@@ -1,12 +1,13 @@
 # AGENTS.md Drift Report
 
-> Last generated: 2026-06-03 11:01 UTC
-> Organization: `jodidaniel` — 2 repo(s) scanned
+> Last generated: 2026-06-04 09:56 UTC
+> Organization: `jodidaniel` — 3 repo(s) scanned
 
 | Repository | Status | Has marker | Open PR | Sections | Notes |
 |------------|--------|------------|---------|----------|-------|
-| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | **no-agents-md** | — | none | none | AGENTS.md not found in repo |
+| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | **drift-detected** | no | none | none |  |
 | [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | **drift-detected** | no | none | none |  |
+| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | **no-agents-md** | — | none | none | AGENTS.md not found in repo |
 
 ---
 
