@@ -29,6 +29,15 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
+      - name: Verify sync token is configured
+        env:
+          GH_TOKEN: ${{ secrets.ORG_JODIDANIEL_READWRITE_CONTENTS_PRS }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::ORG_JODIDANIEL_READWRITE_CONTENTS_PRS secret is not set on this repo. Create a fine-grained PAT with contents:write and pull-requests:write scopes on all target repos and add it as a repo secret named ORG_JODIDANIEL_READWRITE_CONTENTS_PRS. See README." >&2
+            exit 1
+          fi
+
       - name: Run sync
         env:
           # Token requires: contents:write (push branches), pull_requests:write (open PRs),
