@@ -375,8 +375,12 @@ test_sync_full() {
     # Verify content ordering for no-marker repo: managed content BEFORE marker,
     # existing (preserved) content AFTER — this is the parse invariant: content
     # above "$MARKER" is managed/overwritten, content at-and-below it survives.
+    # The marker grep must be anchored: line 1 of the built output (the
+    # BEGIN MANAGED SECTION comment) contains the marker TEXT, so an
+    # unanchored grep locates line 1 instead of the real marker line —
+    # the production parse in sync.sh is anchored (`sed -n "/^MARKER/..."`).
     local marker_line managed_line existing_line
-    marker_line=$(grep -n "## Repo-specific additions" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
+    marker_line=$(grep -n "^## Repo-specific additions" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     existing_line=$(grep -n "# Our Custom Agent Guide" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     managed_line=$(grep -n "BEGIN MANAGED SECTION" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     if [[ -n "$managed_line" && -n "$marker_line" && "$managed_line" -lt "$marker_line" ]]; then
