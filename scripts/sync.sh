@@ -218,8 +218,16 @@ Managed content updated by the central _agent-guidance repository." || {
         log "PR #$existing_pr already exists — branch updated."
         ((OK_COUNT++)) || true
     else
-        default_branch=$(gh repo view "$repo_name" --json defaultBranchRef \
-            --jq .defaultBranchRef.name)
+        # Guarded assignment: a bare command substitution would abort the
+        # entire run under set -e on a transient API error, breaking the
+        # per-repo fail isolation used by the other steps. The -z check
+        # also catches an empty-but-exit-0 response.
+        if ! default_branch=$(gh repo view "$repo_name" --json defaultBranchRef \
+            --jq .defaultBranchRef.name) || [[ -z "$default_branch" ]]; then
+            fail "could not resolve default branch for $repo_name"
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
 
         # --head: gh cannot infer the head branch in a fresh temp clone.
         # --base: the default branch varies across repos (main vs master),

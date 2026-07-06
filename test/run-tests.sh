@@ -186,6 +186,19 @@ case "$1" in
                     exit 1
                 fi
                 ;;
+            view)
+                # sync.sh resolves the default branch via
+                # `gh repo view <repo> --json defaultBranchRef --jq ...`;
+                # the mock repos all use main.
+                shift 2  # remove "repo view"
+                json='{"defaultBranchRef":{"name":"main"}}'
+                jq_filter=$(parse_jq_filter "$@")
+                if [[ -n "$jq_filter" ]]; then
+                    echo "$json" | jq -r "$jq_filter"
+                else
+                    echo "$json"
+                fi
+                ;;
         esac
         ;;
     api)
