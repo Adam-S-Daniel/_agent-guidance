@@ -290,9 +290,14 @@ case "$1" in
                         echo "$json"
                     fi
                 else
+                    # Real gh api prints the raw error JSON body to stdout on
+                    # HTTP errors (the --jq filter is NOT applied) — mimic that
+                    # so callers that mishandle failure output get caught.
+                    echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}'
                     exit 1
                 fi
             else
+                echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}'
                 exit 1
             fi
         fi

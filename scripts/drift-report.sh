@@ -45,7 +45,9 @@ strip_volatile() {
 fetch_file_content() {
     local repo="$1" path="$2"
     local encoded
-    encoded=$(gh api "repos/$repo/contents/$path" --jq '.content' 2>/dev/null || true)
+    # On HTTP errors gh api prints the raw error JSON body to stdout (the
+    # --jq filter is not applied) — discard output on failure, don't decode it.
+    encoded=$(gh api "repos/$repo/contents/$path" --jq '.content' 2>/dev/null) || encoded=""
     [[ -n "$encoded" ]] && echo "$encoded" | base64 -d 2>/dev/null || true
 }
 

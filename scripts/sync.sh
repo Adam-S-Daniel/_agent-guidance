@@ -121,8 +121,14 @@ for repo_name in "${REPOS[@]}"; do
 
     sections=()
 
-    remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
-        --jq '.content' 2>/dev/null || true)
+    # On HTTP errors (e.g. 404 when the file is absent) gh api prints the raw
+    # error JSON body to stdout — the --jq filter is not applied — so `|| true`
+    # alone would leave garbage in remote_yaml, break the base64 decode, and
+    # silently defeat the default_sections fallback. Discard output on failure.
+    if ! remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
+        --jq '.content' 2>/dev/null); then
+        remote_yaml=""
+    fi
 
     if [[ -n "$remote_yaml" ]]; then
         while IFS= read -r s; do
