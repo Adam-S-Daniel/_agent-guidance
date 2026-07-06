@@ -32,6 +32,22 @@
 - New behavior requires new tests; bug fixes require regression tests.
 - Tests should be deterministic — no sleeping, no network calls, no reliance on wall-clock time.
 
+## Subagent delegation (model routing)
+
+- Don't write code in the main loop: run the implementation in a subagent on an
+  appropriately lower-power model (e.g. the Agent tool's `model` override in
+  Claude Code; skip if the harness has no subagent support).
+- Route by mechanicalness: smallest model (haiku-class) for exactly-specified
+  edits — pin bumps, renames, config/doc tweaks; mid-tier (sonnet-class) for
+  normal implementation from a clear spec.
+- The main loop keeps root-cause investigation, architectural decisions,
+  writing the spec, and review of the subagent's diff before commit.
+- Escalate the model rather than ship a wrong diff when the task is genuinely
+  subtle (cross-repo invariants, race conditions).
+- Give the subagent a precise spec — files, exact changes, house style, the
+  test command to run. Subagent output is gated by the same test/CI proof as
+  any other change.
+
 ## Git practices
 
 - Write concise commit messages that explain *why*, not just *what*.
