@@ -146,8 +146,17 @@ for repo_name in "${REPOS[@]}"; do
     # ── Assemble ───────────────────────────────────────────────────────
 
     if [[ -n "$existing_prefix" ]]; then
-        # No-marker case: existing content on top, marker, then managed content
-        new_agents_md="$(printf '%s\n\n%s\n\n%s' "$existing_prefix" "$MARKER" "$managed_content")"
+        # No-marker case: managed content on top, then the marker, then the
+        # existing hand-written content preserved below it — mirroring the
+        # marker-case ordering below (managed content above the marker,
+        # repo-specific content at-and-below it). This ordering is required
+        # by the parse invariant: on every sync, content above "$MARKER" is
+        # managed (overwritten) and content from "$MARKER" down is preserved.
+        # Putting the existing content ABOVE the marker here (as before) would
+        # make the *next* sync's marker-case parse treat the stale managed
+        # copy below it as "repo-specific", silently destroying everything
+        # written above on the second sync.
+        new_agents_md="$(printf '%s\n%s\n\n%s\n' "$managed_content" "$MARKER" "$existing_prefix")"
     else
         new_agents_md="$(printf '%s%s\n' "$managed_content" "$repo_specific")"
     fi

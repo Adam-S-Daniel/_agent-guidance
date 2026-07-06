@@ -372,20 +372,22 @@ test_sync_full() {
     assert_contains "$verify_nomarker/AGENTS.md" "## Python" "repo-existing-no-marker: managed python section present"
     assert_contains "$verify_nomarker/AGENTS.md" "BEGIN MANAGED SECTION" "repo-existing-no-marker: managed section marker present"
 
-    # Verify content ordering for no-marker repo: existing content BEFORE marker, managed AFTER
+    # Verify content ordering for no-marker repo: managed content BEFORE marker,
+    # existing (preserved) content AFTER — this is the parse invariant: content
+    # above "$MARKER" is managed/overwritten, content at-and-below it survives.
     local marker_line managed_line existing_line
     marker_line=$(grep -n "## Repo-specific additions" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     existing_line=$(grep -n "# Our Custom Agent Guide" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     managed_line=$(grep -n "BEGIN MANAGED SECTION" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
-    if [[ -n "$existing_line" && -n "$marker_line" && "$existing_line" -lt "$marker_line" ]]; then
-        pass "repo-existing-no-marker: existing content appears before marker"
+    if [[ -n "$managed_line" && -n "$marker_line" && "$managed_line" -lt "$marker_line" ]]; then
+        pass "repo-existing-no-marker: managed content appears before marker"
     else
-        fail "repo-existing-no-marker: existing content appears before marker — existing at line $existing_line, marker at line $marker_line"
+        fail "repo-existing-no-marker: managed content appears before marker — managed at line $managed_line, marker at line $marker_line"
     fi
-    if [[ -n "$managed_line" && -n "$marker_line" && "$managed_line" -gt "$marker_line" ]]; then
-        pass "repo-existing-no-marker: managed content appears after marker"
+    if [[ -n "$existing_line" && -n "$marker_line" && "$existing_line" -gt "$marker_line" ]]; then
+        pass "repo-existing-no-marker: existing content appears after marker"
     else
-        fail "repo-existing-no-marker: managed content appears after marker — managed at line $managed_line, marker at line $marker_line"
+        fail "repo-existing-no-marker: existing content appears after marker — existing at line $existing_line, marker at line $marker_line"
     fi
 
     # Verify PRs were created for all repos (4 repos should get PRs)
@@ -460,6 +462,86 @@ GHSCRIPT
     assert_contains "$TEST_DIR/sync-fail-output.txt" "1 failed" "sync reports failure count"
 }
 
+# ── Test 3c: no-marker assemble + marker-case parse round-trip ────────────
+#
+# Regression test for the second-sync data-loss bug: the no-marker branch of
+# the "# ── Assemble" section used to put pre-existing hand-written content
+# ABOVE the marker and managed content below it. On the *next* sync, the
+# marker-case parse (content from "$MARKER" down is "repo-specific" and
+# survives; everything above it is managed and gets overwritten) would treat
+# that stale managed copy as repo-specific and discard the hand-written
+# content sitting above it — silent, permanent data loss on the second sync.
+#
+# This exercises the actual "# ── Preserve repo-specific content" and
+# "# ── Assemble" blocks from sync.sh — extracted by their section-comment
+# anchors, the same style the script itself uses to delimit managed content —
+# so the test tracks the real implementation instead of a hand-duplicated
+# copy that could silently drift out of sync with it. It needs neither `gh`
+# nor `jq`, so it runs even in environments where the full mocked sync.sh
+# pipeline (used by the tests above) cannot.
+
+extract_sync_block() {
+    # Prints the lines between two "# ── <label>" section-comment anchors in
+    # sync.sh, exclusive of the closing anchor line.
+    sed -n "/# ── $1/,/# ── $2/p" "$REPO_ROOT/scripts/sync.sh" | sed '$d'
+}
+
+test_sync_round_trip_no_marker() {
+    echo ""
+    echo "=== Test: no-marker assemble + marker-case parse round-trip ==="
+
+    local rt_dir="$TEST_DIR/round-trip"
+    mkdir -p "$rt_dir"
+
+    local MARKER="## Repo-specific additions"
+    local preserve_block assemble_block
+    preserve_block=$(extract_sync_block "Preserve repo-specific content" "Assemble")
+    assemble_block=$(extract_sync_block "Assemble" "Diff check")
+
+    # Seed a hand-written AGENTS.md with NO marker — the scenario that used
+    # to get inverted.
+    cat > "$rt_dir/AGENTS.md" <<'MD'
+# Our Custom Agent Guide
+
+Follow these repo-specific rules when working in this codebase.
+
+- Always run linting before commits
+- Use conventional commit messages
+MD
+
+    # --- First sync: no-marker branch runs, adopts the existing file as
+    #     repo-specific content below a newly-added marker. ---
+    local managed_content new_agents_md repo_specific existing_prefix
+    managed_content=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    (
+        cd "$rt_dir"
+        eval "$preserve_block"
+        eval "$assemble_block"
+        echo "$new_agents_md" > AGENTS.md
+    )
+
+    assert_contains "$rt_dir/AGENTS.md" "# Our Custom Agent Guide" "round-trip after 1st sync: original heading present"
+    assert_contains "$rt_dir/AGENTS.md" "## Repo-specific additions" "round-trip after 1st sync: marker added"
+
+    # --- Second sync: AGENTS.md now has the marker, so this run exercises
+    #     the marker-case parse against the first sync's output. If the
+    #     ordering is right, the hand-written content must survive. ---
+    managed_content=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    (
+        cd "$rt_dir"
+        eval "$preserve_block"
+        eval "$assemble_block"
+        echo "$new_agents_md" > AGENTS.md
+    )
+
+    assert_contains "$rt_dir/AGENTS.md" "# Our Custom Agent Guide" "round-trip after 2nd sync: original heading survives"
+    assert_contains "$rt_dir/AGENTS.md" "Follow these repo-specific rules when working in this codebase." "round-trip after 2nd sync: original body survives"
+    assert_contains "$rt_dir/AGENTS.md" "Always run linting before commits" "round-trip after 2nd sync: original bullet 1 survives"
+    assert_contains "$rt_dir/AGENTS.md" "Use conventional commit messages" "round-trip after 2nd sync: original bullet 2 survives"
+    assert_contains "$rt_dir/AGENTS.md" "## Repo-specific additions" "round-trip after 2nd sync: marker still present"
+    assert_contains "$rt_dir/AGENTS.md" "## Python" "round-trip after 2nd sync: managed python section present"
+}
+
 # ── Test 4: drift-report.sh ───────────────────────────────────────────────
 
 test_drift_report() {
@@ -498,6 +580,7 @@ test_build_script
 test_sync_dry_run
 test_sync_full
 test_sync_failure_exit_code
+test_sync_round_trip_no_marker
 test_drift_report
 
 echo ""
