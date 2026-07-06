@@ -34,6 +34,8 @@ else
     ORG=$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')
 fi
 
+REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 strip_volatile() {
@@ -46,6 +48,21 @@ fetch_file_content() {
     encoded=$(gh api "repos/$repo/contents/$path" --jq '.content' 2>/dev/null || true)
     [[ -n "$encoded" ]] && echo "$encoded" | base64 -d 2>/dev/null || true
 }
+
+# ── Load central repos.yml (exclusions + default sections) ─────────────────
+
+EXCLUDED_REPOS=()
+DEFAULT_SECTIONS=()
+
+if [[ -f "$REPOS_YML" ]]; then
+    while IFS= read -r r; do
+        [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
+    done < <(yq -r '.exclude // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+
+    while IFS= read -r s; do
+        [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
+    done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+fi
 
 # ── Discover repos ─────────────────────────────────────────────────────────
 
@@ -64,6 +81,24 @@ repo_list_raw=$(
 )
 
 mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sort)
+
+# ── Filter repos excluded via repos.yml ─────────────────────────────────────
+if [[ ${#EXCLUDED_REPOS[@]} -gt 0 ]]; then
+    FILTERED_REPOS=()
+    for r in "${REPOS[@]}"; do
+        short_name="${r##*/}"
+        excluded=false
+        for ex in "${EXCLUDED_REPOS[@]}"; do
+            [[ "$short_name" == "$ex" ]] && excluded=true && break
+        done
+        if $excluded; then
+            echo "  $r — excluded by repos.yml"
+        else
+            FILTERED_REPOS+=("$r")
+        fi
+    done
+    REPOS=("${FILTERED_REPOS[@]}")
+fi
 
 echo "Found ${#REPOS[@]} repo(s)"
 echo ""
@@ -102,6 +137,8 @@ for repo_name in "${REPOS[@]}"; do
         while IFS= read -r s; do
             [[ -n "$s" ]] && sections+=("$s")
         done < <(echo "$remote_yaml" | yq -r '.sections // [] | .[]' 2>/dev/null || true)
+    else
+        sections=("${DEFAULT_SECTIONS[@]}")
     fi
 
     sections_display="${sections[*]:-none}"

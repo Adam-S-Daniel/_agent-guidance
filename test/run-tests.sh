@@ -124,6 +124,67 @@ MD
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
+    # Central repos.yml fixture for this test run (NOT the real repo-root
+    # repos.yml — tests must not depend on the real exclusion list).
+    cat > "$TEST_DIR/repos.yml" <<'YAML'
+exclude:
+  - repo-excluded
+default_sections:
+  - rust
+YAML
+
+    # Mock repo 5: has .agents-sync.yml (typescript) and a pre-existing
+    # CLAUDE.md that does NOT import @AGENTS.md, no AGENTS.md.
+    local repo5_bare="$TEST_DIR/bare/testorg_repo-with-claude-md"
+    local repo5_work="$TEST_DIR/work/repo-with-claude-md"
+    mkdir -p "$repo5_bare" "$repo5_work"
+    git init --bare --initial-branch=main "$repo5_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo5_work" >/dev/null 2>&1
+    cd "$repo5_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo5_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - typescript
+YAML
+    cat > CLAUDE.md <<'MD'
+# My hand-written Claude notes
+
+Some pre-existing instructions that do not reference AGENTS.md.
+MD
+    git add .agents-sync.yml CLAUDE.md
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+
+    # Mock repo 6: repo-excluded — deliberately NOT set up as a bare repo.
+    # It must only appear in the fake `gh repo list` JSON output, so that if
+    # the exclusion filter is ever broken, `gh repo clone` fails loudly
+    # ("mock repo ... not found") instead of the test silently passing.
+
+    # Mock repo 7: AGENTS.md already up to date (built via the real build
+    # script so it can't drift from the actual implementation), no CLAUDE.md.
+    local repo7_bare="$TEST_DIR/bare/testorg_repo-up-to-date-no-claude"
+    local repo7_work="$TEST_DIR/work/repo-up-to-date-no-claude"
+    mkdir -p "$repo7_bare" "$repo7_work"
+    git init --bare --initial-branch=main "$repo7_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo7_work" >/dev/null 2>&1
+    cd "$repo7_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo7_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+YAML
+    local managed_for_repo7 marker_block
+    managed_for_repo7=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    marker_block="$(printf '%s\n\n%s\n' \
+        "## Repo-specific additions" \
+        "<!-- Add your repo-specific agent guidance below this line -->")"
+    printf '%s\n%s\n' "$managed_for_repo7" "$marker_block" > AGENTS.md
+    git add .agents-sync.yml AGENTS.md
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+
     cd "$REPO_ROOT"
 }
 
@@ -160,6 +221,9 @@ case "$1" in
                   {"nameWithOwner":"testorg/repo-no-sync"},
                   {"nameWithOwner":"testorg/repo-with-existing"},
                   {"nameWithOwner":"testorg/repo-existing-no-marker"},
+                  {"nameWithOwner":"testorg/repo-with-claude-md"},
+                  {"nameWithOwner":"testorg/repo-excluded"},
+                  {"nameWithOwner":"testorg/repo-up-to-date-no-claude"},
                   {"nameWithOwner":"testorg/_agent-guidance"}
                 ]'
                 # Find --jq filter in remaining args
@@ -301,6 +365,7 @@ test_sync_dry_run() {
     output=$(
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/sync.sh" --dry-run 2>&1
     ) || true
@@ -313,6 +378,8 @@ test_sync_dry_run() {
     assert_contains "$TEST_DIR/sync-output.txt" "repo-with-existing" "finds repo-with-existing"
     assert_not_contains "$TEST_DIR/sync-output.txt" "=== testorg/_agent-guidance ===" "excludes self repo"
     assert_contains "$TEST_DIR/sync-output.txt" "[DRY RUN]" "respects dry-run flag"
+    assert_not_contains "$TEST_DIR/sync-output.txt" "=== testorg/repo-excluded ===" "excludes repo listed in repos.yml"
+    assert_contains "$TEST_DIR/sync-output.txt" "excluded by repos.yml" "logs exclusion reason"
 }
 
 # ── Test 3: sync.sh full run ──────────────────────────────────────────────
@@ -329,6 +396,7 @@ test_sync_full() {
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         MOCK_PR_LOG="$pr_log" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/sync.sh" 2>&1
     ) || true
@@ -341,8 +409,8 @@ test_sync_full() {
     # Check repo-with-existing got go sections
     assert_contains "$TEST_DIR/sync-full-output.txt" "Sections: go" "repo-with-existing gets go"
 
-    # Check repo-no-sync gets no sections
-    assert_contains "$TEST_DIR/sync-full-output.txt" "Sections: none" "repo-no-sync gets no sections"
+    # Check repo-no-sync falls back to default_sections (rust) from repos.yml
+    assert_contains "$TEST_DIR/sync-full-output.txt" "Sections: rust" "repo-no-sync gets default_sections (rust)"
 
     # Verify repo-with-existing preserved repo-specific content
     local existing_bare="$TEST_DIR/bare/testorg_repo-with-existing"
@@ -369,6 +437,17 @@ test_sync_full() {
     assert_contains "$verify_sync/AGENTS.md" "## Python" "repo-with-sync: python section present"
     assert_contains "$verify_sync/AGENTS.md" "## Docker" "repo-with-sync: docker section present"
     assert_contains "$verify_sync/AGENTS.md" "## Repo-specific additions" "repo-with-sync: marker header added"
+    assert_contains "$verify_sync/CLAUDE.md" "@AGENTS.md" "repo-with-sync: CLAUDE.md bridge created"
+    assert_contains "$verify_sync/CLAUDE.md" "Managed by _agent-guidance" "repo-with-sync: CLAUDE.md bridge comment present"
+
+    # Verify repo-no-sync got the default_sections (rust) content
+    local nosync_bare="$TEST_DIR/bare/testorg_repo-no-sync"
+    local verify_nosync="$TEST_DIR/verify-no-sync"
+    git clone "$nosync_bare" "$verify_nosync" -b agents-md-sync/update 2>/dev/null || {
+        fail "repo-no-sync: sync branch not created"
+        return
+    }
+    assert_contains "$verify_nosync/AGENTS.md" "## Rust" "repo-no-sync: default_sections rust section present"
 
     # Verify repo-existing-no-marker preserved existing content under the marker
     local nomarker_bare="$TEST_DIR/bare/testorg_repo-existing-no-marker"
@@ -407,23 +486,57 @@ test_sync_full() {
         fail "repo-existing-no-marker: existing content appears after marker — existing at line $existing_line, marker at line $marker_line"
     fi
 
-    # Verify PRs were created for all repos (4 repos should get PRs)
+    # Verify repo-with-claude-md: existing CLAUDE.md left untouched, WARN emitted
+    local claudemd_bare="$TEST_DIR/bare/testorg_repo-with-claude-md"
+    local verify_claudemd="$TEST_DIR/verify-claude-md"
+    git clone "$claudemd_bare" "$verify_claudemd" -b agents-md-sync/update 2>/dev/null || {
+        fail "repo-with-claude-md: sync branch not created"
+        return
+    }
+    assert_contains "$verify_claudemd/CLAUDE.md" "Some pre-existing instructions" "repo-with-claude-md: existing CLAUDE.md content unchanged"
+    assert_not_contains "$verify_claudemd/CLAUDE.md" "@AGENTS.md" "repo-with-claude-md: existing CLAUDE.md not modified to add bridge"
+    assert_contains "$TEST_DIR/sync-full-output.txt" "WARN: CLAUDE.md exists but does not import @AGENTS.md" "repo-with-claude-md: WARN emitted for non-bridging CLAUDE.md"
+
+    # Verify repo-up-to-date-no-claude: AGENTS.md untouched, only CLAUDE.md added
+    local uptodate_bare="$TEST_DIR/bare/testorg_repo-up-to-date-no-claude"
+    local verify_uptodate="$TEST_DIR/verify-up-to-date-no-claude"
+    git clone "$uptodate_bare" "$verify_uptodate" -b agents-md-sync/update 2>/dev/null || {
+        fail "repo-up-to-date-no-claude: sync branch not created"
+        return
+    }
+    local expected_managed_repo7 expected_marker_block_repo7 expected_agents_repo7
+    expected_managed_repo7=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    expected_marker_block_repo7="$(printf '%s\n\n%s\n' \
+        "## Repo-specific additions" \
+        "<!-- Add your repo-specific agent guidance below this line -->")"
+    expected_agents_repo7="$(printf '%s\n%s\n' "$expected_managed_repo7" "$expected_marker_block_repo7")"
+    if diff -q <(echo "$expected_agents_repo7") "$verify_uptodate/AGENTS.md" &>/dev/null; then
+        pass "repo-up-to-date-no-claude: AGENTS.md byte-identical to already up-to-date fixture"
+    else
+        fail "repo-up-to-date-no-claude: AGENTS.md byte-identical to already up-to-date fixture"
+    fi
+    assert_contains "$verify_uptodate/CLAUDE.md" "@AGENTS.md" "repo-up-to-date-no-claude: CLAUDE.md bridge added"
+
+    # Verify repo-excluded never got processed
+    assert_not_contains "$TEST_DIR/sync-full-output.txt" "=== testorg/repo-excluded ===" "repo-excluded: never processed by sync"
+
+    # Verify PRs were created for all 6 non-excluded repos
     if [[ -f "$pr_log" ]]; then
         local pr_count
         pr_count=$(wc -l < "$pr_log")
-        if [[ "$pr_count" -eq 4 ]]; then
-            pass "sync created PRs for all 4 repos"
+        if [[ "$pr_count" -eq 6 ]]; then
+            pass "sync created PRs for all 6 repos"
         else
-            fail "sync created PRs for all 4 repos — got $pr_count PR creations"
+            fail "sync created PRs for all 6 repos — got $pr_count PR creations"
         fi
     else
-        fail "sync created PRs for all 4 repos — no PR log file found"
+        fail "sync created PRs for all 6 repos — no PR log file found"
     fi
     assert_contains "$TEST_DIR/sync-full-output.txt" "PR created." "sync output shows PR created"
 
     # Verify summary line
     assert_contains "$TEST_DIR/sync-full-output.txt" "Sync complete:" "sync shows summary line"
-    assert_contains "$TEST_DIR/sync-full-output.txt" "4 synced" "sync reports 4 synced"
+    assert_contains "$TEST_DIR/sync-full-output.txt" "6 synced" "sync reports 6 synced"
     assert_contains "$TEST_DIR/sync-full-output.txt" "0 failed" "sync reports 0 failed"
 }
 
@@ -467,6 +580,7 @@ GHSCRIPT
     local exit_code=0
     GITHUB_REPOSITORY_OWNER=testorg \
     MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
     PATH="$TEST_DIR/bin-fail:$PATH" \
     "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-fail-output.txt" 2>&1 || exit_code=$?
 
@@ -600,6 +714,7 @@ test_drift_report() {
     output=$(
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
@@ -612,8 +727,9 @@ test_drift_report() {
     assert_contains "$REPO_ROOT/drift-report.md" "repo-with-existing" "drift report includes repo-with-existing"
     assert_contains "$REPO_ROOT/drift-report.md" "Status legend" "drift report has legend"
     assert_contains "$REPO_ROOT/drift-report.md" "Organization:" "drift report shows org"
-    assert_contains "$REPO_ROOT/drift-report.md" "4 repo(s) scanned" "drift report shows repo count"
+    assert_contains "$REPO_ROOT/drift-report.md" "6 repo(s) scanned" "drift report shows repo count"
     assert_not_contains "$REPO_ROOT/drift-report.md" "_agent-guidance" "drift report excludes self"
+    assert_not_contains "$REPO_ROOT/drift-report.md" "repo-excluded" "drift report excludes repos.yml-excluded repo"
 }
 
 # ── Run all tests ──────────────────────────────────────────────────────────

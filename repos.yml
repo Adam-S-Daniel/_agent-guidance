@@ -1,0 +1,11 @@
+# Central sync registry: repos excluded from AGENTS.md sync, and default sections.
+# Consumer repos opt into extra sections via their own .agents-sync.yml.
+exclude:
+  - civic-platform-agents  # out of scope per agentskills#18
+  - civic-iac-policy       # out of scope per agentskills#18
+  - civic-azure-infra      # out of scope per agentskills#18
+  - scratch-claude-001     # being archived
+  - scratch-jules-001      # being archived
+  - scratch-claude-002     # being archived
+  - squarespacetemp        # being archived
+default_sections: []

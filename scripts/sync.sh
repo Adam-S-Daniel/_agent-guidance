@@ -32,6 +32,8 @@ else
     ORG=$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')
 fi
 
+REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
+
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -48,6 +50,21 @@ SKIP_COUNT=0
 read_sections_from_yaml() {
     yq -r '.sections // [] | .[]' 2>/dev/null || true
 }
+
+# ── Load central repos.yml (exclusions + default sections) ─────────────────
+
+EXCLUDED_REPOS=()
+DEFAULT_SECTIONS=()
+
+if [[ -f "$REPOS_YML" ]]; then
+    while IFS= read -r r; do
+        [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
+    done < <(yq -r '.exclude // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+
+    while IFS= read -r s; do
+        [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
+    done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+fi
 
 # ── Discover repos ─────────────────────────────────────────────────────────
 
@@ -67,6 +84,24 @@ repo_list_raw=$(
 )
 
 mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sort)
+
+# ── Filter repos excluded via repos.yml ─────────────────────────────────────
+if [[ ${#EXCLUDED_REPOS[@]} -gt 0 ]]; then
+    FILTERED_REPOS=()
+    for r in "${REPOS[@]}"; do
+        short_name="${r##*/}"
+        excluded=false
+        for ex in "${EXCLUDED_REPOS[@]}"; do
+            [[ "$short_name" == "$ex" ]] && excluded=true && break
+        done
+        if $excluded; then
+            echo "  $r — excluded by repos.yml"
+        else
+            FILTERED_REPOS+=("$r")
+        fi
+    done
+    REPOS=("${FILTERED_REPOS[@]}")
+fi
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
     echo "No repos found in $ORG — nothing to sync."
@@ -93,6 +128,8 @@ for repo_name in "${REPOS[@]}"; do
         while IFS= read -r s; do
             [[ -n "$s" ]] && sections+=("$s")
         done < <(echo "$remote_yaml" | base64 -d | read_sections_from_yaml)
+    else
+        sections=("${DEFAULT_SECTIONS[@]}")
     fi
 
     log "Sections: ${sections[*]:-none}"
@@ -169,8 +206,20 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Diff check ─────────────────────────────────────────────────────
+    # Skip only when AGENTS.md is already correct AND the CLAUDE.md bridge
+    # is already in place — a repo can be AGENTS.md-current but still
+    # missing CLAUDE.md (e.g. it predates the bridge), and that case must
+    # still get a commit that adds just the bridge file.
 
+    agents_up_to_date=false
     if [[ -f AGENTS.md ]] && diff -q <(echo "$new_agents_md") AGENTS.md &>/dev/null; then
+        agents_up_to_date=true
+    fi
+
+    claude_md_present=false
+    [[ -f CLAUDE.md ]] && claude_md_present=true
+
+    if $agents_up_to_date && $claude_md_present; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -178,7 +227,11 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     if $DRY_RUN; then
-        log "[DRY RUN] Would update AGENTS.md"
+        if $agents_up_to_date; then
+            log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge"
+        else
+            log "[DRY RUN] Would update AGENTS.md"
+        fi
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
         continue
@@ -193,11 +246,44 @@ for repo_name in "${REPOS[@]}"; do
     }
 
     echo "$new_agents_md" > AGENTS.md
-    git add AGENTS.md
-    git commit -m "chore: sync AGENTS.md from _agent-guidance
+
+    # ── CLAUDE.md bridge ────────────────────────────────────────────────
+    # Claude Code reads CLAUDE.md, not AGENTS.md — it never sees the managed
+    # guidance unless something imports it. Anthropic's documented pattern
+    # is a CLAUDE.md containing `@AGENTS.md`. We only ever CREATE this file;
+    # an existing CLAUDE.md is left completely untouched even if it doesn't
+    # import AGENTS.md, since we must not clobber someone's hand-written file.
+    claude_md_added=false
+    if ! $claude_md_present; then
+        cat > CLAUDE.md <<'CLAUDEEOF'
+<!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
+@AGENTS.md
+CLAUDEEOF
+        claude_md_added=true
+    elif ! grep -qF '@AGENTS.md' CLAUDE.md; then
+        log "WARN: CLAUDE.md exists but does not import @AGENTS.md — Claude Code will not see the managed guidance."
+    fi
+
+    if $claude_md_added; then
+        git add AGENTS.md CLAUDE.md
+    else
+        git add AGENTS.md
+    fi
+
+    if $agents_up_to_date; then
+        commit_message="chore: add CLAUDE.md bridge for AGENTS.md sync
+
+AGENTS.md was already up to date. Adds a CLAUDE.md that imports
+@AGENTS.md so Claude Code (which reads CLAUDE.md, not AGENTS.md) sees
+the managed guidance."
+    else
+        commit_message="chore: sync AGENTS.md from _agent-guidance
 
 Sections: ${sections[*]:-none}
-Managed content updated by the central _agent-guidance repository." || {
+Managed content updated by the central _agent-guidance repository."
+    fi
+
+    git commit -m "$commit_message" || {
         log "Nothing to commit."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"; continue
@@ -243,6 +329,11 @@ Automated sync of the managed portion of \`AGENTS.md\` from the central
 **Sections included:** ${sections[*]:-none}
 
 Content below \`## Repo-specific additions\` has been preserved.
+
+This sync also ensures a \`CLAUDE.md\` exists that imports \`AGENTS.md\`
+via \`@AGENTS.md\` — Claude Code reads CLAUDE.md, not AGENTS.md, directly,
+so without this bridge it would never see the managed guidance. An
+existing CLAUDE.md is never modified.
 EOF
 )"; then
             log "PR created."
