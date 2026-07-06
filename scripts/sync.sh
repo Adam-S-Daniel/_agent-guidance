@@ -218,7 +218,15 @@ Managed content updated by the central _agent-guidance repository." || {
         log "PR #$existing_pr already exists — branch updated."
         ((OK_COUNT++)) || true
     else
+        default_branch=$(gh repo view "$repo_name" --json defaultBranchRef \
+            --jq .defaultBranchRef.name)
+
+        # --head: gh cannot infer the head branch in a fresh temp clone.
+        # --base: the default branch varies across repos (main vs master),
+        #         and omitting --base while passing --head can mistarget.
         if gh pr create \
+            --head "$BRANCH_NAME" \
+            --base "$default_branch" \
             --title "chore: sync AGENTS.md from _agent-guidance" \
             --body "$(cat <<EOF
 Automated sync of the managed portion of \`AGENTS.md\` from the central
