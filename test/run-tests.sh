@@ -372,20 +372,26 @@ test_sync_full() {
     assert_contains "$verify_nomarker/AGENTS.md" "## Python" "repo-existing-no-marker: managed python section present"
     assert_contains "$verify_nomarker/AGENTS.md" "BEGIN MANAGED SECTION" "repo-existing-no-marker: managed section marker present"
 
-    # Verify content ordering for no-marker repo: existing content BEFORE marker, managed AFTER
+    # Verify content ordering for no-marker repo: managed content BEFORE marker,
+    # existing (preserved) content AFTER — this is the parse invariant: content
+    # above "$MARKER" is managed/overwritten, content at-and-below it survives.
+    # The marker grep must be anchored: line 1 of the built output (the
+    # BEGIN MANAGED SECTION comment) contains the marker TEXT, so an
+    # unanchored grep locates line 1 instead of the real marker line —
+    # the production parse in sync.sh is anchored (`sed -n "/^MARKER/..."`).
     local marker_line managed_line existing_line
-    marker_line=$(grep -n "## Repo-specific additions" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
+    marker_line=$(grep -n "^## Repo-specific additions" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     existing_line=$(grep -n "# Our Custom Agent Guide" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
     managed_line=$(grep -n "BEGIN MANAGED SECTION" "$verify_nomarker/AGENTS.md" | head -1 | cut -d: -f1)
-    if [[ -n "$existing_line" && -n "$marker_line" && "$existing_line" -lt "$marker_line" ]]; then
-        pass "repo-existing-no-marker: existing content appears before marker"
+    if [[ -n "$managed_line" && -n "$marker_line" && "$managed_line" -lt "$marker_line" ]]; then
+        pass "repo-existing-no-marker: managed content appears before marker"
     else
-        fail "repo-existing-no-marker: existing content appears before marker — existing at line $existing_line, marker at line $marker_line"
+        fail "repo-existing-no-marker: managed content appears before marker — managed at line $managed_line, marker at line $marker_line"
     fi
-    if [[ -n "$managed_line" && -n "$marker_line" && "$managed_line" -gt "$marker_line" ]]; then
-        pass "repo-existing-no-marker: managed content appears after marker"
+    if [[ -n "$existing_line" && -n "$marker_line" && "$existing_line" -gt "$marker_line" ]]; then
+        pass "repo-existing-no-marker: existing content appears after marker"
     else
-        fail "repo-existing-no-marker: managed content appears after marker — managed at line $managed_line, marker at line $marker_line"
+        fail "repo-existing-no-marker: existing content appears after marker — existing at line $existing_line, marker at line $marker_line"
     fi
 
     # Verify PRs were created for all repos (4 repos should get PRs)
@@ -460,6 +466,117 @@ GHSCRIPT
     assert_contains "$TEST_DIR/sync-fail-output.txt" "1 failed" "sync reports failure count"
 }
 
+# ── Test 3c: no-marker assemble + marker-case parse round-trip ────────────
+#
+# Regression test for two data-loss bugs in the "# ── Assemble" section:
+#
+# 1. Inverted no-marker ordering: the no-marker branch used to put
+#    pre-existing hand-written content ABOVE the marker and managed content
+#    below it. On the *next* sync, the marker-case parse (content from
+#    "$MARKER" down is "repo-specific" and survives; everything above it is
+#    managed and gets overwritten) would treat that stale managed copy as
+#    repo-specific and discard the hand-written content sitting above it —
+#    silent, permanent data loss on the second sync.
+#
+# 2. Glued marker in the marker case: managed_content carries no trailing
+#    newline (command substitution strips it), so the old
+#    `printf '%s%s\n'` glued the marker line onto
+#    "<!-- END MANAGED SECTION -->". A glued marker still passes the
+#    unanchored `grep -qF` presence check but fails the anchored
+#    `sed -n "/^MARKER/..."` parse, leaving repo_specific empty — dropping
+#    all preserved content one sync later (third sync from a no-marker seed).
+#
+# Hence the three consecutive cycles below, asserting after each that the
+# hand-written content survives and the marker starts its own line, plus
+# byte-identical output between cycles (idempotency — anything less would
+# also churn PRs forever instead of hitting the "Up to date" diff check).
+#
+# This exercises the actual "# ── Preserve repo-specific content" and
+# "# ── Assemble" blocks from sync.sh — extracted by their section-comment
+# anchors, the same style the script itself uses to delimit managed content —
+# so the test tracks the real implementation instead of a hand-duplicated
+# copy that could silently drift out of sync with it. It needs neither `gh`
+# nor `jq`, so it runs even in environments where the full mocked sync.sh
+# pipeline (used by the tests above) cannot.
+
+extract_sync_block() {
+    # Prints the lines between two "# ── <label>" section-comment anchors in
+    # sync.sh, exclusive of the closing anchor line.
+    sed -n "/# ── $1/,/# ── $2/p" "$REPO_ROOT/scripts/sync.sh" | sed '$d'
+}
+
+test_sync_round_trip_no_marker() {
+    echo ""
+    echo "=== Test: no-marker assemble + marker-case parse round-trip ==="
+
+    local rt_dir="$TEST_DIR/round-trip"
+    mkdir -p "$rt_dir"
+
+    local MARKER="## Repo-specific additions"
+    local preserve_block assemble_block
+    preserve_block=$(extract_sync_block "Preserve repo-specific content" "Assemble")
+    assemble_block=$(extract_sync_block "Assemble" "Diff check")
+
+    # Seed a hand-written AGENTS.md with NO marker — the scenario that used
+    # to get inverted.
+    cat > "$rt_dir/AGENTS.md" <<'MD'
+# Our Custom Agent Guide
+
+Follow these repo-specific rules when working in this codebase.
+
+- Always run linting before commits
+- Use conventional commit messages
+MD
+
+    # --- Three consecutive syncs. Cycle 1 exercises the no-marker branch
+    #     (adopts the existing file as repo-specific content below a
+    #     newly-added marker); cycles 2 and 3 exercise the marker-case parse
+    #     against the previous cycle's output. Cycle 3 is what catches the
+    #     glued-marker bug: gluing happens on cycle 2, data loss on cycle 3. ---
+    local managed_content new_agents_md repo_specific existing_prefix
+    local cycle marker_count
+    for cycle in 1 2 3; do
+        managed_content=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+        (
+            cd "$rt_dir"
+            eval "$preserve_block"
+            eval "$assemble_block"
+            echo "$new_agents_md" > AGENTS.md
+        )
+        cp "$rt_dir/AGENTS.md" "$rt_dir/AGENTS.md.cycle$cycle"
+
+        assert_contains "$rt_dir/AGENTS.md" "# Our Custom Agent Guide" "round-trip cycle $cycle: original heading survives"
+        assert_contains "$rt_dir/AGENTS.md" "Follow these repo-specific rules when working in this codebase." "round-trip cycle $cycle: original body survives"
+        assert_contains "$rt_dir/AGENTS.md" "Always run linting before commits" "round-trip cycle $cycle: original bullet 1 survives"
+        assert_contains "$rt_dir/AGENTS.md" "Use conventional commit messages" "round-trip cycle $cycle: original bullet 2 survives"
+        assert_contains "$rt_dir/AGENTS.md" "## Python" "round-trip cycle $cycle: managed python section present"
+
+        # The marker must start its own line — a marker glued onto the end of
+        # the managed content still passes grep -qF but breaks the anchored
+        # sed parse on the following sync.
+        marker_count=$(grep -c "^## Repo-specific additions" "$rt_dir/AGENTS.md" || true)
+        if [[ "$marker_count" -eq 1 ]]; then
+            pass "round-trip cycle $cycle: marker at start of its own line (exactly once)"
+        else
+            fail "round-trip cycle $cycle: marker at start of its own line (exactly once) — anchored count $marker_count"
+        fi
+    done
+
+    # Idempotency: re-syncing an already-correct file must be byte-identical,
+    # otherwise sync.sh's diff check never reports "Up to date" and every
+    # repo gets a churn PR on every run.
+    if cmp -s "$rt_dir/AGENTS.md.cycle1" "$rt_dir/AGENTS.md.cycle2"; then
+        pass "round-trip idempotency: cycle 1 and cycle 2 outputs byte-identical"
+    else
+        fail "round-trip idempotency: cycle 1 and cycle 2 outputs byte-identical"
+    fi
+    if cmp -s "$rt_dir/AGENTS.md.cycle2" "$rt_dir/AGENTS.md.cycle3"; then
+        pass "round-trip idempotency: cycle 2 and cycle 3 outputs byte-identical"
+    else
+        fail "round-trip idempotency: cycle 2 and cycle 3 outputs byte-identical"
+    fi
+}
+
 # ── Test 4: drift-report.sh ───────────────────────────────────────────────
 
 test_drift_report() {
@@ -498,6 +615,7 @@ test_build_script
 test_sync_dry_run
 test_sync_full
 test_sync_failure_exit_code
+test_sync_round_trip_no_marker
 test_drift_report
 
 echo ""

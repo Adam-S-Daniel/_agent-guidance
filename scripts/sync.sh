@@ -146,10 +146,26 @@ for repo_name in "${REPOS[@]}"; do
     # ── Assemble ───────────────────────────────────────────────────────
 
     if [[ -n "$existing_prefix" ]]; then
-        # No-marker case: existing content on top, marker, then managed content
-        new_agents_md="$(printf '%s\n\n%s\n\n%s' "$existing_prefix" "$MARKER" "$managed_content")"
+        # No-marker case: managed content on top, then the marker, then the
+        # existing hand-written content preserved below it — mirroring the
+        # marker-case ordering below (managed content above the marker,
+        # repo-specific content at-and-below it). This ordering is required
+        # by the parse invariant: on every sync, content above "$MARKER" is
+        # managed (overwritten) and content from "$MARKER" down is preserved.
+        # Putting the existing content ABOVE the marker here (as before) would
+        # make the *next* sync's marker-case parse treat the stale managed
+        # copy below it as "repo-specific", silently destroying everything
+        # written above on the second sync.
+        new_agents_md="$(printf '%s\n%s\n\n%s\n' "$managed_content" "$MARKER" "$existing_prefix")"
     else
-        new_agents_md="$(printf '%s%s\n' "$managed_content" "$repo_specific")"
+        # The "\n" between managed content and repo_specific is load-bearing:
+        # managed_content carries no trailing newline (command substitution
+        # strips it), so without it the marker line at the top of
+        # repo_specific glues onto "<!-- END MANAGED SECTION -->". A glued
+        # marker still passes the unanchored `grep -qF` presence check above
+        # but fails the anchored `sed -n "/^${MARKER}/..."` parse on the next
+        # sync, leaving repo_specific empty and dropping all preserved content.
+        new_agents_md="$(printf '%s\n%s\n' "$managed_content" "$repo_specific")"
     fi
 
     # ── Diff check ─────────────────────────────────────────────────────
