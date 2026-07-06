@@ -464,13 +464,28 @@ GHSCRIPT
 
 # ── Test 3c: no-marker assemble + marker-case parse round-trip ────────────
 #
-# Regression test for the second-sync data-loss bug: the no-marker branch of
-# the "# ── Assemble" section used to put pre-existing hand-written content
-# ABOVE the marker and managed content below it. On the *next* sync, the
-# marker-case parse (content from "$MARKER" down is "repo-specific" and
-# survives; everything above it is managed and gets overwritten) would treat
-# that stale managed copy as repo-specific and discard the hand-written
-# content sitting above it — silent, permanent data loss on the second sync.
+# Regression test for two data-loss bugs in the "# ── Assemble" section:
+#
+# 1. Inverted no-marker ordering: the no-marker branch used to put
+#    pre-existing hand-written content ABOVE the marker and managed content
+#    below it. On the *next* sync, the marker-case parse (content from
+#    "$MARKER" down is "repo-specific" and survives; everything above it is
+#    managed and gets overwritten) would treat that stale managed copy as
+#    repo-specific and discard the hand-written content sitting above it —
+#    silent, permanent data loss on the second sync.
+#
+# 2. Glued marker in the marker case: managed_content carries no trailing
+#    newline (command substitution strips it), so the old
+#    `printf '%s%s\n'` glued the marker line onto
+#    "<!-- END MANAGED SECTION -->". A glued marker still passes the
+#    unanchored `grep -qF` presence check but fails the anchored
+#    `sed -n "/^MARKER/..."` parse, leaving repo_specific empty — dropping
+#    all preserved content one sync later (third sync from a no-marker seed).
+#
+# Hence the three consecutive cycles below, asserting after each that the
+# hand-written content survives and the marker starts its own line, plus
+# byte-identical output between cycles (idempotency — anything less would
+# also churn PRs forever instead of hitting the "Up to date" diff check).
 #
 # This exercises the actual "# ── Preserve repo-specific content" and
 # "# ── Assemble" blocks from sync.sh — extracted by their section-comment
@@ -509,37 +524,53 @@ Follow these repo-specific rules when working in this codebase.
 - Use conventional commit messages
 MD
 
-    # --- First sync: no-marker branch runs, adopts the existing file as
-    #     repo-specific content below a newly-added marker. ---
+    # --- Three consecutive syncs. Cycle 1 exercises the no-marker branch
+    #     (adopts the existing file as repo-specific content below a
+    #     newly-added marker); cycles 2 and 3 exercise the marker-case parse
+    #     against the previous cycle's output. Cycle 3 is what catches the
+    #     glued-marker bug: gluing happens on cycle 2, data loss on cycle 3. ---
     local managed_content new_agents_md repo_specific existing_prefix
-    managed_content=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
-    (
-        cd "$rt_dir"
-        eval "$preserve_block"
-        eval "$assemble_block"
-        echo "$new_agents_md" > AGENTS.md
-    )
+    local cycle marker_count
+    for cycle in 1 2 3; do
+        managed_content=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+        (
+            cd "$rt_dir"
+            eval "$preserve_block"
+            eval "$assemble_block"
+            echo "$new_agents_md" > AGENTS.md
+        )
+        cp "$rt_dir/AGENTS.md" "$rt_dir/AGENTS.md.cycle$cycle"
 
-    assert_contains "$rt_dir/AGENTS.md" "# Our Custom Agent Guide" "round-trip after 1st sync: original heading present"
-    assert_contains "$rt_dir/AGENTS.md" "## Repo-specific additions" "round-trip after 1st sync: marker added"
+        assert_contains "$rt_dir/AGENTS.md" "# Our Custom Agent Guide" "round-trip cycle $cycle: original heading survives"
+        assert_contains "$rt_dir/AGENTS.md" "Follow these repo-specific rules when working in this codebase." "round-trip cycle $cycle: original body survives"
+        assert_contains "$rt_dir/AGENTS.md" "Always run linting before commits" "round-trip cycle $cycle: original bullet 1 survives"
+        assert_contains "$rt_dir/AGENTS.md" "Use conventional commit messages" "round-trip cycle $cycle: original bullet 2 survives"
+        assert_contains "$rt_dir/AGENTS.md" "## Python" "round-trip cycle $cycle: managed python section present"
 
-    # --- Second sync: AGENTS.md now has the marker, so this run exercises
-    #     the marker-case parse against the first sync's output. If the
-    #     ordering is right, the hand-written content must survive. ---
-    managed_content=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
-    (
-        cd "$rt_dir"
-        eval "$preserve_block"
-        eval "$assemble_block"
-        echo "$new_agents_md" > AGENTS.md
-    )
+        # The marker must start its own line — a marker glued onto the end of
+        # the managed content still passes grep -qF but breaks the anchored
+        # sed parse on the following sync.
+        marker_count=$(grep -c "^## Repo-specific additions" "$rt_dir/AGENTS.md" || true)
+        if [[ "$marker_count" -eq 1 ]]; then
+            pass "round-trip cycle $cycle: marker at start of its own line (exactly once)"
+        else
+            fail "round-trip cycle $cycle: marker at start of its own line (exactly once) — anchored count $marker_count"
+        fi
+    done
 
-    assert_contains "$rt_dir/AGENTS.md" "# Our Custom Agent Guide" "round-trip after 2nd sync: original heading survives"
-    assert_contains "$rt_dir/AGENTS.md" "Follow these repo-specific rules when working in this codebase." "round-trip after 2nd sync: original body survives"
-    assert_contains "$rt_dir/AGENTS.md" "Always run linting before commits" "round-trip after 2nd sync: original bullet 1 survives"
-    assert_contains "$rt_dir/AGENTS.md" "Use conventional commit messages" "round-trip after 2nd sync: original bullet 2 survives"
-    assert_contains "$rt_dir/AGENTS.md" "## Repo-specific additions" "round-trip after 2nd sync: marker still present"
-    assert_contains "$rt_dir/AGENTS.md" "## Python" "round-trip after 2nd sync: managed python section present"
+    # Idempotency: re-syncing an already-correct file must be byte-identical,
+    # otherwise sync.sh's diff check never reports "Up to date" and every
+    # repo gets a churn PR on every run.
+    if cmp -s "$rt_dir/AGENTS.md.cycle1" "$rt_dir/AGENTS.md.cycle2"; then
+        pass "round-trip idempotency: cycle 1 and cycle 2 outputs byte-identical"
+    else
+        fail "round-trip idempotency: cycle 1 and cycle 2 outputs byte-identical"
+    fi
+    if cmp -s "$rt_dir/AGENTS.md.cycle2" "$rt_dir/AGENTS.md.cycle3"; then
+        pass "round-trip idempotency: cycle 2 and cycle 3 outputs byte-identical"
+    else
+        fail "round-trip idempotency: cycle 2 and cycle 3 outputs byte-identical"
+    fi
 }
 
 # ── Test 4: drift-report.sh ───────────────────────────────────────────────

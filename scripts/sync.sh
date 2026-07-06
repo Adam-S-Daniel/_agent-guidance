@@ -158,7 +158,14 @@ for repo_name in "${REPOS[@]}"; do
         # written above on the second sync.
         new_agents_md="$(printf '%s\n%s\n\n%s\n' "$managed_content" "$MARKER" "$existing_prefix")"
     else
-        new_agents_md="$(printf '%s%s\n' "$managed_content" "$repo_specific")"
+        # The "\n" between managed content and repo_specific is load-bearing:
+        # managed_content carries no trailing newline (command substitution
+        # strips it), so without it the marker line at the top of
+        # repo_specific glues onto "<!-- END MANAGED SECTION -->". A glued
+        # marker still passes the unanchored `grep -qF` presence check above
+        # but fails the anchored `sed -n "/^${MARKER}/..."` parse on the next
+        # sync, leaving repo_specific empty and dropping all preserved content.
+        new_agents_md="$(printf '%s\n%s\n' "$managed_content" "$repo_specific")"
     fi
 
     # ── Diff check ─────────────────────────────────────────────────────
