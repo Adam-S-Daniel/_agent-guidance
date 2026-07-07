@@ -30,25 +30,42 @@ The skills that used to live here (`debug-github-workflows`,
   `repos.yml` registry for repos excluded from sync entirely and for
   `default_sections` applied to repos with no `.agents-sync.yml` of their own.
 
-## Required secret
+## Required secrets
 
-The sync workflow needs write access across the org to push branches and
-open PRs. Create a fine-grained personal access token with `contents:write`
-and `pull-requests:write` scopes on all target repos, then add it as a
-repository secret named `ORG_JODIDANIEL_READWRITE_CONTENTS_PRS` (Settings →
-Secrets and variables → Actions → New repository secret) on this repo.
-Without it, `scripts/sync.sh` runs with an empty `GH_TOKEN` and `gh` fails
-opaquely (exit code 4) partway through the run — the workflow now checks
-for this up front and fails with a clear message instead.
+The sync workflow now scans repos across **two GitHub accounts** —
+`Adam-S-Daniel` and the `jodidaniel` org (see `SYNC_OWNERS` in `sync.yml`) —
+so the token behind `AGENTS_SYNC_READWRITE_TOKEN` needs `contents:write` and
+`pull-requests:write` on **all target repos in both accounts**.
+
+A fine-grained PAT is scoped to a single GitHub resource owner (one account
+or org), so a single fine-grained PAT cannot cover both `Adam-S-Daniel` and
+`jodidaniel` at once. Two options:
+
+1. **Classic PAT with `repo` scope** — classic PATs aren't resource-owner-scoped,
+   so one token can cover repos across both accounts (as long as the token's
+   owner has access to both). This is what CI needs, since `sync.yml` only
+   supports a single `AGENTS_SYNC_READWRITE_TOKEN` secret.
+2. **Two fine-grained tokens, run locally per owner** — create one
+   fine-grained PAT per account, and run `scripts/sync.sh` locally once per
+   owner (set `SYNC_OWNERS` to just that one owner, or rely on the existing
+   `GITHUB_REPOSITORY_OWNER`/git-remote fallback). CI cannot do this split
+   automatically — it only reads the one `AGENTS_SYNC_READWRITE_TOKEN` secret.
+
+Add the token as a repository secret named `AGENTS_SYNC_READWRITE_TOKEN`
+(Settings → Secrets and variables → Actions → New repository secret) on this
+repo. Without it, `scripts/sync.sh` runs with an empty `GH_TOKEN` and `gh`
+fails opaquely (exit code 4) partway through the run — the workflow now
+checks for this up front and fails with a clear message instead.
 
 The nightly drift report only reads repo contents, so it can run with the
-default `github.token` GitHub Actions provides automatically. For full
-coverage of private repos across the org, optionally add a fine-grained
-PAT with read-only `contents` and `pull-requests` scopes as a repository
-secret named `ORG_JODIDANIEL_READONLY_CONTENTS_PRS`; `drift-report.yml`
-falls back to `github.token` when this secret isn't set, so private repos
-will simply show up as fetch failures in the report until it's added —
-a workable degraded mode rather than a hard failure.
+default `github.token` GitHub Actions provides automatically (covering
+whichever account owns this repo). For full coverage of private repos
+across **both** accounts, optionally add a fine-grained PAT with read-only
+`contents` and `pull-requests` scopes as a repository secret named
+`AGENTS_SYNC_READONLY_TOKEN`; `drift-report.yml` falls back to
+`github.token` when this secret isn't set, so private repos in the other
+account will simply show up as fetch failures in the report until it's
+added — a workable degraded mode rather than a hard failure.
 
 ## Layout
 

@@ -15,6 +15,10 @@ set -euo pipefail
 # Requirements: gh (GitHub CLI, authenticated), yq
 #
 # Environment:
+#   SYNC_OWNERS              — space-separated list of owners to scan; when
+#                               set, takes precedence over
+#                               GITHUB_REPOSITORY_OWNER and the git-remote
+#                               fallback (e.g. "Adam-S-Daniel jodidaniel")
 #   GITHUB_REPOSITORY_OWNER — org/user to scan (auto-set in GitHub Actions)
 #   SYNC_SELF_REPO          — this repo's name, excluded from report (default: _agent-guidance)
 
@@ -27,11 +31,14 @@ TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
 BRANCH_NAME="agents-md-sync/update"
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
 
-# Resolve the org/user name.
-if [[ -n "${GITHUB_REPOSITORY_OWNER:-}" ]]; then
-    ORG="$GITHUB_REPOSITORY_OWNER"
+# Resolve the owner(s) to scan: SYNC_OWNERS (space-separated) takes
+# precedence, then GITHUB_REPOSITORY_OWNER, then fall back to git remote.
+if [[ -n "${SYNC_OWNERS:-}" ]]; then
+    read -ra OWNERS <<< "$SYNC_OWNERS"
+elif [[ -n "${GITHUB_REPOSITORY_OWNER:-}" ]]; then
+    OWNERS=("$GITHUB_REPOSITORY_OWNER")
 else
-    ORG=$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')
+    OWNERS=("$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')")
 fi
 
 REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
@@ -65,6 +72,18 @@ if [[ -f "$REPOS_YML" ]]; then
         [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
     done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
 fi
+
+# ── Write report header (once, before any owner) ────────────────────────────
+
+{
+    echo "# AGENTS.md Drift Report"
+    echo ""
+    echo "> Last generated: $TIMESTAMP"
+} > "$OUTPUT_FILE"
+
+# ── Scan each owner ──────────────────────────────────────────────────────
+
+for ORG in "${OWNERS[@]}"; do
 
 # ── Discover repos ─────────────────────────────────────────────────────────
 
@@ -108,14 +127,14 @@ echo ""
 # ── Build report ───────────────────────────────────────────────────────────
 
 {
-    echo "# AGENTS.md Drift Report"
     echo ""
-    echo "> Last generated: $TIMESTAMP"
+    echo "## $ORG"
+    echo ""
     echo "> Organization: \`$ORG\` — ${#REPOS[@]} repo(s) scanned"
     echo ""
     echo "| Repository | Status | Has marker | Open PR | Sections | Notes |"
     echo "|------------|--------|------------|---------|----------|-------|"
-} > "$OUTPUT_FILE"
+} >> "$OUTPUT_FILE"
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
     echo "| *(no repos found)* | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
@@ -198,6 +217,8 @@ for repo_name in "${REPOS[@]}"; do
     # ── Write row ──────────────────────────────────────────────────────
 
     echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
+done
+
 done
 
 # ── Footer ─────────────────────────────────────────────────────────────────

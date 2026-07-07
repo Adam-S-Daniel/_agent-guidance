@@ -31,10 +31,10 @@ jobs:
 
       - name: Verify sync token is configured
         env:
-          GH_TOKEN: ${{ secrets.ORG_JODIDANIEL_READWRITE_CONTENTS_PRS }}
+          GH_TOKEN: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN }}
         run: |
           if [[ -z "$GH_TOKEN" ]]; then
-            echo "::error::ORG_JODIDANIEL_READWRITE_CONTENTS_PRS secret is not set on this repo. Create a fine-grained PAT with contents:write and pull-requests:write scopes on all target repos and add it as a repo secret named ORG_JODIDANIEL_READWRITE_CONTENTS_PRS. See README." >&2
+            echo "::error::AGENTS_SYNC_READWRITE_TOKEN secret is not set on this repo. Create a fine-grained PAT (or classic PAT with repo scope, for multi-account coverage) with contents:write and pull-requests:write scopes on all target repos and add it as a repo secret named AGENTS_SYNC_READWRITE_TOKEN. See README." >&2
             exit 1
           fi
 
@@ -42,9 +42,8 @@ jobs:
         env:
           # Token requires: contents:write (push branches), pull_requests:write (open PRs),
           # metadata:read (list repos) on all target repos in the org.
-          GH_TOKEN: ${{ secrets.ORG_JODIDANIEL_READWRITE_CONTENTS_PRS }}
-          # NOTE: previously referenced ORG_JODIDANIEL_READONLY_CONTENTS_PRS which
-          # lacked write access — push and PR creation would silently fail.
+          GH_TOKEN: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN }}
+          SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
         run: |
           chmod +x scripts/sync.sh scripts/build-agents-md.sh
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then

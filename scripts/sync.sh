@@ -13,6 +13,10 @@ set -euo pipefail
 # Usage:        ./scripts/sync.sh [--dry-run]
 #
 # Environment:
+#   SYNC_OWNERS              — space-separated list of owners to scan; when
+#                               set, takes precedence over
+#                               GITHUB_REPOSITORY_OWNER and the git-remote
+#                               fallback (e.g. "Adam-S-Daniel jodidaniel")
 #   GITHUB_REPOSITORY_OWNER — org/user to scan (auto-set in GitHub Actions)
 #   SYNC_SELF_REPO          — this repo's name, excluded from sync (default: _agent-guidance)
 
@@ -25,11 +29,14 @@ DRY_RUN=false
 WORK_DIR=$(mktemp -d)
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
 
-# Resolve the org/user name: prefer env var, fall back to git remote.
-if [[ -n "${GITHUB_REPOSITORY_OWNER:-}" ]]; then
-    ORG="$GITHUB_REPOSITORY_OWNER"
+# Resolve the owner(s) to scan: SYNC_OWNERS (space-separated) takes
+# precedence, then GITHUB_REPOSITORY_OWNER, then fall back to git remote.
+if [[ -n "${SYNC_OWNERS:-}" ]]; then
+    read -ra OWNERS <<< "$SYNC_OWNERS"
+elif [[ -n "${GITHUB_REPOSITORY_OWNER:-}" ]]; then
+    OWNERS=("$GITHUB_REPOSITORY_OWNER")
 else
-    ORG=$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')
+    OWNERS=("$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')")
 fi
 
 REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
@@ -65,6 +72,10 @@ if [[ -f "$REPOS_YML" ]]; then
         [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
     done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
 fi
+
+# ── Scan each owner ──────────────────────────────────────────────────────
+
+for ORG in "${OWNERS[@]}"; do
 
 # ── Discover repos ─────────────────────────────────────────────────────────
 
@@ -105,7 +116,7 @@ fi
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
     echo "No repos found in $ORG — nothing to sync."
-    exit 0
+    continue
 fi
 
 echo "Found ${#REPOS[@]} repo(s):"
@@ -351,6 +362,8 @@ EOF
     fi
 
     cd "$REPO_ROOT"
+done
+
 done
 
 echo ""
