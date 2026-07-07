@@ -639,6 +639,84 @@ test_sync_multi_owner() {
     assert_contains "$TEST_DIR/sync-multi-output.txt" "0 failed" "multi-owner: sync reports 0 failed"
 }
 
+# ── Test 3a2: sync.sh per-owner token resolution & restoration ────────────
+
+test_sync_per_owner_token() {
+    echo ""
+    echo "=== Test: sync.sh (per-owner token resolution & restoration) ==="
+
+    # Reset branches from prior tests so each sync.sh invocation below can
+    # push a clean branch again (see test_sync_multi_owner for why this is
+    # needed).
+    for bare in "$TEST_DIR"/bare/testorg_* "$TEST_DIR"/bare/testorg2_*; do
+        git -C "$bare" branch -D agents-md-sync/update >/dev/null 2>&1 || true
+    done
+
+    # Case 1: a per-owner token set for the SECOND owner (testorg2) only,
+    # plus a base GH_TOKEN. testorg (no per-owner token of its own) must
+    # fall back to the base token silently — it must not log per-owner
+    # usage. Exact-line match (grep -x), not the shared assert_contains
+    # substring helper: "testorg" is a literal prefix of "testorg2", so a
+    # substring search for testorg's log line would spuriously match
+    # testorg2's "Using per-owner token for testorg2" line too.
+    local out1="$TEST_DIR/sync-token-case1.txt"
+    local output1
+    output1=$(
+        SYNC_OWNERS="testorg testorg2" \
+        GH_TOKEN="base-token" \
+        GH_TOKEN_TESTORG2="testorg2-token" \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output1" > "$out1"
+
+    if grep -qxF "  Using per-owner token for testorg2" "$out1"; then
+        pass "per-owner token: testorg2 uses its own token"
+    else
+        fail "per-owner token: testorg2 uses its own token"
+    fi
+    if grep -qxF "  Using per-owner token for testorg" "$out1"; then
+        fail "per-owner token: testorg (no per-owner token) does not claim one"
+    else
+        pass "per-owner token: testorg (no per-owner token) does not claim one"
+    fi
+
+    # Reset branches again for the second invocation below.
+    for bare in "$TEST_DIR"/bare/testorg_* "$TEST_DIR"/bare/testorg2_*; do
+        git -C "$bare" branch -D agents-md-sync/update >/dev/null 2>&1 || true
+    done
+
+    # Case 2 (restoration): a per-owner token set for the FIRST owner
+    # (testorg) only. testorg2's iteration must not reuse testorg's
+    # token — testorg2 has none of its own, so it must fall back to the
+    # base token instead of leaking testorg's token across iterations.
+    local out2="$TEST_DIR/sync-token-case2.txt"
+    local output2
+    output2=$(
+        SYNC_OWNERS="testorg testorg2" \
+        GH_TOKEN="base-token" \
+        GH_TOKEN_TESTORG="testorg-token" \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output2" > "$out2"
+
+    if grep -qxF "  Using per-owner token for testorg" "$out2"; then
+        pass "per-owner token restoration: first owner (testorg) uses its own token"
+    else
+        fail "per-owner token restoration: first owner (testorg) uses its own token"
+    fi
+    if grep -qxF "  Using per-owner token for testorg2" "$out2"; then
+        fail "per-owner token restoration: second owner (testorg2) does not reuse testorg's token"
+    else
+        pass "per-owner token restoration: second owner (testorg2) does not reuse testorg's token"
+    fi
+}
+
 # ── Test 3b: sync.sh exits non-zero on per-repo failure ───────────────
 
 test_sync_failure_exit_code() {
@@ -877,6 +955,7 @@ test_sync_failure_exit_code
 test_sync_round_trip_no_marker
 test_drift_report
 test_sync_multi_owner
+test_sync_per_owner_token
 test_drift_report_multi_owner
 
 echo ""

@@ -81,9 +81,30 @@ fi
     echo "> Last generated: $TIMESTAMP"
 } > "$OUTPUT_FILE"
 
+# Base GH_TOKEN captured before the per-owner loop, so each iteration can
+# restore it when the owner has no per-owner token of its own (owner A's
+# per-owner token must not leak into owner B's iteration).
+BASE_GH_TOKEN="${GH_TOKEN:-}"
+
 # ── Scan each owner ──────────────────────────────────────────────────────
 
 for ORG in "${OWNERS[@]}"; do
+
+# ── Resolve per-owner token ──────────────────────────────────────────────
+# GH_TOKEN_<OWNER>, where <OWNER> is $ORG uppercased with - and . mapped to
+# _ (e.g. Adam-S-Daniel -> GH_TOKEN_ADAM_S_DANIEL). Falls back to the base
+# GH_TOKEN captured above; if neither is set, GH_TOKEN is left unset so gh's
+# ambient auth (locally) or failure (in CI) behaves as it did before.
+per_owner_var="GH_TOKEN_$(echo "$ORG" | tr '[:lower:]-.' '[:upper:]__')"
+per_owner_token="${!per_owner_var:-}"
+if [[ -n "$per_owner_token" ]]; then
+    export GH_TOKEN="$per_owner_token"
+    echo "  Using per-owner token for $ORG"
+elif [[ -n "$BASE_GH_TOKEN" ]]; then
+    export GH_TOKEN="$BASE_GH_TOKEN"
+else
+    unset GH_TOKEN || true
+fi
 
 # ── Discover repos ─────────────────────────────────────────────────────────
 
