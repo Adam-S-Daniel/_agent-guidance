@@ -185,6 +185,28 @@ YAML
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
+    # Mock repo 8: testorg2/repo-owner2-only — no .agents-sync.yml, no
+    # AGENTS.md; verifies SYNC_OWNERS scans a second owner and falls back to
+    # default_sections (rust) like repo-no-sync does.
+    local repo8_bare="$TEST_DIR/bare/testorg2_repo-owner2-only"
+    local repo8_work="$TEST_DIR/work/repo-owner2-only"
+    mkdir -p "$repo8_bare" "$repo8_work"
+    git init --bare --initial-branch=main "$repo8_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo8_work" >/dev/null 2>&1
+    cd "$repo8_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo8_bare"
+    echo "# hello" > README.md
+    git add README.md
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+
+    # Mock repo: testorg2/_agent-guidance — deliberately NOT set up as a bare
+    # repo. It must only appear in the fake `gh repo list` JSON output for
+    # testorg2, so that if the self-repo exclusion filter is ever broken for
+    # a second owner, `gh repo clone` fails loudly instead of the test
+    # silently passing.
+
     cd "$REPO_ROOT"
 }
 
@@ -215,17 +237,32 @@ case "$1" in
         case "$2" in
             list)
                 shift 2  # remove "repo list"
-                # Raw JSON data
-                json='[
-                  {"nameWithOwner":"testorg/repo-with-sync"},
-                  {"nameWithOwner":"testorg/repo-no-sync"},
-                  {"nameWithOwner":"testorg/repo-with-existing"},
-                  {"nameWithOwner":"testorg/repo-existing-no-marker"},
-                  {"nameWithOwner":"testorg/repo-with-claude-md"},
-                  {"nameWithOwner":"testorg/repo-excluded"},
-                  {"nameWithOwner":"testorg/repo-up-to-date-no-claude"},
-                  {"nameWithOwner":"testorg/_agent-guidance"}
-                ]'
+                org="$1"
+                # Raw JSON data, keyed by requested org (gh repo list <org> ...
+                # puts the org as the first positional arg right after "repo list")
+                case "$org" in
+                    testorg)
+                        json='[
+                          {"nameWithOwner":"testorg/repo-with-sync"},
+                          {"nameWithOwner":"testorg/repo-no-sync"},
+                          {"nameWithOwner":"testorg/repo-with-existing"},
+                          {"nameWithOwner":"testorg/repo-existing-no-marker"},
+                          {"nameWithOwner":"testorg/repo-with-claude-md"},
+                          {"nameWithOwner":"testorg/repo-excluded"},
+                          {"nameWithOwner":"testorg/repo-up-to-date-no-claude"},
+                          {"nameWithOwner":"testorg/_agent-guidance"}
+                        ]'
+                        ;;
+                    testorg2)
+                        json='[
+                          {"nameWithOwner":"testorg2/repo-owner2-only"},
+                          {"nameWithOwner":"testorg2/_agent-guidance"}
+                        ]'
+                        ;;
+                    *)
+                        json='[]'
+                        ;;
+                esac
                 # Find --jq filter in remaining args
                 jq_filter=$(parse_jq_filter "$@")
                 if [[ -n "$jq_filter" ]]; then
@@ -545,6 +582,63 @@ test_sync_full() {
     assert_contains "$TEST_DIR/sync-full-output.txt" "0 failed" "sync reports 0 failed"
 }
 
+# ── Test 3a: sync.sh with SYNC_OWNERS (multiple owners) ───────────────────
+
+test_sync_multi_owner() {
+    echo ""
+    echo "=== Test: sync.sh (SYNC_OWNERS multi-owner) ==="
+
+    # test_sync_full (run earlier in this suite) already pushed
+    # agents-md-sync/update branches to the testorg bare repos, simulating
+    # still-open PRs. Delete those branches here to simulate the PRs having
+    # been merged/closed since then, so this second sync run can push a
+    # clean branch again — each sync.sh run clones a fresh shallow copy of
+    # main and cuts a brand-new local branch, so without this reset its
+    # history would diverge from whatever was pushed last time and a
+    # (correctly) non-force push would be rejected. That divergence is a
+    # real, pre-existing edge case (re-running sync while a PR is still
+    # open) unrelated to multi-owner support and out of scope here.
+    for bare in "$TEST_DIR"/bare/testorg_*; do
+        git -C "$bare" branch -D agents-md-sync/update >/dev/null 2>&1 || true
+    done
+
+    local pr_log="$TEST_DIR/pr-creations-multi.log"
+    rm -f "$pr_log"
+
+    local output
+    output=$(
+        SYNC_OWNERS="testorg testorg2" \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        MOCK_PR_LOG="$pr_log" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+
+    echo "$output" > "$TEST_DIR/sync-multi-output.txt"
+
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "Scanning repos for: testorg" "multi-owner: scans testorg"
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "Scanning repos for: testorg2" "multi-owner: scans testorg2"
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "=== testorg2/repo-owner2-only ===" "multi-owner: processes testorg2's repo"
+    assert_not_contains "$TEST_DIR/sync-multi-output.txt" "=== testorg2/_agent-guidance ===" "multi-owner: excludes self repo for testorg2"
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "repo-with-sync" "multi-owner: still processes testorg's repos"
+
+    if [[ -f "$pr_log" ]]; then
+        local pr_count
+        pr_count=$(wc -l < "$pr_log")
+        if [[ "$pr_count" -eq 7 ]]; then
+            pass "multi-owner: sync created PRs for all 7 repos across both owners"
+        else
+            fail "multi-owner: sync created PRs for all 7 repos across both owners — got $pr_count PR creations"
+        fi
+    else
+        fail "multi-owner: sync created PRs for all 7 repos across both owners — no PR log file found"
+    fi
+
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "7 synced" "multi-owner: sync reports 7 synced"
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "0 failed" "multi-owner: sync reports 0 failed"
+}
+
 # ── Test 3b: sync.sh exits non-zero on per-repo failure ───────────────
 
 test_sync_failure_exit_code() {
@@ -737,6 +831,37 @@ test_drift_report() {
     assert_not_contains "$REPO_ROOT/drift-report.md" "repo-excluded" "drift report excludes repos.yml-excluded repo"
 }
 
+# ── Test 4a: drift-report.sh with SYNC_OWNERS (multiple owners) ───────────
+
+test_drift_report_multi_owner() {
+    echo ""
+    echo "=== Test: drift-report.sh (SYNC_OWNERS multi-owner) ==="
+
+    local output
+    output=$(
+        SYNC_OWNERS="testorg testorg2" \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+
+    echo "$output" > "$TEST_DIR/drift-multi-output.txt"
+
+    assert_contains "$REPO_ROOT/drift-report.md" "## testorg" "multi-owner drift report has testorg heading"
+    assert_contains "$REPO_ROOT/drift-report.md" "## testorg2" "multi-owner drift report has testorg2 heading"
+    assert_contains "$REPO_ROOT/drift-report.md" "repo-owner2-only" "multi-owner drift report includes testorg2's repo"
+    assert_contains "$REPO_ROOT/drift-report.md" "repo-with-sync" "multi-owner drift report still includes testorg's repos"
+
+    local count
+    count=$(grep -c "Status legend" "$REPO_ROOT/drift-report.md" || true)
+    if [[ "$count" -eq 1 ]]; then
+        pass "multi-owner drift report has Status legend exactly once"
+    else
+        fail "multi-owner drift report has Status legend exactly once — got count $count"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -751,6 +876,8 @@ test_sync_full
 test_sync_failure_exit_code
 test_sync_round_trip_no_marker
 test_drift_report
+test_sync_multi_owner
+test_drift_report_multi_owner
 
 echo ""
 echo "========================================="

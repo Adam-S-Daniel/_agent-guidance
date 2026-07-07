@@ -24,7 +24,8 @@ jobs:
 
       - name: Generate drift report
         env:
-          GH_TOKEN: ${{ secrets.ORG_JODIDANIEL_READONLY_CONTENTS_PRS || github.token }}
+          GH_TOKEN: ${{ secrets.AGENTS_SYNC_READONLY_TOKEN || github.token }}
+          SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
         run: |
           chmod +x scripts/drift-report.sh scripts/build-agents-md.sh
           ./scripts/drift-report.sh
