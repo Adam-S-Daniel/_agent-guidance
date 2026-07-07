@@ -32,40 +32,86 @@ The skills that used to live here (`debug-github-workflows`,
 
 ## Required secrets
 
-The sync workflow now scans repos across **two GitHub accounts** —
+The sync workflow scans repos across **two GitHub accounts** —
 `Adam-S-Daniel` and the `jodidaniel` org (see `SYNC_OWNERS` in `sync.yml`) —
-so the token behind `AGENTS_SYNC_READWRITE_TOKEN` needs `contents:write` and
-`pull-requests:write` on **all target repos in both accounts**.
+so whatever token(s) back the sync need `contents:write` and
+`pull-requests:write` on **all target repos in both accounts**. `sync.sh` and
+`drift-report.sh` resolve a **per-owner token** at the top of each owner's
+loop iteration: for owner `$ORG` they look for `GH_TOKEN_<OWNER>`, where
+`<OWNER>` is `$ORG` uppercased with `-` and `.` mapped to `_` (e.g.
+`Adam-S-Daniel` → `GH_TOKEN_ADAM_S_DANIEL`, `jodidaniel` →
+`GH_TOKEN_JODIDANIEL`). If that's set it's used for the whole iteration; if
+not, they fall back to the plain `GH_TOKEN` captured before the loop started
+(restored on every iteration, so one owner's per-owner token never leaks into
+another's). There are three ways to supply these, in order of preference:
 
-A fine-grained PAT is scoped to a single GitHub resource owner (one account
-or org), so a single fine-grained PAT cannot cover both `Adam-S-Daniel` and
-`jodidaniel` at once. Two options:
+### a) Recommended: GitHub App (no rotation, ever)
 
-1. **Classic PAT with `repo` scope** — classic PATs aren't resource-owner-scoped,
-   so one token can cover repos across both accounts (as long as the token's
-   owner has access to both). This is what CI needs, since `sync.yml` only
-   supports a single `AGENTS_SYNC_READWRITE_TOKEN` secret.
-2. **Two fine-grained tokens, run locally per owner** — create one
-   fine-grained PAT per account, and run `scripts/sync.sh` locally once per
-   owner (set `SYNC_OWNERS` to just that one owner, or rely on the existing
-   `GITHUB_REPOSITORY_OWNER`/git-remote fallback). CI cannot do this split
-   automatically — it only reads the one `AGENTS_SYNC_READWRITE_TOKEN` secret.
+Create one GitHub App (any name, e.g. `agents-md-sync`) with permissions
+`Contents: read & write`, `Pull requests: read & write`, and
+`Metadata: read`, then install it on **both** the `Adam-S-Daniel` account and
+the `jodidaniel` org. Store the app ID as a repository variable (`APP_ID`)
+and the private key as a repository secret, then mint short-lived
+installation tokens per owner at workflow runtime with
+[`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
+(pin it to a full commit SHA when adopting this). Installation tokens live
+1 hour and are minted fresh on every run, so nothing ever expires and there
+is no PAT to rotate.
 
-Add the token as a repository secret named `AGENTS_SYNC_READWRITE_TOKEN`
-(Settings → Secrets and variables → Actions → New repository secret) on this
-repo. Without it, `scripts/sync.sh` runs with an empty `GH_TOKEN` and `gh`
-fails opaquely (exit code 4) partway through the run — the workflow now
-checks for this up front and fails with a clear message instead.
+This mode is **documented but not yet wired up** — the workflows currently
+run in PAT mode (below). Adopting it means replacing the `secrets.*`
+references in `sync.yml`/`drift-report.yml` with `create-github-app-token`
+steps that populate `GH_TOKEN_ADAM_S_DANIEL` / `GH_TOKEN_JODIDANIEL`.
+
+### b) Two fine-grained PATs (single-owner scope each)
+
+A fine-grained PAT is scoped to a single GitHub resource owner, which maps
+cleanly onto the per-owner token resolution above. Create one fine-grained
+PAT per account with `contents:write` + `pull-requests:write` on all target
+repos, and add them as repository secrets:
+
+- `AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL`
+- `AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL`
+
+Optionally add a read-only pair for the nightly drift report (`contents:read`
++ `pull-requests:read`):
+
+- `AGENTS_SYNC_READONLY_TOKEN_ADAM_S_DANIEL`
+- `AGENTS_SYNC_READONLY_TOKEN_JODIDANIEL`
+
+GitHub has no API to create or regenerate a PAT, so regeneration on expiry is
+manual by design — GitHub emails the token owner before it expires. After
+regenerating, update the secret with:
+
+```
+gh secret set <NAME> --repo Adam-S-Daniel/_agent-guidance
+```
+
+### c) One classic PAT with `repo` scope (shared, coarser-grained)
+
+Classic PATs aren't resource-owner-scoped, so a single token can cover repos
+across both accounts (as long as the token's owner has access to both). Add
+it as `AGENTS_SYNC_READWRITE_TOKEN` (and, for the drift report,
+`AGENTS_SYNC_READONLY_TOKEN` with read-only scopes). This is the shared
+fallback used by any owner that has no per-owner token of its own — the two
+modes can be mixed, e.g. a per-owner PAT for one account and the shared
+classic PAT covering the other.
+
+Add secrets under Settings → Secrets and variables → Actions → New
+repository secret on this repo. If **no** token resolves for an owner (no
+per-owner secret and no shared `AGENTS_SYNC_READWRITE_TOKEN`), `sync.yml`'s
+"Verify sync token is configured" step emits a `::warning::` naming that
+owner and continues — sync then fails per-repo for that owner's repos, which
+the run summary surfaces. It only hard-fails the whole job if *no* token is
+configured anywhere (not even the shared fallback), since in that case `gh`
+would otherwise fail opaquely (exit code 4) partway through the run.
 
 The nightly drift report only reads repo contents, so it can run with the
 default `github.token` GitHub Actions provides automatically (covering
-whichever account owns this repo). For full coverage of private repos
-across **both** accounts, optionally add a fine-grained PAT with read-only
-`contents` and `pull-requests` scopes as a repository secret named
-`AGENTS_SYNC_READONLY_TOKEN`; `drift-report.yml` falls back to
-`github.token` when this secret isn't set, so private repos in the other
-account will simply show up as fetch failures in the report until it's
-added — a workable degraded mode rather than a hard failure.
+whichever account owns this repo) when no read-only tokens are configured at
+all. Private repos in an account with no matching token (per-owner or
+shared) will simply show up as fetch failures in the report — a workable
+degraded mode rather than a hard failure.
 
 ## Layout
 

@@ -32,17 +32,30 @@ jobs:
       - name: Verify sync token is configured
         env:
           GH_TOKEN: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN }}
+          GH_TOKEN_ADAM_S_DANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL }}
+          GH_TOKEN_JODIDANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL }}
         run: |
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo "::error::AGENTS_SYNC_READWRITE_TOKEN secret is not set on this repo. Create a fine-grained PAT (or classic PAT with repo scope, for multi-account coverage) with contents:write and pull-requests:write scopes on all target repos and add it as a repo secret named AGENTS_SYNC_READWRITE_TOKEN. See README." >&2
+          if [[ -z "$GH_TOKEN" && -z "$GH_TOKEN_ADAM_S_DANIEL" && -z "$GH_TOKEN_JODIDANIEL" ]]; then
+            echo "::error::No sync token is configured. Set AGENTS_SYNC_READWRITE_TOKEN (shared, classic PAT with repo scope) or the per-owner fine-grained PATs AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL / AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL as repo secrets. See README." >&2
             exit 1
+          fi
+          if [[ -z "$GH_TOKEN" && -z "$GH_TOKEN_ADAM_S_DANIEL" ]]; then
+            echo "::warning::No token configured for Adam-S-Daniel (neither AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL nor the shared AGENTS_SYNC_READWRITE_TOKEN is set). Sync will fail for that owner's repos. See README."
+          fi
+          if [[ -z "$GH_TOKEN" && -z "$GH_TOKEN_JODIDANIEL" ]]; then
+            echo "::warning::No token configured for jodidaniel (neither AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL nor the shared AGENTS_SYNC_READWRITE_TOKEN is set). Sync will fail for that owner's repos. See README."
           fi
 
       - name: Run sync
         env:
           # Token requires: contents:write (push branches), pull_requests:write (open PRs),
           # metadata:read (list repos) on all target repos in the org.
+          # GH_TOKEN is the shared fallback used when an owner has no per-owner
+          # token below; GH_TOKEN_<OWNER> takes precedence for that owner (see
+          # scripts/sync.sh's per-owner token resolution).
           GH_TOKEN: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN }}
+          GH_TOKEN_ADAM_S_DANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL }}
+          GH_TOKEN_JODIDANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL }}
           SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
         run: |
           chmod +x scripts/sync.sh scripts/build-agents-md.sh
