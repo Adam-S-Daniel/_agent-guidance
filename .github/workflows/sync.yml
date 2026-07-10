@@ -29,33 +29,55 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Verify sync token is configured
+      # ── Per-owner installation tokens from the agents-md-sync GitHub App ──
+      # One short-lived (~1h) token per owner, scoped to that owner's repos and
+      # minted fresh every run — nothing to rotate. continue-on-error keeps a
+      # missing installation on one owner from aborting the other owner's sync;
+      # the verify step below turns "neither minted" into a hard failure.
+      - name: Mint installation token for Adam-S-Daniel
+        id: token_adam_s_daniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: Adam-S-Daniel
+
+      - name: Mint installation token for jodidaniel
+        id: token_jodidaniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: jodidaniel
+
+      - name: Verify at least one installation token was minted
         env:
-          GH_TOKEN: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN }}
-          GH_TOKEN_ADAM_S_DANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL }}
-          GH_TOKEN_JODIDANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL }}
+          GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
+          GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
         run: |
-          if [[ -z "$GH_TOKEN" && -z "$GH_TOKEN_ADAM_S_DANIEL" && -z "$GH_TOKEN_JODIDANIEL" ]]; then
-            echo "::error::No sync token is configured. Set AGENTS_SYNC_READWRITE_TOKEN (shared, classic PAT with repo scope) or the per-owner fine-grained PATs AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL / AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL as repo secrets. See README." >&2
+          if [[ -z "$GH_TOKEN_ADAM_S_DANIEL" && -z "$GH_TOKEN_JODIDANIEL" ]]; then
+            echo "::error::Could not mint an installation token for either owner. Check that the agents-md-sync GitHub App is installed on Adam-S-Daniel and/or jodidaniel with Contents + Pull requests: read & write, and that the APP_ID variable and APP_PRIVATE_KEY secret are set on this repo. See README." >&2
             exit 1
           fi
-          if [[ -z "$GH_TOKEN" && -z "$GH_TOKEN_ADAM_S_DANIEL" ]]; then
-            echo "::warning::No token configured for Adam-S-Daniel (neither AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL nor the shared AGENTS_SYNC_READWRITE_TOKEN is set). Sync will fail for that owner's repos. See README."
+          if [[ -z "$GH_TOKEN_ADAM_S_DANIEL" ]]; then
+            echo "::warning::No installation token for Adam-S-Daniel — is the App installed on that account? Its repos will be skipped this run."
           fi
-          if [[ -z "$GH_TOKEN" && -z "$GH_TOKEN_JODIDANIEL" ]]; then
-            echo "::warning::No token configured for jodidaniel (neither AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL nor the shared AGENTS_SYNC_READWRITE_TOKEN is set). Sync will fail for that owner's repos. See README."
+          if [[ -z "$GH_TOKEN_JODIDANIEL" ]]; then
+            echo "::warning::No installation token for jodidaniel — is the App installed on that org? Its repos will be skipped this run."
           fi
 
       - name: Run sync
         env:
-          # Token requires: contents:write (push branches), pull_requests:write (open PRs),
-          # metadata:read (list repos) on all target repos in the org.
-          # GH_TOKEN is the shared fallback used when an owner has no per-owner
-          # token below; GH_TOKEN_<OWNER> takes precedence for that owner (see
-          # scripts/sync.sh's per-owner token resolution).
-          GH_TOKEN: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN }}
-          GH_TOKEN_ADAM_S_DANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_ADAM_S_DANIEL }}
-          GH_TOKEN_JODIDANIEL: ${{ secrets.AGENTS_SYNC_READWRITE_TOKEN_JODIDANIEL }}
+          # Per-owner installation tokens minted above (GitHub App mode). Each
+          # carries the App's contents:write (push branches) + pull_requests:write
+          # (open PRs) + metadata:read (list repos) on that owner's repos, and is
+          # consumed by scripts/sync.sh's per-owner token resolution
+          # (GH_TOKEN_<OWNER>). No shared GH_TOKEN fallback is needed — every
+          # owner gets its own minted token.
+          GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
+          GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
           SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
         run: |
           chmod +x scripts/sync.sh scripts/build-agents-md.sh
