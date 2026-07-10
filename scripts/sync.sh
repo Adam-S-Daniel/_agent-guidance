@@ -7,7 +7,9 @@ set -euo pipefail
 #   1. Reads the repo's .agents-sync.yml (sections to include)
 #   2. Builds the managed portion via build-agents-md.sh
 #   3. Preserves any content below "## Repo-specific additions"
-#   4. Opens (or updates) a PR if the managed content has changed
+#   4. Ensures a CLAUDE.md bridge exists (creates it if absent; warns — or
+#      rewrites when opted in via fix_claude_md — if present but broken)
+#   5. Opens (or updates) a PR if the managed content has changed
 #
 # Requirements: gh (GitHub CLI, authenticated), yq, git
 # Usage:        ./scripts/sync.sh [--dry-run]
@@ -23,6 +25,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
+BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
 MARKER="## Repo-specific additions"
 BRANCH_NAME="agents-md-sync/update"
 DRY_RUN=false
@@ -49,6 +52,17 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 log()  { echo "  $*"; }
 fail() { echo "  ERROR: $*"; }
+
+# Writes the standard two-line CLAUDE.md bridge (imports @AGENTS.md) to the
+# current directory. Shared by both the "CLAUDE.md absent" and the opted-in
+# "rewrite a broken bridge" paths so the byte-for-byte content can't drift
+# between them.
+write_bridge_claude_md() {
+    cat > CLAUDE.md <<'CLAUDEEOF'
+<!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
+@AGENTS.md
+CLAUDEEOF
+}
 
 FAIL_COUNT=0
 OK_COUNT=0
@@ -166,8 +180,16 @@ for repo_name in "${REPOS[@]}"; do
         while IFS= read -r s; do
             [[ -n "$s" ]] && sections+=("$s")
         done < <(echo "$remote_yaml" | base64 -d | read_sections_from_yaml)
+
+        # Optional per-repo opt-in: let the sync REWRITE an existing
+        # CLAUDE.md that doesn't import @AGENTS.md (see the "CLAUDE.md
+        # bridge" block below). Anything other than exactly "true" — unset,
+        # malformed YAML, "false", "yes", etc. — normalizes to false.
+        fix_claude_md=$(echo "$remote_yaml" | base64 -d | yq -r '.fix_claude_md // false' 2>/dev/null || echo false)
+        [[ "$fix_claude_md" == "true" ]] || fix_claude_md=false
     else
         sections=("${DEFAULT_SECTIONS[@]}")
+        fix_claude_md=false
     fi
 
     log "Sections: ${sections[*]:-none}"
@@ -245,9 +267,13 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Diff check ─────────────────────────────────────────────────────
     # Skip only when AGENTS.md is already correct AND the CLAUDE.md bridge
-    # is already in place — a repo can be AGENTS.md-current but still
-    # missing CLAUDE.md (e.g. it predates the bridge), and that case must
-    # still get a commit that adds just the bridge file.
+    # is already in place AND there's no opted-in bridge fix pending — a
+    # repo can be AGENTS.md-current but still missing CLAUDE.md (e.g. it
+    # predates the bridge), and that case must still get a commit that adds
+    # just the bridge file. Likewise, a repo can be current-and-bridged yet
+    # opted into fixing a broken bridge (fix_claude_md: true with an
+    # existing no-import CLAUDE.md), and that case must still get a commit
+    # that rewrites it.
 
     agents_up_to_date=false
     if [[ -f AGENTS.md ]] && diff -q <(echo "$new_agents_md") AGENTS.md &>/dev/null; then
@@ -257,7 +283,20 @@ for repo_name in "${REPOS[@]}"; do
     claude_md_present=false
     [[ -f CLAUDE.md ]] && claude_md_present=true
 
-    if $agents_up_to_date && $claude_md_present; then
+    # bridge_status classifies an existing CLAUDE.md via bridge-status.sh;
+    # needs_claude_fix gates the opt-in rewrite path below on a broken
+    # bridge AND the repo's fix_claude_md: true.
+    bridge_status="missing"
+    if $claude_md_present; then
+        bridge_status=$("$BRIDGE_SCRIPT" CLAUDE.md)
+    fi
+
+    needs_claude_fix=false
+    if $claude_md_present && [[ "$bridge_status" == "no-import" ]] && [[ "$fix_claude_md" == "true" ]]; then
+        needs_claude_fix=true
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -265,7 +304,9 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     if $DRY_RUN; then
-        if $agents_up_to_date; then
+        if $agents_up_to_date && $needs_claude_fix; then
+            log "[DRY RUN] AGENTS.md up to date; would rewrite CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true)"
+        elif $agents_up_to_date; then
             log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge"
         else
             log "[DRY RUN] Would update AGENTS.md"
@@ -287,28 +328,45 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── CLAUDE.md bridge ────────────────────────────────────────────────
     # Claude Code reads CLAUDE.md, not AGENTS.md — it never sees the managed
-    # guidance unless something imports it. Anthropic's documented pattern
-    # is a CLAUDE.md containing `@AGENTS.md`. We only ever CREATE this file;
-    # an existing CLAUDE.md is left completely untouched even if it doesn't
-    # import AGENTS.md, since we must not clobber someone's hand-written file.
+    # guidance unless something imports it. Anthropic's documented pattern is
+    # a CLAUDE.md containing `@AGENTS.md`. Default remains never-rewrite: an
+    # existing CLAUDE.md is left untouched even if it doesn't import
+    # AGENTS.md, since we must not clobber someone's hand-written file.
+    # fix_claude_md is the per-repo opt-in that lifts that default — it's
+    # safe because the rewrite still only lands via a reviewed PR, never a
+    # direct push. Bridge presence is judged with bridge-status.sh instead of
+    # the old `grep -qF '@AGENTS.md'`, which a fenced example could fool into
+    # a false positive; the classifier is fence-aware and isn't.
     claude_md_added=false
+    claude_md_fixed=false
+    warn_no_import=false
     if ! $claude_md_present; then
-        cat > CLAUDE.md <<'CLAUDEEOF'
-<!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
-@AGENTS.md
-CLAUDEEOF
+        write_bridge_claude_md
         claude_md_added=true
-    elif ! grep -qF '@AGENTS.md' CLAUDE.md; then
-        log "WARN: CLAUDE.md exists but does not import @AGENTS.md — Claude Code will not see the managed guidance."
+    elif [[ "$bridge_status" == "no-import" ]]; then
+        if $needs_claude_fix; then
+            write_bridge_claude_md
+            claude_md_fixed=true
+            log "Rewriting CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true)."
+        else
+            warn_no_import=true
+            log "WARN: CLAUDE.md exists but does not import @AGENTS.md — Claude Code will not see the managed guidance."
+        fi
     fi
 
-    if $claude_md_added; then
+    if $claude_md_added || $claude_md_fixed; then
         git add AGENTS.md CLAUDE.md
     else
         git add AGENTS.md
     fi
 
-    if $agents_up_to_date; then
+    if $agents_up_to_date && $claude_md_fixed; then
+        commit_message="chore: rewrite CLAUDE.md to the @AGENTS.md bridge
+
+AGENTS.md was already up to date, but CLAUDE.md did not import it, so
+Claude Code never saw the managed guidance. Rewritten to the standard
+@AGENTS.md bridge per this repo's fix_claude_md: true opt-in."
+    elif $agents_up_to_date; then
         commit_message="chore: add CLAUDE.md bridge for AGENTS.md sync
 
 AGENTS.md was already up to date. Adds a CLAUDE.md that imports
@@ -334,6 +392,16 @@ Managed content updated by the central _agent-guidance repository."
     fi
 
     # ── Open or update PR ──────────────────────────────────────────────
+
+    # Surface CLAUDE.md bridge status in the PR body — the same observability
+    # gap that motivated the WARN log line above, but written where a
+    # reviewer approving the sync PR will actually see it.
+    pr_extra=""
+    if $warn_no_import; then
+        pr_extra="⚠️ **CLAUDE.md does not import \`@AGENTS.md\`** — Claude Code will not see this guidance. This sync never rewrites an existing CLAUDE.md by default. To fix, add a line containing exactly \`@AGENTS.md\` (outside code fences) to CLAUDE.md, or set \`fix_claude_md: true\` in \`.agents-sync.yml\` to let the sync propose the rewrite."
+    elif $claude_md_fixed; then
+        pr_extra="This PR also rewrites CLAUDE.md to the standard \`@AGENTS.md\` bridge (opted in via \`fix_claude_md: true\`) because the previous file never imported AGENTS.md."
+    fi
 
     existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
         --jq '.[0].number // empty' 2>/dev/null || true)
@@ -371,7 +439,10 @@ Content below \`## Repo-specific additions\` has been preserved.
 This sync also ensures a \`CLAUDE.md\` exists that imports \`AGENTS.md\`
 via \`@AGENTS.md\` — Claude Code reads CLAUDE.md, not AGENTS.md, directly,
 so without this bridge it would never see the managed guidance. An
-existing CLAUDE.md is never modified.
+existing CLAUDE.md is left untouched unless this repo opts in via
+\`fix_claude_md: true\`.
+
+${pr_extra}
 EOF
 )"; then
             log "PR created."

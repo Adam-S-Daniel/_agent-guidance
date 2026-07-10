@@ -22,13 +22,99 @@ The skills that used to live here (`debug-github-workflows`,
 - `scripts/sync.sh` (CI: `sync.yml`) scans the account's repos, rebuilds each
   repo's managed `AGENTS.md` portion, preserves anything under
   `## Repo-specific additions`, and opens/updates a PR when content changed.
+  It also creates the `CLAUDE.md` bridge in repos that lack one, warns (in
+  the sync log and the PR body) when an existing `CLAUDE.md` doesn't import
+  `@AGENTS.md`, and can rewrite such a file when the repo opts in via
+  `fix_claude_md: true` — see [The CLAUDE.md bridge](#the-claudemd-bridge).
 - `scripts/drift-report.sh` (CI: nightly `drift-report.yml`) writes
-  `drift-report.md`, a dashboard of which repos are missing or out of date.
-  This tracks **AGENTS.md drift** — it is the guidance layer working as
-  designed, not the skill-copy drift that the strategy consolidation removed.
+  `drift-report.md`, a dashboard of which repos are missing or out of date,
+  including a "CLAUDE.md bridge" column (`bridge-ok` / `no-import` /
+  `missing`). This tracks **AGENTS.md drift** — it is the guidance layer
+  working as designed, not the skill-copy drift that the strategy
+  consolidation removed.
 - `scripts/sync.sh` / `scripts/drift-report.sh` consult the central
   `repos.yml` registry for repos excluded from sync entirely and for
   `default_sections` applied to repos with no `.agents-sync.yml` of their own.
+
+## The CLAUDE.md bridge
+
+### Why
+
+Claude Code reads `CLAUDE.md`, not `AGENTS.md` — there is no native
+`AGENTS.md` support (tracked upstream: anthropics/claude-code#6235, open,
+no commitment). So the sync creates a two-line bridge file in every repo it
+touches:
+
+```
+<!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
+@AGENTS.md
+```
+
+An existing `CLAUDE.md` is never rewritten without the repo opting in via
+`fix_claude_md: true` (see `.agents-sync.example.yml`).
+
+This isn't hypothetical: a `CLAUDE.md` in `adamdaniel.ai` that merely
+*linked* to `AGENTS.md` (`See [AGENTS.md](./AGENTS.md) for the agent
+guidance.`) instead of importing it left roughly 1,300 lines of managed
+guidance completely unread by Claude Code for months
+(Adam-S-Daniel/adamdaniel.ai#2545). Nothing failed loudly — the file existed,
+it just wasn't a working bridge. That's why bridge status is now surfaced in
+both the drift report and every sync PR body, not just checked silently.
+
+### Bridge contract
+
+- `@AGENTS.md` must start its own line, outside code spans and fenced code
+  blocks — a fenced example of the syntax is documentation, not a working
+  import. (`scripts/bridge-status.sh` enforces exactly this rule.)
+- Only in-repo relative imports are reliable: importing an absolute path
+  outside the repo triggers an interactive approval dialog, which is
+  silently dropped in headless/CI runs.
+- Import chains resolve at most 4 hops deep; the bridge here uses exactly 1.
+- Imported files must keep the `.md` extension (anthropics/claude-code#18518).
+- The HTML-comment header in the bridge file is stripped before injection —
+  it's human-only signage and costs no context budget.
+
+### Why not a symlink (decision record)
+
+A `CLAUDE.md -> AGENTS.md` symlink looks simpler than a bridge file. It was
+considered and rejected, so this isn't relitigated every time it comes up:
+
+- On Windows without Developer Mode + `core.symlinks=true`, git checks out
+  the symlink as a plain text file containing the literal string
+  `AGENTS.md` — which is *exactly* the broken no-import state this whole
+  mechanism exists to catch, and it happens silently.
+- Open upstream bug anthropics/claude-code#66559: Edit/Write refuse to write
+  through a symlinked `CLAUDE.md`, breaking `/init` and any agent-driven
+  memory edit.
+- GitHub's UI and API treat a symlink as indirection, not content — anything
+  reading `CLAUDE.md` over the API (including this repo's own drift report)
+  would need to resolve it specially.
+- The upstream changelog has a track record of `.claude/`-path symlink bugs.
+- And no upside: every context where the import fails is a context where
+  `CLAUDE.md` isn't read at all, so a symlink buys nothing a plain file
+  doesn't already provide.
+
+### Verification
+
+Static checks (`bridge-status.sh`, the drift report) prove the bridge has
+the right *shape*. Only an end-to-end probe proves it actually *loads*. The
+behavioral canary for that lives in a separate repo: a magic-token eval in
+[Adam-S-Daniel/skills-evals](https://github.com/Adam-S-Daniel/skills-evals)
+(`evals/guidance-bridge-canary`, skills-evals#5).
+
+Loader behavior isn't stable enough to check once and forget: it changed at
+least three times in about a year upstream — the SDK's `settingSources`
+default flip (and revert), subagent memory-passing changes, and the
+`--add-dir` flag. Run the canary again on Claude Code CLI major version
+bumps.
+
+### Watch upstream
+
+anthropics/claude-code#6235 tracks native `AGENTS.md` support. It's open
+with no commitment either way. If it ships, the bridge becomes redundant but
+harmless — nothing breaks by leaving it in place. The canary eval's
+`no-bridge` layout turning visible is the signal to simplify the fleet if
+that day comes.
 
 ## Required secrets
 
