@@ -129,27 +129,31 @@ loop iteration: for owner `$ORG` they look for `GH_TOKEN_<OWNER>`, where
 `GH_TOKEN_JODIDANIEL`). If that's set it's used for the whole iteration; if
 not, they fall back to the plain `GH_TOKEN` captured before the loop started
 (restored on every iteration, so one owner's per-owner token never leaks into
-another's). There are three ways to supply these, in order of preference:
+another's). The workflows populate `GH_TOKEN_<OWNER>` by minting a short-lived
+token per owner from a GitHub App at runtime — **mode (a) below, now active**.
+Modes (b) and (c) remain documented alternatives; using them means swapping the
+`create-github-app-token` mint steps back for `secrets.*` env references.
 
-### a) Recommended: GitHub App (no rotation, ever)
+### a) GitHub App (active — no rotation, ever)
 
-Create one GitHub App (any name, e.g. `agents-md-sync`) with permissions
-`Contents: read & write`, `Pull requests: read & write`, and
-`Metadata: read`, then install it on **both** the `Adam-S-Daniel` account and
-the `jodidaniel` org. Store the app ID as a repository variable (`APP_ID`)
-and the private key as a repository secret, then mint short-lived
-installation tokens per owner at workflow runtime with
+The workflows run in this mode. One GitHub App (`agents-md-sync`) with
+permissions `Contents: read & write`, `Pull requests: read & write`, and
+`Metadata: read`, installed on **both** the `Adam-S-Daniel` account and the
+`jodidaniel` org with access to every target repo. Its App ID is stored as the
+repository **variable** `APP_ID` and its private key as the repository
+**secret** `APP_PRIVATE_KEY`.
+
+`sync.yml` and `drift-report.yml` each mint a short-lived installation token
+**per owner** at runtime with
 [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
-(pin it to a full commit SHA when adopting this). Installation tokens live
-1 hour and are minted fresh on every run, so nothing ever expires and there
-is no PAT to rotate.
+(pinned to a full commit SHA) — one step per owner, writing into
+`GH_TOKEN_ADAM_S_DANIEL` / `GH_TOKEN_JODIDANIEL`. Each token lives ~1 hour, is
+scoped to that owner's repos, and is minted fresh every run, so nothing expires
+and there is no PAT to rotate. The mint steps are `continue-on-error`, so a
+missing installation on one owner only skips that owner's repos; sync hard-fails
+only if **neither** token can be minted.
 
-This mode is **documented but not yet wired up** — the workflows currently
-run in PAT mode (below). Adopting it means replacing the `secrets.*`
-references in `sync.yml`/`drift-report.yml` with `create-github-app-token`
-steps that populate `GH_TOKEN_ADAM_S_DANIEL` / `GH_TOKEN_JODIDANIEL`.
-
-### b) Two fine-grained PATs (single-owner scope each)
+### b) Alternative: two fine-grained PATs (single-owner scope each)
 
 A fine-grained PAT is scoped to a single GitHub resource owner, which maps
 cleanly onto the per-owner token resolution above. Create one fine-grained
@@ -173,7 +177,7 @@ regenerating, update the secret with:
 gh secret set <NAME> --repo Adam-S-Daniel/_agent-guidance
 ```
 
-### c) One classic PAT with `repo` scope (shared, coarser-grained)
+### c) Alternative: one classic PAT with `repo` scope (shared, coarser-grained)
 
 Classic PATs aren't resource-owner-scoped, so a single token can cover repos
 across both accounts (as long as the token's owner has access to both). Add
@@ -183,21 +187,20 @@ fallback used by any owner that has no per-owner token of its own — the two
 modes can be mixed, e.g. a per-owner PAT for one account and the shared
 classic PAT covering the other.
 
-Add secrets under Settings → Secrets and variables → Actions → New
-repository secret on this repo. If **no** token resolves for an owner (no
-per-owner secret and no shared `AGENTS_SYNC_READWRITE_TOKEN`), `sync.yml`'s
-"Verify sync token is configured" step emits a `::warning::` naming that
-owner and continues — sync then fails per-repo for that owner's repos, which
-the run summary surfaces. It only hard-fails the whole job if *no* token is
-configured anywhere (not even the shared fallback), since in that case `gh`
-would otherwise fail opaquely (exit code 4) partway through the run.
+Add the App credentials (or the alternative PAT secrets) under Settings →
+Secrets and variables → Actions on this repo — `APP_ID` as a **variable**,
+`APP_PRIVATE_KEY` as a **secret**. In App mode, `sync.yml`'s "Verify at least
+one installation token was minted" step emits a `::warning::` for any owner
+whose token could not be minted (App not installed there) and continues,
+skipping that owner's repos; it hard-fails the whole job only if **neither**
+owner's token could be minted, since `gh` would otherwise fail opaquely (exit
+code 4) partway through the run.
 
-The nightly drift report only reads repo contents, so it can run with the
-default `github.token` GitHub Actions provides automatically (covering
-whichever account owns this repo) when no read-only tokens are configured at
-all. Private repos in an account with no matching token (per-owner or
-shared) will simply show up as fetch failures in the report — a workable
-degraded mode rather than a hard failure.
+The nightly drift report only reads repo contents, so it mints the same
+per-owner App tokens but keeps the default `github.token` as a base fallback
+(covering whichever account owns this repo). If an owner's App token can't be
+minted, its private repos simply show up as fetch failures in the report — a
+workable degraded mode rather than a hard failure.
 
 ## Layout
 

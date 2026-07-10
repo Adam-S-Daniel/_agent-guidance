@@ -22,11 +22,38 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
+      # ── Per-owner read tokens from the agents-md-sync GitHub App ──
+      # The same App as sync; here only its read access is exercised (list
+      # repos, read CLAUDE.md/AGENTS.md, list open sync PRs). continue-on-error
+      # plus the github.token base fallback below keep the report in its
+      # documented degraded mode (public repos only) if an owner's install is
+      # missing, rather than hard-failing the nightly job.
+      - name: Mint installation token for Adam-S-Daniel
+        id: token_adam_s_daniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: Adam-S-Daniel
+
+      - name: Mint installation token for jodidaniel
+        id: token_jodidaniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: jodidaniel
+
       - name: Generate drift report
         env:
-          GH_TOKEN: ${{ secrets.AGENTS_SYNC_READONLY_TOKEN || github.token }}
-          GH_TOKEN_ADAM_S_DANIEL: ${{ secrets.AGENTS_SYNC_READONLY_TOKEN_ADAM_S_DANIEL }}
-          GH_TOKEN_JODIDANIEL: ${{ secrets.AGENTS_SYNC_READONLY_TOKEN_JODIDANIEL }}
+          # Base fallback: github.token can still read this repo's owner's
+          # public repos if App minting fails (the documented degraded mode).
+          # GH_TOKEN_<OWNER> (minted above) takes precedence per owner.
+          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
+          GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
           SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
         run: |
           chmod +x scripts/drift-report.sh scripts/build-agents-md.sh
