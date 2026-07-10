@@ -7,6 +7,7 @@ set -euo pipefail
 #   • Whether AGENTS.md exists
 #   • Whether the managed section matches what we would generate
 #   • Whether the repo-specific marker header is present
+#   • Whether CLAUDE.md imports @AGENTS.md (the Claude Code bridge)
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
 #
@@ -25,6 +26,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
+BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
 OUTPUT_FILE="$REPO_ROOT/drift-report.md"
 MARKER="## Repo-specific additions"
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
@@ -153,12 +155,12 @@ echo ""
     echo ""
     echo "> Organization: \`$ORG\` — ${#REPOS[@]} repo(s) scanned"
     echo ""
-    echo "| Repository | Status | Has marker | Open PR | Sections | Notes |"
-    echo "|------------|--------|------------|---------|----------|-------|"
+    echo "| Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |"
+    echo "|------------|--------|------------|-------------------|---------|----------|-------|"
 } >> "$OUTPUT_FILE"
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
-    echo "| *(no repos found)* | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
+    echo "| *(no repos found)* | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
 fi
 
 for repo_name in "${REPOS[@]}"; do
@@ -166,6 +168,7 @@ for repo_name in "${REPOS[@]}"; do
 
     status="unknown"
     has_marker="—"
+    bridge_cell="—"
     open_pr="none"
     sections_display="—"
     notes=""
@@ -225,6 +228,21 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── Check CLAUDE.md bridge status ───────────────────────────────────
+
+    current_claude=$(fetch_file_content "$repo_name" "CLAUDE.md")
+
+    if [[ -z "$current_claude" ]]; then
+        bridge_cell="missing"
+    else
+        bridge_status=$(echo "$current_claude" | "$BRIDGE_SCRIPT" -)
+        if [[ "$bridge_status" == "no-import" ]]; then
+            bridge_cell="**no-import**"
+        else
+            bridge_cell="$bridge_status"
+        fi
+    fi
+
     # ── Check for open sync PR ─────────────────────────────────────────
 
     pr_number=$(gh pr list --repo "$repo_name" --head "$BRANCH_NAME" \
@@ -237,7 +255,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Write row ──────────────────────────────────────────────────────
 
-    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
+    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
 done
 
 done
@@ -257,6 +275,14 @@ done
     echo "| **pr-open** | A sync PR is already open for this repo |"
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
+    echo ""
+    echo "**CLAUDE.md bridge legend**"
+    echo ""
+    echo "| Bridge status | Meaning |"
+    echo "|---------------|---------|"
+    echo "| bridge-ok | CLAUDE.md imports \`@AGENTS.md\` (line-start, outside code fences) |"
+    echo "| **no-import** | CLAUDE.md exists but never imports \`@AGENTS.md\` — Claude Code will not see the managed guidance |"
+    echo "| missing | No CLAUDE.md yet — sync adds the bridge in its next PR |"
 } >> "$OUTPUT_FILE"
 
 echo ""

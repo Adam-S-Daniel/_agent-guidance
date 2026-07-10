@@ -32,6 +32,9 @@ assert_contains() {
 assert_not_contains() {
     if grep -qF "$2" "$1" 2>/dev/null; then fail "$3 — did not expect '$2' in $1"; else pass "$3"; fi
 }
+assert_row_contains() {
+    if grep -F "$2" "$1" | grep -qF "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
+}
 
 # ── Set up mock repos as bare git repos ────────────────────────────────────
 
@@ -95,7 +98,13 @@ This will be overwritten.
 Keep this custom content!
 Do not delete me.
 MD
-    git add .agents-sync.yml AGENTS.md
+    # Standard two-line bridge (byte-identical to what sync.sh writes) —
+    # makes this repo the bridge-ok drift case; sync must not warn for it.
+    cat > CLAUDE.md <<'MD'
+<!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
+@AGENTS.md
+MD
+    git add .agents-sync.yml AGENTS.md CLAUDE.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
@@ -147,11 +156,26 @@ YAML
 sections:
   - typescript
 YAML
+    # Content mirrors the real adamdaniel.ai#2545 failure shape (a
+    # markdown LINK to AGENTS.md, not an import) plus a fenced example of
+    # the real bridge syntax — proving the classifier is fence-aware: the
+    # old unanchored `grep -qF '@AGENTS.md'` check would have been fooled
+    # by the fenced line into silently treating this as bridged.
     cat > CLAUDE.md <<'MD'
 # My hand-written Claude notes
 
 Some pre-existing instructions that do not reference AGENTS.md.
+
+See [AGENTS.md](./AGENTS.md) for the agent guidance.
+
+Example bridge syntax (illustration only — fenced, so it is not a real
+import):
+
+```
+@AGENTS.md
+```
 MD
+    cp CLAUDE.md "$TEST_DIR/repo-with-claude-md.CLAUDE.md.orig"
     git add .agents-sync.yml CLAUDE.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
@@ -182,6 +206,37 @@ YAML
         "<!-- Add your repo-specific agent guidance below this line -->")"
     printf '%s\n%s\n' "$managed_for_repo7" "$marker_block" > AGENTS.md
     git add .agents-sync.yml AGENTS.md
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+
+    # Mock repo 9: testorg/repo-fix-claude — opts into fix_claude_md: true.
+    # AGENTS.md already up to date (built the same way as repo 7); CLAUDE.md
+    # is present but pointer-only (no-import). Exercises both the extended
+    # skip condition (agents_up_to_date && claude_md_present is no longer
+    # enough to skip when a fix is pending) and the opted-in rewrite path.
+    local repo9_bare="$TEST_DIR/bare/testorg_repo-fix-claude"
+    local repo9_work="$TEST_DIR/work/repo-fix-claude"
+    mkdir -p "$repo9_bare" "$repo9_work"
+    git init --bare --initial-branch=main "$repo9_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo9_work" >/dev/null 2>&1
+    cd "$repo9_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo9_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+fix_claude_md: true
+YAML
+    local managed_for_repo9 marker_block_repo9
+    managed_for_repo9=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    marker_block_repo9="$(printf '%s\n\n%s\n' \
+        "## Repo-specific additions" \
+        "<!-- Add your repo-specific agent guidance below this line -->")"
+    printf '%s\n%s\n' "$managed_for_repo9" "$marker_block_repo9" > AGENTS.md
+    cat > CLAUDE.md <<'MD'
+See [AGENTS.md](./AGENTS.md) for the agent guidance.
+MD
+    git add .agents-sync.yml AGENTS.md CLAUDE.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
@@ -232,6 +287,19 @@ parse_jq_filter() {
     done
 }
 
+# Generic flag-value extractor (e.g. parse_flag_value --body "$@"), used to
+# capture gh pr create's --body for test verification.
+parse_flag_value() {
+    local flag="$1"; shift
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+        if [[ "${args[$i]}" == "$flag" ]]; then
+            echo "${args[$((i+1))]}"
+            return
+        fi
+    done
+}
+
 case "$1" in
     repo)
         case "$2" in
@@ -250,6 +318,7 @@ case "$1" in
                           {"nameWithOwner":"testorg/repo-with-claude-md"},
                           {"nameWithOwner":"testorg/repo-excluded"},
                           {"nameWithOwner":"testorg/repo-up-to-date-no-claude"},
+                          {"nameWithOwner":"testorg/repo-fix-claude"},
                           {"nameWithOwner":"testorg/_agent-guidance"}
                         ]'
                         ;;
@@ -355,6 +424,11 @@ case "$1" in
             create)
                 # Log PR creation to a file for test verification
                 echo "pr-created" >> "${MOCK_PR_LOG:-/dev/null}"
+                if [[ -n "${MOCK_PR_BODY_DIR:-}" ]]; then
+                    mkdir -p "$MOCK_PR_BODY_DIR"
+                    pr_body=$(parse_flag_value --body "$@")
+                    printf '%s\n' "$pr_body" > "$MOCK_PR_BODY_DIR/$(basename "$PWD").body"
+                fi
                 echo "https://github.com/mock/pr/1"
                 ;;
         esac
@@ -397,6 +471,81 @@ test_build_script() {
     assert_contains "$TEST_DIR/build-unknown.md" "## Python" "still includes valid section"
 }
 
+# ── Test 1a: bridge-status.sh ─────────────────────────────────────────────
+
+test_bridge_status() {
+    echo ""
+    echo "=== Test: bridge-status.sh ==="
+
+    local bridge_script="$REPO_ROOT/scripts/bridge-status.sh"
+    local bs_dir="$TEST_DIR/bridge-status"
+    mkdir -p "$bs_dir"
+    local result
+
+    # Standard two-line bridge
+    cat > "$bs_dir/standard.md" <<'MD'
+<!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
+@AGENTS.md
+MD
+    result=$("$bridge_script" "$bs_dir/standard.md")
+    [[ "$result" == "bridge-ok" ]] && pass "standard two-line bridge -> bridge-ok" || fail "standard two-line bridge -> bridge-ok (got '$result')"
+
+    # Markdown-link pointer (the adamdaniel.ai#2545 failure shape)
+    cat > "$bs_dir/pointer.md" <<'MD'
+See [AGENTS.md](./AGENTS.md) for the agent guidance.
+MD
+    result=$("$bridge_script" "$bs_dir/pointer.md")
+    [[ "$result" == "no-import" ]] && pass "markdown-link pointer -> no-import" || fail "markdown-link pointer -> no-import (got '$result')"
+
+    # Fenced example only
+    cat > "$bs_dir/fenced-only.md" <<'MD'
+Example:
+
+```
+@AGENTS.md
+```
+MD
+    result=$("$bridge_script" "$bs_dir/fenced-only.md")
+    [[ "$result" == "no-import" ]] && pass "fenced example only -> no-import" || fail "fenced example only -> no-import (got '$result')"
+
+    # Fenced example AND a real line-start import after it
+    cat > "$bs_dir/fenced-plus-real.md" <<'MD'
+Example:
+
+```
+@AGENTS.md
+```
+
+@AGENTS.md
+MD
+    result=$("$bridge_script" "$bs_dir/fenced-plus-real.md")
+    [[ "$result" == "bridge-ok" ]] && pass "fenced example plus real import after it -> bridge-ok" || fail "fenced example plus real import after it -> bridge-ok (got '$result')"
+
+    # @AGENTS.md with trailing whitespace
+    printf '@AGENTS.md   \n' > "$bs_dir/trailing-ws.md"
+    result=$("$bridge_script" "$bs_dir/trailing-ws.md")
+    [[ "$result" == "bridge-ok" ]] && pass "@AGENTS.md with trailing whitespace -> bridge-ok" || fail "@AGENTS.md with trailing whitespace -> bridge-ok (got '$result')"
+
+    # Nonexistent path
+    result=$("$bridge_script" "$bs_dir/does-not-exist.md")
+    [[ "$result" == "missing" ]] && pass "nonexistent path -> missing" || fail "nonexistent path -> missing (got '$result')"
+
+    # Empty file
+    : > "$bs_dir/empty.md"
+    result=$("$bridge_script" "$bs_dir/empty.md")
+    [[ "$result" == "missing" ]] && pass "empty file -> missing" || fail "empty file -> missing (got '$result')"
+
+    # Stdin mode
+    result=$(printf '@AGENTS.md\n' | "$bridge_script" -)
+    [[ "$result" == "bridge-ok" ]] && pass "stdin mode: bridge-ok" || fail "stdin mode: bridge-ok (got '$result')"
+
+    result=$(printf 'no import here\n' | "$bridge_script" -)
+    [[ "$result" == "no-import" ]] && pass "stdin mode: no-import" || fail "stdin mode: no-import (got '$result')"
+
+    result=$(printf '' | "$bridge_script" -)
+    [[ "$result" == "missing" ]] && pass "stdin mode: empty stdin -> missing" || fail "stdin mode: empty stdin -> missing (got '$result')"
+}
+
 # ── Test 2: sync.sh --dry-run ─────────────────────────────────────────────
 
 test_sync_dry_run() {
@@ -431,13 +580,16 @@ test_sync_full() {
     echo "=== Test: sync.sh (full run) ==="
 
     local pr_log="$TEST_DIR/pr-creations.log"
+    local pr_body_dir="$TEST_DIR/pr-bodies"
     rm -f "$pr_log"
+    rm -rf "$pr_body_dir"
 
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         MOCK_PR_LOG="$pr_log" \
+        MOCK_PR_BODY_DIR="$pr_body_dir" \
         REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/sync.sh" 2>&1
@@ -536,8 +688,17 @@ test_sync_full() {
         return
     }
     assert_contains "$verify_claudemd/CLAUDE.md" "Some pre-existing instructions" "repo-with-claude-md: existing CLAUDE.md content unchanged"
-    assert_not_contains "$verify_claudemd/CLAUDE.md" "@AGENTS.md" "repo-with-claude-md: existing CLAUDE.md not modified to add bridge"
+    # Byte-identical check instead of assert_not_contains "@AGENTS.md": the
+    # fenced example in the fixture now legitimately contains that substring,
+    # so only an exact comparison against the pristine pre-sync copy proves
+    # the file was never touched.
+    if cmp -s "$verify_claudemd/CLAUDE.md" "$TEST_DIR/repo-with-claude-md.CLAUDE.md.orig"; then
+        pass "repo-with-claude-md: existing CLAUDE.md byte-identical — never modified without opt-in"
+    else
+        fail "repo-with-claude-md: existing CLAUDE.md byte-identical — never modified without opt-in"
+    fi
     assert_contains "$TEST_DIR/sync-full-output.txt" "WARN: CLAUDE.md exists but does not import @AGENTS.md" "repo-with-claude-md: WARN emitted for non-bridging CLAUDE.md"
+    assert_contains "$pr_body_dir/testorg_repo-with-claude-md.body" "does not import" "repo-with-claude-md: PR body warns about missing bridge"
 
     # Verify repo-up-to-date-no-claude: AGENTS.md untouched, only CLAUDE.md added
     local uptodate_bare="$TEST_DIR/bare/testorg_repo-up-to-date-no-claude"
@@ -559,26 +720,59 @@ test_sync_full() {
     fi
     assert_contains "$verify_uptodate/CLAUDE.md" "@AGENTS.md" "repo-up-to-date-no-claude: CLAUDE.md bridge added"
 
+    # Verify repo-fix-claude: fix_claude_md: true opt-in rewrites the
+    # pointer-only CLAUDE.md to the standard bridge; AGENTS.md (already
+    # up to date) is untouched.
+    local fixclaude_bare="$TEST_DIR/bare/testorg_repo-fix-claude"
+    local verify_fixclaude="$TEST_DIR/verify-fix-claude"
+    git clone "$fixclaude_bare" "$verify_fixclaude" -b agents-md-sync/update 2>/dev/null || {
+        fail "repo-fix-claude: sync branch not created"
+        return
+    }
+
+    if grep -q '^@AGENTS.md' "$verify_fixclaude/CLAUDE.md"; then
+        pass "repo-fix-claude: CLAUDE.md rewritten with line-start @AGENTS.md import"
+    else
+        fail "repo-fix-claude: CLAUDE.md rewritten with line-start @AGENTS.md import"
+    fi
+    assert_contains "$verify_fixclaude/CLAUDE.md" "Managed by _agent-guidance" "repo-fix-claude: CLAUDE.md rewritten with standard bridge comment"
+    assert_not_contains "$verify_fixclaude/CLAUDE.md" "See [AGENTS.md]" "repo-fix-claude: old pointer-only content replaced"
+
+    local expected_managed_repo9 expected_marker_block_repo9 expected_agents_repo9
+    expected_managed_repo9=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    expected_marker_block_repo9="$(printf '%s\n\n%s\n' \
+        "## Repo-specific additions" \
+        "<!-- Add your repo-specific agent guidance below this line -->")"
+    expected_agents_repo9="$(printf '%s\n%s\n' "$expected_managed_repo9" "$expected_marker_block_repo9")"
+    if diff -q <(echo "$expected_agents_repo9") "$verify_fixclaude/AGENTS.md" &>/dev/null; then
+        pass "repo-fix-claude: AGENTS.md byte-identical to already up-to-date fixture"
+    else
+        fail "repo-fix-claude: AGENTS.md byte-identical to already up-to-date fixture"
+    fi
+
+    assert_contains "$TEST_DIR/sync-full-output.txt" "Rewriting CLAUDE.md" "repo-fix-claude: sync log reports the rewrite"
+    assert_contains "$pr_body_dir/testorg_repo-fix-claude.body" "fix_claude_md" "repo-fix-claude: PR body mentions fix_claude_md opt-in"
+
     # Verify repo-excluded never got processed
     assert_not_contains "$TEST_DIR/sync-full-output.txt" "=== testorg/repo-excluded ===" "repo-excluded: never processed by sync"
 
-    # Verify PRs were created for all 6 non-excluded repos
+    # Verify PRs were created for all 7 non-excluded repos
     if [[ -f "$pr_log" ]]; then
         local pr_count
         pr_count=$(wc -l < "$pr_log")
-        if [[ "$pr_count" -eq 6 ]]; then
-            pass "sync created PRs for all 6 repos"
+        if [[ "$pr_count" -eq 7 ]]; then
+            pass "sync created PRs for all 7 repos"
         else
-            fail "sync created PRs for all 6 repos — got $pr_count PR creations"
+            fail "sync created PRs for all 7 repos — got $pr_count PR creations"
         fi
     else
-        fail "sync created PRs for all 6 repos — no PR log file found"
+        fail "sync created PRs for all 7 repos — no PR log file found"
     fi
     assert_contains "$TEST_DIR/sync-full-output.txt" "PR created." "sync output shows PR created"
 
     # Verify summary line
     assert_contains "$TEST_DIR/sync-full-output.txt" "Sync complete:" "sync shows summary line"
-    assert_contains "$TEST_DIR/sync-full-output.txt" "6 synced" "sync reports 6 synced"
+    assert_contains "$TEST_DIR/sync-full-output.txt" "7 synced" "sync reports 7 synced"
     assert_contains "$TEST_DIR/sync-full-output.txt" "0 failed" "sync reports 0 failed"
 }
 
@@ -626,16 +820,16 @@ test_sync_multi_owner() {
     if [[ -f "$pr_log" ]]; then
         local pr_count
         pr_count=$(wc -l < "$pr_log")
-        if [[ "$pr_count" -eq 7 ]]; then
-            pass "multi-owner: sync created PRs for all 7 repos across both owners"
+        if [[ "$pr_count" -eq 8 ]]; then
+            pass "multi-owner: sync created PRs for all 8 repos across both owners"
         else
-            fail "multi-owner: sync created PRs for all 7 repos across both owners — got $pr_count PR creations"
+            fail "multi-owner: sync created PRs for all 8 repos across both owners — got $pr_count PR creations"
         fi
     else
-        fail "multi-owner: sync created PRs for all 7 repos across both owners — no PR log file found"
+        fail "multi-owner: sync created PRs for all 8 repos across both owners — no PR log file found"
     fi
 
-    assert_contains "$TEST_DIR/sync-multi-output.txt" "7 synced" "multi-owner: sync reports 7 synced"
+    assert_contains "$TEST_DIR/sync-multi-output.txt" "8 synced" "multi-owner: sync reports 8 synced"
     assert_contains "$TEST_DIR/sync-multi-output.txt" "0 failed" "multi-owner: sync reports 0 failed"
 }
 
@@ -904,9 +1098,17 @@ test_drift_report() {
     assert_contains "$REPO_ROOT/drift-report.md" "repo-with-existing" "drift report includes repo-with-existing"
     assert_contains "$REPO_ROOT/drift-report.md" "Status legend" "drift report has legend"
     assert_contains "$REPO_ROOT/drift-report.md" "Organization:" "drift report shows org"
-    assert_contains "$REPO_ROOT/drift-report.md" "6 repo(s) scanned" "drift report shows repo count"
+    assert_contains "$REPO_ROOT/drift-report.md" "7 repo(s) scanned" "drift report shows repo count"
     assert_not_contains "$REPO_ROOT/drift-report.md" "_agent-guidance" "drift report excludes self"
     assert_not_contains "$REPO_ROOT/drift-report.md" "repo-excluded" "drift report excludes repos.yml-excluded repo"
+
+    # CLAUDE.md bridge column
+    assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge" "drift report has CLAUDE.md bridge column"
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-with-existing" "bridge-ok" "drift report: repo-with-existing is bridge-ok"
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-with-claude-md" "**no-import**" "drift report: repo-with-claude-md is no-import"
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-fix-claude" "**no-import**" "drift report: repo-fix-claude is no-import"
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-no-sync" "missing" "drift report: repo-no-sync bridge is missing"
+    assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge legend" "drift report has CLAUDE.md bridge legend"
 }
 
 # ── Test 4a: drift-report.sh with SYNC_OWNERS (multiple owners) ───────────
@@ -949,6 +1151,7 @@ echo "========================================="
 setup_mock_repos
 create_mock_gh
 test_build_script
+test_bridge_status
 test_sync_dry_run
 test_sync_full
 test_sync_failure_exit_code

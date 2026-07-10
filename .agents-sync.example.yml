@@ -22,3 +22,12 @@ sections:
   # - dotnet
   # - rust
   # - docker
+
+# Optional: let the sync propose a PR that REWRITES this repo's CLAUDE.md to
+# the standard two-line @AGENTS.md bridge when it exists but does not import
+# AGENTS.md (e.g. a pointer-only file that merely links to it). Off by
+# default — without this the sync never edits an existing CLAUDE.md; it only
+# warns in the sync log, the sync PR body, and the drift report.
+# NOTE: the rewrite REPLACES the whole file; only opt in if CLAUDE.md carries
+# no hand-written guidance worth keeping.
+# fix_claude_md: true
