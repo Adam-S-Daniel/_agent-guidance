@@ -89,6 +89,22 @@ email addresses and their correspondents' into a public Actions log.)
   test command to run. Subagent output is gated by the same test/CI proof as
   any other change.
 
+## Skills ecosystem
+
+- The canonical skills registry is `github.com/Adam-S-Daniel/agentskills`,
+  organized as three bundle plugins — `adam` (general-purpose, cloud-safe;
+  default-on), `adam-local` (machine-bound), and `fastmail` — each holding
+  `skills/<skill>/` directories.
+- In Claude Code with the marketplace installed, invoke a skill as
+  `/adam:<skill>` (e.g. `/adam:pin-actions-to-sha`).
+- Local machines get the marketplace plus per-agent symlinks via that repo's
+  `setup.sh`.
+- Cloud sessions currently get **no** plugins from repo-declared settings — a
+  known Claude Code limitation (see agentskills' `docs/decisions/0001`) — so
+  don't assume bundle skills are available there.
+- New reusable skills graduate **into** the registry (sensitive ones into
+  `agentskills-private`) rather than living on in a consumer repo.
+
 ## Git practices
 
 - Write concise commit messages that explain *why*, not just *what*.
