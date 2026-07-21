@@ -317,8 +317,17 @@ MD
     git add .agents-sync.yml CLAUDE.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
-    # Hook installed AFTER the setup push so seeding main succeeds; only the
-    # sync's later direct push is rejected.
+    # A pre-existing, DIVERGED stale agents-md-sync/update branch from the old
+    # PR-era: built on a sibling commit (not an ancestor of the sync's fresh
+    # HEAD), so the fallback's branch push is non-fast-forward and must force.
+    git checkout -b agents-md-sync/update >/dev/null 2>&1
+    printf 'stale old sync content\n' > AGENTS.md
+    git add AGENTS.md
+    git commit -m "stale sync" >/dev/null 2>&1
+    git push origin HEAD:agents-md-sync/update >/dev/null 2>&1
+    git checkout main >/dev/null 2>&1
+    # Hook installed AFTER the setup pushes so seeding succeeds; only the
+    # sync's later direct push to main is rejected.
     install_reject_main_hook "$repo10_bare"
 
     # Mock repo 11: protorg/repo-protected-fix — protected (same hook) and
@@ -1296,6 +1305,9 @@ test_sync_protected_fallback() {
     }
     assert_contains "$verify_branch/AGENTS.md" "## Python" "repo-protected: fallback branch has managed python section"
     assert_contains "$verify_branch/AGENTS.md" "BEGIN MANAGED SECTION" "repo-protected: fallback branch has managed section"
+    # The fixture seeds a diverged stale agents-md-sync/update branch; the
+    # fallback must force-push over it (non-fast-forward) rather than fail.
+    assert_not_contains "$verify_branch/AGENTS.md" "stale old sync content" "repo-protected: force-push replaced the diverged stale branch"
 
     # A PR was created and auto-merge was enabled on it (the "--auto" flag).
     assert_contains "$pr_log" "pr-created" "protected: PR created on fallback"

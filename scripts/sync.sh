@@ -433,7 +433,14 @@ Managed content updated by the central _agent-guidance repository."
             cd "$REPO_ROOT"; continue
         }
 
-        if ! git push -u origin "$BRANCH_NAME"; then
+        # Force-push: a stale agents-md-sync/update branch from the old PR-era
+        # (built on a since-superseded default branch) has diverged from this
+        # run's HEAD, so a plain push is rejected (fetch first). Force is safe
+        # here — the branch is bot-owned, this sync is its only writer, and it
+        # is regenerated from the current default branch every run; force just
+        # replaces a stale proposal. The default branch itself stays gated by
+        # the repo's protection.
+        if ! git push -u --force origin "$BRANCH_NAME"; then
             fail "push failed for $repo_name"
             ((FAIL_COUNT++)) || true
             cd "$REPO_ROOT"; continue
