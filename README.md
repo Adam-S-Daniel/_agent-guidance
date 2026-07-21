@@ -39,7 +39,11 @@ The skills that used to live here (`debug-github-workflows`,
   including a "CLAUDE.md bridge" column (`bridge-ok` / `no-import` /
   `missing`). This tracks **AGENTS.md drift** — it is the guidance layer
   working as designed, not the skill-copy drift that the strategy
-  consolidation removed.
+  consolidation removed. Per repo-settings' ADR 0001, this generated data
+  never lands on the protected default branch — the old standing-PR model
+  is gone — so the report is force-pushed nightly to its own unprotected
+  results branch, the same pattern skills-evals uses for `eval-results`:
+  [`drift-report`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/drift-report/drift-report.md).
 - `scripts/sync.sh` / `scripts/drift-report.sh` consult the central
   `repos.yml` registry for repos excluded from sync entirely and for
   `default_sections` applied to repos with no `.agents-sync.yml` of their own.
@@ -219,6 +223,5 @@ scripts/                # build, sync, drift-report
 .github/workflows/      # CI, sync-on-push, nightly drift report
 .agents-sync.example.yml
 repos.yml               # central exclusion list + default sections
-drift-report.md         # generated nightly dashboard
 test/run-tests.sh
 ```

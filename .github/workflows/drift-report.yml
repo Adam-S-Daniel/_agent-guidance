@@ -6,8 +6,7 @@ on:
   workflow_dispatch:           # manual trigger
 
 permissions:
-  contents: write              # create-pull-request commits the report to a branch
-  pull-requests: write         # ...and opens/updates the standing drift-report PR
+  contents: write              # force-pushes the regenerated report to drift-report
 
 jobs:
   report:
@@ -60,35 +59,25 @@ jobs:
           chmod +x scripts/drift-report.sh scripts/build-agents-md.sh
           ./scripts/drift-report.sh
 
-      # Under the branch ruleset that requires a PR before merging, the old
-      # "git push to main" as github-actions[bot] is rejected and the nightly
-      # job fails whenever there is drift. Instead, carry the regenerated report
-      # on one reusable branch and open/update a single standing PR. This is
-      # idempotent — subsequent nightly runs update that PR in place rather than
-      # piling up new ones — and mirrors how sync.yml already lands changes on
-      # main via PRs. When there is no drift, no PR is created (and any stale
-      # branch is deleted), matching the old "No changes to report" early exit.
-      - name: Open or update drift-report PR
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1 (2026-04)
-        with:
-          token: ${{ github.token }}
-          add-paths: drift-report.md
-          branch: drift-report/update
-          base: main
-          delete-branch: true
-          commit-message: "chore: update drift report [skip ci]"
-          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          title: "chore: nightly AGENTS.md drift report"
-          body: |
-            Automated nightly regeneration of `drift-report.md` (the AGENTS.md
-            drift dashboard) by the **Nightly drift report** workflow.
-
-            Opened as a pull request instead of pushed directly to `main` so the
-            job stays green under the branch ruleset that requires a PR before
-            merging (direct pushes by `github-actions[bot]` are blocked). This PR
-            reuses one branch (`drift-report/update`), so later nightly runs
-            update it in place rather than opening a fresh PR each night.
-
-            Review and merge (or enable native auto-merge) to land the refreshed
-            report on `main`.
+      # Under the branch ruleset that requires a PR before merging, a plain
+      # "git push to main" as github-actions[bot] is rejected, so this can't
+      # land on main directly. An earlier version of this job opened a
+      # standing PR instead, but that's the wrong shape: a regenerated
+      # dashboard is generated data, not a reviewable change, and the PR
+      # just piled up as unmergeable bot noise nobody acted on. Per
+      # repo-settings' ADR 0001, generated data belongs on its own
+      # unprotected results branch instead. drift-report holds only the
+      # latest snapshot with no history worth preserving, so force-push it
+      # fresh each night; consumers read the report straight off that
+      # branch rather than off main.
+      - name: Publish to the drift-report results branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f drift-report.md
+          if git diff --cached --quiet; then
+            echo "No changes to report — leaving the drift-report branch as is."
+            exit 0
+          fi
+          git commit -m "chore: nightly drift report [skip ci]"
+          git push --force origin HEAD:refs/heads/drift-report
