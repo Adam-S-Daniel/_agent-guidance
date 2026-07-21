@@ -31,9 +31,12 @@ jobs:
 
       # ── Per-owner installation tokens from the agents-md-sync GitHub App ──
       # One short-lived (~1h) token per owner, scoped to that owner's repos and
-      # minted fresh every run — nothing to rotate. continue-on-error keeps a
-      # missing installation on one owner from aborting the other owner's sync;
-      # the verify step below turns "neither minted" into a hard failure.
+      # minted fresh every run — nothing to rotate. The App holds a ruleset
+      # bypass on fleet-managed repos, so the sync pushes AGENTS.md directly to
+      # the default branch (PR + auto-merge fallback where protection rejects
+      # it). continue-on-error keeps a missing installation on one owner from
+      # aborting the other owner's sync; the verify step below turns "neither
+      # minted" into a hard failure.
       - name: Mint installation token for Adam-S-Daniel
         id: token_adam_s_daniel
         continue-on-error: true
@@ -71,11 +74,12 @@ jobs:
       - name: Run sync
         env:
           # Per-owner installation tokens minted above (GitHub App mode). Each
-          # carries the App's contents:write (push branches) + pull_requests:write
-          # (open PRs) + metadata:read (list repos) on that owner's repos, and is
-          # consumed by scripts/sync.sh's per-owner token resolution
-          # (GH_TOKEN_<OWNER>). No shared GH_TOKEN fallback is needed — every
-          # owner gets its own minted token.
+          # carries the App's contents:write (push directly to the default
+          # branch) + pull_requests:write (PR + auto-merge fallback) +
+          # metadata:read (list repos) on that owner's repos, and is consumed by
+          # scripts/sync.sh's per-owner token resolution (GH_TOKEN_<OWNER>). No
+          # shared GH_TOKEN fallback is needed — every owner gets its own minted
+          # token.
           GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
           GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
           SYNC_OWNERS: "Adam-S-Daniel jodidaniel"

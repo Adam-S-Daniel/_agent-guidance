@@ -1,0 +1,1 @@
+KEEP_TEST_DIR=/tmp/tmp.4MsIlUM20A rm -rf "$TEST_DIR" EXIT2

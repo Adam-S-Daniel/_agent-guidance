@@ -9,7 +9,9 @@ set -euo pipefail
 #   3. Preserves any content below "## Repo-specific additions"
 #   4. Ensures a CLAUDE.md bridge exists (creates it if absent; warns — or
 #      rewrites when opted in via fix_claude_md — if present but broken)
-#   5. Opens (or updates) a PR if the managed content has changed
+#   5. Pushes the update directly to the default branch (the sync App has a
+#      ruleset bypass, declared in repo-settings); falls back to a PR with
+#      auto-merge for repos whose protection rejects the push
 #
 # Requirements: gh (GitHub CLI, authenticated), yq, git
 # Usage:        ./scripts/sync.sh [--dry-run]
@@ -303,26 +305,36 @@ for repo_name in "${REPOS[@]}"; do
         continue
     fi
 
+    # ── Resolve default branch ─────────────────────────────────────────
+    # Resolved before delivery (the direct push targets it, the PR fallback
+    # bases onto it) and before the dry-run report so it can name the branch.
+    # Guarded assignment — a bare command substitution would abort the entire
+    # run under set -e on a transient API error, breaking the per-repo fail
+    # isolation used by the other steps. The -z check also catches an
+    # empty-but-exit-0 response.
+    if ! default_branch=$(gh repo view "$repo_name" --json defaultBranchRef \
+        --jq .defaultBranchRef.name) || [[ -z "$default_branch" ]]; then
+        fail "could not resolve default branch for $repo_name"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
     if $DRY_RUN; then
         if $agents_up_to_date && $needs_claude_fix; then
             log "[DRY RUN] AGENTS.md up to date; would rewrite CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true)"
         elif $agents_up_to_date; then
             log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge"
         else
-            log "[DRY RUN] Would update AGENTS.md"
+            log "[DRY RUN] Would update AGENTS.md (direct push to $default_branch; PR fallback if rejected)"
         fi
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
         continue
     fi
 
-    # ── Branch, commit, push ───────────────────────────────────────────
-
-    git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME" 2>/dev/null || {
-        fail "could not create branch in $repo_name"
-        ((FAIL_COUNT++)) || true
-        cd "$REPO_ROOT"; continue
-    }
+    # ── Commit on the default branch ───────────────────────────────────
+    # No side branch: the clone is already checked out on the default
+    # branch, and the sync App's ruleset bypass lets us push straight to it.
 
     echo "$new_agents_md" > AGENTS.md
 
@@ -333,8 +345,9 @@ for repo_name in "${REPOS[@]}"; do
     # existing CLAUDE.md is left untouched even if it doesn't import
     # AGENTS.md, since we must not clobber someone's hand-written file.
     # fix_claude_md is the per-repo opt-in that lifts that default — it's
-    # safe because the rewrite still only lands via a reviewed PR, never a
-    # direct push. Bridge presence is judged with bridge-status.sh instead of
+    # safe because it only fires on the repo's explicit fix_claude_md: true
+    # opt-in (the same delivery path as any other change: direct push, PR
+    # fallback). Bridge presence is judged with bridge-status.sh instead of
     # the old `grep -qF '@AGENTS.md'`, which a fenced example could fool into
     # a false positive; the classifier is fence-aware and isn't.
     claude_md_added=false
@@ -385,50 +398,75 @@ Managed content updated by the central _agent-guidance repository."
         cd "$REPO_ROOT"; continue
     }
 
-    if ! git push -u origin "$BRANCH_NAME"; then
-        fail "push failed for $repo_name"
-        ((FAIL_COUNT++)) || true
-        cd "$REPO_ROOT"; continue
-    fi
+    # ── Deliver: push directly, fall back to a PR ──────────────────────
+    # The sync App has a ruleset bypass on fleet-managed repos (declared in
+    # repo-settings; see its ADR 0001), so push straight to the default
+    # branch. Repos whose branch protection still rejects the push (the
+    # cms-platform-managed repos) fall back to a PR with auto-merge.
 
-    # ── Open or update PR ──────────────────────────────────────────────
+    if git push origin HEAD:"$default_branch"; then
+        log "Pushed directly to $default_branch."
 
-    # Surface CLAUDE.md bridge status in the PR body — the same observability
-    # gap that motivated the WARN log line above, but written where a
-    # reviewer approving the sync PR will actually see it.
-    pr_extra=""
-    if $warn_no_import; then
-        pr_extra="⚠️ **CLAUDE.md does not import \`@AGENTS.md\`** — Claude Code will not see this guidance. This sync never rewrites an existing CLAUDE.md by default. To fix, add a line containing exactly \`@AGENTS.md\` (outside code fences) to CLAUDE.md, or set \`fix_claude_md: true\` in \`.agents-sync.yml\` to let the sync propose the rewrite."
-    elif $claude_md_fixed; then
-        pr_extra="This PR also rewrites CLAUDE.md to the standard \`@AGENTS.md\` bridge (opted in via \`fix_claude_md: true\`) because the previous file never imported AGENTS.md."
-    fi
+        # Stale-PR/branch cleanup from the pre-direct-push era: an earlier
+        # run of this sync (branch + PR model) may have left an open PR and
+        # its head branch behind. Neither cleanup step is a repo failure.
+        existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
+            --jq '.[0].number // empty' 2>/dev/null || true)
+        if [[ -n "$existing_pr" ]]; then
+            if ! gh pr close "$existing_pr" --comment "Superseded: the sync now pushes the managed AGENTS.md directly to the default branch (ruleset bypass declared in repo-settings fleet.yml; see its ADR 0001)."; then
+                log "WARN: could not close superseded PR #$existing_pr."
+            fi
+        fi
+        if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+            if ! git push origin --delete "$BRANCH_NAME"; then
+                log "WARN: could not delete stale branch $BRANCH_NAME."
+            fi
+        fi
 
-    existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
-        --jq '.[0].number // empty' 2>/dev/null || true)
-
-    if [[ -n "$existing_pr" ]]; then
-        log "PR #$existing_pr already exists — branch updated."
         ((OK_COUNT++)) || true
     else
-        # Guarded assignment: a bare command substitution would abort the
-        # entire run under set -e on a transient API error, breaking the
-        # per-repo fail isolation used by the other steps. The -z check
-        # also catches an empty-but-exit-0 response.
-        if ! default_branch=$(gh repo view "$repo_name" --json defaultBranchRef \
-            --jq .defaultBranchRef.name) || [[ -z "$default_branch" ]]; then
-            fail "could not resolve default branch for $repo_name"
+        log "WARN: direct push to $default_branch rejected — falling back to PR."
+
+        git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME" 2>/dev/null || {
+            fail "could not create branch in $repo_name"
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        }
+
+        if ! git push -u origin "$BRANCH_NAME"; then
+            fail "push failed for $repo_name"
             ((FAIL_COUNT++)) || true
             cd "$REPO_ROOT"; continue
         fi
 
-        # --head: gh cannot infer the head branch in a fresh temp clone.
-        # --base: the default branch varies across repos (main vs master),
-        #         and omitting --base while passing --head can mistarget.
-        if gh pr create \
-            --head "$BRANCH_NAME" \
-            --base "$default_branch" \
-            --title "chore: sync AGENTS.md from _agent-guidance" \
-            --body "$(cat <<EOF
+        # ── Open or update PR ──────────────────────────────────────────
+
+        # Surface CLAUDE.md bridge status in the PR body — the same
+        # observability gap that motivated the WARN log line above, but
+        # written where a reviewer approving the sync PR will actually see it.
+        pr_extra=""
+        if $warn_no_import; then
+            pr_extra="⚠️ **CLAUDE.md does not import \`@AGENTS.md\`** — Claude Code will not see this guidance. This sync never rewrites an existing CLAUDE.md by default. To fix, add a line containing exactly \`@AGENTS.md\` (outside code fences) to CLAUDE.md, or set \`fix_claude_md: true\` in \`.agents-sync.yml\` to let the sync propose the rewrite."
+        elif $claude_md_fixed; then
+            pr_extra="This PR also rewrites CLAUDE.md to the standard \`@AGENTS.md\` bridge (opted in via \`fix_claude_md: true\`) because the previous file never imported AGENTS.md."
+        fi
+
+        existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
+            --jq '.[0].number // empty' 2>/dev/null || true)
+
+        if [[ -n "$existing_pr" ]]; then
+            log "PR #$existing_pr already exists — branch updated."
+            pr_number="$existing_pr"
+        else
+            # --head: gh cannot infer the head branch in a fresh temp clone.
+            # --base: the default branch varies across repos (main vs master),
+            #         and omitting --base while passing --head can mistarget.
+            # Capture the created PR's URL to derive its number for auto-merge.
+            if pr_url=$(gh pr create \
+                --head "$BRANCH_NAME" \
+                --base "$default_branch" \
+                --title "chore: sync AGENTS.md from _agent-guidance" \
+                --body "$(cat <<EOF
 Automated sync of the managed portion of \`AGENTS.md\` from the central
 [\`_agent-guidance\`](https://github.com/${ORG}/${SELF_REPO}) repository.
 
@@ -444,13 +482,30 @@ existing CLAUDE.md is left untouched unless this repo opts in via
 
 ${pr_extra}
 EOF
-)"; then
-            log "PR created."
-            ((OK_COUNT++)) || true
-        else
-            fail "PR creation failed for $repo_name"
-            ((FAIL_COUNT++)) || true
+)"); then
+                log "PR created."
+                pr_number="${pr_url##*/}"
+            else
+                fail "PR creation failed for $repo_name"
+                ((FAIL_COUNT++)) || true
+                cd "$REPO_ROOT"; continue
+            fi
         fi
+
+        # Enable auto-merge so the PR lands on its own once checks pass. Try
+        # squash first, then a plain merge; a repo may disable one method.
+        # A PR left open for manual merge is an acceptable degraded outcome,
+        # so none of these count as a repo failure.
+        if [[ -n "$pr_number" ]]; then
+            if ! gh pr merge "$pr_number" --auto --squash 2>/dev/null \
+                && ! gh pr merge "$pr_number" --auto --merge 2>/dev/null; then
+                log "WARN: could not enable auto-merge on PR #$pr_number — left open for manual merge."
+            fi
+        else
+            log "WARN: could not enable auto-merge — left open for manual merge."
+        fi
+
+        ((OK_COUNT++)) || true
     fi
 
     cd "$REPO_ROOT"
