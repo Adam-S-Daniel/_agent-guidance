@@ -1,38 +1,28 @@
 # AGENTS.md Drift Report
 
-> Last generated: 2026-07-16 08:14 UTC
+> Last generated: 2026-07-21 00:25 UTC
 
-## Adam-S-Daniel
+## testorg
 
-> Organization: `Adam-S-Daniel` — 15 repo(s) scanned
-
-| Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |
-|------------|--------|------------|-------------------|---------|----------|-------|
-| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | **pr-open** | yes | bridge-ok | #3 | none |  |
-| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | **pr-open** | yes | **no-import** | #41 | none |  |
-| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | **pr-open** | no | bridge-ok | #2566 | none |  |
-| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | **drift-detected** | yes | bridge-ok | none | none |  |
-| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | **pr-open** | yes | bridge-ok | #4 | none |  |
-| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | **pr-open** | yes | bridge-ok | #11 | none |  |
-| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | **pr-open** | no | bridge-ok | #163 | none |  |
-| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | **no-agents-md** | — | missing | none | none | AGENTS.md not found in repo |
-| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | **pr-open** | yes | bridge-ok | #3 | none |  |
-| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | **no-agents-md** | — | missing | none | none | AGENTS.md not found in repo |
-| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | **pr-open** | yes | bridge-ok | #3 | none |  |
-| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | **pr-open** | yes | bridge-ok | #7 | none |  |
-| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | **pr-open** | yes | bridge-ok | #4 | none |  |
-| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | **pr-open** | yes | bridge-ok | #7 | none |  |
-| [`Adam-S-Daniel/tools`](https://github.com/Adam-S-Daniel/tools) | **pr-open** | yes | bridge-ok | #4 | none |  |
-
-## jodidaniel
-
-> Organization: `jodidaniel` — 3 repo(s) scanned
+> Organization: `testorg` — 7 repo(s) scanned
 
 | Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |
 |------------|--------|------------|-------------------|---------|----------|-------|
-| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | **drift-detected** | yes | bridge-ok | none | none |  |
-| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | **pr-open** | yes | **no-import** | #10 | none |  |
-| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | **pr-open** | yes | bridge-ok | #2 | none |  |
+| [`testorg/repo-existing-no-marker`](https://github.com/testorg/repo-existing-no-marker) | **pr-open** | yes | bridge-ok | #null | python |  |
+| [`testorg/repo-fix-claude`](https://github.com/testorg/repo-fix-claude) | **pr-open** | yes | bridge-ok | #null | python |  |
+| [`testorg/repo-no-sync`](https://github.com/testorg/repo-no-sync) | **pr-open** | yes | bridge-ok | #null | rust |  |
+| [`testorg/repo-up-to-date-no-claude`](https://github.com/testorg/repo-up-to-date-no-claude) | **pr-open** | yes | bridge-ok | #null | python |  |
+| [`testorg/repo-with-claude-md`](https://github.com/testorg/repo-with-claude-md) | **pr-open** | yes | **no-import** | #null | typescript |  |
+| [`testorg/repo-with-existing`](https://github.com/testorg/repo-with-existing) | **pr-open** | yes | bridge-ok | #null | go |  |
+| [`testorg/repo-with-sync`](https://github.com/testorg/repo-with-sync) | **pr-open** | yes | bridge-ok | #null | python docker |  |
+
+## testorg2
+
+> Organization: `testorg2` — 1 repo(s) scanned
+
+| Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |
+|------------|--------|------------|-------------------|---------|----------|-------|
+| [`testorg2/repo-owner2-only`](https://github.com/testorg2/repo-owner2-only) | **pr-open** | yes | bridge-ok | #null | rust |  |
 
 ---
 

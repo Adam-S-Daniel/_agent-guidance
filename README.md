@@ -21,11 +21,19 @@ The skills that used to live here (`debug-github-workflows`,
   (see `.agents-sync.example.yml`).
 - `scripts/sync.sh` (CI: `sync.yml`) scans the account's repos, rebuilds each
   repo's managed `AGENTS.md` portion, preserves anything under
-  `## Repo-specific additions`, and opens/updates a PR when content changed.
-  It also creates the `CLAUDE.md` bridge in repos that lack one, warns (in
-  the sync log and the PR body) when an existing `CLAUDE.md` doesn't import
-  `@AGENTS.md`, and can rewrite such a file when the repo opts in via
-  `fix_claude_md: true` — see [The CLAUDE.md bridge](#the-claudemd-bridge).
+  `## Repo-specific additions`, and pushes the change directly to the
+  default branch when content changed. This works because the
+  `agents-md-sync` GitHub App holds a declared ruleset bypass on every
+  fleet-managed repo — declared as code in
+  [Adam-S-Daniel/repo-settings](https://github.com/Adam-S-Daniel/repo-settings)
+  (see that repo's ADR 0001). Repos whose branch protection still rejects
+  the direct push (the cms-platform-managed sites) fall back to opening a
+  PR (`agents-md-sync/update`) and enabling auto-merge on it, left open
+  for manual merge only if auto-merge can't be enabled. It also creates
+  the `CLAUDE.md` bridge in repos that lack one, warns (in the sync log,
+  and in the fallback PR's body) when an existing `CLAUDE.md` doesn't
+  import `@AGENTS.md`, and can rewrite such a file when the repo opts in
+  via `fix_claude_md: true` — see [The CLAUDE.md bridge](#the-claudemd-bridge).
 - `scripts/drift-report.sh` (CI: nightly `drift-report.yml`) writes
   `drift-report.md`, a dashboard of which repos are missing or out of date,
   including a "CLAUDE.md bridge" column (`bridge-ok` / `no-import` /
@@ -59,7 +67,8 @@ guidance.`) instead of importing it left roughly 1,300 lines of managed
 guidance completely unread by Claude Code for months
 (Adam-S-Daniel/adamdaniel.ai#2545). Nothing failed loudly — the file existed,
 it just wasn't a working bridge. That's why bridge status is now surfaced in
-both the drift report and every sync PR body, not just checked silently.
+the drift report, the sync log, and the fallback PR's body when one exists,
+not just checked silently.
 
 ### Bridge contract
 

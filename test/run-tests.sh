@@ -36,6 +36,38 @@ assert_row_contains() {
     if grep -F "$2" "$1" | grep -qF "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
 }
 
+# The sync now pushes directly to main, mutating shared bare-repo state that
+# the old branch-only model left untouched. Snapshot the pristine bares after
+# setup so tests that must observe the pre-sync state (the drift report; the
+# re-run "N synced" counts) can restore it.
+snapshot_bare_repos() {
+    rm -rf "$TEST_DIR/bare-pristine"
+    cp -a "$TEST_DIR/bare" "$TEST_DIR/bare-pristine"
+}
+reset_bare_repos() {
+    rm -rf "$TEST_DIR/bare"
+    cp -a "$TEST_DIR/bare-pristine" "$TEST_DIR/bare"
+}
+
+# Install a pre-receive hook on a bare repo that rejects any update to
+# refs/heads/main (GH013-like) while allowing every other ref — simulating a
+# branch-protected default branch the sync's direct push cannot reach, so it
+# must fall back to a PR.
+install_reject_main_hook() {
+    local bare="$1"
+    cat > "$bare/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+while read -r _old _new ref; do
+    if [ "$ref" = "refs/heads/main" ]; then
+        echo "remote: error: GH013: Repository rule violations found for refs/heads/main." 1>&2
+        exit 1
+    fi
+done
+exit 0
+HOOK
+    chmod +x "$bare/hooks/pre-receive"
+}
+
 # ── Set up mock repos as bare git repos ────────────────────────────────────
 
 setup_mock_repos() {
@@ -262,6 +294,86 @@ MD
     # a second owner, `gh repo clone` fails loudly instead of the test
     # silently passing.
 
+    # Mock repo 10: protorg/repo-protected — its bare repo rejects any update
+    # to refs/heads/main (pre-receive hook), simulating a branch-protected
+    # default branch. The direct push must fail and the sync must fall back to
+    # a PR + auto-merge. Pre-existing no-import CLAUDE.md so the fallback PR
+    # body carries the "does not import" warning.
+    local repo10_bare="$TEST_DIR/bare/protorg_repo-protected"
+    local repo10_work="$TEST_DIR/work/repo-protected"
+    mkdir -p "$repo10_bare" "$repo10_work"
+    git init --bare --initial-branch=main "$repo10_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo10_work" >/dev/null 2>&1
+    cd "$repo10_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo10_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+YAML
+    cat > CLAUDE.md <<'MD'
+See [AGENTS.md](./AGENTS.md) for the agent guidance.
+MD
+    git add .agents-sync.yml CLAUDE.md
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    # Hook installed AFTER the setup push so seeding main succeeds; only the
+    # sync's later direct push is rejected.
+    install_reject_main_hook "$repo10_bare"
+
+    # Mock repo 11: protorg/repo-protected-fix — protected (same hook) and
+    # opted into fix_claude_md: true with an already-up-to-date AGENTS.md and a
+    # pointer-only CLAUDE.md, so the fallback PR body carries the fix_claude_md
+    # opt-in note.
+    local repo11_bare="$TEST_DIR/bare/protorg_repo-protected-fix"
+    local repo11_work="$TEST_DIR/work/repo-protected-fix"
+    mkdir -p "$repo11_bare" "$repo11_work"
+    git init --bare --initial-branch=main "$repo11_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo11_work" >/dev/null 2>&1
+    cd "$repo11_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo11_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+fix_claude_md: true
+YAML
+    local managed_for_repo11 marker_block_repo11
+    managed_for_repo11=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    marker_block_repo11="$(printf '%s\n\n%s\n' \
+        "## Repo-specific additions" \
+        "<!-- Add your repo-specific agent guidance below this line -->")"
+    printf '%s\n%s\n' "$managed_for_repo11" "$marker_block_repo11" > AGENTS.md
+    cat > CLAUDE.md <<'MD'
+See [AGENTS.md](./AGENTS.md) for the agent guidance.
+MD
+    git add .agents-sync.yml AGENTS.md CLAUDE.md
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    install_reject_main_hook "$repo11_bare"
+
+    # Mock repo 12: stalorg/repo-stale — unprotected, but carries a
+    # pre-existing agents-md-sync/update branch (and a still-"open" PR #42 via
+    # MOCK_OPEN_PR_REPOS in the stale-cleanup test). After a successful direct
+    # push the sync must close PR #42 and delete the stale branch.
+    local repo12_bare="$TEST_DIR/bare/stalorg_repo-stale"
+    local repo12_work="$TEST_DIR/work/repo-stale"
+    mkdir -p "$repo12_bare" "$repo12_work"
+    git init --bare --initial-branch=main "$repo12_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo12_work" >/dev/null 2>&1
+    cd "$repo12_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo12_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+YAML
+    git add .agents-sync.yml
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    # Pre-existing stale sync branch left behind by the old branch + PR model.
+    git push origin HEAD:agents-md-sync/update >/dev/null 2>&1
+
     cd "$REPO_ROOT"
 }
 
@@ -326,6 +438,17 @@ case "$1" in
                         json='[
                           {"nameWithOwner":"testorg2/repo-owner2-only"},
                           {"nameWithOwner":"testorg2/_agent-guidance"}
+                        ]'
+                        ;;
+                    protorg)
+                        json='[
+                          {"nameWithOwner":"protorg/repo-protected"},
+                          {"nameWithOwner":"protorg/repo-protected-fix"}
+                        ]'
+                        ;;
+                    stalorg)
+                        json='[
+                          {"nameWithOwner":"stalorg/repo-stale"}
                         ]'
                         ;;
                     *)
@@ -411,10 +534,20 @@ case "$1" in
     pr)
         case "$2" in
             list)
-                # Parse --jq from remaining args
+                # Parse --jq from remaining args. Return an "open" PR #42 for
+                # repos whose clone-dir basename (owner_repo) is listed in
+                # MOCK_OPEN_PR_REPOS — used by the stale-cleanup test; every
+                # other repo has no open PRs, as before.
                 shift 2
                 jq_filter=$(parse_jq_filter "$@")
                 json='[]'
+                current_repo=$(basename "$PWD")
+                for r in ${MOCK_OPEN_PR_REPOS:-}; do
+                    if [[ "$r" == "$current_repo" ]]; then
+                        json='[{"number":42}]'
+                        break
+                    fi
+                done
                 if [[ -n "$jq_filter" ]]; then
                     echo "$json" | jq -r "$jq_filter"
                 else
@@ -430,6 +563,16 @@ case "$1" in
                     printf '%s\n' "$pr_body" > "$MOCK_PR_BODY_DIR/$(basename "$PWD").body"
                 fi
                 echo "https://github.com/mock/pr/1"
+                ;;
+            close)
+                # gh pr close <number> --comment ... — log the closed number.
+                echo "pr-closed $3" >> "${MOCK_PR_LOG:-/dev/null}"
+                ;;
+            merge)
+                # gh pr merge <number> --auto --squash|--merge — always succeed,
+                # logging the args so tests can assert --auto was requested.
+                shift 2
+                echo "pr-merged $*" >> "${MOCK_PR_LOG:-/dev/null}"
                 ;;
         esac
         ;;
@@ -580,16 +723,13 @@ test_sync_full() {
     echo "=== Test: sync.sh (full run) ==="
 
     local pr_log="$TEST_DIR/pr-creations.log"
-    local pr_body_dir="$TEST_DIR/pr-bodies"
     rm -f "$pr_log"
-    rm -rf "$pr_body_dir"
 
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         MOCK_PR_LOG="$pr_log" \
-        MOCK_PR_BODY_DIR="$pr_body_dir" \
         REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/sync.sh" 2>&1
@@ -609,7 +749,7 @@ test_sync_full() {
     # Verify repo-with-existing preserved repo-specific content
     local existing_bare="$TEST_DIR/bare/testorg_repo-with-existing"
     local verify_dir="$TEST_DIR/verify-existing"
-    git clone "$existing_bare" "$verify_dir" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$existing_bare" "$verify_dir" 2>/dev/null || {
         fail "repo-with-existing: sync branch not created"
         return
     }
@@ -623,7 +763,7 @@ test_sync_full() {
     # Verify repo-with-sync has correct AGENTS.md
     local sync_bare="$TEST_DIR/bare/testorg_repo-with-sync"
     local verify_sync="$TEST_DIR/verify-sync"
-    git clone "$sync_bare" "$verify_sync" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$sync_bare" "$verify_sync" 2>/dev/null || {
         fail "repo-with-sync: sync branch not created"
         return
     }
@@ -637,7 +777,7 @@ test_sync_full() {
     # Verify repo-no-sync got the default_sections (rust) content
     local nosync_bare="$TEST_DIR/bare/testorg_repo-no-sync"
     local verify_nosync="$TEST_DIR/verify-no-sync"
-    git clone "$nosync_bare" "$verify_nosync" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$nosync_bare" "$verify_nosync" 2>/dev/null || {
         fail "repo-no-sync: sync branch not created"
         return
     }
@@ -646,7 +786,7 @@ test_sync_full() {
     # Verify repo-existing-no-marker preserved existing content under the marker
     local nomarker_bare="$TEST_DIR/bare/testorg_repo-existing-no-marker"
     local verify_nomarker="$TEST_DIR/verify-nomarker"
-    git clone "$nomarker_bare" "$verify_nomarker" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$nomarker_bare" "$verify_nomarker" 2>/dev/null || {
         fail "repo-existing-no-marker: sync branch not created"
         return
     }
@@ -683,7 +823,7 @@ test_sync_full() {
     # Verify repo-with-claude-md: existing CLAUDE.md left untouched, WARN emitted
     local claudemd_bare="$TEST_DIR/bare/testorg_repo-with-claude-md"
     local verify_claudemd="$TEST_DIR/verify-claude-md"
-    git clone "$claudemd_bare" "$verify_claudemd" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$claudemd_bare" "$verify_claudemd" 2>/dev/null || {
         fail "repo-with-claude-md: sync branch not created"
         return
     }
@@ -698,12 +838,11 @@ test_sync_full() {
         fail "repo-with-claude-md: existing CLAUDE.md byte-identical — never modified without opt-in"
     fi
     assert_contains "$TEST_DIR/sync-full-output.txt" "WARN: CLAUDE.md exists but does not import @AGENTS.md" "repo-with-claude-md: WARN emitted for non-bridging CLAUDE.md"
-    assert_contains "$pr_body_dir/testorg_repo-with-claude-md.body" "does not import" "repo-with-claude-md: PR body warns about missing bridge"
 
     # Verify repo-up-to-date-no-claude: AGENTS.md untouched, only CLAUDE.md added
     local uptodate_bare="$TEST_DIR/bare/testorg_repo-up-to-date-no-claude"
     local verify_uptodate="$TEST_DIR/verify-up-to-date-no-claude"
-    git clone "$uptodate_bare" "$verify_uptodate" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$uptodate_bare" "$verify_uptodate" 2>/dev/null || {
         fail "repo-up-to-date-no-claude: sync branch not created"
         return
     }
@@ -725,7 +864,7 @@ test_sync_full() {
     # up to date) is untouched.
     local fixclaude_bare="$TEST_DIR/bare/testorg_repo-fix-claude"
     local verify_fixclaude="$TEST_DIR/verify-fix-claude"
-    git clone "$fixclaude_bare" "$verify_fixclaude" -b agents-md-sync/update 2>/dev/null || {
+    git clone "$fixclaude_bare" "$verify_fixclaude" 2>/dev/null || {
         fail "repo-fix-claude: sync branch not created"
         return
     }
@@ -751,24 +890,13 @@ test_sync_full() {
     fi
 
     assert_contains "$TEST_DIR/sync-full-output.txt" "Rewriting CLAUDE.md" "repo-fix-claude: sync log reports the rewrite"
-    assert_contains "$pr_body_dir/testorg_repo-fix-claude.body" "fix_claude_md" "repo-fix-claude: PR body mentions fix_claude_md opt-in"
 
     # Verify repo-excluded never got processed
     assert_not_contains "$TEST_DIR/sync-full-output.txt" "=== testorg/repo-excluded ===" "repo-excluded: never processed by sync"
 
-    # Verify PRs were created for all 7 non-excluded repos
-    if [[ -f "$pr_log" ]]; then
-        local pr_count
-        pr_count=$(wc -l < "$pr_log")
-        if [[ "$pr_count" -eq 7 ]]; then
-            pass "sync created PRs for all 7 repos"
-        else
-            fail "sync created PRs for all 7 repos — got $pr_count PR creations"
-        fi
-    else
-        fail "sync created PRs for all 7 repos — no PR log file found"
-    fi
-    assert_contains "$TEST_DIR/sync-full-output.txt" "PR created." "sync output shows PR created"
+    # Unprotected repos now take the DIRECT-push path — no PRs are created.
+    assert_not_contains "$pr_log" "pr-created" "sync used direct push (no PRs) for unprotected repos"
+    assert_contains "$TEST_DIR/sync-full-output.txt" "Pushed directly to main." "sync output shows a direct push to main"
 
     # Verify summary line
     assert_contains "$TEST_DIR/sync-full-output.txt" "Sync complete:" "sync shows summary line"
@@ -782,19 +910,10 @@ test_sync_multi_owner() {
     echo ""
     echo "=== Test: sync.sh (SYNC_OWNERS multi-owner) ==="
 
-    # test_sync_full (run earlier in this suite) already pushed
-    # agents-md-sync/update branches to the testorg bare repos, simulating
-    # still-open PRs. Delete those branches here to simulate the PRs having
-    # been merged/closed since then, so this second sync run can push a
-    # clean branch again — each sync.sh run clones a fresh shallow copy of
-    # main and cuts a brand-new local branch, so without this reset its
-    # history would diverge from whatever was pushed last time and a
-    # (correctly) non-force push would be rejected. That divergence is a
-    # real, pre-existing edge case (re-running sync while a PR is still
-    # open) unrelated to multi-owner support and out of scope here.
-    for bare in "$TEST_DIR"/bare/testorg_*; do
-        git -C "$bare" branch -D agents-md-sync/update >/dev/null 2>&1 || true
-    done
+    # test_sync_full (run earlier) direct-pushed to the testorg bare repos'
+    # main, mutating shared state. Restore the pristine bares so this run
+    # re-syncs every repo from the pre-sync baseline and "8 synced" holds.
+    reset_bare_repos
 
     local pr_log="$TEST_DIR/pr-creations-multi.log"
     rm -f "$pr_log"
@@ -817,17 +936,8 @@ test_sync_multi_owner() {
     assert_not_contains "$TEST_DIR/sync-multi-output.txt" "=== testorg2/_agent-guidance ===" "multi-owner: excludes self repo for testorg2"
     assert_contains "$TEST_DIR/sync-multi-output.txt" "repo-with-sync" "multi-owner: still processes testorg's repos"
 
-    if [[ -f "$pr_log" ]]; then
-        local pr_count
-        pr_count=$(wc -l < "$pr_log")
-        if [[ "$pr_count" -eq 8 ]]; then
-            pass "multi-owner: sync created PRs for all 8 repos across both owners"
-        else
-            fail "multi-owner: sync created PRs for all 8 repos across both owners — got $pr_count PR creations"
-        fi
-    else
-        fail "multi-owner: sync created PRs for all 8 repos across both owners — no PR log file found"
-    fi
+    # Every repo is unprotected, so the sync direct-pushes to main — no PRs.
+    assert_not_contains "$pr_log" "pr-created" "multi-owner: all repos direct-pushed (no PRs created)"
 
     assert_contains "$TEST_DIR/sync-multi-output.txt" "8 synced" "multi-owner: sync reports 8 synced"
     assert_contains "$TEST_DIR/sync-multi-output.txt" "0 failed" "multi-owner: sync reports 0 failed"
@@ -1142,6 +1252,108 @@ test_drift_report_multi_owner() {
     fi
 }
 
+# ── Test 3d: protected default branch → PR fallback + auto-merge ──────────
+
+test_sync_protected_fallback() {
+    echo ""
+    echo "=== Test: sync.sh (protected default branch → PR fallback) ==="
+
+    local pr_log="$TEST_DIR/pr-protected.log"
+    local pr_body_dir="$TEST_DIR/pr-bodies-protected"
+    rm -f "$pr_log"
+    rm -rf "$pr_body_dir"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=protorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        MOCK_PR_LOG="$pr_log" \
+        MOCK_PR_BODY_DIR="$pr_body_dir" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+
+    echo "$output" > "$TEST_DIR/sync-protected-output.txt"
+
+    assert_contains "$TEST_DIR/sync-protected-output.txt" "direct push to main rejected — falling back to PR" "protected: logs the rejected direct push + fallback"
+
+    # main must be UNCHANGED — the pre-receive hook rejected the direct push,
+    # so no managed AGENTS.md landed there (repo-protected had none to start).
+    local prot_bare="$TEST_DIR/bare/protorg_repo-protected"
+    local verify_main="$TEST_DIR/verify-protected-main"
+    git clone "$prot_bare" "$verify_main" 2>/dev/null || {
+        fail "repo-protected: could not clone main"
+        return
+    }
+    assert_not_contains "$verify_main/AGENTS.md" "BEGIN MANAGED SECTION" "repo-protected: main left unchanged (no managed AGENTS.md)"
+
+    # The managed content must have landed on the fallback branch instead.
+    local verify_branch="$TEST_DIR/verify-protected-branch"
+    git clone "$prot_bare" "$verify_branch" -b agents-md-sync/update 2>/dev/null || {
+        fail "repo-protected: fallback branch not pushed"
+        return
+    }
+    assert_contains "$verify_branch/AGENTS.md" "## Python" "repo-protected: fallback branch has managed python section"
+    assert_contains "$verify_branch/AGENTS.md" "BEGIN MANAGED SECTION" "repo-protected: fallback branch has managed section"
+
+    # A PR was created and auto-merge was enabled on it (the "--auto" flag).
+    assert_contains "$pr_log" "pr-created" "protected: PR created on fallback"
+    assert_contains "$pr_log" "pr-merged 1 --auto" "protected: auto-merge enabled on the fallback PR"
+
+    # PR bodies are captured only on the fallback path — the no-import warning
+    # and the fix_claude_md opt-in note now surface here.
+    assert_contains "$pr_body_dir/protorg_repo-protected.body" "does not import" "protected: PR body warns about the non-bridging CLAUDE.md"
+    assert_contains "$pr_body_dir/protorg_repo-protected-fix.body" "fix_claude_md" "protected: PR body notes the fix_claude_md opt-in"
+
+    assert_contains "$TEST_DIR/sync-protected-output.txt" "2 synced" "protected: both repos synced via fallback"
+    assert_contains "$TEST_DIR/sync-protected-output.txt" "0 failed" "protected: no repo failures on the fallback path"
+}
+
+# ── Test 3e: stale PR/branch cleanup after a direct push ──────────────────
+
+test_sync_stale_cleanup() {
+    echo ""
+    echo "=== Test: sync.sh (stale PR/branch cleanup after direct push) ==="
+
+    local pr_log="$TEST_DIR/pr-stale.log"
+    rm -f "$pr_log"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=stalorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        MOCK_PR_LOG="$pr_log" \
+        MOCK_OPEN_PR_REPOS="stalorg_repo-stale" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+
+    echo "$output" > "$TEST_DIR/sync-stale-output.txt"
+
+    assert_contains "$TEST_DIR/sync-stale-output.txt" "Pushed directly to main." "stale: direct push to main succeeded"
+
+    # Managed content updated on main.
+    local stale_bare="$TEST_DIR/bare/stalorg_repo-stale"
+    local verify_main="$TEST_DIR/verify-stale-main"
+    git clone "$stale_bare" "$verify_main" 2>/dev/null || {
+        fail "repo-stale: could not clone main"
+        return
+    }
+    assert_contains "$verify_main/AGENTS.md" "## Python" "stale: managed content pushed to main"
+
+    # The pre-existing open PR #42 was closed.
+    assert_contains "$pr_log" "pr-closed 42" "stale: superseded PR #42 closed"
+
+    # The stale sync branch was deleted from the remote.
+    if git ls-remote --heads "$stale_bare" agents-md-sync/update | grep -q agents-md-sync/update; then
+        fail "stale: agents-md-sync/update branch still present on remote"
+    else
+        pass "stale: agents-md-sync/update branch deleted from remote"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -1150,12 +1362,18 @@ echo "========================================="
 
 setup_mock_repos
 create_mock_gh
+snapshot_bare_repos
 test_build_script
 test_bridge_status
 test_sync_dry_run
 test_sync_full
+test_sync_protected_fallback
+test_sync_stale_cleanup
 test_sync_failure_exit_code
 test_sync_round_trip_no_marker
+# The sync now direct-pushes to main; restore the pristine bares so the drift
+# report observes the pre-sync baseline (test_sync_multi_owner resets itself).
+reset_bare_repos
 test_drift_report
 test_sync_multi_owner
 test_sync_per_owner_token

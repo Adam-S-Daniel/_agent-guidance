@@ -71,6 +71,24 @@ email addresses and their correspondents' into a public Actions log.)
 - **Commit with the GitHub `…@users.noreply.github.com` identity** on public
   repos so a real email is not baked into commit author/committer metadata.
 
+## Automation vs branch protection
+
+Fleet repos enforce PR-only default branches via ruleset, managed as code in
+`repo-settings` (see its ADR 0001). Design automation accordingly:
+
+- Never design a bot that pushes to a protected default branch ad hoc — the
+  push is rejected (GH013), even from the repo's own workflows.
+- Generated data (badges, run summaries, reports, dashboards) belongs on a
+  dedicated unprotected results branch (e.g. skills-evals' `eval-results`);
+  consumers read from that branch and treat its content as untrusted.
+- The rare bot that genuinely must write to a default branch needs a ruleset
+  bypass actor declared in repo-settings' `fleet.yml` — never a hand-granted
+  UI bypass (the drift report flags those). The AGENTS.md sync App is the
+  standing example.
+- PR + auto-merge is not a sanctioned bot-write path for fleet repos; the
+  cms-platform-managed repos (outside the fleet ruleset) use it by their own
+  design.
+
 ## Testing
 
 - Run the existing test suite before considering a task complete.
