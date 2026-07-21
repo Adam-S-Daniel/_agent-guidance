@@ -1,28 +1,38 @@
 # AGENTS.md Drift Report
 
-> Last generated: 2026-07-21 00:25 UTC
+> Last generated: 2026-07-21 08:29 UTC
 
-## testorg
+## Adam-S-Daniel
 
-> Organization: `testorg` — 7 repo(s) scanned
-
-| Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |
-|------------|--------|------------|-------------------|---------|----------|-------|
-| [`testorg/repo-existing-no-marker`](https://github.com/testorg/repo-existing-no-marker) | **pr-open** | yes | bridge-ok | #null | python |  |
-| [`testorg/repo-fix-claude`](https://github.com/testorg/repo-fix-claude) | **pr-open** | yes | bridge-ok | #null | python |  |
-| [`testorg/repo-no-sync`](https://github.com/testorg/repo-no-sync) | **pr-open** | yes | bridge-ok | #null | rust |  |
-| [`testorg/repo-up-to-date-no-claude`](https://github.com/testorg/repo-up-to-date-no-claude) | **pr-open** | yes | bridge-ok | #null | python |  |
-| [`testorg/repo-with-claude-md`](https://github.com/testorg/repo-with-claude-md) | **pr-open** | yes | **no-import** | #null | typescript |  |
-| [`testorg/repo-with-existing`](https://github.com/testorg/repo-with-existing) | **pr-open** | yes | bridge-ok | #null | go |  |
-| [`testorg/repo-with-sync`](https://github.com/testorg/repo-with-sync) | **pr-open** | yes | bridge-ok | #null | python docker |  |
-
-## testorg2
-
-> Organization: `testorg2` — 1 repo(s) scanned
+> Organization: `Adam-S-Daniel` — 15 repo(s) scanned
 
 | Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |
 |------------|--------|------------|-------------------|---------|----------|-------|
-| [`testorg2/repo-owner2-only`](https://github.com/testorg2/repo-owner2-only) | **pr-open** | yes | bridge-ok | #null | rust |  |
+| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | **drift-detected** | yes | **no-import** | none | none |  |
+| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | **pr-open** | no | bridge-ok | #2714 | none |  |
+| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | **pr-open** | yes | bridge-ok | #49 | none |  |
+| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | **pr-open** | no | bridge-ok | #181 | none |  |
+| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | **drift-detected** | yes | bridge-ok | none | none |  |
+| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | **no-agents-md** | — | missing | #3 | none | AGENTS.md not found in repo |
+
+## jodidaniel
+
+> Organization: `jodidaniel` — 3 repo(s) scanned
+
+| Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |
+|------------|--------|------------|-------------------|---------|----------|-------|
+| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | **pr-open** | yes | bridge-ok | #99 | none |  |
+| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | **drift-detected** | yes | **no-import** | none | none |  |
+| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | **drift-detected** | yes | bridge-ok | none | none |  |
 
 ---
 
