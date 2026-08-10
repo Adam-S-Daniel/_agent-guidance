@@ -605,7 +605,17 @@ test_build_script() {
     assert_contains "$TEST_DIR/build-output.md" "BEGIN MANAGED SECTION" "has managed section start marker"
     assert_contains "$TEST_DIR/build-output.md" "END MANAGED SECTION" "has managed section end marker"
     assert_contains "$TEST_DIR/build-output.md" "Sections: python docker" "lists sections in header"
-    assert_contains "$TEST_DIR/build-output.md" "## General guidelines" "includes base content"
+    # Derive the sentinel from base.md's first heading rather than hardcoding
+    # one. This assertion only means "the base content got included"; pinning
+    # it to a specific heading made it fail whenever base.md was reorganised,
+    # which is a rename, not a regression.
+    base_heading=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/base.md")
+    # An empty needle would make both assertions below vacuous (grep -F ""
+    # matches anything), so a headingless base.md must fail loudly instead.
+    if [ -z "$base_heading" ]; then
+        fail "agents-md/base.md has no '## ' heading to use as a base-content sentinel"
+    fi
+    assert_contains "$TEST_DIR/build-output.md" "$base_heading" "includes base content"
     assert_contains "$TEST_DIR/build-output.md" "## Python" "includes python section"
     assert_contains "$TEST_DIR/build-output.md" "## Docker" "includes docker section"
     assert_not_contains "$TEST_DIR/build-output.md" "## Go" "does not include unrequested section"
@@ -614,7 +624,7 @@ test_build_script() {
     output=$("$REPO_ROOT/scripts/build-agents-md.sh")
     echo "$output" > "$TEST_DIR/build-no-sections.md"
     assert_contains "$TEST_DIR/build-no-sections.md" "Sections: none" "reports none when no sections"
-    assert_contains "$TEST_DIR/build-no-sections.md" "## General guidelines" "still includes base"
+    assert_contains "$TEST_DIR/build-no-sections.md" "$base_heading" "still includes base"
 
     # Test with unknown section
     output=$("$REPO_ROOT/scripts/build-agents-md.sh" python bogus)
