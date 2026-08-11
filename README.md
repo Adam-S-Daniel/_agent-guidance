@@ -153,8 +153,9 @@ The workflows run in this mode. One GitHub App (`agents-md-sync`) with
 permissions `Contents: read & write`, `Pull requests: read & write`, and
 `Metadata: read`, installed on **both** the `Adam-S-Daniel` account and the
 `jodidaniel` org with access to every target repo. Its App ID is stored as the
-repository **variable** `APP_ID` and its private key as the repository
-**secret** `APP_PRIVATE_KEY`.
+repository **variable** `APP_CLIENT_ID` (the App's Client ID; the legacy
+`APP_ID` variable still works as a fallback) and its private key as the
+repository **secret** `APP_PRIVATE_KEY`.
 
 `sync.yml` and `drift-report.yml` each mint a short-lived installation token
 **per owner** at runtime with
@@ -201,7 +202,7 @@ modes can be mixed, e.g. a per-owner PAT for one account and the shared
 classic PAT covering the other.
 
 Add the App credentials (or the alternative PAT secrets) under Settings →
-Secrets and variables → Actions on this repo — `APP_ID` as a **variable**,
+Secrets and variables → Actions on this repo — `APP_CLIENT_ID` as a **variable**,
 `APP_PRIVATE_KEY` as a **secret**. In App mode, `sync.yml`'s "Verify at least
 one installation token was minted" step emits a `::warning::` for any owner
 whose token could not be minted (App not installed there) and continues,
