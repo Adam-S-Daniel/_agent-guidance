@@ -153,9 +153,9 @@ The workflows run in this mode. One GitHub App (`agents-md-sync`) with
 permissions `Contents: read & write`, `Pull requests: read & write`, and
 `Metadata: read`, installed on **both** the `Adam-S-Daniel` account and the
 `jodidaniel` org with access to every target repo. Its App ID is stored as the
-repository **variable** `APP_CLIENT_ID` (the App's Client ID; the legacy
-`APP_ID` variable still works as a fallback) and its private key as the
-repository **secret** `APP_PRIVATE_KEY`.
+repository **variable** `APP_CLIENT_ID` (the App's Client ID -- not its
+numeric App ID; the action's `app-id` input is deprecated) and its private
+key as the repository **secret** `APP_PRIVATE_KEY`.
 
 `sync.yml` and `drift-report.yml` each mint a short-lived installation token
 **per owner** at runtime with
