@@ -14,6 +14,15 @@ FAIL=0
 
 trap 'rm -rf "$TEST_DIR"' EXIT
 
+# These tests must never reach the network. sync.sh rewrites each clone's
+# `origin` to https://github.com/<repo> whenever GH_TOKEN is set, so an
+# ambient token in a developer's shell silently redirects every push away from
+# the mock bare repos and out to real GitHub — the suite then fails with
+# "access denied"/403 noise that looks like a code regression and is not. CI
+# never exports a plain GH_TOKEN (only GH_TOKEN_<OWNER>), so this only ever
+# bit local runs; unsetting both here makes the run deterministic everywhere.
+unset GH_TOKEN GITHUB_TOKEN
+
 # Ensure git identity is configured (CI runners may not have this set globally).
 if ! git config --global user.name &>/dev/null; then
     git config --global user.name "test-runner"
@@ -165,14 +174,8 @@ MD
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
-    # Central repos.yml fixture for this test run (NOT the real repo-root
-    # repos.yml — tests must not depend on the real exclusion list).
-    cat > "$TEST_DIR/repos.yml" <<'YAML'
-exclude:
-  - repo-excluded
-default_sections:
-  - rust
-YAML
+    # Central repos.yml fixture is written by setup_bootstrap_repos (it needs
+    # the stub hook's digest), which runs right after this function.
 
     # Mock repo 5: has .agents-sync.yml (typescript) and a pre-existing
     # CLAUDE.md that does NOT import @AGENTS.md, no AGENTS.md.
@@ -386,6 +389,168 @@ YAML
     cd "$REPO_ROOT"
 }
 
+# ── Set up the skills-bootstrap fixtures ───────────────────────────────────
+#
+# Delivery is opt-in and DOUBLE-KEYED (repos.yml allowlist AND the target repo
+# already carrying its own skills.lock), so the fixtures below exist to pin
+# each key, plus the two ways delivery must degrade instead of damaging
+# something:
+#
+#   bootorg/agentskills        the registry the pinned hook is fetched FROM
+#                              (deliberately absent from `gh repo list` so it
+#                              is never itself a sync target here)
+#   bootorg/repo-adopted       allowlisted + federated skills.lock + an
+#                              EXISTING SessionStart entry → the happy path,
+#                              and the append-don't-overwrite regression
+#   bootorg/repo-ignored       allowlisted + lock, but `.claude/` is
+#                              gitignored → `git add` on an ignored path exits
+#                              1, which under `set -euo pipefail` would abort
+#                              the WHOLE FLEET RUN. It sorts second, so if the
+#                              guard regresses, every repo after it silently
+#                              stops syncing
+#   bootorg/repo-no-lock       allowlisted, no lock → withhold (the hook with
+#                              no lock is a permanent DEGRADED verdict, not a
+#                              no-op)
+#   bootorg/repo-not-allowed   has a lock but is NOT allowlisted → nothing
+#   bootorg/repo-unparseable   allowlisted + lock, but settings.json is not
+#                              valid JSON → refuse to touch it, deliver nothing
+setup_bootstrap_repos() {
+    echo "Setting up skills-bootstrap fixtures..."
+
+    # The stub stands in for the real 46 KB hook: the sync only ever copies
+    # bytes and compares digests, so its CONTENT is irrelevant to these tests
+    # and a 4-line file keeps the fixtures readable.
+    local hook_src="$TEST_DIR/pinned-hook.sh"
+    cat > "$hook_src" <<'HOOK'
+#!/usr/bin/env bash
+# stub skills-bootstrap hook (test fixture)
+echo '{"hookSpecificOutput":{"hookEventName":"SessionStart"}}'
+HOOK
+    BOOTSTRAP_HOOK_SHA=$(sha256sum "$hook_src" | cut -d' ' -f1)
+
+    # A federated lock, mirroring adamdaniel.ai's live shape: two sources. If
+    # the sync ever writes a lock, this is what it would flatten.
+    cat > "$TEST_DIR/federated.lock" <<'LOCK'
+{
+  "registry": "bootorg/agentskills",
+  "ref": "1111111111111111111111111111111111111111",
+  "bundles": ["adam"],
+  "sources": [
+    {
+      "registry": "bootorg/cms-platform",
+      "ref": "2222222222222222222222222222222222222222",
+      "bundles": ["cms-platform"],
+      "layout": "skills"
+    }
+  ],
+  "skills": {"adam/finding-unknowns": "deadbeef"}
+}
+LOCK
+
+    # An existing SessionStart entry, byte-identical in shape to the one both
+    # live consumers carry. It must survive registration untouched.
+    cat > "$TEST_DIR/existing-settings.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "symlinkDirectories": ["vendor", "node_modules", ".bundle"]
+  }
+}
+JSON
+
+    local name bare work
+    for name in agentskills repo-adopted repo-ignored repo-no-lock \
+                repo-not-allowed repo-unparseable; do
+        bare="$TEST_DIR/bare/bootorg_$name"
+        work="$TEST_DIR/work/bootorg-$name"
+        mkdir -p "$bare" "$work"
+        git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+        git init --initial-branch=main "$work" >/dev/null 2>&1
+        cd "$work"
+        git config commit.gpgsign false
+        git remote add origin "$bare"
+
+        case "$name" in
+            agentskills)
+                mkdir -p .claude/hooks
+                cp "$hook_src" .claude/hooks/skills-bootstrap.sh
+                ;;
+            repo-adopted)
+                cp "$TEST_DIR/federated.lock" skills.lock
+                mkdir -p .claude
+                cp "$TEST_DIR/existing-settings.json" .claude/settings.json
+                ;;
+            repo-ignored)
+                cp "$TEST_DIR/federated.lock" skills.lock
+                printf '.claude/\n' > .gitignore
+                ;;
+            repo-no-lock)
+                echo "# no lock here" > README.md
+                ;;
+            repo-not-allowed)
+                cp "$TEST_DIR/federated.lock" skills.lock
+                ;;
+            repo-unparseable)
+                cp "$TEST_DIR/federated.lock" skills.lock
+                mkdir -p .claude
+                printf '{ this is not json\n' > .claude/settings.json
+                ;;
+        esac
+
+        cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+YAML
+        git add -A
+        git commit -m "init" >/dev/null 2>&1
+        git push origin HEAD:main >/dev/null 2>&1
+    done
+
+    # Byte-exact pre-sync copies of every file the sync must NOT change.
+    cp "$TEST_DIR/work/bootorg-repo-adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"
+    cp "$TEST_DIR/work/bootorg-repo-unparseable/.claude/settings.json" "$TEST_DIR/repo-unparseable.settings.orig"
+
+    # Central repos.yml fixture for this test run (NOT the real repo-root
+    # repos.yml — tests must not depend on the real exclusion list or the real
+    # allowlist).
+    cat > "$TEST_DIR/repos.yml" <<YAML
+exclude:
+  - repo-excluded
+default_sections:
+  - rust
+skills_bootstrap:
+  registry: bootorg/agentskills
+  path: .claude/hooks/skills-bootstrap.sh
+  ref: 3333333333333333333333333333333333333333
+  sha256: $BOOTSTRAP_HOOK_SHA
+  repos:
+    - repo-adopted
+    - repo-ignored
+    - repo-no-lock
+    - repo-unparseable
+YAML
+
+    # Same registry and allowlist, but a WRONG digest — used by the
+    # digest-mismatch test.
+    sed 's/^  sha256: .*/  sha256: 00000000000000000000000000000000000000000000000000000000deadbeef/' \
+        "$TEST_DIR/repos.yml" > "$TEST_DIR/repos-baddigest.yml"
+
+    cd "$REPO_ROOT"
+}
+
 # ── Create mock gh CLI ─────────────────────────────────────────────────────
 
 create_mock_gh() {
@@ -460,6 +625,17 @@ case "$1" in
                           {"nameWithOwner":"stalorg/repo-stale"}
                         ]'
                         ;;
+                    bootorg)
+                        # bootorg/agentskills is deliberately ABSENT: it is the
+                        # registry the hook is fetched from, not a sync target.
+                        json='[
+                          {"nameWithOwner":"bootorg/repo-adopted"},
+                          {"nameWithOwner":"bootorg/repo-ignored"},
+                          {"nameWithOwner":"bootorg/repo-no-lock"},
+                          {"nameWithOwner":"bootorg/repo-not-allowed"},
+                          {"nameWithOwner":"bootorg/repo-unparseable"}
+                        ]'
+                        ;;
                     *)
                         json='[]'
                         ;;
@@ -514,6 +690,11 @@ case "$1" in
             owner="${BASH_REMATCH[1]}"
             repo="${BASH_REMATCH[2]}"
             file_path="${BASH_REMATCH[3]}"
+            # Strip a ?ref=<sha> query. The mock always serves `main`: pinning
+            # is exercised by the digest check in sync.sh, not by the mock
+            # resolving refs, and a mock that pretended to would be testing
+            # itself.
+            file_path="${file_path%%\?*}"
             repo_slug="${owner}_${repo}"
             bare_path="${MOCK_BARE_DIR}/${repo_slug}"
 
@@ -1240,6 +1421,67 @@ test_drift_report() {
     assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge legend" "drift report has CLAUDE.md bridge legend"
 }
 
+# ── Test 4b: drift-report.sh skills-bootstrap column ──────────────────────
+
+test_drift_report_bootstrap() {
+    echo ""
+    echo "=== Test: drift-report.sh (skills-bootstrap column) ==="
+
+    # Observe the fully-delivered state produced by test_sync_bootstrap.
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-bootstrap-output.txt"
+
+    local rpt="$REPO_ROOT/drift-report.md"
+    assert_contains "$rpt" "skills-bootstrap" "drift report has a skills-bootstrap column"
+    assert_contains "$rpt" "skills-bootstrap legend" "drift report has a skills-bootstrap legend"
+
+    assert_row_contains "$rpt" "repo-adopted" "ok" "drift report: repo-adopted is ok"
+    # The cheapest answer to invisible lock staleness: print what each lock
+    # pins, per federated source.
+    assert_row_contains "$rpt" "repo-adopted" "lock: agentskills@1111111 + cms-platform@2222222" "drift report: repo-adopted's federated lock pins are shown"
+    assert_row_contains "$rpt" "repo-no-lock" "no-lock" "drift report: repo-no-lock shows the withheld state"
+    assert_row_contains "$rpt" "repo-ignored" "**missing**" "drift report: repo-ignored (blocked by .gitignore) shows as missing"
+
+    # repo-not-allowed carries a lock but no hook and is not allowlisted, so
+    # the bootstrap column must stay blank rather than inventing a to-do.
+    if grep -F "repo-not-allowed" "$rpt" | grep -qF "no-lock"; then
+        fail "drift report: non-allowlisted repo has no bootstrap state"
+    else
+        pass "drift report: non-allowlisted repo has no bootstrap state"
+    fi
+}
+
+# ── Test 4c: a hook in a repo that is no longer allowlisted ───────────────
+
+test_drift_report_bootstrap_unmanaged() {
+    echo ""
+    echo "=== Test: drift-report.sh (unmanaged hook detection) ==="
+
+    # The sync has no delete semantics: dropping a repo from the allowlist
+    # leaves its hook in place, still running. `unmanaged` is the only thing
+    # in the fleet that would ever say so.
+    sed '/- repo-adopted/d' "$TEST_DIR/repos.yml" > "$TEST_DIR/repos-dropped.yml"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos-dropped.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-unmanaged-output.txt"
+
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-adopted" "**unmanaged**" "drift report: a hook left behind by a de-allowlisted repo is flagged unmanaged"
+}
+
 # ── Test 4a: drift-report.sh with SYNC_OWNERS (multiple owners) ───────────
 
 test_drift_report_multi_owner() {
@@ -1376,6 +1618,468 @@ test_sync_stale_cleanup() {
     fi
 }
 
+# ── Test 5: bootstrap-status.sh ───────────────────────────────────────────
+
+test_bootstrap_status() {
+    echo ""
+    echo "=== Test: bootstrap-status.sh ==="
+
+    local s="$REPO_ROOT/scripts/bootstrap-status.sh"
+    local d="$TEST_DIR/bootstrap-status"
+    mkdir -p "$d"
+    local result
+
+    cp "$TEST_DIR/existing-settings.json" "$d/other-hook.json"
+    result=$("$s" "$d/other-hook.json")
+    [[ "$result" == "no-entry" ]] && pass "unrelated SessionStart entry -> no-entry" || fail "unrelated SessionStart entry -> no-entry (got '$result')"
+
+    cat > "$d/registered.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\""}]},
+      {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"", "timeout": 90}]}
+    ]
+  }
+}
+JSON
+    result=$("$s" "$d/registered.json")
+    [[ "$result" == "registered" ]] && pass "hook named in a SessionStart command -> registered" || fail "hook named in a SessionStart command -> registered (got '$result')"
+
+    # agentskills' own entry: no matcher, no timeout. Matching the whole
+    # command verbatim would call this unregistered and re-add it every run.
+    cat > "$d/bare-entry.json" <<'JSON'
+{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\""}]}]}}
+JSON
+    result=$("$s" "$d/bare-entry.json")
+    [[ "$result" == "registered" ]] && pass "matcher-less hand-written entry -> registered" || fail "matcher-less hand-written entry -> registered (got '$result')"
+
+    # The hook named under a DIFFERENT event never runs at session start. A
+    # grep over the file would call this registered; a parse must not.
+    cat > "$d/wrong-event.json" <<'JSON'
+{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}]}]}}
+JSON
+    result=$("$s" "$d/wrong-event.json")
+    if [[ "$result" == "no-entry" ]]; then
+        pass "hook under a non-SessionStart event -> no-entry (not fooled by a substring)"
+    else
+        fail "hook under a non-SessionStart event -> no-entry (got '$result')"
+    fi
+
+    printf '{ not json\n' > "$d/broken.json"
+    result=$("$s" "$d/broken.json")
+    [[ "$result" == "unparseable" ]] && pass "malformed JSON -> unparseable" || fail "malformed JSON -> unparseable (got '$result')"
+
+    printf '[]\n' > "$d/array.json"
+    result=$("$s" "$d/array.json")
+    [[ "$result" == "unparseable" ]] && pass "non-object top level -> unparseable" || fail "non-object top level -> unparseable (got '$result')"
+
+    result=$("$s" "$d/absent.json")
+    [[ "$result" == "missing" ]] && pass "absent file -> missing" || fail "absent file -> missing (got '$result')"
+
+    result=$(printf '' | "$s" -)
+    [[ "$result" == "missing" ]] && pass "stdin mode: empty -> missing" || fail "stdin mode: empty -> missing (got '$result')"
+
+    result=$(cat "$d/registered.json" | "$s" -)
+    [[ "$result" == "registered" ]] && pass "stdin mode: registered" || fail "stdin mode: registered (got '$result')"
+}
+
+# ── Test 5a: register-bootstrap-hook.sh (append + idempotence) ────────────
+
+test_register_bootstrap_hook() {
+    echo ""
+    echo "=== Test: register-bootstrap-hook.sh (append, never overwrite) ==="
+
+    local r="$REPO_ROOT/scripts/register-bootstrap-hook.sh"
+    local d="$TEST_DIR/register-hook"
+    mkdir -p "$d"
+    local out rc
+
+    # ── The regression both live consumers depend on: an existing
+    #    setup-hooks.sh SessionStart entry must survive verbatim.
+    cp "$TEST_DIR/existing-settings.json" "$d/consumer.json"
+    out=$("$r" "$d/consumer.json")
+    [[ "$out" == "registered" ]] && pass "existing settings.json -> registered" || fail "existing settings.json -> registered (got '$out')"
+
+    assert_contains "$d/consumer.json" "setup-hooks.sh" "append: pre-existing hook command survives"
+    assert_contains "$d/consumer.json" "skills-bootstrap.sh" "append: bootstrap hook command added"
+    assert_contains "$d/consumer.json" "symlinkDirectories" "append: unrelated top-level keys survive"
+
+    # Structure, not substrings: two SEPARATE groups, ours last, and the
+    # pre-existing group's matcher/timeout/command untouched.
+    python3 - "$d/consumer.json" <<'PY' > "$d/shape.txt"
+import json, sys
+doc = json.load(open(sys.argv[1]))
+g = doc["hooks"]["SessionStart"]
+print("groups=%d" % len(g))
+print("first_cmd=%s" % g[0]["hooks"][0]["command"])
+print("first_timeout=%s" % g[0]["hooks"][0].get("timeout"))
+print("first_matcher=%s" % g[0].get("matcher"))
+print("last_cmd=%s" % g[-1]["hooks"][0]["command"])
+print("last_timeout=%s" % g[-1]["hooks"][0].get("timeout"))
+print("last_matcher=%s" % g[-1].get("matcher"))
+PY
+    assert_contains "$d/shape.txt" "groups=2" "append: a SEPARATE group was added (not merged into the existing one)"
+    assert_contains "$d/shape.txt" "first_cmd=bash \"\$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"" "append: existing group's command unchanged"
+    assert_contains "$d/shape.txt" "first_timeout=30" "append: existing group's timeout unchanged"
+    assert_contains "$d/shape.txt" "first_matcher=startup|resume" "append: existing group's matcher unchanged"
+    assert_contains "$d/shape.txt" "last_cmd=bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"" "append: new group's command matches the live reference"
+    assert_contains "$d/shape.txt" "last_timeout=90" "append: new group's timeout is 90"
+
+    # ── Idempotence: a second application must be a byte-for-byte no-op.
+    cp "$d/consumer.json" "$d/consumer.after1.json"
+    out=$("$r" "$d/consumer.json")
+    [[ "$out" == "already-registered" ]] && pass "second application -> already-registered" || fail "second application -> already-registered (got '$out')"
+    if cmp -s "$d/consumer.after1.json" "$d/consumer.json"; then
+        pass "idempotent: file byte-identical after a second application"
+    else
+        fail "idempotent: file byte-identical after a second application"
+    fi
+
+    # ── Absent file: created with just our group.
+    out=$("$r" "$d/fresh.json")
+    [[ "$out" == "registered" ]] && pass "absent settings.json -> created" || fail "absent settings.json -> created (got '$out')"
+    assert_contains "$d/fresh.json" "skills-bootstrap.sh" "absent settings.json: hook registered in the new file"
+    out=$("$r" "$d/fresh.json")
+    [[ "$out" == "already-registered" ]] && pass "created file is idempotent too" || fail "created file is idempotent too (got '$out')"
+
+    # ── Unparseable: refuse, exit 3, write NOTHING.
+    printf '{ not json\n' > "$d/broken.json"
+    cp "$d/broken.json" "$d/broken.orig"
+    rc=0
+    out=$("$r" "$d/broken.json") || rc=$?
+    [[ "$rc" -eq 3 ]] && pass "unparseable settings.json -> exit 3" || fail "unparseable settings.json -> exit 3 (got $rc)"
+    if cmp -s "$d/broken.json" "$d/broken.orig"; then
+        pass "unparseable settings.json left byte-identical (never rewritten)"
+    else
+        fail "unparseable settings.json left byte-identical (never rewritten)"
+    fi
+
+    # ── A `hooks` key of the wrong TYPE is configuration we do not
+    #    understand; coercing it would destroy it.
+    printf '{"hooks": "nope"}\n' > "$d/weird.json"
+    cp "$d/weird.json" "$d/weird.orig"
+    rc=0
+    out=$("$r" "$d/weird.json") || rc=$?
+    [[ "$rc" -eq 3 ]] && pass "wrong-typed hooks key -> exit 3" || fail "wrong-typed hooks key -> exit 3 (got $rc)"
+    if cmp -s "$d/weird.json" "$d/weird.orig"; then
+        pass "wrong-typed hooks key left byte-identical"
+    else
+        fail "wrong-typed hooks key left byte-identical"
+    fi
+}
+
+# ── Test 5b: sync.sh delivers the bootstrap hook (opt-in, double-keyed) ────
+
+test_sync_bootstrap() {
+    echo ""
+    echo "=== Test: sync.sh (skills-bootstrap delivery) ==="
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-bootstrap.txt"
+
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "pinned hook fetched" "bootstrap: pinned hook fetched and digest verified"
+
+    # ── The gitignore fleet-killer. `git add` on an ignored path exits 1 and
+    #    would abort the whole run under set -euo pipefail. repo-ignored sorts
+    #    SECOND, so the three repos after it prove the run survived.
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" ".claude/ is gitignored in bootorg/repo-ignored" "bootstrap: gitignored .claude/ is detected and warned, not force-added"
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "=== bootorg/repo-no-lock ===" "bootstrap: the run SURVIVES a gitignored .claude/ (later repos still processed)"
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "=== bootorg/repo-unparseable ===" "bootstrap: the run reaches the last repo after the gitignored one"
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "5 synced" "bootstrap: all five bootorg repos synced"
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "0 failed" "bootstrap: no repo failures"
+
+    # ── repo-adopted: hook delivered, registration APPENDED, lock untouched.
+    local adopted="$TEST_DIR/verify-bootstrap-adopted"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$adopted" 2>/dev/null || {
+        fail "repo-adopted: could not clone"
+        return
+    }
+    if [[ -f "$adopted/.claude/hooks/skills-bootstrap.sh" ]]; then
+        pass "repo-adopted: hook file delivered"
+    else
+        fail "repo-adopted: hook file delivered"
+    fi
+    if cmp -s "$adopted/.claude/hooks/skills-bootstrap.sh" "$TEST_DIR/pinned-hook.sh"; then
+        pass "repo-adopted: delivered hook is byte-identical to the pinned copy"
+    else
+        fail "repo-adopted: delivered hook is byte-identical to the pinned copy"
+    fi
+    assert_contains "$adopted/.claude/settings.json" "setup-hooks.sh" "repo-adopted: pre-existing SessionStart entry preserved"
+    assert_contains "$adopted/.claude/settings.json" "skills-bootstrap.sh" "repo-adopted: bootstrap entry appended"
+
+    # THE non-negotiable: the federated lock must survive byte-for-byte.
+    if cmp -s "$adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
+        pass "repo-adopted: federated skills.lock byte-identical — the sync never writes it"
+    else
+        fail "repo-adopted: federated skills.lock byte-identical — the sync never writes it"
+    fi
+    assert_contains "$adopted/skills.lock" "bootorg/cms-platform" "repo-adopted: the lock's second federated source survives"
+
+    # ── repo-no-lock: allowlisted but undeclared → withhold, and say why.
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "no skills.lock in the repo yet" "repo-no-lock: withheld with a stated reason"
+    local nolock="$TEST_DIR/verify-bootstrap-nolock"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$nolock" 2>/dev/null || {
+        fail "repo-no-lock: could not clone"
+        return
+    }
+    if [[ -e "$nolock/.claude" ]]; then
+        fail "repo-no-lock: nothing under .claude/ was created"
+    else
+        pass "repo-no-lock: nothing under .claude/ was created"
+    fi
+    if [[ -e "$nolock/skills.lock" ]]; then
+        fail "repo-no-lock: the sync did NOT create a skills.lock"
+    else
+        pass "repo-no-lock: the sync did NOT create a skills.lock"
+    fi
+
+    # ── repo-not-allowed: has a lock, but the fleet never allowlisted it.
+    local notallowed="$TEST_DIR/verify-bootstrap-notallowed"
+    git clone "$TEST_DIR/bare/bootorg_repo-not-allowed" "$notallowed" 2>/dev/null || {
+        fail "repo-not-allowed: could not clone"
+        return
+    }
+    if [[ -e "$notallowed/.claude" ]]; then
+        fail "repo-not-allowed: a lock alone does NOT trigger delivery"
+    else
+        pass "repo-not-allowed: a lock alone does NOT trigger delivery"
+    fi
+
+    # ── repo-ignored: warned above; nothing may have landed.
+    local ignored="$TEST_DIR/verify-bootstrap-ignored"
+    git clone "$TEST_DIR/bare/bootorg_repo-ignored" "$ignored" 2>/dev/null || {
+        fail "repo-ignored: could not clone"
+        return
+    }
+    if [[ -f "$ignored/.claude/hooks/skills-bootstrap.sh" ]]; then
+        fail "repo-ignored: no hook committed into a repo that gitignores .claude/"
+    else
+        pass "repo-ignored: no hook committed into a repo that gitignores .claude/"
+    fi
+
+    # ── repo-unparseable: refuse to edit, deliver nothing, leave it alone.
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "is not parseable JSON — refusing to edit it" "repo-unparseable: refusal is logged"
+    local unparse="$TEST_DIR/verify-bootstrap-unparseable"
+    git clone "$TEST_DIR/bare/bootorg_repo-unparseable" "$unparse" 2>/dev/null || {
+        fail "repo-unparseable: could not clone"
+        return
+    }
+    if cmp -s "$unparse/.claude/settings.json" "$TEST_DIR/repo-unparseable.settings.orig"; then
+        pass "repo-unparseable: settings.json byte-identical (never rewritten)"
+    else
+        fail "repo-unparseable: settings.json byte-identical (never rewritten)"
+    fi
+    if [[ -f "$unparse/.claude/hooks/skills-bootstrap.sh" ]]; then
+        fail "repo-unparseable: hook withheld too (a hook nothing runs is silently dead)"
+    else
+        pass "repo-unparseable: hook withheld too (a hook nothing runs is silently dead)"
+    fi
+}
+
+# ── Test 5c: a second sync run is a no-op (no duplicate registration) ─────
+
+test_sync_bootstrap_idempotent() {
+    echo ""
+    echo "=== Test: sync.sh (skills-bootstrap idempotence on re-run) ==="
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-bootstrap-2.txt"
+
+    assert_contains "$TEST_DIR/sync-bootstrap-2.txt" "5 skipped" "re-run: every bootorg repo is now up to date"
+    assert_contains "$TEST_DIR/sync-bootstrap-2.txt" "0 synced" "re-run: nothing re-committed"
+
+    local adopted="$TEST_DIR/verify-bootstrap-adopted-2"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$adopted" 2>/dev/null || {
+        fail "repo-adopted (re-run): could not clone"
+        return
+    }
+    local groups
+    groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks']['SessionStart']))")
+    if [[ "$groups" -eq 2 ]]; then
+        pass "re-run: still exactly 2 SessionStart groups (registration not duplicated)"
+    else
+        fail "re-run: still exactly 2 SessionStart groups — got $groups"
+    fi
+    if cmp -s "$adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
+        pass "re-run: skills.lock STILL byte-identical"
+    else
+        fail "re-run: skills.lock STILL byte-identical"
+    fi
+}
+
+# ── Test 5d: a drifted hook is overwritten with the pinned copy ───────────
+
+test_sync_bootstrap_drift() {
+    echo ""
+    echo "=== Test: sync.sh (drifted hook is re-pinned) ==="
+
+    # Hand-edit the delivered hook on main, exactly as a well-meaning local
+    # patch (or a stale older pin) would leave it.
+    local w="$TEST_DIR/work/drift-adopted"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    printf '# hand-edited, drifted\n' >> "$w/.claude/hooks/skills-bootstrap.sh"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "drift the hook" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-bootstrap-drift.txt"
+
+    assert_contains "$TEST_DIR/sync-bootstrap-drift.txt" "hook differed from the pin — overwritten" "drift: the divergent hook is overwritten, not preserved"
+
+    local v="$TEST_DIR/verify-bootstrap-drift"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+        fail "drift: could not clone"
+        return
+    }
+    if cmp -s "$v/.claude/hooks/skills-bootstrap.sh" "$TEST_DIR/pinned-hook.sh"; then
+        pass "drift: hook restored byte-identical to the pinned copy"
+    else
+        fail "drift: hook restored byte-identical to the pinned copy"
+    fi
+    assert_not_contains "$v/.claude/hooks/skills-bootstrap.sh" "hand-edited, drifted" "drift: the local edit is gone"
+    if cmp -s "$v/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
+        pass "drift: skills.lock STILL byte-identical through the overwrite"
+    else
+        fail "drift: skills.lock STILL byte-identical through the overwrite"
+    fi
+}
+
+# ── Test 5e: a digest mismatch disables delivery and fails the run ────────
+
+test_sync_bootstrap_bad_digest() {
+    echo ""
+    echo "=== Test: sync.sh (pinned-hook digest mismatch) ==="
+
+    reset_bare_repos
+
+    local exit_code=0
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-baddigest.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-bootstrap-baddigest.txt" 2>&1 || exit_code=$?
+
+    assert_contains "$TEST_DIR/sync-bootstrap-baddigest.txt" "digest mismatch" "bad digest: mismatch reported"
+    assert_contains "$TEST_DIR/sync-bootstrap-baddigest.txt" "Delivery disabled for this run" "bad digest: delivery disabled for the run"
+    if [[ $exit_code -ne 0 ]]; then
+        pass "bad digest: run exits non-zero"
+    else
+        fail "bad digest: run exits non-zero (got 0)"
+    fi
+
+    # AGENTS.md still syncs — a bad pin must not take the guidance layer down.
+    local v="$TEST_DIR/verify-baddigest"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+        fail "bad digest: could not clone"
+        return
+    }
+    assert_contains "$v/AGENTS.md" "BEGIN MANAGED SECTION" "bad digest: AGENTS.md still synced (fail-soft, not fail-stop)"
+    if [[ -f "$v/.claude/hooks/skills-bootstrap.sh" ]]; then
+        fail "bad digest: no hook delivered"
+    else
+        pass "bad digest: no hook delivered"
+    fi
+}
+
+# ── Test 5f: --dry-run reports the bootstrap work honestly ────────────────
+
+test_sync_bootstrap_dry_run() {
+    echo ""
+    echo "=== Test: sync.sh --dry-run (skills-bootstrap visibility) ==="
+
+    reset_bare_repos
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" --dry-run 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-bootstrap-dry.txt"
+
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would add .claude/hooks/skills-bootstrap.sh" "dry-run: names the hook it would add"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would append a SessionStart entry" "dry-run: names the settings.json append"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "existing entries preserved" "dry-run: states that existing entries are preserved"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would NOT touch skills.lock" "dry-run: states that skills.lock is never touched"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "no skills.lock in the repo yet" "dry-run: explains the withheld repo"
+
+    # A dry run must change nothing at all.
+    local v="$TEST_DIR/verify-dry"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+        fail "dry-run: could not clone"
+        return
+    }
+    if [[ -f "$v/.claude/hooks/skills-bootstrap.sh" ]]; then
+        fail "dry-run: nothing was actually written"
+    else
+        pass "dry-run: nothing was actually written"
+    fi
+}
+
+# ── Test 5g: protected repo → the PR body discloses the hook ──────────────
+
+test_sync_bootstrap_pr_body() {
+    echo ""
+    echo "=== Test: sync.sh (bootstrap disclosure in the fallback PR body) ==="
+
+    reset_bare_repos
+    install_reject_main_hook "$TEST_DIR/bare/bootorg_repo-adopted"
+
+    local pr_body_dir="$TEST_DIR/pr-bodies-bootstrap"
+    rm -rf "$pr_body_dir"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        MOCK_PR_LOG="$TEST_DIR/pr-bootstrap.log" \
+        MOCK_PR_BODY_DIR="$pr_body_dir" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-bootstrap-prbody.txt"
+
+    local body="$pr_body_dir/bootorg_repo-adopted.body"
+    assert_contains "$body" "This PR also delivers" "PR body: the hook is called out explicitly"
+    assert_contains "$body" "SessionStart" "PR body: names the event it runs on"
+    assert_contains "$body" "ephemeral" "PR body: states that it only acts on ephemeral surfaces"
+    assert_contains "$body" "always-on context" "PR body: discloses the standing context cost"
+    assert_contains "$body" "existing entries are preserved" "PR body: states that existing SessionStart entries survive"
+    assert_contains "$body" "sha256 verified before writing" "PR body: states the delivered bytes were digest-verified"
+
+    rm -f "$TEST_DIR/bare/bootorg_repo-adopted/hooks/pre-receive"
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -1383,16 +2087,31 @@ echo "  Agent Guidance Integration Tests"
 echo "========================================="
 
 setup_mock_repos
+setup_bootstrap_repos
 create_mock_gh
 snapshot_bare_repos
 test_build_script
 test_bridge_status
+test_bootstrap_status
+test_register_bootstrap_hook
 test_sync_dry_run
 test_sync_full
 test_sync_protected_fallback
 test_sync_stale_cleanup
 test_sync_failure_exit_code
 test_sync_round_trip_no_marker
+# The skills-bootstrap lane mutates the bootorg bares in a fixed order:
+# dry-run (writes nothing) → deliver → re-run (no-op) → drift → report →
+# unmanaged report → bad digest → PR-body fallback. Each of the three that
+# needs a clean slate resets the bares itself.
+test_sync_bootstrap_dry_run
+test_sync_bootstrap
+test_sync_bootstrap_idempotent
+test_sync_bootstrap_drift
+test_drift_report_bootstrap
+test_drift_report_bootstrap_unmanaged
+test_sync_bootstrap_bad_digest
+test_sync_bootstrap_pr_body
 # The sync now direct-pushes to main; restore the pristine bares so the drift
 # report observes the pre-sync baseline (test_sync_multi_owner resets itself).
 reset_bare_repos
