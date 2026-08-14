@@ -8,12 +8,13 @@ set -euo pipefail
 #   • Whether the managed section matches what we would generate
 #   • Whether the repo-specific marker header is present
 #   • Whether CLAUDE.md imports @AGENTS.md (the Claude Code bridge)
+#   • Whether the skills-bootstrap hook is delivered, current and REGISTERED
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
 #
 # Output: drift-report.md in the repository root.
 #
-# Requirements: gh (GitHub CLI, authenticated), yq
+# Requirements: gh (GitHub CLI, authenticated), yq, python3
 #
 # Environment:
 #   SYNC_OWNERS              — space-separated list of owners to scan; when
@@ -27,6 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
 BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
+BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
+HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
+SETTINGS_REL_PATH=".claude/settings.json"
+LOCK_REL_PATH="skills.lock"
 OUTPUT_FILE="$REPO_ROOT/drift-report.md"
 MARKER="## Repo-specific additions"
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
@@ -74,6 +79,69 @@ if [[ -f "$REPOS_YML" ]]; then
         [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
     done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
 fi
+
+# ── skills-bootstrap delivery config (read-only mirror of sync.sh's) ───────
+
+BOOTSTRAP_REPOS=()
+BOOTSTRAP_REGISTRY=""
+BOOTSTRAP_PATH=""
+BOOTSTRAP_REF=""
+
+if [[ -f "$REPOS_YML" ]]; then
+    BOOTSTRAP_REGISTRY=$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_PATH=$(yq -r '.skills_bootstrap.path // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_REF=$(yq -r '.skills_bootstrap.ref // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    while IFS= read -r r; do
+        [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
+    done < <(yq -r '.skills_bootstrap.repos // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+fi
+
+bootstrap_allowlisted() {
+    local short="${1##*/}" entry
+    for entry in ${BOOTSTRAP_REPOS[@]+"${BOOTSTRAP_REPOS[@]}"}; do
+        [[ "$short" == "$entry" ]] && return 0
+    done
+    return 1
+}
+
+# The pinned hook, fetched lazily so a report run that touches no allowlisted
+# repo costs nothing. Fetch failure is not fatal: the column degrades to
+# "unverified" rather than the whole report failing.
+PINNED_HOOK=""
+PINNED_HOOK_TRIED=false
+pinned_hook() {
+    if ! $PINNED_HOOK_TRIED; then
+        PINNED_HOOK_TRIED=true
+        [[ -n "$BOOTSTRAP_REGISTRY" && -n "$BOOTSTRAP_PATH" && -n "$BOOTSTRAP_REF" ]] || return 1
+        PINNED_HOOK=$(fetch_file_content "$BOOTSTRAP_REGISTRY" "$BOOTSTRAP_PATH?ref=$BOOTSTRAP_REF")
+    fi
+    [[ -n "$PINNED_HOOK" ]]
+}
+
+# lock_summary <json> — "registry@shortref" per source, ", "-joined. This is the
+# cheapest available answer to "is a consumer's lock stale?": the report cannot
+# re-pin one (the generator lives in the registry, not here), but printing what
+# each lock pins is what stops staleness being INVISIBLE — a lock forty commits
+# behind installs cleanly and reports OK, so nothing else surfaces it.
+lock_summary() {
+    python3 -c '
+import json, sys
+try:
+    doc = json.loads(sys.stdin.read())
+except Exception:
+    print("unreadable")
+    sys.exit(0)
+parts = []
+def add(entry):
+    reg = str(entry.get("registry", "?")).split("/")[-1]
+    parts.append("%s@%s" % (reg, str(entry.get("ref", "?"))[:7]))
+add(doc)
+for src in doc.get("sources", []) or []:
+    if isinstance(src, dict):
+        add(src)
+print(" + ".join(parts))
+' 2>/dev/null || echo "unreadable"
+}
 
 # ── Write report header (once, before any owner) ────────────────────────────
 
@@ -155,12 +223,12 @@ echo ""
     echo ""
     echo "> Organization: \`$ORG\` — ${#REPOS[@]} repo(s) scanned"
     echo ""
-    echo "| Repository | Status | Has marker | CLAUDE.md bridge | Open PR | Sections | Notes |"
-    echo "|------------|--------|------------|-------------------|---------|----------|-------|"
+    echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | Open PR | Sections | Notes |"
+    echo "|------------|--------|------------|-------------------|------------------|---------|----------|-------|"
 } >> "$OUTPUT_FILE"
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
-    echo "| *(no repos found)* | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
+    echo "| *(no repos found)* | — | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
 fi
 
 for repo_name in "${REPOS[@]}"; do
@@ -243,6 +311,55 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── Check skills-bootstrap delivery ────────────────────────────────
+    # Reported for EVERY repo, not just allowlisted ones: a hook sitting in a
+    # repo that is no longer allowlisted still runs, and `unmanaged` is the
+    # only thing that would ever say so (the sync has no delete semantics).
+
+    bootstrap_cell="—"
+    current_hook=$(fetch_file_content "$repo_name" "$HOOK_REL_PATH")
+
+    if bootstrap_allowlisted "$repo_name"; then
+        current_lock=$(fetch_file_content "$repo_name" "$LOCK_REL_PATH")
+
+        if [[ -n "$current_lock" ]]; then
+            notes="lock: $(echo "$current_lock" | lock_summary)"
+        fi
+
+        if [[ -z "$current_hook" ]]; then
+            if [[ -z "$current_lock" ]]; then
+                # Delivery correctly withheld — not a fault, and not a to-do
+                # for the sync. The repo has not declared its bundles yet.
+                bootstrap_cell="no-lock"
+            else
+                bootstrap_cell="**missing**"
+            fi
+        else
+            current_settings=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH")
+            if [[ -z "$current_settings" ]]; then
+                bootstrap_status="missing"
+            else
+                bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+            fi
+
+            if [[ "$bootstrap_status" != "registered" ]]; then
+                # The silent-death case: the file is there, nothing runs it.
+                bootstrap_cell="**no-entry**"
+            elif ! pinned_hook; then
+                bootstrap_cell="unverified"
+            elif [[ "$current_hook" == "$PINNED_HOOK" ]]; then
+                # Both sides come through the same command-substitution path,
+                # so trailing-newline differences cancel; content is compared,
+                # not bytes-on-disk (sync.sh's cmp is the authoritative check).
+                bootstrap_cell="ok"
+            else
+                bootstrap_cell="**drifted**"
+            fi
+        fi
+    elif [[ -n "$current_hook" ]]; then
+        bootstrap_cell="**unmanaged**"
+    fi
+
     # ── Check for open sync PR ─────────────────────────────────────────
 
     pr_number=$(gh pr list --repo "$repo_name" --head "$BRANCH_NAME" \
@@ -255,7 +372,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Write row ──────────────────────────────────────────────────────
 
-    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
+    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $bootstrap_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
 done
 
 done
@@ -283,6 +400,28 @@ done
     echo "| bridge-ok | CLAUDE.md imports \`@AGENTS.md\` (line-start, outside code fences) |"
     echo "| **no-import** | CLAUDE.md exists but never imports \`@AGENTS.md\` — Claude Code will not see the managed guidance |"
     echo "| missing | No CLAUDE.md yet — sync adds the bridge in its next PR |"
+    echo ""
+    echo "**skills-bootstrap legend**"
+    echo ""
+    echo "Delivery is opt-in and double-keyed: the repo must be listed in"
+    echo "\`repos.yml\`'s \`skills_bootstrap.repos\` **and** already carry its own"
+    echo "\`skills.lock\`. See \`docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md\`."
+    echo ""
+    echo "| Status | Meaning |"
+    echo "|--------|---------|"
+    echo "| ok | Hook present, byte-equal to the pinned copy, and registered in \`.claude/settings.json\` |"
+    echo "| **no-entry** | Hook is present but **nothing runs it** — no SessionStart entry names it. Silently dead |"
+    echo "| **drifted** | Hook present but differs from the pinned copy — the next sync overwrites it |"
+    echo "| **missing** | Allowlisted and has a lock, but no hook — the next sync delivers it (or it is blocked; check the sync log for a gitignored \`.claude/\`) |"
+    echo "| no-lock | Allowlisted, no \`skills.lock\` yet — delivery deliberately withheld until the repo declares its bundles |"
+    echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"
+    echo "| unverified | Could not fetch the pinned hook this run — the drift comparison was skipped |"
+    echo "| — | Not allowlisted and no hook present |"
+    echo ""
+    echo "The **Notes** column carries each allowlisted repo's lock pins"
+    echo "(\`registry@shortref\`, one per federated source). Nothing else in the"
+    echo "fleet surfaces a stale lock: a lock pinned far behind still installs"
+    echo "cleanly and still reports \`OK\` in-session, by design."
 } >> "$OUTPUT_FILE"
 
 echo ""

@@ -31,3 +31,33 @@ sections:
 # NOTE: the rewrite REPLACES the whole file; only opt in if CLAUDE.md carries
 # no hand-written guidance worth keeping.
 # fix_claude_md: true
+
+# ── skills-bootstrap: there is deliberately NO key for it here ──────────────
+#
+# The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a
+# SessionStart hook that installs the skills registry's bundles into EPHEMERAL
+# Claude surfaces (cloud sessions, CI runners; it no-ops on a developer's
+# machine, where the marketplace install stays authoritative).
+#
+# It is off unless BOTH of these hold, and neither of them lives in this file:
+#
+#   1. the repo is listed in `skills_bootstrap.repos` in _agent-guidance's
+#      central `repos.yml` — the fleet operator's allowlist;
+#   2. the repo already contains a `skills.lock` — YOUR declaration of which
+#      bundles you install, and the pins/digests they are verified against.
+#
+# Key 2 is this repo's own consent, which is why there is no flag for it here:
+# committing a `skills.lock` IS the opt-in, and deleting it is the opt-out. The
+# sync never creates, updates or overwrites that file — a lock is per-repo (some
+# federate more than one registry), so a fleet-wide writer would eventually
+# flatten someone's declaration.
+#
+# Generate a lock from the registry, not by hand:
+#   python3 scripts/generate_skills_lock.py --registry Adam-S-Daniel/agentskills \
+#           --ref <sha> -o /path/to/your-repo/skills.lock
+# (run from an agentskills checkout; add one --source per extra registry —
+# omitting them on a REGENERATION silently de-federates an existing lock).
+#
+# Note the standing cost before adopting: every bundled skill's front-matter is
+# always-on context in each ephemeral session, so a 9-skill bundle is roughly
+# 1.3k tokens per session, forever.
