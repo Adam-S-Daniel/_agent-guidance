@@ -45,8 +45,67 @@ The skills that used to live here (`debug-github-workflows`,
   results branch, the same pattern skills-evals uses for `eval-results`:
   [`drift-report`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/drift-report/drift-report.md).
 - `scripts/sync.sh` / `scripts/drift-report.sh` consult the central
-  `repos.yml` registry for repos excluded from sync entirely and for
-  `default_sections` applied to repos with no `.agents-sync.yml` of their own.
+  `repos.yml` registry for repos excluded from sync entirely, for
+  `default_sections` applied to repos with no `.agents-sync.yml` of their own,
+  and for the `skills_bootstrap` allowlist + pin (see
+  [The skills-bootstrap hook](#the-skills-bootstrap-hook)).
+
+## The skills-bootstrap hook
+
+The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a
+`SessionStart` hook from the
+[agentskills](https://github.com/Adam-S-Daniel/agentskills) registry that
+installs a repo's declared skill bundles into **ephemeral** Claude surfaces
+(cloud sessions, CI runners). It no-ops on a developer's machine, where the
+marketplace install stays authoritative. This closes the gap where cloud
+sessions get no plugins from repo-declared settings, without every repo
+vendoring a mirror of the registry.
+
+**It is opt-in, and the default reach is a deliberate decision, not whatever
+repo discovery happens to do.** Delivery requires *two independent keys*:
+
+1. the repo is listed in `repos.yml`'s `skills_bootstrap.repos` — the fleet
+   operator's allowlist; **and**
+2. the repo already carries its own `skills.lock` — the repo owner's
+   declaration of which bundles it installs, at which pins.
+
+Allowlisting a repo that has no lock is a no-op with a log line, not a
+half-install: the hook *without* a lock is not inert — it prints a permanent
+`skills: DEGRADED — no skills.lock found` verdict into every ephemeral session
+of that repo, naming a generator script no consumer has.
+
+**The sync never writes `skills.lock` — not even to create one.** Locks are
+per-repo and some federate several registries (adamdaniel.ai's carries both
+`agentskills` and `cms-platform`), so a fleet-wide writer would eventually
+flatten someone's declaration. There is deliberately no code path for it, and
+`sync.sh` refuses to commit if that file is ever staged.
+
+Mechanics:
+
+- The hook is **fetched, not vendored**: `repos.yml` pins the registry, an
+  immutable commit, and the file's sha256; the sync verifies the digest before
+  writing. Fanning a hook fix across the fleet is a one-line pin bump. A digest
+  mismatch disables delivery for the run and fails it — `AGENTS.md` still syncs.
+- `.claude/settings.json` is **appended to, never overwritten**, as a separate
+  `hooks.SessionStart` group, so an existing `scripts/setup-hooks.sh` entry
+  keeps its own matcher, timeout and position. An unparseable file is refused
+  rather than rewritten. Registration is idempotent
+  (`scripts/register-bootstrap-hook.sh`), and `scripts/bootstrap-status.sh` is
+  the shared classifier — `registered` / `no-entry` / `unparseable` /
+  `missing` — used by both the sync and the drift report.
+- A hook that **drifts** from the pin is overwritten (it is machinery with no
+  repo-specific seam; the escape hatch is the allowlist, not a `fix_*` flag).
+- A repo that gitignores `.claude/` is **warned and skipped, never
+  `git add -f`'d** — `git add` on an ignored path exits 1, which under
+  `set -euo pipefail` would abort the whole fleet run.
+- The drift report gains a `skills-bootstrap` column (`ok` / `no-entry` /
+  `drifted` / `missing` / `no-lock` / `unmanaged`) and prints each lock's pins
+  in Notes — the only thing in the fleet that surfaces a stale lock, since a
+  stale one installs cleanly and reports `OK` in-session.
+
+Full reasoning, including the repos deliberately left off the allowlist and
+what this leaves unsolved:
+[`docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md`](docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md).
 
 ## The CLAUDE.md bridge
 
@@ -220,9 +279,10 @@ workable degraded mode rather than a hard failure.
 
 ```
 agents-md/              # managed AGENTS.md content (base + opt-in sections)
-scripts/                # build, sync, drift-report
+scripts/                # build, sync, drift-report, bridge/bootstrap status
+docs/decisions/         # ADRs (start at the README there)
 .github/workflows/      # CI, sync-on-push, nightly drift report
 .agents-sync.example.yml
-repos.yml               # central exclusion list + default sections
+repos.yml               # exclusions, default sections, skills-bootstrap pin
 test/run-tests.sh
 ```
