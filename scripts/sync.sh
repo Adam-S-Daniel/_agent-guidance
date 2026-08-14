@@ -9,11 +9,14 @@ set -euo pipefail
 #   3. Preserves any content below "## Repo-specific additions"
 #   4. Ensures a CLAUDE.md bridge exists (creates it if absent; warns — or
 #      rewrites when opted in via fix_claude_md — if present but broken)
-#   5. Pushes the update directly to the default branch (the sync App has a
+#   5. Delivers the skills-bootstrap SessionStart hook to ALLOWLISTED repos
+#      that already carry their own skills.lock (see repos.yml and
+#      docs/decisions/0001) — never to every repo, and never writing the lock
+#   6. Pushes the update directly to the default branch (the sync App has a
 #      ruleset bypass, declared in repo-settings); falls back to a PR with
 #      auto-merge for repos whose protection rejects the push
 #
-# Requirements: gh (GitHub CLI, authenticated), yq, git
+# Requirements: gh (GitHub CLI, authenticated), yq, git, python3
 # Usage:        ./scripts/sync.sh [--dry-run]
 #
 # Environment:
@@ -28,6 +31,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
 BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
+BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
+REGISTER_SCRIPT="$SCRIPT_DIR/register-bootstrap-hook.sh"
+HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
+SETTINGS_REL_PATH=".claude/settings.json"
+LOCK_REL_PATH="skills.lock"
 MARKER="## Repo-specific additions"
 BRANCH_NAME="agents-md-sync/update"
 DRY_RUN=false
@@ -89,6 +97,98 @@ if [[ -f "$REPOS_YML" ]]; then
     done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
 fi
 
+# ── skills-bootstrap hook delivery config ──────────────────────────────────
+# Opt-in, allowlisted, and double-keyed: a repo gets the hook only if it is
+# named in repos.yml's skills_bootstrap.repos AND already carries its own
+# skills.lock. See docs/decisions/0001. Absent config = the feature is simply
+# off, which is what keeps this an additive change for every existing repo.
+
+BOOTSTRAP_REPOS=()
+BOOTSTRAP_REGISTRY=""
+BOOTSTRAP_PATH=""
+BOOTSTRAP_REF=""
+BOOTSTRAP_SHA256=""
+
+if [[ -f "$REPOS_YML" ]]; then
+    BOOTSTRAP_REGISTRY=$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_PATH=$(yq -r '.skills_bootstrap.path // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_REF=$(yq -r '.skills_bootstrap.ref // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_SHA256=$(yq -r '.skills_bootstrap.sha256 // ""' "$REPOS_YML" 2>/dev/null || echo "")
+
+    while IFS= read -r r; do
+        [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
+    done < <(yq -r '.skills_bootstrap.repos // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+fi
+
+# Enabled only when the pin is fully specified. A half-filled block (a ref
+# with no digest, say) must not silently deliver unverified bytes.
+BOOTSTRAP_ENABLED=false
+if [[ -n "$BOOTSTRAP_REGISTRY" && -n "$BOOTSTRAP_PATH" \
+      && -n "$BOOTSTRAP_REF" && -n "$BOOTSTRAP_SHA256" \
+      && ${#BOOTSTRAP_REPOS[@]} -gt 0 ]]; then
+    BOOTSTRAP_ENABLED=true
+fi
+
+BOOTSTRAP_BLOB=""          # path to the fetched, verified hook; "" until fetched
+BOOTSTRAP_FETCH_WARNED=false
+
+bootstrap_allowlisted() {
+    local short="${1##*/}" entry
+    for entry in ${BOOTSTRAP_REPOS[@]+"${BOOTSTRAP_REPOS[@]}"}; do
+        [[ "$short" == "$entry" ]] && return 0
+    done
+    return 1
+}
+
+# ensure_bootstrap_blob — fetch the pinned hook once per run, verify its digest.
+#
+# Called from inside the owner loop rather than before it, because the token
+# that can read the registry is the PER-OWNER one resolved there (sync.yml
+# exports no shared GH_TOKEN). It is retried on each owner until it succeeds,
+# so owner ordering cannot decide whether the hook is available.
+#
+# Two failure modes, deliberately different:
+#   • fetch failed  — transient/permissions. Warn once, leave the feature on,
+#     retry next owner; repos simply don't get the hook this run.
+#   • digest mismatch — the bytes at the pinned commit are not the bytes that
+#     were reviewed. Hard-disable delivery for the run and fail it.
+ensure_bootstrap_blob() {
+    $BOOTSTRAP_ENABLED || return 1
+    [[ -n "$BOOTSTRAP_BLOB" ]] && return 0
+
+    local encoded dest actual
+    dest="$WORK_DIR/skills-bootstrap.sh"
+
+    if ! encoded=$(gh api \
+        "repos/$BOOTSTRAP_REGISTRY/contents/$BOOTSTRAP_PATH?ref=$BOOTSTRAP_REF" \
+        --jq '.content' 2>/dev/null) || [[ -z "$encoded" ]]; then
+        if ! $BOOTSTRAP_FETCH_WARNED; then
+            log "WARN: could not fetch $BOOTSTRAP_REGISTRY/$BOOTSTRAP_PATH@${BOOTSTRAP_REF:0:7} — skills-bootstrap not delivered this run."
+            BOOTSTRAP_FETCH_WARNED=true
+        fi
+        return 1
+    fi
+
+    if ! echo "$encoded" | base64 -d > "$dest" 2>/dev/null; then
+        log "WARN: could not decode $BOOTSTRAP_PATH@${BOOTSTRAP_REF:0:7} — skills-bootstrap not delivered this run."
+        rm -f "$dest"
+        return 1
+    fi
+
+    actual=$(sha256sum "$dest" | cut -d' ' -f1)
+    if [[ "$actual" != "$BOOTSTRAP_SHA256" ]]; then
+        fail "skills-bootstrap digest mismatch at ${BOOTSTRAP_REF:0:7}: repos.yml says ${BOOTSTRAP_SHA256:0:12}…, fetched ${actual:0:12}…. Delivery disabled for this run."
+        BOOTSTRAP_ENABLED=false
+        ((FAIL_COUNT++)) || true
+        rm -f "$dest"
+        return 1
+    fi
+
+    BOOTSTRAP_BLOB="$dest"
+    log "skills-bootstrap: pinned hook fetched from $BOOTSTRAP_REGISTRY@${BOOTSTRAP_REF:0:7} (digest OK)."
+    return 0
+}
+
 # Base GH_TOKEN captured before the per-owner loop, so each iteration can
 # restore it when the owner has no per-owner token of its own (owner A's
 # per-owner token must not leak into owner B's iteration).
@@ -113,6 +213,10 @@ elif [[ -n "$BASE_GH_TOKEN" ]]; then
 else
     unset GH_TOKEN || true
 fi
+
+# Best-effort, at most once per run (see the function's comment for why it is
+# attempted here and not before the owner loop).
+ensure_bootstrap_blob || true
 
 # ── Discover repos ─────────────────────────────────────────────────────────
 
@@ -298,7 +402,63 @@ for repo_name in "${REPOS[@]}"; do
         needs_claude_fix=true
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix; then
+    # ── skills-bootstrap: classify ─────────────────────────────────────
+    # Both keys are read from the CLONE, so neither can be spoofed by config
+    # in this repo: the allowlist is ours, the lock is theirs. Everything
+    # below stays false for a repo that is not allowlisted, which is why this
+    # block cannot change behaviour for the 16 repos that aren't.
+
+    bootstrap_deliver=false     # this repo should end up with hook + registration
+    bootstrap_reason=""         # why not, when it shouldn't
+    hook_state="n/a"            # missing | current | drifted
+    reg_state="n/a"             # registered | no-entry | unparseable | missing
+    lock_present=false
+    [[ -f "$LOCK_REL_PATH" ]] && lock_present=true
+
+    if bootstrap_allowlisted "$repo_name"; then
+        if ! $lock_present; then
+            # NOT a half-install: the hook without a lock prints a permanent
+            # "skills: DEGRADED — no skills.lock found" verdict into every
+            # ephemeral session, naming a generator script the repo does not
+            # have. Withholding is the correct, documented outcome.
+            bootstrap_reason="no skills.lock in the repo yet — delivery withheld (the repo declares its own bundles; the sync never writes one)"
+        elif [[ -z "$BOOTSTRAP_BLOB" ]]; then
+            bootstrap_reason="pinned hook unavailable this run"
+        else
+            bootstrap_deliver=true
+
+            if [[ -f "$HOOK_REL_PATH" ]]; then
+                if cmp -s "$HOOK_REL_PATH" "$BOOTSTRAP_BLOB"; then
+                    hook_state="current"
+                else
+                    hook_state="drifted"
+                fi
+            else
+                hook_state="missing"
+            fi
+
+            reg_state=$("$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+
+            # An unreadable settings.json is never rewritten (same posture as
+            # an existing CLAUDE.md). Delivering the hook file alone would
+            # leave it silently dead, so withhold the whole artifact and say so.
+            if [[ "$reg_state" == "unparseable" ]]; then
+                bootstrap_deliver=false
+                bootstrap_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it"
+            fi
+        fi
+    fi
+
+    bootstrap_up_to_date=true
+    if $bootstrap_deliver && { [[ "$hook_state" != "current" ]] || [[ "$reg_state" != "registered" ]]; }; then
+        bootstrap_up_to_date=false
+    fi
+
+    if [[ -n "$bootstrap_reason" ]]; then
+        log "skills-bootstrap: $bootstrap_reason."
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -320,13 +480,29 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     if $DRY_RUN; then
-        if $agents_up_to_date && $needs_claude_fix; then
-            log "[DRY RUN] AGENTS.md up to date; would rewrite CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true)"
-        elif $agents_up_to_date; then
-            log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge"
-        else
+        if ! $agents_up_to_date; then
             log "[DRY RUN] Would update AGENTS.md (direct push to $default_branch; PR fallback if rejected)"
+        elif $needs_claude_fix; then
+            log "[DRY RUN] AGENTS.md up to date; would rewrite CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true)"
+        elif ! $claude_md_present; then
+            log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge"
         fi
+
+        # The bootstrap artifact is reported line-by-line and separately from
+        # AGENTS.md, including the case where the ONLY change is the hook —
+        # a dry run that hid that would be lying about the run it previews.
+        if ! $bootstrap_up_to_date; then
+            case "$hook_state" in
+                missing) log "[DRY RUN] Would add $HOOK_REL_PATH (from $BOOTSTRAP_REGISTRY@${BOOTSTRAP_REF:0:7})" ;;
+                drifted) log "[DRY RUN] Would overwrite drifted $HOOK_REL_PATH with the pinned copy (${BOOTSTRAP_REF:0:7})" ;;
+            esac
+            [[ "$reg_state" != "registered" ]] && \
+                log "[DRY RUN] Would append a SessionStart entry for the hook to $SETTINGS_REL_PATH (existing entries preserved)"
+        fi
+        if $bootstrap_deliver; then
+            log "[DRY RUN] Would NOT touch $LOCK_REL_PATH (present; the sync never writes it)"
+        fi
+
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
         continue
@@ -367,29 +543,107 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
-    if $claude_md_added || $claude_md_fixed; then
-        git add AGENTS.md CLAUDE.md
-    else
-        git add AGENTS.md
+    # ── skills-bootstrap: deliver ──────────────────────────────────────
+    # Three files are in play and they are NOT symmetrical:
+    #   .claude/hooks/skills-bootstrap.sh — machinery. Written when absent,
+    #     OVERWRITTEN when drifted. There is no repo-specific seam in it and
+    #     no marker to preserve; a divergent copy is either stale-from-an-
+    #     older-pin (which must self-heal) or hand-edited — and a hand-edited
+    #     copy of a file that fetches and installs instruction text with no
+    #     approval prompt is precisely the thing not to preserve. Hence no
+    #     fix_* opt-in, unlike CLAUDE.md: the escape hatch is the allowlist.
+    #   .claude/settings.json — configuration. APPENDED to, never overwritten,
+    #     and refused outright if unparseable (classified above).
+    #   skills.lock — the repo's own DECLARATION. Never written, not even
+    #     created. There is deliberately no code path here that writes it.
+    bootstrap_hook_written=false
+    bootstrap_registered_now=false
+    bootstrap_gitignored=false
+
+    if $bootstrap_deliver; then
+        # git add on a gitignored path exits 1, and under `set -euo pipefail`
+        # that aborts the ENTIRE fleet run at whichever repo hits it first —
+        # not just this repo. Two repos in the fleet gitignore `.claude/`
+        # today, deliberately and with a comment, so this probe is load-
+        # bearing. `git add -f` is not the answer: overriding a repo's
+        # explicit policy from a central sync is a conversation, not a flag.
+        if git check-ignore -q "$HOOK_REL_PATH" 2>/dev/null \
+           || git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
+            bootstrap_gitignored=true
+            log "WARN: .claude/ is gitignored in $repo_name — skills-bootstrap not delivered (change that repo's .gitignore, or drop it from repos.yml)."
+        else
+            if [[ "$hook_state" != "current" ]]; then
+                mkdir -p "$(dirname "$HOOK_REL_PATH")"
+                cp "$BOOTSTRAP_BLOB" "$HOOK_REL_PATH"
+                chmod 0755 "$HOOK_REL_PATH"
+                bootstrap_hook_written=true
+                if [[ "$hook_state" == "drifted" ]]; then
+                    log "skills-bootstrap: hook differed from the pin — overwritten with ${BOOTSTRAP_REF:0:7}."
+                else
+                    log "skills-bootstrap: hook added at ${BOOTSTRAP_REF:0:7}."
+                fi
+            fi
+
+            if [[ "$reg_state" != "registered" ]]; then
+                mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+                if register_result=$("$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
+                    [[ "$register_result" == "registered" ]] && bootstrap_registered_now=true
+                    log "skills-bootstrap: settings.json — $register_result."
+                else
+                    log "WARN: could not register the hook in $SETTINGS_REL_PATH ($register_result) — leaving it untouched."
+                fi
+            fi
+        fi
     fi
 
-    if $agents_up_to_date && $claude_md_fixed; then
+    add_paths=(AGENTS.md)
+    { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
+    $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
+    $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
+    git add "${add_paths[@]}"
+
+    # Whatever else changed, skills.lock is never among it. Cheap, absolute,
+    # and checked HERE rather than trusted: a staged lock means some future
+    # edit introduced a writer, and that must stop the repo, not ship. Uses
+    # --name-only (empty output == not staged) rather than --quiet, whose
+    # non-zero exit is indistinguishable from a git error.
+    if [[ -n "$(git diff --cached --name-only -- "$LOCK_REL_PATH")" ]]; then
+        fail "$repo_name: refusing to commit — $LOCK_REL_PATH is staged, and the sync must never write it."
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
+    bootstrap_note=""
+    if $bootstrap_hook_written || $bootstrap_registered_now; then
+        bootstrap_note="
+
+Also delivers the skills-bootstrap SessionStart hook, fetched from
+${BOOTSTRAP_REGISTRY}@${BOOTSTRAP_REF:0:7} (pinned in _agent-guidance's
+repos.yml) and registered as an additional SessionStart entry. This repo's
+own skills.lock declares which bundles it installs and is not touched."
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
+        commit_message="chore: deliver the skills-bootstrap SessionStart hook
+
+AGENTS.md and the CLAUDE.md bridge were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_fixed; then
         commit_message="chore: rewrite CLAUDE.md to the @AGENTS.md bridge
 
 AGENTS.md was already up to date, but CLAUDE.md did not import it, so
 Claude Code never saw the managed guidance. Rewritten to the standard
-@AGENTS.md bridge per this repo's fix_claude_md: true opt-in."
+@AGENTS.md bridge per this repo's fix_claude_md: true opt-in.${bootstrap_note}"
     elif $agents_up_to_date; then
         commit_message="chore: add CLAUDE.md bridge for AGENTS.md sync
 
 AGENTS.md was already up to date. Adds a CLAUDE.md that imports
 @AGENTS.md so Claude Code (which reads CLAUDE.md, not AGENTS.md) sees
-the managed guidance."
+the managed guidance.${bootstrap_note}"
     else
         commit_message="chore: sync AGENTS.md from _agent-guidance
 
 Sections: ${sections[*]:-none}
-Managed content updated by the central _agent-guidance repository."
+Managed content updated by the central _agent-guidance repository.${bootstrap_note}"
     fi
 
     git commit -m "$commit_message" || {
@@ -456,6 +710,27 @@ Managed content updated by the central _agent-guidance repository."
             pr_extra="⚠️ **CLAUDE.md does not import \`@AGENTS.md\`** — Claude Code will not see this guidance. This sync never rewrites an existing CLAUDE.md by default. To fix, add a line containing exactly \`@AGENTS.md\` (outside code fences) to CLAUDE.md, or set \`fix_claude_md: true\` in \`.agents-sync.yml\` to let the sync propose the rewrite."
         elif $claude_md_fixed; then
             pr_extra="This PR also rewrites CLAUDE.md to the standard \`@AGENTS.md\` bridge (opted in via \`fix_claude_md: true\`) because the previous file never imported AGENTS.md."
+        fi
+
+        # The bootstrap hook gets its OWN paragraph, always, when it is part of
+        # the change. A reviewer approving this PR is approving a script that
+        # runs at session start and installs skills with no further prompt, and
+        # the always-on context those skills cost — that must not arrive as an
+        # unremarked file in a diff titled "sync AGENTS.md".
+        if $bootstrap_hook_written || $bootstrap_registered_now; then
+            pr_extra="${pr_extra}
+
+**This PR also delivers \`$HOOK_REL_PATH\`** — a \`SessionStart\` hook, fetched
+from [\`${BOOTSTRAP_REGISTRY}\`](https://github.com/${BOOTSTRAP_REGISTRY}/blob/${BOOTSTRAP_REF}/${BOOTSTRAP_PATH}) at
+the immutable commit \`${BOOTSTRAP_REF:0:7}\` pinned in \`repos.yml\`, with its
+sha256 verified before writing. On **ephemeral** surfaces only (cloud sessions,
+CI runners — it no-ops on a developer's machine) it installs the bundles this
+repo's own \`skills.lock\` names, verifying every skill's digest. Those skills
+then cost always-on context in each such session.
+
+It is registered as an **additional** \`hooks.SessionStart\` entry in
+\`$SETTINGS_REL_PATH\`; existing entries are preserved. \`$LOCK_REL_PATH\` is
+**not** modified by this sync — it is this repo's own declaration."
         fi
 
         existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
