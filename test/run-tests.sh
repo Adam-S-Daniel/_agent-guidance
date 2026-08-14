@@ -1627,7 +1627,7 @@ test_bootstrap_status() {
     local s="$REPO_ROOT/scripts/bootstrap-status.sh"
     local d="$TEST_DIR/bootstrap-status"
     mkdir -p "$d"
-    local result
+    local result rc
 
     cp "$TEST_DIR/existing-settings.json" "$d/other-hook.json"
     result=$("$s" "$d/other-hook.json")
@@ -1676,6 +1676,19 @@ JSON
 
     result=$("$s" "$d/absent.json")
     [[ "$result" == "missing" ]] && pass "absent file -> missing" || fail "absent file -> missing (got '$result')"
+
+    # A repo root passed instead of its settings.json is the obvious hand-run
+    # slip. Directories have nonzero size, so the `-s` test alone lets one
+    # through into `classify < "$1"` and python3 dies on a directory stdin.
+    # It is a caller error (exit 2), and must NOT come back as one of the four
+    # classifications: `missing` would read as "no hook registered here".
+    rc=0
+    result=$("$s" "$d" 2>/dev/null) || rc=$?
+    if [[ "$rc" -eq 2 && ! "$result" =~ (registered|no-entry|unparseable|missing) ]]; then
+        pass "directory argument -> exit 2 caller error (never a classification)"
+    else
+        fail "directory argument -> exit 2 caller error (never a classification) (got rc=$rc, stdout '$result')"
+    fi
 
     result=$(printf '' | "$s" -)
     [[ "$result" == "missing" ]] && pass "stdin mode: empty -> missing" || fail "stdin mode: empty -> missing (got '$result')"
