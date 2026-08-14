@@ -95,6 +95,14 @@ case "${1:-}" in
         classify
         ;;
     *)
+        # A directory is a caller error, not a fifth classification. `-s` is
+        # TRUE for one (directories have nonzero size), so without this guard
+        # control reaches `classify < "$1"`, bash redirects stdin from the
+        # directory, and python3 dies with a core-level fatal error.
+        if [[ -d "$1" ]]; then
+            echo "bootstrap-status.sh: $1 is a directory; pass its .claude/settings.json" >&2
+            exit 2
+        fi
         if [[ ! -s "$1" ]]; then
             echo "missing"
         else
