@@ -774,13 +774,18 @@ EOF
             fi
         fi
 
-        # Enable auto-merge so the PR lands on its own once checks pass. Try
-        # squash first, then a plain merge; a repo may disable one method.
-        # A PR left open for manual merge is an acceptable degraded outcome,
-        # so none of these count as a repo failure.
+        # Enable auto-merge so the PR lands on its own once checks pass. Merge
+        # commit FIRST, squash only as a fallback: the fleet default is
+        # merge-only (repo-settings' fleet.yml disables squash and rebase), and
+        # the three cms-platform-managed repos that do keep squash allow plain
+        # merges too — so `--merge` is the one method that works on every repo
+        # this sync touches, and leading with squash spent a guaranteed failed
+        # call per repo. The fallback stays because a repo CAN be configured
+        # squash-only, and a PR left open for manual merge is an acceptable
+        # degraded outcome — none of these count as a repo failure.
         if [[ -n "$pr_number" ]]; then
-            if ! gh pr merge "$pr_number" --auto --squash 2>/dev/null \
-                && ! gh pr merge "$pr_number" --auto --merge 2>/dev/null; then
+            if ! gh pr merge "$pr_number" --auto --merge 2>/dev/null \
+                && ! gh pr merge "$pr_number" --auto --squash 2>/dev/null; then
                 log "WARN: could not enable auto-merge on PR #$pr_number — left open for manual merge."
             fi
         else
