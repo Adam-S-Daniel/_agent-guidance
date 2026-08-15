@@ -1564,6 +1564,16 @@ test_sync_protected_fallback() {
     # A PR was created and auto-merge was enabled on it (the "--auto" flag).
     assert_contains "$pr_log" "pr-created" "protected: PR created on fallback"
     assert_contains "$pr_log" "pr-merged 1 --auto" "protected: auto-merge enabled on the fallback PR"
+    # ...as a MERGE COMMIT, and on the first attempt. The fleet default is
+    # merge-only, so leading with --squash spent a guaranteed failed call per
+    # repo; the mock succeeds on whatever it is given, so the first logged line
+    # is the method the sync actually prefers.
+    assert_contains "$pr_log" "pr-merged 1 --auto --merge" "protected: auto-merge uses a merge commit"
+    if head -n 1 "$pr_log" >/dev/null 2>&1 && grep -q -- "--squash" "$pr_log"; then
+        fail "protected: sync fell back to --squash when --merge was available"
+    else
+        pass "protected: no wasted --squash attempt"
+    fi
 
     # PR bodies are captured only on the fallback path — the no-import warning
     # and the fix_claude_md opt-in note now surface here.
