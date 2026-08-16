@@ -49,8 +49,10 @@ skills_bootstrap:
     # hook current against the pin above and re-registers it if the entry is
     # ever dropped.
     - adamdaniel.ai
-    # Allowlisted, no skills.lock yet — delivery is correctly withheld until
-    # the repo commits one (`no-lock` in the drift report). Heavy documented
+    # Allowlisted; the second key is in flight. jodidaniel.com PR #134 commits
+    # the repo's own skills.lock — until it merges the drift report reads
+    # `no-lock` (delivery correctly withheld), and the first sync run after it
+    # merges arms delivery with no change needed here. Heavy documented
     # web-session workflow; the second repo #54's acceptance criterion is
     # about.
     - jodidaniel.com
