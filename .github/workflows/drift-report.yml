@@ -66,18 +66,22 @@ jobs:
       # dashboard is generated data, not a reviewable change, and the PR
       # just piled up as unmergeable bot noise nobody acted on. Per
       # repo-settings' ADR 0001, generated data belongs on its own
-      # unprotected results branch instead. drift-report holds only the
+      # unprotected results branch instead. The branch holds only the
       # latest snapshot with no history worth preserving, so force-push it
       # fresh each night; consumers read the report straight off that
-      # branch rather than off main.
-      - name: Publish to the drift-report results branch
+      # branch rather than off main. It's named drift-report-latest, not
+      # drift-report, because a legacy refs/heads/drift-report/update ref
+      # from that earlier standing-PR design still occupies the
+      # drift-report/ namespace and blocks the bare name from ever being
+      # created as a ref.
+      - name: Publish to the drift-report-latest results branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f drift-report.md
           if git diff --cached --quiet; then
-            echo "No changes to report — leaving the drift-report branch as is."
+            echo "No changes to report — leaving the drift-report-latest branch as is."
             exit 0
           fi
           git commit -m "chore: nightly drift report [skip ci]"
-          git push --force origin HEAD:refs/heads/drift-report
+          git push --force origin HEAD:refs/heads/drift-report-latest
