@@ -397,15 +397,24 @@ YAML
 # something:
 #
 #   bootorg/agentskills        the registry the pinned hook is fetched FROM
-#                              (deliberately absent from `gh repo list` so it
-#                              is never itself a sync target here)
+#                              (absent from `gh repo list` by default so it is
+#                              never itself a sync target here; MOCK_INCLUDE_
+#                              REGISTRY=1 puts it back for the one drift-report
+#                              sub-test that needs the registry as a TARGET)
 #   bootorg/repo-adopted       allowlisted + federated skills.lock + an
 #                              EXISTING SessionStart entry → the happy path,
-#                              and the append-don't-overwrite regression
+#                              and the append-don't-overwrite regression. Also
+#                              carries an UNRELATED `.gitignore`, so `blocked`
+#                              has to key on a rule that matches the artifact
+#                              rather than on the file merely existing
+#   bootorg/repo-hook-no-lock  allowlisted + hook already committed, but NO
+#                              lock → the state no sync ever revisits: the
+#                              hook prints `skills: DEGRADED` into every
+#                              session forever
 #   bootorg/repo-ignored       allowlisted + lock, but `.claude/` is
 #                              gitignored → `git add` on an ignored path exits
 #                              1, which under `set -euo pipefail` would abort
-#                              the WHOLE FLEET RUN. It sorts second, so if the
+#                              the WHOLE FLEET RUN. It sorts third, so if the
 #                              guard regresses, every repo after it silently
 #                              stops syncing
 #   bootorg/repo-no-lock       allowlisted, no lock → withhold (the hook with
@@ -472,8 +481,8 @@ LOCK
 JSON
 
     local name bare work
-    for name in agentskills repo-adopted repo-ignored repo-no-lock \
-                repo-not-allowed repo-unparseable; do
+    for name in agentskills repo-adopted repo-hook-no-lock repo-ignored \
+                repo-no-lock repo-not-allowed repo-unparseable; do
         bare="$TEST_DIR/bare/bootorg_$name"
         work="$TEST_DIR/work/bootorg-$name"
         mkdir -p "$bare" "$work"
@@ -492,6 +501,18 @@ JSON
                 cp "$TEST_DIR/federated.lock" skills.lock
                 mkdir -p .claude
                 cp "$TEST_DIR/existing-settings.json" .claude/settings.json
+                # An ignore file that has NOTHING to say about `.claude/`.
+                # The blocked probe must replay git's matcher and come back
+                # "not ignored" — a check that keyed on "the repo has a
+                # .gitignore" would flip this happy-path repo to blocked.
+                printf 'node_modules/\n' > .gitignore
+                ;;
+            repo-hook-no-lock)
+                # The hook is already here; the lock never arrived. Nothing in
+                # the sync revisits this — it is not a to-do, it is a standing
+                # DEGRADED verdict in every session the repo opens.
+                mkdir -p .claude/hooks
+                cp "$hook_src" .claude/hooks/skills-bootstrap.sh
                 ;;
             repo-ignored)
                 cp "$TEST_DIR/federated.lock" skills.lock
@@ -538,6 +559,7 @@ skills_bootstrap:
   sha256: $BOOTSTRAP_HOOK_SHA
   repos:
     - repo-adopted
+    - repo-hook-no-lock
     - repo-ignored
     - repo-no-lock
     - repo-unparseable
@@ -626,15 +648,23 @@ case "$1" in
                         ]'
                         ;;
                     bootorg)
-                        # bootorg/agentskills is deliberately ABSENT: it is the
+                        # bootorg/agentskills is ABSENT by default: it is the
                         # registry the hook is fetched from, not a sync target.
-                        json='[
-                          {"nameWithOwner":"bootorg/repo-adopted"},
-                          {"nameWithOwner":"bootorg/repo-ignored"},
-                          {"nameWithOwner":"bootorg/repo-no-lock"},
-                          {"nameWithOwner":"bootorg/repo-not-allowed"},
-                          {"nameWithOwner":"bootorg/repo-unparseable"}
-                        ]'
+                        # MOCK_INCLUDE_REGISTRY=1 puts it back, for the one
+                        # sub-test that asks what the report says when the
+                        # registry IS scanned as a target.
+                        registry_row=""
+                        [[ -n "${MOCK_INCLUDE_REGISTRY:-}" ]] && \
+                            registry_row='{"nameWithOwner":"bootorg/agentskills"},'
+                        json="[
+                          $registry_row
+                          {\"nameWithOwner\":\"bootorg/repo-adopted\"},
+                          {\"nameWithOwner\":\"bootorg/repo-hook-no-lock\"},
+                          {\"nameWithOwner\":\"bootorg/repo-ignored\"},
+                          {\"nameWithOwner\":\"bootorg/repo-no-lock\"},
+                          {\"nameWithOwner\":\"bootorg/repo-not-allowed\"},
+                          {\"nameWithOwner\":\"bootorg/repo-unparseable\"}
+                        ]"
                         ;;
                     *)
                         json='[]'
@@ -1447,7 +1477,24 @@ test_drift_report_bootstrap() {
     # pins, per federated source.
     assert_row_contains "$rpt" "repo-adopted" "lock: agentskills@1111111 + cms-platform@2222222" "drift report: repo-adopted's federated lock pins are shown"
     assert_row_contains "$rpt" "repo-no-lock" "no-lock" "drift report: repo-no-lock shows the withheld state"
-    assert_row_contains "$rpt" "repo-ignored" "**missing**" "drift report: repo-ignored (blocked by .gitignore) shows as missing"
+
+    # ── The three states that never self-heal must not hide inside
+    #    `**missing**`, whose whole meaning is "the next sync delivers it".
+    assert_row_contains "$rpt" "repo-ignored" "**blocked**" "drift report: a gitignored .claude/ is blocked, not missing"
+    assert_row_contains "$rpt" "repo-ignored" '`.claude/` gitignored' "drift report: repo-ignored's Notes name the reason"
+    assert_row_contains "$rpt" "repo-unparseable" "**refused**" "drift report: an unparseable settings.json is refused, not missing"
+    assert_row_contains "$rpt" "repo-unparseable" '`settings.json` unparseable' "drift report: repo-unparseable's Notes name the reason"
+    assert_row_contains "$rpt" "repo-hook-no-lock" "**degraded**" "drift report: a hook with no lock is degraded, not no-lock and not ok"
+
+    # A `.gitignore` that says nothing about `.claude/` must not blocked-flag
+    # a healthy repo: the probe keys on a rule that MATCHES the artifact.
+    assert_row_contains "$rpt" "repo-adopted" "ok" "drift report: an unrelated .gitignore leaves the happy path ok"
+
+    # The legend no longer delegates the distinction to a log the reader has
+    # to go find.
+    assert_not_contains "$rpt" "check the sync log for a gitignored" "drift report: the missing legend no longer punts to the sync log"
+    assert_contains "$rpt" "| **blocked** |" "drift report: legend documents blocked"
+    assert_contains "$rpt" "| **refused** |" "drift report: legend documents refused"
 
     # repo-not-allowed carries a lock but no hook and is not allowlisted, so
     # the bootstrap column must stay blank rather than inventing a to-do.
@@ -1480,6 +1527,34 @@ test_drift_report_bootstrap_unmanaged() {
     echo "$output" > "$TEST_DIR/drift-unmanaged-output.txt"
 
     assert_row_contains "$REPO_ROOT/drift-report.md" "repo-adopted" "**unmanaged**" "drift report: a hook left behind by a de-allowlisted repo is flagged unmanaged"
+}
+
+# ── Test 4d: the registry itself is never `unmanaged` ─────────────────────
+
+test_drift_report_bootstrap_registry() {
+    echo ""
+    echo "=== Test: drift-report.sh (the registry is not an unmanaged hook) ==="
+
+    # The registry AUTHORS the hook and is deliberately off the allowlist, so
+    # a naive "not allowlisted + has a hook" rule points `unmanaged`'s "remove
+    # it by hand" advice straight at the source of truth. Scan it as a target
+    # once and prove it does not.
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_INCLUDE_REGISTRY=1 \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-registry-output.txt"
+
+    if grep -F "bootorg/agentskills" "$REPO_ROOT/drift-report.md" | grep -qF "**unmanaged**"; then
+        fail "drift report: the registry that authors the hook is not flagged unmanaged"
+    else
+        pass "drift report: the registry that authors the hook is not flagged unmanaged"
+    fi
 }
 
 # ── Test 4a: drift-report.sh with SYNC_OWNERS (multiple owners) ───────────
@@ -1812,11 +1887,11 @@ test_sync_bootstrap() {
 
     # ── The gitignore fleet-killer. `git add` on an ignored path exits 1 and
     #    would abort the whole run under set -euo pipefail. repo-ignored sorts
-    #    SECOND, so the three repos after it prove the run survived.
+    #    THIRD, so the three repos after it prove the run survived.
     assert_contains "$TEST_DIR/sync-bootstrap.txt" ".claude/ is gitignored in bootorg/repo-ignored" "bootstrap: gitignored .claude/ is detected and warned, not force-added"
     assert_contains "$TEST_DIR/sync-bootstrap.txt" "=== bootorg/repo-no-lock ===" "bootstrap: the run SURVIVES a gitignored .claude/ (later repos still processed)"
     assert_contains "$TEST_DIR/sync-bootstrap.txt" "=== bootorg/repo-unparseable ===" "bootstrap: the run reaches the last repo after the gitignored one"
-    assert_contains "$TEST_DIR/sync-bootstrap.txt" "5 synced" "bootstrap: all five bootorg repos synced"
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "6 synced" "bootstrap: all six bootorg repos synced"
     assert_contains "$TEST_DIR/sync-bootstrap.txt" "0 failed" "bootstrap: no repo failures"
 
     # ── repo-adopted: hook delivered, registration APPENDED, lock untouched.
@@ -1923,7 +1998,7 @@ test_sync_bootstrap_idempotent() {
     ) || true
     echo "$output" > "$TEST_DIR/sync-bootstrap-2.txt"
 
-    assert_contains "$TEST_DIR/sync-bootstrap-2.txt" "5 skipped" "re-run: every bootorg repo is now up to date"
+    assert_contains "$TEST_DIR/sync-bootstrap-2.txt" "6 skipped" "re-run: every bootorg repo is now up to date"
     assert_contains "$TEST_DIR/sync-bootstrap-2.txt" "0 synced" "re-run: nothing re-committed"
 
     local adopted="$TEST_DIR/verify-bootstrap-adopted-2"
@@ -2133,6 +2208,7 @@ test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
 test_drift_report_bootstrap_unmanaged
+test_drift_report_bootstrap_registry
 test_sync_bootstrap_bad_digest
 test_sync_bootstrap_pr_body
 # The sync now direct-pushes to main; restore the pristine bares so the drift

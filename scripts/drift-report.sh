@@ -143,6 +143,46 @@ print(" + ".join(parts))
 ' 2>/dev/null || echo "unreadable"
 }
 
+# The drift report has no clone of any target repo — `fetch_file_content` is a
+# `gh api …/contents/` read and nothing else — so `git check-ignore`, which is
+# what sync.sh's probe uses, is unavailable. Infer instead: fetch the repo's
+# committed ignore rules and replay them through git's OWN matcher in a
+# throwaway repo. Never hand-roll the matching. The rules this has to get right
+# are exactly the ones a regex gets wrong: `.claude/` followed by a
+# `!.claude/hooks/` that git will NOT honour inside an excluded directory.
+#
+# `--no-index` is deliberate. sync.sh's probe is index-aware and answers "not
+# ignored" for a TRACKED path; here the artifact is absent by construction, so
+# the two answers coincide.
+#
+# Not inferable through this API: nested `.gitignore`s below `.claude/`,
+# `.git/info/exclude`, `core.excludesFile`. All three are empty or
+# runner-default in the CI clone sync.sh probes, so root + `.claude/.gitignore`
+# reproduces its effective view there.
+IGNORE_PROBE_DIR=""
+
+bootstrap_blocked() {
+    local repo_name="$1" root_ignore claude_ignore probe
+    root_ignore=$(fetch_file_content "$repo_name" ".gitignore")
+    claude_ignore=$(fetch_file_content "$repo_name" ".claude/.gitignore")
+    [[ -z "$root_ignore$claude_ignore" ]] && return 1
+
+    if [[ -z "$IGNORE_PROBE_DIR" ]]; then
+        probe=$(mktemp -d)
+        # Assign ONLY after init succeeds: assigning first latches the guard
+        # below, and every later probe returns 1 forever with no signal.
+        git init -q "$probe" 2>/dev/null || { rm -rf "$probe"; return 1; }
+        IGNORE_PROBE_DIR="$probe"
+    fi
+
+    printf '%s\n' "$root_ignore" > "$IGNORE_PROBE_DIR/.gitignore"
+    mkdir -p "$IGNORE_PROBE_DIR/.claude"
+    printf '%s\n' "$claude_ignore" > "$IGNORE_PROBE_DIR/.claude/.gitignore"
+
+    git -C "$IGNORE_PROBE_DIR" check-ignore -q --no-index "$HOOK_REL_PATH" 2>/dev/null \
+      || git -C "$IGNORE_PROBE_DIR" check-ignore -q --no-index "$SETTINGS_REL_PATH" 2>/dev/null
+}
+
 # ── Write report header (once, before any owner) ────────────────────────────
 
 {
@@ -323,14 +363,38 @@ for repo_name in "${REPOS[@]}"; do
         current_lock=$(fetch_file_content "$repo_name" "$LOCK_REL_PATH")
 
         if [[ -n "$current_lock" ]]; then
-            notes="lock: $(echo "$current_lock" | lock_summary)"
+            notes="${notes:+$notes; }lock: $(echo "$current_lock" | lock_summary)"
         fi
 
-        if [[ -z "$current_hook" ]]; then
-            if [[ -z "$current_lock" ]]; then
-                # Delivery correctly withheld — not a fault, and not a to-do
-                # for the sync. The repo has not declared its bundles yet.
+        if [[ -z "$current_lock" ]]; then
+            # Delivery correctly withheld — not a fault, and not a to-do for
+            # the sync. The repo has not declared its bundles yet. Tested
+            # BEFORE the hook: sync.sh skips a lock-less repo whether or not
+            # a hook is sitting there, so a hook present here is not `ok` —
+            # it prints `skills: DEGRADED` into every session, forever, and
+            # no sync will ever revisit it.
+            if [[ -n "$current_hook" ]]; then
+                bootstrap_cell="**degraded**"
+            else
                 bootstrap_cell="no-lock"
+            fi
+        elif [[ -z "$current_hook" ]]; then
+            # Three reasons the hook can be absent. Only one self-heals.
+            settings_probe=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH")
+            settings_state="missing"
+            [[ -n "$settings_probe" ]] && \
+                settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+
+            blocked=no
+            [[ "$settings_state" != "unparseable" ]] && \
+                { bootstrap_blocked "$repo_name" && blocked=yes || true; }
+
+            if [[ "$settings_state" == "unparseable" ]]; then
+                bootstrap_cell="**refused**"
+                notes="$notes; \`settings.json\` unparseable"
+            elif [[ "$blocked" == yes ]]; then
+                bootstrap_cell="**blocked**"
+                notes="$notes; \`.claude/\` gitignored"
             else
                 bootstrap_cell="**missing**"
             fi
@@ -356,7 +420,9 @@ for repo_name in "${REPOS[@]}"; do
                 bootstrap_cell="**drifted**"
             fi
         fi
-    elif [[ -n "$current_hook" ]]; then
+    elif [[ -n "$current_hook" ]] && [[ "$repo_name" != "$BOOTSTRAP_REGISTRY" ]]; then
+        # The registry AUTHORS the hook. `unmanaged`'s legend says "remove it
+        # by hand" — pointed at the source of truth, that is a wrong answer.
         bootstrap_cell="**unmanaged**"
     fi
 
@@ -412,7 +478,10 @@ done
     echo "| ok | Hook present, byte-equal to the pinned copy, and registered in \`.claude/settings.json\` |"
     echo "| **no-entry** | Hook is present but **nothing runs it** — no SessionStart entry names it. Silently dead |"
     echo "| **drifted** | Hook present but differs from the pinned copy — the next sync overwrites it |"
-    echo "| **missing** | Allowlisted and has a lock, but no hook — the next sync delivers it (or it is blocked; check the sync log for a gitignored \`.claude/\`) |"
+    echo "| **missing** | Allowlisted and has a lock, but no hook — the next sync delivers it (unless the pinned hook was unavailable fleet-wide that run; the sync log says \`pinned hook unavailable this run\`) |"
+    echo "| **blocked** | Allowlisted and has a lock, but the repo gitignores \`.claude/\` — \`git add\` cannot stage the hook, so every sync skips it with a warning. Does **not** self-heal: change that repo's \`.gitignore\`, or drop it from the allowlist |"
+    echo "| **refused** | Allowlisted and has a lock, but \`.claude/settings.json\` is not parseable JSON — the sync will not edit it, and withholds the hook rather than leave one nothing runs. Does **not** self-heal: fix that file |"
+    echo "| **degraded** | Hook present in a repo with no \`skills.lock\` — it prints \`skills: DEGRADED\` into every session and no sync will revisit it. Commit a lock, or remove the hook |"
     echo "| no-lock | Allowlisted, no \`skills.lock\` yet — delivery deliberately withheld until the repo declares its bundles |"
     echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"
     echo "| unverified | Could not fetch the pinned hook this run — the drift comparison was skipped |"

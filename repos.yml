@@ -35,13 +35,13 @@ skills_bootstrap:
   # one-line change that fans a hook fix across the fleet.
   registry: Adam-S-Daniel/agentskills
   path: .claude/hooks/skills-bootstrap.sh
-  ref: 1e4fe9e01cc58be2dc3a6bb4f819ce0299866a66
+  ref: 40868ae84d071917be72afb0d799815bd67fa8c6
   # sha256 of the file at `ref`. The ref is already content-addressed, so this
   # is belt-and-braces — but the artifact executes instruction text at session
   # start with no approval prompt, so "the bytes we deliver are the bytes that
   # were reviewed" is worth making mechanical rather than assumed. A mismatch
   # disables delivery for the whole run and fails it.
-  sha256: 02090e10b79361db0fea2ac30f8da1ea0d6a6a0bc011eafaf23336abf8c26445
+  sha256: 17bb7255e99e6c616f7cc7a6b40a3cf8bdf3d51ba0e0cd7c44c74daa51505171
   # The allowlist. Short repo names, matched the same way `exclude` is.
   repos:
     # Adopted: carries a federated skills.lock (agentskills + cms-platform),
@@ -49,8 +49,10 @@ skills_bootstrap:
     # hook current against the pin above and re-registers it if the entry is
     # ever dropped.
     - adamdaniel.ai
-    # Allowlisted, no skills.lock yet — delivery is correctly withheld until
-    # the repo commits one (`no-lock` in the drift report). Heavy documented
+    # Allowlisted; the second key is in flight. jodidaniel.com PR #134 commits
+    # the repo's own skills.lock — until it merges the drift report reads
+    # `no-lock` (delivery correctly withheld), and the first sync run after it
+    # merges arms delivery with no change needed here. Heavy documented
     # web-session workflow; the second repo #54's acceptance criterion is
     # about.
     - jodidaniel.com
