@@ -397,8 +397,10 @@ YAML
 # something:
 #
 #   bootorg/agentskills        the registry the pinned hook is fetched FROM
-#                              (deliberately absent from `gh repo list` so it
-#                              is never itself a sync target here)
+#                              (absent from `gh repo list` by default so it is
+#                              never itself a sync target here; MOCK_INCLUDE_
+#                              REGISTRY=1 puts it back for the one drift-report
+#                              sub-test that needs the registry as a TARGET)
 #   bootorg/repo-adopted       allowlisted + federated skills.lock + an
 #                              EXISTING SessionStart entry → the happy path,
 #                              and the append-don't-overwrite regression. Also
@@ -646,16 +648,23 @@ case "$1" in
                         ]'
                         ;;
                     bootorg)
-                        # bootorg/agentskills is deliberately ABSENT: it is the
+                        # bootorg/agentskills is ABSENT by default: it is the
                         # registry the hook is fetched from, not a sync target.
-                        json='[
-                          {"nameWithOwner":"bootorg/repo-adopted"},
-                          {"nameWithOwner":"bootorg/repo-hook-no-lock"},
-                          {"nameWithOwner":"bootorg/repo-ignored"},
-                          {"nameWithOwner":"bootorg/repo-no-lock"},
-                          {"nameWithOwner":"bootorg/repo-not-allowed"},
-                          {"nameWithOwner":"bootorg/repo-unparseable"}
-                        ]'
+                        # MOCK_INCLUDE_REGISTRY=1 puts it back, for the one
+                        # sub-test that asks what the report says when the
+                        # registry IS scanned as a target.
+                        registry_row=""
+                        [[ -n "${MOCK_INCLUDE_REGISTRY:-}" ]] && \
+                            registry_row='{"nameWithOwner":"bootorg/agentskills"},'
+                        json="[
+                          $registry_row
+                          {\"nameWithOwner\":\"bootorg/repo-adopted\"},
+                          {\"nameWithOwner\":\"bootorg/repo-hook-no-lock\"},
+                          {\"nameWithOwner\":\"bootorg/repo-ignored\"},
+                          {\"nameWithOwner\":\"bootorg/repo-no-lock\"},
+                          {\"nameWithOwner\":\"bootorg/repo-not-allowed\"},
+                          {\"nameWithOwner\":\"bootorg/repo-unparseable\"}
+                        ]"
                         ;;
                     *)
                         json='[]'
@@ -1520,6 +1529,34 @@ test_drift_report_bootstrap_unmanaged() {
     assert_row_contains "$REPO_ROOT/drift-report.md" "repo-adopted" "**unmanaged**" "drift report: a hook left behind by a de-allowlisted repo is flagged unmanaged"
 }
 
+# ── Test 4d: the registry itself is never `unmanaged` ─────────────────────
+
+test_drift_report_bootstrap_registry() {
+    echo ""
+    echo "=== Test: drift-report.sh (the registry is not an unmanaged hook) ==="
+
+    # The registry AUTHORS the hook and is deliberately off the allowlist, so
+    # a naive "not allowlisted + has a hook" rule points `unmanaged`'s "remove
+    # it by hand" advice straight at the source of truth. Scan it as a target
+    # once and prove it does not.
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_INCLUDE_REGISTRY=1 \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-registry-output.txt"
+
+    if grep -F "bootorg/agentskills" "$REPO_ROOT/drift-report.md" | grep -qF "**unmanaged**"; then
+        fail "drift report: the registry that authors the hook is not flagged unmanaged"
+    else
+        pass "drift report: the registry that authors the hook is not flagged unmanaged"
+    fi
+}
+
 # ── Test 4a: drift-report.sh with SYNC_OWNERS (multiple owners) ───────────
 
 test_drift_report_multi_owner() {
@@ -2171,6 +2208,7 @@ test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
 test_drift_report_bootstrap_unmanaged
+test_drift_report_bootstrap_registry
 test_sync_bootstrap_bad_digest
 test_sync_bootstrap_pr_body
 # The sync now direct-pushes to main; restore the pristine bares so the drift

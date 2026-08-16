@@ -420,7 +420,9 @@ for repo_name in "${REPOS[@]}"; do
                 bootstrap_cell="**drifted**"
             fi
         fi
-    elif [[ -n "$current_hook" ]]; then
+    elif [[ -n "$current_hook" ]] && [[ "$repo_name" != "$BOOTSTRAP_REGISTRY" ]]; then
+        # The registry AUTHORS the hook. `unmanaged`'s legend says "remove it
+        # by hand" — pointed at the source of truth, that is a wrong answer.
         bootstrap_cell="**unmanaged**"
     fi
 
