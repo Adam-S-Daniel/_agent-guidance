@@ -161,6 +161,25 @@ print(" + ".join(parts))
 # reproduces its effective view there.
 IGNORE_PROBE_DIR=""
 
+# The probe outlives any single call — it is reused across every repo in the
+# run, which is what memoizing it above is for — so the earliest safe moment to
+# remove it is the end of the run. sync.sh pairs its own `mktemp -d` with an
+# EXIT trap the same way; this one needs a function rather than that one-liner
+# because the directory does not exist yet when the trap is installed. Nothing
+# else in this script traps, so there is no handler to chain onto.
+cleanup_ignore_probe() {
+    # On a run that probed nothing — no allowlisted repo missing its hook — the
+    # variable is still "". The test is not here to stop `rm -rf ""`, which is a
+    # silent no-op; it is here to keep the trap's exit status 0, so cleanup can
+    # never rewrite the script's own exit code. It also leaves the `:?` below
+    # unreachable — that is a backstop for the day the test is dropped, not a
+    # path this takes today.
+    if [[ -n "$IGNORE_PROBE_DIR" ]]; then
+        rm -rf "${IGNORE_PROBE_DIR:?}"
+    fi
+}
+trap cleanup_ignore_probe EXIT
+
 bootstrap_blocked() {
     local repo_name="$1" root_ignore claude_ignore probe
     root_ignore=$(fetch_file_content "$repo_name" ".gitignore")

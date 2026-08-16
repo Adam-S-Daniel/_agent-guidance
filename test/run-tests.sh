@@ -1557,6 +1557,56 @@ test_drift_report_bootstrap_registry() {
     fi
 }
 
+# ── Test 4e: the ignore probe leaves no temp directory behind ─────────────
+
+test_drift_report_probe_cleanup() {
+    echo ""
+    echo "=== Test: drift-report.sh (ignore probe is cleaned up) ==="
+
+    # `bootstrap_blocked` creates one `mktemp -d` probe per RUN — it is reused
+    # across repos, which is what `IGNORE_PROBE_DIR` memoizes — and nothing ever
+    # removed it, so every run left one behind; this suite alone leaked three.
+    # Point TMPDIR at an empty directory of our own so whatever the run leaves
+    # behind is unambiguously the probe and nothing else.
+    local probe_tmp="$TEST_DIR/probe-tmpdir"
+    rm -rf "$probe_tmp"
+    mkdir -p "$probe_tmp"
+
+    # Every drift test writes the report to the same fixed path, and the
+    # preceding one leaves the very same `repo-ignored | **blocked**` row there
+    # from its own bootorg fixtures. Delete it immediately before the run so the
+    # row the guard below reads can only have come from THIS invocation —
+    # otherwise the guard passes on a stale artifact even when the script under
+    # test never executes at all.
+    rm -f "$REPO_ROOT/drift-report.md"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        TMPDIR="$probe_tmp" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-cleanup-output.txt"
+
+    # Guard against a vacuous pass. If no repo reaches the probe, no directory
+    # is ever created and the leak check below would pass without testing
+    # anything. `repo-ignored` reaches `**blocked**` only THROUGH the probe, so
+    # this assertion is what proves the run exercised the path.
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-ignored" "**blocked**" \
+        "drift report cleanup: the run actually exercised the ignore probe"
+
+    local leftover
+    leftover=$(find "$probe_tmp" -mindepth 1 -maxdepth 1)
+    if [[ -z "$leftover" ]]; then
+        pass "drift report: the ignore probe directory is removed on exit"
+    else
+        fail "drift report: the ignore probe directory is removed on exit — left behind: $(echo "$leftover" | tr '\n' ' ')"
+    fi
+}
+
 # ── Test 4a: drift-report.sh with SYNC_OWNERS (multiple owners) ───────────
 
 test_drift_report_multi_owner() {
@@ -2209,6 +2259,7 @@ test_sync_bootstrap_drift
 test_drift_report_bootstrap
 test_drift_report_bootstrap_unmanaged
 test_drift_report_bootstrap_registry
+test_drift_report_probe_cleanup
 test_sync_bootstrap_bad_digest
 test_sync_bootstrap_pr_body
 # The sync now direct-pushes to main; restore the pristine bares so the drift
