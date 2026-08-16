@@ -35,13 +35,13 @@ skills_bootstrap:
   # one-line change that fans a hook fix across the fleet.
   registry: Adam-S-Daniel/agentskills
   path: .claude/hooks/skills-bootstrap.sh
-  ref: 88526d12e3d6b35e4db6248497334b3a85e50b68
+  ref: b0518b8f50ccbb27c9851f30377c66f8238d46bc
   # sha256 of the file at `ref`. The ref is already content-addressed, so this
   # is belt-and-braces — but the artifact executes instruction text at session
   # start with no approval prompt, so "the bytes we deliver are the bytes that
   # were reviewed" is worth making mechanical rather than assumed. A mismatch
   # disables delivery for the whole run and fails it.
-  sha256: 81ec9cf8ff8b2b6c8a59ecab790820064a8e0d7897031b2ad775c17ca6d1c703
+  sha256: 944f10e5a75b8ca8c1ac00a04f2a25934713122716c495cf32230dbca05987a1
   # The allowlist. Short repo names, matched the same way `exclude` is.
   repos:
     # Adopted: carries a federated skills.lock (agentskills + cms-platform),
