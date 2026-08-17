@@ -2228,6 +2228,122 @@ test_sync_bootstrap_pr_body() {
     rm -f "$TEST_DIR/bare/bootorg_repo-adopted/hooks/pre-receive"
 }
 
+# ── Test 6: check-cron-coverage.js ────────────────────────────────────────
+#
+# The gate that says a repo running crons actually watches them. It is pinned
+# in BOTH directions against fixtures because presence is not coverage, and
+# the first draft of this gate only checked presence: a caller missing
+# `issues: write` and a caller with no `schedule:` trigger BOTH scored "OK".
+# That certifies as covered a repo whose nightly audit 403s, and one whose
+# audit can never fire at all — a new silently-failing cron dressed up as the
+# fix for silently-failing crons. Those are the `noperm` and `nosched` cases;
+# delete either assertion and the defect walks straight back in.
+#
+# The `covered` case is not decoration either: without a reachable pass path a
+# gate that always fails would satisfy every negative assertion here.
+
+test_check_cron_coverage() {
+    echo ""
+    echo "=== Test: check-cron-coverage.js ==="
+
+    local script="$REPO_ROOT/scripts/check-cron-coverage.js"
+    local caller="$REPO_ROOT/.github/workflows/scheduled-run-health.yml"
+    local root="$TEST_DIR/cron"
+
+    # No silent skip when the parser is missing. A gate that quietly does not
+    # run is precisely the failure this suite exists to catch, so say what is
+    # wrong and fail rather than pass vacuously. CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "cron coverage: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    # A scheduled workload, so every fixture below has something to watch.
+    cron_workload() {
+        mkdir -p "$root/$1/.github/workflows"
+        cat > "$root/$1/.github/workflows/nightly.yml" <<'EOF'
+name: Nightly
+on:
+  schedule:
+    - cron: '0 6 * * *'
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+EOF
+    }
+
+    # <fixture> <expected-exit> <expected-substring> <label>
+    assert_cron() {
+        local out rc=0
+        out=$(node "$script" --repos-root "$root" --require "$1" 2>&1) || rc=$?
+        if [[ "$rc" == "$2" ]] && grep -qF "$3" <<<"$out"; then
+            pass "$4"
+        else
+            fail "$4 — expected exit $2 containing '$3'; got exit $rc: $(echo "$out" | head -2 | tr '\n' ' ')"
+        fi
+    }
+
+    rm -rf "$root"; mkdir -p "$root"
+
+    # 1. The real caller, unmodified: the pass path must be reachable.
+    cron_workload covered
+    cp "$caller" "$root/covered/.github/workflows/scheduled-run-health.yml"
+    assert_cron covered 0 "OK    covered:" "cron coverage: a correct caller passes"
+
+    # 2. Crons, no caller at all — the state every adopting repo starts in.
+    cron_workload uncovered
+    assert_cron uncovered 1 "no scheduled-run-health caller" \
+        "cron coverage: crons with no caller fail"
+
+    # 3. Caller file present, job-level `uses:` deleted. The detector must key
+    #    on the `uses:` VALUE, never on a filename it could be fooled by.
+    cron_workload nouses
+    sed '/uses: Adam-S-Daniel/d' "$caller" \
+        > "$root/nouses/.github/workflows/scheduled-run-health.yml"
+    assert_cron nouses 1 "no scheduled-run-health caller" \
+        "cron coverage: a caller file with no uses: fails"
+
+    # 4. Caller present but `issues: write` removed. Reusable permissions are
+    #    CAPPED by the caller's grant, so this audit 403s every night.
+    cron_workload noperm
+    sed '/^  issues: write$/d' "$caller" \
+        > "$root/noperm/.github/workflows/scheduled-run-health.yml"
+    assert_cron noperm 1 "lacks permissions issues: write" \
+        "cron coverage: a caller without issues: write fails"
+
+    # 5. Caller present but its own `schedule:` trigger removed — it can never
+    #    fire, so it watches nothing while looking installed.
+    cron_workload nosched
+    sed '/^  schedule:$/,/^  workflow_dispatch:$/{/^  workflow_dispatch:$/!d;}' "$caller" \
+        > "$root/nosched/.github/workflows/scheduled-run-health.yml"
+    assert_cron nosched 1 "has no on.schedule:" \
+        "cron coverage: a caller with no schedule: trigger fails"
+
+    # 6. Workflows, but none scheduled: nothing to watch, so not a failure.
+    mkdir -p "$root/nocron/.github/workflows"
+    printf 'name: CI\non:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n' \
+        > "$root/nocron/.github/workflows/ci.yml"
+    assert_cron nocron 0 "SKIP  nocron:" "cron coverage: a repo with no crons skips"
+
+    # 7. No .github/workflows at all. The first draft FAILed here and so
+    #    reddened rss-inator, a repo with nothing to audit.
+    mkdir -p "$root/noworkflows"
+    assert_cron noworkflows 0 "no .github/workflows" \
+        "cron coverage: a repo with no workflows skips, not fails"
+
+    # 8. Malformed YAML must be its OWN labelled outcome. Left uncaught it
+    #    exits 1 with a parser stack trace that reads exactly like an
+    #    uncovered repo, making a broken workflow and a missing audit
+    #    indistinguishable.
+    cron_workload badyaml
+    printf 'name: Broken\non:\n  push:\njobs:\n  a:\n   - [unclosed\n' \
+        > "$root/badyaml/.github/workflows/broken.yml"
+    assert_cron badyaml 1 "unparseable YAML" \
+        "cron coverage: malformed YAML reports as a parse error, not a coverage verdict"
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -2269,6 +2385,7 @@ test_drift_report
 test_sync_multi_owner
 test_sync_per_owner_token
 test_drift_report_multi_owner
+test_check_cron_coverage
 
 echo ""
 echo "========================================="

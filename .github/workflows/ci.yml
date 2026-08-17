@@ -20,8 +20,30 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
+      # The suite now covers a Node gate (scripts/check-cron-coverage.js) that
+      # parses workflow YAML with a real parser rather than a line scanner, so
+      # the one pinned dev dependency behind it has to be here. `npm ci`, not
+      # `npm install`: the lockfile is the version under test.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
+        with:
+          node-version: "20"
+
+      - name: Install the workflow parser
+        run: npm ci
+
       - name: Run integration tests
         run: |
           chmod +x scripts/build-agents-md.sh scripts/sync.sh scripts/drift-report.sh
           chmod +x test/run-tests.sh
           ./test/run-tests.sh
+
+      # This repo runs crons of its own (drift-report, the Dependabot sweep),
+      # and a scheduled failure notifies nobody — drift-report.yml was red 26
+      # consecutive nights unnoticed. So the repo must also run the
+      # scheduled-run-health audit, and that audit must be able to fire and to
+      # file. Deliberately keyed to the CHECKED-OUT repo rather than to sibling
+      # clones on a disk: a runner has exactly one repo, so a disk-root gate
+      # could never run here and would rot while looking like a guarantee.
+      - name: Cron-coverage self-check
+        run: node scripts/check-cron-coverage.js

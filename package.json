@@ -1,0 +1,12 @@
+{
+  "name": "agent-guidance",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only tooling deps. This repo is bash+yq; the single dependency below backs scripts/check-cron-coverage.js, which must parse workflow YAML with a real parser rather than a line scanner (house rule: AST/parser always for anything reasoning about code structure). Pinned exactly, and to the same 2.9.0 cms-platform's e2e lint suite already resolves, so the two trees cannot disagree about what a workflow means.",
+  "scripts": {
+    "check-cron-coverage": "node scripts/check-cron-coverage.js"
+  },
+  "devDependencies": {
+    "yaml": "2.9.0"
+  }
+}
