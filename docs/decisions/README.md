@@ -15,6 +15,7 @@ a page.
 | ADR | Title |
 |-----|-------|
 | [0001](0001-skills-bootstrap-delivery-is-opt-in.md) | skills-bootstrap delivery is opt-in and double-keyed, not fleet-wide |
+| [0002](0002-unconditional-rules-live-in-the-guidance-not-a-skill.md) | Unconditional rules live in the managed guidance, not in a skill |
 
 ## Format
 

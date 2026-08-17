@@ -144,12 +144,14 @@ delivery for the whole run and fails it, while `AGENTS.md` keeps syncing.
   entry) where a fleet default would take none. That is the price of key 2, and
   key 2 is what makes the lock the repo's own statement.
 - **The strongest argument for default-ON is unanswered by this ADR and is
-  answered by the `AGENTS.md` edit instead:** the managed guidance already names
-  `finding-unknowns` and `pin-actions-to-sha` by name in all 18 repos, so the
-  fleet has been shipping references to skills most sessions cannot load. The
-  corrected text now says so plainly and tells the reader how to check. If that
-  proves insufficient, widening the allowlist is a one-line PR — which is the
-  point of making reach a data decision rather than an emergent one.
+  answered by the `AGENTS.md` edit instead:** the managed guidance names
+  `finding-unknowns` by name in all 18 repos, so the fleet has been shipping
+  references to skills most sessions cannot load. The corrected text now says so
+  plainly and tells the reader how to check. If that proves insufficient,
+  widening the allowlist is a one-line PR — which is the point of making reach a
+  data decision rather than an emergent one. (ADR 0002 takes the other exit for
+  the one rule that must never depend on a skill loading at all: it moved into
+  the managed guidance itself.)
 - **A repo with no ephemeral sessions pays zero tokens**, so the cost argument
   does not reach the scratch repos. What it leaves is smaller but worse in kind:
   an armed latent default that first fires when someone opens a web session in
