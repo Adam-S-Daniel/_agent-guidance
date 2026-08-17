@@ -1,0 +1,12 @@
+{
+  "name": "agent-guidance",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only dep for scripts/check-cron-coverage.js — see its header.",
+  "scripts": {
+    "check-cron-coverage": "node scripts/check-cron-coverage.js"
+  },
+  "devDependencies": {
+    "yaml": "2.9.0"
+  }
+}
