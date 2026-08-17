@@ -47,3 +47,22 @@ jobs:
       # could never run here and would rot while looking like a guarantee.
       - name: Cron-coverage self-check
         run: node scripts/check-cron-coverage.js
+
+      # This repo is excluded from its own sync (SYNC_SELF_REPO), so nothing
+      # ever wrote an AGENTS.md here — it was the one repo in the fleet whose
+      # agents could not read the fleet's guidance while editing it. The fix is
+      # a committed artifact, and this is what stops it going stale. The
+      # composition below must stay byte-identical to sync.sh's: managed content
+      # with its trailing newlines stripped, then the marker line and everything
+      # under it, then exactly one closing newline.
+      - name: Self-guidance is current
+        run: |
+          printf '%s\n%s\n' \
+            "$(./scripts/build-agents-md.sh)" \
+            "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" \
+            > /tmp/expected-AGENTS.md
+          if ! diff -u AGENTS.md /tmp/expected-AGENTS.md; then
+            echo "::error::AGENTS.md is stale. Regenerate it — see its 'Repo-specific additions' section."
+            exit 1
+          fi
+          test "$(./scripts/bridge-status.sh CLAUDE.md)" = bridge-ok

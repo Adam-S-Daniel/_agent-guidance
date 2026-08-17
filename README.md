@@ -49,6 +49,15 @@ The skills that used to live here (`debug-github-workflows`,
   `default_sections` applied to repos with no `.agents-sync.yml` of their own,
   and for the `skills_bootstrap` allowlist + pin (see
   [The skills-bootstrap hook](#the-skills-bootstrap-hook)).
+- **This repo's own `AGENTS.md` is a committed artifact**, not a synced one:
+  `sync.sh` excludes its own repo (`SYNC_SELF_REPO`), which left the repo where
+  the guidance is written as the one repo whose agents never read it. It is
+  rebuilt from `agents-md/` and diffed by CI ("Self-guidance is current"), so a
+  `base.md` edit that forgets to regenerate it fails the build — and a PR that
+  changes `base.md` shows the exact text the fleet is about to receive, in the
+  same diff. Regeneration command: see `AGENTS.md`'s own "Repo-specific
+  additions" section. Reasoning:
+  [`docs/decisions/0002`](docs/decisions/0002-unconditional-rules-live-in-the-guidance-not-a-skill.md).
 
 ## The skills-bootstrap hook
 
@@ -284,5 +293,7 @@ docs/decisions/         # ADRs (start at the README there)
 .github/workflows/      # CI, sync-on-push, nightly drift report
 .agents-sync.example.yml
 repos.yml               # exclusions, default sections, skills-bootstrap pin
+AGENTS.md               # GENERATED from agents-md/ — this repo's own copy
+CLAUDE.md               # the bridge that makes AGENTS.md load here too
 test/run-tests.sh
 ```
