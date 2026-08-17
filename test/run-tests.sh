@@ -2258,17 +2258,29 @@ test_check_cron_coverage() {
         return
     fi
 
-    # Every fixture is a REPO, so every fixture carries a real minimal git dir:
-    # the audit refuses to certify a directory that is not one (cases 7c-7g).
-    # This helper used to write an empty FILE named .git, which was itself the
-    # evasion cases 7e/7f now pin — so the suite was asserting against a shape
-    # git calls "not a git repository" and teaching the wrong invariant to
-    # anyone reading it. objects/ + refs/ + a HEAD that validates as a ref is
-    # git's own is_git_directory(). Built in one helper so a fixture added
-    # later cannot forget it and mysteriously ERROR.
+    # Every fixture is a REPOSITORY BUILT BY GIT — `git init` plus an empty
+    # commit, which is the step that materializes `.git/index`. Two earlier
+    # revisions of this helper hand-built the git dir instead, and each encoded
+    # a contract WEAKER than what git writes, so the suite taught the wrong
+    # invariant and would have waved through the wrong fix: revision one wrote
+    # an empty FILE named `.git` (itself the evasion cases 7e/7f now pin), and
+    # revision two wrote objects/ + refs/ + HEAD but no INDEX — and the index is
+    # precisely what separates "this repo has no workflows" from "this checkout
+    # omitted them" (cases 7j-7m). Fixtures no longer DESCRIBE git's output,
+    # they ARE it. The empty commit tracks nothing, so the workflow files each
+    # fixture writes afterwards are untracked — which the audit allows on
+    # purpose: reading more than git tracks can only make a verdict louder.
     cron_repo() {
-        mkdir -p "$root/$1/.git/objects" "$root/$1/.git/refs"
-        printf 'ref: refs/heads/main\n' > "$root/$1/.git/HEAD"
+        git init -q --initial-branch=main "$root/$1"
+        git -C "$root/$1" -c user.name=t -c user.email=t@example.com \
+            commit -q --allow-empty -m seed
+    }
+
+    # Commits what the fixture has written so far, so its INDEX really lists the
+    # workflow paths the checkout cases below then hide from the working tree.
+    cron_commit() {
+        git -C "$root/$1" add -A
+        git -C "$root/$1" -c user.name=t -c user.email=t@example.com commit -q -m wf
     }
 
     # A scheduled workload, so every fixture below has something to watch.
@@ -2435,19 +2447,130 @@ EOF
     # 7h. The positive half, and the case existence-testing was chosen to
     #     protect: in a LINKED WORKTREE git writes `.git` as a FILE holding
     #     `gitdir: <path>`, and that git dir has no objects/ or refs/ of its own
-    #     — it borrows both from the parent through `commondir`. Shape copied
-    #     from the real worktree this was written in. The pointer is deliberately
-    #     RELATIVE (git writes relative gitlinks for submodules), so resolving it
-    #     against anything but the containing directory reddens here. Without
-    #     this assertion, closing 7e/7f by demanding a `.git` DIRECTORY would
-    #     look correct and would break the cwd form in every worktree.
+    #     — it borrows both from the parent through `commondir`. Built by `git
+    #     worktree add` rather than by hand: the hand-built version omitted the
+    #     two things git actually writes there, the `gitdir` BACK-POINTER that
+    #     7i turns on and the worktree's own `index` that 7j-7m turn on, so it
+    #     encoded a shape strictly weaker than reality and would have passed a
+    #     fix that reads neither. Without this assertion, closing 7e/7f by
+    #     demanding a `.git` DIRECTORY would look correct and would break the
+    #     argument-less cwd form ci.yml runs in every worktree.
     cron_repo wtparent
-    mkdir -p "$root/wtparent/.git/worktrees/wt" "$root/wtshape"
-    printf 'ref: refs/heads/main\n' > "$root/wtparent/.git/worktrees/wt/HEAD"
-    printf '../..\n' > "$root/wtparent/.git/worktrees/wt/commondir"
-    printf 'gitdir: ../wtparent/.git/worktrees/wt\n' > "$root/wtshape/.git"
+    git -C "$root/wtparent" worktree add -q --detach "$root/wtshape"
     assert_cron wtshape 0 "no .github/workflows" \
-        "cron coverage: a worktree-shaped .git FILE is a repository"
+        "cron coverage: a real linked worktree is a repository"
+
+    # 7i. A gitlink is a POINTER, and following one proves a repository exists
+    #     SOMEWHERE — never that THIS directory is it. Measured 2026-08-17 on
+    #     the shipped code: four directories, each holding the single line
+    #     `gitdir: /home/user/_agent-guidance/.git` and audited under a
+    #     DIFFERENT --require name, all scored "SKIP … nothing to watch" and
+    #     "All audited repos covered", exit 0 — one real repo's git dir
+    #     vouching for four fakes, which is case 7c's four-empty-files evasion
+    #     reconstituted at content level, and a direct YES to "can this audit
+    #     ever report a different repo than --require named". Every content
+    #     test 7e-7g makes still passes here, because they interrogate the repo
+    #     at the far end of the pointer rather than this directory.
+    cron_repo lender
+    mkdir -p "$root/borrowed"
+    printf 'gitdir: %s/lender/.git\n' "$root" > "$root/borrowed/.git"
+    assert_cron borrowed 1 "is not this repository" \
+        "cron coverage: a gitlink borrowed from another repo is not this repo"
+
+    # 7j. The same class of gap with NOTHING hand-written: an ordinary clone of
+    #     a repo that really does have crons, sparse-checked-out so the tree
+    #     lacks them. Measured on the shipped code against two clones of THIS
+    #     repo at the SAME commit — sparse said "SKIP … nothing to watch",
+    #     exit 0; full said FAIL, exit 1. `git rev-parse --git-dir` blesses
+    #     both, so no amount of git-repo-ness closes it: the verdict flipped
+    #     red -> green purely on which files were materialized. The index does
+    #     close it, because it still lists the paths the checkout skipped.
+    cron_workload realsrc
+    mkdir -p "$root/realsrc/scripts"; echo keep > "$root/realsrc/scripts/keep.sh"
+    cron_commit realsrc
+    git clone -q --no-checkout "$root/realsrc" "$root/sparsetree"
+    git -C "$root/sparsetree" sparse-checkout init --cone >/dev/null
+    git -C "$root/sparsetree" sparse-checkout set scripts >/dev/null
+    git -C "$root/sparsetree" checkout -q
+    assert_cron sparsetree 1 "did not materialize" \
+        "cron coverage: a checkout that omitted .github/workflows is not audited"
+
+    # 7k. With no files materialized AT ALL: `git worktree add --no-checkout`
+    #     yields a directory whose only entry is a 61-byte `.git`. Measured on
+    #     the shipped code through the ARGUMENT-LESS cwd form ci.yml actually
+    #     runs: "no .github/workflows — nothing to watch", exit 0. That git dir
+    #     has no `index`, so nothing on disk says the checkout ever happened —
+    #     which has to be a loud refusal, never a silent skip.
+    cron_repo nocosrc
+    git -C "$root/nocosrc" worktree add -q --no-checkout --detach "$root/nocheckout"
+    assert_cron nocheckout 1 "no readable git index" \
+        "cron coverage: a worktree with no checkout at all is not audited"
+
+    # 7l. One level below 7j: the DIRECTORY is materialized but a file inside it
+    #     is not. Measured on the shipped code — a --no-cone sparse checkout
+    #     that took .github/workflows/ci.yml and left nightly.yml behind scored
+    #     "SKIP … no scheduled workflows", exit 0, because the repo's only cron
+    #     simply was not on disk. Pins that the index is compared FILE BY FILE,
+    #     not merely asked whether the directory ought to exist.
+    cron_workload partialsrc
+    cat > "$root/partialsrc/.github/workflows/ci.yml" <<'EOF'
+name: CI
+on:
+  pull_request:
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+EOF
+    cron_commit partialsrc
+    git clone -q --no-checkout "$root/partialsrc" "$root/partialtree"
+    git -C "$root/partialtree" sparse-checkout init --no-cone >/dev/null
+    printf '/.github/workflows/ci.yml\n' > "$root/partialtree/.git/info/sparse-checkout"
+    git -C "$root/partialtree" checkout -q
+    assert_cron partialtree 1 "did not materialize" \
+        "cron coverage: a checkout missing one tracked workflow file is not audited"
+
+    # 7m. The same omission carried by an index of VERSION 4, which prefix-
+    #     compresses every path against the previous one. The obvious way to
+    #     implement 7j — scanning the raw index file for the substring
+    #     ".github/workflows/" — reads FALSE here even though the path is
+    #     tracked (measured 2026-08-17 with `git update-index --index-version
+    #     4`), so that shortcut fails OPEN and waves this straight through.
+    #     Pins that the index is PARSED, which is also why v2/v3/v4 are handled
+    #     and any other version is refused rather than guessed at.
+    #     `.gitattributes` is LOAD-BEARING, not scenery: v4 compresses a path
+    #     only against the previous SORTED entry, so with the workflow first in
+    #     the index it is stored whole and the substring is present after all.
+    #     Measured 2026-08-17 — without this sibling the fixture reads
+    #     SUBSTRING_PRESENT=true and a substring implementation passes it,
+    #     which is exactly what the mutation proof caught on the first draft.
+    cron_workload v4src
+    mkdir -p "$root/v4src/scripts"; echo keep > "$root/v4src/scripts/keep.sh"
+    echo "* text=auto" > "$root/v4src/.gitattributes"
+    cron_commit v4src
+    git clone -q --no-checkout "$root/v4src" "$root/v4tree"
+    git -C "$root/v4tree" sparse-checkout init --cone >/dev/null
+    git -C "$root/v4tree" sparse-checkout set scripts >/dev/null
+    git -C "$root/v4tree" checkout -q
+    git -C "$root/v4tree" update-index --index-version 4
+    assert_cron v4tree 1 "did not materialize" \
+        "cron coverage: a version-4 (prefix-compressed) index is parsed, not scanned"
+
+    # 7n. The OTHER return leg git writes, and the second positive case. A
+    #     SUBMODULE's `.git` is a gitlink too — the very shape 7i rejects — but
+    #     its git dir claims this directory back through `core.worktree` in its
+    #     config rather than through a `gitdir` file (measured on a real one:
+    #     `worktree = ../../../sub`, relative to the git dir). Without this
+    #     assertion the identity check would look correct while rejecting every
+    #     submodule, the same way demanding a `.git` DIRECTORY would look
+    #     correct while breaking every worktree.
+    cron_repo subparent
+    cron_repo subchild
+    git -C "$root/subparent" -c protocol.file.allow=always \
+        -c user.name=t -c user.email=t@example.com submodule add -q "$root/subchild" sub
+    assert_cron subparent/sub 0 "no .github/workflows" \
+        "cron coverage: a submodule identifies itself through core.worktree"
 
     # 8. Malformed YAML must be its OWN labelled outcome. Left uncaught it
     #    exits 1 with a parser stack trace that reads exactly like an

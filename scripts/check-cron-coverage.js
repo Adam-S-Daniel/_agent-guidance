@@ -23,12 +23,39 @@
  * (2) and (3) are not hypothetical: the first draft of this gate checked only
  * (1), and fixtures with a scheduleless caller and with a caller missing
  * `issues: write` both scored "OK". test/run-tests.sh pins all three.
- * Under all of them sits a fourth assertion — that the target is a REAL REPO
- * and not merely a path that exists (see repoIdentityError). A gate may never
- * certify something it did not audit, and "the path resolved" is not "I read a
- * repo": a file, an off-by-one directory, and an empty file merely NAMED `.git`
- * all scored covered, exit 0. The repo is now identified by reading git's
- * on-disk contract, so no name can stand in for one.
+ * Under all of them sits a fourth assertion — that the thing audited really is
+ * THIS repo, fully checked out (repoIdentity + checkoutError). A gate may never
+ * certify something it did not read, and five revisions of that assertion each
+ * shipped the next evasion, because each described a SHAPE the target had to
+ * have rather than a FACT it had to prove. Scored covered, exit 0, in turn: a
+ * file; an off-by-one directory; an empty file merely NAMED `.git`; a git dir
+ * with a zero-byte HEAD; a `gitdir:` pointer BORROWED from another real repo;
+ * and — with nothing hand-written at all — an ordinary sparse clone of this
+ * very repo, whose tree simply lacked the workflows its own index lists.
+ *
+ * WHAT THIS GATE NOW PROVES, AND WHAT IT STILL CANNOT.
+ * Proves: the directory audited is a real git repository that claims this
+ * directory back, its index was read, and every workflow file that index tracks
+ * was present on disk and parsed. A verdict is therefore about files this
+ * process actually opened, not about a path that merely resolved.
+ * Cannot: (a) that the checked-out ref is the one you meant — HEAD is never
+ * compared to a branch, a remote or anything else, so a complete checkout of a
+ * stale or unrelated commit audits clean (measured: a detached old commit,
+ * exit 0). (b) That the repo is the one the NAME says. `name` is the path's
+ * basename and there is no canonical repo identity on disk to check it
+ * against, so this one is reachably GREEN, not merely mislabelled: measured
+ * 2026-08-17, a symlink `_agent-guidance -> <a different, covered repo>`
+ * prints `OK _agent-guidance … All audited repos covered`, exit 0. A
+ * `--require` list is trusted to name the directories you meant. (c) That
+ * untracked or ignored workflow files on disk belong there — reading more than
+ * git tracks can only make a verdict louder, so they are allowed through.
+ * (d) That a repo cannot claim a directory it does not own: `core.worktree`
+ * lets a git dir nominate any path as its checkout, and this gate agrees with
+ * git about that on purpose — writing that config means owning the repo, and
+ * the materialized-files check still has to pass afterwards. (e) Anything at
+ * all about a repo whose git dir or index it cannot read: those are REFUSED,
+ * never skipped — a loud stop, which is the absence of a verdict rather than a
+ * guarantee. Widen any of this only with a measurement.
  *
  * REAL YAML PARSE (eemeli `yaml`), never a regex or line scanner. This reasons
  * about workflow STRUCTURE — which triggers exist, which job calls what, which
@@ -158,11 +185,78 @@ function looksLikeGitDir(gitDir) {
   return /^ref:[ \t]*refs\//.test(head) || /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(head);
 }
 
-function repoIdentityError(dir) {
+// A gitlink is a POINTER, and following one proves a repository exists
+// SOMEWHERE — never that THIS directory is it. Measured 2026-08-17: four
+// directories, each holding the single line `gitdir: /home/user/_agent-guidance
+// /.git` and audited under a DIFFERENT --require name, all scored "SKIP …
+// nothing to watch" and "All audited repos covered", exit 0. One real repo's
+// git dir vouched for four fakes — round 1's four-empty-files evasion
+// reconstituted at content level, and the answer to "can this audit ever report
+// a different repo than --require named": yes.
+// So assert the RETURN LEG, which git writes itself rather than this gate
+// inventing a shape: a linked worktree's git dir holds a `gitdir` file naming
+// this `.git`, and a submodule's config holds `core.worktree` naming this
+// directory (both measured on real ones). When `.git` IS the git dir there is
+// nothing to borrow and the check is met by construction, which is every
+// ordinary clone.
+function samePath(a, b) {
+  if (path.resolve(a) === path.resolve(b)) return true;
+  // A repo reached through a symlinked path is still that repo, so fall back to
+  // the resolved form rather than failing a legitimate layout on spelling.
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const ra = real(a);
+  return ra !== null && ra === real(b);
+}
+
+// git config is INI-shaped, so track the current section rather than scanning
+// the file for a bare `worktree` key: that name under any other section means
+// something else entirely.
+function coreWorktree(gitDir) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(gitDir, "config"), "utf8");
+  } catch {
+    return null;
+  }
+  let section = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const head = /^\[[ \t]*([A-Za-z0-9.-]+)/.exec(line);
+    if (head) {
+      section = head[1].toLowerCase();
+      continue;
+    }
+    const kv = /^worktree[ \t]*=[ \t]*(.*)$/i.exec(line);
+    if (section === "core" && kv) return kv[1].trim().replace(/^"(.*)"$/, "$1");
+  }
+  return null;
+}
+
+function gitDirBelongsTo(dir, gitDir) {
+  const marker = path.join(dir, ".git");
+  if (samePath(gitDir, marker)) return true;
+  let back = null;
+  try {
+    back = fs.readFileSync(path.join(gitDir, "gitdir"), "utf8").trim();
+  } catch {
+    back = null;
+  }
+  if (back && samePath(path.resolve(gitDir, back), marker)) return true;
+  const wt = coreWorktree(gitDir);
+  return Boolean(wt) && samePath(path.resolve(gitDir, wt), dir);
+}
+
+function repoIdentity(dir) {
   const st = fs.statSync(dir, { throwIfNoEntry: false });
   // undefined also covers a dangling symlink, which stats ENOENT.
-  if (!st) return `no such directory ${dir} — nothing was audited`;
-  if (!st.isDirectory()) return `${dir} is not a directory — nothing was audited`;
+  if (!st) return { error: `no such directory ${dir} — nothing was audited` };
+  if (!st.isDirectory()) return { error: `${dir} is not a directory — nothing was audited` };
   let gitDir = null;
   // An unreadable marker is not a repo this gate can vouch for either, and it
   // must not exit on a stack trace that reads like an uncovered repo — the
@@ -173,7 +267,144 @@ function repoIdentityError(dir) {
     gitDir = null;
   }
   if (!gitDir || !looksLikeGitDir(gitDir)) {
-    return `${dir} is not a repository (no readable git dir) — nothing was audited`;
+    return { error: `${dir} is not a repository (no readable git dir) — nothing was audited` };
+  }
+  if (!gitDirBelongsTo(dir, gitDir)) {
+    return {
+      error: `${dir} is not this repository (its git dir ${gitDir} does not point back`
+        + ") — nothing was audited",
+    };
+  }
+  return { gitDir };
+}
+
+// ---------------------------------------------------------------------------
+// Was the repo actually CHECKED OUT? Identity settles "this directory is that
+// repository"; it says nothing about whether the files are here. Measured
+// 2026-08-17 on two clones of THIS repo at the SAME commit, no hand-written
+// file anywhere:
+//   git clone --no-checkout + sparse-checkout set scripts  ->  SKIP,  exit 0
+//   git clone                                              ->  FAIL,  exit 1
+// and `git worktree add --no-checkout` yields a directory whose only entry is a
+// 61-byte `.git`, where the ARGUMENT-LESS cwd form ci.yml actually runs said
+// "no .github/workflows — nothing to watch", exit 0. `git rev-parse --git-dir`
+// blesses all three. The verdict flipped red -> green purely on which files were
+// materialized: the same "I did not actually look" failure the gate exists to
+// prevent, one level below a fabricated path.
+//
+// git already records the answer, so read it instead of inferring one. The
+// index lists every path tracked at the checked-out ref, which separates three
+// states a bare `existsSync` collapses into one:
+//   index absent or unreadable — the checkout was never verified. ERROR, loud;
+//     this is the --no-checkout worktree, which has no index at all.
+//   index names a workflow the tree lacks — the checkout omitted it. ERROR.
+//     Catches the missing DIRECTORY and the subtler missing FILE alike: a
+//     --no-cone sparse checkout that materialized .github/workflows/ci.yml but
+//     not nightly.yml scored "SKIP … no scheduled workflows", exit 0.
+//   index names nothing under .github/workflows/ — genuinely nothing to watch,
+//     so the SKIP stands. Measured on all 14 repos on this disk the index and
+//     the tree agree 14/14, so the three that legitimately SKIP (rss-inator,
+//     SonosAmpJuicePi, agentskills-private) still do — the exact constraint
+//     that ruled out using `.github/workflows` as the repo marker in the first
+//     place.
+// An UNTRACKED workflow file is not an error: reading more than git tracks can
+// only make a verdict louder, never green.
+const WORKFLOW_PREFIX = ".github/workflows/";
+
+// Decodes gitformat-index far enough to list the tracked paths. A substring
+// scan for ".github/workflows/" over the raw file is the obvious shortcut and
+// is WRONG: index version 4 prefix-compresses each path against the previous
+// one, so a v4 index of a repo that tracks .github/workflows/n.yml contains no
+// such substring — measured 2026-08-17 — and paired with a sparse checkout that
+// shortcut waves the evasion straight through, failing OPEN. Versions 2, 3 and
+// 4 are parsed; any other version throws and the caller fails loud. Object ids
+// are 20 bytes under sha1 and 32 under sha256 and the header does not say
+// which, so both are tried and whichever consumes the entries cleanly wins.
+// Validated 2026-08-17 against `git ls-files` over 23 indexes — the 14 repos
+// here, a v3 sparse clone, two v4 indexes, a real submodule, a linked worktree,
+// two empty ones, and a 22,073-entry index with non-ASCII paths: identical
+// output, zero disagreements.
+function readVarint(buf, off) {
+  if (off >= buf.length) return null;
+  let c = buf[off++];
+  let val = c & 0x7f;
+  while (c & 0x80) {
+    if (off >= buf.length) return null;
+    val += 1;
+    c = buf[off++];
+    val = (val << 7) + (c & 0x7f);
+  }
+  return [val, off];
+}
+
+function readIndexEntries(buf, version, count, idLen) {
+  const paths = [];
+  let off = 12;
+  let prev = "";
+  for (let i = 0; i < count; i++) {
+    const start = off;
+    // ctime+mtime+dev+ino+mode+uid+gid+size = 40 bytes, then the object id,
+    // then the 2-byte flags whose 0x4000 bit adds 2 more in v3+.
+    off += 40 + idLen + 2;
+    if (off > buf.length) return null;
+    if (version >= 3 && buf.readUInt16BE(off - 2) & 0x4000) off += 2;
+    let name;
+    if (version < 4) {
+      const nul = buf.indexOf(0, off);
+      if (nul === -1) return null;
+      name = buf.toString("utf8", off, nul);
+      // 1-8 NUL bytes pad the record to a multiple of 8.
+      off = start + (((nul - start) + 8) & ~7);
+    } else {
+      const v = readVarint(buf, off);
+      if (!v) return null;
+      const [strip, after] = v;
+      if (strip > prev.length) return null;
+      const nul = buf.indexOf(0, after);
+      if (nul === -1) return null;
+      name = prev.slice(0, prev.length - strip) + buf.toString("utf8", after, nul);
+      off = nul + 1;
+    }
+    if (off > buf.length || !name) return null;
+    paths.push(name);
+    prev = name;
+  }
+  // What follows the entries is the trailing checksum, optionally preceded by
+  // extensions whose 4-byte signature is alphabetic. Anything else means the
+  // entries were misaligned, so this id length was the wrong guess.
+  const left = buf.length - off;
+  if (left < idLen) return null;
+  if (left !== idLen && !/^[A-Za-z]{4}$/.test(buf.toString("latin1", off, off + 4))) return null;
+  return paths;
+}
+
+function parseIndexPaths(buf) {
+  if (buf.length < 12 || buf.toString("latin1", 0, 4) !== "DIRC") {
+    throw new Error("not a git index");
+  }
+  const version = buf.readUInt32BE(4);
+  if (version < 2 || version > 4) throw new Error(`unsupported index version ${version}`);
+  const count = buf.readUInt32BE(8);
+  for (const idLen of [20, 32]) {
+    const paths = readIndexEntries(buf, version, count, idLen);
+    if (paths) return paths;
+  }
+  throw new Error("entries did not parse");
+}
+
+function checkoutError(dir, gitDir) {
+  let tracked;
+  try {
+    tracked = parseIndexPaths(fs.readFileSync(path.join(gitDir, "index")));
+  } catch (err) {
+    return `${dir} has no readable git index (${err.code || err.message}) — the`
+      + " checkout was never verified, so nothing was audited";
+  }
+  const want = tracked.filter((p) => p.startsWith(WORKFLOW_PREFIX));
+  const missing = want.filter((p) => !fs.existsSync(path.join(dir, p)));
+  if (missing.length) {
+    return `${dir} tracks ${want.length} workflow file(s) but this checkout did not`
+      + ` materialize ${missing.length} (e.g. ${missing[0]}) — nothing was audited`;
   }
   return null;
 }
@@ -221,9 +452,15 @@ function auditRepo(dir) {
   // POSIX shell resolves to nothing and printed "All audited repos covered",
   // exit 0 — a green gate that audited zero repos. Same "never pass
   // vacuously" rule the suite applies to a missing node_modules/yaml.
-  const identity = repoIdentityError(dir);
-  if (identity) {
-    return { name, status: "ERROR", detail: identity };
+  const { error, gitDir } = repoIdentity(dir);
+  if (error) {
+    return { name, status: "ERROR", detail: error };
+  }
+  // …and a real repo whose workflows were never checked out is not one this
+  // gate may certify either: see checkoutError.
+  const incomplete = checkoutError(dir, gitDir);
+  if (incomplete) {
+    return { name, status: "ERROR", detail: incomplete };
   }
   const wfDir = path.join(dir, ".github", "workflows");
   // No workflows at all means no crons, and a repo cannot fail to watch what
