@@ -1,5 +1,29 @@
 # Central sync registry: repos excluded from AGENTS.md sync, and default sections.
 # Consumer repos opt into extra sections via their own .agents-sync.yml.
+#
+# ── This list is NOT the whole exclusion story ──────────────────────────────
+#
+# Three more classes of repo never receive the guidance, and none of them
+# appears below — they are excluded structurally, by how sync.sh and
+# drift-report.sh DISCOVER repos, not by policy written here. Anyone auditing
+# "which repos get the managed AGENTS.md?" from this file alone gets a wrong
+# answer, which is why they are named here rather than left to be rediscovered:
+#
+#   • FORKS. Discovery passes `--source` to `gh repo list`, which means
+#     non-forks only. Deliberate — an AGENTS.md pushed into a fork becomes a
+#     diff against the upstream project and rides along in any PR sent back to
+#     it. Adam-S-Daniel/OctopusDeploy-Api and Adam-S-Daniel/SonosAmpJuicePi are
+#     the current forks. To sync one, it would have to stop being a fork; there
+#     is no entry here that could include it.
+#   • ARCHIVED repos. Discovery passes `--no-archived`. Also deliberate: an
+#     archived repo rejects pushes, so syncing one is a guaranteed failure, and
+#     nobody is opening agent sessions in it.
+#   • THIS REPO. sync.sh skips $SYNC_SELF_REPO. It carries its own AGENTS.md as
+#     a committed artifact instead, rebuilt from agents-md/ and diffed by CI —
+#     see docs/decisions/0002 for why that beats syncing into itself.
+#
+# What remains below is the policy exclusion list: repos that discovery WOULD
+# reach and that we choose not to sync.
 exclude:
   - civic-platform-agents  # out of scope per agentskills#18
   - civic-iac-policy       # out of scope per agentskills#18
