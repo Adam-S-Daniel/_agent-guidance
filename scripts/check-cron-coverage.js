@@ -28,6 +28,10 @@
  * about workflow STRUCTURE — which triggers exist, which job calls what, which
  * permissions block applies — and GitHub has allowed anchors/aliases in
  * workflows since 2025-09-18, which a line scanner silently mis-reads.
+ * That dep is pinned exactly, and to the same 2.9.0 cms-platform's e2e lint
+ * suite already resolves, so the two trees cannot disagree about what a
+ * workflow means. (Recorded here rather than in package.json: JSON has no
+ * comments, and the rationale crammed into `description` was a 432-col line.)
  *
  * Deterministic: pure filesystem. No network, no sleeps, no wall-clock.
  *
@@ -95,6 +99,16 @@ function missingScopes(perms) {
 
 function auditRepo(dir) {
   const name = path.basename(path.resolve(dir));
+  // "A real repo with nothing to audit" and "you pointed me at nothing" are
+  // different answers, and only the first is a pass. Without this the audit
+  // scores a typo'd or mislocated path as covered: `--repos-root D:\repos`
+  // (the Windows layout this fleet's own AGENTS.md documents) run from a
+  // POSIX shell resolves to nothing and printed "All audited repos covered",
+  // exit 0 — a green gate that audited zero repos. Same "never pass
+  // vacuously" rule the suite applies to a missing node_modules/yaml.
+  if (!fs.existsSync(dir)) {
+    return { name, status: "ERROR", detail: `no such directory ${dir} — nothing was audited` };
+  }
   const wfDir = path.join(dir, ".github", "workflows");
   // No workflows at all means no crons, and a repo cannot fail to watch what
   // it does not have. This is a SKIP, not a FAIL: the first draft FAILed here
@@ -119,6 +133,16 @@ function auditRepo(dir) {
     if (hasSchedule(onBlock(doc))) scheduled++;
     for (const [job, spec] of Object.entries(doc.jobs || {})) {
       if (spec && typeof spec.uses === "string" && spec.uses.includes(REUSABLE)) {
+        // ORDER DEPENDENCE, known and bounded. `files` is sorted, so with two
+        // callers the last one by filename wins — a broken caller can be
+        // masked by a good one that sorts after it. Deterministic, never
+        // flaky. Deliberately NOT tightened to "every caller must be valid":
+        // that would red-flag a legitimate workflow_dispatch-only manual
+        // caller, which has no schedule by design, only runs when a human
+        // runs it, and so is not a silently-failing cron at all.
+        // Measured 2026-08-17 across every repo on disk: the only three
+        // callers that exist (adamdaniel.ai, jodidaniel.com, cms-platform)
+        // are one apiece, so nothing is masked today in either direction.
         caller = { file, job, doc, spec };
       }
     }

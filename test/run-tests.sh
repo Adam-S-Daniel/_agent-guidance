@@ -2285,6 +2285,21 @@ EOF
         fi
     }
 
+    # Same contract driven through the ARGUMENT-LESS cwd form instead. Every
+    # assertion above passes --repos-root/--require, so on its own the suite
+    # leaves the cwd default — the only form a CI runner can use, and the one
+    # ci.yml actually wires — completely unexercised. The `cd` is confined to
+    # the subshell, so the caller's cwd is untouched.
+    assert_cron_cwd() {
+        local out rc=0
+        out=$(cd "$root/$1" && node "$script" 2>&1) || rc=$?
+        if [[ "$rc" == "$2" ]] && grep -qF "$3" <<<"$out"; then
+            pass "$4"
+        else
+            fail "$4 — expected exit $2 containing '$3'; got exit $rc: $(echo "$out" | head -2 | tr '\n' ' ')"
+        fi
+    }
+
     rm -rf "$root"; mkdir -p "$root"
 
     # 1. The real caller, unmodified: the pass path must be reachable.
@@ -2313,6 +2328,17 @@ EOF
     assert_cron noperm 1 "lacks permissions issues: write" \
         "cron coverage: a caller without issues: write fails"
 
+    # 4b. Caller present and `issues:` GRANTED — but only at `read`. Pins the
+    #     LEVEL of the grant, not merely its presence: without this, the
+    #     scope check could be loosened to "the key exists" and case 4 above
+    #     would still pass, while a read-only grant still 403s on every issue
+    #     write the audit makes.
+    cron_workload issread
+    sed 's/^  issues: write$/  issues: read/' "$caller" \
+        > "$root/issread/.github/workflows/scheduled-run-health.yml"
+    assert_cron issread 1 "lacks permissions issues: write" \
+        "cron coverage: a caller granting issues: read (not write) fails"
+
     # 5. Caller present but its own `schedule:` trigger removed — it can never
     #    fire, so it watches nothing while looking installed.
     cron_workload nosched
@@ -2333,6 +2359,15 @@ EOF
     assert_cron noworkflows 0 "no .github/workflows" \
         "cron coverage: a repo with no workflows skips, not fails"
 
+    # 7b. The repo DIRECTORY itself is absent — a typo'd or mislocated path.
+    #     Distinct from case 7: there the repo is real and has nothing to
+    #     audit; here nothing was audited at all. Collapsing the two makes the
+    #     gate certify paths it never looked at (`--repos-root D:\repos` from
+    #     a POSIX shell printed "All audited repos covered", exit 0). No
+    #     mkdir here — the absence IS the fixture.
+    assert_cron doesnotexist 1 "no such directory" \
+        "cron coverage: a repo directory that does not exist is an error, not a skip"
+
     # 8. Malformed YAML must be its OWN labelled outcome. Left uncaught it
     #    exits 1 with a parser stack trace that reads exactly like an
     #    uncovered repo, making a broken workflow and a missing audit
@@ -2342,6 +2377,16 @@ EOF
         > "$root/badyaml/.github/workflows/broken.yml"
     assert_cron badyaml 1 "unparseable YAML" \
         "cron coverage: malformed YAML reports as a parse error, not a coverage verdict"
+
+    # 9. The no-args cwd form, both directions. This is the path ci.yml runs
+    #    and the only one available to a runner (a runner has exactly ONE repo
+    #    checked out), yet cases 1-8 all drive --repos-root/--require — so a
+    #    broken cwd default would ship green behind a fully green suite.
+    #    Reuses the fixtures built above rather than making new ones.
+    assert_cron_cwd covered 0 "OK    covered:" \
+        "cron coverage: no-args cwd mode passes on a covered repo"
+    assert_cron_cwd uncovered 1 "no scheduled-run-health caller" \
+        "cron coverage: no-args cwd mode fails on an uncovered repo"
 }
 
 # ── Run all tests ──────────────────────────────────────────────────────────
