@@ -23,6 +23,10 @@
  * (2) and (3) are not hypothetical: the first draft of this gate checked only
  * (1), and fixtures with a scheduleless caller and with a caller missing
  * `issues: write` both scored "OK". test/run-tests.sh pins all three.
+ * Under all of them sits a fourth assertion — that the target is a REAL REPO
+ * and not merely a path that exists (see repoIdentityError). A gate may never
+ * certify something it did not audit, and "the path resolved" is not "I read a
+ * repo": a file and an off-by-one directory both scored covered, exit 0.
  *
  * REAL YAML PARSE (eemeli `yaml`), never a regex or line scanner. This reasons
  * about workflow STRUCTURE — which triggers exist, which job calls what, which
@@ -97,6 +101,72 @@ function missingScopes(perms) {
     .map(([scope, level]) => `${scope}: ${level}`);
 }
 
+// The target must be a REAL REPO, not merely a path that exists. `existsSync`
+// alone certified two kinds of "you pointed me at nothing" as covered, exit 0:
+// four empty FILES named after the four adopting repos, and `--repos-root`
+// pointed one level too high (`/home` + `--require user`) — the latter is the
+// mistake this fleet's own AGENTS.md invites, documenting a TWO-segment layout
+// `D:\repos\<owner>\<repo>` in which the owner level is a real directory.
+//
+// `.git` is the marker, chosen over the two alternatives on measurement:
+//   - directory-ness alone closes the file case but not the off-by-one one,
+//     because an owner-level directory is still a directory;
+//   - requiring `.github/workflows` would conflate the two answers this
+//     function exists to keep apart — 3 of the 14 repos on this disk
+//     (rss-inator, agentskills-private, SonosAmpJuicePi) are real repos with
+//     no workflows dir, and test case 7 exists precisely so they SKIP;
+//   - `.git` is what git itself writes at a checkout root and nowhere above
+//     it. Measured 2026-08-17: all 14 repos on disk have it, none of
+//     /home, /home/user, /tmp does. `actions/checkout` (ci.yml) leaves one,
+//     so the cwd form CI runs still passes.
+// Tested by EXISTENCE, never isDirectory(): in a linked worktree git writes
+// `.git` as a FILE, so a directory test would break the cwd form in every
+// worktree — including the one this fix was written in.
+function repoIdentityError(dir) {
+  const st = fs.statSync(dir, { throwIfNoEntry: false });
+  // undefined also covers a dangling symlink, which stats ENOENT.
+  if (!st) return `no such directory ${dir} — nothing was audited`;
+  if (!st.isDirectory()) return `${dir} is not a directory — nothing was audited`;
+  if (!fs.existsSync(path.join(dir, ".git"))) {
+    return `${dir} is not a repository (no .git) — nothing was audited`;
+  }
+  return null;
+}
+
+// Sorts every caller into one of three buckets, so the verdict is a property
+// of the SET and not of which filename happens to sort last:
+//   watcher    — has its own on.schedule: AND the scopes: it really does watch;
+//   problems   — scheduled but underpermissioned: a nightly 403, i.e. exactly
+//                the silently-failing cron this gate exists to prevent, so it
+//                fails the repo even alongside a working watcher;
+//   unfireable — no on.schedule: at all. A workflow_dispatch-only manual
+//                caller is LEGITIMATE — it only runs when a human runs it, so
+//                it is not a silent failure — and is therefore not a problem;
+//                it just cannot be the thing that covers the repo.
+// Callers arrive in sorted-file order, so `problems[0]`/`unfireable[0]` and the
+// chosen watcher are all deterministic.
+function classifyCallers(callers) {
+  let watcher = null;
+  const problems = [];
+  const unfireable = [];
+  for (const caller of callers) {
+    if (!hasSchedule(onBlock(caller.doc))) {
+      unfireable.push(`${caller.file} has no on.schedule: — the audit can never fire`);
+      continue;
+    }
+    const missing = missingScopes(effectivePermissions(caller.doc, caller.spec));
+    if (missing.length) {
+      problems.push(
+        `${caller.file} job '${caller.job}' lacks permissions ${missing.join(" + ")}`
+          + " — the audit would 403 nightly",
+      );
+      continue;
+    }
+    if (!watcher) watcher = caller;
+  }
+  return { watcher, problems, unfireable };
+}
+
 function auditRepo(dir) {
   const name = path.basename(path.resolve(dir));
   // "A real repo with nothing to audit" and "you pointed me at nothing" are
@@ -106,8 +176,9 @@ function auditRepo(dir) {
   // POSIX shell resolves to nothing and printed "All audited repos covered",
   // exit 0 — a green gate that audited zero repos. Same "never pass
   // vacuously" rule the suite applies to a missing node_modules/yaml.
-  if (!fs.existsSync(dir)) {
-    return { name, status: "ERROR", detail: `no such directory ${dir} — nothing was audited` };
+  const identity = repoIdentityError(dir);
+  if (identity) {
+    return { name, status: "ERROR", detail: identity };
   }
   const wfDir = path.join(dir, ".github", "workflows");
   // No workflows at all means no crons, and a repo cannot fail to watch what
@@ -118,7 +189,7 @@ function auditRepo(dir) {
   }
   const files = fs.readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)).sort();
   let scheduled = 0;
-  let caller = null;
+  const callers = [];
   for (const file of files) {
     let doc;
     try {
@@ -133,50 +204,44 @@ function auditRepo(dir) {
     if (hasSchedule(onBlock(doc))) scheduled++;
     for (const [job, spec] of Object.entries(doc.jobs || {})) {
       if (spec && typeof spec.uses === "string" && spec.uses.includes(REUSABLE)) {
-        // ORDER DEPENDENCE, known and bounded. `files` is sorted, so with two
-        // callers the last one by filename wins — a broken caller can be
-        // masked by a good one that sorts after it. Deterministic, never
-        // flaky. Deliberately NOT tightened to "every caller must be valid":
-        // that would red-flag a legitimate workflow_dispatch-only manual
-        // caller, which has no schedule by design, only runs when a human
-        // runs it, and so is not a silently-failing cron at all.
-        // Measured 2026-08-17 across every repo on disk: the only three
-        // callers that exist (adamdaniel.ai, jodidaniel.com, cms-platform)
-        // are one apiece, so nothing is masked today in either direction.
-        caller = { file, job, doc, spec };
+        // EVERY caller is collected, not just the last by filename. Assigning
+        // a single `caller` here made the verdict depend on sort order, and
+        // the comment that justified leaving it there was wrong: it called
+        // red-flagging a legitimate workflow_dispatch-only manual caller a
+        // hypothetical cost of tightening, when the shipped code already did
+        // exactly that whenever the manual caller sorted last. Measured
+        // 2026-08-17 — one dispatch-only caller plus one good caller scored
+        // FAIL as `zzz-manual-health.yml` and OK as `aaa-manual-health.yml`,
+        // same repo, same coverage. See classifyCallers for the rule that
+        // replaced it.
+        callers.push({ file, job, doc, spec });
       }
     }
   }
   if (scheduled === 0) {
     return { name, status: "SKIP", detail: "no scheduled workflows — nothing to watch" };
   }
-  if (!caller) {
+  if (!callers.length) {
     return {
       name,
       status: "FAIL",
       detail: `${scheduled} scheduled workflow(s), no ${REUSABLE} caller`,
     };
   }
-  if (!hasSchedule(onBlock(caller.doc))) {
-    return {
-      name,
-      status: "FAIL",
-      detail: `${caller.file} has no on.schedule: — the audit can never fire`,
-    };
+  const { watcher, problems, unfireable } = classifyCallers(callers);
+  // A scheduled caller that would 403 is itself a new silently-failing cron,
+  // so it fails the repo even when a second caller does watch the crons.
+  if (problems.length) {
+    return { name, status: "FAIL", detail: problems[0] };
   }
-  const missing = missingScopes(effectivePermissions(caller.doc, caller.spec));
-  if (missing.length) {
-    return {
-      name,
-      status: "FAIL",
-      detail: `${caller.file} job '${caller.job}' lacks permissions ${missing.join(" + ")}`
-        + " — the audit would 403 nightly",
-    };
+  // Nothing broken, but nothing that can fire either: every caller is manual.
+  if (!watcher) {
+    return { name, status: "FAIL", detail: unfireable[0] };
   }
   return {
     name,
     status: "OK",
-    detail: `${scheduled} scheduled workflow(s) watched by ${caller.file}`,
+    detail: `${scheduled} scheduled workflow(s) watched by ${watcher.file}`,
   };
 }
 

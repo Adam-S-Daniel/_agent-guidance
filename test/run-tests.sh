@@ -2258,8 +2258,20 @@ test_check_cron_coverage() {
         return
     fi
 
+    # Every fixture is a REPO, so every fixture carries a .git marker: the
+    # audit now refuses to certify a directory that is not one (cases 7c/7d).
+    # A plain FILE is deliberate and sufficient — that is what git itself
+    # writes as .git in a linked worktree, so this also pins that the check is
+    # existence and not isDirectory(). Built in one helper so a fixture added
+    # later cannot forget it and mysteriously ERROR.
+    cron_repo() {
+        mkdir -p "$root/$1"
+        : > "$root/$1/.git"
+    }
+
     # A scheduled workload, so every fixture below has something to watch.
     cron_workload() {
+        cron_repo "$1"
         mkdir -p "$root/$1/.github/workflows"
         cat > "$root/$1/.github/workflows/nightly.yml" <<'EOF'
 name: Nightly
@@ -2348,14 +2360,18 @@ EOF
         "cron coverage: a caller with no schedule: trigger fails"
 
     # 6. Workflows, but none scheduled: nothing to watch, so not a failure.
+    cron_repo nocron
     mkdir -p "$root/nocron/.github/workflows"
     printf 'name: CI\non:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n' \
         > "$root/nocron/.github/workflows/ci.yml"
     assert_cron nocron 0 "SKIP  nocron:" "cron coverage: a repo with no crons skips"
 
     # 7. No .github/workflows at all. The first draft FAILed here and so
-    #    reddened rss-inator, a repo with nothing to audit.
-    mkdir -p "$root/noworkflows"
+    #    reddened rss-inator, a repo with nothing to audit. Measured
+    #    2026-08-17: 3 of the 14 repos on this disk are in that state, which is
+    #    why cases 7c/7d below identify a repo by .git and NOT by the presence
+    #    of a workflows dir — that marker would redden all three.
+    cron_repo noworkflows
     assert_cron noworkflows 0 "no .github/workflows" \
         "cron coverage: a repo with no workflows skips, not fails"
 
@@ -2367,6 +2383,26 @@ EOF
     #     mkdir here — the absence IS the fixture.
     assert_cron doesnotexist 1 "no such directory" \
         "cron coverage: a repo directory that does not exist is an error, not a skip"
+
+    # 7c. The target EXISTS but is a regular FILE. `fs.existsSync` is true for a
+    #     file, so four empty files named after the four adopting repos audited
+    #     as clean: four "SKIP … no .github/workflows", "All audited repos
+    #     covered", exit 0. Case 7b does not catch this — the path does exist.
+    : > "$root/isafile"
+    assert_cron isafile 1 "is not a directory" \
+        "cron coverage: a target that is a file, not a directory, is an error"
+
+    # 7d. The target exists, IS a directory, but is not a repo — `--repos-root`
+    #     off by one level. Same operator-error class as 7b, and invited by this
+    #     fleet's own documented layout: AGENTS.md specifies a TWO-segment
+    #     `D:\repos\<owner>\<repo>`, so aiming at the owner level is the natural
+    #     mistake, and an owner level is a perfectly real directory.
+    #     Measured on the shipped code: `--repos-root /home --require user` →
+    #     "SKIP user: no .github/workflows", exit 0. No .git here — that
+    #     absence IS the fixture, so do not route this through cron_repo.
+    mkdir -p "$root/notarepo"
+    assert_cron notarepo 1 "not a repository" \
+        "cron coverage: an existing non-repo directory is an error, not a skip"
 
     # 8. Malformed YAML must be its OWN labelled outcome. Left uncaught it
     #    exits 1 with a parser stack trace that reads exactly like an
@@ -2387,6 +2423,44 @@ EOF
         "cron coverage: no-args cwd mode passes on a covered repo"
     assert_cron_cwd uncovered 1 "no scheduled-run-health caller" \
         "cron coverage: no-args cwd mode fails on an uncovered repo"
+
+    # 10. TWO callers in one repo: the verdict must be a property of the SET,
+    #     not of which filename sorts last. A single overwritten `caller`
+    #     variable made the last file win — measured 2026-08-17, one good caller
+    #     plus one dispatch-only manual caller scored FAIL as `zzz-manual.yml`
+    #     and OK as `aaa-manual.yml`: same repo, same coverage, opposite exit.
+    #     Both halves are pinned, because order-independence must not be bought
+    #     by dropping a detection:
+    #       - a dispatch-only MANUAL caller is legitimate (it fires only when a
+    #         human runs it, so it is not a silent failure) → OK either way;
+    #       - a SCHEDULED caller missing `issues: write` 403s nightly, which is
+    #         the exact failure this gate exists to prevent → FAIL either way,
+    #         including when a working caller sorts after it (where the old
+    #         last-wins rule scored the repo OK and missed it).
+    cron_two_callers() {   # <fixture> <good-file> <second-file> manual|broken
+        cron_workload "$1"
+        cp "$caller" "$root/$1/.github/workflows/$2"
+        if [[ "$4" == manual ]]; then
+            sed '/^  schedule:$/,/^  workflow_dispatch:$/{/^  workflow_dispatch:$/!d;}' \
+                "$caller" > "$root/$1/.github/workflows/$3"
+        else
+            sed '/^  issues: write$/d' "$caller" > "$root/$1/.github/workflows/$3"
+        fi
+    }
+
+    cron_two_callers manuallast aaa-health.yml zzz-manual.yml manual
+    cron_two_callers manualfirst zzz-health.yml aaa-manual.yml manual
+    assert_cron manuallast 0 "watched by aaa-health.yml" \
+        "cron coverage: a manual-only caller sorting LAST does not unseat a good one"
+    assert_cron manualfirst 0 "watched by zzz-health.yml" \
+        "cron coverage: a manual-only caller sorting FIRST does not unseat a good one"
+
+    cron_two_callers brokenlast aaa-health.yml zzz-broken.yml broken
+    cron_two_callers brokenfirst zzz-health.yml aaa-broken.yml broken
+    assert_cron brokenlast 1 "zzz-broken.yml job 'audit' lacks permissions" \
+        "cron coverage: a scheduled 403ing caller fails the repo, sorting LAST"
+    assert_cron brokenfirst 1 "aaa-broken.yml job 'audit' lacks permissions" \
+        "cron coverage: a scheduled 403ing caller fails the repo, sorting FIRST"
 }
 
 # ── Run all tests ──────────────────────────────────────────────────────────
