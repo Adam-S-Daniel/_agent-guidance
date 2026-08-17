@@ -2258,15 +2258,17 @@ test_check_cron_coverage() {
         return
     fi
 
-    # Every fixture is a REPO, so every fixture carries a .git marker: the
-    # audit now refuses to certify a directory that is not one (cases 7c/7d).
-    # A plain FILE is deliberate and sufficient — that is what git itself
-    # writes as .git in a linked worktree, so this also pins that the check is
-    # existence and not isDirectory(). Built in one helper so a fixture added
+    # Every fixture is a REPO, so every fixture carries a real minimal git dir:
+    # the audit refuses to certify a directory that is not one (cases 7c-7g).
+    # This helper used to write an empty FILE named .git, which was itself the
+    # evasion cases 7e/7f now pin — so the suite was asserting against a shape
+    # git calls "not a git repository" and teaching the wrong invariant to
+    # anyone reading it. objects/ + refs/ + a HEAD that validates as a ref is
+    # git's own is_git_directory(). Built in one helper so a fixture added
     # later cannot forget it and mysteriously ERROR.
     cron_repo() {
-        mkdir -p "$root/$1"
-        : > "$root/$1/.git"
+        mkdir -p "$root/$1/.git/objects" "$root/$1/.git/refs"
+        printf 'ref: refs/heads/main\n' > "$root/$1/.git/HEAD"
     }
 
     # A scheduled workload, so every fixture below has something to watch.
@@ -2403,6 +2405,49 @@ EOF
     mkdir -p "$root/notarepo"
     assert_cron notarepo 1 "not a repository" \
         "cron coverage: an existing non-repo directory is an error, not a skip"
+
+    # 7e/7f. The NAME `.git` is not a repository either. Testing the marker by
+    #     existence was the third revision of this predicate, and it certified a
+    #     directory holding one zero-byte file called `.git`: measured on that
+    #     code, four such directories named after the four adopting repos scored
+    #     "SKIP … no .github/workflows" ×4, "All audited repos covered", exit 0.
+    #     An empty DIRECTORY called `.git` did the same. Both are the same
+    #     "the path resolved" error as 7b-7d, one level further down, which is
+    #     why the fix stopped blacklisting shapes and started reading content.
+    mkdir -p "$root/gitnamefile"; : > "$root/gitnamefile/.git"
+    assert_cron gitnamefile 1 "not a repository" \
+        "cron coverage: an empty file named .git is not a repository"
+    mkdir -p "$root/gitnamedir/.git"
+    assert_cron gitnamedir 1 "not a repository" \
+        "cron coverage: an empty directory named .git is not a repository"
+
+    # 7g. And one level below THAT: a git dir with the right entry NAMES but a
+    #     zero-byte HEAD. Pins that HEAD is read and validated as a ref rather
+    #     than merely existing — otherwise the predicate stops one directory
+    #     short and the same defect class survives. Measured 2026-08-17: `git
+    #     rev-parse --git-dir` in this fixture says "not a git repository", so
+    #     accepting it would put the gate at odds with git itself.
+    mkdir -p "$root/emptyhead/.git/objects" "$root/emptyhead/.git/refs"
+    : > "$root/emptyhead/.git/HEAD"
+    assert_cron emptyhead 1 "not a repository" \
+        "cron coverage: a git dir whose HEAD is empty is not a repository"
+
+    # 7h. The positive half, and the case existence-testing was chosen to
+    #     protect: in a LINKED WORKTREE git writes `.git` as a FILE holding
+    #     `gitdir: <path>`, and that git dir has no objects/ or refs/ of its own
+    #     — it borrows both from the parent through `commondir`. Shape copied
+    #     from the real worktree this was written in. The pointer is deliberately
+    #     RELATIVE (git writes relative gitlinks for submodules), so resolving it
+    #     against anything but the containing directory reddens here. Without
+    #     this assertion, closing 7e/7f by demanding a `.git` DIRECTORY would
+    #     look correct and would break the cwd form in every worktree.
+    cron_repo wtparent
+    mkdir -p "$root/wtparent/.git/worktrees/wt" "$root/wtshape"
+    printf 'ref: refs/heads/main\n' > "$root/wtparent/.git/worktrees/wt/HEAD"
+    printf '../..\n' > "$root/wtparent/.git/worktrees/wt/commondir"
+    printf 'gitdir: ../wtparent/.git/worktrees/wt\n' > "$root/wtshape/.git"
+    assert_cron wtshape 0 "no .github/workflows" \
+        "cron coverage: a worktree-shaped .git FILE is a repository"
 
     # 8. Malformed YAML must be its OWN labelled outcome. Left uncaught it
     #    exits 1 with a parser stack trace that reads exactly like an
