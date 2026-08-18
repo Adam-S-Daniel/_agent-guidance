@@ -38,7 +38,6 @@ treat unknown-hunting as part of the work, not a phase that ends at the plan:
 - While building: keep a running note of decisions that departed from the plan
   and edge cases you hit. Surface them; don't silently absorb them.
 - After building: be able to explain what changed and why it is correct.
-
 - Durable findings go in the **repo**, not in agent memory — an environment
   quirk, non-obvious wiring, where a source of truth actually lives, a
   sequencing constraint. Repo files version with the code and every person and
@@ -128,7 +127,6 @@ Fleet repos enforce PR-only default branches via ruleset, managed as code in
   cms-platform-managed repos (outside the fleet ruleset) use it by their own
   design.
 
-
 ### A required status check gets no `concurrency` group
 
 A job that publishes a **required** status context and can fire more than once
@@ -193,7 +191,6 @@ Two things about that setting are easy to get wrong:
 
 `semver-minor-days` / `semver-patch-days` are deliberately left undefined —
 they fall back to `default-days`, and spelling them out only invites drift.
-
 
 The window is not only Dependabot's. A package you add or bump **by hand** mid-task
 is the case with no automation watching it: check the publish date
@@ -278,7 +275,6 @@ ref for review, not the setting, to catch.
 - Supply a throwaway credential, or scope the test to what runs
   unauthenticated. If it genuinely cannot run without a real one, that is the
   operator's call — not a gap for the subagent to close on its own initiative.
-
 
 ## Skills ecosystem
 
