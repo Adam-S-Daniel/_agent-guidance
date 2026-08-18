@@ -16,6 +16,7 @@ a page.
 |-----|-------|
 | [0001](0001-skills-bootstrap-delivery-is-opt-in.md) | skills-bootstrap delivery is opt-in and double-keyed, not fleet-wide |
 | [0002](0002-unconditional-rules-live-in-the-guidance-not-a-skill.md) | Unconditional rules live in the managed guidance, not in a skill |
+| [0003](0003-cron-coverage-is-fleet-listed.md) | Cron coverage is measured against a declared fleet, not against a disk |
 
 ## Format
 

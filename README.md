@@ -284,15 +284,49 @@ per-owner App tokens but keeps the default `github.token` as a base fallback
 minted, its private repos simply show up as fetch failures in the report — a
 workable degraded mode rather than a hard failure.
 
+## Cron coverage
+
+A `schedule:`-triggered workflow fails silently — no PR goes red, nothing
+notifies. This repo's own `drift-report.yml` was red for 26 consecutive nights
+before anyone noticed. `scripts/check-cron-coverage.js` is the gate that says a
+repo running crons actually calls cms-platform's `scheduled-run-health`
+reusable, and that the caller it has can fire and can file.
+
+Two forms, answering two different questions:
+
+```bash
+# "Is THIS repo covered?" — what ci.yml runs. A runner has exactly one repo
+# checked out, so this is the form that can exist in CI at all.
+node scripts/check-cron-coverage.js
+
+# "Is the FLEET covered?" — every repo repos.yml names under
+# cron_coverage.fleet, resolved against a disk root. A named repo that is not
+# there, or is not fully checked out, is an ERROR: absence is never a pass.
+node scripts/check-cron-coverage.js --repos-root /home/user
+
+# …or an explicit subset, on purpose.
+node scripts/check-cron-coverage.js --repos-root /home/user \
+  --require _agent-guidance,skills-evals
+```
+
+The gate is offline by design (pure filesystem, no network), so it can only
+know the fleet `repos.yml` declares. `drift-report.sh` is the half that
+discovers, and it flags any repo in either owner that neither
+`cron_coverage.fleet` nor `cron_coverage.out_of_scope` classifies — so the list
+can go stale, but not quietly. See
+[ADR 0003](docs/decisions/0003-cron-coverage-is-fleet-listed.md) for why the
+fleet is declared rather than inferred from whatever happens to be cloned.
+
 ## Layout
 
 ```
 agents-md/              # managed AGENTS.md content (base + opt-in sections)
-scripts/                # build, sync, drift-report, bridge/bootstrap status
+scripts/                # build, sync, drift-report, cron coverage, status
 docs/decisions/         # ADRs (start at the README there)
-.github/workflows/      # CI, sync-on-push, nightly drift report
+.github/workflows/      # CI, sync-on-push, nightly drift report, cron health
 .agents-sync.example.yml
-repos.yml               # exclusions, default sections, skills-bootstrap pin
+repos.yml               # exclusions, default sections, skills-bootstrap pin,
+                        #   cron-coverage fleet + out-of-scope
 AGENTS.md               # GENERATED from agents-md/ — this repo's own copy
 CLAUDE.md               # the bridge that makes AGENTS.md load here too
 test/run-tests.sh
