@@ -1,3 +1,7 @@
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+<!-- Source: _agent-guidance -->
+<!-- Sections: none -->
+
 # AGENTS.md
 
 > **Managed by [`_agent-guidance`].**
@@ -234,3 +238,26 @@ every repo — by `repo-settings`' `fleet.yml` for the fleet, and by
   `generate_skills_lock.py --check` then fails with `cannot resolve ref`.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
+
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+
+**`AGENTS.md` in this repo is a generated artifact.** Everything above the marker
+is `scripts/build-agents-md.sh` output — edit `agents-md/base.md` (or a file under
+`agents-md/sections/`), never this file's managed half. CI regenerates and diffs
+it, so a base.md edit without a regenerated `AGENTS.md` fails the build.
+
+Why it is committed here at all, when `sync.sh` writes it everywhere else: the
+sync excludes its own repo (`SYNC_SELF_REPO`), so for as long as this repo has
+existed it was the one repo in the fleet whose agents never read the fleet's
+guidance. Committing the rendered output fixes that and buys a second thing —
+a PR that changes `base.md` shows the exact text ~20 repos are about to receive,
+in the same diff, instead of deferring it to an async run after merge.
+
+Regenerate with:
+
+```bash
+printf '%s\n%s\n' "$(./scripts/build-agents-md.sh)" \
+  "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new \
+  && mv AGENTS.md.new AGENTS.md
+```
