@@ -46,16 +46,22 @@
  * against, so this one is reachably GREEN, not merely mislabelled: measured
  * 2026-08-17, a symlink `_agent-guidance -> <a different, covered repo>`
  * prints `OK _agent-guidance … All audited repos covered`, exit 0. A
- * `--require` list is trusted to name the directories you meant. (c) That
- * untracked or ignored workflow files on disk belong there — reading more than
- * git tracks can only make a verdict louder, so they are allowed through.
+ * `fleet:`/`--require` list is trusted to name the directories you meant.
+ * (c) That untracked or ignored workflow files on disk belong there — reading
+ * more than git tracks can only make a verdict louder, so they are allowed
+ * through.
  * (d) That a repo cannot claim a directory it does not own: `core.worktree`
  * lets a git dir nominate any path as its checkout, and this gate agrees with
  * git about that on purpose — writing that config means owning the repo, and
  * the materialized-files check still has to pass afterwards. (e) Anything at
  * all about a repo whose git dir or index it cannot read: those are REFUSED,
  * never skipped — a loud stop, which is the absence of a verdict rather than a
- * guarantee. Widen any of this only with a measurement.
+ * guarantee. (f) That the DECLARED fleet is the whole account. A disk-root run
+ * now fails on a repo repos.yml names and the disk lacks — that gap was issue
+ * #37 and is closed — but a repo created in the account and never added to
+ * `cron_coverage.fleet` is invisible here, because nothing offline can know
+ * about it. drift-report.sh discovers and flags exactly that; this script
+ * deliberately keeps no network. Widen any of this only with a measurement.
  *
  * REAL YAML PARSE (eemeli `yaml`), never a regex or line scanner. This reasons
  * about workflow STRUCTURE — which triggers exist, which job calls what, which
@@ -71,8 +77,12 @@
  * Usage:
  *   node scripts/check-cron-coverage.js                  # audit the cwd repo
  *   node scripts/check-cron-coverage.js --repo <dir>     # audit one repo
+ *   node scripts/check-cron-coverage.js --repos-root /home/user
+ *                                                        # every repo repos.yml
+ *                                                        # names under
+ *                                                        # cron_coverage.fleet
  *   node scripts/check-cron-coverage.js --repos-root /home/user \
- *     --require _agent-guidance,skills-evals             # local multi-repo
+ *     --require _agent-guidance,skills-evals             # an explicit subset
  *
  * The cwd default is the load-bearing one: a CI runner has exactly ONE repo
  * checked out, so a gate keyed to sibling clones on a developer's disk could
@@ -527,15 +537,81 @@ function auditRepo(dir) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// WHICH repos a disk-root audit is answering about. Everything above decides
+// whether a given directory is covered; this decides which directories had to
+// be there in the first place, and it is the difference between a verdict and
+// an anecdote. Measured 2026-08-17 (issue #37): a session holding 14 of the
+// account's 25 repos audited its 14, found three uncovered, and printed
+// nothing whatsoever about the 11 it never saw — because a disk-scoped audit
+// has no way to miss a repo that is not on the disk. Its clean line and a
+// genuinely complete one are the same bytes.
+//
+// So the fleet is DECLARED, in repos.yml, and a name that does not resolve to
+// a readable repo is an ERROR by the same rule as everywhere else in this
+// file: absence is never a pass. `--require` still overrides, for auditing a
+// subset on purpose; what it can no longer do is be the only way to name
+// anything, which is what left the default silent.
+//
+// The list is the one hand-maintained repo inventory in this repo — sync.sh
+// and drift-report.sh both discover instead — so it can go stale. It cannot go
+// stale QUIETLY: drift-report.sh discovers every repo nightly and flags any it
+// reaches that neither `fleet:` nor `out_of_scope:` classifies. That split of
+// duties is deliberate and is why this script keeps its no-network property;
+// see docs/decisions/0003-cron-coverage-is-fleet-listed.md.
+function fleetFromRegistry(file) {
+  let doc;
+  try {
+    doc = YAML.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    return { error: `cannot read the fleet list in ${file} (${err.code || err.message})` };
+  }
+  const scope = doc && typeof doc === "object" ? doc.cron_coverage : undefined;
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
+    return { error: `${file} has no cron_coverage: block — there is no fleet to audit` };
+  }
+  const fleet = scope.fleet;
+  // An EMPTY list is the vacuous-pass shape this whole file is built against:
+  // zero repos audited, zero failures, "All audited repos covered", exit 0.
+  if (!Array.isArray(fleet) || !fleet.length) {
+    return { error: `${file} lists no cron_coverage.fleet repos — nothing would be audited` };
+  }
+  const bad = fleet.find((r) => typeof r !== "string" || !r.trim() || /[\\/]/.test(r));
+  if (bad !== undefined) {
+    return { error: `${file} cron_coverage.fleet entry ${JSON.stringify(bad)} is not a repo name` };
+  }
+  // A name under both keys is a contradiction, and the two keys are read by
+  // different tools (this one reads `fleet:`, drift-report.sh reads both), so
+  // an overlap would make them disagree about the same repo rather than fail.
+  const out = Array.isArray(scope.out_of_scope) ? scope.out_of_scope : [];
+  const both = fleet.filter((r) => out.includes(r));
+  if (both.length) {
+    return { error: `${file} lists ${both[0]} as both cron_coverage.fleet and out_of_scope` };
+  }
+  return { fleet };
+}
+
 const reposRoot = arg("repos-root");
 const required = arg("require").split(",").map((s) => s.trim()).filter(Boolean);
+// Resolved from this script rather than the cwd: the gate must audit the fleet
+// its OWN repo declares, not whatever repos.yml happens to sit beside the
+// directory someone ran it from.
+const reposYml = arg("repos-yml", path.join(__dirname, "..", "repos.yml"));
 let targets;
-if (reposRoot || required.length) {
-  if (!reposRoot || !required.length) {
-    console.error("check-cron-coverage: --repos-root and --require must be given together");
-    process.exit(2);
+if (reposRoot) {
+  let names = required;
+  if (!names.length) {
+    const { error, fleet } = fleetFromRegistry(reposYml);
+    if (error) {
+      console.error(`check-cron-coverage: ${error}`);
+      process.exit(2);
+    }
+    names = fleet;
   }
-  targets = required.map((repo) => path.join(reposRoot, repo));
+  targets = names.map((repo) => path.join(reposRoot, repo));
+} else if (required.length) {
+  console.error("check-cron-coverage: --require needs --repos-root to resolve names against");
+  process.exit(2);
 } else {
   targets = [path.resolve(arg("repo", process.cwd()))];
 }

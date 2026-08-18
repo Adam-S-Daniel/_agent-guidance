@@ -563,6 +563,21 @@ skills_bootstrap:
     - repo-ignored
     - repo-no-lock
     - repo-unparseable
+# Every repo the mock \`gh repo list\` can return, across all five mock orgs, so
+# the drift report's cron-coverage classification check finds nothing to flag.
+# Silence is this block's pass condition, and test_drift_report asserts it; the
+# flagging path gets its own fixture in test_drift_report_cron_classification.
+#
+# FLOW SEQUENCES, not block ones, on purpose: two tests derive variants of this
+# file with \`sed '/- <name>/d'\`, and a block list here would have those edits
+# silently reach into this key as well.
+cron_coverage:
+  fleet: [repo-with-sync, repo-no-sync, repo-with-existing, repo-existing-no-marker,
+          repo-with-claude-md, repo-up-to-date-no-claude, repo-fix-claude,
+          _agent-guidance, repo-owner2-only, repo-protected, repo-protected-fix,
+          repo-stale, agentskills, repo-adopted, repo-hook-no-lock, repo-ignored,
+          repo-no-lock, repo-not-allowed, repo-unparseable]
+  out_of_scope: [repo-excluded]
 YAML
 
     # Same registry and allowlist, but a WRONG digest — used by the
@@ -1449,6 +1464,13 @@ test_drift_report() {
     assert_row_contains "$REPO_ROOT/drift-report.md" "repo-fix-claude" "**no-import**" "drift report: repo-fix-claude is no-import"
     assert_row_contains "$REPO_ROOT/drift-report.md" "repo-no-sync" "missing" "drift report: repo-no-sync bridge is missing"
     assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge legend" "drift report has CLAUDE.md bridge legend"
+
+    # Cron-coverage classification: the fixture repos.yml classifies every mock
+    # repo, so the report must say NOTHING. Asserted here rather than only in
+    # the flagging test because a check that fires on a fully-classified fleet
+    # is noise nobody would read twice.
+    assert_not_contains "$REPO_ROOT/drift-report.md" "Unclassified for cron coverage" \
+        "drift report: a fully classified fleet raises nothing"
 }
 
 # ── Test 4b: drift-report.sh skills-bootstrap column ──────────────────────
@@ -1502,6 +1524,61 @@ test_drift_report_bootstrap() {
         fail "drift report: non-allowlisted repo has no bootstrap state"
     else
         pass "drift report: non-allowlisted repo has no bootstrap state"
+    fi
+}
+
+# ── Test 4b2: a repo classified by neither cron_coverage key is flagged ───
+#
+# `check-cron-coverage.js` audits a DISK and so cannot notice a repo that is
+# not checked out — issue #37, where 14 of 25 repos were audited and the other
+# 11 produced no output at all. repos.yml's `cron_coverage.fleet` makes an
+# absent one an ERROR there; this report is the only thing that sees what the
+# ACCOUNT holds, so it is the only thing that can notice a repo missing from
+# the list itself. Without this test the list could rot exactly as silently as
+# the crons it exists to cover.
+
+test_drift_report_cron_classification() {
+    echo ""
+    echo "=== Test: drift-report.sh (cron-coverage classification) ==="
+
+    # Drop one repo from both keys — the state a newly created repo is in.
+    # `repo-not-allowed` is chosen because nothing else asserts on its row, and
+    # the deletion is anchored to the flow-sequence spelling so it cannot reach
+    # into skills_bootstrap.repos.
+    sed 's/, repo-not-allowed,/,/' "$TEST_DIR/repos.yml" > "$TEST_DIR/repos-uncron.yml"
+
+    # Prove the fixture actually changed: a no-op sed would make every
+    # assertion below pass against an unmodified file.
+    if diff -q "$TEST_DIR/repos.yml" "$TEST_DIR/repos-uncron.yml" >/dev/null; then
+        fail "drift report: the unclassified-repo fixture did not change repos.yml"
+        return
+    fi
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos-uncron.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-uncron-output.txt"
+
+    local rpt="$REPO_ROOT/drift-report.md"
+    assert_contains "$rpt" "Unclassified for cron coverage (1)" \
+        "drift report: an unclassified repo is counted"
+    assert_contains "$rpt" "bootorg/repo-not-allowed" \
+        "drift report: the unclassified repo is named"
+    assert_contains "$rpt" "cron_coverage.out_of_scope" \
+        "drift report: the finding says which keys resolve it"
+    assert_contains "$TEST_DIR/drift-uncron-output.txt" "1 repo(s) unclassified for cron coverage" \
+        "drift report: the run log surfaces the count too"
+
+    # Classified repos must NOT be swept in with it.
+    if grep -q '^> - `bootorg/repo-adopted`' "$rpt"; then
+        fail "drift report: a classified repo was reported unclassified"
+    else
+        pass "drift report: classified repos are not flagged"
     fi
 }
 
@@ -2629,6 +2706,93 @@ EOF
         "cron coverage: a scheduled 403ing caller fails the repo, sorting LAST"
     assert_cron brokenfirst 1 "aaa-broken.yml job 'audit' lacks permissions" \
         "cron coverage: a scheduled 403ing caller fails the repo, sorting FIRST"
+
+    # ── 9. WHICH repos the audit is answering about ───────────────────────
+    #
+    # Everything above asks whether a named directory is covered. These ask
+    # which directories had to be named, which is the half issue #37 found
+    # missing: with --require supplying the only list, a disk holding 14 of 25
+    # repos audited 14 and printed nothing at all about the other 11 — its
+    # clean line and a complete one are the same bytes. The fleet now comes
+    # from repos.yml, and a name that does not resolve is an ERROR by the same
+    # rule the rest of this file enforces: absence is never a pass.
+
+    # <repos-yml> <root> <expected-exit> <expected-substring> <label>
+    assert_fleet() {
+        local out rc=0
+        out=$(node "$script" --repos-root "$2" --repos-yml "$1" 2>&1) || rc=$?
+        if [[ "$rc" == "$3" ]] && grep -qF "$4" <<<"$out"; then
+            pass "$5"
+        else
+            fail "$5 — expected exit $3 containing '$4'; got exit $rc: $(echo "$out" | head -2 | tr '\n' ' ')"
+        fi
+    }
+
+    # Writes a repos.yml whose cron_coverage body is the remaining args, ONE
+    # PER LINE; $1 names the file. `printf '%s\n' "$@"` rather than "$*": the
+    # latter joins with a space, which folded a two-key fixture onto one line
+    # and turned an overlap assertion into a YAML parse error that still
+    # exited 2 — the right code for the wrong reason.
+    fleet_yml() {
+        local file="$root/$1"; shift
+        { echo 'exclude: []'; echo 'cron_coverage:'; printf '%s\n' "$@"; } > "$file"
+    }
+
+    # 9a. The declared fleet is what gets audited — both fixtures, no --require.
+    fleet_yml fleet-ok.yml "  fleet: [covered, uncovered]"
+    assert_fleet "$root/fleet-ok.yml" "$root" 1 "OK    covered:" \
+        "cron coverage: the declared fleet is audited without --require"
+    assert_fleet "$root/fleet-ok.yml" "$root" 1 "FAIL  uncovered:" \
+        "cron coverage: every declared repo is audited, not just the first"
+
+    # 9b. THE #37 FIX. A repo the list names and the disk lacks is a FINDING.
+    # Before this, the same run simply had one fewer line and still said
+    # "All audited repos covered".
+    fleet_yml fleet-absent.yml "  fleet: [covered, never-cloned]"
+    assert_fleet "$root/fleet-absent.yml" "$root" 1 "no such directory" \
+        "cron coverage: a fleet repo missing from the disk is an error, not a silence"
+
+    # 9c-9f. A registry that cannot decide the question is a loud STOP (exit 2),
+    # never a green run over whatever it managed to read. An empty fleet is the
+    # vacuous-pass shape specifically: zero audited, zero failures, exit 0.
+    assert_fleet "$root/no-such-repos.yml" "$root" 2 "cannot read the fleet list" \
+        "cron coverage: an unreadable repos.yml stops the run"
+    printf 'exclude: []\n' > "$root/fleet-none.yml"
+    assert_fleet "$root/fleet-none.yml" "$root" 2 "no cron_coverage: block" \
+        "cron coverage: a repos.yml with no cron_coverage block stops the run"
+    fleet_yml fleet-empty.yml "  fleet: []"
+    assert_fleet "$root/fleet-empty.yml" "$root" 2 "lists no cron_coverage.fleet repos" \
+        "cron coverage: an empty fleet stops the run rather than passing vacuously"
+    fleet_yml fleet-both.yml "  fleet: [covered]" "  out_of_scope: [covered]"
+    assert_fleet "$root/fleet-both.yml" "$root" 2 "as both cron_coverage.fleet and out_of_scope" \
+        "cron coverage: a repo in both keys is a contradiction, not a default"
+
+    # 9g. Names, not paths: the entries are joined onto --repos-root, so a
+    # traversal component would silently audit somewhere else entirely.
+    fleet_yml fleet-path.yml "  fleet: ['../elsewhere']"
+    assert_fleet "$root/fleet-path.yml" "$root" 2 "is not a repo name" \
+        "cron coverage: a fleet entry containing a path separator is rejected"
+
+    # 9h. --require alone has no root to resolve against; it used to be half of
+    # a pair, and the pairing is what this preserves now that the other half
+    # has a default.
+    local out rc=0
+    out=$(node "$script" --require covered 2>&1) || rc=$?
+    if [[ "$rc" == 2 ]] && grep -qF "needs --repos-root" <<<"$out"; then
+        pass "cron coverage: --require without --repos-root is rejected"
+    else
+        fail "cron coverage: --require without --repos-root is rejected — got exit $rc"
+    fi
+
+    # 9i. The REAL repos.yml, not a fixture. Nothing else exercises it: ci.yml
+    # runs the cwd form, which never reads the file at all, so a fleet key
+    # deleted, emptied or double-listed would ship green. Pointed at an empty
+    # directory, a well-formed registry must get as far as looking for its
+    # first repo (exit 1, "no such directory"); any registry-level defect stops
+    # at exit 2 before that.
+    mkdir -p "$root/empty-disk"
+    assert_fleet "$REPO_ROOT/repos.yml" "$root/empty-disk" 1 "no such directory" \
+        "cron coverage: this repo's own repos.yml declares a usable fleet"
 }
 
 # ── Run all tests ──────────────────────────────────────────────────────────
@@ -2660,6 +2824,7 @@ test_sync_bootstrap
 test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
+test_drift_report_cron_classification
 test_drift_report_bootstrap_unmanaged
 test_drift_report_bootstrap_registry
 test_drift_report_probe_cleanup

@@ -80,6 +80,34 @@ if [[ -f "$REPOS_YML" ]]; then
     done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
 fi
 
+# ── cron-coverage classification (the fleet list's only drift alarm) ───────
+#
+# `scripts/check-cron-coverage.js` audits a DISK, so it can only reason about
+# repos that are checked out; repos.yml's `cron_coverage.fleet` is what makes an
+# absent one a finding there. But that list is hand-maintained and this script
+# is the only thing in the repo that knows what the ACCOUNT actually holds — so
+# a repo created and never classified is invisible everywhere else. Checking it
+# here costs nothing: discovery has already produced the names, and this is a
+# set lookup, not an extra API call. See
+# docs/decisions/0003-cron-coverage-is-fleet-listed.md.
+CRON_CLASSIFIED=()
+
+if [[ -f "$REPOS_YML" ]]; then
+    while IFS= read -r r; do
+        [[ -n "$r" ]] && CRON_CLASSIFIED+=("$r")
+    done < <(yq -r \
+        '((.cron_coverage.fleet // []) + (.cron_coverage.out_of_scope // [])) | .[]' \
+        "$REPOS_YML" 2>/dev/null || true)
+fi
+
+cron_classified() {
+    local short="${1##*/}" entry
+    for entry in ${CRON_CLASSIFIED[@]+"${CRON_CLASSIFIED[@]}"}; do
+        [[ "$short" == "$entry" ]] && return 0
+    done
+    return 1
+}
+
 # ── skills-bootstrap delivery config (read-only mirror of sync.sh's) ───────
 
 BOOTSTRAP_REPOS=()
@@ -250,6 +278,17 @@ repo_list_raw=$(
         --limit 1000 \
         --jq '.[].nameWithOwner'
 )
+
+# Measured against the RAW discovery output, not the filtered list: this repo
+# itself and every repos.yml-excluded repo still have to be classified for cron
+# coverage, and both are dropped a line below. Forks and archived repos never
+# appear here at all (`--source`, `--no-archived`), which is why repos.yml
+# records them as structurally out of scope rather than expecting them.
+CRON_UNCLASSIFIED=()
+while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    cron_classified "$r" || CRON_UNCLASSIFIED+=("$r")
+done < <(echo "$repo_list_raw" | sort)
 
 mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sort)
 
@@ -460,6 +499,21 @@ for repo_name in "${REPOS[@]}"; do
     echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $bootstrap_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
 done
 
+# ── Unclassified for cron coverage ─────────────────────────────────────────
+# Silence here is the pass. A name showing up means someone has to decide
+# whether it belongs in `cron_coverage.fleet` (audited, and its absence from a
+# disk becomes an error) or `out_of_scope` (nobody is promising to watch it).
+if [[ ${#CRON_UNCLASSIFIED[@]} -gt 0 ]]; then
+    {
+        echo ""
+        echo "> **Unclassified for cron coverage (${#CRON_UNCLASSIFIED[@]}):**"
+        for r in "${CRON_UNCLASSIFIED[@]}"; do
+            echo "> - \`$r\` — add it to \`repos.yml\` under \`cron_coverage.fleet\` or \`cron_coverage.out_of_scope\`"
+        done
+    } >> "$OUTPUT_FILE"
+    echo "  ${#CRON_UNCLASSIFIED[@]} repo(s) unclassified for cron coverage"
+fi
+
 done
 
 # ── Footer ─────────────────────────────────────────────────────────────────
@@ -505,6 +559,15 @@ done
     echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"
     echo "| unverified | Could not fetch the pinned hook this run — the drift comparison was skipped |"
     echo "| — | Not allowlisted and no hook present |"
+    echo ""
+    echo "**Cron-coverage classification**"
+    echo ""
+    echo "\`scripts/check-cron-coverage.js\` audits a disk, so it cannot notice a"
+    echo "repo that is not checked out; \`repos.yml\`'s \`cron_coverage.fleet\` is what"
+    echo "makes an absent one an error there. This report is the only thing that"
+    echo "sees the whole account, so it is where a repo classified by neither key"
+    echo "surfaces — as the block above, or not at all when every repo is"
+    echo "classified. See \`docs/decisions/0003-cron-coverage-is-fleet-listed.md\`."
     echo ""
     echo "The **Notes** column carries each allowlisted repo's lock pins"
     echo "(\`registry@shortref\`, one per federated source). Nothing else in the"

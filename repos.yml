@@ -98,3 +98,79 @@ skills_bootstrap:
     #     rss-inator, repo-settings — plausible one day; decide per repo when
     #     someone actually opens an ephemeral session there and wants it.
     #     (GHA-bench also gitignores `.claude/`.)
+
+# ── cron-coverage scope ────────────────────────────────────────────────────
+#
+# Which repos `scripts/check-cron-coverage.js` is answering ABOUT when it
+# audits a disk root. Read docs/decisions/0003-cron-coverage-is-fleet-listed.md
+# before changing anything here.
+#
+# WHY A LIST AT ALL. The gate is deterministic and offline — pure filesystem,
+# no network — so left to itself it can only audit what happens to be checked
+# out, and a disk holding four repos and a disk holding all of them print the
+# same "All audited repos covered". Measured 2026-08-17 (issue #37): a session
+# with 14 of the account's 25 repos checked out audited 14 and reported clean.
+# The list is what turns an absent repo into a FINDING instead of a silence:
+# every name under `fleet:` must resolve to a real, fully-checked-out repo or
+# the run ERRORs.
+#
+# This costs a maintenance burden the rest of this file avoids — sync.sh and
+# drift-report.sh DISCOVER repos via `gh repo list` and never hold a list. The
+# burden is paid back by drift-report.sh, which does discover, and now flags
+# any repo it reaches that neither key below classifies. So the list can go
+# stale, but not silently: adding a repo to the account and forgetting it here
+# shows up in the nightly report.
+cron_coverage:
+  # Repos the multi-repo audit expects to find and must be able to read.
+  # Derived 2026-08-18 from the 25 repos the account holds: the two owners
+  # sync.yml scans (`SYNC_OWNERS: "Adam-S-Daniel jodidaniel"`), non-fork and
+  # non-archived — which is exactly what discovery reaches — minus everything
+  # classified out of scope below.
+  fleet:
+    - _agent-guidance
+    - adamdaniel.ai
+    - agentskills
+    - agentskills-private
+    - claude-memory-map
+    - cms-platform
+    - fastmail-actions
+    - GHA-bench
+    - jodidaniel.com
+    - repo-settings
+    - rss-inator
+    - skills-evals
+    - wsl-automation
+
+  # Deliberately NOT audited, and not expected to be checked out. Recorded so
+  # the question is settled once rather than re-argued at each audit (#37), and
+  # so the completeness check above has something to measure against.
+  #
+  # Being here is NOT a claim that a repo has no failing cron. It is a claim
+  # that nobody is promising to watch one. Moving a name up to `fleet:` is the
+  # whole reversal — no other file changes.
+  out_of_scope:
+    # Scratch and unexamined. A cron-coverage guarantee is an operational
+    # promise, and there is nothing here anyone is operating; these repos do
+    # still receive the AGENTS.md sync, which is a different and cheaper thing.
+    # If one ever grows a cron somebody depends on, that is the moment it stops
+    # being scratch — move it, don't special-case it.
+    - scratch-claude-001
+    - scratch-jules-001
+    - scratch-claude-002
+    - squarespacetemp
+    - jc
+    - 4A
+    # Out of scope per agentskills#18 — the same three repos `exclude:` above
+    # keeps out of the AGENTS.md sync, listed again because that key answers a
+    # different question and a reader of one should not have to find the other.
+    - civic-azure-infra
+    - civic-iac-policy
+    - civic-platform-agents
+    # FORKS. Never reachable by discovery either (`gh repo list --source`), so
+    # these two can never become a finding — they are written down because
+    # "why isn't this audited?" is a question worth answering from this file
+    # rather than from sync.sh's flags.
+    - OctopusDeploy-Api
+    - SonosAmpJuicePi
+    # Outside both owners in SYNC_OWNERS, so likewise unreachable by discovery.
+    - superoutrigger
