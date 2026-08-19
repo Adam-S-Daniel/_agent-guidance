@@ -6,6 +6,16 @@ name: Bump consumer skills.lock
 # while this was still only anticipated ("a companion PR adds the re-pinner"),
 # naming the ordering as the risk it took. See docs/decisions/0005.
 #
+# The run has two passes, and the order is load-bearing: it SWEEPS first —
+# merging the bump PRs the PREVIOUS night opened, where the checks are green
+# and the diff is still the lock alone — and only then proposes new ones. A PR
+# merged seconds after it was opened is merged before any check has started;
+# the gap between two nightly runs is what gives a consumer's CI a full day to
+# report. Native auto-merge is the mechanism this would otherwise use and
+# cannot arm on this fleet (`required_status_checks: []` leaves it nothing to
+# hold the merge for), so the script attempts it anyway and does not depend on
+# it. See docs/decisions/0006.
+#
 # The re-pin itself is `generate_skills_lock.py --repin`, which lives in the
 # registry and is called, never reimplemented. The script probes the generator
 # for that flag once, up front, so a checkout that predates it is one stated
@@ -28,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (decide and report, but write and push nothing)"
+        description: "Dry run (decide and report, but merge, write and push nothing)"
         type: boolean
         default: false
 
@@ -54,9 +64,15 @@ concurrency:
   cancel-in-progress: false
 
 # The workflow's own token only ever reads this checkout. Every write — the
-# branch push and the PR — is made with the per-owner App installation tokens
-# minted below, which is also the only credential that can reach the other
-# owner's repos at all.
+# branch push, the pull request, and the MERGE of a pull request a previous run
+# opened — is made with the per-owner App installation tokens minted below,
+# which is also the only credential that can reach the other owner's repos at
+# all. Merging needs no new grant: `PUT /repos/{o}/{r}/pulls/{n}/merge` wants
+# Contents: write AND Pull requests: write, which is exactly the pair the
+# branch push and `gh pr create` already need and exactly the pair the verify
+# step below tells you to install this App with. `permissions:` here governs
+# `secrets.GITHUB_TOKEN`, which is scoped to THIS repo and does none of that
+# work — raising it would grant the script nothing.
 permissions:
   contents: read
 

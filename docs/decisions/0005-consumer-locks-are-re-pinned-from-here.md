@@ -1,6 +1,6 @@
 # 0005 — Consumer locks are re-pinned from here, and only when the bundle moved
 
-**Status:** Accepted (2026-08-19)
+**Status:** Accepted (2026-08-19). Superseded in part by [0006](0006-bump-prs-land-on-a-sweep.md) (2026-08-19), which reverses "A pull request, never a direct push and never auto-merge" and the *Left open* bullet beginning "Nothing merges these": the bumper now merges its own pull requests on a sweep. The rest of this ADR stands.
 
 ## Context
 
