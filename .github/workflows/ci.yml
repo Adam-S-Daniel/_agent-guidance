@@ -48,6 +48,18 @@ jobs:
       - name: Cron-coverage self-check
         run: node scripts/check-cron-coverage.js
 
+      # Structure BEFORE staleness: the staleness diff below only proves
+      # AGENTS.md is a FIXED POINT of the regen recipe, and a doubled managed
+      # block is a fixed point too — the corruption at c86465f regenerated to
+      # itself for four commits (through 7b87581) because the recipe's
+      # first-occurrence-shaped marker match always re-anchored on the same
+      # truncated fragment. Only a check that counts markers and their order
+      # can tell a doubled file from a well-formed one; the diff below cannot,
+      # so this runs first and a failure here is reported as a structural
+      # defect rather than an unreadable multi-hundred-line diff.
+      - name: AGENTS.md structure is sound
+        run: ./scripts/check-agents-md.sh AGENTS.md
+
       # This repo is excluded from its own sync (SYNC_SELF_REPO), so nothing
       # ever wrote an AGENTS.md here — it was the one repo in the fleet whose
       # agents could not read the fleet's guidance while editing it. The fix is

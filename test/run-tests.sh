@@ -4873,6 +4873,138 @@ test_bump_workflow() {
     fi
 }
 
+# ── Test 7f: check-agents-md.sh catches a doubled managed block ───────────
+#
+# THE BUG THIS PINS. AGENTS.md carried two managed blocks — two, sometimes
+# contradictory, copies of the skills-ecosystem rule — from c86465f through
+# 7b87581, because something split it on the first OCCURRENCE of the marker
+# substring instead of the marker LINE, and the managed block's own BEGIN
+# header quotes the marker verbatim (`DO NOT EDIT ABOVE "## Repo-specific
+# additions"`). CI's staleness check (diff against build-agents-md.sh output)
+# never caught it: the doubled file is a FIXED POINT of the regen recipe, so
+# it kept regenerating to itself. check-agents-md.sh is the structural check
+# that can tell the difference — these fixtures are built by hand rather than
+# through sync.sh/build-agents-md.sh, so each one isolates a single way the
+# structure can go wrong without needing a mock repo to produce it.
+test_check_agents_md() {
+    echo ""
+    echo "=== Test: check-agents-md.sh (structural AGENTS.md validator) ==="
+
+    local script="$REPO_ROOT/scripts/check-agents-md.sh"
+    local fixture out exit_code
+
+    # -- a well-formed file passes --
+    fixture="$TEST_DIR/check-agents-md-wellformed.md"
+    cat > "$fixture" <<'EOF'
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+some managed content
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+some repo-specific text
+EOF
+    out="$TEST_DIR/check-agents-md-wellformed.out"
+    exit_code=0
+    "$script" "$fixture" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 0 ]]; then
+        pass "check-agents-md: a well-formed file passes"
+    else
+        fail "check-agents-md: a well-formed file passes — exit $exit_code: $(cat "$out")"
+    fi
+
+    # -- two full managed blocks fails --
+    fixture="$TEST_DIR/check-agents-md-doubled.md"
+    cat > "$fixture" <<'EOF'
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+fresh managed content
+<!-- END MANAGED SECTION -->
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+stale managed content
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+some repo-specific text
+EOF
+    out="$TEST_DIR/check-agents-md-doubled.out"
+    exit_code=0
+    "$script" "$fixture" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "check-agents-md: a file with two managed blocks fails"
+    else
+        fail "check-agents-md: a file with two managed blocks fails — exit $exit_code: $(cat "$out")"
+    fi
+
+    # -- the truncated BEGIN-header fragment fails, and is named by name --
+    # This is the actual shape the c86465f corruption left behind: one BEGIN
+    # (the first-occurrence split anchored ON the header, so it was consumed
+    # into the "preserved" tail rather than duplicated itself), two ENDs and
+    # two "Managed by"s (one pair per block), and the header's own closing
+    # `" -->` stranded on a line that otherwise starts exactly like the real
+    # marker.
+    fixture="$TEST_DIR/check-agents-md-fingerprint.md"
+    cat > "$fixture" <<'EOF'
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+new managed content
+<!-- END MANAGED SECTION -->
+## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+old repo-specific text
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+new repo-specific text
+EOF
+    out="$TEST_DIR/check-agents-md-fingerprint.out"
+    exit_code=0
+    "$script" "$fixture" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "check-agents-md: the truncated fragment line fails"
+    else
+        fail "check-agents-md: the truncated fragment line fails — exit $exit_code: $(cat "$out")"
+    fi
+    assert_contains "$out" "truncated-header fingerprint" \
+        "check-agents-md: the truncated-fragment failure names the fingerprint by name"
+
+    # -- zero markers fails --
+    fixture="$TEST_DIR/check-agents-md-empty.md"
+    cat > "$fixture" <<'EOF'
+Just some prose. No managed section, no marker, nothing to preserve.
+EOF
+    out="$TEST_DIR/check-agents-md-empty.out"
+    exit_code=0
+    "$script" "$fixture" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "check-agents-md: a file with zero markers fails"
+    else
+        fail "check-agents-md: a file with zero markers fails — exit $exit_code: $(cat "$out")"
+    fi
+
+    # -- out-of-order markers fails --
+    # One of each marker, so invariants 1-4 all read "exactly one" — only
+    # invariant 6 (ordering) can catch this, which is the point: it proves
+    # the ordering check does independent work rather than only ever firing
+    # alongside a count failure.
+    fixture="$TEST_DIR/check-agents-md-outoforder.md"
+    cat > "$fixture" <<'EOF'
+<!-- BEGIN MANAGED SECTION -->
+> **Managed by [`_agent-guidance`].**
+## Repo-specific additions
+some repo-specific text
+<!-- END MANAGED SECTION -->
+EOF
+    out="$TEST_DIR/check-agents-md-outoforder.out"
+    exit_code=0
+    "$script" "$fixture" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "check-agents-md: out-of-order markers fail"
+    else
+        fail "check-agents-md: out-of-order markers fail — exit $exit_code: $(cat "$out")"
+    fi
+    assert_contains "$out" "out of order" \
+        "check-agents-md: the out-of-order failure names it as an ordering problem"
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -4947,6 +5079,7 @@ test_self_hosted_hook_pin
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
 test_bump_workflow
+test_check_agents_md
 
 echo ""
 echo "========================================="
