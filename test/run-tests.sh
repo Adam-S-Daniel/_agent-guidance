@@ -2795,6 +2795,315 @@ EOF
         "cron coverage: this repo's own repos.yml declares a usable fleet"
 }
 
+# ── Test 7: this repo's own committed configuration ───────────────────────
+#
+# Everything above drives mock repos through the scripts. These four read the
+# REAL files in this checkout, because nothing else does: this repo is dropped
+# from both `sync.sh` and `drift-report.sh` (`grep -v "/${SELF_REPO}$"`), so
+# neither the delivery that repairs a consumer nor the report that flags one
+# can see anything here. Where the fleet has two mechanisms watching it, this
+# repo has the suite.
+
+# Reads a YAML document with the same real parser scripts/check-cron-coverage.js
+# uses, printing one line per array element. Never a grep: a line scan matches
+# its needle wherever the bytes happen to sit — inside a comment, under a
+# different key, in a block the file no longer uses — and so reads clean on
+# exactly the structure it cannot see. A missing parser FAILS rather than
+# skips; these files have no other check. CI installs it with `npm ci`.
+yaml_field() {   # <file> <dotted-path>
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const file = process.argv[2];
+const path = process.argv[3];
+let cursor = YAML.parse(fs.readFileSync(file, "utf8"));
+for (const key of path.split(".")) {
+  const isObj = cursor && typeof cursor === "object";
+  // `on:` parses to the string key "on" under YAML 1.2 core (what `yaml`
+  // uses) and folds to boolean true under 1.1. Accept both, exactly as
+  // check-cron-coverage.js does, so a trigger block can never be missed
+  // because of spec version.
+  const actual = isObj && !(key in cursor) && key === "on" && "true" in cursor
+    ? "true" : key;
+  if (!isObj || !(actual in cursor)) {
+    console.error(`${file} has no ${path}`);
+    process.exit(1);
+  }
+  cursor = cursor[actual];
+}
+for (const v of (Array.isArray(cursor) ? cursor : [cursor])) console.log(String(v));
+' "$REPO_ROOT" "$1" "$2"
+}
+
+# ── Test 7a: sync.yml fires on every file that decides what a run does ────
+#
+# THE BUG THIS PINS. sync.sh reads its policy out of this checkout while it
+# runs, and most of that policy is in repos.yml — the exclusion list, the
+# skills-bootstrap allowlist, the hook's pinned ref and its sha256. For as
+# long as `paths:` did not name repos.yml, a pure repos.yml commit produced
+# ZERO sync runs: the fleet's declared state changed, nothing applied it, and
+# the diff read as shipped. That made ADR 0001's "fanning a hook security fix
+# across the fleet is a reviewable one-line pin bump" false as written.
+#
+# The expected set is DERIVED from sync.sh, never typed out here. A hand-kept
+# list reproduces the same bug one level up: it passes while naming a SUBSET,
+# so the entries a future editor is likeliest to prune as noise — the per-repo
+# helpers — would be exactly the ones nothing asserts. Deriving means adding a
+# helper to sync.sh makes this test demand its `paths:` entry, with no second
+# edit to remember.
+test_sync_workflow_trigger() {
+    echo ""
+    echo "=== Test: sync.yml triggers on the files that decide a run ==="
+
+    local paths_file="$TEST_DIR/sync-yml-paths.txt"
+    local err_file="$TEST_DIR/sync-yml-paths.err"
+    if ! yaml_field "$REPO_ROOT/.github/workflows/sync.yml" "on.push.paths" \
+            > "$paths_file" 2> "$err_file"; then
+        fail "sync trigger: could not read on.push.paths — $(head -1 "$err_file")"
+        return
+    fi
+
+    # Every file sync.sh resolves out of this checkout at runtime, read off
+    # sync.sh itself: `$SCRIPT_DIR/<helper>` and `$REPO_ROOT/<file>`. The
+    # leading-alphanumeric character class is what keeps `$SCRIPT_DIR/..` — the
+    # REPO_ROOT computation — from being derived as a watched path. `|| true`
+    # on each: no match is grep's exit 1, and under `set -euo pipefail` an
+    # empty derivation would abort the suite instead of failing the floor
+    # check below, which is the thing that can actually explain it.
+    local helpers_file="$TEST_DIR/sync-yml-helpers.txt"
+    local roots_file="$TEST_DIR/sync-yml-roots.txt"
+    grep -oE '\$SCRIPT_DIR/[A-Za-z0-9][A-Za-z0-9._-]*' "$REPO_ROOT/scripts/sync.sh" \
+        | sed 's#\$SCRIPT_DIR/#scripts/#' > "$helpers_file" || true
+    grep -oE '\$REPO_ROOT/[A-Za-z0-9][A-Za-z0-9._-]*' "$REPO_ROOT/scripts/sync.sh" \
+        | sed 's#\$REPO_ROOT/##' > "$roots_file" || true
+
+    # A derivation that quietly matched nothing would satisfy every assertion
+    # below and prove nothing at all, so each half has to have found SOMETHING
+    # before its result is trusted. Checked as a shape rather than a count: how
+    # many helpers sync.sh has is allowed to change, and a count here would
+    # then fail in the one place whose message cannot explain it.
+    local half
+    for half in "$helpers_file" "$roots_file"; do
+        if [[ ! -s "$half" ]]; then
+            fail "sync trigger: derived no paths from scripts/sync.sh ($(basename "$half")) — it no longer resolves files through \$SCRIPT_DIR/\$REPO_ROOT, so the derivation broke, not the filter"
+            return
+        fi
+    done
+
+    # The three no derivation can see, each for its own reason: the entrypoint
+    # never references itself; `agents-md/**` is read one level down, by
+    # build-agents-md.sh; and the workflow carries `SYNC_OWNERS`, so it decides
+    # WHICH ~20 repos a run touches while — without its own entry — firing no
+    # run to apply that decision.
+    local want_file="$TEST_DIR/sync-yml-want.txt"
+    cat "$helpers_file" "$roots_file" > "$want_file"
+    printf '%s\n' "scripts/sync.sh" "agents-md/**" ".github/workflows/sync.yml" \
+        >> "$want_file"
+    sort -u -o "$want_file" "$want_file"
+
+    # Exact-line matching, not substring: "repos.yml" is a substring of a
+    # dozen plausible paths, and a filter naming one of those would satisfy a
+    # looser check while watching the wrong file.
+    local want
+    while IFS= read -r want; do
+        [[ -n "$want" ]] || continue
+        if grep -qxF "$want" "$paths_file"; then
+            pass "sync trigger: on.push.paths names $want"
+        else
+            fail "sync trigger: on.push.paths does not name $want — editing it would change what the sync does to the fleet with no run to apply the change"
+        fi
+    done < "$want_file"
+}
+
+# ── Test 7b: the self-hosted hook matches the pin in repos.yml ────────────
+#
+# This repo cannot RECEIVE the hook (see the group header), so the two
+# mechanisms that keep a consumer's copy honest — sync.sh overwriting a
+# drifted hook, drift-report.sh printing `drifted` — are both blind here. This
+# assertion and test 7d's are the whole of the guard, on a file that fetches
+# and executes instruction text at session start with no approval prompt: this
+# one covers the BYTES, 7d covers whether they ever run and whether they have
+# a lock to act on. It compares bytes on disk against the digest in repos.yml
+# and fetches nothing, so it is as offline and deterministic as the rest of
+# the suite.
+test_self_hosted_hook_pin() {
+    echo ""
+    echo "=== Test: the self-hosted skills-bootstrap hook matches the pin ==="
+
+    local hook="$REPO_ROOT/.claude/hooks/skills-bootstrap.sh"
+    local pinned registry ref hook_path actual
+    if ! pinned=$(yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.sha256" 2>&1); then
+        fail "self-hosted hook: $pinned"
+        return
+    fi
+    registry=$(yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.registry" 2>/dev/null || echo "the registry")
+    ref=$(yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.ref" 2>/dev/null || echo "<ref>")
+    hook_path=$(yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.path" 2>/dev/null || echo "<path>")
+
+    # Both remedies named, because which one is right depends on intent and the
+    # suite cannot know it: a stale copy is re-fetched, deliberately newer bytes
+    # mean the pin moves (and moves for the whole fleet with it).
+    local remedy="re-copy it (\`git -C <clone of $registry> show $ref:$hook_path\`), or bump skills_bootstrap.ref + sha256 in repos.yml if the newer bytes are the intended ones"
+
+    if [[ ! -f "$hook" ]]; then
+        fail "self-hosted hook: $hook is missing — $remedy"
+        return
+    fi
+
+    actual=$(sha256sum "$hook" | cut -d' ' -f1)
+    if [[ "$actual" == "$pinned" ]]; then
+        pass "self-hosted hook: sha256 equals repos.yml's skills_bootstrap.sha256"
+    else
+        fail "self-hosted hook: $hook hashes to ${actual:0:12}… but repos.yml pins ${pinned:0:12}… — $remedy"
+    fi
+}
+
+# ── Test 7c: nothing unreachable is bootstrap-allowlisted ────────────────
+#
+# Both sync.sh and drift-report.sh drop repos BEFORE the per-repo loop that
+# consults the allowlist, and neither ever says an allowlist entry was
+# ignored. So a name dropped by one of those filters is not an overridden
+# decision, it is an invisible one: the entry looks like delivery was chosen
+# and nothing will ever act on it. Two filters drop names, and the allowlist
+# has to stay clear of BOTH:
+#
+#   * `exclude:` — checked repo by repo; a run prints "excluded by repos.yml"
+#     for the repo and nothing about the allowlist.
+#   * `$SELF_REPO` — dropped with the same pre-loop `grep -v "/${SELF_REPO}$"`
+#     in both scripts (ADR 0004 fact 5). THIS repo can therefore never be
+#     delivered to and never appears in the drift report's bootstrap table; an
+#     entry for it would only tell the next reader that the sync maintains
+#     this repo's hook, which is the belief that lets a stale copy sit. It
+#     self-hosts instead, guarded by 7b and 7d.
+#
+# Kept honest here because the scripts cannot — check-cron-coverage.js refuses
+# a fleet/out_of_scope overlap outright, and these are the same contradiction
+# under keys that have no such refusal.
+test_bootstrap_allowlist_disjoint() {
+    echo ""
+    echo "=== Test: exclude: and skills_bootstrap.repos do not overlap ==="
+
+    local excluded_file="$TEST_DIR/repos-excluded.txt"
+    local allowed_file="$TEST_DIR/repos-allowlisted.txt"
+    local err_file="$TEST_DIR/repos-keys.err"
+    if ! yaml_field "$REPO_ROOT/repos.yml" "exclude" > "$excluded_file" 2> "$err_file" \
+       || ! yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.repos" > "$allowed_file" 2>> "$err_file"; then
+        fail "allowlist overlap: could not read repos.yml — $(head -1 "$err_file")"
+        return
+    fi
+
+    # Intersected with grep inside an `if`, never as a bare command: no match
+    # is grep's exit 1, and under `set -euo pipefail` the empty — i.e. PASSING
+    # — case would abort the whole suite before it could report anything.
+    local overlap="" repo
+    while IFS= read -r repo; do
+        [[ -n "$repo" ]] || continue
+        if grep -qxF "$repo" "$excluded_file"; then
+            overlap="${overlap:+$overlap, }$repo"
+        fi
+    done < "$allowed_file"
+
+    if [[ -z "$overlap" ]]; then
+        pass "allowlist overlap: no repo is both excluded and bootstrap-allowlisted"
+    else
+        fail "allowlist overlap: $overlap is in both exclude: and skills_bootstrap.repos — exclusion is applied first and silently wins, so the allowlist entry can only ever be a no-op that reads as a decision"
+    fi
+
+    # Read out of sync.sh rather than written here, so renaming this repo does
+    # not leave the assertion guarding a name nothing uses any more.
+    local self_repo
+    self_repo=$(sed -n 's/^SELF_REPO="\${SYNC_SELF_REPO:-\(.*\)}"$/\1/p' \
+        "$REPO_ROOT/scripts/sync.sh")
+    if [[ -z "$self_repo" ]]; then
+        fail "allowlist overlap: could not read SELF_REPO's default out of scripts/sync.sh — the derivation broke, not the allowlist"
+    elif grep -qxF "$self_repo" "$allowed_file"; then
+        fail "allowlist overlap: $self_repo is this repo, dropped by both scripts before the allowlist is consulted (grep -v \"/\${SELF_REPO}\$\") — the entry cannot deliver anything or be reported on, and it tells the next reader the sync maintains this repo's hook, which it cannot"
+    else
+        pass "allowlist overlap: this repo ($self_repo) is not bootstrap-allowlisted"
+    fi
+}
+
+# ── Test 7d: the self-hosted hook is registered, and has a lock to read ───
+#
+# 7b proves the hook's BYTES are the reviewed ones. It says nothing about
+# whether they ever run, or whether they can do anything when they do — and
+# the other two thirds of this repo's adoption fail silently, in opposite
+# directions:
+#
+#   * Claude Code runs the hook ONLY if `.claude/settings.json` names it in a
+#     SessionStart entry. Drop the registration and the hook sits there,
+#     byte-perfect and dead, and no session ever says so — the exact case
+#     bootstrap-status.sh exists to classify for consumers.
+#   * With no `skills.lock` the hook runs and installs nothing: it prints
+#     `skills: DEGRADED — no skills.lock found` into EVERY ephemeral session,
+#     forever. repos.yml calls that out as worse than inert, because nothing
+#     revisits it.
+#
+# Neither file is reachable by sync.sh or drift-report.sh here (see the group
+# header), so without this both could be deleted with CI fully green. Offline
+# and deterministic: the repo's own classifier plus a stdlib JSON read.
+test_self_hosted_registration() {
+    echo ""
+    echo "=== Test: the self-hosted hook is registered and has a lock ==="
+
+    local settings="$REPO_ROOT/.claude/settings.json"
+    local lock="$REPO_ROOT/skills.lock"
+    local state
+
+    # The same classifier sync.sh and drift-report.sh use on consumers, so
+    # "registered" means here exactly what it means in the drift report — a
+    # second opinion hand-rolled in this file could disagree with the fleet's.
+    if [[ ! -f "$settings" ]]; then
+        fail "self-hosted registration: $settings is missing — the hook is delivered but nothing runs it; regenerate with scripts/register-bootstrap-hook.sh"
+    else
+        state=$("$REPO_ROOT/scripts/bootstrap-status.sh" "$settings")
+        if [[ "$state" == "registered" ]]; then
+            pass "self-hosted registration: .claude/settings.json registers the hook"
+        else
+            fail "self-hosted registration: bootstrap-status.sh reads '$state', not 'registered' — the hook would never run; re-run scripts/register-bootstrap-hook.sh"
+        fi
+    fi
+
+    # Only the keys the hook itself requires before it can install anything:
+    # a `registry`/`ref` to fetch from, at least one bundle to fetch, and a
+    # `skills` object of digests to verify against. Not a schema check and not
+    # a currency check — `generate_skills_lock.py --check`, in the registry,
+    # owns whether the digests still match the pinned ref, and it needs the
+    # network this suite must not touch.
+    if [[ ! -f "$lock" ]]; then
+        fail "self-hosted registration: $lock is missing — the hook would print 'skills: DEGRADED — no skills.lock found' into every ephemeral session"
+        return
+    fi
+    local lock_err
+    if lock_err=$(python3 -c '
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    try:
+        lock = json.load(handle)
+    except Exception as exc:
+        sys.exit("not valid JSON (%s)" % exc.__class__.__name__)
+
+if not isinstance(lock, dict):
+    sys.exit("top level is not an object")
+for key in ("registry", "ref"):
+    if not isinstance(lock.get(key), str) or not lock[key].strip():
+        sys.exit("%s is missing or empty" % key)
+if not isinstance(lock.get("bundles"), list) or not lock["bundles"]:
+    sys.exit("bundles is missing or empty")
+if not isinstance(lock.get("skills"), dict) or not lock["skills"]:
+    sys.exit("skills is missing or empty")
+' "$lock" 2>&1); then
+        pass "self-hosted registration: skills.lock carries the keys the hook reads"
+    else
+        fail "self-hosted registration: skills.lock is unusable — $lock_err"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -2838,6 +3147,12 @@ test_sync_multi_owner
 test_sync_per_owner_token
 test_drift_report_multi_owner
 test_check_cron_coverage
+# This repo's own committed files, not the mock fleet — nothing syncs or
+# reports on _agent-guidance, so these are the only checks they get.
+test_sync_workflow_trigger
+test_self_hosted_hook_pin
+test_bootstrap_allowlist_disjoint
+test_self_hosted_registration
 
 echo ""
 echo "========================================="

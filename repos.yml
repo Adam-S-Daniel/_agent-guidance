@@ -35,7 +35,8 @@ default_sections: []
 # Delivery of the `skills-bootstrap` SessionStart hook, which installs the
 # skills registry's bundles into ephemeral Claude surfaces (cloud sessions, CI
 # runners). Read docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md
-# before changing anything here — the shape of this block IS the decision.
+# before changing anything here — the shape of this block IS the decision —
+# and 0004 for the widening that took the allowlist from two repos to ten.
 #
 # Two independent keys must BOTH hold before the sync delivers anything:
 #
@@ -56,7 +57,10 @@ skills_bootstrap:
   # The hook is FETCHED from the registry at this immutable commit, never
   # vendored here — one canonical copy, in the repo whose CI shellchecks and
   # tests it. Bumping the pin (and the digest below with it) is the reviewable
-  # one-line change that fans a hook fix across the fleet.
+  # one-line change that fans a hook fix across the fleet — which holds only
+  # because sync.yml's `paths:` filter watches THIS file. It did not until
+  # 2026-08-19, and a pin bump alone fired no run at all; drop that entry and
+  # the claim silently becomes false again rather than failing.
   registry: Adam-S-Daniel/agentskills
   path: .claude/hooks/skills-bootstrap.sh
   ref: 40868ae84d071917be72afb0d799815bd67fa8c6
@@ -67,37 +71,110 @@ skills_bootstrap:
   # disables delivery for the whole run and fails it.
   sha256: 17bb7255e99e6c616f7cc7a6b40a3cf8bdf3d51ba0e0cd7c44c74daa51505171
   # The allowlist. Short repo names, matched the same way `exclude` is.
+  #
+  # Widened from two repos to ten on 2026-08-19 (ADR 0004). The two-repo start
+  # was held there by ADR 0001's "do not widen past what a human can re-pin by
+  # hand"; a companion PR adds the lock re-pinner that lifts it. What decides
+  # membership now is whether anyone opens an ephemeral session in the repo —
+  # so the reason for an ABSENCE is what needs writing down, and it is, below.
+  #
+  # KEY 2 IS NOT YET HELD BY MOST OF THESE, and the difference is what an
+  # operator reads this block to find out. As of 2026-08-19 only adamdaniel.ai
+  # and jodidaniel.com carry a committed skills.lock; the other eight have an
+  # open companion PR that adds one. Until that PR merges the entry is INERT —
+  # sync.sh logs "no skills.lock in the repo yet — delivery withheld" and
+  # skips, and the drift report cell reads `no-lock`. So each entry says which
+  # side it is on and names its PR, rather than leaving "is the widening
+  # finished?" to be answered by fetching ten default branches. Alphabetical,
+  # because any other order invites a reader to look for a meaning in the
+  # sequence.
   repos:
-    # Adopted: carries a federated skills.lock (agentskills + cms-platform),
-    # the hook, and the registration already. Listed so the sync keeps the
-    # hook current against the pin above and re-registers it if the entry is
-    # ever dropped.
+    # lock: committed — federated (agentskills + cms-platform), with the hook
+    # and its registration already in place. Listed so the sync keeps the hook
+    # current against the pin above.
     - adamdaniel.ai
-    # Allowlisted; the second key is in flight. jodidaniel.com PR #134 commits
-    # the repo's own skills.lock — until it merges the drift report reads
-    # `no-lock` (delivery correctly withheld), and the first sync run after it
-    # merges arms delivery with no change needed here. Heavy documented
-    # web-session workflow; the second repo #54's acceptance criterion is
-    # about.
+    # Corrects a wrong reason, not just an omission. The old note grouped this
+    # repo with `agentskills` as "they AUTHOR the hook and the lock". It does
+    # not: it authors PRIVATE SKILLS, it will consume an ordinary `adam` lock
+    # like any other repo, and nothing here is a source of truth this sync
+    # could clobber. A wrong reason left standing is worse than a missing one —
+    # it survives review by looking already-decided.
+    # lock: pending agentskills-private#8 — inert until that merges.
+    - agentskills-private
+    # lock: pending claude-memory-map#19 — inert until that merges.
+    - claude-memory-map
+    # cms-platform and GHA-bench both gitignore `.claude/` — cms-platform with
+    # an explanatory comment, GHA-bench as a bare `/.claude/` entry (the
+    # comment above it is about workflow files) — which is why ADR 0001 refused
+    # to list them. Each has ONE companion PR carrying BOTH remaining steps:
+    # the narrowed ignore and the repo's first skills.lock. So the drift cell
+    # for these two reads `no-lock` like the other six pending entries, not
+    # `blocked`: drift-report.sh tests the lock BEFORE it probes the ignore, so
+    # `blocked` is only reachable once a lock exists. The entry is INERT, not
+    # wrong; what it buys is that nothing further is needed HERE once the
+    # companion merges.
+    # lock + ignore: pending cms-platform#275 — inert until that merges.
+    - cms-platform
+    # lock: pending fastmail-actions#8 — inert until that merges.
+    - fastmail-actions
+    # lock + ignore: pending GHA-bench#49 — inert until that merges.
+    - GHA-bench
+    # lock: committed — PR #134 merged 2026-08-16, so the lock this file used
+    # to call "in flight" has been committed for three days, and the sync
+    # delivered the hook on its next run (2026-08-18). The stale note said the
+    # drift report reads `no-lock`; it reads `ok`.
     - jodidaniel.com
+    # lock: pending repo-settings#17 — inert until that merges.
+    - repo-settings
+    # The `scratch-` prefix is a misnomer this list should not repeat: it is a
+    # live portfolio site whose `main` deploys to sprites.dev. NOT "on every
+    # push to main" — `deploy.yml` filters on `index.html` and on itself, so a
+    # sync commit deploys nothing. ADR 0001 shelved it as scratch on the
+    # strength of the name alone; see `cron_coverage.out_of_scope` below, where
+    # it stays out for a different and still-good reason.
+    # lock: pending scratch-claude-002#15 — inert until that merges.
+    - scratch-claude-002
+    # lock: pending wsl-automation#9 — inert until that merges.
+    - wsl-automation
     #
-    # DELIBERATELY NOT LISTED (see the ADR for the full table):
-    #   agentskills, agentskills-private — they AUTHOR the hook and the lock;
-    #     syncing either back is a source-of-truth clobber.
-    #   skills-evals — it runs the skill-propagation probes; installing the
-    #     bundle into its sessions contaminates the instrument.
-    #   cms-platform — wants the `adam` bundle, but its own .gitignore
-    #     excludes `.claude/` (deliberately, with a comment). Delivery is
-    #     impossible until that repo changes its policy; that is a
-    #     conversation in cms-platform, not an entry here that could only
-    #     ever render red.
-    #   scratch-claude-001, scratch-jules-001, scratch-claude-002,
-    #     squarespacetemp, 4A, jc — scratch or unexamined. An auto-executing
-    #     session hook does not get armed in a repo nobody has looked at.
-    #   GHA-bench, claude-memory-map, wsl-automation, fastmail-actions,
-    #     rss-inator, repo-settings — plausible one day; decide per repo when
-    #     someone actually opens an ephemeral session there and wants it.
-    #     (GHA-bench also gitignores `.claude/`.)
+    # DELIBERATELY NOT LISTED — each for a reason, none by default:
+    #   agentskills — AUTHORS the hook and self-hosts it. Syncing it back is a
+    #     source-of-truth clobber, and the drift report exempts it from
+    #     `unmanaged` for the same reason.
+    #   _agent-guidance — adopted, but it must never appear here. Both sync.sh
+    #     and drift-report.sh drop $SELF_REPO before the per-repo loop, so an
+    #     entry could not deliver anything or even be reported on; all it would
+    #     do is tell a reader the sync maintains this repo's hook, which it
+    #     cannot. This repo SELF-HOSTS instead, exactly as agentskills does,
+    #     and the only thing keeping its copy honest is test/run-tests.sh —
+    #     which asserts all three parts, because any one of them alone is a
+    #     dead adoption: the hook's sha256 equals the pin above, this repo's
+    #     `.claude/settings.json` still REGISTERS it, and `skills.lock` is
+    #     still present and readable by it.
+    #   skills-evals — runs the skill-propagation probes; installing the bundle
+    #     into its sessions contaminates the instrument.
+    #   scratch-claude-001 — the live E1 skill-delivery experiment. Its own
+    #     .claude/settings.json SessionStart hook runs `claude plugin
+    #     marketplace add` + `claude plugin install adam@agentskills`, and
+    #     E1-HOOK-RESULT.md / E1-CLOUD-RESULT.md at the repo root are its
+    #     readings. A second installing hook confounds exactly what it
+    #     measures — same class as skills-evals, not the same class as its name.
+    #   4A, jc, rss-inator, scratch-jules-001, squarespacetemp — dormant: no
+    #     human commit since 2026-03 (since 2024-10 for `jc`, which does carry
+    #     a page and a deploy workflow from then); everything after that is the
+    #     AGENTS.md sync bot. Nobody opens a session there, so the bundle would
+    #     cost always-on context in sessions that never happen.
+    #   civic-platform-agents, civic-iac-policy, civic-azure-infra — in
+    #     `exclude:` above, and exclusion is applied BEFORE this allowlist is
+    #     consulted. Both scripts do print "excluded by repos.yml" for the repo;
+    #     what neither ever says is that an allowlist entry was ignored. An
+    #     entry here could therefore only ever be a no-op that reads like a
+    #     decision; the suite asserts the two keys stay disjoint so the
+    #     contradiction cannot be introduced unnoticed.
+    #   forks and archived repos — never reached by discovery at all
+    #     (`gh repo list --source --no-archived`), so they are not a choice
+    #     this key can express. See the header of `exclude:` above.
+
 
 # ── cron-coverage scope ────────────────────────────────────────────────────
 #
@@ -156,10 +233,16 @@ cron_coverage:
     # being scratch — move it, don't special-case it.
     - scratch-claude-001
     - scratch-jules-001
-    - scratch-claude-002
     - squarespacetemp
     - jc
     - 4A
+    # NOT scratch — the skills_bootstrap block above records it as a live
+    # portfolio site, and leaving it filed under "nothing here anyone is
+    # operating" would make one key of this file contradict the other. It is
+    # out of scope for a narrower reason that survives that correction: its
+    # only workflow (`deploy.yml`) is push-triggered, so there is no scheduled
+    # run to cover. Give it a cron anyone depends on and it moves to `fleet:`.
+    - scratch-claude-002
     # Out of scope per agentskills#18 — the same three repos `exclude:` above
     # keeps out of the AGENTS.md sync, listed again because that key answers a
     # different question and a reader of one should not have to find the other.
