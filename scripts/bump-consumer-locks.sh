@@ -4,8 +4,19 @@ set -euo pipefail
 # bump-consumer-locks.sh — re-pin every consumer's skills.lock onto the
 # registry's current commit, one pull request per repo.
 #
-# Discovers repos dynamically via `gh repo list`, exactly as sync.sh does. For
-# each repo the script:
+# Discovers repos dynamically via `gh repo list`, exactly as sync.sh does, and
+# then makes TWO passes over what it found.
+#
+# PASS 1 — SWEEP. Merge the bump pull requests a PREVIOUS run left open, where
+# every safety condition in sweep_bump_prs() holds. This is what makes these
+# PRs land without anyone clicking merge, and it runs FIRST for a reason that
+# is easy to lose: a PR merged seconds after it was opened is merged before
+# any check has started, so the day between two nightly runs IS the window a
+# consumer's CI gets. Native auto-merge would be the obvious mechanism and
+# cannot arm on most of this fleet (see the attempt after `gh pr create`, and
+# docs/decisions/0006).
+#
+# PASS 2 — PROPOSE. For each repo the script:
 #   1. Fetches skills.lock from the default branch (absent → nothing to do)
 #   2. Reads which registries that lock names — the primary and every
 #      federated source — and skips a lock that never names the registry
@@ -57,11 +68,19 @@ set -euo pipefail
 #                             the repo that owns it)
 #   BUMP_BRANCH             — branch the PR is opened from
 #                             (default: skills-lock-bump/update)
+#   BUMP_PR_AUTHOR          — the login that opens this bumper's pull requests,
+#                             and the only author the sweep will merge
+#                             (default: agents-md-sync[bot], the App this
+#                             repo's workflows authenticate as). Run by hand
+#                             under a personal token, PRs are authored by that
+#                             human instead, so the sweep merges nothing until
+#                             this is set — which is the safe direction.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOCK_REL_PATH="skills.lock"
 BRANCH_NAME="${BUMP_BRANCH:-skills-lock-bump/update}"
+PR_AUTHOR="${BUMP_PR_AUTHOR:-agents-md-sync[bot]}"
 DRY_RUN=false
 WORK_DIR=$(mktemp -d)
 
@@ -111,6 +130,11 @@ fail() { echo "  ERROR: $*"; }
 FAIL_COUNT=0
 OK_COUNT=0
 SKIP_COUNT=0
+# Merges are counted apart from OK_COUNT/SKIP_COUNT rather than folded into
+# them: those two answer "how many consumers got a proposal, and how many did
+# not", one line per repo, and the same repo can be swept AND proposed in one
+# run. Folding would make the summary's numbers stop adding up to the fleet.
+MERGE_COUNT=0
 
 # lock_plan <file> — the registries a lock names, one per line:
 #
@@ -233,6 +257,261 @@ if gone:
 ' "$1" "$2"
 }
 
+# pr_merge_verdict <pr json> <branch> <author> <lock path> — one line, either
+#
+#   READY <what the checks said>
+#   SKIP  <why this pull request must not be merged>
+#
+# and a non-zero exit with a message when the JSON cannot be judged at all.
+# Every reason to refuse a merge lives HERE, in one place, so a reviewer can
+# read the whole gate at once rather than reconstructing it from a chain of
+# early `continue`s. python3 rather than a jq filter for the same reason
+# lock_plan() gives: this is structured data, and the branches below turn on
+# distinctions (a null conclusion vs a missing key) that a one-line filter
+# hides.
+#
+# The gate exists because merging is the one thing here nobody reviews. The
+# three refusals that carry it:
+#   * the PR must be OURS — head branch AND author, never one of the two. The
+#     branch name is a convention anybody can push to; the author is the only
+#     thing a stranger cannot forge.
+#   * the diff must be the lock ALONE. A human who pushed another file onto
+#     this branch owns it now, and merging it would land their work unread.
+#   * no check may be un-green or unfinished — while an ABSENCE of checks is
+#     not a failure, because most consumers in this fleet have no CI at all.
+pr_merge_verdict() {
+    python3 -c '
+import json, sys
+
+path, branch, author, lock_path = sys.argv[1:5]
+
+try:
+    with open(path, encoding="utf-8") as handle:
+        pr = json.load(handle)
+except Exception as exc:
+    sys.exit("not readable JSON (%s)" % exc.__class__.__name__)
+if not isinstance(pr, dict):
+    sys.exit("top level is not an object")
+
+
+def verdict(word, detail):
+    print("%s %s" % (word, detail))
+    raise SystemExit(0)
+
+
+def normalize(login):
+    # gh has named a GitHub App both as "name[bot]" and as "app/name" across
+    # versions and endpoints. Normalizing BOTH sides means a gh upgrade cannot
+    # quietly turn every PR into "not ours" — the sweep would simply stop
+    # merging, and nothing about a green run would say so. A genuinely
+    # different author still fails the comparison, which is what this is for.
+    login = (login or "").strip().lower()
+    if login.startswith("app/"):
+        login = login[4:]
+    if login.endswith("[bot]"):
+        login = login[: -len("[bot]")]
+    return login
+
+
+head = pr.get("headRefName")
+if head != branch:
+    verdict("SKIP", "its head branch is %r, not the bump branch %r" % (head, branch))
+
+pr_author = (pr.get("author") or {}).get("login")
+# An empty expected author refuses everything rather than matching everything:
+# BUMP_PR_AUTHOR="" must not become "merge anyone".
+if not normalize(author) or normalize(pr_author) != normalize(author):
+    verdict("SKIP", "it was opened by %r, and this bumper opens pull requests as %r"
+                    % (pr_author, author))
+
+if pr.get("isDraft"):
+    verdict("SKIP", "it is a draft")
+
+if (pr.get("reviewDecision") or "") == "CHANGES_REQUESTED":
+    verdict("SKIP", "a reviewer has requested changes")
+
+mergeable = pr.get("mergeable")
+if mergeable != "MERGEABLE":
+    # CONFLICTING is a real merge conflict; UNKNOWN is GitHub still computing
+    # the answer, which is not a yes.
+    verdict("SKIP", "GitHub reports mergeable=%s" % mergeable)
+
+state = str(pr.get("mergeStateStatus") or "")
+if state in ("DIRTY", "BLOCKED", "DRAFT", "UNKNOWN"):
+    # DIRTY is a conflict the mergeable field has not caught up with. BLOCKED
+    # is the repository itself holding this PR back — a required review, or a
+    # required check this sweep cannot satisfy — and is a SKIP, not a failure,
+    # because attempting the merge would be refused every night and paint the
+    # scheduled run permanently red for a repo behaving exactly as configured.
+    verdict("SKIP", "mergeStateStatus=%s" % state)
+
+files = pr.get("files")
+if not isinstance(files, list) or not files:
+    verdict("SKIP", "GitHub reported no files for this pull request")
+paths = sorted({str(entry.get("path")) for entry in files if isinstance(entry, dict)})
+if paths != [lock_path]:
+    verdict("SKIP", "its diff is not %s alone — it touches %s"
+                    % (lock_path, ", ".join(paths)))
+
+rollup = pr.get("statusCheckRollup")
+if rollup is None:
+    rollup = []
+if not isinstance(rollup, list):
+    sys.exit("statusCheckRollup is present but is not a list")
+
+GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+UNFINISHED = {"", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED"}
+pending, failing = [], []
+for entry in rollup:
+    if not isinstance(entry, dict):
+        sys.exit("statusCheckRollup holds an entry that is not an object")
+    name = entry.get("name") or entry.get("context") or "?"
+    # A check RUN carries .conclusion, null until it concludes; a legacy commit
+    # STATUS carries .state and has no conclusion key at all. Read only one and
+    # failures of the other kind come back clean — this account has an incident
+    # about exactly that (AGENTS.md, "The watch finished is not CI passed").
+    result = str(entry.get("conclusion") or entry.get("state") or "").upper()
+    if result in UNFINISHED:
+        pending.append(str(name))
+    elif result not in GREEN:
+        failing.append("%s: %s" % (name, result))
+
+if failing:
+    verdict("SKIP", "%d check(s) are not green (%s)" % (len(failing), "; ".join(failing)))
+if pending:
+    verdict("SKIP", "%d check(s) have not concluded (%s)" % (len(pending), ", ".join(pending)))
+if not rollup:
+    # Not a failure, and the commonest case in this fleet: said in its own
+    # words so "no checks ran" and "the checks passed" are different lines in
+    # the log rather than one indistinguishable OK.
+    verdict("READY", "no checks ran on it — this repo reports none")
+verdict("READY", "all %d check(s) concluded green" % len(rollup))
+' "$1" "$2" "$3" "$4"
+}
+
+# sweep_bump_prs — merge the bump pull requests a PREVIOUS run left open.
+#
+# WHY THIS RUNS BEFORE THE PROPOSE PASS AND NOT AFTER IT. Merging a PR seconds
+# after opening it merges it before any check has started, so the sweep would
+# be reading an empty rollup and calling it "no CI here" on repos that have
+# CI. Sweeping first instead makes the gap between two nightly runs the window
+# a consumer's CI gets — a full day — with no waiting, no polling and no state
+# kept between runs: the open PR IS the state.
+#
+# It runs per owner, inside that owner's iteration, because the credential
+# that can read and merge these PRs is that owner's own installation token.
+# One owner's proposals therefore land before the next owner's sweep, which
+# weakens nothing: the reason for the ordering is per PR — give its checks a
+# day — and no PR this run opens is a candidate for this run's sweep.
+#
+# One repo's failure is counted and the loop continues, exactly as the propose
+# pass does. Nothing here aborts the fleet.
+sweep_bump_prs() {
+    local repo_name numbers_raw number pr_json verdict_line verdict detail merge_out
+    local head_oid
+    local -a match_args
+    local -a numbers
+
+    echo "Sweeping bump pull requests left open by a previous run"
+
+    for repo_name in "${REPOS[@]}"; do
+        # The same carve-out the propose pass makes: this bumper opens nothing
+        # on the registry, so anything sitting on that branch name there is
+        # not ours to merge.
+        if [[ "$repo_name" == "$BUMP_REGISTRY" ]]; then
+            log "$repo_name — the registry itself; nothing here opens a pull request on it, so nothing is swept."
+            continue
+        fi
+
+        # Captured with its exit status, and only parsed on success: on an HTTP
+        # error gh prints the raw error body to stdout and the --jq filter
+        # never runs, so `|| true` here would read that JSON as a list of PR
+        # numbers. Silence is not an option either — "could not ask" and "no
+        # open PRs" are the same empty string, and only one of them is fine.
+        if ! numbers_raw=$(gh pr list --repo "$repo_name" \
+            --head "$BRANCH_NAME" --state open --json number \
+            --jq '.[].number' 2>&1); then
+            fail "$repo_name: could not list bump pull requests — $(head -1 <<< "$numbers_raw")"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        mapfile -t numbers < <(sed '/^$/d' <<< "$numbers_raw")
+        # No line at all for the commonest case. Most repos in the fleet have
+        # no bump PR on any given night, and twenty "nothing to merge" lines
+        # would bury the ones that say something.
+        [[ ${#numbers[@]} -eq 0 ]] && continue
+
+        for number in "${numbers[@]}"; do
+            pr_json="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')-pr-$number.json"
+            if ! gh pr view "$number" --repo "$repo_name" --json \
+                number,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
+                > "$pr_json" 2>/dev/null; then
+                fail "$repo_name#$number: could not read the pull request."
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+
+            if ! verdict_line=$(pr_merge_verdict "$pr_json" "$BRANCH_NAME" \
+                "$PR_AUTHOR" "$LOCK_REL_PATH" 2>&1); then
+                # "Cannot judge it" is not permission to merge it.
+                fail "$repo_name#$number: could not judge whether this pull request is safe to merge — $(head -1 <<< "$verdict_line")"
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+            verdict="${verdict_line%% *}"
+            detail="${verdict_line#* }"
+
+            if [[ "$verdict" != "READY" ]]; then
+                log "$repo_name#$number: not merged — $detail"
+                continue
+            fi
+
+            if $DRY_RUN; then
+                log "[DRY RUN] Would merge $repo_name#$number with a merge commit — $detail"
+                continue
+            fi
+
+            # --merge, never --squash or --rebase. Both are disabled on every
+            # fleet repo, so --squash fails outright rather than falling back;
+            # and squash is actively unsafe for a fleet that pins commits by
+            # sha, because it strands the commit a lock names on no branch.
+            # See AGENTS.md, "Git practices".
+            # Everything above judged a SNAPSHOT. Pinning the merge to the
+            # head that snapshot described closes the gap between the two: if
+            # anything reached the branch in between, GitHub refuses rather
+            # than landing a diff nothing checked. An unreadable oid is
+            # "cannot judge it" all over again, and is not permission to merge.
+            head_oid=$(python3 -c '
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    oid = json.load(handle).get("headRefOid")
+sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", oid) else "")
+' "$pr_json" 2>/dev/null) || head_oid=""
+            match_args=()
+            if [[ -n "$MERGE_MATCH_FLAG" ]]; then
+                if [[ -z "$head_oid" ]]; then
+                    fail "$repo_name#$number: its head commit did not read back as a sha, so the merge could not be pinned to the commit that was just checked."
+                    ((FAIL_COUNT++)) || true
+                    continue
+                fi
+                match_args=("$MERGE_MATCH_FLAG" "$head_oid")
+            fi
+
+            if merge_out=$(gh pr merge "$number" --repo "$repo_name" --merge \
+                ${match_args[@]+"${match_args[@]}"} 2>&1); then
+                log "$repo_name#$number: MERGED with a merge commit — $detail"
+                ((MERGE_COUNT++)) || true
+            else
+                fail "$repo_name#$number: merge was refused — $(head -1 <<< "$merge_out")"
+                ((FAIL_COUNT++)) || true
+            fi
+        done
+    done
+
+    echo ""
+}
+
 # ── Load central repos.yml (exclusions + the registry being bumped) ────────
 
 EXCLUDED_REPOS=()
@@ -328,6 +607,20 @@ if ! generator_help=$(python3 "$GENERATOR" --help 2>&1) \
    || ! grep -q -- '--repin' <<< "$generator_help"; then
     echo "ERROR: $GENERATOR does not support --repin — this script advances a lock with that flag and will not hand-roll one. Point BUMP_GENERATOR at a generator that has it, or update the registry checkout." >&2
     exit 2
+fi
+
+# `gh pr merge --match-head-commit <sha>` refuses the merge if the head moved
+# since we read it, which is what makes the sweep's verdict and its merge one
+# decision instead of two. Probed rather than assumed: unlike --repin the flag
+# is not load-bearing — without it the sweep is merely non-atomic, and a hard
+# exit here would ground the whole fleet over a gh old enough to lack it. So a
+# shortfall degrades and SAYS SO, once, instead of failing or going quiet.
+MERGE_MATCH_FLAG=""
+if gh_merge_help=$(gh pr merge --help 2>&1) \
+   && grep -q -- '--match-head-commit' <<< "$gh_merge_help"; then
+    MERGE_MATCH_FLAG="--match-head-commit"
+else
+    echo "NOTE: this gh has no 'gh pr merge --match-head-commit'; the sweep will merge without the head-match guard, so a push landing on a bump branch between the safety check and the merge would not be caught." >&2
 fi
 
 echo "Bumping consumer locks onto $BUMP_REGISTRY"
@@ -435,7 +728,13 @@ echo "Found ${#REPOS[@]} repo(s):"
 printf '  %s\n' "${REPOS[@]}"
 echo ""
 
-# ── Main loop ──────────────────────────────────────────────────────────────
+# ── Pass 1: sweep, before anything is proposed ─────────────────────────────
+sweep_bump_prs
+
+# ── Pass 2: propose ────────────────────────────────────────────────────────
+
+echo "Proposing re-pins for consumers whose bundle has moved"
+echo ""
 
 for repo_name in "${REPOS[@]}"; do
     echo "=== $repo_name ==="
@@ -801,7 +1100,9 @@ ${federated_lines}"
         cd "$REPO_ROOT"; continue
     fi
 
-    if gh pr create \
+    # Output captured rather than discarded: gh prints the new PR's URL, and
+    # the auto-merge attempt below needs something to name.
+    if pr_create_out=$(gh pr create \
         --head "$BRANCH_NAME" \
         --title "chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7}" \
         --body "$(cat <<EOF
@@ -809,6 +1110,14 @@ Automated re-pin of this repo's \`$LOCK_REL_PATH\`, opened by
 \`scripts/bump-consumer-locks.sh\` in ${BUMPER_SOURCE}.
 
 **What moved:** \`${primary_registry}\` — \`${old_ref:0:7}\` → \`${new_ref:0:7}\`.
+
+**This pull request merges itself.** A later run of the same bumper sweeps it
+and merges it with a merge commit once every check on it has concluded green —
+or straight away where this repo runs no checks at all. It is not waiting for a
+reviewer, so review it now if you mean to. It refuses to merge itself if
+anything but \`$LOCK_REL_PATH\` appears in the diff: push a second file onto this
+branch and it becomes yours. Closing it is not a way to say no — the next run
+proposes the same change again. See \`docs/decisions/0006\`.
 
 The bundle content at the old ref no longer matches the registry's tree, which
 is why this PR exists: a lock is not wrong for being old, but a lock pinned
@@ -832,9 +1141,31 @@ and re-resolves only \`ref\`; it cannot be told to change any of them. Nothing
 in \`_agent-guidance\` composes a lock of its own — see its
 \`docs/decisions/0005\`.
 EOF
-)" >/dev/null; then
+)"); then
         log "PR created."
         ((OK_COUNT++)) || true
+
+        # Ask for native auto-merge as well, and do not care whether it takes.
+        # On this fleet it will not: the default-branch rulesets set
+        # `required_status_checks: []`, and with nothing to hold the merge FOR,
+        # GitHub refuses to arm auto-merge at all — it errors that the PR is
+        # already in a clean, mergeable state (measured; see the header of
+        # .github/workflows/dependabot-auto-merge.yml, which keeps its own
+        # `--auto` attempt for exactly this reason). Note what that refusal is
+        # NOT: it does not merge the PR here and now, seconds after opening it
+        # and before any check could start.
+        #
+        # It costs one API call and starts working for free the day any repo
+        # here grows a required check — on that repo, and only that repo, the
+        # PR then lands the moment its checks pass instead of waiting for
+        # tomorrow's sweep. A failure to arm is neither a run failure nor a
+        # per-repo failure: the sweep is what actually lands these.
+        pr_url=$(tail -1 <<< "$pr_create_out")
+        if auto_out=$(gh pr merge --auto --merge --repo "$repo_name" "$pr_url" 2>&1); then
+            log "native auto-merge armed — it lands when the checks it waits on pass."
+        else
+            log "native auto-merge did not arm (expected where the ruleset requires no checks) — tomorrow's sweep merges this PR instead: $(head -1 <<< "$auto_out")"
+        fi
     else
         fail "PR creation failed for $repo_name"
         ((FAIL_COUNT++)) || true
@@ -846,7 +1177,7 @@ done
 done
 
 echo ""
-echo "=== Lock bump complete: $OK_COUNT proposed, $SKIP_COUNT skipped, $FAIL_COUNT failed ==="
+echo "=== Lock bump complete: $MERGE_COUNT merged, $OK_COUNT proposed, $SKIP_COUNT skipped, $FAIL_COUNT failed ==="
 
 if [[ $FAIL_COUNT -gt 0 ]]; then
     exit 1

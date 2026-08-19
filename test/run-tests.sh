@@ -35,14 +35,34 @@ fi
 
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
+# `--` before the pattern, in both. Without it grep parses a needle that starts
+# with a dash as an OPTION: it then exits 2, and 2>/dev/null turns that into
+# "no match" — which fails an assert_contains loudly but passes every
+# assert_not_contains SILENTLY, making the assertion vacuous. Caught by a
+# negative assertion on "--match-head-commit"; the older " --squash" one reads
+# as deliberate but only avoids the bug by starting with a space.
 assert_contains() {
-    if grep -qF "$2" "$1" 2>/dev/null; then pass "$3"; else fail "$3 — expected '$2' in $1"; fi
+    if grep -qF -- "$2" "$1" 2>/dev/null; then pass "$3"; else fail "$3 — expected '$2' in $1"; fi
 }
 assert_not_contains() {
-    if grep -qF "$2" "$1" 2>/dev/null; then fail "$3 — did not expect '$2' in $1"; else pass "$3"; fi
+    if grep -qF -- "$2" "$1" 2>/dev/null; then fail "$3 — did not expect '$2' in $1"; else pass "$3"; fi
 }
 assert_row_contains() {
-    if grep -F "$2" "$1" | grep -qF "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
+    if grep -F -- "$2" "$1" | grep -qF -- "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
+}
+# Ordering between two things a run printed. Both greps are captured with an
+# explicit failure branch: a needle that is absent exits 1, and under the
+# suite's `set -euo pipefail` an unguarded command substitution would end the
+# whole run instead of failing one assertion.
+assert_line_before() {   # <file> <needle A> <needle B> <label>
+    local a b
+    a=$(grep -nF "$2" "$1" | head -1 | cut -d: -f1) || a=""
+    b=$(grep -nF "$3" "$1" | head -1 | cut -d: -f1) || b=""
+    if [[ -n "$a" && -n "$b" && "$a" -lt "$b" ]]; then
+        pass "$4"
+    else
+        fail "$4 — '$2' at line ${a:-none}, '$3' at line ${b:-none}"
+    fi
 }
 
 # The sync now pushes directly to main, mutating shared bare-repo state that
@@ -1277,20 +1297,86 @@ case "$1" in
     pr)
         case "$2" in
             list)
-                # Parse --jq from remaining args. Return an "open" PR #42 for
-                # repos whose clone-dir basename (owner_repo) is listed in
-                # MOCK_OPEN_PR_REPOS — used by the stale-cleanup test; every
-                # other repo has no open PRs, as before.
                 shift 2
                 jq_filter=$(parse_jq_filter "$@")
-                json='[]'
-                current_repo=$(basename "$PWD")
-                for r in ${MOCK_OPEN_PR_REPOS:-}; do
-                    if [[ "$r" == "$current_repo" ]]; then
-                        json='[{"number":42}]'
-                        break
-                    fi
-                done
+                repo_arg=$(parse_flag_value --repo "$@")
+                if [[ -n "$repo_arg" ]]; then
+                    # A --repo query is the bumper's SWEEP asking what is open
+                    # on a repo it is not standing in, and it is answered only
+                    # from MOCK_PR_DIR: a directory of <owner>_<repo>.json
+                    # files, each an array of PR objects. Unset, or no file for
+                    # this repo, means no open PRs — which is what every test
+                    # that does not exercise the sweep wants.
+                    #
+                    # DELIBERATELY NOT FILTERED BY --head, though the caller
+                    # passes it and real gh honours it. The script re-checks
+                    # the head branch itself, and a mock that pre-filtered on
+                    # the very field that guard reads would make the guard
+                    # untestable — it exists precisely because a listing filter
+                    # is a query, not a guarantee.
+                    json='[]'
+                    pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_arg//\//_}.json"
+                    [[ -f "$pr_file" ]] && json=$(cat "$pr_file")
+                else
+                    # No --repo: the propose pass asking about the clone it is
+                    # standing in. Unchanged — an "open" PR #42 for repos whose
+                    # clone-dir basename (owner_repo) is listed in
+                    # MOCK_OPEN_PR_REPOS; every other repo has none.
+                    json='[]'
+                    current_repo=$(basename "$PWD")
+                    for r in ${MOCK_OPEN_PR_REPOS:-}; do
+                        if [[ "$r" == "$current_repo" ]]; then
+                            json='[{"number":42}]'
+                            break
+                        fi
+                    done
+                fi
+                if [[ -n "$jq_filter" ]]; then
+                    echo "$json" | jq -r "$jq_filter"
+                else
+                    echo "$json"
+                fi
+                ;;
+            view)
+                # gh pr view <number> --repo <owner/repo> --json <fields>
+                shift 2
+                pr_number="$1"; shift
+                repo_arg=$(parse_flag_value --repo "$@")
+                jq_filter=$(parse_jq_filter "$@")
+                repo_slug="${repo_arg//\//_}"
+                pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_slug}.json"
+                pr_obj=""
+                [[ -f "$pr_file" ]] && pr_obj=$(jq -c --argjson n "$pr_number" \
+                    '.[] | select(.number == $n)' "$pr_file")
+                if [[ -z "$pr_obj" ]]; then
+                    echo "could not resolve to a PullRequest with the number of ${pr_number}" >&2
+                    exit 1
+                fi
+                # `files` is COMPUTED from the branch rather than declared in
+                # the fixture, so a test that says "someone pushed a second
+                # file onto the bump branch" has to actually put it there.
+                head_ref=$(jq -r '.headRefName' <<< "$pr_obj")
+                files_json=$(git -C "${MOCK_BARE_DIR:-/nonexistent}/${repo_slug}" \
+                    diff --name-only "main...refs/heads/${head_ref}" 2>/dev/null \
+                    | jq -R . | jq -s 'map({path: .})')
+                # Same principle as `files`: COMPUTED from the branch, not
+                # declared, so the oid the script pins its merge to is the one
+                # the branch actually has. MOCK_PR_HEAD_MOVES names repos where
+                # it reports a well-formed oid that is NOT the tip — the exact
+                # shape of "someone pushed between the check and the merge".
+                head_oid=$(git -C "${MOCK_BARE_DIR:-/nonexistent}/${repo_slug}" \
+                    rev-parse --verify -q "refs/heads/${head_ref}" 2>/dev/null || true)
+                if [[ " ${MOCK_PR_HEAD_MOVES:-} " == *" $repo_slug "* ]]; then
+                    head_oid="0123456789abcdef0123456789abcdef01234567"
+                fi
+                # ...and one where it is not a sha at all, which is the only
+                # other thing the script can be handed and the case where it
+                # must refuse rather than merge unpinned.
+                if [[ " ${MOCK_PR_HEAD_GARBLED:-} " == *" $repo_slug "* ]]; then
+                    head_oid="not-a-sha"
+                fi
+                json=$(jq --argjson files "${files_json:-[]}" --arg oid "$head_oid" \
+                    '.files = $files | .headRefOid = $oid' <<< "$pr_obj")
                 if [[ -n "$jq_filter" ]]; then
                     echo "$json" | jq -r "$jq_filter"
                 else
@@ -1312,10 +1398,79 @@ case "$1" in
                 echo "pr-closed $3" >> "${MOCK_PR_LOG:-/dev/null}"
                 ;;
             merge)
-                # gh pr merge <number> --auto --squash|--merge — always succeed,
-                # logging the args so tests can assert --auto was requested.
+                # gh pr merge <number|url> [--auto] --merge|--squash — every
+                # call is logged with its arguments, so a test can assert WHICH
+                # method was asked for.
                 shift 2
+                # The capability probe, answered BEFORE the log line: it is not
+                # a merge, and letting it reach the log would make "gh pr merge
+                # was never called" untrue in every run. MOCK_GH_NO_MATCH_FLAG
+                # plays an older gh that lacks the flag entirely.
+                for a in "$@"; do
+                    if [[ "$a" == "--help" ]]; then
+                        echo "Merge a pull request on GitHub."
+                        echo "  --merge      Merge the commits with the base branch"
+                        [[ -z "${MOCK_GH_NO_MATCH_FLAG:-}" ]] && \
+                            echo "  --match-head-commit string   Commit SHA that the pull request head must match to allow merge"
+                        exit 0
+                    fi
+                done
                 echo "pr-merged $*" >> "${MOCK_PR_LOG:-/dev/null}"
+                auto=""
+                for a in "$@"; do [[ "$a" == "--auto" ]] && auto=1; done
+                if [[ -n "$auto" ]]; then
+                    # --auto ARMS native auto-merge; it never merges anything
+                    # itself, which is why nothing below runs for it.
+                    # MOCK_AUTO_MERGE_FAILS reproduces what this fleet actually
+                    # does: with no required checks there is nothing to hold the
+                    # merge for, and GitHub refuses to arm at all.
+                    if [[ -n "${MOCK_AUTO_MERGE_FAILS:-}" ]]; then
+                        echo "failed to enable auto-merge: Pull request is in clean status" >&2
+                        exit 1
+                    fi
+                    exit 0
+                fi
+                pr_number="$1"
+                repo_arg=$(parse_flag_value --repo "$@")
+                repo_slug="${repo_arg//\//_}"
+                if [[ " ${MOCK_PR_MERGE_FAIL:-} " == *" $repo_slug "* ]]; then
+                    echo "failed to merge pull request: Base branch was modified" >&2
+                    exit 1
+                fi
+                # What --match-head-commit buys, enforced the way GitHub
+                # enforces it: the merge is refused outright when the head is
+                # not the commit the caller pinned.
+                match_sha=$(parse_flag_value --match-head-commit "$@")
+                if [[ -n "$match_sha" ]]; then
+                    want_ref=$(jq -r --argjson n "$1" \
+                        '.[] | select(.number == $n) | .headRefName' \
+                        "${MOCK_PR_DIR:-/nonexistent}/${repo_slug}.json" 2>/dev/null || true)
+                    have=$(git -C "${MOCK_BARE_DIR:-/nonexistent}/${repo_slug}" \
+                        rev-parse --verify -q "refs/heads/${want_ref}" 2>/dev/null || true)
+                    if [[ "$match_sha" != "$have" ]]; then
+                        echo "failed to merge pull request: Head branch was modified. Review and try the merge again." >&2
+                        exit 1
+                    fi
+                fi
+                # The state change a real merge makes, in the two places a test
+                # can see it: the PR stops being open, and the default branch
+                # carries the branch tip. `update-ref` rather than a real merge
+                # commit — a bare repo has no worktree to merge in, and what is
+                # under test is which method the script ASKED for, not GitHub's
+                # merge topology.
+                pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_slug}.json"
+                if [[ -f "$pr_file" ]]; then
+                    head_ref=$(jq -r --argjson n "$pr_number" \
+                        '.[] | select(.number == $n) | .headRefName' "$pr_file")
+                    tip=$(git -C "${MOCK_BARE_DIR:-/nonexistent}/${repo_slug}" \
+                        rev-parse --verify -q "refs/heads/${head_ref}" 2>/dev/null || true)
+                    if [[ -n "$tip" ]]; then
+                        git -C "${MOCK_BARE_DIR}/${repo_slug}" update-ref refs/heads/main "$tip"
+                    fi
+                    jq --argjson n "$pr_number" 'map(select(.number != $n))' "$pr_file" \
+                        > "${pr_file}.tmp" && mv "${pr_file}.tmp" "$pr_file"
+                fi
+                exit 0
                 ;;
         esac
         ;;
@@ -2889,7 +3044,7 @@ EOF
     assert_cron() {
         local out rc=0
         out=$(node "$script" --repos-root "$root" --require "$1" 2>&1) || rc=$?
-        if [[ "$rc" == "$2" ]] && grep -qF "$3" <<<"$out"; then
+        if [[ "$rc" == "$2" ]] && grep -qF -- "$3" <<<"$out"; then
             pass "$4"
         else
             fail "$4 — expected exit $2 containing '$3'; got exit $rc: $(echo "$out" | head -2 | tr '\n' ' ')"
@@ -2904,7 +3059,7 @@ EOF
     assert_cron_cwd() {
         local out rc=0
         out=$(cd "$root/$1" && node "$script" 2>&1) || rc=$?
-        if [[ "$rc" == "$2" ]] && grep -qF "$3" <<<"$out"; then
+        if [[ "$rc" == "$2" ]] && grep -qF -- "$3" <<<"$out"; then
             pass "$4"
         else
             fail "$4 — expected exit $2 containing '$3'; got exit $rc: $(echo "$out" | head -2 | tr '\n' ' ')"
@@ -3229,7 +3384,7 @@ EOF
     assert_fleet() {
         local out rc=0
         out=$(node "$script" --repos-root "$2" --repos-yml "$1" 2>&1) || rc=$?
-        if [[ "$rc" == "$3" ]] && grep -qF "$4" <<<"$out"; then
+        if [[ "$rc" == "$3" ]] && grep -qF -- "$4" <<<"$out"; then
             pass "$5"
         else
             fail "$5 — expected exit $3 containing '$4'; got exit $rc: $(echo "$out" | head -2 | tr '\n' ' ')"
@@ -3353,6 +3508,12 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_LOG="$BUMP_PR_LOG" \
     MOCK_PR_BODY_DIR="$BUMP_PR_BODY_DIR" \
     MOCK_OPEN_PR_REPOS="${MOCK_OPEN_PR_REPOS:-}" \
+    MOCK_PR_DIR="${BUMP_PR_DIR_FOR_RUN:-}" \
+    MOCK_PR_MERGE_FAIL="${BUMP_MERGE_FAIL_FOR_RUN:-}" \
+    MOCK_AUTO_MERGE_FAILS="${BUMP_AUTO_MERGE_FAILS_FOR_RUN:-}" \
+    MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
+    MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
+    MOCK_GH_NO_MATCH_FLAG="${BUMP_NO_MATCH_FLAG_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     BUMP_REGISTRY="bumporg/agentskills" \
     BUMP_CHECKOUTS="${BUMP_CHECKOUTS_FOR_RUN:-$BUMP_CHECKOUTS_ARG}" \
@@ -3597,6 +3758,8 @@ test_bump_consumer_locks() {
     assert_contains "$body" "re-derived from the newly pinned commit" "PR body: says where the digests come from"
     assert_contains "$body" "Generated, never hand-edited" "PR body: says the change is generator output"
     assert_contains "$body" "This lock has no federated sources." "PR body: says so when there is no federated half"
+    assert_contains "$body" "This pull request merges itself" "PR body: discloses that no reviewer has to click merge"
+    assert_contains "$log" "native auto-merge armed" "auto-merge: requested on every PR this run opened"
     assert_contains "$body" "which skills.lock still pins" "PR body: quotes the consumer's own lock path, not this run's temp copy"
     assert_not_contains "$body" "$TEST_DIR" "PR body: no path from the machine that ran the bump"
     local fed_body="$BUMP_PR_BODY_DIR/bumporg_repo-federated.body"
@@ -3908,6 +4071,372 @@ test_bump_bundle_vanished() {
     rm -rf "$TEST_DIR/bare-vanish" "$work" "$TEST_DIR/registry-vanished"
 }
 
+# ── Test 8i: the sweep merges the bump PRs a previous run left open ───────
+#
+# The half that makes these pull requests land without anyone clicking merge,
+# and the half where a mistake is unreviewed by construction. So every fixture
+# here is a way for the sweep to merge something it must not:
+#
+#   * a PR whose checks are RED, or have not finished — and the two shapes a
+#     rollup entry can take, because a check RUN carries `.conclusion` and a
+#     legacy commit status carries `.state`, and reading one leaves the
+#     other's failures looking clean (AGENTS.md, "The watch finished is not
+#     CI passed");
+#   * a PR that is not OURS — the right branch under someone else's name, or
+#     someone else's branch;
+#   * a PR whose diff has grown a second file, which is a human's work sitting
+#     on the bot's branch;
+#   * a PR that cannot be merged at all.
+#
+# An ABSENCE of checks is deliberately NOT one of them: most consumers in this
+# fleet have no CI, and a sweep that waited for a green check on those would
+# never merge anything. `repo-nochecks` is that case, and it must merge.
+#
+# The fleet is stood up in a MOCK_BARE_DIR and a MOCK_PR_DIR of its own, like
+# the two tests above it, so none of this becomes standing state for the
+# shared bumporg fixtures.
+
+SWEEP_BARE="$TEST_DIR/bare-sweep"
+SWEEP_PR_DIR="$TEST_DIR/sweep-prs"
+
+# make_sweep_repo <name> <lock ref on main> <head branch|none> <extra file on
+#                 that branch|none> <PR object|none>
+#
+# The bump branch is built the way a previous night's run would have built it:
+# the same lock, re-pinned onto the registry's current commit by the same
+# generator, and nothing else in the commit. The `files` array the sweep reads
+# is computed by the mock from THIS branch, so "someone pushed a second file"
+# has to actually push one.
+make_sweep_repo() {
+    local name="$1" main_ref="$2" head="$3" extra="$4" pr="$5"
+    local bare="$SWEEP_BARE/bumporg_$name"
+    local work="$TEST_DIR/work/sweep-$name"
+
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# $name" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$main_ref"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+
+    if [[ "$head" != "none" ]]; then
+        git checkout -q -b "$head"
+        python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+            --repo "$TEST_DIR/registry" -o skills.lock >/dev/null
+        if [[ "$extra" != "none" ]]; then
+            echo "a reviewer's own work, pushed onto the bot's branch" > "$extra"
+        fi
+        git add -A
+        git commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
+        git push origin "HEAD:refs/heads/$head" >/dev/null 2>&1
+        git checkout -q main
+    fi
+
+    if [[ "$pr" != "none" ]]; then
+        mkdir -p "$SWEEP_PR_DIR"
+        printf '[%s]\n' "$pr" > "$SWEEP_PR_DIR/bumporg_$name.json"
+    fi
+
+    cd "$REPO_ROOT"
+}
+
+sweep_main_sha() {   # <short repo name>
+    git -C "$SWEEP_BARE/bumporg_$1" rev-parse --verify -q refs/heads/main 2>/dev/null || true
+}
+
+setup_sweep_repos() {
+    local branch="skills-lock-bump/update"
+    local bot='"author":{"login":"agents-md-sync[bot]"}'
+    local clean='"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":""'
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
+    mkdir -p "$SWEEP_BARE" "$SWEEP_PR_DIR"
+
+    # The registry itself, carrying a bump pull request that is ready in every
+    # other respect. It must NOT be merged: nothing in this bumper opens a PR
+    # on the registry, so anything sitting on that branch name there belongs to
+    # somebody else. Without this fixture the carve-out assertion would be
+    # vacuous, exactly as the shared bumporg fleet's stale registry lock keeps
+    # the propose-side carve-out from being vacuous.
+    make_sweep_repo agentskills "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":100,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    # Sorts FIRST, has no bump PR, and its lock is genuinely stale — so the
+    # run proposes here. That is the anchor for the ordering assertion: the
+    # sweep merges repo-zz-ready, which sorts LAST, and if the sweep were a
+    # per-repo step rather than a pass of its own, this repo's proposal would
+    # come first.
+    make_sweep_repo repo-aa-stale "$BUMP_REF_OLD" none none none
+
+    make_sweep_repo repo-conflict "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":102,\"headRefName\":\"$branch\",$bot,\"isDraft\":false,\"mergeable\":\"CONFLICTING\",\"mergeStateStatus\":\"DIRTY\",\"reviewDecision\":\"\",\"statusCheckRollup\":[]}"
+
+    # The merge itself is refused by the API (a base that moved under it).
+    # Sorts before both repos that DO merge, so those two are the assertion
+    # that one repo's failure did not end the sweep.
+    make_sweep_repo repo-fail-merge "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":103,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    make_sweep_repo repo-failing "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":104,\"headRefName\":\"$branch\",$bot,\"isDraft\":false,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"UNSTABLE\",\"reviewDecision\":\"\",\"statusCheckRollup\":[{\"name\":\"ci\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]}"
+
+    # The OTHER rollup shape: a legacy commit status, which carries `.state`
+    # and no `.conclusion` at all. A gate that reads only `.conclusion` sees
+    # null here and has to decide what null means — and "not concluded yet" is
+    # the reading that merges this PR.
+    make_sweep_repo repo-legacy-red "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":105,\"headRefName\":\"$branch\",$bot,\"isDraft\":false,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"UNSTABLE\",\"reviewDecision\":\"\",\"statusCheckRollup\":[{\"context\":\"legacy/build\",\"state\":\"FAILURE\"}]}"
+
+    make_sweep_repo repo-nochecks "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":106,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    make_sweep_repo repo-otherfile "$BUMP_REF_CONTENT" "$branch" NOTES.md \
+        "{\"number\":107,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    make_sweep_repo repo-pending "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":108,\"headRefName\":\"$branch\",$bot,\"isDraft\":false,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"UNSTABLE\",\"reviewDecision\":\"\",\"statusCheckRollup\":[{\"name\":\"ci\",\"status\":\"IN_PROGRESS\",\"conclusion\":null}]}"
+
+    make_sweep_repo repo-wrongauthor "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":109,\"headRefName\":\"$branch\",\"author\":{\"login\":\"a-human\"},$clean,\"statusCheckRollup\":[]}"
+
+    # Someone else's branch, listed as if the head filter had not been applied
+    # — which is exactly the assumption the script must not make (see the mock
+    # `pr list`).
+    make_sweep_repo repo-wrongbranch "$BUMP_REF_CONTENT" "human/experiment" none \
+        "{\"number\":110,\"headRefName\":\"human/experiment\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    # Sorts LAST, and is the one PR that is ready in every respect.
+    make_sweep_repo repo-zz-ready "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":111,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[{\"name\":\"ci\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"},{\"name\":\"lint\",\"status\":\"COMPLETED\",\"conclusion\":\"SKIPPED\"}]}"
+}
+
+# A prefix assignment in front of a FUNCTION call stays set after the call
+# returns (unlike one in front of an external command), which is why every
+# caller in this lane unsets afterwards. Done once here.
+run_sweep() {   # <output file> [script args...]
+    BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
+    BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
+    BUMP_MERGE_FAIL_FOR_RUN="bumporg_repo-fail-merge" \
+    BUMP_AUTO_MERGE_FAILS_FOR_RUN=1 \
+        run_bump "$@"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN \
+          BUMP_MERGE_FAIL_FOR_RUN BUMP_AUTO_MERGE_FAILS_FOR_RUN
+}
+
+# ── Test 8i1: --dry-run reports every merge it would make and makes none ──
+
+test_bump_sweep_dry_run() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh --dry-run (the sweep) ==="
+
+    setup_sweep_repos
+
+    local ready_before nochecks_before prs_before
+    ready_before=$(sweep_main_sha repo-zz-ready)
+    nochecks_before=$(sweep_main_sha repo-nochecks)
+    prs_before=$(wc -l < "$BUMP_PR_LOG")
+
+    run_sweep "$TEST_DIR/sweep-dry.txt" --dry-run
+    local log="$TEST_DIR/sweep-dry.txt"
+
+    assert_contains "$log" "[DRY RUN] Would merge bumporg/repo-zz-ready#111" "sweep dry-run: names the merge it would make"
+    assert_contains "$log" "[DRY RUN] Would merge bumporg/repo-nochecks#106" "sweep dry-run: names every merge, not just the first"
+    assert_contains "$log" "0 merged" "sweep dry-run: merges nothing"
+    # The decisions are still made and still reported — a dry run is what a
+    # reviewer reads to find out what tonight would do.
+    assert_contains "$log" "bumporg/repo-failing#104: not merged" "sweep dry-run: still reports the ones it would refuse"
+
+    if [[ "$(sweep_main_sha repo-zz-ready)" == "$ready_before" \
+          && "$(sweep_main_sha repo-nochecks)" == "$nochecks_before" ]]; then
+        pass "sweep dry-run: no default branch moved"
+    else
+        fail "sweep dry-run: no default branch moved"
+    fi
+    if [[ "$(wc -l < "$BUMP_PR_LOG")" == "$prs_before" ]]; then
+        pass "sweep dry-run: gh pr merge was never called"
+    else
+        fail "sweep dry-run: gh pr merge was never called — $(tail -1 "$BUMP_PR_LOG")"
+    fi
+    if [[ -f "$SWEEP_PR_DIR/bumporg_repo-zz-ready.json" ]] \
+       && grep -q '"number": *111' "$SWEEP_PR_DIR/bumporg_repo-zz-ready.json"; then
+        pass "sweep dry-run: the pull request is still open"
+    else
+        fail "sweep dry-run: the pull request is still open"
+    fi
+}
+
+# ── Test 8i2: the sweep itself ────────────────────────────────────────────
+
+test_bump_sweep() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (sweep, then propose) ==="
+
+    local ready_branch_tip untouched
+    ready_branch_tip=$(git -C "$SWEEP_BARE/bumporg_repo-zz-ready" rev-parse \
+        --verify -q refs/heads/skills-lock-bump/update)
+    : > "$TEST_DIR/sweep-mains-before.txt"
+    for untouched in agentskills repo-conflict repo-failing repo-legacy-red \
+                     repo-otherfile repo-pending repo-wrongauthor repo-wrongbranch; do
+        echo "$untouched $(sweep_main_sha "$untouched")" >> "$TEST_DIR/sweep-mains-before.txt"
+    done
+
+    run_sweep "$TEST_DIR/sweep.txt"
+    local log="$TEST_DIR/sweep.txt"
+
+    # ── The ready PR lands, with a merge commit and nothing else.
+    assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "sweep: a ready bump PR from a previous run is merged"
+    assert_contains "$log" "all 2 check(s) concluded green" "sweep: says what the checks said"
+    assert_contains "$BUMP_PR_LOG" "pr-merged 111 --repo bumporg/repo-zz-ready --merge" "sweep: merged with --merge, and with the PR and repo named"
+    assert_not_contains "$BUMP_PR_LOG" " --squash" "sweep: never asks for a squash — it is disabled fleet-wide and strands a pinned commit"
+    # Pinned to the very commit the gate read. Without this the verdict and
+    # the merge are two decisions with a gap between them, and what lands is
+    # whatever the branch happens to hold by the time the merge goes out.
+    assert_contains "$BUMP_PR_LOG" "pr-merged 111 --repo bumporg/repo-zz-ready --merge --match-head-commit $ready_branch_tip" "sweep: the merge is pinned to the head commit the safety check read"
+    if [[ "$(sweep_main_sha repo-zz-ready)" == "$ready_branch_tip" ]]; then
+        pass "sweep: the default branch now carries the re-pinned lock"
+    else
+        fail "sweep: the default branch now carries the re-pinned lock"
+    fi
+
+    # ── No CI at all is not a red CI. Most consumers are this one.
+    assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" "sweep: a PR with no checks at all is merged"
+    assert_contains "$log" "no checks ran on it" "sweep: 'no checks ran' is its own sentence, not an indistinguishable OK"
+
+    # ── Every reason not to merge.
+    assert_contains "$log" "bumporg/repo-failing#104: not merged — 1 check(s) are not green (ci: FAILURE)" "sweep: a failing check-run conclusion blocks the merge"
+    assert_contains "$log" "bumporg/repo-legacy-red#105: not merged — 1 check(s) are not green (legacy/build: FAILURE)" "sweep: a legacy commit status .state failure blocks it too"
+    assert_contains "$log" "bumporg/repo-pending#108: not merged — 1 check(s) have not concluded" "sweep: a pending check blocks the merge"
+    assert_contains "$log" "bumporg/repo-wrongauthor#109: not merged — it was opened by" "sweep: a PR opened by someone else is not merged"
+    assert_contains "$log" "bumporg/repo-wrongbranch#110: not merged — its head branch is" "sweep: a PR on another branch is not merged"
+    assert_contains "$log" "bumporg/repo-otherfile#107: not merged — its diff is not skills.lock alone" "sweep: a diff carrying a second file is not merged"
+    assert_contains "$log" "NOTES.md" "sweep: names the file that is not the lock"
+    assert_contains "$log" "bumporg/repo-conflict#102: not merged — GitHub reports mergeable=CONFLICTING" "sweep: a conflicted PR is not merged"
+    # The registry owns its own re-pin (ADR 0005), so it is not swept either —
+    # and its PR is not merely refused by the gate, it is never judged.
+    assert_contains "$log" "bumporg/agentskills — the registry itself; nothing here opens a pull request on it" "sweep: the registry is carved out, with the reason"
+    assert_not_contains "$log" "bumporg/agentskills#100" "sweep: the registry's pull request is not even considered"
+
+    # Not merged is a claim about the repo, not about the log: every one of
+    # these still has to be sitting on the commit it started the run on.
+    local r sha
+    while read -r r sha; do
+        if [[ "$(sweep_main_sha "$r")" == "$sha" ]]; then
+            pass "sweep: bumporg/$r default branch is untouched"
+        else
+            fail "sweep: bumporg/$r default branch is untouched — something merged into it"
+        fi
+    done < "$TEST_DIR/sweep-mains-before.txt"
+
+    # ── One repo's merge failure is counted, and the sweep goes on. Both
+    # repos that DO merge sort after it.
+    assert_contains "$log" "bumporg/repo-fail-merge#103: merge was refused" "sweep: a refused merge is reported"
+    # Anchored on the summary line's closing marker: a bare "1 failed" also
+    # matches "11 failed".
+    assert_contains "$log" "1 failed ===" "sweep: the refused merge is counted, and is the only failure"
+    assert_line_before "$log" "bumporg/repo-fail-merge#103: merge was refused" \
+        "bumporg/repo-zz-ready#111: MERGED" "sweep: a later repo still merges after one repo's failure"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "sweep: the run exits non-zero, so a scheduled run goes red"
+    else
+        fail "sweep: the run exits non-zero, so a scheduled run goes red (got 0)"
+    fi
+
+    # ── THE ordering. repo-zz-ready sorts LAST and repo-aa-stale FIRST, so a
+    # sweep folded into the per-repo loop would put the proposal first. Merging
+    # a PR seconds after opening it merges it before any check has started.
+    assert_line_before "$log" "bumporg/repo-zz-ready#111: MERGED" \
+        "=== bumporg/repo-aa-stale ===" "sweep: the whole sweep runs BEFORE anything is proposed"
+    assert_line_before "$log" "Sweeping bump pull requests left open by a previous run" \
+        "Proposing re-pins for consumers whose bundle has moved" "sweep: the log says which pass is which, in that order"
+    assert_contains "$log" "PR created" "sweep: the propose pass still runs after it"
+    assert_not_contains "$log" "bumporg/repo-aa-stale#" "sweep: the PR this run opened is not also merged by this run"
+
+    # ── The summary carries the merges alongside the existing counts.
+    assert_contains "$log" "2 merged, 1 proposed" "sweep: merges are counted in the summary line"
+
+    # ── Native auto-merge is attempted on the new PR and its refusal is not a
+    # failure. MOCK_AUTO_MERGE_FAILS reproduces this fleet's measured
+    # behaviour: with no required checks there is nothing to hold the merge
+    # for, and GitHub refuses to arm at all.
+    # Needles that would START with a dash are prefixed with the log's own
+    # first word: `grep -F -- "$needle"` is not what assert_contains runs, so a
+    # leading `--` is parsed by grep as an option, the grep errors, and
+    # assert_not_contains in particular would then PASS on anything.
+    assert_contains "$BUMP_PR_LOG" "pr-merged --auto --merge --repo bumporg/repo-aa-stale" "auto-merge: attempted on the PR this run opened"
+    assert_contains "$log" "native auto-merge did not arm" "auto-merge: its refusal is reported, not hidden"
+    assert_not_contains "$log" "2 failed ===" "auto-merge: a refusal to arm is not counted as a failure"
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
+}
+
+# ── Test 8i3: the merge is pinned to the commit that was checked ──────────
+#
+# The gate in pr_merge_verdict() judges a SNAPSHOT, and the merge goes out
+# afterwards. Everything the gate refuses — a second file in the diff, a red
+# check, a stranger's authorship — arrives on the branch by a push, and a push
+# can land in that gap. --match-head-commit is what makes the two one
+# decision. Both halves are tested, because a flag that is silently absent
+# leaves a green suite that proves nothing.
+test_bump_sweep_head_match() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the merge is pinned to the checked commit) ==="
+
+    local before_sha log prlog before_lines
+
+    # ── The head moved between the check and the merge: nothing lands.
+    setup_sweep_repos
+    before_sha=$(sweep_main_sha repo-zz-ready)
+    BUMP_HEAD_MOVES_FOR_RUN="bumporg_repo-zz-ready" \
+        run_sweep "$TEST_DIR/sweep-moved.txt"
+    unset BUMP_HEAD_MOVES_FOR_RUN
+    log="$TEST_DIR/sweep-moved.txt"
+
+    assert_contains "$log" "bumporg/repo-zz-ready#111: merge was refused" "head match: a head that moved after the check is refused, not merged"
+    assert_contains "$log" "Head branch was modified" "head match: the refusal says the head moved"
+    if [[ "$(sweep_main_sha repo-zz-ready)" == "$before_sha" ]]; then
+        pass "head match: the default branch did not move"
+    else
+        fail "head match: the default branch did not move — an unchecked diff landed"
+    fi
+    # The rest of the sweep is unaffected: one repo's refusal is one repo's.
+    assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" "head match: other repos still merge"
+
+    # ── An oid that is not a sha: refuse. "Cannot pin it" is not permission
+    # to merge it unpinned — the same rule the verdict itself follows.
+    setup_sweep_repos
+    before_sha=$(sweep_main_sha repo-zz-ready)
+    BUMP_HEAD_GARBLED_FOR_RUN="bumporg_repo-zz-ready" \
+        run_sweep "$TEST_DIR/sweep-garbled.txt"
+    unset BUMP_HEAD_GARBLED_FOR_RUN
+    log="$TEST_DIR/sweep-garbled.txt"
+    assert_contains "$log" "bumporg/repo-zz-ready#111: its head commit did not read back as a sha" "head match: an unreadable head commit is refused, with the reason"
+    assert_not_contains "$log" "bumporg/repo-zz-ready#111: MERGED" "head match: an unreadable head commit is not merged unpinned"
+    if [[ "$(sweep_main_sha repo-zz-ready)" == "$before_sha" ]]; then
+        pass "head match: the default branch did not move on an unreadable head"
+    else
+        fail "head match: the default branch did not move on an unreadable head"
+    fi
+
+    # ── A gh too old to have the flag: degrade, say so, still merge.
+    setup_sweep_repos
+    before_lines=$(wc -l < "$BUMP_PR_LOG")
+    BUMP_NO_MATCH_FLAG_FOR_RUN=1 run_sweep "$TEST_DIR/sweep-noflag.txt"
+    unset BUMP_NO_MATCH_FLAG_FOR_RUN
+    log="$TEST_DIR/sweep-noflag.txt"
+    prlog="$TEST_DIR/sweep-noflag-prlog.txt"
+    tail -n +$((before_lines + 1)) "$BUMP_PR_LOG" > "$prlog"
+
+    assert_contains "$log" "this gh has no 'gh pr merge --match-head-commit'" "head match: an older gh is reported, not assumed"
+    assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "head match: an older gh still merges — the guard is hardening, not a dependency"
+    assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
+}
+
 # Everything above drives mock repos through the scripts. These five read the
 # REAL files in this checkout, because nothing else does: this repo is dropped
 # from both `sync.sh` and `drift-report.sh` (`grep -v "/${SELF_REPO}$"`), so
@@ -4022,7 +4551,7 @@ test_sync_workflow_trigger() {
     local want
     while IFS= read -r want; do
         [[ -n "$want" ]] || continue
-        if grep -qxF "$want" "$paths_file"; then
+        if grep -qxF -- "$want" "$paths_file"; then
             pass "sync trigger: on.push.paths names $want"
         else
             fail "sync trigger: on.push.paths does not name $want — editing it would change what the sync does to the fleet with no run to apply the change"
@@ -4113,7 +4642,7 @@ test_bootstrap_allowlist_disjoint() {
     local overlap="" repo
     while IFS= read -r repo; do
         [[ -n "$repo" ]] || continue
-        if grep -qxF "$repo" "$excluded_file"; then
+        if grep -qxF -- "$repo" "$excluded_file"; then
             overlap="${overlap:+$overlap, }$repo"
         fi
     done < "$allowed_file"
@@ -4131,7 +4660,7 @@ test_bootstrap_allowlist_disjoint() {
         "$REPO_ROOT/scripts/sync.sh")
     if [[ -z "$self_repo" ]]; then
         fail "allowlist overlap: could not read SELF_REPO's default out of scripts/sync.sh — the derivation broke, not the allowlist"
-    elif grep -qxF "$self_repo" "$allowed_file"; then
+    elif grep -qxF -- "$self_repo" "$allowed_file"; then
         fail "allowlist overlap: $self_repo is this repo, dropped by both scripts before the allowlist is consulted (grep -v \"/\${SELF_REPO}\$\") — the entry cannot deliver anything or be reported on, and it tells the next reader the sync maintains this repo's hook, which it cannot"
     else
         pass "allowlist overlap: this repo ($self_repo) is not bootstrap-allowlisted"
@@ -4405,6 +4934,12 @@ test_bump_idempotent
 test_bump_shallow_registry
 test_bump_push_rejected
 test_bump_bundle_vanished
+# The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,
+# which is the one thing in this repo nothing else undoes. Dry run first, so
+# "it merged nothing" is a statement about a run that had every chance to.
+test_bump_sweep_dry_run
+test_bump_sweep
+test_bump_sweep_head_match
 # This repo's own committed files, not the mock fleet — nothing syncs or
 # reports on _agent-guidance, so these are the only checks they get.
 test_sync_workflow_trigger
