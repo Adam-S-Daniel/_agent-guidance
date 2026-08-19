@@ -114,7 +114,10 @@ Mechanics:
 
 Full reasoning, including the repos deliberately left off the allowlist and
 what this leaves unsolved:
-[`docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md`](docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md).
+[`docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md`](docs/decisions/0001-skills-bootstrap-delivery-is-opt-in.md),
+then [`0004`](docs/decisions/0004-skills-bootstrap-adopted-where-sessions-happen.md)
+for the widening to ten repos and why this one self-hosts instead of being
+allowlisted.
 
 ## The CLAUDE.md bridge
 
@@ -329,5 +332,9 @@ repos.yml               # exclusions, default sections, skills-bootstrap pin,
                         #   cron-coverage fleet + out-of-scope
 AGENTS.md               # GENERATED from agents-md/ — this repo's own copy
 CLAUDE.md               # the bridge that makes AGENTS.md load here too
+.claude/                # self-hosted skills-bootstrap hook + its registration:
+                        #   the sync skips this repo, so nothing delivers here
+skills.lock             # which bundles THIS repo installs (never written by
+                        #   the sync — see repos.yml's skills_bootstrap block)
 test/run-tests.sh
 ```
