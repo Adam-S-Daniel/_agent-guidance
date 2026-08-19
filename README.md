@@ -324,9 +324,11 @@ fleet is declared rather than inferred from whatever happens to be cloned.
 
 ```
 agents-md/              # managed AGENTS.md content (base + opt-in sections)
-scripts/                # build, sync, drift-report, cron coverage, status
+scripts/                # build, sync, drift-report, lock bump, cron
+                        #   coverage, status
 docs/decisions/         # ADRs (start at the README there)
-.github/workflows/      # CI, sync-on-push, nightly drift report, cron health
+.github/workflows/      # CI, sync-on-push, nightly drift report, daily
+                        #   consumer-lock bump, cron health
 .agents-sync.example.yml
 repos.yml               # exclusions, default sections, skills-bootstrap pin,
                         #   cron-coverage fleet + out-of-scope

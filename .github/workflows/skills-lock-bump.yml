@@ -1,0 +1,173 @@
+name: Bump consumer skills.lock
+
+# Daily re-pin of every consumer's `skills.lock` onto the registry's current
+# commit, one pull request per repo. ADR 0001 held the bootstrap allowlist at
+# two repos precisely because nothing did this; ADR 0004 widened it to ten
+# while this was still only anticipated ("a companion PR adds the re-pinner"),
+# naming the ordering as the risk it took. See docs/decisions/0005.
+#
+# The re-pin itself is `generate_skills_lock.py --repin`, which lives in the
+# registry and is called, never reimplemented. The script probes the generator
+# for that flag once, up front, so a checkout that predates it is one stated
+# error rather than a per-consumer failure every night. What lives HERE is the
+# fleet half: discovery across both owners, and the App credentials that can
+# push a branch to a consumer and open a PR on it. The registry's own
+# workflows hold only `secrets.GITHUB_TOKEN`, scoped to the registry, so they
+# cannot.
+
+on:
+  schedule:
+    # Off-peak, offset minute (house precedent — see scheduled-run-health.yml).
+    # Placed away from this repo's other three crons — drift-report `0 6`, the
+    # Dependabot sweep `17 6`, the scheduled-run health audit `47 8` — by
+    # preference, not as a non-overlap guarantee: scheduled-run-health.yml
+    # records measured GitHub cron lag of 4-5h on daily crons, which swamps 41
+    # minutes of nominal separation. Nothing breaks if two of these do overlap;
+    # they are separate workflows on separate runners.
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (decide and report, but write and push nothing)"
+        type: boolean
+        default: false
+
+# WHY A `concurrency` GROUP IS SAFE HERE, when AGENTS.md says a required status
+# check gets none. That rule is about a job that PUBLISHES a required status
+# context and can fire twice on one head sha: GitHub then picks
+# non-deterministically between the cancelled run and the successful one, and a
+# cancelled winner blocks the merge permanently. This job publishes no status
+# context at all — it has no `pull_request` trigger and no PR anywhere waits on
+# it — so there is no context for a cancelled run to poison. (Its triggers CAN
+# produce two runs at one sha: `schedule` and `workflow_dispatch` both run at
+# the default branch head, and a dispatch fired during the nightly run is two.
+# That is exactly why the group is here, and why it does not matter.)
+#
+# `cancel-in-progress: false` buys one specific thing: the in-flight run is
+# never killed mid-push, so a consumer is not left with a pushed branch and no
+# PR. It does NOT mean "run them all" — as AGENTS.md records, GitHub keeps the
+# in-progress run plus only the LATEST pending one and cancels older pending
+# duplicates. A third queued run is therefore dropped, which for a daily job
+# costs one night and is recovered by the next one.
+concurrency:
+  group: skills-lock-bump
+  cancel-in-progress: false
+
+# The workflow's own token only ever reads this checkout. Every write — the
+# branch push and the PR — is made with the per-owner App installation tokens
+# minted below, which is also the only credential that can reach the other
+# owner's repos at all.
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 (2026-06)
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      # ── Per-owner installation tokens from the agents-md-sync GitHub App ──
+      # One short-lived (~1h) token per owner, scoped to that owner's repos and
+      # minted fresh every run — nothing to rotate. continue-on-error keeps a
+      # missing installation on one owner from aborting the other owner's run;
+      # the verify step below turns "neither minted" into a hard failure.
+      - name: Mint installation token for Adam-S-Daniel
+        id: token_adam_s_daniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0 (2026-05-12)
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: Adam-S-Daniel
+
+      - name: Mint installation token for jodidaniel
+        id: token_jodidaniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0 (2026-05-12)
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: jodidaniel
+
+      - name: Verify at least one installation token was minted
+        env:
+          GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
+          GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
+        run: |
+          if [[ -z "$GH_TOKEN_ADAM_S_DANIEL" && -z "$GH_TOKEN_JODIDANIEL" ]]; then
+            echo "::error::Could not mint an installation token for either owner. Check that the agents-md-sync GitHub App is installed on Adam-S-Daniel and/or jodidaniel with Contents + Pull requests: read & write, and that the APP_CLIENT_ID variable and APP_PRIVATE_KEY secret are set on this repo. See README." >&2
+            exit 1
+          fi
+          if [[ -z "$GH_TOKEN_ADAM_S_DANIEL" ]]; then
+            echo "::warning::No installation token for Adam-S-Daniel — is the App installed on that account? Its repos will be skipped this run."
+          fi
+          if [[ -z "$GH_TOKEN_JODIDANIEL" ]]; then
+            echo "::warning::No installation token for jodidaniel — is the App installed on that org? Its repos will be skipped this run."
+          fi
+
+      # ── The registries a lock can name ────────────────────────────────────
+      # `fetch-depth: 0` on BOTH, and it is load-bearing rather than cautious.
+      # Two separate reads need history a shallow clone does not have:
+      #   * --repin proves this checkout really is the registry the lock names
+      #     by looking for the commit the lock ALREADY pins. A shallow clone
+      #     does not contain it, and the failure reads as "this is not that
+      #     registry" — a wrong-repo hunt for a missing flag.
+      #   * every digest is materialised with `git archive <ref>` at a pinned
+      #     commit, including a federated source's own (unchanged) pin.
+      # The script refuses a shallow checkout up front and says so, rather than
+      # letting either failure be mistaken for drift.
+      - name: Check out the skills registry
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 (2026-06)
+        with:
+          repository: Adam-S-Daniel/agentskills
+          path: registries/agentskills
+          fetch-depth: 0
+          token: ${{ steps.token_adam_s_daniel.outputs.token || github.token }}
+
+      # A federated consumer's lock names this one too (adamdaniel.ai and
+      # jodidaniel.com both federate it). Without its checkout those two are
+      # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
+      # because anything in this run bumps cms-platform's own pin.
+      - name: Check out the federated source registry
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 (2026-06)
+        with:
+          repository: Adam-S-Daniel/cms-platform
+          path: registries/cms-platform
+          fetch-depth: 0
+          token: ${{ steps.token_adam_s_daniel.outputs.token || github.token }}
+
+      - name: Bump consumer locks
+        env:
+          # Per-owner installation tokens minted above, consumed by the
+          # script's GH_TOKEN_<OWNER> resolution. No shared GH_TOKEN fallback
+          # is needed — every owner gets its own minted token.
+          GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
+          GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
+          SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
+          # Which registry this run bumps is NOT set here: the script defaults
+          # it from repos.yml's skills_bootstrap.registry, so the fleet keeps
+          # one answer to "which registry is ours" instead of a second copy in
+          # a workflow that can disagree with it.
+          BUMP_CHECKOUTS: >-
+            Adam-S-Daniel/agentskills=${{ github.workspace }}/registries/agentskills
+            Adam-S-Daniel/cms-platform=${{ github.workspace }}/registries/cms-platform
+          # Read through the environment, never interpolated into the command
+          # below. `${{ inputs.* }}` inside a `run:` body is rendered into the
+          # shell line that Actions echoes to the log, and this account has a
+          # real incident behind that rule (see AGENTS.md, "Data exposure in CI
+          # and public repos"). On a scheduled run there is no input at all, so
+          # this is empty and the full run happens.
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          chmod +x scripts/bump-consumer-locks.sh
+          if [[ "$DRY_RUN" == "true" ]]; then
+            ./scripts/bump-consumer-locks.sh --dry-run
+          else
+            ./scripts/bump-consumer-locks.sh
+          fi

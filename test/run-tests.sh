@@ -77,6 +77,27 @@ HOOK
     chmod +x "$bare/hooks/pre-receive"
 }
 
+# The other ref a GitHub ruleset can restrict: creating the bot's bump branch.
+# GitHub prints `! [remote rejected]` for this exactly as it does for a
+# non-fast-forward, which is why the bumper must not classify by that word.
+install_reject_bump_branch_hook() {
+    local bare="$1"
+    cat > "$bare/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+while read -r _old _new ref; do
+    case "$ref" in
+        refs/heads/skills-lock-bump/*)
+            echo "remote: error: GH013: Repository rule violations found for $ref." 1>&2
+            echo "remote: Cannot create ref due to creations being restricted." 1>&2
+            exit 1
+            ;;
+    esac
+done
+exit 0
+HOOK
+    chmod +x "$bare/hooks/pre-receive"
+}
+
 # ── Set up mock repos as bare git repos ────────────────────────────────────
 
 setup_mock_repos() {
@@ -588,6 +609,467 @@ YAML
     cd "$REPO_ROOT"
 }
 
+# write_stub_generator <path> — the stand-in for agentskills'
+# generate_skills_lock.py.
+#
+# WHY A STAND-IN AND NOT THE REAL FILE. The real generator lives in the
+# registry, is tested there, and is not on this runner: ci.yml checks out this
+# repo and nothing else. Vendoring a copy would be a second implementation to
+# keep in step with the first, which is the thing that repo's own docstring
+# warns against. What this file reproduces instead is the CONTRACT
+# bump-consumer-locks.sh depends on — the flags it passes, the exit codes it
+# branches on, and the FAILED:/ERROR: distinction it refuses to conflate —
+# faithfully enough that the fixture CONTENT decides each outcome rather than a
+# switch. It computes real digests over real directories, so "the digests
+# changed" is an observation and not a stub returning a canned answer.
+#
+# What it therefore does NOT prove: that the real generator agrees with it
+# about a digest. Nothing in this repo consumes those bytes; the registry's
+# own suite owns that, and this one owns the orchestration around it.
+write_stub_generator() {
+    cat > "$1" <<'STUBEOF'
+#!/usr/bin/env python3
+"""Stand-in for agentskills' generate_skills_lock.py (test fixture only).
+
+  --check-current  exit 0 when the bundle content at the ref the lock pins
+                   still matches the checkout's working tree; exit 1 with a
+                   FAILED: verdict when it has moved; exit 1 with an ERROR:
+                   line when it cannot tell (an unresolvable pinned ref).
+                   Every source is read, primary first.
+  --repin          inherit registry / bundles / sources from the lock at -o,
+                   re-resolve only `ref` (to HEAD of --repo, or --ref), and
+                   rewrite the file. --registry / --bundles / --source are
+                   refused alongside it, exactly as the real one refuses them,
+                   so a caller that starts passing them is caught here instead
+                   of de-federating a real lock in production.
+
+Digests follow the real generator's shape — a per-file manifest of
+"<relpath>\\0<sha256>\\n", then sha256 of the concatenation — read from
+`git archive` for the pinned side and from the working tree for the current
+side.
+"""
+import argparse
+import hashlib
+import io
+import json
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+DEFAULT_LAYOUT = "plugins/{bundle}/skills"
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+
+
+def digest_dir(directory):
+    entries = []
+    for path in sorted(p for p in Path(directory).rglob("*") if p.is_file()):
+        rel = path.relative_to(directory).as_posix()
+        entries.append("%s\0%s\n" % (rel, hashlib.sha256(path.read_bytes()).hexdigest()))
+    return hashlib.sha256("".join(sorted(entries)).encode("utf-8")).hexdigest()
+
+
+def collect(root, bundles, layout):
+    skills = {}
+    for bundle in bundles:
+        base = Path(root) / layout.format(bundle=bundle)
+        if not base.is_dir():
+            continue
+        for skill in sorted(p for p in base.iterdir() if p.is_dir()):
+            skills["%s/%s" % (bundle, skill.name)] = digest_dir(skill)
+    return skills
+
+
+def at_ref(repo, ref, bundles, layout):
+    if git(repo, "cat-file", "-e", "%s^{commit}" % ref).returncode != 0:
+        sys.exit("ERROR: cannot resolve ref '%s' in %s" % (ref, repo))
+    proc = git(repo, "archive", "--format=tar", ref)
+    if proc.returncode != 0:
+        sys.exit("ERROR: git archive %s failed in %s" % (ref, repo))
+    with tempfile.TemporaryDirectory() as scratch:
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as archive:
+            try:
+                archive.extractall(scratch, filter="data")
+            except TypeError:  # Python < 3.11.4 has no extraction filters
+                archive.extractall(scratch)
+        return collect(scratch, bundles, layout)
+
+
+def plan(lock, repo, overrides):
+    sources = [{
+        "registry": lock["registry"],
+        "ref": lock["ref"],
+        "bundles": lock["bundles"],
+        "layout": DEFAULT_LAYOUT,
+        "path": Path(repo),
+    }]
+    for source in lock.get("sources") or []:
+        key = source["registry"]
+        if key not in overrides:
+            sys.exit("ERROR: %s: no checkout — pass --source-repo '%s=<path>'" % (key, key))
+        sources.append({
+            "registry": key,
+            "ref": source["ref"],
+            "bundles": source["bundles"],
+            "layout": source.get("layout", DEFAULT_LAYOUT),
+            "path": Path(overrides[key]),
+        })
+    return sources
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check-current", action="store_true")
+    parser.add_argument("--repin", action="store_true")
+    parser.add_argument("--repo")
+    parser.add_argument("--ref")
+    parser.add_argument("--registry")
+    parser.add_argument("--bundles")
+    parser.add_argument("--source", action="append")
+    parser.add_argument("--source-repo", action="append", default=[])
+    parser.add_argument("-o", "--output", required=True)
+    args = parser.parse_args()
+
+    if args.repin and (args.registry or args.bundles or args.source):
+        parser.error("--repin inherits the lock's identity; --registry / --bundles / "
+                     "--source would override it")
+
+    overrides = dict(spec.split("=", 1) for spec in args.source_repo)
+    output = Path(args.output)
+    if not output.is_file():
+        sys.exit("ERROR: %s does not exist" % output)
+    lock = json.loads(output.read_text(encoding="utf-8"))
+    sources = plan(lock, args.repo, overrides)
+
+    if args.check_current:
+        differences = []
+        for source in sources:
+            pinned = at_ref(source["path"], source["ref"], source["bundles"], source["layout"])
+            here = collect(source["path"], source["bundles"], source["layout"])
+            for name in sorted(set(here) - set(pinned)):
+                differences.append("added: '%s' is in the working tree but not at %s"
+                                   % (name, source["ref"]))
+            for name in sorted(set(pinned) - set(here)):
+                differences.append("removed: '%s' is at %s but not in the working tree"
+                                   % (name, source["ref"]))
+            for name in sorted(set(pinned) & set(here)):
+                if pinned[name] != here[name]:
+                    differences.append("changed: '%s' differs from its content at %s"
+                                       % (name, source["ref"]))
+        if not differences:
+            print("OK: the working tree still matches %s." % lock["ref"])
+            return 0
+        print("FAILED: the bundle has moved on since %s, which %s still pins."
+              % (lock["ref"], output))
+        for line in differences:
+            print("  - %s" % line)
+        return 1
+
+    if args.repin:
+        # The real generator's probe: a clone that IS this registry contains
+        # the commit the lock already pins.
+        if git(args.repo, "cat-file", "-e", "%s^{commit}" % lock["ref"]).returncode != 0:
+            sys.exit("ERROR: %s does not contain %s, the commit %s pins for '%s'"
+                     % (args.repo, lock["ref"], output, lock["registry"]))
+        if args.ref:
+            new_ref = args.ref
+        else:
+            proc = git(args.repo, "rev-parse", "--verify", "HEAD^{commit}")
+            if proc.returncode != 0:
+                sys.exit("ERROR: cannot resolve HEAD in %s" % args.repo)
+            new_ref = proc.stdout.decode().strip()
+        sources[0]["ref"] = new_ref
+        skills = {}
+        for source in sources:
+            skills.update(at_ref(source["path"], source["ref"],
+                                 source["bundles"], source["layout"]))
+        document = {
+            "registry": lock["registry"],
+            "ref": new_ref,
+            "bundles": lock["bundles"],
+        }
+        # Inherited verbatim — never rebuilt from flags. This is the whole
+        # federation property the fleet test asserts.
+        if lock.get("sources"):
+            document["sources"] = lock["sources"]
+        document["skills"] = dict(sorted(skills.items()))
+        document["generated_from"] = new_ref
+        output.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n",
+                          encoding="utf-8")
+        print("Wrote %s: %d skills at %s." % (output, len(skills), new_ref))
+        return 0
+
+    parser.error("nothing to do: pass --check-current or --repin")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+STUBEOF
+    chmod +x "$1"
+}
+
+# ── Set up the skills.lock bump fixtures ───────────────────────────────────
+#
+# bump-consumer-locks.sh does not compute a lock; it decides WHICH repos need
+# one recomputed and calls the registry's generator to do it. So these
+# fixtures are built around the two decisions that can go wrong silently:
+#
+#   * re-pinning a lock whose BUNDLE has not moved — churn, one PR per repo
+#     per night, and the fastest way to make the fleet ignore these PRs;
+#   * re-pinning a FEDERATED lock in a way that drops its other registry —
+#     the trap ADR 0001 named, reachable here at fleet scale.
+#
+# The registry fixture therefore has three commits and only the middle one
+# touches bundle content, so "the ref moved" and "the bundle moved" are
+# different facts that different consumers pin. The federated source registry
+# has TWO commits for the same reason on its own axis: with one, its pinned
+# ref and its HEAD are the same sha, and "its pin did not move" and "its pin
+# was re-resolved to HEAD" produce byte-identical fixtures — the single most
+# likely de-federation bug, invisible.
+#
+#   bumporg/agentskills      the registry itself, carrying a stale lock of its
+#                            own so the "never bump the registry" assertion is
+#                            not vacuous — a regressed carve-out would produce
+#                            a real PR here
+#   bumporg/repo-current     pinned one commit BEHIND the registry's HEAD, but
+#                            at content identical to it → no PR, no push
+#   bumporg/repo-diverged    stale primary, but its bump branch already exists
+#                            carrying a DIFFERENT lock (a reviewer's own commit
+#                            on an open bump PR) → refused, never force-pushed
+#   bumporg/repo-error       pins a commit no registry contains → a per-repo
+#                            failure, never a re-pin. Sorts THIRD of ten, so
+#                            the repos after it prove the run survived it
+#   bumporg/repo-fed-current primary content-current, federated source BEHIND
+#                            its registry's HEAD → no PR. The gate reads the
+#                            primary alone; a combined verdict would re-pin
+#                            this repo on every registry commit forever, with
+#                            not one digest changing
+#   bumporg/repo-federated   stale primary + a cms-platform source → PR, with
+#                            the sources array carried through untouched
+#   bumporg/repo-inverted    the federation inverted — cms-platform primary,
+#                            the bumped registry only a source → skipped, so
+#                            no other registry's pin is advanced under this
+#                            registry's name
+#   bumporg/repo-no-lock     declares no bundles at all → skipped
+#   bumporg/repo-other-registry  a lock for some other registry → skipped
+#   bumporg/repo-stale       stale primary → PR, ref advanced, digests changed
+setup_bump_repos() {
+    echo "Setting up skills.lock bump fixtures..."
+
+    # The stand-in generator, written where the real one lives inside its own
+    # registry (scripts/generate_skills_lock.py), because that is where
+    # bump-consumer-locks.sh looks for it by default.
+    mkdir -p "$TEST_DIR/registry/scripts" \
+             "$TEST_DIR/registry/plugins/adam/skills/finding-unknowns" \
+             "$TEST_DIR/registry/plugins/adam/skills/writing-adrs"
+    write_stub_generator "$TEST_DIR/registry/scripts/generate_skills_lock.py"
+
+    echo "v1" > "$TEST_DIR/registry/plugins/adam/skills/finding-unknowns/SKILL.md"
+    echo "v1" > "$TEST_DIR/registry/plugins/adam/skills/writing-adrs/SKILL.md"
+    git init --initial-branch=main "$TEST_DIR/registry" >/dev/null 2>&1
+    cd "$TEST_DIR/registry"
+    git config commit.gpgsign false
+    git add -A && git commit -m "skills v1" >/dev/null 2>&1
+    BUMP_REF_OLD=$(git rev-parse HEAD)
+    echo "v2" > plugins/adam/skills/finding-unknowns/SKILL.md
+    git add -A && git commit -m "edit a skill" >/dev/null 2>&1
+    BUMP_REF_CONTENT=$(git rev-parse HEAD)
+    # A commit that moves HEAD without touching a bundle. This is what makes
+    # repo-current's "no PR" a real assertion rather than a tautology: its ref
+    # IS behind HEAD, and it must still not be re-pinned.
+    echo "# registry" > README.md
+    git add -A && git commit -m "docs only" >/dev/null 2>&1
+    BUMP_REF_HEAD=$(git rev-parse HEAD)
+
+    # The federated source, on its own cadence — never advanced by a bump.
+    # It carries its bundle twice: under its own `skills` layout, which is how
+    # every federated consumer names it, and under the default
+    # plugins/{bundle}/skills, which is the only layout a PRIMARY can have
+    # (the generator materialises the primary with DEFAULT_LAYOUT and a lock
+    # records no layout for it). repo-inverted pins it as a primary, so
+    # without the second copy that fixture could never drift and "no other
+    # registry's pin was advanced" would hold for the wrong reason.
+    mkdir -p "$TEST_DIR/cms-platform/skills/deploy-site" \
+             "$TEST_DIR/cms-platform/plugins/cms-platform/skills/publish-site"
+    echo "deploy v1" > "$TEST_DIR/cms-platform/skills/deploy-site/SKILL.md"
+    echo "publish v1" > "$TEST_DIR/cms-platform/plugins/cms-platform/skills/publish-site/SKILL.md"
+    git init --initial-branch=main "$TEST_DIR/cms-platform" >/dev/null 2>&1
+    cd "$TEST_DIR/cms-platform"
+    git config commit.gpgsign false
+    git add -A && git commit -m "deploy-site" >/dev/null 2>&1
+    BUMP_SRC_REF=$(git rev-parse HEAD)
+    # Captured BEFORE this second commit, so the pin every federated fixture
+    # carries is genuinely behind this registry's HEAD. Without it a re-pin
+    # that re-resolved each sources[].ref to HEAD would leave the lock byte
+    # for byte where it was, and the assertions that its pin "did not move"
+    # could not fail.
+    echo "deploy v2" > "$TEST_DIR/cms-platform/skills/deploy-site/SKILL.md"
+    echo "publish v2" > "$TEST_DIR/cms-platform/plugins/cms-platform/skills/publish-site/SKILL.md"
+    git add -A && git commit -m "deploy v2" >/dev/null 2>&1
+    BUMP_SRC_HEAD=$(git rev-parse HEAD)
+
+    BUMP_CHECKOUTS_ARG="bumporg/agentskills=$TEST_DIR/registry bumporg/cms-platform=$TEST_DIR/cms-platform"
+
+    local name bare work
+    for name in agentskills repo-current repo-diverged repo-error \
+                repo-fed-current repo-federated repo-inverted \
+                repo-no-lock repo-other-registry repo-stale; do
+        bare="$TEST_DIR/bare/bumporg_$name"
+        work="$TEST_DIR/work/bumporg-$name"
+        mkdir -p "$bare" "$work"
+        git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+        git init --initial-branch=main "$work" >/dev/null 2>&1
+        cd "$work"
+        git config commit.gpgsign false
+        git remote add origin "$bare"
+        echo "# $name" > README.md
+
+        case "$name" in
+            agentskills|repo-stale|repo-diverged)
+                seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+                ;;
+            repo-current)
+                seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT"
+                ;;
+            repo-federated)
+                # The sources baseline is written by the FIXTURE, before the
+                # generator ever sees this lock. Comparing generator output
+                # against generator output is a tautology: a generator that
+                # mangles or drops `sources` mangles the baseline identically
+                # and the byte-for-byte assertion still passes.
+                seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD" \
+                    "$BUMP_SRC_REF" fill "$TEST_DIR/repo-federated.sources.expected"
+                ;;
+            repo-fed-current)
+                seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT" \
+                    "$BUMP_SRC_REF"
+                ;;
+            repo-inverted)
+                seed_inverted_lock skills.lock
+                ;;
+            repo-error)
+                # A 40-hex ref no registry contains: the generator cannot say
+                # whether this lock is current, and "cannot say" must never be
+                # read as "re-pin it".
+                seed_bump_lock skills.lock "bumporg/agentskills" \
+                    "9999999999999999999999999999999999999999" "" nofill
+                ;;
+            repo-other-registry)
+                seed_bump_lock skills.lock "bumporg/elsewhere" \
+                    "8888888888888888888888888888888888888888" "" nofill
+                ;;
+            repo-no-lock)
+                : # declares no bundles at all
+                ;;
+        esac
+
+        git add -A
+        git commit -m "init" >/dev/null 2>&1
+        git push origin HEAD:main >/dev/null 2>&1
+    done
+
+    # repo-diverged additionally carries an already-open bump branch whose
+    # lock is NOT the one a run would push — the stand-in for a reviewer's own
+    # commit on an open bump PR, which is the one thing this repo's AGENTS.md
+    # records force-pushing as destroying.
+    cd "$TEST_DIR/work/bumporg-repo-diverged"
+    git checkout -q -b skills-lock-bump/update
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/registry" --ref "$BUMP_REF_CONTENT" -o skills.lock >/dev/null
+    git add -A
+    git commit -m "a reviewer's own edit on the bump branch" >/dev/null 2>&1
+    git push origin HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
+    git checkout -q main
+
+    # Byte-exact pre-run copies of the two locks no bump may touch.
+    cp "$TEST_DIR/work/bumporg-repo-current/skills.lock" "$TEST_DIR/repo-current.lock.orig"
+    cp "$TEST_DIR/work/bumporg-repo-stale/skills.lock" "$TEST_DIR/repo-stale.lock.orig"
+    cp "$TEST_DIR/work/bumporg-repo-federated/skills.lock" "$TEST_DIR/repo-federated.lock.orig"
+
+    cd "$REPO_ROOT"
+}
+
+# seed_bump_lock <path> <registry> <ref> [<federated source ref>] [nofill]
+#                [<sources baseline file>]
+#
+# Writes a lock and then fills in its digests by running the stand-in
+# generator's own --repin at that same ref, so a fixture lock is generator
+# OUTPUT rather than hand-written JSON — the same reason the bootstrap
+# fixtures register through register-bootstrap-hook.sh instead of pasting a
+# settings.json. `nofill` skips that step for the two locks the generator
+# cannot read (a ref no registry has, a registry with no checkout).
+#
+# The optional sources baseline is the ONE thing deliberately captured before
+# the generator runs: an assertion that a bumped lock's `sources` survived
+# byte for byte is worthless if both sides came out of the generator, because
+# a generator that mangles the array mangles the baseline the same way.
+seed_bump_lock() {
+    local path="$1" registry="$2" ref="$3" source_ref="${4:-}" mode="${5:-fill}"
+    local sources_baseline="${6:-}"
+    python3 -c '
+import json, sys
+path, registry, ref, source_ref, baseline = sys.argv[1:6]
+doc = {"registry": registry, "ref": ref, "bundles": ["adam"]}
+if source_ref:
+    doc["sources"] = [{
+        "registry": "bumporg/cms-platform",
+        "ref": source_ref,
+        "bundles": ["cms-platform"],
+        "layout": "skills",
+    }]
+doc["skills"] = {}
+doc["generated_from"] = ref
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+if baseline:
+    with open(baseline, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(doc.get("sources"), indent=2, ensure_ascii=False) + "\n")
+' "$path" "$registry" "$ref" "$source_ref" "$sources_baseline"
+
+    [[ "$mode" == "nofill" ]] && return 0
+
+    local source_args=()
+    [[ -n "$source_ref" ]] && source_args=(--source-repo "bumporg/cms-platform=$TEST_DIR/cms-platform")
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/registry" --ref "$ref" \
+        ${source_args[@]+"${source_args[@]}"} -o "$path" >/dev/null
+}
+
+# seed_inverted_lock <path> — the same federation with the roles swapped:
+# bumporg/cms-platform is the PRIMARY and bumporg/agentskills appears only
+# under `sources`. Generator output like every other fixture lock. Nothing in
+# the real fleet has this shape yet, and nothing rejected it either — a bump
+# of agentskills would have advanced cms-platform's pin instead, under a title
+# naming agentskills and a sha agentskills does not contain.
+seed_inverted_lock() {
+    python3 -c '
+import json, sys
+path, primary_ref, source_ref = sys.argv[1:4]
+doc = {
+    "registry": "bumporg/cms-platform",
+    "ref": primary_ref,
+    "bundles": ["cms-platform"],
+    "sources": [{
+        "registry": "bumporg/agentskills",
+        "ref": source_ref,
+        "bundles": ["adam"],
+        "layout": "plugins/{bundle}/skills",
+    }],
+    "skills": {},
+    "generated_from": primary_ref,
+}
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' "$1" "$BUMP_SRC_REF" "$BUMP_REF_OLD"
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/cms-platform" --ref "$BUMP_SRC_REF" \
+        --source-repo "bumporg/agentskills=$TEST_DIR/registry" -o "$1" >/dev/null
+}
+
 # ── Create mock gh CLI ─────────────────────────────────────────────────────
 
 create_mock_gh() {
@@ -680,6 +1162,32 @@ case "$1" in
                           {\"nameWithOwner\":\"bootorg/repo-not-allowed\"},
                           {\"nameWithOwner\":\"bootorg/repo-unparseable\"}
                         ]"
+                        ;;
+                    bumporg)
+                        # The lock-bump fixtures, enumerated off disk rather
+                        # than listed here: several of them are stood up and
+                        # torn down by a single test (a rejected push, a
+                        # vanished bundle) in their own MOCK_BARE_DIR, and a
+                        # hard-coded roster would have to be edited in two
+                        # places to match. bumporg/agentskills IS the registry
+                        # and is deliberately among them: the carve-out that
+                        # skips it has to be observable, and a registry absent
+                        # from discovery would make that assertion vacuous.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/bumporg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"bumporg/${name#bumporg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
+                    failorg)
+                        # An owner the CLI cannot authenticate against — the
+                        # shape a missing App installation takes when the
+                        # script has unset GH_TOKEN for it. Real gh writes to
+                        # stderr and exits non-zero.
+                        echo "error connecting to api.github.com: authentication required" >&2
+                        exit 4
                         ;;
                     *)
                         json='[]'
@@ -2797,7 +3305,610 @@ EOF
 
 # ── Test 7: this repo's own committed configuration ───────────────────────
 #
-# Everything above drives mock repos through the scripts. These four read the
+# ── Test 8: bump-consumer-locks.sh ────────────────────────────────────────
+#
+# The fleet half of the lock re-pinner: which repos need one, and what happens
+# to the ones that do not. Three properties carry the lane, and each has its
+# own fixture rather than a flag:
+#
+#   * ANTI-CHURN. `repo-current` pins a commit that is BEHIND the registry's
+#     HEAD at content identical to it. A re-pinner keyed on "is the ref the
+#     newest commit" opens a PR here every night forever, and a fleet that
+#     learns to ignore these PRs is worse than no re-pinner. It must produce
+#     nothing at all.
+#   * NON-DE-FEDERATION. `repo-federated`'s `sources` array must come through
+#     a bump unchanged. That is ADR 0001's named trap, at fleet scale.
+#   * ISOLATION. `repo-error` cannot be assessed at all, and sorts third of
+#     ten: `set -euo pipefail` plus a loop is how sync.sh nearly died at the
+#     first gitignored repo, silently leaving every repo after it unsynced.
+#     The repos after it are the assertion.
+#   * FAILING CLOSED ON THE WRITE SIDE. Three things this script can do are
+#     irreversible or fleet-wide, so each has a fixture that reaches it: a
+#     mistyped `--dry-run` must not turn into a live run, an already-open bump
+#     branch carrying someone else's commit must not be force-pushed over, and
+#     a push a ruleset refuses must be a counted failure rather than a skip
+#     with a remedy that cannot be acted on.
+#
+# Deterministic and offline like the rest of the suite: mock `gh`, local bare
+# repos, a stand-in generator, no network, no sleeps, no wall-clock.
+
+BUMP_EXIT=0
+BUMP_PR_LOG="$TEST_DIR/bump-pr.log"
+BUMP_PR_BODY_DIR="$TEST_DIR/bump-pr-bodies"
+# Created empty here so every later `wc -l`/`cat` on it is total. The mock
+# only creates it once some run opens a PR, so any regression that stops this
+# lane opening one used to make a bare `wc -l < "$BUMP_PR_LOG"` abort the
+# WHOLE suite under `set -euo pipefail`: no Results line, and the six tests
+# after it — including the only checks on this repo's own workflows — never
+# run. That is the isolation failure this lane exists to assert, in the
+# harness that asserts it.
+: > "$BUMP_PR_LOG"
+
+run_bump() {   # <output file> [script args...]
+    local out="$1"; shift
+    BUMP_EXIT=0
+    GITHUB_REPOSITORY_OWNER=bumporg \
+    SYNC_OWNERS="${BUMP_OWNERS_FOR_RUN:-}" \
+    MOCK_BARE_DIR="${BUMP_BARE_DIR_FOR_RUN:-$TEST_DIR/bare}" \
+    MOCK_PR_LOG="$BUMP_PR_LOG" \
+    MOCK_PR_BODY_DIR="$BUMP_PR_BODY_DIR" \
+    MOCK_OPEN_PR_REPOS="${MOCK_OPEN_PR_REPOS:-}" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    BUMP_REGISTRY="bumporg/agentskills" \
+    BUMP_CHECKOUTS="${BUMP_CHECKOUTS_FOR_RUN:-$BUMP_CHECKOUTS_ARG}" \
+    BUMP_GENERATOR="${BUMP_GENERATOR_FOR_RUN:-}" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/bump-consumer-locks.sh" "$@" > "$out" 2>&1 || BUMP_EXIT=$?
+}
+
+bump_branch_sha() {   # <short repo name> — the bump branch's sha, or "" if none
+    git -C "$TEST_DIR/bare/bumporg_$1" rev-parse --verify -q \
+        "refs/heads/skills-lock-bump/update" 2>/dev/null || true
+}
+
+bump_lock_at() {   # <short repo name> <ref> — that ref's skills.lock
+    git -C "$TEST_DIR/bare/bumporg_$1" show "$2:skills.lock" 2>/dev/null || true
+}
+
+lock_field_of() {   # <file> <top-level key>
+    python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get(sys.argv[2], ""))
+' "$1" "$2"
+}
+
+lock_skill_digest() {   # <file> <skill key>
+    python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print((json.load(handle).get("skills") or {}).get(sys.argv[2], ""))
+' "$1" "$2"
+}
+
+# The `sources` array as the generator would serialize it. json.loads preserves
+# key order, so re-serializing both sides with identical settings compares the
+# array's BYTES — a reordered key, a changed ref or a dropped source all show
+# up — without depending on where the array happens to sit in the file.
+lock_sources_json() {   # <file>
+    python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.dumps(json.load(handle).get("sources"), indent=2, ensure_ascii=False))
+' "$1"
+}
+
+assert_no_bump_branch() {   # <short repo name> <label>
+    if [[ -z "$(bump_branch_sha "$1")" ]]; then pass "$2"; else fail "$2 — a bump branch was pushed to bumporg/$1"; fi
+}
+
+# ── Test 8a: --dry-run decides everything and writes nothing ──────────────
+
+test_bump_dry_run() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh --dry-run ==="
+
+    run_bump "$TEST_DIR/bump-dry.txt" --dry-run
+
+    assert_contains "$TEST_DIR/bump-dry.txt" "[DRY RUN] Would re-pin skills.lock" "dry-run: names the re-pin it would make"
+    assert_contains "$TEST_DIR/bump-dry.txt" "bundle content unchanged since ${BUMP_REF_CONTENT:0:7}" "dry-run: still reports the repo that needs nothing"
+    assert_contains "$TEST_DIR/bump-dry.txt" "0 proposed" "dry-run: proposes nothing"
+
+    # A repo that cannot be ASSESSED is a failure in a dry run too: the
+    # decision is what a dry run exercises, and this one could not be made.
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "dry-run: exits non-zero for the repo it could not assess"
+    else
+        fail "dry-run: exits non-zero for the repo it could not assess (got 0)"
+    fi
+
+    local r
+    for r in repo-stale repo-federated repo-current repo-error agentskills \
+             repo-fed-current repo-inverted; do
+        assert_no_bump_branch "$r" "dry-run: nothing pushed to bumporg/$r"
+    done
+    if [[ ! -s "$BUMP_PR_LOG" ]]; then
+        pass "dry-run: no pull request opened"
+    else
+        fail "dry-run: no pull request opened — $(cat "$BUMP_PR_LOG")"
+    fi
+}
+
+# ── Test 8a2: a federated source with no checkout is skipped, not halved ──
+#
+# --repin advances the primary ref only, but --check-current and every digest
+# are read from git, so a source whose clone is absent leaves the question
+# unanswerable for that consumer. The dangerous answer is the plausible one:
+# re-pin the half we CAN read and write the other half from whatever is in the
+# file. That is ADR 0001's de-federation damage arriving by omission rather
+# than by a flag. Run as a dry run so the assertion holds wherever this sits
+# in the lane's fixed order.
+test_bump_missing_source_checkout() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a federated source with no checkout) ==="
+
+    BUMP_CHECKOUTS_FOR_RUN="bumporg/agentskills=$TEST_DIR/registry" \
+        run_bump "$TEST_DIR/bump-nosource.txt" --dry-run
+    unset BUMP_CHECKOUTS_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-nosource.txt" "no checkout configured for bumporg/cms-platform" "missing source: names the registry it cannot read"
+    assert_contains "$TEST_DIR/bump-nosource.txt" "skipping bumporg/repo-federated rather than re-pinning part of its lock" "missing source: the federated consumer is skipped whole"
+    # The skip is that consumer's, not the run's: a single-source consumer in
+    # the same run is unaffected.
+    assert_contains "$TEST_DIR/bump-nosource.txt" "[DRY RUN] Would re-pin" "missing source: the single-source consumer is still assessed"
+    assert_no_bump_branch repo-federated "missing source: nothing pushed to the federated consumer"
+}
+
+# ── Test 8b: the bump itself ──────────────────────────────────────────────
+
+test_bump_consumer_locks() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (re-pin the stale, leave the rest) ==="
+
+    local diverged_before
+    diverged_before=$(bump_branch_sha repo-diverged)
+
+    run_bump "$TEST_DIR/bump.txt"
+    local log="$TEST_DIR/bump.txt"
+
+    # ── The registry itself owns its own re-pin.
+    assert_contains "$log" "the registry itself" "registry: excluded with a stated reason"
+    assert_no_bump_branch agentskills "registry: never bumped, even carrying a stale lock of its own"
+
+    # ── The anti-churn case: an old ref, an unmoved bundle, no PR.
+    assert_contains "$log" "bundle content unchanged since ${BUMP_REF_CONTENT:0:7}" "unchanged: reported as needing no re-pin"
+    assert_no_bump_branch repo-current "unchanged: no branch pushed"
+    local current_now="$TEST_DIR/bump-current-now.lock"
+    bump_lock_at repo-current main > "$current_now"
+    if cmp -s "$current_now" "$TEST_DIR/repo-current.lock.orig"; then
+        pass "unchanged: skills.lock byte-identical on main"
+    else
+        fail "unchanged: skills.lock byte-identical on main"
+    fi
+
+    # ── The repo that could not be assessed: a failure, never a re-pin.
+    assert_contains "$log" "could not decide whether skills.lock is current" "unassessable: reported as a failure, not as drift"
+    assert_no_bump_branch repo-error "unassessable: no branch pushed on the strength of an error"
+
+    # ── Isolation: repo-error sorts THIRD of seven.
+    assert_contains "$log" "=== bumporg/repo-no-lock ===" "isolation: the run survives a per-repo failure"
+    assert_contains "$log" "=== bumporg/repo-stale ===" "isolation: the last repo is still reached"
+    assert_contains "$log" "1 failed" "isolation: the failure is counted, not swallowed"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "isolation: the run exits non-zero"
+    else
+        fail "isolation: the run exits non-zero (got 0)"
+    fi
+
+    # ── The two skips that are not faults.
+    assert_contains "$log" "no skills.lock — nothing to re-pin" "no lock: skipped"
+    assert_no_bump_branch repo-no-lock "no lock: nothing created"
+    assert_contains "$log" "never names bumporg/agentskills — skipping" "other registry: skipped"
+    assert_no_bump_branch repo-other-registry "other registry: nothing pushed"
+
+    # ── ANTI-CHURN, federated edition. --check-current reports ONE verdict for
+    # every source a lock names, while --repin advances only the primary. Gate
+    # on the combined answer and this repo — primary current, federated source
+    # behind its registry's HEAD — gets a pull request for EVERY commit to the
+    # primary registry, forever, with not one digest in the diff.
+    assert_contains "$log" "a FEDERATED source has moved on since the ref this lock pins for it" "federated-current: the moved federated half is reported, not acted on"
+    assert_contains "$log" "bundle content unchanged since ${BUMP_REF_CONTENT:0:7}" "federated-current: the primary is judged on its own content"
+    assert_no_bump_branch repo-fed-current "federated-current: no branch — a federated advance is not a primary re-pin"
+
+    # ── The federation inverted: everything downstream targets the PRIMARY,
+    # so a lock that only federates this registry must be left alone rather
+    # than have some other registry's pin advanced under this one's name.
+    assert_contains "$log" "federates bumporg/agentskills but pins bumporg/cms-platform as its primary" "inverted: skipped, with the reason"
+    assert_no_bump_branch repo-inverted "inverted: no other registry's pin was advanced"
+
+    # ── A bump branch that already carries someone else's commit.
+    assert_contains "$log" "refusing to force-push" "diverged: an open bump branch with other content is refused"
+    if [[ -n "$diverged_before" && "$(bump_branch_sha repo-diverged)" == "$diverged_before" ]]; then
+        pass "diverged: the reviewer's commit is still the branch tip"
+    else
+        fail "diverged: the reviewer's commit is still the branch tip — was '$diverged_before', now '$(bump_branch_sha repo-diverged)'"
+    fi
+
+    # ── The stale consumer: ref advanced, digests re-derived.
+    assert_contains "$log" "2 proposed" "bump: exactly the two stale consumers were proposed"
+    local stale_new="$TEST_DIR/bump-stale-new.lock"
+    bump_lock_at repo-stale "refs/heads/skills-lock-bump/update" > "$stale_new"
+    if [[ -s "$stale_new" ]]; then
+        pass "bump: repo-stale has a bump branch carrying a lock"
+    else
+        fail "bump: repo-stale has a bump branch carrying a lock"
+        return
+    fi
+    if [[ "$(lock_field_of "$stale_new" ref)" == "$BUMP_REF_HEAD" ]]; then
+        pass "bump: ref advanced to the registry's current commit"
+    else
+        fail "bump: ref advanced to the registry's current commit — got $(lock_field_of "$stale_new" ref)"
+    fi
+    local stale_old="$TEST_DIR/bump-stale-old.lock"
+    bump_lock_at repo-stale main > "$stale_old"
+    if [[ "$(lock_skill_digest "$stale_new" adam/finding-unknowns)" \
+          != "$(lock_skill_digest "$stale_old" adam/finding-unknowns)" ]]; then
+        pass "bump: the changed skill's digest was re-derived"
+    else
+        fail "bump: the changed skill's digest was re-derived (it is unchanged)"
+    fi
+    if [[ "$(lock_skill_digest "$stale_new" adam/writing-adrs)" \
+          == "$(lock_skill_digest "$stale_old" adam/writing-adrs)" ]]; then
+        pass "bump: the untouched skill's digest is unchanged"
+    else
+        fail "bump: the untouched skill's digest is unchanged"
+    fi
+    if cmp -s "$stale_old" "$TEST_DIR/repo-stale.lock.orig"; then
+        pass "bump: the default branch is untouched — the change arrives as a PR"
+    else
+        fail "bump: the default branch is untouched — the change arrives as a PR"
+    fi
+
+    # ── THE non-negotiable: a federated lock keeps its other registry.
+    # Compared against the array the FIXTURE composed, not against the seeded
+    # lock: `seed_bump_lock` fills a fixture lock by running the generator's
+    # own --repin, so comparing one generator output with another is a
+    # tautology — a generator that drops `sources` drops it from both sides
+    # and this assertion still reports PASS.
+    local fed_new="$TEST_DIR/bump-fed-new.lock"
+    bump_lock_at repo-federated "refs/heads/skills-lock-bump/update" > "$fed_new"
+    if [[ "$(lock_sources_json "$fed_new")" == "$(cat "$TEST_DIR/repo-federated.sources.expected")" ]]; then
+        pass "federated: the sources array survives a bump byte-for-byte"
+    else
+        fail "federated: the sources array survives a bump byte-for-byte — got $(lock_sources_json "$fed_new")"
+    fi
+    assert_contains "$fed_new" "bumporg/cms-platform" "federated: the second registry is still named"
+    assert_contains "$fed_new" "$BUMP_SRC_REF" "federated: the second registry's own pin did not move"
+    # The negative half. Its registry HAS moved on (two commits), so a re-pin
+    # that re-resolved each sources[].ref to that source's HEAD would be the
+    # de-federation-by-currency bug — and would be indistinguishable from
+    # "unchanged" if the fixture had a single commit.
+    assert_not_contains "$fed_new" "$BUMP_SRC_HEAD" "federated: the federated pin was not re-resolved to its registry's HEAD"
+    if [[ "$(lock_field_of "$fed_new" ref)" == "$BUMP_REF_HEAD" ]]; then
+        pass "federated: the primary ref still advanced"
+    else
+        fail "federated: the primary ref still advanced"
+    fi
+
+    # ── What the PR discloses.
+    local body="$BUMP_PR_BODY_DIR/bumporg_repo-stale.body"
+    assert_contains "$body" "${BUMP_REF_OLD:0:7}" "PR body: names the ref it moved from"
+    assert_contains "$body" "${BUMP_REF_HEAD:0:7}" "PR body: names the ref it moved to"
+    assert_contains "$body" "re-derived from the newly pinned commit" "PR body: says where the digests come from"
+    assert_contains "$body" "Generated, never hand-edited" "PR body: says the change is generator output"
+    assert_contains "$body" "This lock has no federated sources." "PR body: says so when there is no federated half"
+    assert_contains "$body" "which skills.lock still pins" "PR body: quotes the consumer's own lock path, not this run's temp copy"
+    assert_not_contains "$body" "$TEST_DIR" "PR body: no path from the machine that ran the bump"
+    local fed_body="$BUMP_PR_BODY_DIR/bumporg_repo-federated.body"
+    assert_contains "$fed_body" "Federated sources keep their pins" "PR body: discloses that the federated half is untouched"
+    assert_contains "$fed_body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}" "PR body: names the federated pin that did not move"
+    # The quoted verdict is the primary-scoped one, so every difference line in
+    # it belongs to the ref this PR advances. A combined verdict would blame a
+    # cms-platform skill for an agentskills re-pin.
+    assert_contains "$fed_body" "adam/finding-unknowns" "PR body: quotes the primary difference that caused this PR"
+    assert_not_contains "$fed_body" "cms-platform/deploy-site" "PR body: does not blame a federated skill for a primary re-pin"
+}
+
+# ── Test 8c: a re-run proposes nothing, and repairs an interrupted one ────
+
+test_bump_idempotent() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (re-run) ==="
+
+    local stale_before fed_before prs_before
+    stale_before=$(bump_branch_sha repo-stale)
+    fed_before=$(bump_branch_sha repo-federated)
+    prs_before=$(wc -l < "$BUMP_PR_LOG")
+
+    # The steady state after a bump: branch pushed, PR open, and main still
+    # carrying the stale lock until someone merges it. The mock has no memory,
+    # so the open PRs are supplied here.
+    MOCK_OPEN_PR_REPOS="bumporg_repo-stale bumporg_repo-federated" \
+        run_bump "$TEST_DIR/bump-rerun.txt"
+
+    assert_contains "$TEST_DIR/bump-rerun.txt" "0 proposed" "re-run: nothing proposed"
+    assert_contains "$TEST_DIR/bump-rerun.txt" "is already open for this branch" "re-run: the open PR is left alone"
+    if [[ "$(bump_branch_sha repo-stale)" == "$stale_before" \
+          && "$(bump_branch_sha repo-federated)" == "$fed_before" ]]; then
+        pass "re-run: no second commit — both bump branches are untouched"
+    else
+        fail "re-run: no second commit — both bump branches are untouched"
+    fi
+    if [[ "$(wc -l < "$BUMP_PR_LOG")" == "$prs_before" ]]; then
+        pass "re-run: no second pull request"
+    else
+        fail "re-run: no second pull request — $(cat "$BUMP_PR_LOG")"
+    fi
+
+    # An interrupted run leaves a correct branch and no PR (the workflow can
+    # be cancelled between the push and `gh pr create`). Returning early on a
+    # matching branch would strand it forever, because every later run finds
+    # the same match. The repair opens the PR and touches nothing else.
+    run_bump "$TEST_DIR/bump-strand.txt"
+    assert_contains "$TEST_DIR/bump-strand.txt" "not pushing again" "stranded: the matching branch is not re-pushed"
+    assert_contains "$TEST_DIR/bump-strand.txt" "PR created" "stranded: the missing PR is opened"
+    if [[ "$(bump_branch_sha repo-stale)" == "$stale_before" \
+          && "$(bump_branch_sha repo-federated)" == "$fed_before" ]]; then
+        pass "stranded: still no second commit"
+    else
+        fail "stranded: still no second commit"
+    fi
+}
+
+# ── Test 8d: a shallow registry checkout is named, not mistaken for drift ─
+
+test_bump_shallow_registry() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (shallow registry checkout) ==="
+
+    rm -rf "$TEST_DIR/registry-shallow"
+    git clone --depth 1 "file://$TEST_DIR/registry" "$TEST_DIR/registry-shallow" >/dev/null 2>&1
+
+    BUMP_CHECKOUTS_FOR_RUN="bumporg/agentskills=$TEST_DIR/registry-shallow bumporg/cms-platform=$TEST_DIR/cms-platform" \
+        run_bump "$TEST_DIR/bump-shallow.txt"
+    unset BUMP_CHECKOUTS_FOR_RUN
+
+    # Every consumer would otherwise fail with "this checkout is not that
+    # registry" — the --repin probe looks for the commit the lock already
+    # pins, which a shallow clone does not have — and send a reader hunting a
+    # wrong registry rather than a missing `fetch-depth: 0`.
+    assert_contains "$TEST_DIR/bump-shallow.txt" "SHALLOW clone" "shallow: says the checkout is shallow"
+    assert_contains "$TEST_DIR/bump-shallow.txt" "fetch-depth: 0" "shallow: names the remedy"
+    if [[ $BUMP_EXIT -eq 2 ]]; then
+        pass "shallow: refuses the run outright rather than skipping every repo"
+    else
+        fail "shallow: refuses the run outright rather than skipping every repo (exit $BUMP_EXIT)"
+    fi
+}
+
+# ── Test 8e: an unrecognised argument stops the run ───────────────────────
+#
+# `--dry-run` is the flag that means "write nothing", and it used to be
+# sniffed rather than parsed: anything that was not exactly `--dry-run` in
+# exactly first position left DRY_RUN=false and the run cloned, committed,
+# pushed and opened pull requests. In CI this script holds installation tokens
+# with write scope across two owners, so a one-character typo is the wrong
+# place for a default. Runs first in the lane, while no bump branch exists
+# anywhere, so "nothing was pushed" is a statement about this run.
+test_bump_unknown_argument() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (an unrecognised argument) ==="
+
+    local prs_before
+    prs_before=$(wc -l < "$BUMP_PR_LOG")
+    run_bump "$TEST_DIR/bump-badarg.txt" --dry-runn
+
+    assert_contains "$TEST_DIR/bump-badarg.txt" "unknown argument '--dry-runn'" "bad argument: named rather than ignored"
+    if [[ $BUMP_EXIT -eq 2 ]]; then
+        pass "bad argument: refuses the run (exit 2)"
+    else
+        fail "bad argument: refuses the run (exit 2) — got $BUMP_EXIT"
+    fi
+    local r
+    for r in repo-stale repo-federated; do
+        assert_no_bump_branch "$r" "bad argument: nothing pushed to bumporg/$r"
+    done
+    if [[ "$(wc -l < "$BUMP_PR_LOG")" == "$prs_before" ]]; then
+        pass "bad argument: no pull request opened"
+    else
+        fail "bad argument: no pull request opened — $(cat "$BUMP_PR_LOG")"
+    fi
+}
+
+# ── Test 8f: a generator without --repin is named once, up front ──────────
+#
+# BUMP_GENERATOR defaults to the copy inside the registry checkout, and that
+# checkout is of the registry's DEFAULT BRANCH — so a run can meet a generator
+# that predates the flag this script cannot reimplement. Unprobed, the
+# shortfall surfaces only once some consumer is genuinely stale, as one
+# argparse exit 2 per stale repo and a red scheduled run every night: a
+# version skew that reads as a fleet-wide breakage.
+test_bump_generator_without_repin() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a generator with no re-pin flag) ==="
+
+    local gen="$TEST_DIR/generator-no-repin.py"
+    cat > "$gen" <<'NOREPIN'
+#!/usr/bin/env python3
+"""A generator from before the advance flag existed: verify modes only."""
+import argparse
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--check-current", action="store_true")
+parser.add_argument("--repo")
+parser.add_argument("--source-repo", action="append", default=[])
+parser.add_argument("-o", "--output", required=True)
+parser.parse_args()
+sys.exit(0)
+NOREPIN
+
+    BUMP_GENERATOR_FOR_RUN="$gen" run_bump "$TEST_DIR/bump-norepin.txt"
+    unset BUMP_GENERATOR_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-norepin.txt" "does not support --repin" "no re-pin flag: said once, before any repo is touched"
+    if [[ $BUMP_EXIT -eq 2 ]]; then
+        pass "no re-pin flag: refuses the run outright"
+    else
+        fail "no re-pin flag: refuses the run outright (exit $BUMP_EXIT)"
+    fi
+    assert_not_contains "$TEST_DIR/bump-norepin.txt" "=== bumporg/repo-stale ===" "no re-pin flag: no consumer is processed at all"
+}
+
+# ── Test 8f2: one owner's listing failure is that owner's failure ─────────
+#
+# `gh repo list` runs under `set -euo pipefail`, and a non-zero gh used to end
+# the script mid-loop. The workflow passes only GH_TOKEN_<OWNER>, so an owner
+# with no installation has GH_TOKEN unset for it and gh fails "authentication
+# required" — and with SYNC_OWNERS ordered "Adam-S-Daniel jodidaniel", losing
+# the FIRST installation stopped the entire fleet, printing a raw gh error and
+# no summary. Both the workflow's comment and its own warning say the opposite
+# ("its repos will be skipped this run"). The failing owner goes first here
+# because that is the ordering the workflow ships.
+test_bump_owner_list_failure() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (one owner cannot be listed) ==="
+
+    local prs_before
+    prs_before=$(wc -l < "$BUMP_PR_LOG")
+    mkdir -p "$TEST_DIR/bare-owner"
+
+    BUMP_OWNERS_FOR_RUN="failorg bumporg" \
+    BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-owner" \
+        run_bump "$TEST_DIR/bump-owner.txt"
+    unset BUMP_OWNERS_FOR_RUN BUMP_BARE_DIR_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-owner.txt" "failorg: could not list repos" "owner listing: the owner that failed is named"
+    assert_contains "$TEST_DIR/bump-owner.txt" "Scanning repos for: bumporg" "owner listing: the SECOND owner is still scanned"
+    assert_contains "$TEST_DIR/bump-owner.txt" "Lock bump complete" "owner listing: the run still prints its summary"
+    assert_contains "$TEST_DIR/bump-owner.txt" "1 failed" "owner listing: counted as a per-owner failure"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "owner listing: the run exits non-zero"
+    else
+        fail "owner listing: the run exits non-zero (got 0)"
+    fi
+    if [[ "$(wc -l < "$BUMP_PR_LOG")" == "$prs_before" ]]; then
+        pass "owner listing: no pull request opened"
+    else
+        fail "owner listing: no pull request opened — $(cat "$BUMP_PR_LOG")"
+    fi
+
+    rm -rf "$TEST_DIR/bare-owner"
+}
+
+# ── Test 8g: a push a ruleset refuses is a failure, not a stale branch ─────
+#
+# Git prints `! [remote rejected]` for ANY server-side refusal, so classifying
+# on the word "rejected" reports a restricted ref creation (GH013 — the error
+# this repo's own AGENTS.md documents) as a stale bump branch. Three things go
+# wrong at once: the remedy printed is "merge or close its PR", about a branch
+# that does not exist; a genuinely stale consumer is never bumped; and the run
+# stays green, so the scheduled-run-health issue never fires. Stands its
+# fixture up in a MOCK_BARE_DIR of its own so the shared fleet is untouched.
+test_bump_push_rejected() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the push is refused by a ruleset) ==="
+
+    local bare="$TEST_DIR/bare-blocked/bumporg_repo-blocked"
+    local work="$TEST_DIR/work/bumporg-repo-blocked"
+    rm -rf "$TEST_DIR/bare-blocked" "$work"
+    mkdir -p "$bare" "$work"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# repo-blocked" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+    install_reject_bump_branch_hook "$bare"
+
+    BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-blocked" \
+        run_bump "$TEST_DIR/bump-blocked.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+
+    assert_not_contains "$TEST_DIR/bump-blocked.txt" "non-fast-forward" "push refused: not diagnosed as a stale bump branch"
+    assert_contains "$TEST_DIR/bump-blocked.txt" "push failed for bumporg/repo-blocked" "push refused: reported as a push failure"
+    assert_contains "$TEST_DIR/bump-blocked.txt" "1 failed" "push refused: counted as a failure, not a skip"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "push refused: the run exits non-zero, so a scheduled run goes red"
+    else
+        fail "push refused: the run exits non-zero, so a scheduled run goes red (got 0)"
+    fi
+    if [[ -z "$(git -C "$bare" rev-parse --verify -q refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "push refused: no branch exists, so 'merge or close its PR' would name nothing"
+    else
+        fail "push refused: no branch exists, so 'merge or close its PR' would name nothing"
+    fi
+
+    rm -rf "$TEST_DIR/bare-blocked" "$work"
+}
+
+# ── Test 8h: a bundle that vanished is refused, not proposed to everyone ───
+#
+# Rename or delete a bundle directory in the registry and --repin finds no
+# skills at the new HEAD, so it writes `"skills": {}` — for every consumer, in
+# one run, under a PR body that still says every digest was re-derived from
+# the newly pinned commit. Merging one is not a no-op: skills-bootstrap writes
+# its claims stream from the routing map precisely so a bundle a lock still
+# declares but has emptied REAPS its old skills. Its own registry clone and
+# its own MOCK_BARE_DIR, so the shared fixtures never see the rename.
+test_bump_bundle_vanished() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a bundle vanished from the registry) ==="
+
+    rm -rf "$TEST_DIR/registry-vanished"
+    # A full clone: --repin proves the checkout is the registry by finding the
+    # commit the lock already pins, which a shallow one would not contain.
+    git clone "file://$TEST_DIR/registry" "$TEST_DIR/registry-vanished" >/dev/null 2>&1
+    cd "$TEST_DIR/registry-vanished"
+    git config commit.gpgsign false
+    git mv plugins/adam plugins/adam2 >/dev/null 2>&1
+    git commit -m "rename the bundle directory" >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    local bare="$TEST_DIR/bare-vanish/bumporg_repo-vanish"
+    local work="$TEST_DIR/work/bumporg-repo-vanish"
+    rm -rf "$TEST_DIR/bare-vanish" "$work"
+    mkdir -p "$bare" "$work"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# repo-vanish" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-vanish" \
+    BUMP_CHECKOUTS_FOR_RUN="bumporg/agentskills=$TEST_DIR/registry-vanished bumporg/cms-platform=$TEST_DIR/cms-platform" \
+        run_bump "$TEST_DIR/bump-vanish.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_CHECKOUTS_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-vanish.txt" "refusing to propose this re-pin" "vanished bundle: refused rather than fanned out"
+    assert_contains "$TEST_DIR/bump-vanish.txt" "declares no skills at all" "vanished bundle: says what is wrong with the lock it just built"
+    assert_contains "$TEST_DIR/bump-vanish.txt" "1 failed" "vanished bundle: counted, so the scheduled run goes red"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "vanished bundle: the run exits non-zero"
+    else
+        fail "vanished bundle: the run exits non-zero (got 0)"
+    fi
+    if [[ -z "$(git -C "$bare" rev-parse --verify -q refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "vanished bundle: nothing pushed"
+    else
+        fail "vanished bundle: nothing pushed"
+    fi
+
+    rm -rf "$TEST_DIR/bare-vanish" "$work" "$TEST_DIR/registry-vanished"
+}
+
+# Everything above drives mock repos through the scripts. These five read the
 # REAL files in this checkout, because nothing else does: this repo is dropped
 # from both `sync.sh` and `drift-report.sh` (`grep -v "/${SELF_REPO}$"`), so
 # neither the delivery that repairs a consumer nor the report that flags one
@@ -3104,6 +4215,135 @@ if not isinstance(lock.get("skills"), dict) or not lock["skills"]:
     fi
 }
 
+# workflow_steps <file> — one line per job step: "<uses> <repository> <fetch-depth>",
+# with "-" for a field the step does not set. The same real parser yaml_field
+# uses, for the same reason: `uses:` inside a comment, or under a key the file
+# no longer reads, is bytes a grep matches and a parser does not.
+workflow_steps() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+for (const spec of Object.values((doc && doc.jobs) || {})) {
+  // A job-level `uses:` is a reusable-workflow call, pinned by the same rule.
+  if (spec && typeof spec.uses === "string") console.log([spec.uses, "-", "-"].join(" "));
+  for (const step of (spec && spec.steps) || []) {
+    const w = step.with || {};
+    console.log([step.uses || "-", w.repository || "-",
+                 w["fetch-depth"] === undefined ? "-" : String(w["fetch-depth"])].join(" "));
+  }
+}
+' "$REPO_ROOT" "$1"
+}
+
+# ── Test 7e: the lock-bump workflow says what the script needs ────────────
+#
+# Read off the REAL file in this checkout, like the four tests above it,
+# because nothing syncs or reports on this repo. Three of these are not style:
+#
+#   * every `uses:` is a 40-hex commit pin (fleet rule — a tag is a movable
+#     pointer, and this job holds a token that can push to ~20 repos);
+#   * the registry checkout is `fetch-depth: 0`, because --repin proves the
+#     checkout IS the registry by finding the commit the lock already pins,
+#     and a shallow clone does not contain it;
+#   * the job can actually fire, and publishes no status context — which is
+#     what puts its `concurrency:` group on the safe side of the rule in
+#     AGENTS.md about required checks.
+test_bump_workflow() {
+    echo ""
+    echo "=== Test: skills-lock-bump.yml is pinned, scheduled and scoped ==="
+
+    local wf="$REPO_ROOT/.github/workflows/skills-lock-bump.yml"
+    local steps_file="$TEST_DIR/bump-workflow-steps.txt"
+    local err_file="$TEST_DIR/bump-workflow.err"
+
+    if ! workflow_steps "$wf" > "$steps_file" 2> "$err_file"; then
+        fail "bump workflow: could not parse $wf — $(head -1 "$err_file")"
+        return
+    fi
+    if [[ -s "$steps_file" ]]; then
+        pass "bump workflow: parses, and declares at least one step"
+    else
+        fail "bump workflow: parses, and declares at least one step — it declares none, so every assertion below would be vacuous"
+        return
+    fi
+
+    # Exact form, not "contains 40 hex": `@v4  # 34e1148…` would satisfy a
+    # looser check while pinning a movable tag.
+    local uses unpinned=""
+    while read -r uses _ _; do
+        [[ "$uses" == "-" ]] && continue
+        if [[ ! "$uses" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+            unpinned="${unpinned:+$unpinned, }$uses"
+        fi
+    done < "$steps_file"
+    if [[ -z "$unpinned" ]]; then
+        pass "bump workflow: every uses: is pinned to a full 40-character commit SHA"
+    else
+        fail "bump workflow: not pinned to a 40-character SHA — $unpinned"
+    fi
+
+    # The other half of the same house rule, and the one half a parser cannot
+    # see: AGENTS.md makes the trailing `# vX.Y.Z (date)` part of the pin —
+    # forty hex characters say nothing on their own, the version says what it
+    # is and the date says how stale it is. Comments are not in the YAML data
+    # model, so this reads raw lines; the day is optional because the account
+    # holds two different day-level records for one of these SHAs and this
+    # file is not the place to pick between them. What is asserted is that a
+    # pin carries a version AND a date at all, which is what a bare `# v3.2.0`
+    # was missing.
+    local pin_comment='@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9][^[:space:]]*[[:space:]]+\([0-9]{4}(-[0-9]{2}){1,2}\)[[:space:]]*$'
+    local uses_line ref undated=""
+    while IFS= read -r uses_line; do
+        ref="${uses_line#*uses:}"
+        ref="${ref#"${ref%%[![:space:]]*}"}"
+        # Nothing to pin, and nothing to date.
+        [[ "$ref" == ./* || "$ref" == docker://* ]] && continue
+        if [[ ! "$uses_line" =~ $pin_comment ]]; then
+            undated="${undated:+$undated; }${uses_line#"${uses_line%%[![:space:]]*}"}"
+        fi
+    done < <(grep -E '(^|[[:space:]])uses:' "$wf")
+    if [[ -z "$undated" ]]; then
+        pass "bump workflow: every pin carries its version and date comment"
+    else
+        fail "bump workflow: a pin has no '# vX.Y.Z (date)' comment — $undated"
+    fi
+
+    local registry_depth
+    registry_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$steps_file")
+    if [[ "$registry_depth" == "0" ]]; then
+        pass "bump workflow: the registry is checked out at full depth"
+    else
+        fail "bump workflow: the registry needs fetch-depth: 0 (got '${registry_depth:-none}') — --repin looks for the commit the lock already pins, and a shallow clone does not have it"
+    fi
+
+    local field
+    for field in "on.schedule.0.cron:41 7 * * *" \
+                 "on.workflow_dispatch.inputs.dry_run.type:boolean" \
+                 "permissions.contents:read" \
+                 "concurrency.group:skills-lock-bump" \
+                 "concurrency.cancel-in-progress:false"; do
+        local path="${field%%:*}" want="${field#*:}" got
+        if got=$(yaml_field "$wf" "$path" 2>/dev/null) && [[ "$got" == "$want" ]]; then
+            pass "bump workflow: $path is $want"
+        else
+            fail "bump workflow: $path should be '$want', got '${got:-nothing}'"
+        fi
+    done
+
+    # No pull_request trigger, so this job can never publish a required status
+    # context — the whole reason a concurrency group is safe here.
+    if yaml_field "$wf" "on.pull_request" >/dev/null 2>&1; then
+        fail "bump workflow: it now has a pull_request trigger, so its concurrency group can cancel a run that publishes a status context — read the AGENTS.md rule about required checks before keeping both"
+    else
+        pass "bump workflow: no pull_request trigger, so no status context a cancelled run could poison"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -3112,6 +4352,7 @@ echo "========================================="
 
 setup_mock_repos
 setup_bootstrap_repos
+setup_bump_repos
 create_mock_gh
 snapshot_bare_repos
 test_build_script
@@ -3147,12 +4388,30 @@ test_sync_multi_owner
 test_sync_per_owner_token
 test_drift_report_multi_owner
 test_check_cron_coverage
+# The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
+# the bares the sync and drift-report lanes share. Fixed order: the two runs
+# that must write nothing at all (a mistyped flag, a generator too old) while
+# no bump branch exists anywhere -> dry run -> bump -> re-run -> a deliberately
+# misconfigured registry checkout. The last two stand their own fixture up in
+# a MOCK_BARE_DIR of their own and tear it down again, so they can be a
+# rejected push and a vanished bundle without those becoming standing state.
+test_bump_unknown_argument
+test_bump_generator_without_repin
+test_bump_owner_list_failure
+test_bump_dry_run
+test_bump_missing_source_checkout
+test_bump_consumer_locks
+test_bump_idempotent
+test_bump_shallow_registry
+test_bump_push_rejected
+test_bump_bundle_vanished
 # This repo's own committed files, not the mock fleet — nothing syncs or
 # reports on _agent-guidance, so these are the only checks they get.
 test_sync_workflow_trigger
 test_self_hosted_hook_pin
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
+test_bump_workflow
 
 echo ""
 echo "========================================="
