@@ -63,13 +63,13 @@ skills_bootstrap:
   # the claim silently becomes false again rather than failing.
   registry: Adam-S-Daniel/agentskills
   path: .claude/hooks/skills-bootstrap.sh
-  ref: 40868ae84d071917be72afb0d799815bd67fa8c6
+  ref: f92569e2be0031e8e54acf8f3294c1c89f31f5eb
   # sha256 of the file at `ref`. The ref is already content-addressed, so this
   # is belt-and-braces — but the artifact executes instruction text at session
   # start with no approval prompt, so "the bytes we deliver are the bytes that
   # were reviewed" is worth making mechanical rather than assumed. A mismatch
   # disables delivery for the whole run and fails it.
-  sha256: 17bb7255e99e6c616f7cc7a6b40a3cf8bdf3d51ba0e0cd7c44c74daa51505171
+  sha256: 23bbadc87a19cf75d6443840f612d1fa9c472435128c0675c631f65d7ce685f8
   # The allowlist. Short repo names, matched the same way `exclude` is.
   #
   # Widened from two repos to ten on 2026-08-19 (ADR 0004). The two-repo start
