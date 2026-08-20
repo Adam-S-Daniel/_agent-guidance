@@ -3,6 +3,15 @@
 Produced 2026-08-19. Every factual claim here was measured; where something is
 uncertain it says so.
 
+**Re-derived 2026-08-20 against live data**, because the state moved under this
+pack overnight: `C`'s gate conditions, the bare-hex lock list, and the issue
+states below. Anything carrying a `2026-08-20` date is the re-derivation;
+anything without one is as first written. `C-history-rewrite.md` was corrected
+in the same pass. The verdict on `C` did not change — every reason behind it
+did, which is the more dangerous kind of staleness: a session acting on the old
+reasons would have spent its first cycle re-doing work that was already done and
+then read a green condition 1 as a green gate.
+
 ## Files
 
 | file | what | can run in parallel? |
@@ -12,10 +21,14 @@ uncertain it says so.
 | `B-detection-gaps.md` | make the remaining silent failures loud; includes adding `workflow_dispatch` where a manual run is meaningful (and where it is hazardous) | yes |
 | `C-history-rewrite.md` | retire the gitleaks exclusions by rewriting history | **NO — gated** |
 
-**C is gated.** It must not start until the `consumer-repo-provisioning` rename
-has reached both consumer sites' committed `skills.lock` (merge → release →
-consumer bump). Running it earlier just bakes a fresh keyword-bearing commit into
-the freshly rewritten history. Its own prerequisite gate spells out the checks.
+**C is gated — still, but no longer for the reason first written here.** The
+`consumer-repo-provisioning` rename HAS now reached both sites' committed
+`skills.lock`, so gate condition 1 passes. What blocks C is gate condition 3
+plus two blockers the gate never listed: `refs/pull/*/head` keeps the offending
+commit reachable on 117 + 24 pull requests and nobody can delete those refs, and
+both `main` rulesets forbid the force-push outright with no bypass actor.
+See "The blocking fact for `C`" below and C's own prerequisite gate, both
+re-derived against live data on 2026-08-20.
 
 A and B are independent of each other and of C's gate.
 
@@ -63,23 +76,85 @@ repos); do not assume a bump PR needs manual arming.
 **Filed and still open by design:** cms-platform#279 (the push-lane blind spot),
 agentskills#87 (see `B-detection-gaps.md` §B3 for what must be true first).
 
-### The blocking fact for `C`
+### The blocking fact for `C` — re-derived 2026-08-20, and it MOVED
 
-Both consumers' `skills.lock` on `main`:
+The federated advance this section used to ask for **has been done.** Both
+consumers' `skills.lock` on `main` (read through `mcp__github__`
+`get_file_contents` at `refs/heads/main`; both files are the same blob,
+`a83236d4`):
 
 | | |
 |---|---|
-| contains `cms-platform/cms-platform-secrets` (OLD) | **YES** |
-| contains `cms-platform/consumer-repo-provisioning` (NEW) | **NO** |
-| `sources[0].ref` (federated cms-platform pin) | `3264e159` — pre-rename |
+| contains `cms-platform/cms-platform-secrets` (OLD) | **NO** |
+| contains `cms-platform/consumer-repo-provisioning` (NEW) | **YES** |
+| `sources[0].ref` (federated cms-platform pin) | `a59763c6` — **post-rename** |
 | top-level `ref` (agentskills primary pin) | `42d1b929` |
+| the pack's own keyword check, run on both | exit **0**, no keyword-bearing keys |
 
-So **`C` is still gated.** The digests ARE `sha256:`-labelled — that half landed —
-but the federated pin has not moved, and neither `platform-bump` nor the nightly
-`--repin` will ever move it. That manual advance is the first thing to do.
+**So gate condition 1 PASSES.** Do not spend a cycle re-doing the federated
+advance, and do not read a green condition 1 as "the gate is met" — conditions
+2 and 3 are separate questions and only one of them passes.
+
+**Condition 2 PASSES**: nothing in the fleet pins a commit of either site. No
+`skills.lock` or `platform.lock` names them, no `uses:` references either as a
+workflow or action source, no `platform_ref:` input names them. (Method: grep
+over every tracked lock and workflow in the nine local clones. Neither site is
+a registry or publishes a reusable, so there is nothing for a lock to pin.)
+
+**Condition 3 FAILS, and it is not a wait — it is structural.** Measured
+2026-08-20 by fetching `refs/pull/*/head` into throwaway bare blobless clones
+and asking `git merge-base --is-ancestor` per ref:
+
+| | adamdaniel.ai | jodidaniel.com |
+|---|---|---|
+| offending commit (the `.gitleaksignore` fingerprint) | `39d92503` | `fee19ee4` |
+| PR refs total | 3197 | 148 |
+| PR refs **containing** it | **117** | **24** |
+| of those, still OPEN | **1** (#3198) | **0** |
+| branches containing it | `main` **+ 1** (below) | `main` **+ 1** (below) |
+| tags containing it | 0 | 0 |
+
+**Correction, same day: `main` is NOT the only branch.** An earlier revision of
+this table said it was, on both repos. Re-measured by enumerating `git ls-remote
+--heads <origin>` and testing `merge-base --is-ancestor` against every head,
+there is one more per repo — and each one's TIP TREE still carries the offending
+line, so these are not merely reachability, they are the live line:
+
+| repo | branch | tip `skills.lock` offending lines |
+|---|---|---|
+| adamdaniel.ai | `cms/posts/delete-5a7734ca-1787068075722` | 1 |
+| jodidaniel.com | `claude/fix-history-secrets-scan` | 1 |
+
+Unlike the PR refs these ARE deletable, so they belong in C's step 2 rather than
+in this blocker. The miss is worth naming because of HOW it happened: the counts
+above came from **bare blobless clones fetched for `refs/pull/*`**, and a clone
+narrowed to the refs you asked for shows you the branches you asked for. That is
+the same failure mode as the shallow-clone trap in `C-history-rewrite.md`
+("Unshallow first, or the verification lies to you") — a narrowed view
+under-reporting in the direction of "all clear". Enumerate branches from
+`ls-remote` against the origin, never from a clone you shaped yourself.
+
+The earlier count in these files (112 / 20) was not wrong, it was **earlier** —
+every new PR branched off `main` adds another permanent ref, so this number only
+grows. Deferring C makes C harder, monotonically.
+
+**Closing a pull request does not delete `refs/pull/N/head`.** 116 of
+adamdaniel.ai's 117 and all 24 of jodidaniel.com's are already closed or merged,
+and their refs are still live — verified directly with `git ls-remote` against
+each origin on 2026-08-20 (`refs/pull/{3111,3150,3191}/head` and
+`refs/pull/{134,149,158}/head` all resolve). GitHub owns that namespace and a
+client cannot write or delete into it — stated from documented behaviour, NOT
+measured here, since measuring it would be a write; the 140 already-closed refs
+that are still live are the same conclusion by observation. So C's step
+"Delete every stale ref found in gate step 3" is
+**unperformable for PR refs**, and while they exist the old commits stay
+*reachable* — which means GitHub's own GC will never collect them either. The
+inventory that condition 3 asks for is above; what does not exist is a way to
+act on it.
 
 Do not read "agentskills#87 is open" as "the labelling never landed". It landed;
-the issue is simply not closed.
+the issue is simply not closed. Re-verified 2026-08-20: still `open`, as is
+cms-platform#279.
 
 ### Verified side effect worth knowing
 
@@ -87,12 +162,24 @@ the issue is simply not closed.
 repos had produced **zero** before the cooldown fix. That is the fix confirmed
 working, not merely plausible.
 
-### Three more locks still bare-hex
+### The bare-hex locks — all healed 2026-08-20, by hand, pins preserved
 
-`cms-platform`, `GHA-bench` and `_agent-guidance` all carry bare-hex digests and
-all pin agentskills at `94cdcc81` — an OLDER ref than the consumers' `42d1b929`,
-i.e. predating the labelling commit. The nightly bumper has not advanced them.
-`B-detection-gaps.md` §B3 says to verify this self-heals rather than assume it.
+This section used to say `cms-platform`, `GHA-bench` and `_agent-guidance` still
+carried bare-hex digests. Re-derived 2026-08-20 across every fleet `skills.lock`
+on `main`: **zero bare digests anywhere.** Five repos — `_agent-guidance`,
+`cms-platform`, `GHA-bench`, `repo-settings`, `claude-memory-map` — are labelled
+and *still pinned at `94cdcc81`*, which is the point: the repair was a RELABEL
+and it moved nobody's pin. (`skills-evals` has no `skills.lock` on `main` at
+all; `agentskills`' own lock is at `f92569e2`.)
+
+That the heals were done by hand is the finding, not a footnote. The nightly
+`bump-consumer-locks.sh` would have repaired the same shape by re-pinning
+WITHOUT `--ref`, moving all eight pins to whatever commit its registry checkout
+was sitting on — a fleet-wide content advance wearing a shape repair's PR body.
+`B-detection-gaps.md` §B3's "verify this self-heals rather than assume it" was
+the right instruction and the verification is what found it. The bumper's format
+branch now passes `--ref <the lock's own pin>`; see
+`scripts/bump-consumer-locks.sh`, "A SHAPE repair is never a CONTENT advance".
 
 ### Two open PRs from elsewhere that may overlap this work
 
@@ -119,7 +206,8 @@ i.e. predating the labelling commit. The nightly bumper has not advanced them.
 - **A federated skill rename does not reach consumer locks by itself.** Neither
   the nightly `--repin` nor `platform-bump` advances a lock's federated
   `sources[].ref`. That manual step is prerequisite #1 of `C`, and it was missed
-  in the first draft of these files.
+  in the first draft of these files. It has since been DONE — both locks pin
+  `a59763c6` — so the lesson stands and the task does not.
 - **Cutting a release needs a version-bump PR first** — `release.yml` refuses to
   tag a tree that does not already declare the version. Five files move together.
 - **`.gitleaksignore` must not propagate and cannot be shared.** A fingerprint is
