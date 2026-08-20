@@ -20,6 +20,7 @@ a page.
 | [0004](0004-skills-bootstrap-adopted-where-sessions-happen.md) | skills-bootstrap is adopted wherever sessions happen, and this repo self-hosts |
 | [0005](0005-consumer-locks-are-re-pinned-from-here.md) | Consumer locks are re-pinned from here, and only when the bundle moved |
 | [0006](0006-bump-prs-land-on-a-sweep.md) | The bumper's own pull requests land on a sweep, not on a reviewer |
+| [0007](0007-sha-pins-carry-no-version-comment.md) | A SHA pin carries no version comment |
 
 ## Format
 

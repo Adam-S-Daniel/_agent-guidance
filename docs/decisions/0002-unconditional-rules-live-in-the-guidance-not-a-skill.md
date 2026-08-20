@@ -1,6 +1,6 @@
 # 0002 — Unconditional rules live in the managed guidance, not in a skill
 
-**Status:** Accepted (2026-08-17)
+**Status:** Accepted (2026-08-17). Superseded in part by [0007](0007-sha-pins-carry-no-version-comment.md) (2026-08-20), which reverses one item in the *Decision*'s list of what moved into `base.md` — "the dated version comment" — and drops it from the pin. The rest of this ADR stands: the conditionality split, the full 40-character SHA, the 7-day cooling-off, the annotated-tag dereference, and this repo committing its own rendered `AGENTS.md`.
 
 ## Context
 

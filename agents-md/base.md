@@ -345,10 +345,11 @@ So:
 ## Pinning GitHub Actions
 
 **Every `uses:` is pinned to a full 40-character commit SHA** — in workflows,
-composite actions, and reusable-workflow references alike, with exactly one
-carve-out, named below. Never a tag, never a branch, never an abbreviated SHA. A
-tag is a movable pointer: pinning to one gives whoever can retag the upstream
-repo a shell on the runner, holding that job's token.
+composite actions, and reusable-workflow references alike. The one carve-out,
+named below, is a ref into this account's own `cms-platform`, and it covers both
+of the shapes such a ref takes. Never a tag, never a branch, never an
+abbreviated SHA. A tag is a movable pointer: pinning to one gives whoever can
+retag the upstream repo a shell on the runner, holding that job's token.
 
 ```yaml
 uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -377,18 +378,21 @@ uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
   commit's, and pinning that fails at runtime. Follow it with
   `git/tags/<that-sha>`, or ask git directly:
   `git ls-remote <url> 'refs/tags/<tag>^{}'`.
-- **The one carve-out: a reusable *workflow* from a repo this account owns stays
-  on a tag.** `uses: Adam-S-Daniel/cms-platform/.github/workflows/<x>.yml@v0.1.85`
-  is correct as written — do not "fix" it to a SHA. The tag is the platform's
-  release identity: `platform-bump.yml` moves the `uses:@` refs, the theme gem,
-  `platform.lock` and every `platform_ref:` input to one release in a single PR,
-  and `check-platform-pin-consistency.js` asserts each of those refs equals
-  `platform.lock`'s `platform_ref` — a SHA there fails the lint and strands the
-  bump. A cms-platform **composite** referenced from another repo takes that
-  same tag form (`@v0.1.88`), for the same reason: the trailing comment used to
-  be the only thing tying a composite pin to `platform.lock`'s `platform_ref`,
-  and the tag ties it directly. It stops there — nothing third-party is ever a
-  tag.
+- **The one carve-out: a ref into `cms-platform` — a repo this account owns —
+  stays on a tag, in either shape that ref takes.** Both of these are correct as
+  written, and neither is a SHA-pinning violation to be "fixed" — a reusable
+  **workflow**, `Adam-S-Daniel/cms-platform/.github/workflows/<x>.yml@v0.1.88`,
+  and a **composite action** referenced from another repo,
+  `Adam-S-Daniel/cms-platform/.github/actions/<x>@v0.1.88`. The tag is the
+  platform's release identity: `platform-bump.yml` moves the `uses:@` refs, the
+  theme gem, `platform.lock` and every `platform_ref:` input to one release in a
+  single PR, and `check-platform-pin-consistency.js` asserts each of those refs
+  equals `platform.lock`'s `platform_ref` — a SHA in either shape fails that lint
+  and strands the bump. The composite shape used to be the exception to the
+  exception, pinned by SHA plus a `# vX.Y.Z` comment; that comment was the only
+  thing tying such a pin to `platform_ref`, and with the comment gone the tag is
+  what ties it. It stops there — nothing third-party is ever a tag, in either
+  shape.
 - `./local/path` and `docker://` refs have nothing to pin. Leave them.
 
 `sha_pinning_required: true` enforces the rule at the repo level — set by
