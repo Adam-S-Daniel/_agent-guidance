@@ -656,6 +656,19 @@ write_stub_generator() {
                    FAILED: verdict when it has moved; exit 1 with an ERROR:
                    line when it cannot tell (an unresolvable pinned ref).
                    Every source is read, primary first.
+  --check-format   exit 0 when every digest STORED in the lock is
+                   `sha256:<64 lowercase hex>`; exit 1 with a FAILED: verdict
+                   naming the offenders when any is not. Reads the file alone
+                   — no checkout, no git — because that is the real flag's
+                   calling convention and the bumper leans on it. An empty
+                   `skills` map does not pass vacuously either: this flag
+                   gates a REPAIR, where "nothing to fix" and "nothing there"
+                   are different answers. It exits 1 with an ERROR: line
+                   rather than a FAILED: one, as does a missing or non-map
+                   `skills` — the same split a missing FILE takes. The split
+                   is reproduced faithfully because the bumper BRANCHES on it:
+                   only FAILED: means "these digests are malformed", and only
+                   that licenses rewriting a consumer's lock.
   --repin          inherit registry / bundles / sources from the lock at -o,
                    re-resolve only `ref` (to HEAD of --repo, or --ref), and
                    rewrite the file. --registry / --bundles / --source are
@@ -672,6 +685,7 @@ import argparse
 import hashlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -683,6 +697,19 @@ DEFAULT_LAYOUT = "plugins/{bundle}/skills"
 
 def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+
+
+# The real generator labels at the DOCUMENT boundary (`_label_digests`), not
+# inside collection, so every comparison between builder outputs keeps working
+# on bare hex — which is exactly why --check-current is blind to a lock's
+# stored shape and why --check-format had to exist. Reproduced here at the same
+# boundary: a stub that wrote bare hex would make every fixture lock malformed,
+# and the anti-churn tests would then be asserting the behaviour of a defect.
+LOCK_DIGEST_PREFIX = "sha256:"
+
+
+def label(skills):
+    return {name: LOCK_DIGEST_PREFIX + digest for name, digest in skills.items()}
 
 
 def digest_dir(directory):
@@ -744,6 +771,7 @@ def plan(lock, repo, overrides):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-current", action="store_true")
+    parser.add_argument("--check-format", action="store_true")
     parser.add_argument("--repin", action="store_true")
     parser.add_argument("--repo")
     parser.add_argument("--ref")
@@ -763,6 +791,46 @@ def main():
     if not output.is_file():
         sys.exit("ERROR: %s does not exist" % output)
     lock = json.loads(output.read_text(encoding="utf-8"))
+
+    # Answered HERE, above plan(), because reading nothing but the file is this
+    # flag's calling convention and not an incidental economy: the bumper runs
+    # it per consumer lock and plan() would exit ERROR: for any federated lock
+    # whose source checkout this call was not given.
+    if args.check_format:
+        skills = lock.get("skills")
+        # ERROR:, not FAILED:, and that is the whole point of reproducing
+        # these two branches at all. `FAILED:` is the bumper's licence to
+        # REWRITE a consumer's lock; neither of these is an answer about
+        # digest shape, so neither may claim it. The real generator says
+        # ERROR: here for exactly that reason — a lock with no skills is
+        # "nothing there", which a re-pin does not repair, and reading it as
+        # "malformed" is what put an empty map into a nightly re-pin loop with
+        # no exit from it.
+        if not isinstance(skills, dict):
+            print("ERROR: %s has no usable 'skills' map (got %s), so it holds "
+                  "no digests whose shape could be wrong"
+                  % (output, type(skills).__name__))
+            return 1
+        if not skills:
+            print("ERROR: %s lists no skills at all, so nothing in it has a "
+                  "digest to be in the right shape" % output)
+            return 1
+        # Names only, never the offending VALUE: a bare 64-hex digest beside a
+        # keyword-bearing name is precisely what gitleaks' generic-api-key rule
+        # fires on, and this report is written for CI logs.
+        offenders = [name for name in sorted(skills)
+                     if not (isinstance(skills[name], str)
+                             and re.fullmatch(r"sha256:[0-9a-f]{64}", skills[name]))]
+        if not offenders:
+            print("OK: every digest in %s is sha256:<64 hex> (%d skills)."
+                  % (output, len(skills)))
+            return 0
+        print("FAILED: %d of %d digests in %s are not sha256:<64 lowercase hex>."
+              % (len(offenders), len(skills), output))
+        for name in offenders:
+            print("  - %s" % name)
+        return 1
+
     sources = plan(lock, args.repo, overrides)
 
     if args.check_current:
@@ -816,14 +884,14 @@ def main():
         # federation property the fleet test asserts.
         if lock.get("sources"):
             document["sources"] = lock["sources"]
-        document["skills"] = dict(sorted(skills.items()))
+        document["skills"] = label(dict(sorted(skills.items())))
         document["generated_from"] = new_ref
         output.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n",
                           encoding="utf-8")
         print("Wrote %s: %d skills at %s." % (output, len(skills), new_ref))
         return 0
 
-    parser.error("nothing to do: pass --check-current or --repin")
+    parser.error("nothing to do: pass --check-current, --check-format or --repin")
 
 
 if __name__ == "__main__":
@@ -1057,6 +1125,41 @@ if baseline:
     python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
         --repo "$TEST_DIR/registry" --ref "$ref" \
         ${source_args[@]+"${source_args[@]}"} -o "$path" >/dev/null
+}
+
+# strip_digest_labels <path> — rewrite a generated lock's digests back to bare
+# hex, reproducing the eight real consumer locks that were written before the
+# generator labelled anything. Deliberately a MUTATION of real generator output
+# rather than a hand-typed lock: the digests stay the true ones for the ref the
+# lock pins, so --check-current still answers OK at exit 0 on it and the only
+# thing wrong with the fixture is the one thing under test. A hand-written lock
+# would risk failing the currency question too and prove nothing about which
+# gate fired.
+#
+# Fails loudly on a lock it did not change. A silent no-op here — an empty
+# `skills` map, a lock already bare, a schema that moved — would seed a fixture
+# identical to its own control, and every assertion downstream would pass while
+# testing nothing.
+strip_digest_labels() {
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    doc = json.load(handle)
+skills = doc.get("skills") or {}
+if not skills:
+    sys.exit("strip_digest_labels: %s lists no skills to strip" % path)
+stripped = 0
+for name, digest in list(skills.items()):
+    if isinstance(digest, str) and digest.startswith("sha256:"):
+        skills[name] = digest[len("sha256:"):]
+        stripped += 1
+if stripped != len(skills):
+    sys.exit("strip_digest_labels: %s had %d of %d digests labelled; expected all"
+             % (path, stripped, len(skills)))
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' "$1"
 }
 
 # seed_inverted_lock <path> — the same federation with the roles swapped:
@@ -3753,6 +3856,11 @@ test_bump_consumer_locks() {
 
     # ── What the PR discloses.
     local body="$BUMP_PR_BODY_DIR/bumporg_repo-stale.body"
+    # The header of a CONTENT re-pin, which is the paired control for the
+    # format gate's assertion that a FORMAT re-pin carries no such line: drop
+    # the header entirely and that one still passes, so only this one notices.
+    assert_contains "$body" "**What moved:**" \
+        "PR body: a content re-pin is headed by what moved"
     assert_contains "$body" "${BUMP_REF_OLD:0:7}" "PR body: names the ref it moved from"
     assert_contains "$body" "${BUMP_REF_HEAD:0:7}" "PR body: names the ref it moved to"
     assert_contains "$body" "re-derived from the newly pinned commit" "PR body: says where the digests come from"
@@ -4069,6 +4177,381 @@ test_bump_bundle_vanished() {
     fi
 
     rm -rf "$TEST_DIR/bare-vanish" "$work" "$TEST_DIR/registry-vanished"
+}
+
+# ── Test 8h1: a lock with NO digests is not a lock with BAD digests ───────
+#
+# The distinction this asserts is the difference between reporting a repo and
+# REWRITING it, and it is carried entirely by which prefix --check-format
+# prints. `FAILED:` is this script's licence to re-pin a consumer's lock;
+# everything else routes to report-and-count. An empty `skills` map is not an
+# answer about digest shape at all — there are no digests — so the generator
+# says ERROR:, and this run must leave the lock alone.
+#
+# Why it needs its own test rather than riding on 8h2: the two conditions are
+# one `if` apart in the generator and both exit 1, so a generator that
+# collapsed them would look identical from the exit code. Reading it as
+# "malformed" is not merely imprecise — it re-pins, --repin over a registry
+# whose bundles vanished writes the same empty map straight back, the shrink
+# guard refuses to propose it, and tomorrow night does it again. A loop with
+# no exit, every step of which reports as progress.
+#
+# It is also the one place the stub generator's FIDELITY to the real one is
+# checked. Nothing else in this repo reads --check-format's ERROR: branch, so
+# without this the stub could drift back to FAILED: — as it did once — and the
+# whole suite would stay green while the fleet script it exists to test took
+# the opposite branch in production.
+test_bump_format_gate_empty_skills() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a lock that lists no skills at all) ==="
+
+    local root="$TEST_DIR/bare-empty-skills"
+    local work="$TEST_DIR/work/bumporg-repo-empty-skills"
+    local bare="$root/bumporg_repo-empty-skills"
+    rm -rf "$root" "$work"
+    mkdir -p "$bare" "$work"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# repo-empty-skills" > README.md
+    # BUMP_REF_CONTENT so --check-current answers OK at exit 0 and the format
+    # gate is what decides this run, exactly as in 8h2.
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT"
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    doc = json.load(handle)
+if not doc.get("skills"):
+    sys.exit("fixture: %s already lists no skills, so emptying it proves nothing" % path)
+doc["skills"] = {}
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' skills.lock
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    BUMP_BARE_DIR_FOR_RUN="$root" run_bump "$TEST_DIR/bump-empty-skills.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-empty-skills.txt" \
+        "could not decide whether skills.lock's digests are well-formed" \
+        "empty skills: routed to report-and-count, not to the rewrite path"
+    assert_contains "$TEST_DIR/bump-empty-skills.txt" "lists no skills at all" \
+        "empty skills: the log quotes what the generator actually said"
+    assert_contains "$TEST_DIR/bump-empty-skills.txt" "1 failed" \
+        "empty skills: counted, so the scheduled run goes red"
+    assert_contains "$TEST_DIR/bump-empty-skills.txt" "0 proposed" \
+        "empty skills: nothing is proposed on an answer nobody got"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "empty skills: the run exits non-zero"
+    else
+        fail "empty skills: the run exits non-zero (got 0)"
+    fi
+    # The load-bearing one. A re-pin here would write the same empty map back
+    # and be refused downstream, so the only evidence that it never STARTED is
+    # that no branch exists to have pushed it to.
+    if [[ -z "$(git -C "$bare" rev-parse --verify -q refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "empty skills: the consumer's lock is left untouched"
+    else
+        fail "empty skills: the consumer's lock is left untouched"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
+# ── Test 8h2: a lock of the right CONTENT but the wrong digest SHAPE ──────
+#
+# The gate this asserts exists because the old one could not fail. A lock that
+# stores bare 64-hex where the canonical shape is `sha256:<hex>` is wrong, and
+# `--check-current` — the only question this script used to ask — cannot see
+# it: it digests the pinned tree and the working tree afresh and never reads
+# the stored values at all (the generator labels at the DOCUMENT boundary
+# expressly so that comparison keeps working on bare hex). Eight real consumer
+# locks sat malformed on 94cdcc81 for exactly as long as the `adam` bundle
+# stood still, with this script logging "no re-pin needed" at them nightly.
+#
+# So the fixtures are a MATCHED PAIR pinned at the same content-current ref,
+# differing in nothing but digest shape. That pairing is the point: a test that
+# only proved the malformed lock gets re-pinned would pass just as well if the
+# gate had degenerated into "re-pin everything", which is the anti-churn
+# property this repo's whole design is built to protect (ADR 0005). One must be
+# proposed and the other must be left alone, in the same run.
+#
+# Its own bare dir and its own consumers, so the shared fixture set — and the
+# exact "2 proposed" count another test asserts on it — never sees these.
+test_bump_digest_format_gate() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a lock whose digests are the wrong shape) ==="
+
+    local root="$TEST_DIR/bare-format"
+    rm -rf "$root" "$TEST_DIR/work/bumporg-repo-bare-digests" \
+           "$TEST_DIR/work/bumporg-repo-labelled"
+
+    local name bare work
+    for name in repo-bare-digests repo-labelled; do
+        bare="$root/bumporg_$name"
+        work="$TEST_DIR/work/bumporg-$name"
+        mkdir -p "$bare" "$work"
+        git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+        git init --initial-branch=main "$work" >/dev/null 2>&1
+        cd "$work"
+        git config commit.gpgsign false
+        git remote add origin "$bare"
+        echo "# $name" > README.md
+        # BUMP_REF_CONTENT is the ref whose bundle content equals the
+        # registry's working tree, so --check-current answers OK at exit 0 for
+        # both of these. Whatever happens next is the shape gate's doing and
+        # nothing else's.
+        seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT"
+        [[ "$name" == "repo-bare-digests" ]] && strip_digest_labels skills.lock
+        git add -A
+        git commit -m "init" >/dev/null 2>&1
+        git push origin HEAD:main >/dev/null 2>&1
+        cd "$REPO_ROOT"
+    done
+
+    # The fixture is only meaningful if seeding really produced the two shapes
+    # asked for. Asserted rather than assumed: seed_bump_lock fills the lock by
+    # calling the stub's --repin, so a stub that stopped labelling would make
+    # BOTH fixtures bare, and every assertion below would still "pass" while
+    # testing one case twice.
+    local bare_lock labelled_lock
+    bare_lock=$(git -C "$root/bumporg_repo-bare-digests" show main:skills.lock)
+    labelled_lock=$(git -C "$root/bumporg_repo-labelled" show main:skills.lock)
+    if grep -qF '"adam/finding-unknowns": "sha256:' <<< "$labelled_lock" \
+       && ! grep -qF '"adam/finding-unknowns": "sha256:' <<< "$bare_lock"; then
+        pass "format gate: the fixtures really are one labelled lock and one bare one"
+    else
+        fail "format gate: the fixtures really are one labelled lock and one bare one"
+    fi
+
+    BUMP_BARE_DIR_FOR_RUN="$root" run_bump "$TEST_DIR/bump-format.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+
+    # ── The malformed lock is repaired ────────────────────────────────────
+    assert_contains "$TEST_DIR/bump-format.txt" \
+        "stored digests are not sha256:<64 hex> — re-pin needed to relabel them" \
+        "format gate: the malformed lock is re-pinned, and the log says the shape is why"
+    assert_contains "$TEST_DIR/bump-format.txt" "1 proposed" \
+        "format gate: exactly one of the two consumers is proposed"
+
+    # ── ...and the reason is legible, not the bundle-moved boilerplate ────
+    local body="$BUMP_PR_BODY_DIR/bumporg_repo-bare-digests.body"
+    assert_contains "$body" "The bundle content at the pinned ref is UNCHANGED" \
+        "format gate: the PR body says plainly that nothing diverged"
+    assert_contains "$body" '`--check-format`' \
+        "format gate: the PR body names the flag whose verdict it quotes"
+    # The old body claimed divergence unconditionally. On this PR that sentence
+    # would contradict the diff it introduces, in which not one digest's hex
+    # differs — so its absence is the assertion, not a nicety.
+    assert_not_contains "$body" "no longer matches the registry's tree" \
+        "format gate: the PR body does not claim the bundle diverged"
+    # The HEADER, not just the paragraph. The first cut of this gate branched
+    # the paragraph and left `**What moved:** <registry> — <old> → <new>`
+    # unconditional six lines above it, so the PR announced a bundle move
+    # directly over a paragraph denying one — the self-contradicting-in-its-own
+    # -diff shape this whole change set exists to stop. Both halves are
+    # asserted because either alone is satisfiable by deleting the header
+    # outright, which is why test_bump_consumer_locks asserts the content-side
+    # header is still there.
+    assert_not_contains "$body" "**What moved:**" \
+        "format gate: a format re-pin is not headed by a bundle move"
+    assert_contains "$body" "the bundle content itself has not moved" \
+        "format gate: the header says the ref advance is a side effect, not the point"
+
+    # ── The repair actually lands in the pushed lock ──────────────────────
+    # The gate is worth nothing if it proposes a re-pin that does not fix the
+    # thing it fired on, so the pushed bytes are read back rather than trusted.
+    local pushed
+    pushed=$(git -C "$root/bumporg_repo-bare-digests" \
+        show "refs/heads/skills-lock-bump/update:skills.lock" 2>/dev/null || true)
+    if [[ -n "$pushed" ]] && ! grep -qE '"adam/[a-z-]+": "[0-9a-f]{64}"' <<< "$pushed" \
+       && grep -qF '"adam/finding-unknowns": "sha256:' <<< "$pushed"; then
+        pass "format gate: the pushed lock has every digest relabelled, none left bare"
+    else
+        fail "format gate: the pushed lock has every digest relabelled, none left bare"
+    fi
+
+    # ── ANTI-CHURN. The well-formed twin is left completely alone ─────────
+    assert_contains "$TEST_DIR/bump-format.txt" \
+        "bundle content unchanged since ${BUMP_REF_CONTENT:0:7} — no re-pin needed." \
+        "format gate: a well-formed lock with unchanged content is still skipped"
+    if [[ -z "$(git -C "$root/bumporg_repo-labelled" rev-parse --verify -q \
+                refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "format gate: nothing is pushed to the well-formed consumer"
+    else
+        fail "format gate: nothing is pushed to the well-formed consumer"
+    fi
+
+    rm -rf "$root" "$TEST_DIR/work/bumporg-repo-bare-digests" \
+           "$TEST_DIR/work/bumporg-repo-labelled"
+}
+
+# ── Test 8h3: a generator too old to answer the shape question ────────────
+#
+# The flag is newer than the rest of this script's requirements and the
+# generator comes from whatever checkout BUMP_GENERATOR points at, so a run can
+# meet one that lacks it. Unlike --repin it is not load-bearing: without it the
+# gate asks one question instead of two, which is exactly what the script did
+# before. So the required behaviour is DEGRADE — never a hard exit (that would
+# ground the fleet over a flag that only ever adds a case) and never silence
+# (the caller is a nightly scheduled run, where an unannounced downgrade is
+# indistinguishable from the gate working).
+test_bump_generator_without_check_format() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a generator with no shape flag) ==="
+
+    local root="$TEST_DIR/bare-noformat"
+    local work="$TEST_DIR/work/bumporg-repo-bare-old-gen"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-bare-old-gen" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-bare-old-gen" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-bare-old-gen"
+    echo "# repo-bare-old-gen" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT"
+    strip_digest_labels skills.lock
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    # Carries --repin (so the load-bearing probe passes and the run proceeds)
+    # and --check-current (exit 0 — this fixture's content genuinely has not
+    # moved), and nothing else. The absence of --check-format from --help is
+    # the whole fixture.
+    local gen="$TEST_DIR/generator-no-check-format.py"
+    cat > "$gen" <<'NOFORMAT'
+#!/usr/bin/env python3
+"""A generator from before the shape flag existed: current/re-pin only."""
+import argparse
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--check-current", action="store_true")
+parser.add_argument("--repin", action="store_true")
+parser.add_argument("--repo")
+parser.add_argument("--ref")
+parser.add_argument("--source-repo", action="append", default=[])
+parser.add_argument("-o", "--output", required=True)
+parser.parse_args()
+sys.exit(0)
+NOFORMAT
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-noformat.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-noformat.txt" "has no --check-format" \
+        "old generator: the missing flag is announced, by name"
+    if [[ $BUMP_EXIT -eq 0 ]]; then
+        pass "old generator: degrades instead of failing the run"
+    else
+        fail "old generator: degrades instead of failing the run (exit $BUMP_EXIT)"
+    fi
+    # Degrading means behaving as this script did before the gate existed —
+    # which for a content-current lock is to skip it. A run that instead
+    # re-pinned on a question it could not ask would be the worse failure.
+    assert_contains "$TEST_DIR/bump-noformat.txt" \
+        "bundle content unchanged since ${BUMP_REF_CONTENT:0:7} — no re-pin needed." \
+        "old generator: falls back to the bundle-moved question alone"
+    assert_contains "$TEST_DIR/bump-noformat.txt" "0 proposed" \
+        "old generator: proposes nothing it could not justify"
+
+    rm -rf "$root" "$work"
+}
+
+# ── Test 8h4: "cannot tell" is not "the digests are bad" ──────────────────
+#
+# --check-format exits 1 for a malformed lock AND for a lock it could not read
+# at all — a missing file, unparseable JSON — exactly as --check-current exits
+# 1 both for real drift and for an unresolvable ref. Measured against the real
+# generator: `--check-format -o <missing>` prints `ERROR: ... does not exist`
+# and exits 1, byte-identical in exit code to the FAILED: case. So the gate
+# must branch on the flag's own verdict, never on the exit code, or a run that
+# merely lost sight of a lock would rewrite it — the same mistake the
+# --check-current branch already refuses to make, and the reason this fixture
+# exists rather than being assumed from that one.
+test_bump_format_check_unreadable() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the shape question cannot be answered) ==="
+
+    local root="$TEST_DIR/bare-formaterr"
+    local work="$TEST_DIR/work/bumporg-repo-format-error"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-format-error" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-format-error" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-format-error"
+    echo "# repo-format-error" > README.md
+    # Content-current and bare, i.e. the exact shape that SHOULD be re-pinned.
+    # That is what makes this a real test of the verdict check: the only thing
+    # standing between this lock and a rewrite is the ERROR:/FAILED: split.
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT"
+    strip_digest_labels skills.lock
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    # Advertises the flag, so the probe arms the gate, then cannot answer it.
+    local gen="$TEST_DIR/generator-format-error.py"
+    cat > "$gen" <<'FORMATERR'
+#!/usr/bin/env python3
+"""--check-format is present but can only report that it could not tell."""
+import argparse
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--check-current", action="store_true")
+parser.add_argument("--check-format", action="store_true")
+parser.add_argument("--repin", action="store_true")
+parser.add_argument("--repo")
+parser.add_argument("--ref")
+parser.add_argument("--source-repo", action="append", default=[])
+parser.add_argument("-o", "--output", required=True)
+args = parser.parse_args()
+if args.check_format:
+    print("ERROR: %s is not valid JSON" % args.output)
+    sys.exit(1)
+if args.repin:
+    sys.exit("this generator must never be asked to re-pin")
+sys.exit(0)
+FORMATERR
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-formaterr.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+
+    assert_contains "$TEST_DIR/bump-formaterr.txt" \
+        "could not decide whether skills.lock's digests are well-formed" \
+        "unanswerable shape: reported as a failure to decide, not as a verdict"
+    assert_contains "$TEST_DIR/bump-formaterr.txt" "1 failed" \
+        "unanswerable shape: counted, so the scheduled run goes red"
+    assert_contains "$TEST_DIR/bump-formaterr.txt" "0 proposed" \
+        "unanswerable shape: nothing is proposed on an answer nobody got"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "unanswerable shape: the run exits non-zero"
+    else
+        fail "unanswerable shape: the run exits non-zero (got 0)"
+    fi
+    if [[ -z "$(git -C "$root/bumporg_repo-format-error" rev-parse --verify -q \
+                refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "unanswerable shape: the consumer's lock is left untouched"
+    else
+        fail "unanswerable shape: the consumer's lock is left untouched"
+    fi
+
+    rm -rf "$root" "$work"
 }
 
 # ── Test 8i: the sweep merges the bump PRs a previous run left open ───────
@@ -4769,6 +5252,54 @@ for (const spec of Object.values((doc && doc.jobs) || {})) {
 ' "$REPO_ROOT" "$1"
 }
 
+# workflow_shape <file> — a fact per line about a workflow's TRIGGERS, its
+# JOBS, and every place a `concurrency:` key appears:
+#
+#   trigger <name>            one per top-level key under `on:`
+#   job <name>                one per key under `jobs:`
+#   concurrency workflow      the workflow-level key, if it is there at all
+#   concurrency job:<name>    a job-level one, if it is there at all
+#
+# The same real parser workflow_steps uses, and here the reason is sharper than
+# usual: the thing being asserted is an ABSENCE. A line scanner that "finds no
+# concurrency" cannot tell a file that has none from a file it mis-read — a
+# `concurrency:` under a key the parser folds differently, or one it never
+# reached because `jobs:` moved. So the trigger and job lines are emitted
+# whether or not anything is wrong, which is what lets a caller distinguish
+# "examined this file and found no concurrency" from "examined nothing".
+workflow_shape() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (!doc || typeof doc !== "object") {
+  console.error(process.argv[2] + " does not parse to a mapping");
+  process.exit(1);
+}
+// `on:` is the string key "on" under YAML 1.2 core (what `yaml` uses) and
+// folds to boolean true under 1.1. Accept both, exactly as yaml_field and
+// check-cron-coverage.js do, so a trigger block is never missed over a spec
+// version. `on: push` and `on: [push, pull_request]` are legal too, and both
+// enumerate here rather than reporting nothing.
+const on = "on" in doc ? doc.on : doc[true];
+if (typeof on === "string") console.log("trigger " + on);
+else for (const name of (Array.isArray(on) ? on : Object.keys(on || {}))) {
+  console.log("trigger " + String(name));
+}
+if ("concurrency" in doc) console.log("concurrency workflow");
+for (const [name, spec] of Object.entries((doc && doc.jobs) || {})) {
+  console.log("job " + name);
+  if (spec && typeof spec === "object" && "concurrency" in spec) {
+    console.log("concurrency job:" + name);
+  }
+}
+' "$REPO_ROOT" "$1"
+}
+
 # ── Test 7e: the lock-bump workflow says what the script needs ────────────
 #
 # Read off the REAL file in this checkout, like the four tests above it,
@@ -5005,6 +5536,75 @@ EOF
         "check-agents-md: the out-of-order failure names it as an ordering problem"
 }
 
+# ── Test 7g: ci.yml's trigger set, and the absence that makes it safe ─────
+#
+# THE CLAIM THIS PINS. ci.yml carries a `workflow_dispatch` trigger and a long
+# comment arguing the addition is safe. That argument rests on two properties,
+# and only one of them lives in another repo: that this workflow publishes no
+# REQUIRED status context is a repo-settings fact (`required_status_checks:
+# []`), asserted there; that this file has NO `concurrency:` block, at workflow
+# or job level, is local and is the half a future tidy-up adds without reading
+# why it was missing. With both a dispatch and a concurrency group, two events
+# on one head sha can leave a cancelled run behind — the trap in AGENTS.md.
+#
+# Locked here because this repo's own convention says so and the precedent sits
+# a few hundred lines up: test_bump_workflow asserts skills-lock-bump.yml's
+# concurrency.group, its cancel-in-progress AND fails if a pull_request trigger
+# ever appears — the mirror image of this file's requirement, since that
+# workflow is safe to cancel precisely because no PR event can give it a
+# context. Until this test, nothing in the suite read ci.yml at all: the file
+# that decides whether every other assertion here even runs was the one file
+# with no assertion on it.
+#
+# The trigger set is asserted EXACTLY rather than "contains workflow_dispatch".
+# The comment declares three; a fourth arriving unread — `schedule`,
+# `pull_request_target`, a `push` narrowed to one branch — changes which events
+# can collide on a sha, and that collision is the entire subject of the
+# argument the comment makes.
+test_ci_workflow_shape() {
+    echo ""
+    echo "=== Test: ci.yml's triggers, and the concurrency block it must not have ==="
+
+    local wf="$REPO_ROOT/.github/workflows/ci.yml"
+    local shape="$TEST_DIR/ci-workflow-shape.txt"
+    local err="$TEST_DIR/ci-workflow-shape.err"
+
+    if ! workflow_shape "$wf" > "$shape" 2> "$err"; then
+        fail "ci workflow: could not parse $wf — $(head -1 "$err")"
+        return
+    fi
+
+    # VACUITY GUARD, and not a formality here: both assertions below are about
+    # what a set does or does not contain, and the empty set satisfies "no
+    # concurrency anywhere" perfectly. A parse that silently yielded nothing —
+    # a `jobs:` key that moved, an `on:` this helper could not read — would
+    # hand back a clean bill of health for a file it never looked at, which is
+    # the exact failure the rest of this change set exists to close.
+    local triggers jobs
+    triggers=$(awk '$1 == "trigger" { print $2 }' "$shape" | sort | tr '\n' ' ' | sed 's/ $//')
+    jobs=$(awk '$1 == "job" { print $2 }' "$shape" | sort | tr '\n' ' ' | sed 's/ $//')
+    if [[ -n "$triggers" && -n "$jobs" ]]; then
+        pass "ci workflow: parses, and declares at least one trigger and at least one job"
+    else
+        fail "ci workflow: parses, and declares at least one trigger and at least one job — got triggers '${triggers:-none}' and jobs '${jobs:-none}', so every assertion below would be vacuous"
+        return
+    fi
+
+    if [[ "$triggers" == "pull_request push workflow_dispatch" ]]; then
+        pass "ci workflow: its triggers are exactly push, pull_request and workflow_dispatch"
+    else
+        fail "ci workflow: its triggers should be exactly 'pull_request push workflow_dispatch', got '$triggers' — the comment above workflow_dispatch argues from WHICH events can produce a run for one head sha, so re-read it before adding or removing one"
+    fi
+
+    local found
+    found=$(awk '$1 == "concurrency" { print $2 }' "$shape" | sort | tr '\n' ' ' | sed 's/ $//')
+    if [[ -z "$found" ]]; then
+        pass "ci workflow: no concurrency group, at workflow or job level"
+    else
+        fail "ci workflow: it now has a concurrency group ($found) — with workflow_dispatch on the same file, two events on one head sha can leave a cancelled run behind. Read the comment above the trigger, and AGENTS.md on required checks, before keeping both"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -5066,6 +5666,10 @@ test_bump_idempotent
 test_bump_shallow_registry
 test_bump_push_rejected
 test_bump_bundle_vanished
+test_bump_format_gate_empty_skills
+test_bump_digest_format_gate
+test_bump_generator_without_check_format
+test_bump_format_check_unreadable
 # The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,
 # which is the one thing in this repo nothing else undoes. Dry run first, so
 # "it merged nothing" is a statement about a run that had every chance to.
@@ -5079,6 +5683,7 @@ test_self_hosted_hook_pin
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
 test_bump_workflow
+test_ci_workflow_shape
 test_check_agents_md
 
 echo ""

@@ -4,6 +4,46 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # Manual re-run, no inputs. Safe against BRANCH PROTECTION specifically
+  # because this workflow publishes NO required status context: repo-settings'
+  # fleet.yml lists Adam-S-Daniel/_agent-guidance with no overrides, so it
+  # inherits `defaults.ruleset.required_status_checks: []`. With nothing
+  # required, the multi-trigger hazard this fleet has been bitten by — two
+  # events producing runs for one head sha, GitHub non-deterministically
+  # surfacing a cancelled one, and the PR hard-blocking on a cancelled
+  # required check — has no context to attach to. There is also no
+  # `concurrency:` block in this file, at workflow or job level, so a dispatch
+  # cannot cancel a push/PR run already in flight for the same sha. Both are
+  # load bearing: give this workflow a required context or a concurrency group
+  # and this trigger needs re-examining, not just re-testing. Test 7g in
+  # test/run-tests.sh asserts the absence and the trigger set off this file.
+  #
+  # BRANCH PROTECTION IS NOT THE ONLY READER OF A CHECK CONCLUSION HERE, and
+  # the other one does not care whether a check is required — so the paragraph
+  # above is the safety argument for one consumer, not for all of them. The
+  # nightly sweep in `scripts/bump-consumer-locks.sh` judges its own pull
+  # requests with `pr_merge_verdict`, which SKIPs on ANY statusCheckRollup
+  # entry that is not green or has not concluded. That strictness is
+  # deliberate: nothing is required anywhere in this fleet, so "ignore what is
+  # not required" would there read as "merge it red". This repo's own
+  # `skills.lock` is in that bumper's scope (see repos.yml — the allowlist
+  # governs hook delivery, not lock bumping), so it opens a PR here on
+  # `skills-lock-bump/update`, and this workflow runs on every push and every
+  # pull request, that branch included.
+  #
+  # THE RESIDUAL, stated rather than argued away: dispatch this workflow AT
+  # the bump branch and cancel it — or watch it fail — and that conclusion
+  # lands on a sha the bumper will not advance. It refuses to force-push, and
+  # a branch whose content already matches is a branch it does not push again.
+  # The sweep then declines that PR every night until someone re-dispatches it
+  # green or the bundle genuinely moves and rewrites the branch onto a fresh
+  # sha. A stall, not a deadlock, and not a silent one: the SKIP line names the
+  # offending check and its conclusion. Deliberately NOT fixed by teaching
+  # `pr_merge_verdict` to ignore non-required checks — that would trade a stall
+  # that announces itself for a merge gate standing open on every repo in the
+  # fleet. Dispatch this at your own branch or at the default branch instead,
+  # where it has no pull request to stall.
+  workflow_dispatch:
 
 permissions:
   contents: read

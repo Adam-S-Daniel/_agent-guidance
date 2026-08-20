@@ -151,6 +151,19 @@ skills_bootstrap:
     #     dead adoption: the hook's sha256 equals the pin above, this repo's
     #     `.claude/settings.json` still REGISTERS it, and `skills.lock` is
     #     still present and readable by it.
+    #     WHAT THIS ABSENCE DOES NOT MEAN: it says nothing about lock
+    #     BUMPING. The corollary "_agent-guidance is not in the allowlist,
+    #     so the nightly bumper does not re-pin its lock" is FALSE, and a
+    #     fresh reader re-derives it from this entry every time, so it is
+    #     written down here. This list governs HOOK DELIVERY only.
+    #     `scripts/bump-consumer-locks.sh` never reads it — it discovers
+    #     repos with `gh repo list` and filters on `.exclude` alone — and it
+    #     deliberately KEEPS the self repo exactly where sync.sh and
+    #     drift-report.sh drop it, under a comment saying so. This repo's own
+    #     `skills.lock` is therefore squarely in the bumper's scope, and it
+    #     sat stuck for the same reason every other consumer's did: the
+    #     anti-churn gate asked only whether the bundle had MOVED, which is
+    #     blind to a lock whose stored digests are the wrong SHAPE.
     #   skills-evals — runs the skill-propagation probes; installing the bundle
     #     into its sessions contaminates the instrument.
     #   scratch-claude-001 — the live E1 skill-delivery experiment. Its own

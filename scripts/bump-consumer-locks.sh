@@ -21,11 +21,19 @@ set -euo pipefail
 #   2. Reads which registries that lock names — the primary and every
 #      federated source — and skips a lock that never names the registry
 #      this run is bumping
-#   3. Asks the GENERATOR whether a re-pin is needed at all
-#      (`--check-current`: does the bundle content at the PRIMARY's pinned
-#      ref still match that registry's tree?). Unchanged → no PR, no push
+#   3. Asks the GENERATOR whether a re-pin is needed at all — TWO separate
+#      questions, either of which is sufficient:
+#        a. `--check-current`: does the bundle content at the PRIMARY's
+#           pinned ref still match that registry's tree?
+#        b. `--check-format`: are the digests this lock STORES in the
+#           canonical `sha256:<hex>` shape? (a) cannot answer this — it
+#           re-digests both trees and never reads the stored values — which
+#           is how eight consumer locks of bare hex stayed unrepaired while
+#           this script reported "no re-pin needed" at them nightly.
+#      Unchanged AND well-formed → no PR, no push
 #   4. Otherwise re-pins with `--repin` inside a clone of the consumer, and
-#      opens (or leaves alone) one PR carrying that single file
+#      opens (or leaves alone) one PR carrying that single file, whose body
+#      names WHICH of the two questions forced it
 #
 # WHY THIS LIVES HERE AND NOT IN THE REGISTRY. ADR 0001 said re-pinning
 # "belongs in agentskills (it owns the generator and the digests)". Half of it
@@ -79,6 +87,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOCK_REL_PATH="skills.lock"
+# The canonical STORED shape of a lock digest, for THIS SCRIPT'S OWN prose —
+# the line it logs when the shape gate fires, and the sentence in the PR body
+# that restates the rule. This script never validates a digest itself; it asks
+# the generator (--check-format) and quotes the answer. Named once so those two
+# places cannot drift apart, and so the test that reads them has one string.
+#
+# It is NOT a claim that every mention of the shape in a bump PR is spelled
+# this way, and an earlier version of this comment said so wrongly. The body
+# also QUOTES --check-format's verdict verbatim, and the generator writes its
+# own wording there — today `sha256:<64 lowercase hex>`, the same shape spelled
+# more precisely. So both spellings appear in one body, a few lines apart. That
+# is correct and must stay: a quotation edited to match the local prose around
+# it stops being evidence, which is the whole reason the verdict is quoted
+# rather than summarised.
+LOCK_DIGEST_SHAPE='sha256:<64 hex>'
 BRANCH_NAME="${BUMP_BRANCH:-skills-lock-bump/update}"
 PR_AUTHOR="${BUMP_PR_AUTHOR:-agents-md-sync[bot]}"
 DRY_RUN=false
@@ -279,6 +302,14 @@ if gone:
 #     this branch owns it now, and merging it would land their work unread.
 #   * no check may be un-green or unfinished — while an ABSENCE of checks is
 #     not a failure, because most consumers in this fleet have no CI at all.
+#     REQUIRED is not part of that test, and deliberately so: nothing is
+#     required anywhere in this fleet (`required_status_checks: []`), so a gate
+#     that only weighed required checks would stand open everywhere. The cost
+#     is that ANY conclusion on the bump branch's head can stall the sweep,
+#     including one a human put there by hand — `.github/workflows/ci.yml` in
+#     this repo carries a `workflow_dispatch` and documents that residual above
+#     its trigger. A stall that names the offending check in the log, and
+#     clears on a green re-run, is the side of the trade this gate is on.
 pr_merge_verdict() {
     python3 -c '
 import json, sys
@@ -609,6 +640,37 @@ if ! generator_help=$(python3 "$GENERATOR" --help 2>&1) \
     exit 2
 fi
 
+# ── Is the generator able to answer the SHAPE question? ───────────────────
+# `--check-current` is structurally blind to a lock's stored digest VALUES: it
+# digests the pinned tree and the working tree afresh and compares those, and
+# never reads `skills` at all. That is deliberate on the generator's side —
+# `_label_digests`' docstring says labelling is applied at the DOCUMENT
+# BOUNDARY precisely so every comparison between builder outputs keeps working
+# on bare hex — and it is exactly what leaves this script's anti-churn gate
+# unable to see a malformed lock. Eight consumers (cms-platform, GHA-bench,
+# _agent-guidance itself, agentskills-private, claude-memory-map,
+# fastmail-actions, repo-settings, wsl-automation) stored bare 64-hex where
+# the canonical shape is `sha256:<hex>`, all pinning 94cdcc81; because the
+# `adam` bundle had not moved, `--check-current` answered `OK: ...` at exit 0
+# every night and this script logged "no re-pin needed" and skipped. A healing
+# mechanism reporting success while doing nothing about the defect it exists
+# to fix.
+#
+# Probed, not assumed, for the same reason --repin is above: this script runs
+# against whatever generator checkout it is pointed at, and the flag is newer
+# than the script's other requirements. Unlike --repin it is NOT load-bearing
+# — without it the gate simply asks one question instead of two and behaves
+# exactly as it did before — so a shortfall must never be a hard failure, and
+# must never be silent either. It is announced as a workflow annotation rather
+# than the plain `NOTE:` its sibling probe below uses because this script's
+# real caller is a NIGHTLY SCHEDULED run, where a line on stderr is seen by
+# nobody; an annotation is the one form that survives to the run summary.
+FORMAT_GATE_AVAILABLE=true
+if ! grep -q -- '--check-format' <<< "$generator_help"; then
+    FORMAT_GATE_AVAILABLE=false
+    echo "::warning::$GENERATOR has no --check-format; this run can only ask whether each bundle has MOVED, not whether a lock's stored digests are the canonical sha256:<hex>. A lock malformed that way will keep reporting 'no re-pin needed' until the generator carries the flag." >&2
+fi
+
 # `gh pr merge --match-head-commit <sha>` refuses the merge if the head moved
 # since we read it, which is what makes the sweep's verdict and its merge one
 # decision instead of two. Probed rather than assumed: unlike --repin the flag
@@ -866,6 +928,11 @@ for repo_name in "${REPOS[@]}"; do
         continue
     fi
 
+    # Which QUESTION forced this repo's re-pin: "" (none yet), `content` (the
+    # bundle moved) or `format` (it did not, but the stored digests are
+    # malformed). Reset per repo — a leftover value would carry one consumer's
+    # reason into the next consumer's PR body.
+    repin_reason=""
     current_exit=0
     check_out=$(python3 "$GENERATOR" --check-current \
         --repo "$primary_dir" \
@@ -892,23 +959,108 @@ for repo_name in "${REPOS[@]}"; do
                 fi
             fi
         fi
-        log "bundle content unchanged since ${old_ref:0:7} — no re-pin needed."
-        ((SKIP_COUNT++)) || true
-        continue
-    fi
+        # ── SECOND QUESTION: are the stored digests the right SHAPE? ───
+        # Not a reinterpretation of the verdict above — a different question
+        # put to the generator, which is the same discipline the `sources`
+        # scoping a few lines up is written for. --check-current cannot answer
+        # this one at all: it compares two freshly digested trees and never
+        # reads `skills`, because `_label_digests` applies the `sha256:` label
+        # at the DOCUMENT BOUNDARY expressly so comparisons between builder
+        # outputs keep seeing bare hex. So a lock whose every stored digest is
+        # malformed is GREEN above, forever, for as long as the bundle stands
+        # still — which is how eight consumer locks sat unrepaired on 94cdcc81
+        # while this script logged "no re-pin needed" at them every night.
+        #
+        # Borrowing --check's verdict instead was the tempting shortcut and is
+        # the one to avoid: it does fail on such a lock, but it reports a wrong
+        # SHAPE in the same words as content drift ("digest changed"), so the
+        # gate would be keyed on wording rather than on a fact. A distinct
+        # question gets a distinct flag.
+        #
+        # Asked of the FULL lock, not the primary-scoped copy: unlike currency,
+        # which is per-source and answered per-source, the shape defect is a
+        # property of the whole file — a federated source's skills land in the
+        # same `skills` map and are malformed or not alongside the primary's.
+        #
+        # ONE-TIME CONSEQUENCE, stated plainly: the repair is a re-pin, and a
+        # re-pin also advances `ref` to the registry's current HEAD. So the
+        # first run after this lands opens one PR per affected repo whose diff
+        # is `ref` + `generated_from` + the relabelled digests — more than the
+        # relabelling strictly needed, and the honest cost of healing through
+        # the generator's own primitive rather than hand-editing a label onto
+        # a value nobody recomputed. It is self-limiting: once labelled, this
+        # gate is satisfied and the anti-churn behaviour above resumes.
+        #
+        # THE ONE SHAPE THIS GATE CANNOT HEAL, named here rather than left to
+        # be discovered from a red run. A lock whose `skills` map is EMPTY —
+        # or missing, or not a map — is not a lock with malformed digests, it
+        # is a lock with no digests to have a shape at all. The generator
+        # answers those with ERROR: rather than FAILED:, deliberately, so the
+        # branch below routes them to the report-and-count path instead of the
+        # rewrite path. That is what stops a re-pin loop with no exit: --repin
+        # over a registry with no skills writes the same empty map straight
+        # back, and `skills_shrink_reason`'s `if not after` then refuses to
+        # propose it, correctly, because an emptied lock REAPS the installed
+        # skills of every ephemeral session in that repo. Re-pinning it nightly
+        # only to refuse the result every night would be motion, not repair.
+        #
+        # So such a lock counts a failure and is LEFT ALONE. Not live — no lock
+        # in this fleet has an empty map, and one would mean a registry whose
+        # bundles had all vanished, which is precisely what the shrink guard
+        # exists to stop fanning out. Left as a loud nightly failure rather
+        # than skipped quietly, because that IS a human's decision and the run
+        # saying so every night is how the human hears about it. What must not
+        # happen is someone meeting that red and "fixing" it either by
+        # loosening the shrink guard or by teaching this branch to treat an
+        # ERROR: as a licence to rewrite.
+        if $FORMAT_GATE_AVAILABLE; then
+            format_exit=0
+            format_out=$(python3 "$GENERATOR" --check-format \
+                -o "$lock_file" 2>&1) || format_exit=$?
+            if [[ $format_exit -ne 0 ]]; then
+                # Same refusal to read a bare exit code as a verdict that the
+                # --check-current branch below makes, and for the same reason:
+                # a missing file and unparseable JSON also exit 1 here, and
+                # both print ERROR: rather than FAILED:. Only the flag's own
+                # FAILED: means "these digests are malformed"; anything else
+                # means the question could not be answered, which is not a
+                # licence to rewrite a consumer's lock.
+                if grep -q '^FAILED:' <<< "$format_out"; then
+                    repin_reason=format
+                else
+                    fail "$repo_name: could not decide whether $LOCK_REL_PATH's digests are well-formed — $(head -1 <<< "$format_out")"
+                    ((FAIL_COUNT++)) || true
+                    continue
+                fi
+            fi
+        fi
 
-    # A non-zero exit is NOT automatically drift. The generator reports a
-    # broken lock, an unreachable pinned commit or a mis-pointed --repo with
-    # the same exit code and an ERROR line; re-pinning on the strength of one
-    # of those writes a lock nobody asked for. Only its own FAILED verdict
-    # means "the bundle moved".
-    if ! grep -q '^FAILED:' <<< "$check_out"; then
-        fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(head -1 <<< "$check_out")"
-        ((FAIL_COUNT++)) || true
-        continue
-    fi
+        if [[ -z "$repin_reason" ]]; then
+            log "bundle content unchanged since ${old_ref:0:7} — no re-pin needed."
+            ((SKIP_COUNT++)) || true
+            continue
+        fi
 
-    log "bundle has moved since ${old_ref:0:7} — re-pin needed."
+        # Said distinctly from the bundle-moved case below, because the reason
+        # is what a reader of this log (and of the PR it produces) has to be
+        # able to tell apart: nothing moved, and the lock is still being
+        # rewritten.
+        log "bundle content unchanged since ${old_ref:0:7}, but this lock's stored digests are not ${LOCK_DIGEST_SHAPE} — re-pin needed to relabel them."
+    else
+        # A non-zero exit is NOT automatically drift. The generator reports a
+        # broken lock, an unreachable pinned commit or a mis-pointed --repo with
+        # the same exit code and an ERROR line; re-pinning on the strength of one
+        # of those writes a lock nobody asked for. Only its own FAILED verdict
+        # means "the bundle moved".
+        if ! grep -q '^FAILED:' <<< "$check_out"; then
+            fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(head -1 <<< "$check_out")"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        repin_reason=content
+        log "bundle has moved since ${old_ref:0:7} — re-pin needed."
+    fi
 
     if $DRY_RUN; then
         log "[DRY RUN] Would re-pin $LOCK_REL_PATH onto $primary_registry's current commit and open a PR on $BRANCH_NAME"
@@ -1077,6 +1229,58 @@ bundles and sources and re-resolves only the primary ref." >/dev/null || {
     # given, which here is a copy under this run's mktemp directory, and a
     # /tmp path nobody can resolve is the one line of an otherwise checkable
     # body that a reviewer has to take on faith.
+    #
+    # WHY THIS PR EXISTS, in the words of the question that actually forced
+    # it. This body used to state the bundle-moved reason unconditionally,
+    # which was true of the only trigger there was; with the shape gate there
+    # are two, and a format re-pin under the old wording would tell a reviewer
+    # the bundle had diverged while every digest line in the diff proves it
+    # had not — the PR contradicting itself in its own diff. Each branch
+    # quotes the verdict of the flag that fired, and only that one.
+    #
+    # The HEADER LINE is branched for the same reason, and leaving it behind is
+    # exactly the defect this whole change set exists to stop: the first cut
+    # branched the paragraph and left `**What moved:** <registry> — <old> →
+    # <new>` unconditional six lines above it, so a format PR announced a move
+    # directly over a paragraph denying one, in a diff where not a single
+    # digest's hex differs. The ref advances in BOTH cases; what differs is
+    # whether that advance is the point or the side effect, and the header is
+    # where a reviewer reads it first.
+    if [[ "$repin_reason" == "format" ]]; then
+        moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`.
+\`${primary_registry}\`'s pin moves \`${old_ref:0:7}\` → \`${new_ref:0:7}\` as a side
+effect of the re-pin that relabels them; the bundle content itself has not moved."
+        why_note="The bundle content at the pinned ref is UNCHANGED — nothing has diverged, and
+this is not a currency bump. What is wrong is the SHAPE of the digests stored
+here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
+\`--check-format\` reads this file alone and says so:
+
+\`\`\`
+$(sed -n '/^FAILED:/,$p' <<< "$format_out" | head -20 | sed "s#$lock_file#$LOCK_REL_PATH#g")
+\`\`\`
+
+\`--check-current\` cannot see this: it digests the pinned tree and the working
+tree afresh and never reads the values stored here, so it reported \`OK\` at
+exit 0 on this lock every night while the defect stood. That is why the fix
+arrives as a re-pin rather than an edit — \`--repin\` recomputes every digest
+from the pinned commit and labels it on the way out, where a hand-edited label
+would be an attestation over bytes nobody re-derived. **The \`ref\` advance in
+this diff is a side effect of that repair, not its purpose**, and it happens
+once: after this lands the shape is right and the anti-churn gate goes back to
+proposing nothing until the bundle actually moves."
+    else
+        moved_note="**What moved:** \`${primary_registry}\` —
+\`${old_ref:0:7}\` → \`${new_ref:0:7}\`."
+        why_note="The bundle content at the old ref no longer matches the registry's tree, which
+is why this PR exists: a lock is not wrong for being old, but a lock pinned
+before a skill changed delivers the older skill to every ephemeral session and
+reports \`OK\` while doing it. \`--check-current\` says the two have diverged:
+
+\`\`\`
+$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed "s#$primary_lock#$LOCK_REL_PATH#g")
+\`\`\`"
+    fi
+
     federated_note="This lock has no federated sources."
     if [[ ${#source_registries[@]} -gt 0 ]]; then
         federated_lines=""
@@ -1109,7 +1313,7 @@ ${federated_lines}"
 Automated re-pin of this repo's \`$LOCK_REL_PATH\`, opened by
 \`scripts/bump-consumer-locks.sh\` in ${BUMPER_SOURCE}.
 
-**What moved:** \`${primary_registry}\` — \`${old_ref:0:7}\` → \`${new_ref:0:7}\`.
+${moved_note}
 
 **This pull request merges itself.** A later run of the same bumper sweeps it
 and merges it with a merge commit once every check on it has concluded green —
@@ -1119,14 +1323,7 @@ anything but \`$LOCK_REL_PATH\` appears in the diff: push a second file onto thi
 branch and it becomes yours. Closing it is not a way to say no — the next run
 proposes the same change again. See \`docs/decisions/0006\`.
 
-The bundle content at the old ref no longer matches the registry's tree, which
-is why this PR exists: a lock is not wrong for being old, but a lock pinned
-before a skill changed delivers the older skill to every ephemeral session and
-reports \`OK\` while doing it. \`--check-current\` says the two have diverged:
-
-\`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed "s#$primary_lock#$LOCK_REL_PATH#g")
-\`\`\`
+${why_note}
 
 **Every digest here is re-derived from the newly pinned commit**, materialized
 with \`git archive\` — never from anyone's working tree — so the lock describes
