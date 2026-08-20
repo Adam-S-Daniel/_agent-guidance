@@ -1046,6 +1046,7 @@ for repo_name in "${REPOS[@]}"; do
         # able to tell apart: nothing moved, and the lock is still being
         # rewritten.
         log "bundle content unchanged since ${old_ref:0:7}, but this lock's stored digests are not ${LOCK_DIGEST_SHAPE} — re-pin needed to relabel them."
+        log "the pin stays at ${old_ref:0:7}: a shape repair is not a content advance."
     else
         # A non-zero exit is NOT automatically drift. The generator reports a
         # broken lock, an unreachable pinned commit or a mis-pointed --repo with
@@ -1089,8 +1090,60 @@ for repo_name in "${REPOS[@]}"; do
         git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"
     fi
 
+    # ── A SHAPE repair is never a CONTENT advance ──────────────────────
+    # `--repin` deliberately does not inherit `ref` — advancing the pin IS the
+    # operation — so an invocation without `--ref` falls through to the
+    # generator's `resolve_ref(repo, "HEAD")` and re-pins onto whatever commit
+    # this run's registry checkout happens to be sitting on. That is exactly
+    # right for `repin_reason=content`, where a moved bundle is the reason the
+    # PR exists, and exactly wrong for `format`, where the complaint is about
+    # the digests STORED here and the bundle at the pinned ref is — by the
+    # gate above, which only fires after `--check-current` returned 0 —
+    # unchanged.
+    #
+    # Measured on a copy of repo-settings' real bare lock, which is one of the
+    # eight that sat malformed on 94cdcc81: without `--ref` the pin moved to
+    # the clone's HEAD; with `--ref` naming the lock's own pin, `ref`,
+    # `generated_from` and every digest's hex came back byte-identical and the
+    # entire diff was the eight `sha256:` labels. All eight were healed BY HAND
+    # that morning and every pin was preserved; had this script reached them
+    # first it would have advanced all eight in one sweep, silently turning a
+    # shape repair into a fleet-wide content advance under a PR body whose
+    # every digest line proves nothing diverged.
+    #
+    # agentskills #108 put `--ref` into the report a HUMAN reads
+    # (`--check-format`'s remediation line); this is the same anchor on the
+    # unattended path that runs every night. It also makes that quoted line
+    # REPRODUCE the diff beneath it: the body prints the generator's verdict
+    # verbatim, so with no `--ref` here a reviewer read a command naming the
+    # old pin above a diff that had moved it.
+    #
+    # A SIBLING SITE MOVES WITH THIS, and it is not editable from here.
+    # agentskills' `report_digest_format` docstring carries a paragraph
+    # beginning "One consequence to expect rather than re-discover" which
+    # states that the bumper's own re-pin passes no `--ref`, that a format PR
+    # therefore advances the pin, and that the quoted command naming the old
+    # pin is "the asymmetry working as intended, not a mismatch to reconcile".
+    # As of this change none of that is true here. That paragraph was written
+    # before the format gate had ever fired on the fleet, so it reasoned about
+    # a blast radius nobody had measured; the eight-lock morning is the
+    # measurement. It is a one-paragraph edit over there — make it when that
+    # repo is next open, and do not read it as evidence about what THIS script
+    # does.
+    #
+    # `$old_ref` is safe to resolve: `--check-current` exited 0 for this repo,
+    # and it gets there only by resolving and `git archive`-ing that very
+    # commit out of `$primary_dir`. Nothing is stranded by holding the pin
+    # either — currency is a separate question asked afresh every night, so a
+    # bundle that later moves gets its own PR, headed by the move.
+    repin_ref_args=()
+    if [[ "$repin_reason" == "format" ]]; then
+        repin_ref_args=(--ref "$old_ref")
+    fi
+
     if ! repin_out=$(python3 "$GENERATOR" --repin \
         --repo "$primary_dir" \
+        ${repin_ref_args[@]+"${repin_ref_args[@]}"} \
         ${source_repo_args[@]+"${source_repo_args[@]}"} \
         -o "$LOCK_REL_PATH" 2>&1); then
         fail "$repo_name: --repin failed — $(head -1 <<< "$repin_out")"
@@ -1182,12 +1235,30 @@ with open(sys.argv[1], encoding="utf-8") as handle:
         # primary's checkout, and a name and a sha in one string must come
         # from the same repository. The guard above makes them equal today;
         # this keeps them equal by construction rather than by that guard.
-        git commit -m "chore: re-pin $LOCK_REL_PATH onto ${primary_registry}@${new_ref:0:7}
-
-The bundle content this lock installs has moved since ${old_ref:0:7}, so
+        #
+        # Branched on the reason for the same cause as the PR body below, and
+        # it is the same defect one artifact further in: this message used to
+        # say "the bundle content this lock installs has moved since <old>"
+        # unconditionally, which on a format re-pin is false in a diff that
+        # disproves it — and, now that the pin is held, would name the same
+        # commit in its subject and in its "since" clause.
+        if [[ "$repin_reason" == "format" ]]; then
+            commit_subject="chore: relabel $LOCK_REL_PATH's digests as ${LOCK_DIGEST_SHAPE}"
+            commit_body="The bundle content at ${old_ref:0:7} has NOT moved; what is wrong is the
+shape of the digests stored here, which are bare hex. Re-pinned at that same
+commit with generate_skills_lock.py --repin --ref, so the pin does not move and
+every digest is recomputed from the ref this lock already attests."
+        else
+            commit_subject="chore: re-pin $LOCK_REL_PATH onto ${primary_registry}@${new_ref:0:7}"
+            commit_body="The bundle content this lock installs has moved since ${old_ref:0:7}, so
 nothing added or changed since then reached an ephemeral session. Generated by
 generate_skills_lock.py --repin, which inherits this repo's own registry,
-bundles and sources and re-resolves only the primary ref." >/dev/null || {
+bundles and sources and re-resolves only the primary ref."
+        fi
+
+        git commit -m "$commit_subject
+
+$commit_body" >/dev/null || {
             log "Nothing to commit."
             ((SKIP_COUNT++)) || true
             cd "$REPO_ROOT"; continue
@@ -1247,9 +1318,10 @@ bundles and sources and re-resolves only the primary ref." >/dev/null || {
     # whether that advance is the point or the side effect, and the header is
     # where a reviewer reads it first.
     if [[ "$repin_reason" == "format" ]]; then
-        moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`.
-\`${primary_registry}\`'s pin moves \`${old_ref:0:7}\` → \`${new_ref:0:7}\` as a side
-effect of the re-pin that relabels them; the bundle content itself has not moved."
+        moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`, and nothing
+else. \`${primary_registry}\`'s pin stays at \`${old_ref:0:7}\` — this re-pin is
+anchored to it with \`--ref\`, so \`ref\` and \`generated_from\` are untouched and
+every digest below is the same hex it was, wearing its label."
         why_note="The bundle content at the pinned ref is UNCHANGED — nothing has diverged, and
 this is not a currency bump. What is wrong is the SHAPE of the digests stored
 here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
@@ -1259,15 +1331,23 @@ here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
 $(sed -n '/^FAILED:/,$p' <<< "$format_out" | head -20 | sed "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`
 
+**That remediation line is the command this PR ran**, \`--ref\` included, so you
+can reproduce this diff from it. It was not always: without \`--ref\` a re-pin
+falls through to the registry checkout's HEAD, which would advance the pin here
+while the quoted command named the old one — a body that could not reproduce
+its own diff, and a shape repair doing a content advance's work across every
+consumer in one sweep.
+
 \`--check-current\` cannot see this: it digests the pinned tree and the working
 tree afresh and never reads the values stored here, so it reported \`OK\` at
 exit 0 on this lock every night while the defect stood. That is why the fix
 arrives as a re-pin rather than an edit — \`--repin\` recomputes every digest
 from the pinned commit and labels it on the way out, where a hand-edited label
-would be an attestation over bytes nobody re-derived. **The \`ref\` advance in
-this diff is a side effect of that repair, not its purpose**, and it happens
-once: after this lands the shape is right and the anti-churn gate goes back to
-proposing nothing until the bundle actually moves."
+would be an attestation over bytes nobody re-derived. It happens once: after
+this lands the shape is right and the anti-churn gate goes back to proposing
+nothing until the bundle actually moves. If the bundle later does move, that
+is a separate question asked afresh every night and arrives as its own PR,
+headed by the move."
     else
         moved_note="**What moved:** \`${primary_registry}\` —
 \`${old_ref:0:7}\` → \`${new_ref:0:7}\`."
@@ -1279,6 +1359,20 @@ reports \`OK\` while doing it. \`--check-current\` says the two have diverged:
 \`\`\`
 $(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed "s#$primary_lock#$LOCK_REL_PATH#g")
 \`\`\`"
+    fi
+
+    # The last two unbranched sentences that a held pin makes false. This is
+    # the same defect the header carried before it was branched — a paragraph
+    # denying a move under a line announcing one — one artifact further down,
+    # and it is why both halves are asserted from both sides in the tests: an
+    # unconditional sentence in a two-reason body is a contradiction waiting
+    # for the second reason to fire.
+    if [[ "$repin_reason" == "format" ]]; then
+        derived_note="**Every digest here is re-derived from the commit this lock already pinned**"
+        resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
+    else
+        derived_note="**Every digest here is re-derived from the newly pinned commit**"
+        resolve_note="and re-resolves only \`ref\`"
     fi
 
     federated_note="This lock has no federated sources."
@@ -1306,9 +1400,19 @@ ${federated_lines}"
 
     # Output captured rather than discarded: gh prints the new PR's URL, and
     # the auto-merge attempt below needs something to name.
+    # The title carries the same branch as the header and the commit subject,
+    # and for the same reason: a PR list shows the title alone, so "re-pin
+    # onto <registry>@<sha>" over a diff whose `ref` line is unchanged makes a
+    # reviewer open the PR to find out whether the pin moved. It did not.
+    if [[ "$repin_reason" == "format" ]]; then
+        pr_title="chore: relabel skills.lock digests as ${LOCK_DIGEST_SHAPE} (pin unchanged)"
+    else
+        pr_title="chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7}"
+    fi
+
     if pr_create_out=$(gh pr create \
         --head "$BRANCH_NAME" \
-        --title "chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7}" \
+        --title "$pr_title" \
         --body "$(cat <<EOF
 Automated re-pin of this repo's \`$LOCK_REL_PATH\`, opened by
 \`scripts/bump-consumer-locks.sh\` in ${BUMPER_SOURCE}.
@@ -1325,7 +1429,7 @@ proposes the same change again. See \`docs/decisions/0006\`.
 
 ${why_note}
 
-**Every digest here is re-derived from the newly pinned commit**, materialized
+${derived_note}, materialized
 with \`git archive\` — never from anyone's working tree — so the lock describes
 bytes that are actually published at \`${new_ref:0:7}\`.
 
@@ -1334,7 +1438,7 @@ $federated_note
 **Generated, never hand-edited.** The whole change is
 \`generate_skills_lock.py --repin\`'s output. That command inherits this repo's
 own \`registry\`, \`bundles\` and \`sources\` from the lock already committed here
-and re-resolves only \`ref\`; it cannot be told to change any of them. Nothing
+${resolve_note}; it cannot be told to change any of them. Nothing
 in \`_agent-guidance\` composes a lock of its own — see its
 \`docs/decisions/0005\`.
 EOF

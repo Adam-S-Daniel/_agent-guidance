@@ -827,6 +827,17 @@ def main():
             return 0
         print("FAILED: %d of %d digests in %s are not sha256:<64 lowercase hex>."
               % (len(offenders), len(skills), output))
+        # The REMEDIATION line, and it carries `--ref` naming this lock's own
+        # pin. Reproduced because the bumper quotes this whole verdict verbatim
+        # into a PR body and then tells the reviewer it is the command that ran
+        # — a claim only checkable if the line is here to check. The real
+        # generator charset-guards the value it prints (agentskills #108); what
+        # is load-bearing for the bumper is that the ref named is the lock's
+        # OWN, so a re-pin that moved the pin would leave the body quoting a
+        # command that cannot reproduce the diff beneath it.
+        print("  python3 scripts/generate_skills_lock.py --repin --ref %s "
+              "--repo <a clone of the registry this lock names> -o <this lock>"
+              % lock.get("ref"))
         for name in offenders:
             print("  - %s" % name)
         return 1
@@ -1493,6 +1504,12 @@ case "$1" in
                     mkdir -p "$MOCK_PR_BODY_DIR"
                     pr_body=$(parse_flag_value --body "$@")
                     printf '%s\n' "$pr_body" > "$MOCK_PR_BODY_DIR/$(basename "$PWD").body"
+                    # The title too: a PR list shows it and nothing else, so a
+                    # title that misdescribes the diff is read by more people
+                    # than the body is. It went uncaptured while the body was
+                    # asserted line by line.
+                    pr_title=$(parse_flag_value --title "$@")
+                    printf '%s\n' "$pr_title" > "$MOCK_PR_BODY_DIR/$(basename "$PWD").title"
                 fi
                 echo "https://github.com/mock/pr/1"
                 ;;
@@ -3861,9 +3878,25 @@ test_bump_consumer_locks() {
     # the header entirely and that one still passes, so only this one notices.
     assert_contains "$body" "**What moved:**" \
         "PR body: a content re-pin is headed by what moved"
+    # The PAIRED CONTROLS for the format gate's two "this PR does not announce
+    # a move" assertions. Each of those is satisfiable by deleting the
+    # announcement from BOTH branches, so the content side has to insist the
+    # announcement is still there — in the title a PR list shows, and in the
+    # commit message that outlives the PR.
+    local stale_title="$BUMP_PR_BODY_DIR/bumporg_repo-stale.title"
+    local moved_onto="re-pin skills.lock onto bumporg/agentskills@${BUMP_REF_HEAD:0:7}"
+    assert_contains "$stale_title" "$moved_onto" \
+        "PR title: a content re-pin still announces the commit it moved onto"
+    local stale_msg="$TEST_DIR/stale-commit-msg.txt"
+    git -C "$TEST_DIR/bare/bumporg_repo-stale" log -1 --format=%B \
+        refs/heads/skills-lock-bump/update > "$stale_msg" 2>/dev/null || : > "$stale_msg"
+    assert_contains "$stale_msg" "has moved since ${BUMP_REF_OLD:0:7}" \
+        "commit message: a content re-pin still says the bundle moved, and since when"
     assert_contains "$body" "${BUMP_REF_OLD:0:7}" "PR body: names the ref it moved from"
     assert_contains "$body" "${BUMP_REF_HEAD:0:7}" "PR body: names the ref it moved to"
     assert_contains "$body" "re-derived from the newly pinned commit" "PR body: says where the digests come from"
+    assert_contains "$body" "re-resolves only \`ref\`" \
+        "PR body: a content re-pin still says the ref was re-resolved"
     assert_contains "$body" "Generated, never hand-edited" "PR body: says the change is generator output"
     assert_contains "$body" "This lock has no federated sources." "PR body: says so when there is no federated half"
     assert_contains "$body" "This pull request merges itself" "PR body: discloses that no reviewer has to click merge"
@@ -4361,8 +4394,8 @@ test_bump_digest_format_gate() {
     # header is still there.
     assert_not_contains "$body" "**What moved:**" \
         "format gate: a format re-pin is not headed by a bundle move"
-    assert_contains "$body" "the bundle content itself has not moved" \
-        "format gate: the header says the ref advance is a side effect, not the point"
+    assert_contains "$body" "pin stays at \`${BUMP_REF_CONTENT:0:7}\`" \
+        "format gate: the header says the pin does not move, and names where it stays"
 
     # ── The repair actually lands in the pushed lock ──────────────────────
     # The gate is worth nothing if it proposes a re-pin that does not fix the
@@ -4376,6 +4409,143 @@ test_bump_digest_format_gate() {
     else
         fail "format gate: the pushed lock has every digest relabelled, none left bare"
     fi
+
+    # ── A SHAPE repair is not a CONTENT advance ──────────────────────────
+    #
+    # `--repin` does not inherit `ref` — advancing the pin IS the operation —
+    # so an invocation without `--ref` re-pins onto whatever commit the
+    # registry checkout is sitting on. Correct for a content re-pin, which is
+    # what test_bump_consumer_locks asserts still happens; wrong here, where
+    # `--check-current` has already answered OK and the only complaint is
+    # about the digests STORED in the file.
+    #
+    # This is not hypothetical and it is not small. Eight real consumer locks
+    # sat bare on 94cdcc81 at once; they were healed BY HAND, every pin
+    # preserved. Had the nightly bumper reached them first, one sweep would
+    # have moved all eight pins — a fleet-wide content advance wearing a shape
+    # repair's PR body, whose every digest line proves nothing diverged.
+    #
+    # These artifacts are written to files rather than held in `$( )` for one
+    # reason: `assert_not_contains` PASSES on a file that does not exist
+    # (`grep -qF` simply finds nothing in nothing), so the emptiness check
+    # below is what stops the whole block from going green on a run that
+    # pushed no branch at all.
+    local before_lock="$TEST_DIR/format-before.lock"
+    local after_lock="$TEST_DIR/format-after.lock"
+    printf '%s\n' "$bare_lock" > "$before_lock"
+    printf '%s\n' "$pushed" > "$after_lock"
+    local title="$BUMP_PR_BODY_DIR/bumporg_repo-bare-digests.title"
+    if [[ -s "$after_lock" && -s "$body" && -s "$title" && -n "$pushed" ]]; then
+        pass "format gate: there is a pushed lock, a body and a title to assert on at all"
+    else
+        fail "format gate: there is a pushed lock, a body and a title to assert on at all"
+    fi
+
+    # The pin, read as a field rather than grepped: `ref` and `generated_from`
+    # must BOTH still name the commit the lock arrived pinned to. Read with
+    # `|| true` so an absent lock reaches the assertion as an empty string and
+    # FAILS there, instead of aborting the suite from a command substitution.
+    local pushed_ref pushed_generated_from
+    pushed_ref=$(lock_field_of "$after_lock" ref 2>/dev/null) || pushed_ref=""
+    pushed_generated_from=$(lock_field_of "$after_lock" generated_from 2>/dev/null) \
+        || pushed_generated_from=""
+    if [[ "$pushed_ref" == "$BUMP_REF_CONTENT" \
+       && "$pushed_generated_from" == "$BUMP_REF_CONTENT" ]]; then
+        pass "format gate: the re-pin holds the pin at the commit the lock already named"
+    else
+        fail "format gate: the re-pin holds the pin — got '${pushed_ref:-<no lock>}'"
+    fi
+    # The negative half, and the one that would notice a pin moved to a commit
+    # nobody named: the registry's HEAD is two commits ahead of this lock's
+    # ref, so it can appear here only by having been resolved.
+    assert_not_contains "$after_lock" "$BUMP_REF_HEAD" \
+        "format gate: the registry checkout's HEAD is nowhere in the repaired lock"
+
+    # A pure RELABEL: same names, same hex, the label added. Distinct from the
+    # pin assertions above because it is what makes "every digest here is
+    # re-derived from the newly pinned commit" true of a diff a reviewer can
+    # check by eye — and it fails loudly rather than vacuously if either side
+    # lists nothing, which is the shape a comparison of two empty maps takes.
+    if python3 -c '
+import json, sys
+locks = []
+for path in sys.argv[1:3]:
+    try:
+        locks.append(json.load(open(path, encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        sys.exit("relabel: %s is not a readable lock (%s) — there is nothing to "
+                 "compare, which is not the same as nothing being wrong" % (path, exc))
+before, after = locks
+was, now = before.get("skills") or {}, after.get("skills") or {}
+if not was or not now:
+    sys.exit("relabel: %d digests before and %d after — an empty comparison is not a "
+             "clean one" % (len(was), len(now)))
+if set(was) != set(now):
+    sys.exit("relabel: the skill names changed: %s" % sorted(set(was) ^ set(now)))
+wrong = [name for name in sorted(was) if now[name] != "sha256:" + was[name]]
+if wrong:
+    sys.exit("relabel: %d of %d digests are not the same hex relabelled: %s"
+             % (len(wrong), len(was), wrong[:3]))
+' "$before_lock" "$after_lock" 2>"$TEST_DIR/format-relabel.err"; then
+        pass "format gate: every digest is the same hex it was, wearing its label"
+    else
+        fail "format gate: every digest is the same hex it was — \
+$(cat "$TEST_DIR/format-relabel.err")"
+    fi
+
+    # ── The PR cannot contradict its own diff ────────────────────────────
+    # The body QUOTES `--check-format`'s verdict verbatim, remediation line
+    # included, and then tells the reviewer that line is the command that ran.
+    # With the pin held that is true; without `--ref` the quoted command names
+    # the old pin above a diff that moved it — a body that cannot reproduce
+    # itself, which is how this defect was found.
+    # A RELATION, not a constant: the ref the body's quoted command names has to
+    # be the ref the pushed lock actually carries. Asserting the constant
+    # `$BUMP_REF_CONTENT` here would pass unchanged while the diff moved the
+    # pin out from under it, which is precisely the contradiction being
+    # guarded — the quoted verdict is `--check-format`'s and always names the
+    # lock's OWN pin, whatever the re-pin then did.
+    local quoted_ref
+    quoted_ref=$(sed -n 's/.*--repin --ref \([0-9a-f]\{40\}\).*/\1/p' "$body" 2>/dev/null \
+        | head -1) || quoted_ref=""
+    if [[ -n "$quoted_ref" && "$quoted_ref" == "$pushed_ref" ]]; then
+        pass "format gate: the quoted remediation names the ref this PR actually pinned"
+    else
+        fail "format gate: the quoted remediation names the ref this PR actually pinned \
+— body says '${quoted_ref:-<none>}', lock says '$pushed_ref'"
+    fi
+    assert_contains "$body" "the command this PR ran" \
+        "format gate: the body claims that command, so the assertion above has a subject"
+    # The two sentences in the body's SHARED tail that a held pin makes false.
+    # Both are asserted from both sides — the content-side controls sit in
+    # test_bump_consumer_locks — because either alone is satisfiable by
+    # deleting the sentence outright from both branches.
+    assert_not_contains "$body" "re-derived from the newly pinned commit" \
+        "format gate: nothing claims a NEWLY pinned commit — the pin is the one it had"
+    assert_contains "$body" "re-derived from the commit this lock already pinned" \
+        "format gate: the body says which commit the digests came from instead"
+    assert_not_contains "$body" "re-resolves only \`ref\`" \
+        "format gate: the body does not claim ref was re-resolved when it was pinned"
+    assert_contains "$body" "so even \`ref\` is unchanged" \
+        "format gate: the body says ref was held, and why"
+
+    # The commit message is the same artifact one layer in, and it carried the
+    # same unconditional bundle-moved sentence the header used to.
+    local msg="$TEST_DIR/format-commit-msg.txt"
+    git -C "$root/bumporg_repo-bare-digests" log -1 --format=%B \
+        refs/heads/skills-lock-bump/update > "$msg" 2>/dev/null || : > "$msg"
+    assert_not_contains "$msg" "has moved since" \
+        "format gate: the commit message does not claim the bundle moved"
+    assert_contains "$msg" "has NOT moved" \
+        "format gate: the commit message says plainly what did not happen"
+
+    # The TITLE. A PR list shows nothing else, so "re-pin onto <registry>@<sha>"
+    # over a diff whose ref line is unchanged sends a reviewer looking for a
+    # move that is not there.
+    assert_contains "$title" "pin unchanged" \
+        "format gate: the title says the pin did not move"
+    assert_not_contains "$title" "re-pin skills.lock onto" \
+        "format gate: the title does not announce a re-pin onto a commit"
 
     # ── ANTI-CHURN. The well-formed twin is left completely alone ─────────
     assert_contains "$TEST_DIR/bump-format.txt" \
