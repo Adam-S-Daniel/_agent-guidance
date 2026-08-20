@@ -199,45 +199,81 @@ shipped mislabelling every finding it ever produced.
 
 ---
 
-## B4a — #279's fix reaches two of the ten repos that call it
+## B4a — #279's fix reached none of the fleet callers — CLOSED by a hand bump; the structural half is still open
 
-**Not in the original pack at all; added from #52.** Closing #279 is not the
-same as delivering it, and the difference is seven repos.
+**Not in the original pack at all; added from #52 — and the first version of
+this section was born stale, which is itself the lesson.** It asserted in the
+present tense that seven repos pin `scheduled-run-health.yml@v0.1.85`. They had
+all been bumped to `v0.1.87` **roughly fifteen hours before that text was
+written**, including `_agent-guidance`, the repo the pack lives in — and the
+tracking issue #52 points at, cms-platform#283, had announced that very bump in
+its own body (*"I am bumping all seven by hand to `v0.1.87` once it is cut"*).
+The gap was real; it was resolved before it was documented, by the mitigation
+the cited issue had already published. Read the rest as history plus one live
+remainder.
 
-Ten repos call `scheduled-run-health.yml`. Only the two cms-platform consumers
-are on `v0.1.86`+; the other **seven pin `@v0.1.85`, which has no push lane at
-all** (`git show v0.1.85:.github/workflows/scheduled-run-health.yml | grep
-push_scan` → no matches). **skills-evals had 14 failing default-branch push runs
-and structurally cannot see any of them.**
+**The gap, as it stood.** Closing cms-platform#279 was not the same as
+delivering it. Only the two cms-platform site consumers were on `v0.1.86`+; the
+other seven pinned `@v0.1.85`, **which has no push lane at all** (`git show
+v0.1.85:.github/workflows/scheduled-run-health.yml | grep push_scan` → no
+matches; at `v0.1.87` the same file carries `push_scan: { type: boolean, default:
+true }`). **skills-evals had 14 failing default-branch push runs and structurally
+could not see any of them.**
 
-The seven — agentskills, repo-settings, `_agent-guidance`, claude-memory-map,
-fastmail-actions, GHA-bench, skills-evals — are **byte-uniform**: same
-`@v0.1.85` with `platform_ref: v0.1.85`, identical
-`permissions: {contents: read, actions: read, issues: write}`, identical
-`on: [schedule, workflow_dispatch]`, no other input. Two consequences:
+**Closed 2026-08-20T05:34Z, by hand, in all seven.** Each carries a commit
+titled *"Bump the health audit to v0.1.87, so this repo's silent push failures
+get seen"* — agentskills `a029fc0`, repo-settings `b1d75b2`, `_agent-guidance`
+`317de9c`, claude-memory-map `4410a46`, fastmail-actions `29ed262`, GHA-bench
+`6ef5628d`, skills-evals `d0edccf`. Measured on each clone's `origin/main`:
+`uses:@v0.1.87` **and** `platform_ref: v0.1.87`, the two refs in agreement in
+all seven. The push lane defaults on, so nothing else had to change.
 
-- **The bump is mechanical** — two refs per repo, no permission or input change.
-  `push_scan` defaults **true** in the reusable, so the push lane switches on by
-  itself at v0.1.86+; nothing in a caller has to opt in.
-- **Their green is not coverage.** Every one of their latest runs is `success`,
-  and at v0.1.85 that means only "the schedule lane found nothing" — exactly the
-  shape of silence this whole session is about.
+**They are still byte-uniform, which is the durable observation.** All seven
+callers resolve to ONE blob — `git rev-parse origin/main:.github/workflows/scheduled-run-health.yml`
+returns `0d947f9d` in every one. That was true at `v0.1.85` and is true at
+`v0.1.87`. Two things follow, and the second is why this section still exists:
 
-The pin is also unmaintainable in **both** directions, which is why this is an
-issue and not a chore. Three of the seven carry
-`ignore: Adam-S-Daniel/cms-platform/*` copied from cms-platform#244 — correct for
-the two site consumers *because `platform-bump` owns the version atomically*, but
-`platform-bump` never targets these repos, so nothing bumps them at all. The
-other four lack the ignore and would take a **half bump**: `uses:@` moves (a
-dependency ref), `platform_ref:` does not (a `with:` input value). The result is
-a new workflow driving an old script, and
+- **A bump is mechanical** — two refs per repo, no permission or input change.
+  Which is exactly why it was doable by hand, once.
+- **Their green was never coverage.** Every one of their latest runs was
+  `success`, and at `v0.1.85` that meant only "the schedule lane found nothing" —
+  precisely the shape of silence this session is about. A green audit is evidence
+  about the lane that ran, never about the lane that was not compiled in.
+
+### What is still open: nothing bumps these callers automatically
+
+The hand bump was a one-off, and the drift has **already restarted**. Measured
+2026-08-20: the two site consumers are on `@v0.1.88` (moved by `platform-bump`
+with the release) while all seven fleet callers sit at `@v0.1.87`. That is the
+same gap one release later, opened by the same absence.
+
+The pin is unmaintainable in **both** directions, which is why this is an issue
+and not a chore. Measured across the seven on 2026-08-20: three carry
+`ignore: Adam-S-Daniel/cms-platform/*` (`_agent-guidance`, fastmail-actions,
+skills-evals) — correct for the two site consumers *because `platform-bump` owns
+the version atomically*, but `platform-bump` never targets these repos, so
+nothing bumps them at all. The other four lack it (repo-settings,
+claude-memory-map, GHA-bench have a `dependabot.yml` without the entry;
+agentskills has no `dependabot.yml`) and would take a **half bump**: `uses:@`
+moves (a dependency ref), `platform_ref:` does not (a `with:` input value). The
+result is a new workflow driving an old script, and
 `flag() { return process.argv.includes(...) }` silently ignores a flag it does
 not know — **green run, zero detection, no error anywhere.**
 
-Tracked as **cms-platform#283**, open at the time of writing with a hand-bump
-mitigation proposed and a pin-agreement lint as the durable fix. **Check its
-state before acting**; the diagnosis above stands either way, but do not assert
-it is unfixed.
+Tracked as **cms-platform#283**, which is **open as measured 2026-08-20 via
+`mcp__github__`**, with PR **#296** ("Two anti-silent-green lints: consumer nudge
+contexts (#284) and pin agreement (#283)") open against it — so check both before
+acting. #283's own body predicted this exactly: *"That is a one-off and does not
+close this issue — the next release re-opens the same gap."*
+
+One caveat if you quote #283: its prose says *"Ten repos call
+`scheduled-run-health.yml`"* while the table directly beneath it enumerates
+**nine** (the seven above plus adamdaniel.ai and jodidaniel.com). Nine is what
+this session could enumerate by reading each clone's `origin/main`; GitHub code
+search returns fewer still and is not authoritative here — it silently omits the
+private and less-recently-indexed callers (repo-settings, claude-memory-map,
+fastmail-actions, jodidaniel.com were all missing from it while present on disk).
+Enumerate from clones, not from the search index.
 
 ---
 
@@ -268,32 +304,70 @@ clones found **27** workflows"*:
   (`SHARED-CONTEXT.md` §7) — and here it was the symptom of two whole clones
   being outside the sweep.
 
-### Add it — a scheduled or push lane you cannot trigger by hand
+### Add it — SHIPPED, all five; only the `self-ci.yml` verdict is still guidance
 
-| repo | workflow | current triggers |
-|---|---|---|
-| skills-evals | `propagation.yml` | pull_request, push, **schedule** |
-| agentskills | `ci.yml` | pull_request, push, **schedule** |
-| skills-evals | `ci.yml` | pull_request, push |
-| `_agent-guidance` | `ci.yml` | pull_request, push |
-| GHA-bench | `ci.yml` | pull_request, push |
-| ~~cms-platform~~ | ~~`self-ci.yml`~~ | **REMOVED — see below** |
+**All five rows landed on 2026-08-20, before this section was written to
+describe them as outstanding.** They are kept, marked, so the next session does
+not re-do finished work — and so the reason each one was worth doing survives.
+`workflow_dispatch` presence re-derived per row from each clone's `origin/main`;
+introducing commit found with `git log -S'workflow_dispatch' -- <file>`.
 
-**`cms-platform/self-ci.yml` was on this ADD list and must not be.** It
-publishes **all four** of that repo's required status contexts and carries
-`cancel-in-progress: true`. Adding `workflow_dispatch` there gives those
-contexts another event that can fire on the same head sha inside a cancelling
-group — which is the documented incident in point 2 below, not a convenience.
-It belongs on the DO-NOT list, and it is the clearest possible demonstration
-that the two lists were assembled by trigger shape rather than by asking what
-each workflow publishes.
+| repo | workflow | triggers when listed | status |
+|---|---|---|---|
+| skills-evals | `propagation.yml` | pull_request, push, **schedule** | **SHIPPED** `6c92c91` 2026-08-20T01:59:52Z |
+| agentskills | `ci.yml` | pull_request, push, **schedule** | **SHIPPED** `3f40330` 2026-08-20T02:01:30Z |
+| skills-evals | `ci.yml` | pull_request, push | **SHIPPED** `6c92c91` 2026-08-20T01:59:52Z |
+| `_agent-guidance` | `ci.yml` | pull_request, push | **SHIPPED** `442af81` 2026-08-20T05:29:51Z |
+| GHA-bench | `ci.yml` | pull_request, push | **SHIPPED** `74ae650f` 2026-08-20T01:59:18Z |
+| ~~cms-platform~~ | ~~`self-ci.yml`~~ | — | **REMOVED from this list — see below** |
 
-The two carrying a `schedule` are the priority: a scheduled probe you cannot
-dispatch means every fix to it waits for the cron before anyone knows it worked.
+~~The two carrying a `schedule` are the priority: a scheduled probe you cannot
+dispatch means every fix to it waits for the cron before anyone knows it
+worked.~~ ~~`propagation.yml` deserves a `dry_run`-style input as well,
+mirroring `scheduled-run-health.yml`'s, so a manual run can exercise the probe
+without opening or updating its tracking issue.~~ **Both done.**
+`propagation.yml` carries `dry_run: { type: boolean, default: true }` — a real
+`boolean`, deliberately NOT the `string` + `fromJSON` shape
+`scheduled-run-health.yml` needs (that workaround exists only because a typed
+boolean crosses a `workflow_call` boundary as a string; nothing here does, and
+its own comment says not to "fix" it in either direction). The default is
+**true**, inverted from the schedule's, so a verification dispatch exercises the
+probe and the dedupe lookup and stops one line short of the write.
 
-`propagation.yml` deserves a `dry_run`-style input as well, mirroring
-`scheduled-run-health.yml`'s, so a manual run can exercise the probe without
-opening or updating its tracking issue.
+**`cms-platform/self-ci.yml` was on this ADD list and must not go back on it —
+but the stated reason has expired, and that matters more than the verdict.** The
+reason given was that the file *"publishes all four of that repo's required
+status contexts and carries `cancel-in-progress: true`"*. The first half holds:
+`actionlint`, `ruby-theme-specs`, `node-unit-lints` and `plugin-validate` are
+this repo's four required contexts, per cms-platform's own
+`repo-settings.yml` (`ruleset_library.platform-main` → `required_status_checks`). **The second half is no longer true and was
+already false when it was written** — cms-platform#285 removed the group, and
+`grep -c '^concurrency:' self-ci.yml` on `origin/main` returns **0**. The file
+says so itself, at lines 67–74: *"NO `concurrency:` BLOCK — a deliberate,
+load-bearing ABSENCE. Do not add one… this workflow carried
+`group: self-ci-<event>-<pr|ref>` with `cancel-in-progress: true` until
+cms-platform#285."* Two paragraphs below, this section's own table already said
+both surviving groups had been removed at `v0.1.87` — so the section contradicted
+itself, and this is the correction.
+
+**The verdict survives the correction because it never rested on the group.**
+Adding `workflow_dispatch` to a workflow publishing four required contexts gives
+those contexts another event that can fire on the same head SHA — the input to
+the cancelled-required-check trap, which point 2 below spells out **does not
+depend on a `concurrency` group existing**. It would have been the documented
+incident at the time, when the group was there; the hazard is now the
+narrower-but-real one, and `v0.1.88`'s widening (a `timeout-minutes` wall also
+reports `cancelled`) is the reason not to treat a groupless workflow as safe by
+default. `self-ci.yml` belongs on the DO-NOT list either way, and it remains the
+clearest demonstration that the two lists were assembled by trigger shape rather
+than by asking what each workflow publishes.
+
+~~Verify each addition by actually dispatching it and reporting the parsed
+conclusion.~~ Still the right rule for the **next** addition. For these five the
+instruction is spent: they are on `main`, so what remains is not a dispatch to
+perform but a claim to check — read the current `on:` block before assuming
+either way. An input you add but never fire is not known to work.
+
 
 ### Do NOT add it — the `pull_request`-only workflows, several actively hazardous
 
@@ -348,12 +422,13 @@ Two reasons, and the second is the one that bites:
    invariant again after `timeout-minutes` produced `cancelled` conclusions with
    no group in sight — `SHARED-CONTEXT.md` §6 carries the current form.
 
-So this is not "add `workflow_dispatch` everywhere". It is a small, specific set
-— **five** now that `self-ci.yml` is off the list, and re-derive it against the
-real 30 before you start — plus an explicit note in the others explaining why
-they do not get one. Without that note a future tidy-up adds them and
-reintroduces a known incident; `self-ci.yml`'s appearance on the ADD list is
-what that tidy-up looks like when it happens to the pack itself.
+So this was never "add `workflow_dispatch` everywhere". It was a small, specific
+set — **five**, all now shipped, once `self-ci.yml` came off the list — plus an
+explicit note in the others explaining why they do not get one. That note is the
+part still owed: without it a future tidy-up adds them and reintroduces a known
+incident, and `self-ci.yml`'s appearance on the ADD list is exactly what that
+tidy-up looks like when it happens to the pack itself.
 
-**Verify each addition by actually dispatching it** and reporting the parsed
-conclusion. An input you added but never fired is not known to work.
+**Before adding a sixth, re-derive the sweep against the real 30 over 13
+clones** — the audit that produced these lists missed two whole repos, so a
+workflow absent from both lists has not been judged, only overlooked.

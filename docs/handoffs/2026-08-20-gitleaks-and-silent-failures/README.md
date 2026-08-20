@@ -30,6 +30,18 @@ this pack is where they belong. Two conventions, both taken from #52 itself:
   what has shipped since. Each such case is marked SUPERSEDED where it appears,
   with what actually shipped.
 
+**Second pass, because the first one got four of them wrong.** #52 was closed on
+the strength of the pass above and then **reopened**: eighteen corrections landed
+faithfully, four shipped new false or already-resolved facts of their own. All
+four are now fixed and, per the first convention, *named where they landed* —
+`SHARED-CONTEXT.md` §2 (a fabricated *"there is no `playwright.unit.config.js`"*),
+`B-detection-gaps.md` §B4a (a `@v0.1.85` pin bumped fifteen hours before the
+section described it), and §B5 twice (a `concurrency` group #285 had already
+removed, and five shipped `workflow_dispatch` additions listed as outstanding).
+The pattern behind all four — **re-verifying what you correct but not what you
+write** — is recorded as its own bullet in `SHARED-CONTEXT.md` §7. Read that
+before making the next correction to this pack.
+
 ## Files
 
 | file | what | can run in parallel? |
@@ -100,9 +112,15 @@ push-lane blind spot), agentskills#87"*. Re-checked through `mcp__github__` on
 **agentskills#87 closed `completed` at 11:12:57Z**. Neither is a task any more.
 
 But do not read either closure as "the fix reached the fleet". #279's own
-successor, **cms-platform#283** (open), is the finding that seven of the ten
-repos calling the health audit are pinned to a release that has **no push lane
-at all**, so #279's fix reaches none of them — see `B-detection-gaps.md` §B4a.
+successor, **cms-platform#283** — open as measured 2026-08-20, with PR #296 open
+against it — found that the seven fleet repos calling the health audit were
+pinned to `@v0.1.85`, a release with **no push lane at all**, so #279's fix
+reached none of them. **That specific gap was closed by a hand bump to `@v0.1.87`
+at 2026-08-20T05:34Z in all seven**, and has already begun to reopen: the two
+site consumers moved to `@v0.1.88` with the release while the seven did not,
+because nothing bumps them automatically. §B4a of `B-detection-gaps.md` carries
+the measured detail — and carries, as its own worked example, how that section
+came to be written in the present tense about a gap that was fifteen hours dead.
 
 ### The blocking fact for `C` — re-derived 2026-08-20, and it MOVED
 

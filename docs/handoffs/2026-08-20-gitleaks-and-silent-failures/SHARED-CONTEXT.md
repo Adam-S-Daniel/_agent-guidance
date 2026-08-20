@@ -63,20 +63,35 @@ gh pr view <n> --repo <owner>/<repo> --json statusCheckRollup --jq \
 `.conclusion` is a check run, `.state` is a legacy commit status — filter on one
 and the other's failures read as clean.
 
-**Also: run the right lane — and this paragraph used to name the wrong one.**
+**Also: run the right lane — and this paragraph named the wrong one twice, in
+opposite directions.**
 
 > ~~cms-platform's pure-fs lane is `cd e2e && npx playwright test
 > --config=playwright.unit.config.js` … In the sandbox checkout, 5 unit-lane
 > failures are pre-existing `ENOENT`s … Verify that claim rather than
 > inheriting it.~~
 
-Somebody did verify it, which is how it was caught (#52). Both halves were
-wrong, and they were wrong in a way that reinforced each other: a made-up config
-name produced a run whose 5 failures then got explained away as "pre-existing".
+**And then the correction overshot.** The first pass at this fixed the lane and
+invented a fact doing it: it asserted, in bold, that *"there is no
+`playwright.unit.config.js`"* and that a *"made-up config name"* had produced
+the 5 failures. Both are false. The file is real and tracked
+(`git cat-file -t origin/main:e2e/playwright.unit.config.js` → `blob`, added
+2026-08-08 in `e5d51b5`), and `e2e/package.json` binds it —
+`"test:unit": "playwright test --config=playwright.unit.config.js"` — with the
+package description naming it as the way to run the pure-Node suite *"for
+platform development on a bare checkout (no consuming site)"*, which is exactly
+the situation the struck paragraph was written for. That correction is recorded
+here rather than quietly dropped for the same reason every other one is: a
+fabricated citation that merely disappears gets re-derived by the next reader.
+#52 itself never claimed the file was missing — its wording is *"the required
+lane is `self-ci.yml`'s `node-unit-lints` … not `--config=playwright.unit.config.js`"*.
+"Not the lane" became "does not exist" in the writing, with no measurement
+between the two.
 
-The required lane is **`self-ci.yml`'s `node-unit-lints`**, and it selects specs
-by an **exclusion DENY list** against the DEFAULT config — there is no
-`playwright.unit.config.js`:
+So the accurate statement is narrower than either version. **`playwright.unit.config.js`
+is real and is the documented bare-checkout command; it is simply not the lane the
+REQUIRED check runs.** The required lane is **`self-ci.yml`'s `node-unit-lints`**,
+which selects specs by an **exclusion DENY list** against the DEFAULT config:
 
 ```bash
 cd e2e && TARGET=prod PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
@@ -90,11 +105,18 @@ counts as current** — that repo gains specs continually and the numbers had
 already moved within the day. The durable assertion is `0 failed / exit 0`; a
 count is only ever evidence of what a specific run did.
 
-The 5 failures the old paragraph rationalised are real, and they are what the
-**bare `./*.test.js` glob without the DENY list** produces: the build-dependent
-specs the lane excludes **by design**. Seeing them means you ran the wrong
-selection, not that the lane is dirty — which is exactly the reading the old
-text pre-authorised.
+**The config name never caused the 5 failures, and this is the part worth
+keeping.** `playwright.unit.config.js` carries no DENY list either — as measured
+on `origin/main` 2026-08-20 it is `testMatch: /\.test\.js$/` over one browserless
+project, nothing excluded — so it selects the same set as the bare `./*.test.js`
+glob and produces the same build-dependent failures. Those specs are the six
+`self-ci.yml` names in `deny=` (`canary-content`, `canary-ondemand-noindex`,
+`e2e-posts-public-exclusion`, `playwright-image-drift`, `prod-mutate-fixture`,
+`base-collections-skip-meta`); they need a `jekyll build` `_site`, the `_e2e/`
+fixtures, or a root `package-lock.json` the machinery repo does not ship, and the
+lane excludes them **by design**. Seeing them means you ran a selection with no
+DENY list — either config — not that the lane is dirty, which is exactly the
+reading the struck text pre-authorised.
 
 ---
 
@@ -372,6 +394,35 @@ The rules that fall out, and they are cheap:
 - **A count that disagrees with the spec is a stop-and-report**, never a
   rounding difference. In that session a test run reported an unchanged count
   and it turned out there were two separate suites.
+- **Re-verify the claims you are WRITING, not only the ones you are
+  correcting.** This pack's own corrections pass is the worked example, and it
+  is why this bullet exists. It re-derived every stale claim it struck, then
+  shipped four new ones that were false or already resolved: a fabricated
+  *"there is no `playwright.unit.config.js`"* (§2 — the file is tracked and
+  bound to `npm run test:unit`), a §B4a written in the present tense about a
+  `@v0.1.85` pin that had been bumped fifteen hours earlier, a §B5 reason
+  resting on a `concurrency` group #285 had already removed, and a §B5 table
+  presenting five shipped `workflow_dispatch` additions as outstanding work.
+
+  Three properties make this failure mode worth naming separately from "verify
+  claims" above:
+
+  - **Two of the four were answerable by one `grep` in the agent's own working
+    tree.** Not an API call, not a subagent — `grep -c '^concurrency:'` and
+    reading an `on:` block.
+  - **The risk was named and then not run.** That pass's own concerns list said
+    the v0.1.87 bump *"may land at any time, which would make new §B4a's 'seven
+    repos on @v0.1.85' stale"* — and stopped there. A risk you can retire with a
+    command is not a caveat to record; recording it instead is how it ships.
+  - **Correcting is the moment of highest confidence and lowest scrutiny.** The
+    fabricated claim landed in **bold, inside a struck-quote frame** — the pack's
+    own notation for "this was checked" — which is precisely what stops the next
+    reader checking it. A correction inherits none of the authority of the
+    verification that motivated the surrounding edit.
+
+  So: state a claim only if you can name the command that produced it, and
+  prefer *"as measured <date>"* to a bare present tense for anything that can
+  move. Recorded on #52, which was reopened for exactly this.
 - **A tree with a running agent is not committable — not even with explicit
   paths.** "Never `git add -A` in a contended clone" (it happened twice) is the
   weak form of this, and the weak form is not enough. An adversarial reviewer's
