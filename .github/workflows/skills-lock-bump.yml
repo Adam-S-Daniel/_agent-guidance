@@ -80,7 +80,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 (2026-06)
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Install yq
         run: |
@@ -96,7 +96,7 @@ jobs:
       - name: Mint installation token for Adam-S-Daniel
         id: token_adam_s_daniel
         continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0 (2026-05-12)
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -105,7 +105,7 @@ jobs:
       - name: Mint installation token for jodidaniel
         id: token_jodidaniel
         continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0 (2026-05-12)
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -139,7 +139,7 @@ jobs:
       # The script refuses a shallow checkout up front and says so, rather than
       # letting either failure be mistaken for drift.
       - name: Check out the skills registry
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 (2026-06)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: Adam-S-Daniel/agentskills
           path: registries/agentskills
@@ -151,7 +151,7 @@ jobs:
       # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
       # because anything in this run bumps cms-platform's own pin.
       - name: Check out the federated source registry
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 (2026-06)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: Adam-S-Daniel/cms-platform
           path: registries/cms-platform
