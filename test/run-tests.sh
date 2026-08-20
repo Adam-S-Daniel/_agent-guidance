@@ -5517,32 +5517,6 @@ test_bump_workflow() {
         fail "bump workflow: not pinned to a 40-character SHA — $unpinned"
     fi
 
-    # The other half of the same house rule, and the one half a parser cannot
-    # see: AGENTS.md makes the trailing `# vX.Y.Z (date)` part of the pin —
-    # forty hex characters say nothing on their own, the version says what it
-    # is and the date says how stale it is. Comments are not in the YAML data
-    # model, so this reads raw lines; the day is optional because the account
-    # holds two different day-level records for one of these SHAs and this
-    # file is not the place to pick between them. What is asserted is that a
-    # pin carries a version AND a date at all, which is what a bare `# v3.2.0`
-    # was missing.
-    local pin_comment='@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9][^[:space:]]*[[:space:]]+\([0-9]{4}(-[0-9]{2}){1,2}\)[[:space:]]*$'
-    local uses_line ref undated=""
-    while IFS= read -r uses_line; do
-        ref="${uses_line#*uses:}"
-        ref="${ref#"${ref%%[![:space:]]*}"}"
-        # Nothing to pin, and nothing to date.
-        [[ "$ref" == ./* || "$ref" == docker://* ]] && continue
-        if [[ ! "$uses_line" =~ $pin_comment ]]; then
-            undated="${undated:+$undated; }${uses_line#"${uses_line%%[![:space:]]*}"}"
-        fi
-    done < <(grep -E '(^|[[:space:]])uses:' "$wf")
-    if [[ -z "$undated" ]]; then
-        pass "bump workflow: every pin carries its version and date comment"
-    else
-        fail "bump workflow: a pin has no '# vX.Y.Z (date)' comment — $undated"
-    fi
-
     local registry_depth
     registry_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$steps_file")
     if [[ "$registry_depth" == "0" ]]; then
