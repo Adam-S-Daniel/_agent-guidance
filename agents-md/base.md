@@ -167,6 +167,75 @@ multi-event trigger — gets no `concurrency` block at all.
   package — never a regex or line scan, which reads clean on text it cannot
   see), so the block cannot come back.
 
+## Two GitHub connectors, and which one you are holding
+
+A session here can see **two** GitHub MCP servers at once. They authenticate as
+the same person, so `get_me` will not tell them apart, and the tool names do
+not say which is which. Establish it before you reach for one:
+
+- **`mcp__github__*` — session-provisioned.** It does NOT appear in
+  `ListConnectors`; the remote environment supplies it and the session's own
+  system prompt points at it. It is the **only** one with GitHub Actions tools
+  (`actions_list`, `actions_get`, `actions_run_trigger`), CI introspection
+  (`get_check_run`, `get_job_logs`), auto-merge control, and review-thread
+  resolution. Its reach is the session's attached repositories; `add_repo`
+  widens it mid-session.
+- **`mcp__b26ebb34-…__*` — the claude.ai org connector `github-mcp`.** It lists
+  in `ListConnectors` as `connected: true`. Its tool set is a **strict subset**
+  of the above: same reads, same PR and issue writes, same `merge_pull_request`,
+  `push_files` and `delete_file` — and no Actions, no job logs, no auto-merge,
+  no review threads. Its reach comes from a GitHub App installation allowlist
+  that is INDEPENDENT of the session's attached repos.
+
+Three consequences, and the first is why this section sits where it does:
+
+- **Everything that verifies CI is `mcp__github__`-only.** Dispatching a run,
+  reading a rollup, pulling a failed job's log — the org connector can do none
+  of it. A session holding only `github-mcp` cannot follow the rule below at
+  all: it can merge a pull request but it cannot check one.
+- **Fewer tools is not less dangerous.** Both connectors merge, push and
+  delete. The subset one is the connector whose reach you cannot infer from the
+  session's repo list, so a write through it can land somewhere the session was
+  never scoped to. Measured 2026-08-19: `github-mcp` 404s on the private
+  `repo-settings` even though the account can push there, while both read a
+  public non-attached repo fine.
+- **A 404 means "not visible to THIS connector"** — never that a repo or file
+  does not exist. Re-check on the other one before concluding anything; the
+  next section is how to tell the two apart.
+
+Prefer `mcp__github__` for everything. Reach for `github-mcp` only when the
+other genuinely cannot see a repo, and say so out loud when you do. When you
+report a verification, name the connector it came from.
+
+## A GitHub 404 means "not authorized", not "not there"
+
+GitHub answers **404 rather than 403** when a caller is not authorized to know a
+private repo exists — it will not confirm the repo either way. So a 404 from any
+GitHub API or MCP call is ambiguous by design: either the thing is gone, or the
+credential simply lacks that repo. The body says "Not Found" in both cases,
+which is why the wrong reading — telling someone their PR was deleted — is the
+easy one to reach for.
+
+- **Probe the repo, not the object.** If `GET /repos/<owner>/<repo>/pulls` 404s
+  as well, the whole repo is invisible to that credential: a scope gap, not a
+  missing PR. If the repo answers and only the object 404s, it is genuinely
+  gone.
+- **Try the other connector before concluding anything.** The two servers above
+  do not share an installation, so one can be blind to a repo the other reads
+  fine. (Real incident, 2026-08-19: a mid-session MCP reconnect brought up a
+  second GitHub server whose credential could not see a private repo. Every call
+  against it 404ed — including on a PR the *other* connector had read
+  successfully minutes earlier — and the repo was neither deleted nor unshared.
+  `add_repo` reported it already attached, which is about session scope and does
+  not widen a connector's own installation.)
+- **Git is a separate credential path** and often still works when the API
+  token does not. `git ls-remote origin '<ref>'` answers "does this branch
+  exist"; `git merge-base --is-ancestor <sha> origin/main` answers "was it
+  merged". Neither touches the API, so both stay available to report real state
+  while a connector is blind.
+- Never report a repo, PR, or branch as gone on a 404 alone. Say which
+  credential could not see it, and what you checked with.
+
 ## "The watch finished" is not "CI passed"
 
 Never read CI pass/fail off a watch command's exit code, or off the fact that it
@@ -194,35 +263,6 @@ e2e and lint were FAILURE while the session reported CI green and moved on.)
 - Treat "watch done" as "now verify", never as "passed". Don't launch a watch
   and go passive without a definite verify-the-rollup step on resume.
 
-## A GitHub 404 means "not authorized", not "not there"
-
-GitHub answers **404 rather than 403** when a caller is not authorized to know a
-private repo exists — it will not confirm the repo either way. So a 404 from any
-GitHub API or MCP call is ambiguous by design: either the thing is gone, or the
-credential simply lacks that repo. The body says "Not Found" in both cases,
-which is why the wrong reading — telling someone their PR was deleted — is the
-easy one to reach for.
-
-- **Probe the repo, not the object.** If `GET /repos/<owner>/<repo>/pulls` 404s
-  as well, the whole repo is invisible to that credential: a scope gap, not a
-  missing PR. If the repo answers and only the object 404s, it is genuinely
-  gone.
-- **A session can hold more than one GitHub connector, and they do not share an
-  installation.** When one 404s a private repo, try the other before concluding
-  anything. (Real incident, 2026-08-19: a mid-session MCP reconnect brought up a
-  second GitHub server whose credential could not see a private repo. Every call
-  against it 404ed — including on a PR the *other* connector had read
-  successfully minutes earlier — and the repo was neither deleted nor unshared.
-  `add_repo` reported it already attached, which is about session scope and does
-  not widen a connector's own installation.)
-- **Git is a separate credential path** and often still works when the API
-  token does not. `git ls-remote origin '<ref>'` answers "does this branch
-  exist"; `git merge-base --is-ancestor <sha> origin/main` answers "was it
-  merged". Neither touches the API, so both stay available to report real state
-  while a connector is blind.
-- Never report a repo, PR, or branch as gone on a 404 alone. Say which
-  credential could not see it, and what you checked with.
-
 ## Dependency updates
 
 Dependabot runs with a **minimum package age** (`cooldown`) so an unattended
@@ -242,6 +282,65 @@ is the case with no automation watching it: check the publish date
 (`npm view <pkg> time --json`), take the newest release that has already cleared
 the 7 days rather than the freshest one, and pin it exact (no caret) so `npm ci`
 cannot drift onto a version that has had no cooling-off at all.
+
+## A name you choose becomes data a scanner reads
+
+gitleaks' `generic-api-key` rule fires on a **keyword** next to a
+high-entropy value. The keyword list is short and ordinary:
+
+```
+access  auth  api  credential  creds  key  passwd  password  secret  token
+```
+
+Nothing warns you that those words are reserved, because they are not — they
+are only reserved *in the position a scanner looks at*. Name a skill, a config
+key, a job output, an artifact or a fixture with one of them, and every
+generated file that serialises `name: value` alongside a hash, id or digest
+starts looking like a leak.
+
+That is not hypothetical. A skill named **`cms-platform-secrets`** put the line
+`"cms-platform/cms-platform-secrets": "<64-hex>"` into `skills.lock`, which is
+generated, committed, and scanned. Both consumer sites went red on every push
+to `main` — adamdaniel.ai for eight consecutive pushes, each one a blocked
+editorial publish. An audit of all 34 skill names across both registries found
+exactly one hit: that name. One word, one outage.
+
+The shape that makes it hard to catch:
+
+- **The repo that chooses the name is not the repo that breaks.** cms-platform
+  named the skill; the two sites that install its bundle are what went red.
+  cms-platform's own lock lists only `adam/*` skills, so it stayed green and
+  the author had no signal at all.
+- **A pull request cannot see it.** The PR lane scans `base..head`; the push,
+  schedule and dispatch lanes scan full history. A finding that lives in an
+  older commit is invisible to every PR and fires on every push.
+- **History is immutable, so the name outlives the rename.** Fixing the
+  generator or renaming the skill fixes the working tree and nothing else. The
+  old line stays in every clone until history is rewritten.
+
+So:
+
+- **Check a name against that list before you commit to it**, whenever the name
+  will land in a generated or serialised artifact. It costs one grep. Prefer a
+  name that says what the thing is for over one that names the sensitive noun —
+  `consumer-repo-provisioning` carries the same meaning as
+  `cms-platform-secrets` and trips nothing.
+- **Fix it at the source, not with an allowlist.** An allowlist entry is
+  per-repo; a `.gitleaksignore` fingerprint is `<commit>:<file>:<rule>:<line>`
+  and commit shas are repo-unique, so it cannot be propagated *at all* — copied
+  to another repo it names a commit that does not exist there and silently
+  suppresses nothing while looking like coverage. One rename immunises every
+  consumer at once; N exclusions immunise N repos until the next one adopts.
+- **Do not lean on a scanner's internals.** Labelling a digest `sha256:<hex>`
+  currently dodges the rule because `:` falls outside its capture class — a
+  welcome side effect, and a bad thing to depend on. Justify such a label as
+  self-documentation (it says which algorithm produced the digest); if the
+  upstream regex ever widens, every lock in the fleet goes red at once.
+- **Suppress by value, never by path.** A `paths` entry does not filter
+  findings, it skips the file before any rule runs, so a real credential pasted
+  into it is never reported (cms-platform#260 — 29KB of a public repo left
+  unscanned that way, suppressing nothing that the value regexes did not
+  already cover).
 
 ## Pinning GitHub Actions
 
@@ -338,14 +437,16 @@ ref for review, not the setting, to catch.
   bundles that lock names directly into those sessions, verified against a
   pinned commit and per-skill digests. Such a session opens with a `skills:`
   verdict naming what loaded, or why nothing did — read it instead of guessing.
-- **That adoption is opt-in and per-repo; most repos have not adopted.**
-  Delivery is allowlisted in `_agent-guidance`'s `repos.yml` *and* requires the
-  repo to have committed a `skills.lock` of its own first — the fleet sync
-  never writes one, because the lock is each repo's own declaration of which
-  bundles it installs (some federate several registries). So in an unfamiliar
-  repo, look for `skills.lock` rather than assuming either way. Bundles cost
-  always-on context in every session that carries them, which is why this is a
-  deliberate per-repo decision and not a fleet default.
+- **Adoption is opt-in and double-keyed, and no longer rare.** Delivery needs
+  an allowlist entry in `_agent-guidance`'s `repos.yml` AND a `skills.lock` the
+  repo committed itself — the fleet sync never writes one, because the lock is
+  where a repo declares which bundles it installs (some federate several
+  registries). A repo holds both keys, or is mid-adoption holding one, or is
+  deliberately out for a reason — a propagation experiment the bundle would
+  contaminate, a dormant repo whose sessions never happen. Which of the three
+  fits an unfamiliar repo is not guessable: look for `skills.lock`. Bundles
+  cost always-on context in every session that carries them, which is why this
+  stays a deliberate per-repo decision and not a fleet default.
 - New reusable skills graduate **into** the registry (sensitive ones into
   `agentskills-private`) rather than living on in a consumer repo. A long skill
   splits across files rather than growing into one wall of text.

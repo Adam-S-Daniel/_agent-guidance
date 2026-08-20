@@ -1,0 +1,1485 @@
+#!/usr/bin/env bash
+set -euo pipefail
+#
+# bump-consumer-locks.sh — re-pin every consumer's skills.lock onto the
+# registry's current commit, one pull request per repo.
+#
+# Discovers repos dynamically via `gh repo list`, exactly as sync.sh does, and
+# then makes TWO passes over what it found.
+#
+# PASS 1 — SWEEP. Merge the bump pull requests a PREVIOUS run left open, where
+# every safety condition in sweep_bump_prs() holds. This is what makes these
+# PRs land without anyone clicking merge, and it runs FIRST for a reason that
+# is easy to lose: a PR merged seconds after it was opened is merged before
+# any check has started, so the day between two nightly runs IS the window a
+# consumer's CI gets. Native auto-merge would be the obvious mechanism and
+# cannot arm on most of this fleet (see the attempt after `gh pr create`, and
+# docs/decisions/0006).
+#
+# PASS 2 — PROPOSE. For each repo the script:
+#   1. Fetches skills.lock from the default branch (absent → nothing to do)
+#   2. Reads which registries that lock names — the primary and every
+#      federated source — and skips a lock that never names the registry
+#      this run is bumping
+#   3. Asks the GENERATOR whether a re-pin is needed at all — TWO separate
+#      questions, either of which is sufficient:
+#        a. `--check-current`: does the bundle content at the PRIMARY's
+#           pinned ref still match that registry's tree?
+#        b. `--check-format`: are the digests this lock STORES in the
+#           canonical `sha256:<hex>` shape? (a) cannot answer this — it
+#           re-digests both trees and never reads the stored values — which
+#           is how eight consumer locks of bare hex stayed unrepaired while
+#           this script reported "no re-pin needed" at them nightly.
+#      Unchanged AND well-formed → no PR, no push
+#   4. Otherwise re-pins with `--repin` inside a clone of the consumer, and
+#      opens (or leaves alone) one PR carrying that single file, whose body
+#      names WHICH of the two questions forced it
+#
+# WHY THIS LIVES HERE AND NOT IN THE REGISTRY. ADR 0001 said re-pinning
+# "belongs in agentskills (it owns the generator and the digests)". Half of it
+# does, and landed there as `generate_skills_lock.py --repin` (agentskills
+# #103), which this script calls, does not reimplement, and probes for up
+# front rather than assuming. The FLEET half cannot: agentskills' workflows
+# hold only `secrets.GITHUB_TOKEN`, scoped to agentskills, so a bumper there
+# could not push a branch to a consumer or open a PR on one. This repo already
+# holds the agents-md-sync App credentials that mint a per-owner token across
+# both owners. See docs/decisions/0005.
+#
+# WHY IT IS A SEPARATE SCRIPT FROM sync.sh. ADR 0001 made "_agent-guidance has
+# no code path that writes skills.lock" a structural property, and sync.sh
+# enforces it by refusing to commit at all if the lock is ever staged. That
+# property is not weakened by this file: the lock a consumer gets here is
+# `--repin`'s output, which INHERITS the consumer's own registry, bundles and
+# whole `sources` array and re-resolves only `ref`. What ADR 0001 recorded was
+# that "any canonical lock pushed fleet-wide would flatten the federated one";
+# a writer that cannot express the declaration cannot flatten it. sync.sh's
+# guard stays exactly as it is — do not add a lock writer to it.
+#
+# Requirements: gh (GitHub CLI, authenticated), yq, git, python3
+# Usage:        ./scripts/bump-consumer-locks.sh [--dry-run]
+#
+# Environment:
+#   SYNC_OWNERS             — space-separated owners to scan; takes precedence
+#                             over GITHUB_REPOSITORY_OWNER and the git-remote
+#                             fallback (e.g. "Adam-S-Daniel jodidaniel")
+#   GITHUB_REPOSITORY_OWNER — org/user to scan (auto-set in GitHub Actions)
+#   BUMP_REGISTRY           — OWNER/REPO of the registry being bumped
+#                             (default: repos.yml skills_bootstrap.registry)
+#   BUMP_CHECKOUTS          — where each registry a lock may name is checked
+#                             out on THIS machine, as space- or newline-
+#                             separated OWNER/REPO=PATH entries. Required: a
+#                             guessed path is how sync-skills once enumerated
+#                             nothing (see AGENTS.md), so nothing here encodes
+#                             a repo location as a constant.
+#   BUMP_GENERATOR          — path to generate_skills_lock.py (default: the
+#                             copy inside the BUMP_REGISTRY checkout, which is
+#                             the repo that owns it)
+#   BUMP_BRANCH             — branch the PR is opened from
+#                             (default: skills-lock-bump/update)
+#   BUMP_PR_AUTHOR          — the login that opens this bumper's pull requests,
+#                             and the only author the sweep will merge
+#                             (default: agents-md-sync[bot], the App this
+#                             repo's workflows authenticate as). Run by hand
+#                             under a personal token, PRs are authored by that
+#                             human instead, so the sweep merges nothing until
+#                             this is set — which is the safe direction.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOCK_REL_PATH="skills.lock"
+# The canonical STORED shape of a lock digest, for THIS SCRIPT'S OWN prose —
+# the line it logs when the shape gate fires, and the sentence in the PR body
+# that restates the rule. This script never validates a digest itself; it asks
+# the generator (--check-format) and quotes the answer. Named once so those two
+# places cannot drift apart, and so the test that reads them has one string.
+#
+# It is NOT a claim that every mention of the shape in a bump PR is spelled
+# this way, and an earlier version of this comment said so wrongly. The body
+# also QUOTES --check-format's verdict verbatim, and the generator writes its
+# own wording there — today `sha256:<64 lowercase hex>`, the same shape spelled
+# more precisely. So both spellings appear in one body, a few lines apart. That
+# is correct and must stay: a quotation edited to match the local prose around
+# it stops being evidence, which is the whole reason the verdict is quoted
+# rather than summarised.
+LOCK_DIGEST_SHAPE='sha256:<64 hex>'
+BRANCH_NAME="${BUMP_BRANCH:-skills-lock-bump/update}"
+PR_AUTHOR="${BUMP_PR_AUTHOR:-agents-md-sync[bot]}"
+DRY_RUN=false
+WORK_DIR=$(mktemp -d)
+
+# Resolve the owner(s) to scan: SYNC_OWNERS (space-separated) takes
+# precedence, then GITHUB_REPOSITORY_OWNER, then fall back to git remote.
+if [[ -n "${SYNC_OWNERS:-}" ]]; then
+    read -ra OWNERS <<< "$SYNC_OWNERS"
+elif [[ -n "${GITHUB_REPOSITORY_OWNER:-}" ]]; then
+    OWNERS=("$GITHUB_REPOSITORY_OWNER")
+else
+    OWNERS=("$(git remote get-url origin | sed -E 's#.*/([^/]+)/[^/]+\.git$#\1#; s#.*/([^/]+)/[^/]+$#\1#')")
+fi
+
+REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
+
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Parsed as a closed set rather than sniffed. `[[ $1 == --dry-run ]]` alone
+# fails OPEN: `--dry-runn`, `-n`, or `--dry-run` given anywhere but first all
+# left DRY_RUN=false and went on to clone, commit, push and open pull
+# requests. This run holds installation tokens with write scope across two
+# owners, so the flag that means "write nothing" has to fail CLOSED — an
+# argument this script does not recognise stops it. After the trap, so a
+# usage exit still removes the work directory.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true ;;
+        -h|--help)
+            echo "Usage: $(basename "${BASH_SOURCE[0]}") [--dry-run]"
+            echo "Environment: see the header of this script."
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown argument '$1'." >&2
+            echo "Usage: $(basename "${BASH_SOURCE[0]}") [--dry-run]" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+log()  { echo "  $*"; }
+fail() { echo "  ERROR: $*"; }
+
+FAIL_COUNT=0
+OK_COUNT=0
+SKIP_COUNT=0
+# Merges are counted apart from OK_COUNT/SKIP_COUNT rather than folded into
+# them: those two answer "how many consumers got a proposal, and how many did
+# not", one line per repo, and the same repo can be swept AND proposed in one
+# run. Folding would make the summary's numbers stop adding up to the fleet.
+MERGE_COUNT=0
+
+# lock_plan <file> — the registries a lock names, one per line:
+#
+#   registry <primary>
+#   ref <the commit it currently pins>
+#   source <a federated source's registry>   (zero or more)
+#
+# python3, never a regex: the lock is JSON, this repo forbids hand-rolled
+# parsers for structured formats, and a regex that reads `"registry"` out of a
+# federated lock cannot tell the primary from a source — which is the one
+# distinction every decision below turns on.
+lock_plan() {
+    python3 -c '
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        lock = json.load(handle)
+except Exception as exc:
+    sys.exit("not readable JSON (%s)" % exc.__class__.__name__)
+
+if not isinstance(lock, dict):
+    sys.exit("top level is not an object")
+
+registry = lock.get("registry")
+if not isinstance(registry, str) or not registry.strip():
+    sys.exit("registry is missing or empty")
+ref = lock.get("ref")
+if not isinstance(ref, str) or not ref.strip():
+    sys.exit("ref is missing or empty")
+print("registry %s" % registry)
+print("ref %s" % ref)
+
+sources = lock.get("sources")
+if sources is None:
+    sources = []
+# A malformed `sources` is refused rather than read as "no sources". The
+# generator refuses it on the same grounds — treating it as absent would let
+# this script report a federated lock as ordinary and re-pin it as one.
+if not isinstance(sources, list):
+    sys.exit("sources is present but is not a list")
+for index, source in enumerate(sources):
+    if not isinstance(source, dict):
+        sys.exit("sources[%d] is not an object" % index)
+    source_registry = source.get("registry")
+    if not isinstance(source_registry, str) or not source_registry.strip():
+        sys.exit("sources[%d].registry is missing or empty" % index)
+    print("source %s" % source_registry)
+' "$1"
+}
+
+# lock_summary <file> <registry> — "registry@shortref" for one entry of a lock,
+# used to describe in the PR body what moved and what did not.
+lock_summary() {
+    python3 -c '
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lock = json.load(handle)
+wanted = sys.argv[2]
+entries = [lock] + [s for s in (lock.get("sources") or []) if isinstance(s, dict)]
+for entry in entries:
+    if entry.get("registry") == wanted:
+        print("%s@%s" % (entry.get("registry"), str(entry.get("ref", "?"))[:7]))
+        break
+' "$1" "$2"
+}
+
+# primary_only <lock> <destination> — the same lock with its federated
+# `sources` array removed, i.e. a lock that asks only about its primary.
+# Used to scope the currency question; see the gate in the per-repo loop for
+# why the combined question is the wrong one to decide on.
+primary_only() {
+    python3 -c '
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lock = json.load(handle)
+lock.pop("sources", None)
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(lock, indent=2, ensure_ascii=False) + "\n")
+' "$1" "$2"
+}
+
+# skills_shrink_reason <lock before> <lock after> — prints why a re-pin must
+# not be proposed, or nothing at all.
+#
+# Two shapes are refused: a re-pinned lock that declares no skills, and one
+# that lost every skill of a bundle it still declares. Both mean a bundle
+# directory stopped existing at the registry's new HEAD — a rename, a deleted
+# plugin, a layout change — which is a registry-side decision, not a lock
+# chore, and it hits every consumer in the same run.
+skills_shrink_reason() {
+    python3 -c '
+import json, sys
+
+
+def skills(path):
+    with open(path, encoding="utf-8") as handle:
+        found = json.load(handle).get("skills")
+    return found if isinstance(found, dict) else {}
+
+
+def per_bundle(mapping):
+    counts = {}
+    for key in mapping:
+        bundle = key.split("/", 1)[0]
+        counts[bundle] = counts.get(bundle, 0) + 1
+    return counts
+
+
+before, after = skills(sys.argv[1]), skills(sys.argv[2])
+if not after:
+    print("the re-pinned lock declares no skills at all (it had %d)" % len(before))
+    sys.exit(0)
+counts_after = per_bundle(after)
+gone = sorted(b for b, n in per_bundle(before).items() if n and not counts_after.get(b))
+if gone:
+    print("bundle(s) %s lost every skill they had" % ", ".join(gone))
+' "$1" "$2"
+}
+
+# pr_merge_verdict <pr json> <branch> <author> <lock path> — one line, either
+#
+#   READY <what the checks said>
+#   SKIP  <why this pull request must not be merged>
+#
+# and a non-zero exit with a message when the JSON cannot be judged at all.
+# Every reason to refuse a merge lives HERE, in one place, so a reviewer can
+# read the whole gate at once rather than reconstructing it from a chain of
+# early `continue`s. python3 rather than a jq filter for the same reason
+# lock_plan() gives: this is structured data, and the branches below turn on
+# distinctions (a null conclusion vs a missing key) that a one-line filter
+# hides.
+#
+# The gate exists because merging is the one thing here nobody reviews. The
+# three refusals that carry it:
+#   * the PR must be OURS — head branch AND author, never one of the two. The
+#     branch name is a convention anybody can push to; the author is the only
+#     thing a stranger cannot forge.
+#   * the diff must be the lock ALONE. A human who pushed another file onto
+#     this branch owns it now, and merging it would land their work unread.
+#   * no check may be un-green or unfinished — while an ABSENCE of checks is
+#     not a failure, because most consumers in this fleet have no CI at all.
+#     REQUIRED is not part of that test, and deliberately so: nothing is
+#     required anywhere in this fleet (`required_status_checks: []`), so a gate
+#     that only weighed required checks would stand open everywhere. The cost
+#     is that ANY conclusion on the bump branch's head can stall the sweep,
+#     including one a human put there by hand — `.github/workflows/ci.yml` in
+#     this repo carries a `workflow_dispatch` and documents that residual above
+#     its trigger. A stall that names the offending check in the log, and
+#     clears on a green re-run, is the side of the trade this gate is on.
+pr_merge_verdict() {
+    python3 -c '
+import json, sys
+
+path, branch, author, lock_path = sys.argv[1:5]
+
+try:
+    with open(path, encoding="utf-8") as handle:
+        pr = json.load(handle)
+except Exception as exc:
+    sys.exit("not readable JSON (%s)" % exc.__class__.__name__)
+if not isinstance(pr, dict):
+    sys.exit("top level is not an object")
+
+
+def verdict(word, detail):
+    print("%s %s" % (word, detail))
+    raise SystemExit(0)
+
+
+def normalize(login):
+    # gh has named a GitHub App both as "name[bot]" and as "app/name" across
+    # versions and endpoints. Normalizing BOTH sides means a gh upgrade cannot
+    # quietly turn every PR into "not ours" — the sweep would simply stop
+    # merging, and nothing about a green run would say so. A genuinely
+    # different author still fails the comparison, which is what this is for.
+    login = (login or "").strip().lower()
+    if login.startswith("app/"):
+        login = login[4:]
+    if login.endswith("[bot]"):
+        login = login[: -len("[bot]")]
+    return login
+
+
+head = pr.get("headRefName")
+if head != branch:
+    verdict("SKIP", "its head branch is %r, not the bump branch %r" % (head, branch))
+
+pr_author = (pr.get("author") or {}).get("login")
+# An empty expected author refuses everything rather than matching everything:
+# BUMP_PR_AUTHOR="" must not become "merge anyone".
+if not normalize(author) or normalize(pr_author) != normalize(author):
+    verdict("SKIP", "it was opened by %r, and this bumper opens pull requests as %r"
+                    % (pr_author, author))
+
+if pr.get("isDraft"):
+    verdict("SKIP", "it is a draft")
+
+if (pr.get("reviewDecision") or "") == "CHANGES_REQUESTED":
+    verdict("SKIP", "a reviewer has requested changes")
+
+mergeable = pr.get("mergeable")
+if mergeable != "MERGEABLE":
+    # CONFLICTING is a real merge conflict; UNKNOWN is GitHub still computing
+    # the answer, which is not a yes.
+    verdict("SKIP", "GitHub reports mergeable=%s" % mergeable)
+
+state = str(pr.get("mergeStateStatus") or "")
+if state in ("DIRTY", "BLOCKED", "DRAFT", "UNKNOWN"):
+    # DIRTY is a conflict the mergeable field has not caught up with. BLOCKED
+    # is the repository itself holding this PR back — a required review, or a
+    # required check this sweep cannot satisfy — and is a SKIP, not a failure,
+    # because attempting the merge would be refused every night and paint the
+    # scheduled run permanently red for a repo behaving exactly as configured.
+    verdict("SKIP", "mergeStateStatus=%s" % state)
+
+files = pr.get("files")
+if not isinstance(files, list) or not files:
+    verdict("SKIP", "GitHub reported no files for this pull request")
+paths = sorted({str(entry.get("path")) for entry in files if isinstance(entry, dict)})
+if paths != [lock_path]:
+    verdict("SKIP", "its diff is not %s alone — it touches %s"
+                    % (lock_path, ", ".join(paths)))
+
+rollup = pr.get("statusCheckRollup")
+if rollup is None:
+    rollup = []
+if not isinstance(rollup, list):
+    sys.exit("statusCheckRollup is present but is not a list")
+
+GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+UNFINISHED = {"", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED"}
+pending, failing = [], []
+for entry in rollup:
+    if not isinstance(entry, dict):
+        sys.exit("statusCheckRollup holds an entry that is not an object")
+    name = entry.get("name") or entry.get("context") or "?"
+    # A check RUN carries .conclusion, null until it concludes; a legacy commit
+    # STATUS carries .state and has no conclusion key at all. Read only one and
+    # failures of the other kind come back clean — this account has an incident
+    # about exactly that (AGENTS.md, "The watch finished is not CI passed").
+    result = str(entry.get("conclusion") or entry.get("state") or "").upper()
+    if result in UNFINISHED:
+        pending.append(str(name))
+    elif result not in GREEN:
+        failing.append("%s: %s" % (name, result))
+
+if failing:
+    verdict("SKIP", "%d check(s) are not green (%s)" % (len(failing), "; ".join(failing)))
+if pending:
+    verdict("SKIP", "%d check(s) have not concluded (%s)" % (len(pending), ", ".join(pending)))
+if not rollup:
+    # Not a failure, and the commonest case in this fleet: said in its own
+    # words so "no checks ran" and "the checks passed" are different lines in
+    # the log rather than one indistinguishable OK.
+    verdict("READY", "no checks ran on it — this repo reports none")
+verdict("READY", "all %d check(s) concluded green" % len(rollup))
+' "$1" "$2" "$3" "$4"
+}
+
+# sweep_bump_prs — merge the bump pull requests a PREVIOUS run left open.
+#
+# WHY THIS RUNS BEFORE THE PROPOSE PASS AND NOT AFTER IT. Merging a PR seconds
+# after opening it merges it before any check has started, so the sweep would
+# be reading an empty rollup and calling it "no CI here" on repos that have
+# CI. Sweeping first instead makes the gap between two nightly runs the window
+# a consumer's CI gets — a full day — with no waiting, no polling and no state
+# kept between runs: the open PR IS the state.
+#
+# It runs per owner, inside that owner's iteration, because the credential
+# that can read and merge these PRs is that owner's own installation token.
+# One owner's proposals therefore land before the next owner's sweep, which
+# weakens nothing: the reason for the ordering is per PR — give its checks a
+# day — and no PR this run opens is a candidate for this run's sweep.
+#
+# One repo's failure is counted and the loop continues, exactly as the propose
+# pass does. Nothing here aborts the fleet.
+sweep_bump_prs() {
+    local repo_name numbers_raw number pr_json verdict_line verdict detail merge_out
+    local head_oid
+    local -a match_args
+    local -a numbers
+
+    echo "Sweeping bump pull requests left open by a previous run"
+
+    for repo_name in "${REPOS[@]}"; do
+        # The same carve-out the propose pass makes: this bumper opens nothing
+        # on the registry, so anything sitting on that branch name there is
+        # not ours to merge.
+        if [[ "$repo_name" == "$BUMP_REGISTRY" ]]; then
+            log "$repo_name — the registry itself; nothing here opens a pull request on it, so nothing is swept."
+            continue
+        fi
+
+        # Captured with its exit status, and only parsed on success: on an HTTP
+        # error gh prints the raw error body to stdout and the --jq filter
+        # never runs, so `|| true` here would read that JSON as a list of PR
+        # numbers. Silence is not an option either — "could not ask" and "no
+        # open PRs" are the same empty string, and only one of them is fine.
+        if ! numbers_raw=$(gh pr list --repo "$repo_name" \
+            --head "$BRANCH_NAME" --state open --json number \
+            --jq '.[].number' 2>&1); then
+            fail "$repo_name: could not list bump pull requests — $(head -1 <<< "$numbers_raw")"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        mapfile -t numbers < <(sed '/^$/d' <<< "$numbers_raw")
+        # No line at all for the commonest case. Most repos in the fleet have
+        # no bump PR on any given night, and twenty "nothing to merge" lines
+        # would bury the ones that say something.
+        [[ ${#numbers[@]} -eq 0 ]] && continue
+
+        for number in "${numbers[@]}"; do
+            pr_json="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')-pr-$number.json"
+            if ! gh pr view "$number" --repo "$repo_name" --json \
+                number,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
+                > "$pr_json" 2>/dev/null; then
+                fail "$repo_name#$number: could not read the pull request."
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+
+            if ! verdict_line=$(pr_merge_verdict "$pr_json" "$BRANCH_NAME" \
+                "$PR_AUTHOR" "$LOCK_REL_PATH" 2>&1); then
+                # "Cannot judge it" is not permission to merge it.
+                fail "$repo_name#$number: could not judge whether this pull request is safe to merge — $(head -1 <<< "$verdict_line")"
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+            verdict="${verdict_line%% *}"
+            detail="${verdict_line#* }"
+
+            if [[ "$verdict" != "READY" ]]; then
+                log "$repo_name#$number: not merged — $detail"
+                continue
+            fi
+
+            if $DRY_RUN; then
+                log "[DRY RUN] Would merge $repo_name#$number with a merge commit — $detail"
+                continue
+            fi
+
+            # --merge, never --squash or --rebase. Both are disabled on every
+            # fleet repo, so --squash fails outright rather than falling back;
+            # and squash is actively unsafe for a fleet that pins commits by
+            # sha, because it strands the commit a lock names on no branch.
+            # See AGENTS.md, "Git practices".
+            # Everything above judged a SNAPSHOT. Pinning the merge to the
+            # head that snapshot described closes the gap between the two: if
+            # anything reached the branch in between, GitHub refuses rather
+            # than landing a diff nothing checked. An unreadable oid is
+            # "cannot judge it" all over again, and is not permission to merge.
+            head_oid=$(python3 -c '
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    oid = json.load(handle).get("headRefOid")
+sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", oid) else "")
+' "$pr_json" 2>/dev/null) || head_oid=""
+            match_args=()
+            if [[ -n "$MERGE_MATCH_FLAG" ]]; then
+                if [[ -z "$head_oid" ]]; then
+                    fail "$repo_name#$number: its head commit did not read back as a sha, so the merge could not be pinned to the commit that was just checked."
+                    ((FAIL_COUNT++)) || true
+                    continue
+                fi
+                match_args=("$MERGE_MATCH_FLAG" "$head_oid")
+            fi
+
+            if merge_out=$(gh pr merge "$number" --repo "$repo_name" --merge \
+                ${match_args[@]+"${match_args[@]}"} 2>&1); then
+                log "$repo_name#$number: MERGED with a merge commit — $detail"
+                ((MERGE_COUNT++)) || true
+            else
+                fail "$repo_name#$number: merge was refused — $(head -1 <<< "$merge_out")"
+                ((FAIL_COUNT++)) || true
+            fi
+        done
+    done
+
+    echo ""
+}
+
+# ── Load central repos.yml (exclusions + the registry being bumped) ────────
+
+EXCLUDED_REPOS=()
+if [[ -f "$REPOS_YML" ]]; then
+    while IFS= read -r r; do
+        [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
+    done < <(yq -r '.exclude // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+fi
+
+# The registry this run bumps. Defaulted from the same key sync.sh reads for
+# the pinned hook, so the fleet has ONE answer to "which registry is ours"
+# rather than a second copy that can disagree with it.
+BUMP_REGISTRY="${BUMP_REGISTRY:-}"
+if [[ -z "$BUMP_REGISTRY" && -f "$REPOS_YML" ]]; then
+    BUMP_REGISTRY=$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML" 2>/dev/null || echo "")
+fi
+if [[ -z "$BUMP_REGISTRY" ]]; then
+    echo "ERROR: no registry to bump — set BUMP_REGISTRY, or give repos.yml a skills_bootstrap.registry." >&2
+    exit 2
+fi
+
+# ── Locate each registry's checkout ────────────────────────────────────────
+#
+# Digests are read from git, so every registry a lock names needs a local
+# clone: the primary for `--repo`, each federated source for `--source-repo`.
+# Missing one is not a reason to re-pin half a lock (see the per-repo loop) —
+# it is a reason to leave that consumer alone this run.
+
+declare -A CHECKOUT_DIR=()
+for entry in ${BUMP_CHECKOUTS:-}; do
+    [[ "$entry" == *=* ]] || {
+        echo "ERROR: BUMP_CHECKOUTS entry '$entry' is not OWNER/REPO=PATH." >&2
+        exit 2
+    }
+    checkout_path="${entry#*=}"
+    # Absolutised here, once. The per-repo loop cds into a clone of the
+    # consumer before it passes this to --repo, so a relative path would
+    # resolve against that clone and the generator would report a checkout
+    # that is "not that registry" — a wrong-repo hunt with a working-directory
+    # cause.
+    [[ "$checkout_path" == /* ]] || checkout_path="$PWD/$checkout_path"
+    CHECKOUT_DIR["${entry%%=*}"]="$checkout_path"
+done
+
+# checkout_problem <registry> — empty when that registry has a usable
+# full-depth checkout, otherwise the reason it does not. Re-probed per call
+# rather than cached: every caller reads it through a command substitution, so
+# a cache would live in that subshell and die with it, and two cheap local git
+# calls are not worth a helper that lies about being memoized.
+checkout_problem() {
+    local registry="$1" dir problem=""
+    dir="${CHECKOUT_DIR[$registry]:-}"
+    if [[ -z "$dir" ]]; then
+        problem="no checkout configured for $registry (add it to BUMP_CHECKOUTS as '$registry=<path>')"
+    elif [[ ! -d "$dir/.git" ]]; then
+        problem="no git checkout of $registry at $dir"
+    elif [[ "$(git -C "$dir" rev-parse --is-shallow-repository 2>/dev/null || echo unknown)" != "false" ]]; then
+        # Said plainly because the symptom otherwise reads as drift: --repin
+        # probes that --repo contains the commit the lock ALREADY pins, and a
+        # shallow clone does not contain it — so every consumer would fail
+        # with "this checkout is not that registry" and a reader would go
+        # looking for a wrong registry rather than a missing `fetch-depth: 0`.
+        problem="$dir is a SHALLOW clone of $registry — re-pinning needs full history (git fetch --unshallow, or fetch-depth: 0 in CI), because the pin already in a lock is what proves this clone is that registry"
+    fi
+
+    printf '%s' "$problem"
+}
+
+# The registry being bumped has to be usable before anything else runs: with
+# no clone of it there is nothing to bump against, and a run that skipped
+# every repo for that reason would print the same "nothing to do" a genuinely
+# current fleet prints.
+registry_problem=$(checkout_problem "$BUMP_REGISTRY")
+if [[ -n "$registry_problem" ]]; then
+    echo "ERROR: $registry_problem" >&2
+    exit 2
+fi
+
+GENERATOR="${BUMP_GENERATOR:-${CHECKOUT_DIR[$BUMP_REGISTRY]}/scripts/generate_skills_lock.py}"
+if [[ ! -f "$GENERATOR" ]]; then
+    echo "ERROR: no lock generator at $GENERATOR — set BUMP_GENERATOR." >&2
+    exit 2
+fi
+
+# --repin is the one thing this script deliberately cannot reimplement, and by
+# default the generator comes from a checkout of the registry's DEFAULT
+# BRANCH — so a run can meet a generator that predates the flag (a rollback, a
+# checkout pinned elsewhere, an ordering where the bumper landed first).
+# Probed once here because the shortfall otherwise surfaces only when some
+# consumer is genuinely stale, as one argparse exit 2 per stale repo and a red
+# scheduled run every night: a version skew that reads as a fleet breakage.
+if ! generator_help=$(python3 "$GENERATOR" --help 2>&1) \
+   || ! grep -q -- '--repin' <<< "$generator_help"; then
+    echo "ERROR: $GENERATOR does not support --repin — this script advances a lock with that flag and will not hand-roll one. Point BUMP_GENERATOR at a generator that has it, or update the registry checkout." >&2
+    exit 2
+fi
+
+# ── Is the generator able to answer the SHAPE question? ───────────────────
+# `--check-current` is structurally blind to a lock's stored digest VALUES: it
+# digests the pinned tree and the working tree afresh and compares those, and
+# never reads `skills` at all. That is deliberate on the generator's side —
+# `_label_digests`' docstring says labelling is applied at the DOCUMENT
+# BOUNDARY precisely so every comparison between builder outputs keeps working
+# on bare hex — and it is exactly what leaves this script's anti-churn gate
+# unable to see a malformed lock. Eight consumers (cms-platform, GHA-bench,
+# _agent-guidance itself, agentskills-private, claude-memory-map,
+# fastmail-actions, repo-settings, wsl-automation) stored bare 64-hex where
+# the canonical shape is `sha256:<hex>`, all pinning 94cdcc81; because the
+# `adam` bundle had not moved, `--check-current` answered `OK: ...` at exit 0
+# every night and this script logged "no re-pin needed" and skipped. A healing
+# mechanism reporting success while doing nothing about the defect it exists
+# to fix.
+#
+# Probed, not assumed, for the same reason --repin is above: this script runs
+# against whatever generator checkout it is pointed at, and the flag is newer
+# than the script's other requirements. Unlike --repin it is NOT load-bearing
+# — without it the gate simply asks one question instead of two and behaves
+# exactly as it did before — so a shortfall must never be a hard failure, and
+# must never be silent either. It is announced as a workflow annotation rather
+# than the plain `NOTE:` its sibling probe below uses because this script's
+# real caller is a NIGHTLY SCHEDULED run, where a line on stderr is seen by
+# nobody; an annotation is the one form that survives to the run summary.
+FORMAT_GATE_AVAILABLE=true
+if ! grep -q -- '--check-format' <<< "$generator_help"; then
+    FORMAT_GATE_AVAILABLE=false
+    echo "::warning::$GENERATOR has no --check-format; this run can only ask whether each bundle has MOVED, not whether a lock's stored digests are the canonical sha256:<hex>. A lock malformed that way will keep reporting 'no re-pin needed' until the generator carries the flag." >&2
+fi
+
+# `gh pr merge --match-head-commit <sha>` refuses the merge if the head moved
+# since we read it, which is what makes the sweep's verdict and its merge one
+# decision instead of two. Probed rather than assumed: unlike --repin the flag
+# is not load-bearing — without it the sweep is merely non-atomic, and a hard
+# exit here would ground the whole fleet over a gh old enough to lack it. So a
+# shortfall degrades and SAYS SO, once, instead of failing or going quiet.
+MERGE_MATCH_FLAG=""
+if gh_merge_help=$(gh pr merge --help 2>&1) \
+   && grep -q -- '--match-head-commit' <<< "$gh_merge_help"; then
+    MERGE_MATCH_FLAG="--match-head-commit"
+else
+    echo "NOTE: this gh has no 'gh pr merge --match-head-commit'; the sweep will merge without the head-match guard, so a push landing on a bump branch between the safety check and the merge would not be caught." >&2
+fi
+
+echo "Bumping consumer locks onto $BUMP_REGISTRY"
+echo "  generator: $GENERATOR"
+echo "  registry checkout: ${CHECKOUT_DIR[$BUMP_REGISTRY]}"
+$DRY_RUN && echo "  DRY RUN — nothing will be written or pushed"
+echo ""
+
+# Where this run came from, named in every PR body it opens. Read from
+# GITHUB_REPOSITORY rather than composed from the owner being scanned: the
+# bumper lives in exactly one repo, and interpolating $ORG (which sync.sh does
+# for its own PR body) sends a jodidaniel consumer's reviewer to
+# github.com/jodidaniel/_agent-guidance, which does not exist.
+if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+    BUMPER_SOURCE="[\`${GITHUB_REPOSITORY}\`](${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY})"
+else
+    BUMPER_SOURCE="\`_agent-guidance\`"
+fi
+
+# Base GH_TOKEN captured before the per-owner loop, so each iteration can
+# restore it when the owner has no per-owner token of its own (owner A's
+# per-owner token must not leak into owner B's iteration).
+BASE_GH_TOKEN="${GH_TOKEN:-}"
+
+# ── Scan each owner ──────────────────────────────────────────────────────
+
+for ORG in "${OWNERS[@]}"; do
+
+# ── Resolve per-owner token ──────────────────────────────────────────────
+# GH_TOKEN_<OWNER>, where <OWNER> is $ORG uppercased with - and . mapped to
+# _ (e.g. Adam-S-Daniel -> GH_TOKEN_ADAM_S_DANIEL). Falls back to the base
+# GH_TOKEN captured above; if neither is set, GH_TOKEN is left unset so gh's
+# ambient auth (locally) or failure (in CI) behaves as it did before.
+per_owner_var="GH_TOKEN_$(echo "$ORG" | tr '[:lower:]-.' '[:upper:]__')"
+per_owner_token="${!per_owner_var:-}"
+if [[ -n "$per_owner_token" ]]; then
+    export GH_TOKEN="$per_owner_token"
+    log "Using per-owner token for $ORG"
+elif [[ -n "$BASE_GH_TOKEN" ]]; then
+    export GH_TOKEN="$BASE_GH_TOKEN"
+else
+    unset GH_TOKEN || true
+fi
+
+# ── Discover repos ─────────────────────────────────────────────────────────
+
+echo "Scanning repos for: $ORG"
+echo ""
+
+# Captured through a command substitution, never process substitution: <(...)
+# swallows the error and the script reports success while doing nothing. The
+# failure branch is explicit because a bare `set -e` death here is the wrong
+# shape too — with SYNC_OWNERS ordered "Adam-S-Daniel jodidaniel", one owner
+# missing its App installation ends the run before the OTHER owner is scanned
+# at all, printing a raw gh error and no summary, while this workflow's own
+# comment and warning promise that owner's repos are merely "skipped this
+# run". Counted per owner instead, so the scheduled run still goes red and
+# names which owner could not be read.
+if ! repo_list_raw=$(
+    gh repo list "$ORG" \
+        --no-archived \
+        --source \
+        --json nameWithOwner \
+        --limit 1000 \
+        --jq '.[].nameWithOwner' 2>&1
+); then
+    fail "$ORG: could not list repos — $(head -1 <<< "$repo_list_raw")"
+    ((FAIL_COUNT++)) || true
+    continue
+fi
+
+# NOTE FOR ANYONE COMPARING THIS WITH sync.sh / drift-report.sh: those two
+# drop $SELF_REPO here (`grep -v "/${SELF_REPO}$"`) and this one deliberately
+# does NOT. They drop it because delivering guidance to itself and reporting
+# drift against itself are both meaningless. Re-pinning is neither: this repo
+# SELF-HOSTS the bootstrap hook and carries a skills.lock of its own (ADR
+# 0004), which goes stale exactly like a consumer's and has no other mechanism
+# watching it. Its PR arrives through the same review path as everyone else's.
+mapfile -t REPOS < <(echo "$repo_list_raw" | sed '/^$/d' | sort)   # drop the blank line an empty owner produces
+
+# ── Filter repos excluded via repos.yml ─────────────────────────────────────
+if [[ ${#EXCLUDED_REPOS[@]} -gt 0 ]]; then
+    FILTERED_REPOS=()
+    for r in "${REPOS[@]}"; do
+        short_name="${r##*/}"
+        excluded=false
+        for ex in "${EXCLUDED_REPOS[@]}"; do
+            [[ "$short_name" == "$ex" ]] && excluded=true && break
+        done
+        if $excluded; then
+            echo "  $r — excluded by repos.yml"
+        else
+            FILTERED_REPOS+=("$r")
+        fi
+    done
+    REPOS=("${FILTERED_REPOS[@]}")
+fi
+
+if [[ ${#REPOS[@]} -eq 0 ]]; then
+    echo "No repos found in $ORG — nothing to bump."
+    continue
+fi
+
+echo "Found ${#REPOS[@]} repo(s):"
+printf '  %s\n' "${REPOS[@]}"
+echo ""
+
+# ── Pass 1: sweep, before anything is proposed ─────────────────────────────
+sweep_bump_prs
+
+# ── Pass 2: propose ────────────────────────────────────────────────────────
+
+echo "Proposing re-pins for consumers whose bundle has moved"
+echo ""
+
+for repo_name in "${REPOS[@]}"; do
+    echo "=== $repo_name ==="
+
+    # The registry itself is never bumped from here. It owns the order of
+    # operations — content commit, then re-pin, then lock commit — and its own
+    # CI already asserts it with --check-current, so a bot PR racing that
+    # would re-pin a lock its author is mid-way through re-pinning by hand.
+    # Same carve-out shape drift-report.sh uses to exempt the registry from
+    # `unmanaged`.
+    if [[ "$repo_name" == "$BUMP_REGISTRY" ]]; then
+        log "the registry itself — it owns its own re-pin; skipping."
+        ((SKIP_COUNT++)) || true
+        continue
+    fi
+
+    # ── Fetch the lock ─────────────────────────────────────────────────
+    # On HTTP errors (404 when the file is absent) gh api prints the raw error
+    # JSON body to stdout — the --jq filter is not applied — so `|| true` alone
+    # would leave garbage here and base64-decode it into a "lock". Discard
+    # output on failure explicitly.
+    if ! encoded=$(gh api "repos/$repo_name/contents/$LOCK_REL_PATH" \
+        --jq '.content' 2>/dev/null); then
+        encoded=""
+    fi
+
+    if [[ -z "$encoded" ]]; then
+        # Not a fault, and by far the commonest outcome: most repos in the
+        # fleet declare no bundles at all. Logged rather than silent so a run
+        # says what it considered.
+        log "no $LOCK_REL_PATH — nothing to re-pin."
+        ((SKIP_COUNT++)) || true
+        continue
+    fi
+
+    lock_file="$WORK_DIR/$(echo "$repo_name" | tr '/' '_').lock"
+    if ! echo "$encoded" | base64 -d > "$lock_file" 2>/dev/null; then
+        fail "$repo_name: could not decode $LOCK_REL_PATH."
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+
+    # ── Which registries does it name? ─────────────────────────────────
+
+    if ! plan=$(lock_plan "$lock_file" 2>&1); then
+        fail "$repo_name: $LOCK_REL_PATH is unusable — $plan"
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+
+    primary_registry=$(echo "$plan" | sed -n 's/^registry //p')
+    old_ref=$(echo "$plan" | sed -n 's/^ref //p')
+    mapfile -t source_registries < <(echo "$plan" | sed -n 's/^source //p')
+
+    # Naming the registry is not enough; it has to be the PRIMARY. Everything
+    # downstream targets the primary — `primary_dir` is its checkout, --repin
+    # advances its `ref`, and `new_ref` is read back from the lock's top-level
+    # `ref` — so a lock that federates this registry under some OTHER primary
+    # would have that other registry's pin advanced (the advance ADR 0005
+    # reserves for a human), while the drift that started it went untouched,
+    # under a title pairing this registry's name with a sha it does not
+    # contain. No lock has that shape today; nothing else rejects it either.
+    if [[ "$primary_registry" != "$BUMP_REGISTRY" ]]; then
+        federates_registry=false
+        for s in ${source_registries[@]+"${source_registries[@]}"}; do
+            [[ "$s" == "$BUMP_REGISTRY" ]] && federates_registry=true
+        done
+        if $federates_registry; then
+            log "$LOCK_REL_PATH federates $BUMP_REGISTRY but pins $primary_registry as its primary — --repin advances only the primary ref, so that federated pin is a human's to advance; skipping."
+        else
+            log "$LOCK_REL_PATH pins $primary_registry and never names $BUMP_REGISTRY — skipping."
+        fi
+        ((SKIP_COUNT++)) || true
+        continue
+    fi
+
+    # ── Locate every checkout this lock needs ──────────────────────────
+    # --repin advances ONLY the primary ref, but it re-derives EVERY digest,
+    # including each federated source's at that source's own unchanged pin. A
+    # missing checkout therefore means the lock cannot be rebuilt at all, and
+    # skipping is the only safe outcome: half-re-pinning a federated lock is
+    # the exact damage ADR 0001 named. (The currency question below is scoped
+    # to the primary and would not need them; the rebuild does.)
+
+    missing_checkout=""
+    for reg in "$primary_registry" ${source_registries[@]+"${source_registries[@]}"}; do
+        problem=$(checkout_problem "$reg")
+        if [[ -n "$problem" ]]; then
+            missing_checkout="$problem"
+            break
+        fi
+    done
+    if [[ -n "$missing_checkout" ]]; then
+        log "WARN: $missing_checkout — skipping $repo_name rather than re-pinning part of its lock."
+        ((SKIP_COUNT++)) || true
+        continue
+    fi
+
+    primary_dir="${CHECKOUT_DIR[$primary_registry]}"
+    source_repo_args=()
+    for reg in ${source_registries[@]+"${source_registries[@]}"}; do
+        source_repo_args+=(--source-repo "$reg=${CHECKOUT_DIR[$reg]}")
+    done
+
+    # ── Is a re-pin NEEDED? ────────────────────────────────────────────
+    # The generator's own primitive, not a home-grown one: --check-current
+    # compares the bundle content at the ref a lock pins against the
+    # registry's working tree. Exit 0 means the ref may be old while the
+    # BUNDLE is unchanged — the lock is doing its job and gets no PR. That
+    # asymmetry is the whole anti-churn design; see docs/decisions/0005.
+    #
+    # THE QUESTION IS SCOPED TO THE PRIMARY, and that is the design rather
+    # than an optimisation. --check-current reads EVERY source a lock names
+    # and emits one FAILED: for the whole run if any of them differs, while
+    # --repin advances ONLY the primary `ref` — nothing in this system ever
+    # advances a federated pin. Deciding on the combined verdict therefore
+    # keys the gate on a fact the re-pin cannot change: the moment a federated
+    # checkout sits ahead of its pin that FAILED: is permanent, and every
+    # commit to the primary registry — docs, a workflow, a Dependabot bump,
+    # the registry's own lock commit — yields a pull request whose entire diff
+    # is `ref` + `generated_from`, with not one digest changed. Handing the
+    # generator a copy of the lock with `sources` removed asks a different
+    # QUESTION rather than reinterpreting the combined answer, so it cannot
+    # drift with the generator's wording.
+    primary_lock="${lock_file%.lock}.primary.lock"
+    if ! primary_only "$lock_file" "$primary_lock" 2>/dev/null; then
+        fail "$repo_name: could not scope $LOCK_REL_PATH to its primary registry."
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+
+    # Which QUESTION forced this repo's re-pin: "" (none yet), `content` (the
+    # bundle moved) or `format` (it did not, but the stored digests are
+    # malformed). Reset per repo — a leftover value would carry one consumer's
+    # reason into the next consumer's PR body.
+    repin_reason=""
+    current_exit=0
+    check_out=$(python3 "$GENERATOR" --check-current \
+        --repo "$primary_dir" \
+        -o "$primary_lock" 2>&1) || current_exit=$?
+
+    if [[ $current_exit -eq 0 ]]; then
+        # The primary is current. A federated half that has moved decides
+        # nothing here — this script cannot advance it — but it is worth
+        # saying out loud, because that re-pin is a human's and otherwise has
+        # no signal at all (ADR 0005, "Left open").
+        if [[ ${#source_registries[@]} -gt 0 ]]; then
+            fed_exit=0
+            fed_out=$(python3 "$GENERATOR" --check-current \
+                --repo "$primary_dir" \
+                ${source_repo_args[@]+"${source_repo_args[@]}"} \
+                -o "$lock_file" 2>&1) || fed_exit=$?
+            if [[ $fed_exit -ne 0 ]]; then
+                if grep -q '^FAILED:' <<< "$fed_out"; then
+                    log "WARN: a FEDERATED source has moved on since the ref this lock pins for it — advancing that pin is a human's job, so nothing is re-pinned here."
+                else
+                    fail "$repo_name: could not read this lock's federated half — $(head -1 <<< "$fed_out")"
+                    ((FAIL_COUNT++)) || true
+                    continue
+                fi
+            fi
+        fi
+        # ── SECOND QUESTION: are the stored digests the right SHAPE? ───
+        # Not a reinterpretation of the verdict above — a different question
+        # put to the generator, which is the same discipline the `sources`
+        # scoping a few lines up is written for. --check-current cannot answer
+        # this one at all: it compares two freshly digested trees and never
+        # reads `skills`, because `_label_digests` applies the `sha256:` label
+        # at the DOCUMENT BOUNDARY expressly so comparisons between builder
+        # outputs keep seeing bare hex. So a lock whose every stored digest is
+        # malformed is GREEN above, forever, for as long as the bundle stands
+        # still — which is how eight consumer locks sat unrepaired on 94cdcc81
+        # while this script logged "no re-pin needed" at them every night.
+        #
+        # Borrowing --check's verdict instead was the tempting shortcut and is
+        # the one to avoid: it does fail on such a lock, but it reports a wrong
+        # SHAPE in the same words as content drift ("digest changed"), so the
+        # gate would be keyed on wording rather than on a fact. A distinct
+        # question gets a distinct flag.
+        #
+        # Asked of the FULL lock, not the primary-scoped copy: unlike currency,
+        # which is per-source and answered per-source, the shape defect is a
+        # property of the whole file — a federated source's skills land in the
+        # same `skills` map and are malformed or not alongside the primary's.
+        #
+        # ONE-TIME CONSEQUENCE, stated plainly: the repair is a re-pin, and a
+        # re-pin also advances `ref` to the registry's current HEAD. So the
+        # first run after this lands opens one PR per affected repo whose diff
+        # is `ref` + `generated_from` + the relabelled digests — more than the
+        # relabelling strictly needed, and the honest cost of healing through
+        # the generator's own primitive rather than hand-editing a label onto
+        # a value nobody recomputed. It is self-limiting: once labelled, this
+        # gate is satisfied and the anti-churn behaviour above resumes.
+        #
+        # THE ONE SHAPE THIS GATE CANNOT HEAL, named here rather than left to
+        # be discovered from a red run. A lock whose `skills` map is EMPTY —
+        # or missing, or not a map — is not a lock with malformed digests, it
+        # is a lock with no digests to have a shape at all. The generator
+        # answers those with ERROR: rather than FAILED:, deliberately, so the
+        # branch below routes them to the report-and-count path instead of the
+        # rewrite path. That is what stops a re-pin loop with no exit: --repin
+        # over a registry with no skills writes the same empty map straight
+        # back, and `skills_shrink_reason`'s `if not after` then refuses to
+        # propose it, correctly, because an emptied lock REAPS the installed
+        # skills of every ephemeral session in that repo. Re-pinning it nightly
+        # only to refuse the result every night would be motion, not repair.
+        #
+        # So such a lock counts a failure and is LEFT ALONE. Not live — no lock
+        # in this fleet has an empty map, and one would mean a registry whose
+        # bundles had all vanished, which is precisely what the shrink guard
+        # exists to stop fanning out. Left as a loud nightly failure rather
+        # than skipped quietly, because that IS a human's decision and the run
+        # saying so every night is how the human hears about it. What must not
+        # happen is someone meeting that red and "fixing" it either by
+        # loosening the shrink guard or by teaching this branch to treat an
+        # ERROR: as a licence to rewrite.
+        if $FORMAT_GATE_AVAILABLE; then
+            format_exit=0
+            format_out=$(python3 "$GENERATOR" --check-format \
+                -o "$lock_file" 2>&1) || format_exit=$?
+            if [[ $format_exit -ne 0 ]]; then
+                # Same refusal to read a bare exit code as a verdict that the
+                # --check-current branch below makes, and for the same reason:
+                # a missing file and unparseable JSON also exit 1 here, and
+                # both print ERROR: rather than FAILED:. Only the flag's own
+                # FAILED: means "these digests are malformed"; anything else
+                # means the question could not be answered, which is not a
+                # licence to rewrite a consumer's lock.
+                if grep -q '^FAILED:' <<< "$format_out"; then
+                    repin_reason=format
+                else
+                    fail "$repo_name: could not decide whether $LOCK_REL_PATH's digests are well-formed — $(head -1 <<< "$format_out")"
+                    ((FAIL_COUNT++)) || true
+                    continue
+                fi
+            fi
+        fi
+
+        if [[ -z "$repin_reason" ]]; then
+            log "bundle content unchanged since ${old_ref:0:7} — no re-pin needed."
+            ((SKIP_COUNT++)) || true
+            continue
+        fi
+
+        # Said distinctly from the bundle-moved case below, because the reason
+        # is what a reader of this log (and of the PR it produces) has to be
+        # able to tell apart: nothing moved, and the lock is still being
+        # rewritten.
+        log "bundle content unchanged since ${old_ref:0:7}, but this lock's stored digests are not ${LOCK_DIGEST_SHAPE} — re-pin needed to relabel them."
+        log "the pin stays at ${old_ref:0:7}: a shape repair is not a content advance."
+    else
+        # A non-zero exit is NOT automatically drift. The generator reports a
+        # broken lock, an unreachable pinned commit or a mis-pointed --repo with
+        # the same exit code and an ERROR line; re-pinning on the strength of one
+        # of those writes a lock nobody asked for. Only its own FAILED verdict
+        # means "the bundle moved".
+        if ! grep -q '^FAILED:' <<< "$check_out"; then
+            fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(head -1 <<< "$check_out")"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        repin_reason=content
+        log "bundle has moved since ${old_ref:0:7} — re-pin needed."
+    fi
+
+    if $DRY_RUN; then
+        log "[DRY RUN] Would re-pin $LOCK_REL_PATH onto $primary_registry's current commit and open a PR on $BRANCH_NAME"
+        ((SKIP_COUNT++)) || true
+        continue
+    fi
+
+    # ── Clone the consumer and re-pin ──────────────────────────────────
+
+    repo_dir="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')"
+    if ! gh repo clone "$repo_name" "$repo_dir" -- --depth 1; then
+        fail "clone failed for $repo_name"
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+    cd "$repo_dir"
+
+    # Configure git identity for commits (not inherited in fresh clones), and
+    # commit under the App's noreply address so no real email is baked into
+    # commit metadata on a public repo.
+    git config user.name "agents-md-sync[bot]"
+    git config user.email "agents-md-sync[bot]@users.noreply.github.com"
+
+    # Embed token in remote URL so git push can authenticate in CI (no TTY).
+    if [[ -n "${GH_TOKEN:-}" ]]; then
+        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"
+    fi
+
+    # ── A SHAPE repair is never a CONTENT advance ──────────────────────
+    # `--repin` deliberately does not inherit `ref` — advancing the pin IS the
+    # operation — so an invocation without `--ref` falls through to the
+    # generator's `resolve_ref(repo, "HEAD")` and re-pins onto whatever commit
+    # this run's registry checkout happens to be sitting on. That is exactly
+    # right for `repin_reason=content`, where a moved bundle is the reason the
+    # PR exists, and exactly wrong for `format`, where the complaint is about
+    # the digests STORED here and the bundle at the pinned ref is — by the
+    # gate above, which only fires after `--check-current` returned 0 —
+    # unchanged.
+    #
+    # Measured on a copy of repo-settings' real bare lock, which is one of the
+    # eight that sat malformed on 94cdcc81: without `--ref` the pin moved to
+    # the clone's HEAD; with `--ref` naming the lock's own pin, `ref`,
+    # `generated_from` and every digest's hex came back byte-identical and the
+    # entire diff was the eight `sha256:` labels. All eight were healed BY HAND
+    # that morning and every pin was preserved; had this script reached them
+    # first it would have advanced all eight in one sweep, silently turning a
+    # shape repair into a fleet-wide content advance under a PR body whose
+    # every digest line proves nothing diverged.
+    #
+    # agentskills #108 put `--ref` into the report a HUMAN reads
+    # (`--check-format`'s remediation line); this is the same anchor on the
+    # unattended path that runs every night. It also makes that quoted line
+    # REPRODUCE the diff beneath it: the body prints the generator's verdict
+    # verbatim, so with no `--ref` here a reviewer read a command naming the
+    # old pin above a diff that had moved it.
+    #
+    # A SIBLING SITE MOVES WITH THIS, and it is not editable from here.
+    # agentskills' `report_digest_format` docstring carries a paragraph
+    # beginning "One consequence to expect rather than re-discover" which
+    # states that the bumper's own re-pin passes no `--ref`, that a format PR
+    # therefore advances the pin, and that the quoted command naming the old
+    # pin is "the asymmetry working as intended, not a mismatch to reconcile".
+    # As of this change none of that is true here. That paragraph was written
+    # before the format gate had ever fired on the fleet, so it reasoned about
+    # a blast radius nobody had measured; the eight-lock morning is the
+    # measurement. It is a one-paragraph edit over there — make it when that
+    # repo is next open, and do not read it as evidence about what THIS script
+    # does.
+    #
+    # `$old_ref` is safe to resolve: `--check-current` exited 0 for this repo,
+    # and it gets there only by resolving and `git archive`-ing that very
+    # commit out of `$primary_dir`. Nothing is stranded by holding the pin
+    # either — currency is a separate question asked afresh every night, so a
+    # bundle that later moves gets its own PR, headed by the move.
+    repin_ref_args=()
+    if [[ "$repin_reason" == "format" ]]; then
+        repin_ref_args=(--ref "$old_ref")
+    fi
+
+    if ! repin_out=$(python3 "$GENERATOR" --repin \
+        --repo "$primary_dir" \
+        ${repin_ref_args[@]+"${repin_ref_args[@]}"} \
+        ${source_repo_args[@]+"${source_repo_args[@]}"} \
+        -o "$LOCK_REL_PATH" 2>&1); then
+        fail "$repo_name: --repin failed — $(head -1 <<< "$repin_out")"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
+    # A re-pin that empties a bundle is a registry-side decision, not a lock
+    # chore. Rename or delete a bundle directory and `collect_skills` finds
+    # nothing at the new HEAD, so --repin writes `"skills": {}` — and every
+    # consumer gets that proposed in the same run, under a PR body that still
+    # says "every digest here is re-derived from the newly pinned commit",
+    # vacuously true because there are none. Nor is it a benign no-op
+    # downstream: skills-bootstrap writes its claims stream from the routing
+    # map precisely so a bundle a lock still declares but has emptied REAPS
+    # its old skills, so merging one deletes the installed skills in every
+    # ephemeral session in that repo. Refused per repo and counted, so the
+    # scheduled run goes red and a human decides before it fans out.
+    if ! shrink=$(skills_shrink_reason "$lock_file" "$LOCK_REL_PATH" 2>&1); then
+        fail "$repo_name: could not compare the re-pinned lock with the one on the default branch — $(head -1 <<< "$shrink")"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+    if [[ -n "$shrink" ]]; then
+        fail "$repo_name: refusing to propose this re-pin — $shrink. A bundle that vanished from the registry (a rename, a deleted plugin, a layout change) needs a human, not a fan-out."
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
+    # Belt and braces on top of --check-current: a ref that moved with the
+    # bundle standing still can still re-serialize to the identical file, and
+    # an identical file must never become a pull request.
+    if git diff --quiet -- "$LOCK_REL_PATH"; then
+        log "re-pin produced no change — leaving $repo_name alone."
+        ((SKIP_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
+    new_ref=$(python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get("ref", "?"))
+' "$LOCK_REL_PATH")
+
+    # ── An open bump branch is never force-pushed over ─────────────────
+    # Two cases, and neither is answered with --force. sync.sh deliberately
+    # does not force-push either, and this repo's AGENTS.md records the
+    # recovery for a stale bot branch: merge its PR to free the name.
+    branch_exists=false
+    branch_matches=false
+    if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+        branch_exists=true
+        if git fetch --depth 1 origin "$BRANCH_NAME" >/dev/null 2>&1 \
+           && open_lock=$(git show "FETCH_HEAD:$LOCK_REL_PATH" 2>/dev/null) \
+           && [[ "$open_lock" == "$(cat "$LOCK_REL_PATH")" ]]; then
+            branch_matches=true
+        fi
+    fi
+
+    if $branch_exists && ! $branch_matches; then
+        log "WARN: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
+        ((SKIP_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
+    if $branch_exists; then
+        # Nothing to push. Fall through to the PR step anyway: a previous run
+        # that died between the push and `gh pr create` — an interrupted job,
+        # a cancelled workflow — leaves a branch that is correct and a PR that
+        # does not exist, and returning here would strand it forever, since
+        # every later run would find the same matching branch and stop.
+        log "an open bump branch already carries this exact lock — not pushing again."
+    else
+        git add "$LOCK_REL_PATH"
+
+        # The mirror image of sync.sh's guard. There, a staged lock stops the
+        # repo because the sync must never write one; here the lock is the
+        # ONLY thing this script may write, so anything else staged means some
+        # code path started touching a consumer's tree, and that must stop the
+        # repo too.
+        staged=$(git diff --cached --name-only)
+        if [[ "$staged" != "$LOCK_REL_PATH" ]]; then
+            fail "$repo_name: refusing to commit — expected only $LOCK_REL_PATH staged, got: ${staged//$'\n'/, }"
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+
+        # $primary_registry, not $BUMP_REGISTRY: the sha comes out of the
+        # primary's checkout, and a name and a sha in one string must come
+        # from the same repository. The guard above makes them equal today;
+        # this keeps them equal by construction rather than by that guard.
+        #
+        # Branched on the reason for the same cause as the PR body below, and
+        # it is the same defect one artifact further in: this message used to
+        # say "the bundle content this lock installs has moved since <old>"
+        # unconditionally, which on a format re-pin is false in a diff that
+        # disproves it — and, now that the pin is held, would name the same
+        # commit in its subject and in its "since" clause.
+        if [[ "$repin_reason" == "format" ]]; then
+            commit_subject="chore: relabel $LOCK_REL_PATH's digests as ${LOCK_DIGEST_SHAPE}"
+            commit_body="The bundle content at ${old_ref:0:7} has NOT moved; what is wrong is the
+shape of the digests stored here, which are bare hex. Re-pinned at that same
+commit with generate_skills_lock.py --repin --ref, so the pin does not move and
+every digest is recomputed from the ref this lock already attests."
+        else
+            commit_subject="chore: re-pin $LOCK_REL_PATH onto ${primary_registry}@${new_ref:0:7}"
+            commit_body="The bundle content this lock installs has moved since ${old_ref:0:7}, so
+nothing added or changed since then reached an ephemeral session. Generated by
+generate_skills_lock.py --repin, which inherits this repo's own registry,
+bundles and sources and re-resolves only the primary ref."
+        fi
+
+        git commit -m "$commit_subject
+
+$commit_body" >/dev/null || {
+            log "Nothing to commit."
+            ((SKIP_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        }
+
+        # Pushed, never with --force.
+        push_ok=true
+        push_out=$(git push origin "HEAD:refs/heads/$BRANCH_NAME" 2>&1) || push_ok=false
+        if ! $push_ok; then
+            # Matched on git's own non-fast-forward wording, never on the bare
+            # word "rejected": the server prints `! [remote rejected]` for ANY
+            # server-side refusal — a ruleset restricting ref creation (GH013),
+            # a pre-receive hook, branch protection on creation — and calling
+            # one of those a stale bump branch prints a remedy ("merge or close
+            # its PR") for a branch that does not exist, counts a genuinely
+            # stale consumer as a skip, and leaves the run green, so the
+            # scheduled-run-health issue this repo relies on never fires.
+            if grep -qiE 'non-fast-forward|fetch first|updates were rejected because' <<< "$push_out"; then
+                log "WARN: push to $BRANCH_NAME was rejected as non-fast-forward — refusing to force. Merge or close its PR to free the branch, then re-run."
+                ((SKIP_COUNT++)) || true
+            else
+                fail "push failed for $repo_name — $(head -1 <<< "$push_out")"
+                ((FAIL_COUNT++)) || true
+            fi
+            cd "$REPO_ROOT"; continue
+        fi
+    fi
+
+    # ── Open the PR ────────────────────────────────────────────────────
+
+    # What the PR discloses is what a reviewer cannot see in a one-line diff:
+    # which registry moved, that the digests are re-derived from the newly
+    # pinned commit rather than from anyone's working tree, that a federated
+    # source's own pin is untouched, and that nothing here was hand-written.
+    #
+    # The quoted verdict is the PRIMARY-scoped one, so every difference line in
+    # it belongs to the ref this PR advances. Its `-o` path is rewritten back
+    # to the consumer's own `skills.lock`: the generator names the file it was
+    # given, which here is a copy under this run's mktemp directory, and a
+    # /tmp path nobody can resolve is the one line of an otherwise checkable
+    # body that a reviewer has to take on faith.
+    #
+    # WHY THIS PR EXISTS, in the words of the question that actually forced
+    # it. This body used to state the bundle-moved reason unconditionally,
+    # which was true of the only trigger there was; with the shape gate there
+    # are two, and a format re-pin under the old wording would tell a reviewer
+    # the bundle had diverged while every digest line in the diff proves it
+    # had not — the PR contradicting itself in its own diff. Each branch
+    # quotes the verdict of the flag that fired, and only that one.
+    #
+    # The HEADER LINE is branched for the same reason, and leaving it behind is
+    # exactly the defect this whole change set exists to stop: the first cut
+    # branched the paragraph and left `**What moved:** <registry> — <old> →
+    # <new>` unconditional six lines above it, so a format PR announced a move
+    # directly over a paragraph denying one, in a diff where not a single
+    # digest's hex differs. The ref advances in BOTH cases; what differs is
+    # whether that advance is the point or the side effect, and the header is
+    # where a reviewer reads it first.
+    if [[ "$repin_reason" == "format" ]]; then
+        moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`, and nothing
+else. \`${primary_registry}\`'s pin stays at \`${old_ref:0:7}\` — this re-pin is
+anchored to it with \`--ref\`, so \`ref\` and \`generated_from\` are untouched and
+every digest below is the same hex it was, wearing its label."
+        why_note="The bundle content at the pinned ref is UNCHANGED — nothing has diverged, and
+this is not a currency bump. What is wrong is the SHAPE of the digests stored
+here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
+\`--check-format\` reads this file alone and says so:
+
+\`\`\`
+$(sed -n '/^FAILED:/,$p' <<< "$format_out" | head -20 | sed "s#$lock_file#$LOCK_REL_PATH#g")
+\`\`\`
+
+**That remediation line is the command this PR ran**, \`--ref\` included, so you
+can reproduce this diff from it. It was not always: without \`--ref\` a re-pin
+falls through to the registry checkout's HEAD, which would advance the pin here
+while the quoted command named the old one — a body that could not reproduce
+its own diff, and a shape repair doing a content advance's work across every
+consumer in one sweep.
+
+\`--check-current\` cannot see this: it digests the pinned tree and the working
+tree afresh and never reads the values stored here, so it reported \`OK\` at
+exit 0 on this lock every night while the defect stood. That is why the fix
+arrives as a re-pin rather than an edit — \`--repin\` recomputes every digest
+from the pinned commit and labels it on the way out, where a hand-edited label
+would be an attestation over bytes nobody re-derived. It happens once: after
+this lands the shape is right and the anti-churn gate goes back to proposing
+nothing until the bundle actually moves. If the bundle later does move, that
+is a separate question asked afresh every night and arrives as its own PR,
+headed by the move."
+    else
+        moved_note="**What moved:** \`${primary_registry}\` —
+\`${old_ref:0:7}\` → \`${new_ref:0:7}\`."
+        why_note="The bundle content at the old ref no longer matches the registry's tree, which
+is why this PR exists: a lock is not wrong for being old, but a lock pinned
+before a skill changed delivers the older skill to every ephemeral session and
+reports \`OK\` while doing it. \`--check-current\` says the two have diverged:
+
+\`\`\`
+$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed "s#$primary_lock#$LOCK_REL_PATH#g")
+\`\`\`"
+    fi
+
+    # The last two unbranched sentences that a held pin makes false. This is
+    # the same defect the header carried before it was branched — a paragraph
+    # denying a move under a line announcing one — one artifact further down,
+    # and it is why both halves are asserted from both sides in the tests: an
+    # unconditional sentence in a two-reason body is a contradiction waiting
+    # for the second reason to fire.
+    if [[ "$repin_reason" == "format" ]]; then
+        derived_note="**Every digest here is re-derived from the commit this lock already pinned**"
+        resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
+    else
+        derived_note="**Every digest here is re-derived from the newly pinned commit**"
+        resolve_note="and re-resolves only \`ref\`"
+    fi
+
+    federated_note="This lock has no federated sources."
+    if [[ ${#source_registries[@]} -gt 0 ]]; then
+        federated_lines=""
+        for reg in "${source_registries[@]}"; do
+            federated_lines="${federated_lines}
+- \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **unchanged**"
+        done
+        federated_note="**Federated sources keep their pins.** \`--repin\` advances the primary
+\`ref\` only; it refuses \`--source\` outright, because that flag REPLACES the
+inherited \`sources\` array and would silently de-federate the lock. Advancing
+one of these is still a human's job:
+${federated_lines}"
+    fi
+
+    existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
+        --jq '.[0].number // empty' 2>/dev/null || true)
+
+    if [[ -n "$existing_pr" ]]; then
+        log "PR #$existing_pr is already open for this branch — leaving it alone."
+        ((SKIP_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
+    # Output captured rather than discarded: gh prints the new PR's URL, and
+    # the auto-merge attempt below needs something to name.
+    # The title carries the same branch as the header and the commit subject,
+    # and for the same reason: a PR list shows the title alone, so "re-pin
+    # onto <registry>@<sha>" over a diff whose `ref` line is unchanged makes a
+    # reviewer open the PR to find out whether the pin moved. It did not.
+    if [[ "$repin_reason" == "format" ]]; then
+        pr_title="chore: relabel skills.lock digests as ${LOCK_DIGEST_SHAPE} (pin unchanged)"
+    else
+        pr_title="chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7}"
+    fi
+
+    if pr_create_out=$(gh pr create \
+        --head "$BRANCH_NAME" \
+        --title "$pr_title" \
+        --body "$(cat <<EOF
+Automated re-pin of this repo's \`$LOCK_REL_PATH\`, opened by
+\`scripts/bump-consumer-locks.sh\` in ${BUMPER_SOURCE}.
+
+${moved_note}
+
+**This pull request merges itself.** A later run of the same bumper sweeps it
+and merges it with a merge commit once every check on it has concluded green —
+or straight away where this repo runs no checks at all. It is not waiting for a
+reviewer, so review it now if you mean to. It refuses to merge itself if
+anything but \`$LOCK_REL_PATH\` appears in the diff: push a second file onto this
+branch and it becomes yours. Closing it is not a way to say no — the next run
+proposes the same change again. See \`docs/decisions/0006\`.
+
+${why_note}
+
+${derived_note}, materialized
+with \`git archive\` — never from anyone's working tree — so the lock describes
+bytes that are actually published at \`${new_ref:0:7}\`.
+
+$federated_note
+
+**Generated, never hand-edited.** The whole change is
+\`generate_skills_lock.py --repin\`'s output. That command inherits this repo's
+own \`registry\`, \`bundles\` and \`sources\` from the lock already committed here
+${resolve_note}; it cannot be told to change any of them. Nothing
+in \`_agent-guidance\` composes a lock of its own — see its
+\`docs/decisions/0005\`.
+EOF
+)"); then
+        log "PR created."
+        ((OK_COUNT++)) || true
+
+        # Ask for native auto-merge as well, and do not care whether it takes.
+        # On this fleet it will not: the default-branch rulesets set
+        # `required_status_checks: []`, and with nothing to hold the merge FOR,
+        # GitHub refuses to arm auto-merge at all — it errors that the PR is
+        # already in a clean, mergeable state (measured; see the header of
+        # .github/workflows/dependabot-auto-merge.yml, which keeps its own
+        # `--auto` attempt for exactly this reason). Note what that refusal is
+        # NOT: it does not merge the PR here and now, seconds after opening it
+        # and before any check could start.
+        #
+        # It costs one API call and starts working for free the day any repo
+        # here grows a required check — on that repo, and only that repo, the
+        # PR then lands the moment its checks pass instead of waiting for
+        # tomorrow's sweep. A failure to arm is neither a run failure nor a
+        # per-repo failure: the sweep is what actually lands these.
+        pr_url=$(tail -1 <<< "$pr_create_out")
+        if auto_out=$(gh pr merge --auto --merge --repo "$repo_name" "$pr_url" 2>&1); then
+            log "native auto-merge armed — it lands when the checks it waits on pass."
+        else
+            log "native auto-merge did not arm (expected where the ruleset requires no checks) — tomorrow's sweep merges this PR instead: $(head -1 <<< "$auto_out")"
+        fi
+    else
+        fail "PR creation failed for $repo_name"
+        ((FAIL_COUNT++)) || true
+    fi
+
+    cd "$REPO_ROOT"
+done
+
+done
+
+echo ""
+echo "=== Lock bump complete: $MERGE_COUNT merged, $OK_COUNT proposed, $SKIP_COUNT skipped, $FAIL_COUNT failed ==="
+
+if [[ $FAIL_COUNT -gt 0 ]]; then
+    exit 1
+fi

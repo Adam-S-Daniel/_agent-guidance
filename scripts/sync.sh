@@ -331,8 +331,29 @@ for repo_name in "${REPOS[@]}"; do
     repo_specific=""
     existing_prefix=""
     if [[ -f AGENTS.md ]]; then
-        if grep -qF "$MARKER" AGENTS.md; then
-            repo_specific=$(sed -n "/^${MARKER}/,\$p" AGENTS.md)
+        # Anchored AND exact-whole-line, on both the presence check and the
+        # extraction — not the unanchored/non-end-anchored pair this used to
+        # be. This repo's own AGENTS.md carried a live example of why: its
+        # generated BEGIN-MANAGED-SECTION header quotes the marker text
+        # verbatim (`DO NOT EDIT ABOVE "## Repo-specific additions"`), so an
+        # unanchored `grep -qF "$MARKER"` is satisfied by line 1 of a file
+        # with no real marker at all, and a start-only-anchored
+        # `/^${MARKER}/` treats a truncated `## Repo-specific additions" -->`
+        # fragment (the tail of that same header, however it got split onto
+        # its own line) as a valid anchor too. Either way the sed extracts
+        # the wrong slice — in the truncated-fragment case, everything from
+        # THAT line down, which includes a stale managed block and re-glues
+        # it below a freshly generated one on every future sync, doubling it
+        # forever. `-x` on the grep and `$` on the sed regex require the
+        # WHOLE line to equal the marker, so only a genuine
+        # `## Repo-specific additions` line — nothing quoting it, nothing
+        # truncating it — can anchor either check. This closes the
+        # unanchored-grep/anchored-sed mismatch the comment further down this
+        # block (the "glued marker" note) already flagged: that comment was
+        # about the trailing-newline case; this is the other way the same
+        # mismatch bites.
+        if grep -qxF -- "$MARKER" AGENTS.md; then
+            repo_specific=$(sed -n "/^${MARKER}\$/,\$p" AGENTS.md)
         else
             # Existing AGENTS.md without marker — preserve entire content above
             # the marker heading, with managed content added below it

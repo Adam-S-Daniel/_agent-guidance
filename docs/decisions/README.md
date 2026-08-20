@@ -17,6 +17,9 @@ a page.
 | [0001](0001-skills-bootstrap-delivery-is-opt-in.md) | skills-bootstrap delivery is opt-in and double-keyed, not fleet-wide |
 | [0002](0002-unconditional-rules-live-in-the-guidance-not-a-skill.md) | Unconditional rules live in the managed guidance, not in a skill |
 | [0003](0003-cron-coverage-is-fleet-listed.md) | Cron coverage is measured against a declared fleet, not against a disk |
+| [0004](0004-skills-bootstrap-adopted-where-sessions-happen.md) | skills-bootstrap is adopted wherever sessions happen, and this repo self-hosts |
+| [0005](0005-consumer-locks-are-re-pinned-from-here.md) | Consumer locks are re-pinned from here, and only when the bundle moved |
+| [0006](0006-bump-prs-land-on-a-sweep.md) | The bumper's own pull requests land on a sweep, not on a reviewer |
 
 ## Format
 

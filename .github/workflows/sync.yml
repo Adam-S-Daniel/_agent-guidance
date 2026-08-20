@@ -3,10 +3,35 @@ name: Sync AGENTS.md to downstream repos
 on:
   push:
     branches: [main]
+    # This filter has to name every file that DECIDES WHAT A RUN DOES — every
+    # file sync.sh reads at runtime, plus this workflow, which carries the
+    # owner list. Anything in that set is fleet policy: editing it changes what
+    # the next run does to ~20 repos, and if no run fires, the edit changes
+    # nothing at all while reading as shipped.
+    # `repos.yml` is the case that proved it — the bootstrap allowlist, the
+    # hook's pinned ref and its sha256 all live there, so for as long as it was
+    # missing here, "bump the pin to fan a hook fix across the fleet" (ADR 0001)
+    # produced ZERO runs and waited for an unrelated commit to carry it.
+    # `test_sync_workflow_trigger` DERIVES the script half of this list from
+    # sync.sh's own `$SCRIPT_DIR/…` / `$REPO_ROOT/…` references, so adding a
+    # helper to sync.sh makes the test demand its entry here; the three that no
+    # derivation can see are asserted by name, with the reason each is needed.
     paths:
+      - "repos.yml"
       - "agents-md/**"
       - "scripts/build-agents-md.sh"
       - "scripts/sync.sh"
+      # Executed by sync.sh per repo, so each one decides a consumer's outcome:
+      # how its CLAUDE.md is classified, how its settings.json is classified,
+      # and what registration gets written into it.
+      - "scripts/bridge-status.sh"
+      - "scripts/bootstrap-status.sh"
+      - "scripts/register-bootstrap-hook.sh"
+      # This file. `SYNC_OWNERS` below decides WHICH ~20 repos the run touches,
+      # and the dispatch inputs decide whether it writes at all — an owner
+      # added or removed here is as much a policy change as an allowlist edit,
+      # and without this entry it would fire no run to apply itself.
+      - ".github/workflows/sync.yml"
   workflow_dispatch:
     inputs:
       dry_run:
