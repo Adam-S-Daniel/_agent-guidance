@@ -54,11 +54,52 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      # A `run:` block is the blind spot in the fleet's SHA-pinning rule: that
+      # rule governs `uses:`, and this step downloads a third-party binary,
+      # marks it executable and runs it as root — the same trust the rule
+      # exists to constrain, in a shape it does not reach. Until 2026-08-20 the
+      # ref here was `releases/latest`, i.e. mutable, in the repo that HOSTS
+      # the pinning rule. It is now pinned by version AND by digest, and the
+      # fetch is retried, because an unretried single fetch also reds CI for
+      # reasons unrelated to any diff: run 32383649430 lost `wget` to exit 4
+      # four seconds in, before a test body ran. docs/decisions/0008 has the
+      # argument, including why the digest is stated HERE rather than fetched
+      # from the release alongside the binary. The same step is duplicated in
+      # sync.yml, drift-report.yml and skills-lock-bump.yml and test 7h asserts
+      # all four stay byte-identical, so edit it in one place and copy.
       - name: Install yq
+        env:
+          # Pinned exactly like a `uses:`, and for the same reason — see
+          # docs/decisions/0008. Bump the two together: the digest is
+          # `yq_linux_amd64`'s, taken from that release's own `checksums`
+          # (the SHA-256 column, per its `checksums_hashes_order`) and
+          # re-computed from the downloaded bytes.
+          YQ_VERSION: v4.53.3
+          YQ_SHA256: fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
         run: |
-          sudo wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+          set -euo pipefail
+          # Fetch AND verify as one retryable unit. A truncated body is a 200
+          # with the wrong digest, so a checksum miss is a transient to retry
+          # rather than a reason to stop; only a run that fails all three is
+          # reporting something real. Bounded at three because a fourth is
+          # waiting out an outage, which is a red run's job to announce.
+          tmp="$(mktemp -d)"
+          for attempt in 1 2 3; do
+            if wget -nv --tries=1 --timeout=30 -O "$tmp/yq" \
+                 "https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64" \
+               && printf '%s  %s\n' "$YQ_SHA256" "$tmp/yq" | sha256sum -c - >/dev/null; then
+              # Verified bytes only, and they arrive already +x: there is no
+              # window in which /usr/local/bin/yq exists unchecked.
+              sudo install -m 0755 "$tmp/yq" /usr/local/bin/yq
+              yq --version
+              exit 0
+            fi
+            echo "::warning::yq $YQ_VERSION: fetch or checksum failed on attempt $attempt of 3"
+            rm -f "$tmp/yq"
+            if [ "$attempt" -lt 3 ]; then sleep $(( attempt * 5 )); fi
+          done
+          echo "::error::yq $YQ_VERSION could not be installed: three attempts failed to produce bytes matching $YQ_SHA256"
+          exit 1
 
       # The suite now covers a Node gate (scripts/check-cron-coverage.js) that
       # parses workflow YAML with a real parser rather than a line scanner, so
