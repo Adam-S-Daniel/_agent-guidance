@@ -257,8 +257,25 @@ Therefore:
   **`pin-consistency / pin-consistency`** and not its own file name — see
   `A-trigger-narrowing.md`.
 - **Do not re-add `pull_request: edited`** anywhere (cms-platform#222).
-- **Do not narrow `dependabot-comment-sync.yml`'s `push: branches: ['**']`** —
-  it exists to suppress GitHub's phantom red zero-job runs.
+- **~~Do not narrow `dependabot-comment-sync.yml`'s `push: branches: ['**']`~~
+  — OBSOLETE as of 2026-08-20; do NOT act on it.** The trigger this defended is
+  gone: `dependabot-comment-sync` regenerated the trailing `# vX.Y.Z` label on
+  SHA pins, that convention was retired fleet-wide (agentskills ADR 0004 /
+  `_agent-guidance` ADR 0007), and both consumer callers had
+  `pull_request_target` and `push: branches: ['**']` REMOVED, leaving only an
+  inert `workflow_dispatch`. Kept here, struck rather than deleted, because the
+  phantom-zero-job-run rationale was real and would otherwise be re-derived —
+  and because re-adding any trigger is the one edit that re-arms the retired
+  convention. The callers pin `@v0.1.88`, an immutable tag that still ships the
+  reusable AND `scripts/sync-action-pin-comments.sh`, so deleting the reusable
+  from cms-platform `main` did NOT disarm them; the missing triggers are the
+  whole of the disarm. Worse, the script GROWS a label rather than refreshing
+  one — its `USES_RE` captures the comment as an OPTIONAL group `(#.*)?` while
+  `build_new_line()` emits one unconditionally — so a re-armed run would write
+  labels onto bare pins. The callers themselves stay until the next
+  `platform_ref` bump past v0.1.88: deleting one earlier reads as
+  `workflow-set: MISSING (platform-dictated)` and reds the required
+  `pin-consistency / pin-consistency` check (tracked as jodidaniel.com#161).
 - **`semver-*-days` is invalid under `package-ecosystem: github-actions`** —
   a schema error that disables the whole `updates[]` entry. It IS valid for
   npm/bundler.

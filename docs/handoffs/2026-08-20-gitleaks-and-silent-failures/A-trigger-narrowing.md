@@ -140,9 +140,26 @@ and it is exactly why this context must never be made required.
    `405 Required status check is cancelled`, hard-blocking merges, documented in
    the reusable's own header with incident PR numbers. The extra ~30s runs are
    the deliberately accepted cost.
-2. **Narrowing `dependabot-comment-sync.yml`'s `push: branches: ['**']`.** It
+2. ~~**Narrowing `dependabot-comment-sync.yml`'s `push: branches: ['**']`.** It
    suppresses GitHub's phantom red zero-job runs; narrowing trades ~73 cheap
-   green no-ops/day for red rows on every other push.
+   green no-ops/day for red rows on every other push.~~
+   **OBSOLETE — corrected 2026-08-20. There is no such trigger any more, and
+   this item now points the wrong way.** `dependabot-comment-sync` existed to
+   regenerate the trailing `# vX.Y.Z (YYYY-MM-DD)` label on SHA pins. That
+   convention was retired fleet-wide (agentskills ADR 0004 / this repo's ADR
+   0007), the reusable and `scripts/sync-action-pin-comments.sh` were deleted
+   from cms-platform `main`, and both consumer callers had every trigger
+   removed except `workflow_dispatch`. Struck rather than deleted because the
+   phantom-run rationale was correct on its own terms and a claim that merely
+   disappears gets re-derived — but read the polarity as INVERTED: re-adding a
+   trigger here does not restore a saving, it re-arms the retired convention.
+   The script does not merely refresh a label, it GROWS one (`USES_RE` captures
+   the comment as an optional `(#.*)?`; `build_new_line()` emits one
+   unconditionally), and the callers pin the immutable tag `@v0.1.88`, which
+   still ships both, so trigger removal is the entire disarm. The caller files
+   are deleted at the next `platform_ref` bump past v0.1.88 and not before —
+   deleting one alone reds `pin-consistency / pin-consistency` as
+   `workflow-set: MISSING (platform-dictated)` (jodidaniel.com#161).
 3. **Adding `paths:` filters to the required PR checks** (`parity-preview`,
    `preview-media`, `e2e-tests`, `visual-regression`) so canary/content-only PRs
    skip them. That defeats the canary loops, which exist precisely to prove a
