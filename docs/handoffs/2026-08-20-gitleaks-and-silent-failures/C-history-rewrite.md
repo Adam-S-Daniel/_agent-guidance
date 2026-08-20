@@ -25,6 +25,13 @@ and those files exist only to be deleted.
 The verdict is unchanged; every reason behind it has changed, so read this
 rather than the paragraph you remember.
 
+**Also corrected against
+[`_agent-guidance#52`](https://github.com/Adam-S-Daniel/_agent-guidance/issues/52),
+which re-measured this gate.** Its verdict matches this file's on all three
+conditions. Two of its numbers do NOT match, and this file wins both times
+because it measured later — see condition 3 below, and `README.md`,
+"Corrections pass".
+
 **Condition 1 now PASSES.** The federated advance this file used to open with
 has been done: both consumers' `skills.lock` on `main` carry
 `cms-platform/consumer-repo-provisioning`, carry no
@@ -37,12 +44,30 @@ has been done: both consumers' `skills.lock` on `main` carry
 lock, no `uses:`, no `platform_ref:`. Neither site is a registry and neither
 publishes a reusable, so there is nothing for a pin to name.
 
+**Confirmed a second way, which is the form to re-run** (from #52): sweep every
+distinct 40-hex token across every repo's default-branch tip and **resolve** each
+one, instead of trusting that a commit sha only ever appears in pin syntax. Of
+**124** tokens, three resolve inside a site repo and the single cross-repo hit,
+`62a5f8f4`, is a **blob** — the `preview-media` sentinel
+`assets/images/uploads/e2e-preview-media-probe.png`, gated on its git blob sha1.
+That is the answer you want and a grep cannot give you: a rewrite changes commit
+shas and leaves blob hashes alone, so the one hit that *looks* like a cross-repo
+pin is structurally immune to C.
+
 **Condition 3 FAILS, structurally, and is what actually blocks C.** 117 of
 adamdaniel.ai's 3197 PR refs and 24 of jodidaniel.com's 148 contain the
 offending commit; 116 and 24 of those respectively belong to pull requests that
 are ALREADY closed or merged, and their `refs/pull/N/head` are still live.
 Closing a PR does not delete its ref and no client can. Full numbers and method
 in `README.md`, "The blocking fact for `C`".
+
+**#52 quotes an earlier figure — "112 PR refs … only 3 are open", and 20 for
+jodidaniel.com — and the numbers above supersede it.** Not because this document
+outranks that one, but because these were measured afterwards, and the count
+only ever moves in one direction: every new PR branched off `main` adds another
+permanent ref. **Deferring C makes C harder, monotonically**, which is why a
+stale count here always under-states the problem — and why the drift is worth
+recording rather than silently overwriting.
 
 **Two more blockers this gate never listed.** Both are below, under "Blockers
 the gate does not list". Neither is a wait; each needs a decision someone has to
@@ -274,6 +299,14 @@ Required, per machine, for each rewritten repo:
    `git rev-parse --is-shallow-repository` before believing any history search,
    and note the shallow answer was *smaller*, not an error: a truncated search
    under-reports silently in the direction of "all clear".
+
+   **The scale of the truncation, measured (#52): reachable commits go from 76
+   to 4084 on unshallowing** — a 98% blind spot presented as a complete answer.
+   The site clones arrive shallow, so this is the DEFAULT state a re-verifier
+   meets, not an edge case they have to construct. It is the same failure mode
+   as the bare blobless clone in `README.md` ("Enumerate branches from
+   `ls-remote`"): **a view you narrowed yourself shows you only what you asked
+   for, and reports the difference as good news.**
 4. **Add a `pre-push` guard so this cannot silently recur.** ZENDA already
    carries a global pre-push hook (the sync-skills one), so there is an
    established place and pattern for it. The guard should reject a push whose

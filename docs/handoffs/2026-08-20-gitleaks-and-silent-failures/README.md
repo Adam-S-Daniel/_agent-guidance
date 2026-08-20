@@ -12,6 +12,24 @@ did, which is the more dangerous kind of staleness: a session acting on the old
 reasons would have spent its first cycle re-doing work that was already done and
 then read a green condition 1 as a green gate.
 
+**Corrections pass, later the same day.** Every correction recorded in
+[`_agent-guidance#52`](https://github.com/Adam-S-Daniel/_agent-guidance/issues/52)
+has now been folded into the file it corrects — that issue's own stated
+definition of done, deferred until now. #52 was filed as an issue first because
+the session that measured those corrections could end between two tool calls;
+this pack is where they belong. Two conventions, both taken from #52 itself:
+
+- **A false claim is corrected in place AND named.** It is never silently
+  deleted — "a stale claim that merely disappears gets re-derived", which is why
+  #52 records its own reversals in a header instead of dropping them. If you
+  remember an old number here, you should be able to see it was considered.
+- **A conflict between #52 and this pack resolves by measurement DATE, not by
+  document.** #52 says "where a number here differs from the handoff, this one
+  wins", and that is right for everything it measured *after* the handoff was
+  written — but not for the handful the handoff re-derived afterwards, or for
+  what has shipped since. Each such case is marked SUPERSEDED where it appears,
+  with what actually shipped.
+
 ## Files
 
 | file | what | can run in parallel? |
@@ -45,10 +63,12 @@ A and B are independent of each other and of C's gate.
 > recursively**: if fixing X reveals Y, fix Y in the same effort, and if Y
 > reveals Z, keep going — do not defer findings to a list.
 >
-> Take everything through to merge yourself. Where a change touches a
-> cms-platform reusable, **cut the release and confirm the consumer bumps
-> landed** — a change that has not propagated has not been verified, and a theory
-> that needs it live has not been tested.
+> Take everything through to merge yourself, but **not before the adversarial
+> review returns** — green CI is a necessary condition, not the gate (see
+> `SHARED-CONTEXT.md` §7). Where a change touches a cms-platform reusable, **cut
+> the release and confirm the consumer bumps landed** — a change that has not
+> propagated has not been verified, and a theory that needs it live has not been
+> tested.
 >
 > Verify every claim you rely on, including the ones in these files and the ones
 > subagents report back. Report parsed CI conclusions, never "the watch
@@ -73,8 +93,16 @@ adamdaniel.ai#3220 both merged. Note `platform-bump` arms auto-merge itself at
 release time, with method **SQUASH** (legitimate on the three cms-platform-managed
 repos); do not assume a bump PR needs manual arming.
 
-**Filed and still open by design:** cms-platform#279 (the push-lane blind spot),
-agentskills#87 (see `B-detection-gaps.md` §B3 for what must be true first).
+**Both tracking issues are now CLOSED — corrected in the #52 pass.** This
+paragraph used to read *"Filed and still open by design: cms-platform#279 (the
+push-lane blind spot), agentskills#87"*. Re-checked through `mcp__github__` on
+2026-08-20: **cms-platform#279 closed `completed` at 10:54:34Z** and
+**agentskills#87 closed `completed` at 11:12:57Z**. Neither is a task any more.
+
+But do not read either closure as "the fix reached the fleet". #279's own
+successor, **cms-platform#283** (open), is the finding that seven of the ten
+repos calling the health audit are pinned to a release that has **no push lane
+at all**, so #279's fix reaches none of them — see `B-detection-gaps.md` §B4a.
 
 ### The blocking fact for `C` — re-derived 2026-08-20, and it MOVED
 
@@ -100,6 +128,18 @@ advance, and do not read a green condition 1 as "the gate is met" — conditions
 workflow or action source, no `platform_ref:` input names them. (Method: grep
 over every tracked lock and workflow in the nine local clones. Neither site is
 a registry or publishes a reusable, so there is nothing for a lock to pin.)
+
+**A stronger form of the same check, added from #52, because it catches what a
+grep for pin SYNTAX cannot.** Sweep every distinct 40-hex token across every
+repo's default-branch tip and try to RESOLVE each one, rather than trusting that
+a commit sha only ever appears in a `uses:` or a `ref:`. Of **124** such tokens,
+only three resolve inside a site repo, and the single cross-repo hit —
+`62a5f8f4` — is a **blob**, not a commit: it is the `preview-media` sentinel
+`assets/images/uploads/e2e-preview-media-probe.png`, gated on its git blob sha1.
+That distinction is the whole value of the exercise. A rewrite changes commit
+shas and leaves blob hashes untouched, so the one hit that looked like a
+cross-repo pin is structurally immune to C — but only a resolve tells you that,
+and a syntax grep would have reported either nothing at all or a scare.
 
 **Condition 3 FAILS, and it is not a wait — it is structural.** Measured
 2026-08-20 by fetching `refs/pull/*/head` into throwaway bare blobless clones
@@ -138,6 +178,14 @@ The earlier count in these files (112 / 20) was not wrong, it was **earlier** �
 every new PR branched off `main` adds another permanent ref, so this number only
 grows. Deferring C makes C harder, monotonically.
 
+**`_agent-guidance#52` quotes that earlier figure** — "112 PR refs … only 3 are
+open", and 20 for jodidaniel.com — so a reader holding both documents sees a
+conflict. **The table above wins**, because it was measured later, and the
+direction of travel (monotonically up) is itself the reason. This is the one
+place #52's blanket "where a number here differs from the handoff, this one
+wins" does not apply: it is a rule about which SESSION measured, and it breaks
+where the handoff was re-derived afterwards. Resolve by date, not by document.
+
 **Closing a pull request does not delete `refs/pull/N/head`.** 116 of
 adamdaniel.ai's 117 and all 24 of jodidaniel.com's are already closed or merged,
 and their refs are still live — verified directly with `git ls-remote` against
@@ -152,9 +200,13 @@ that are still live are the same conclusion by observation. So C's step
 inventory that condition 3 asks for is above; what does not exist is a way to
 act on it.
 
-Do not read "agentskills#87 is open" as "the labelling never landed". It landed;
-the issue is simply not closed. Re-verified 2026-08-20: still `open`, as is
-cms-platform#279.
+Do not read "agentskills#87 is open" as "the labelling never landed". It landed
+long before the issue closed. **Corrected in the #52 pass: this used to end
+"Re-verified 2026-08-20: still `open`, as is cms-platform#279" — both are now
+closed `completed`** (#87 at 11:12:57Z, #279 at 10:54:34Z, `mcp__github__`).
+The point the sentence was making outlived its own example, in both directions:
+an open issue is not evidence the work in it is undone, and a closed one is not
+evidence the fix reached anything (cms-platform#283).
 
 ### Verified side effect worth knowing
 
