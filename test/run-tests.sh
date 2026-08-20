@@ -5749,6 +5749,162 @@ test_ci_workflow_shape() {
     fi
 }
 
+# yq_install_facts — one fact per line about how this repo's workflows fetch a
+# third-party binary, read with the same real parser the helpers above use.
+#
+# A line scan cannot do this job, and this very change set is the proof: ci.yml
+# now carries the literal string `releases/latest` inside a COMMENT that
+# explains the ref it stopped using. A grep flags that comment, and it would
+# equally miss a mutable ref reached through a YAML anchor or a folded scalar —
+# matching bytes it can see, blind to structure it cannot. Every fact below is
+# therefore read off PARSED `run:` bodies and step `env:` mappings, by which
+# point comments do not exist.
+#
+#   workflow <file>              one per workflow parsed          (vacuity guard)
+#   fetch    <file> <step>       a run: body fetching the yq release asset
+#   mutable  <file> <step>       a run: body naming a MUTABLE release ref
+#   unverified <file> <step>     a fetch with no sha256 check in the same body
+#   step     <file> <digest>     sha256 over the whole install step, for skew
+#   version  <file> <value>      its YQ_VERSION
+#   digest   <file> <value>      its YQ_SHA256
+yq_install_facts() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const dir = path.join(process.argv[1], ".github", "workflows");
+for (const file of fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort()) {
+  const doc = YAML.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+  if (!doc || typeof doc !== "object") {
+    console.error(file + " does not parse to a mapping");
+    process.exit(1);
+  }
+  console.log("workflow " + file);
+  for (const spec of Object.values(doc.jobs || {})) {
+    for (const step of (spec && spec.steps) || []) {
+      if (!step || typeof step.run !== "string") continue;
+      const name = String(step.name || "(unnamed)").replace(/\s+/g, "_");
+      const body = step.run;
+      // Mutable by construction: whatever the tag points at TODAY.
+      if (body.includes("/releases/latest")) console.log("mutable " + file + " " + name);
+      // Match the ASSET, not the path shape: a step that regressed to a
+      // mutable ref must still COUNT as an install step, or restoring one
+      // trips the vacuity guard ("3 steps, expected 4") instead of the
+      // mutable assertion, and the failure names a deleted step rather than
+      // the ref that came back. Caught by the negative control, not by
+      // review.
+      if (!body.includes("yq_linux_amd64")) continue;
+      console.log("fetch " + file + " " + name);
+      if (!body.includes("sha256sum -c")) console.log("unverified " + file + " " + name);
+      const env = step.env || {};
+      // Hash the whole step, env included: two copies that differ in ANY of
+      // name, env or body are a skew this test exists to catch.
+      const canonical = JSON.stringify([step.name || null, env, body]);
+      console.log("step " + file + " " + crypto.createHash("sha256").update(canonical).digest("hex"));
+      console.log("version " + file + " " + String(env.YQ_VERSION));
+      console.log("digest " + file + " " + String(env.YQ_SHA256));
+    }
+  }
+}
+' "$REPO_ROOT"
+}
+
+# ── Test 7h: the yq install is pinned, verified, retried — and unskewed ────
+#
+# THE INCIDENT. On 2026-08-20 run 32383649430 (PR #56) lost this step to `wget`
+# exit 4 — a network failure — four seconds in, before a test body ran, reding
+# a `test` check run while a sibling run of the same context on the same head
+# passed. One transient blip, one red CI, nothing to do with the diff.
+#
+# THE LARGER PROBLEM the incident exposed. The ref was
+# `releases/latest/download`: a MUTABLE pointer to a third-party binary that is
+# then chmod +x and run as root. That is precisely the trust the fleet's
+# SHA-pinning rule exists to constrain — and the rule could not reach it,
+# because the rule governs `uses:` and this is a `run:` block. It sat, unnoticed,
+# in the repo that HOSTS the rule.
+#
+# WHAT THIS PINS, and why each assertion is separate from the others:
+#   * no run: body anywhere reaches a mutable release ref — the regression;
+#   * every yq fetch verifies a sha256 in the same body — a pin without a
+#     digest check still trusts whatever the host serves under that tag;
+#   * the version is an exact vX.Y.Z and the digest is 64 hex — so a future
+#     `YQ_VERSION: latest` cannot satisfy the assertion above by shape alone;
+#   * all four copies are byte-identical. The step is duplicated across four
+#     workflows rather than factored into a composite action, because a local
+#     `uses: ./…` would fail test_bump_workflow's 40-hex pin assertion and
+#     widening a security lint to accommodate a refactor is the wrong trade
+#     (docs/decisions/0008). Duplication is only safe while it cannot skew, and
+#     four copies of a version+digest is exactly the pin-skew hazard this
+#     account has been bitten by — so the identity check is what BUYS the
+#     duplication, not a tidiness nicety.
+test_yq_install_pinned() {
+    echo ""
+    echo "=== Test: the yq install is version-pinned, digest-verified and retried ==="
+
+    local facts="$TEST_DIR/yq-install-facts.txt"
+    local err="$TEST_DIR/yq-install-facts.err"
+
+    if ! yq_install_facts > "$facts" 2> "$err"; then
+        fail "yq install: could not parse this repo's workflows — $(head -1 "$err")"
+        return
+    fi
+
+    # VACUITY GUARD. Three of the four assertions below are about an ABSENCE,
+    # and the empty set satisfies every one of them perfectly. A parse that
+    # silently yielded nothing would hand back a clean bill of health for files
+    # it never opened — so establish first that workflows were read AND that
+    # the step being judged was actually found.
+    local workflows fetches
+    workflows=$(awk '$1 == "workflow"' "$facts" | wc -l)
+    fetches=$(awk '$1 == "fetch"' "$facts" | wc -l)
+    if [[ "$workflows" -ge 4 && "$fetches" -eq 4 ]]; then
+        pass "yq install: parsed $workflows workflows and found all 4 install steps"
+    else
+        fail "yq install: expected >=4 workflows parsed and exactly 4 yq install steps, got $workflows and $fetches — every assertion below would be vacuous"
+        return
+    fi
+
+    local mutable
+    mutable=$(awk '$1 == "mutable" { print $2 "/" $3 }' "$facts" | tr '\n' ' ' | sed 's/ $//')
+    if [[ -z "$mutable" ]]; then
+        pass "yq install: no run: body reaches a mutable release ref"
+    else
+        fail "yq install: a mutable release ref is back in $mutable — 'latest' is whatever the tag points at on the day CI runs, on a binary this step makes executable and runs as root. Pin the version and the digest; see docs/decisions/0008"
+    fi
+
+    local unverified
+    unverified=$(awk '$1 == "unverified" { print $2 "/" $3 }' "$facts" | tr '\n' ' ' | sed 's/ $//')
+    if [[ -z "$unverified" ]]; then
+        pass "yq install: every yq fetch checks a sha256 in the same run: body"
+    else
+        fail "yq install: $unverified downloads yq without checking a sha256 — a version pin alone still trusts whatever the host serves under that tag"
+    fi
+
+    # Exact form, not "looks versionish": `latest` and `v4` are both refs that
+    # can move under a pin that a laxer check would accept.
+    local bad_version bad_digest
+    bad_version=$(awk '$1 == "version" && $3 !~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 "=" $3 }' "$facts" | tr '\n' ' ' | sed 's/ $//')
+    bad_digest=$(awk '$1 == "digest" && $3 !~ /^[0-9a-f]{64}$/ { print $2 "=" $3 }' "$facts" | tr '\n' ' ' | sed 's/ $//')
+    if [[ -z "$bad_version" && -z "$bad_digest" ]]; then
+        pass "yq install: every copy states an exact vX.Y.Z and a 64-hex sha256"
+    else
+        fail "yq install: not an exact version and digest — version ${bad_version:-ok}, digest ${bad_digest:-ok}"
+    fi
+
+    local distinct
+    distinct=$(awk '$1 == "step" { print $3 }' "$facts" | sort -u | wc -l)
+    if [[ "$distinct" -eq 1 ]]; then
+        pass "yq install: all 4 copies of the step are identical"
+    else
+        fail "yq install: the 4 copies have drifted into $distinct variants — they carry the pinned version and digest, so a skew means CI, the sync, the drift report and the lock bumper are no longer running the same yq. Edit one and copy it to the other three"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -5828,6 +5984,7 @@ test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
 test_bump_workflow
 test_ci_workflow_shape
+test_yq_install_pinned
 test_check_agents_md
 
 echo ""

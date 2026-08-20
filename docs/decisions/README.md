@@ -21,6 +21,7 @@ a page.
 | [0005](0005-consumer-locks-are-re-pinned-from-here.md) | Consumer locks are re-pinned from here, and only when the bundle moved |
 | [0006](0006-bump-prs-land-on-a-sweep.md) | The bumper's own pull requests land on a sweep, not on a reviewer |
 | [0007](0007-sha-pins-carry-no-version-comment.md) | A SHA pin carries no version comment |
+| [0008](0008-downloaded-binaries-are-pinned-and-digest-checked.md) | A downloaded binary is pinned by version and by digest, and the digest lives here |
 
 ## Format
 
