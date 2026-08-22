@@ -1381,17 +1381,28 @@ for repo_name in "${REPOS[@]}"; do
     # old pin above a diff that had moved it.
     #
     # A SIBLING SITE MOVES WITH THIS, and it is not editable from here.
-    # agentskills' `report_digest_format` docstring carries a paragraph
-    # beginning "One consequence to expect rather than re-discover" which
-    # states that the bumper's own re-pin passes no `--ref`, that a format PR
-    # therefore advances the pin, and that the quoted command naming the old
-    # pin is "the asymmetry working as intended, not a mismatch to reconcile".
-    # As of this change none of that is true here. That paragraph was written
-    # before the format gate had ever fired on the fleet, so it reasoned about
-    # a blast radius nobody had measured; the eight-lock morning is the
-    # measurement. It is a one-paragraph edit over there — make it when that
-    # repo is next open, and do not read it as evidence about what THIS script
-    # does.
+    # agentskills' `report_digest_format` prints the `--check-format`
+    # remediation line this script quotes verbatim into a PR body, and that
+    # line carries a `--ref` of its own for the same reason this branch does.
+    # So the two paths AGREE: a shape repair holds the pin whether a human at
+    # a terminal or this nightly performs it, which is what makes quoting the
+    # report honest — the command a reviewer reads is the command that
+    # produced the diff beneath it. The comment beside that print block says
+    # the same from the other side and names this one, so neither half is a
+    # pointer to nowhere.
+    #
+    # This block asked, until _agent-guidance#65, for a paragraph over there to
+    # be rewritten — the one that stated this script's own re-pin passes no
+    # `--ref` and called the resulting mismatch an asymmetry working as
+    # intended. That request is DISCHARGED: read on ag58-generator before this
+    # edit, the paragraph is gone and its replacement states the agreement
+    # above, naming this block from the other side. The
+    # request is deleted rather than left standing, because a cross-repo
+    # instruction pointing at text that is not there is read and believed, and
+    # costs the next reader a reconstruction of whether the debt was paid or
+    # the paragraph merely moved. Nothing compares the two copies
+    # automatically; a change to either half still has to be carried across by
+    # hand, which is why the heading stays and only its content moved.
     #
     # `$old_ref` is safe to resolve: `--check-current` exited 0 for this repo,
     # and it gets there only by resolving and `git archive`-ing that very

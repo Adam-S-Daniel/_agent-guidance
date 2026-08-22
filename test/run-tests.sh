@@ -6826,6 +6826,22 @@ test_bump_script_self_consistency() {
         "self-consistency: no comment claims a federated pin is never advanced"
     assert_not_contains "$script" "that FAILED: is permanent" \
         "self-consistency: no comment claims a federated FAILED: can never be cleared"
+
+    # _agent-guidance#65. The cross-repo block asked a future reader to rewrite
+    # an agentskills paragraph beginning "One consequence to expect rather than
+    # re-discover", which that repo had already replaced — so the instruction
+    # pointed at text that is not there, and a stale cross-repo pointer is read
+    # and believed exactly like a stale SHA-pin version comment. Two halves,
+    # because deleting the whole block would leave the agentskills side (which
+    # names this one by its heading) pointing at nothing: the heading stays,
+    # the discharged request does not.
+    if grep -qF -- 'A SIBLING SITE MOVES WITH THIS' "$script"; then
+        pass "self-consistency: the cross-repo block agentskills names by heading still exists"
+    else
+        fail "self-consistency: the cross-repo block agentskills names by heading still exists"
+    fi
+    assert_not_contains "$script" "One consequence to expect rather than re-discover"         "self-consistency: it no longer asks for an edit to a paragraph that is gone"
+    assert_not_contains "$script" "make it when that repo is next open"         "self-consistency: and carries no outstanding cross-repo request at all"
 }
 
 test_bump_workflow() {
