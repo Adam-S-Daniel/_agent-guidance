@@ -60,6 +60,16 @@
 # suite can render an artifact for a run state without a fleet, a clone or a
 # network.
 
+# failed_slice — the piece of a generator report a PR body quotes, read from
+# stdin: from the first `FAILED:` headline to the end of the report, capped at
+# 20 lines. THE ONE DEFINITION OF THAT PIPELINE, and it is a function rather
+# than five copies of a one-liner for a reason that is about the TEST, not
+# about repetition. What the cap keeps is a claim the PR body makes, so a test
+# has to measure it — and a test that re-types the pipeline measures a
+# pipeline nobody runs the moment the library changes its range. Both halves
+# have to come from here.
+failed_slice() { sed -n '/^FAILED:/,$p' | head -20; }
+
 # lock_summary <file> <registry> — "registry@shortref" for one entry of a lock,
 # used to describe in the PR body what moved and what did not. Lives here
 # because the body is its only caller.
@@ -404,7 +414,7 @@ here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
 \`--check-format\` reads this file alone and says so:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$format_out" | head -20 | sed "s#$lock_file#$LOCK_REL_PATH#g")
+$(failed_slice <<< "$format_out" | sed "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
 }
 # THE COMMAND THE BODY QUOTES, and what it is honest to call it. The
@@ -457,7 +467,7 @@ reports \`OK\` while doing it. \`--check-current\`, scoped to the primary, says 
 have diverged:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+$(failed_slice <<< "$check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
 }
 claim_text_why_content_plain() {
@@ -467,7 +477,7 @@ before a skill changed delivers the older skill to every ephemeral session and
 reports \`OK\` while doing it. \`--check-current\` says the two have diverged:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+$(failed_slice <<< "$check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
 }
 
@@ -497,7 +507,7 @@ are installed by this lock and only \`--repin-source\` advances its pin.
 ones that answered:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$fed_check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+$(failed_slice <<< "$fed_check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
 }
 claim_text_why_fed_evidence_only() {
@@ -505,7 +515,7 @@ claim_text_why_fed_evidence_only() {
 asked once per source, and these are the ones that answered:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$fed_check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+$(failed_slice <<< "$fed_check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
 }
 claim_text_why_fed_one_question() {

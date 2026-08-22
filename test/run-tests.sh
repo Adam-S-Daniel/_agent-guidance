@@ -5819,32 +5819,77 @@ test_bump_pr_body_slice_arithmetic() {
     echo ""
     echo "=== Test: the PR body's 20-line cap over a concatenated scoped stream ==="
 
-    # The cap is read off the code rather than assumed, so this test cannot
-    # keep measuring a number the code has stopped using.
+    # THE PIPELINE THIS RUNS IS THE LIBRARY'S OWN, called, not copied. It used
+    # to be half derived and half re-typed: `head -20` was grepped for out of
+    # the library, but the `sed -n '/^FAILED:/,$p'` range beside it was a hand
+    # copy — so changing the library's range to, say, `/^FAILED:/,+5p` left
+    # this test happily measuring the old pipeline under a comment claiming it
+    # ran the current one. `failed_slice` is now the one definition of both
+    # halves, and this sources the library and calls it.
     local claims="$REPO_ROOT/scripts/lib/bump-pr-claims.sh"
-    if grep -qF -- 'fed_check_out" | head -20' "$claims"; then
-        pass "slice: the claims library really caps the federated slice at 20 lines"
+    if grep -qF -- '$(failed_slice <<< "$fed_check_out"' "$claims"; then
+        pass "slice: the PR body's federated evidence is sliced by failed_slice"
     else
-        fail "slice: the claims library really caps the federated slice at 20 lines"
+        fail "slice: the PR body's federated evidence is sliced by failed_slice"
         return
     fi
 
-    local stream="$TEST_DIR/fedslice.in" sliced="$TEST_DIR/fedslice.out" i
+    # THE CAP IS MEASURED off that function rather than read off its source,
+    # so nothing here can keep asserting a number the code stopped using — and
+    # the fixture below is built FROM the measurement, so the arithmetic under
+    # test is the arithmetic the library actually performs.
+    local cap="" i
+    cap=$( { echo "FAILED: probe"; seq 1 200 | sed 's/^/  - line /'; } \
+           | ( source "$claims" && failed_slice ) | wc -l ) || cap=""
+    if [[ "$cap" =~ ^[0-9]+$ ]] && [[ "$cap" -ge 4 ]]; then
+        pass "slice: failed_slice caps a report at $cap lines"
+    else
+        fail "slice: failed_slice caps a report at a countable number of lines — got '$cap'"
+        return
+    fi
+    # AND THE COMMENT BESIDE IT STATES THAT SAME ARITHMETIC. It names three
+    # numbers a reader would otherwise have to take on trust; all three are
+    # derived from the one measurement above.
+    if python3 -c '
+import re, sys
+cap = int(sys.argv[2])
+text = re.sub(r"(?m)^[ \t]*#[ \t]?", "", open(sys.argv[1], encoding="utf-8").read())
+text = re.sub(r"\s+", " ", text)
+m = re.search(r"a first source with (\d+) difference lines puts the second "
+              r"source.s headline on line (\d+) and its command on line (\d+)", text)
+if not m:
+    sys.exit("the comment beside the slice no longer states the arithmetic")
+diffs, headline, command = (int(g) for g in m.groups())
+if (diffs, headline, command) != (cap - 3, cap, cap + 1):
+    sys.exit("the comment says %d/%d/%d; a cap of %d makes it %d/%d/%d"
+             % (diffs, headline, command, cap, cap - 3, cap, cap + 1))
+' "$claims" "$cap" 2>"$TEST_DIR/slice-arith.err"; then
+        pass "slice: and the comment beside it states that cap's own arithmetic"
+    else
+        fail "slice: and the comment beside it states that cap's own arithmetic — $(cat "$TEST_DIR/slice-arith.err")"
+    fi
+
+    local stream="$TEST_DIR/fedslice.in" sliced="$TEST_DIR/fedslice.out"
     # Two scoped blocks, each 1 headline + 1 remediation + its differences.
-    # Seventeen differences in the first is the exact arithmetic the comment
-    # names: 1 + 1 + 17 = 19, so the second headline lands on line 20 and its
-    # command on line 21.
+    # `cap - 3` differences in the first is what puts the second block's
+    # headline on the LAST line kept and its command one past the cap:
+    # 1 + 1 + (cap - 3) = cap - 1.
     {
         echo "FAILED: org/src-a's bundles have moved on since aaaaaaa, which skills.lock still pins for it."
         echo "  python3 scripts/generate_skills_lock.py --repin --ref bbbbbbb --repin-source 'org/src-a@'"
-        for i in $(seq 1 17); do
+        for i in $(seq 1 $((cap - 3))); do
             echo "  - changed: 'src-a/skill-$i' differs from its content at aaaaaaa"
         done
         echo "FAILED: org/src-b's bundles have moved on since ccccccc, which skills.lock still pins for it."
         echo "  python3 scripts/generate_skills_lock.py --repin --ref bbbbbbb --repin-source 'org/src-b@'"
         echo "  - changed: 'src-b/skill-1' differs from its content at ccccccc"
     } > "$stream"
-    sed -n '/^FAILED:/,$p' "$stream" | head -20 > "$sliced"
+    ( source "$claims" && failed_slice ) < "$stream" > "$sliced" || :
+    if [[ "$(wc -l < "$sliced")" -eq "$cap" ]]; then
+        pass "slice: the fixture is long enough that the cap is what truncates it"
+    else
+        fail "slice: the fixture is long enough that the cap is what truncates it — kept $(wc -l < "$sliced") of $cap"
+    fi
 
     # WHAT HOLDS: the first block's headline is line 1 and its command line 2,
     # whichever block is first, so the pair a reader needs most cannot be split.
@@ -5861,8 +5906,11 @@ test_bump_pr_body_slice_arithmetic() {
 
     # WHAT DOES NOT HOLD, and is stated rather than promised away: a LATER
     # block can keep its headline and lose the command beneath it.
-    assert_contains "$sliced" "org/src-b's bundles have moved" \
-        "slice: a later block's headline can be the last line kept"
+    if [[ "$(sed -n "${cap}p" "$sliced")" == FAILED:\ org/src-b* ]]; then
+        pass "slice: a later block's headline can be the last line kept"
+    else
+        fail "slice: a later block's headline can be the last line kept — line $cap is '$(sed -n "${cap}p" "$sliced")'"
+    fi
     assert_not_contains "$sliced" "--repin-source 'org/src-b@'" \
         "slice: while its command falls outside the cap"
 
