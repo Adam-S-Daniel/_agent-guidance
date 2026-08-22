@@ -5551,7 +5551,6 @@ block = block.group(0)
 listed = re.findall(r"^#   \* (\S+)", block, re.M)
 hand = re.findall(r"^#   \* (\S+)", block.split("DERIVED BY SURGERY")[0], re.M)
 words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11}
-stated = re.search(r"^# (\w+)\n?# ?generator stand-ins|^# ([A-Z]+)\b generator stand-ins", block, re.M)
 stated = re.search(r"([A-Z]+) *\n?#? *generator stand-ins", block)
 if not stated:
     sys.exit("the inventory no longer states how many stand-ins there are")
