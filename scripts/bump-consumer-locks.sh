@@ -1077,9 +1077,33 @@ for repo_name in "${REPOS[@]}"; do
     # a non-zero exit is NOT drift. A bad `--only` value lands on exactly that
     # path, because the generator raises for it and exits 1 with an ERROR:
     # line and no `^FAILED:` at all.
+    #
+    # THE PRIMARY'S OWN NAME IS NOT A SCOPED QUESTION, and skipping it is not
+    # an optimisation. A lock may name one registry as BOTH its primary and a
+    # federated source — `plan_sources`' uniqueness check is keyed on BUNDLE,
+    # so two entries may share a registry — and the generator refuses to scope
+    # to such a name because it has two answers, correctly. Asking anyway
+    # lands on the else-fail path below, which is safe but has NO WAY BACK:
+    # the lock is red every night until a human edits it, where on the
+    # combined-verdict behaviour this replaced the same lock was re-pinned
+    # normally. So the question this script cannot ask is not asked, the
+    # primary's own currency is answered by `$primary_lock` above as it always
+    # was, and that entry's pin is carried through untouched — which is also
+    # what `--repin-source` would do with it, since it refuses the primary's
+    # name outright. No lock in this fleet has that shape today; nothing else
+    # rejects it either.
+    fed_self_named=false
+    for reg in ${source_registries[@]+"${source_registries[@]}"}; do
+        [[ "$reg" == "$primary_registry" ]] && fed_self_named=true
+    done
+    if $fed_self_named; then
+        log "$LOCK_REL_PATH names $primary_registry as both its primary registry and a federated source; a scoped question under that one name has two answers, so it is not put and that entry's pin is carried through untouched."
+    fi
+
     fed_gate_failed=false
     if [[ ${#source_registries[@]} -gt 0 ]] && $FED_ADVANCE_AVAILABLE; then
         for reg in "${source_registries[@]}"; do
+            [[ "$reg" == "$primary_registry" ]] && continue
             fed_exit=0
             fed_out=$(python3 "$GENERATOR" --check-current --only "$reg" \
                 --repo "$primary_dir" \
@@ -1716,11 +1740,19 @@ them."
     # as it stands on the default branch and is never written to; the NEW one
     # from the re-pinned working copy. Two files, so the arrow cannot show the
     # same value twice.
+    #
+    # A `sources` entry naming the PRIMARY's own registry gets no line in that
+    # list and a paragraph of its own. It was never asked about — the scoped
+    # question has two answers under one name — so it has no verdict to
+    # print, and `lock_summary` would answer for the top-level entry rather
+    # than the source one anyway, describing the primary's pin under a
+    # federated heading.
     federated_note="This lock has no federated sources."
     if [[ ${#source_registries[@]} -gt 0 ]]; then
         federated_lines=""
         advanced_any=false
         for reg in "${source_registries[@]}"; do
+            [[ "$reg" == "$primary_registry" ]] && continue
             fed_moved=false
             for moved_reg in ${fed_drifted_regs[@]+"${fed_drifted_regs[@]}"}; do
                 [[ "$moved_reg" == "$reg" ]] && fed_moved=true
@@ -1737,7 +1769,19 @@ them."
 - \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **not asked**"
             fi
         done
-        if ! $FED_ADVANCE_AVAILABLE; then
+        self_named_note=""
+        if $fed_self_named; then
+            self_named_note="
+
+**One \`sources\` entry names \`${primary_registry}\`, this lock's own primary
+registry.** A \`--check-current --only ${primary_registry}\` has two answers under
+that one name, so the question was not put; \`--repin-source\` refuses that name
+outright for the same reason. That entry's pin is carried through exactly as this
+lock had it. Give the two halves two names if either is meant to move on its own."
+        fi
+        if [[ -z "$federated_lines" ]]; then
+            federated_note="**No federated source in this lock could be asked about.**${self_named_note}"
+        elif ! $FED_ADVANCE_AVAILABLE; then
             federated_note="**Federated sources keep their pins, and this run could not ask whether they
 should.** The generator this run used has no \`--check-current --only <registry>\`,
 so no per-source question was put and no pin below was checked against its own
@@ -1745,21 +1789,21 @@ registry — each is carried through exactly as this lock already had it, which 
 what \`--repin\` does with a source nothing names. \`--source\` is refused outright,
 because that flag REPLACES the inherited \`sources\` array and would silently
 de-federate the lock:
-${federated_lines}"
+${federated_lines}${self_named_note}"
         elif $advanced_any; then
             federated_note="**Federated sources advance one at a time, and only when asked.** Each source
 was put its OWN \`--check-current --only <registry>\` question, and only the ones
 that answered \`FAILED\` were named to \`--repin-source\`. \`--source\` stays refused
 outright, because that flag REPLACES the inherited \`sources\` array and would
 silently de-federate the lock:
-${federated_lines}"
+${federated_lines}${self_named_note}"
         else
             federated_note="**Federated sources keep their pins.** Each was put its own
 \`--check-current --only <registry>\` question and answered that its bundles have
 not moved, so none was named to \`--repin-source\`; \`--source\` is refused outright,
 because that flag REPLACES the inherited \`sources\` array and would silently
 de-federate the lock:
-${federated_lines}"
+${federated_lines}${self_named_note}"
         fi
     fi
 

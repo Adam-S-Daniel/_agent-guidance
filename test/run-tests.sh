@@ -5060,6 +5060,99 @@ test_bump_generator_without_scoped_flags() {
     fi
 }
 
+# ── Test 8h3b: a lock that federates its own primary registry ─────────────
+#
+# Representable, and nothing rejects it: `plan_sources`' uniqueness check is
+# keyed on BUNDLE, so one registry may appear as both the primary and a source
+# with different bundles and its own pin. The generator refuses to SCOPE to
+# such a name, correctly — one name, two entries, two answers — so a scoped
+# loop that asks anyway lands on the else-fail path, which is safe and has no
+# way back: red every night until a human edits the consumer's lock. On the
+# combined-verdict behaviour this replaced, the same lock was re-pinned
+# normally, so asking made a passing case a permanent failure.
+#
+# The primary here is STALE, so a re-pin is genuinely due: this measures that
+# the re-pin still happens, not merely that nothing exploded.
+test_bump_self_federating_lock() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a lock naming its primary as a source) ==="
+
+    local root="$TEST_DIR/bare-selffed"
+    local work="$TEST_DIR/work/bumporg-repo-selffed"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-selffed" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-selffed" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-selffed"
+    echo "# repo-selffed" > README.md
+    # Written here rather than through seed_bump_lock, which hardcodes the
+    # sibling registry: the whole shape under test is a `sources` entry whose
+    # registry EQUALS the lock's own. The bundle is one no registry carries, so
+    # that entry contributes no skills and cannot collide with the primary's.
+    python3 -c '
+import json, sys
+path, ref = sys.argv[1:3]
+doc = {
+    "registry": "bumporg/agentskills",
+    "ref": ref,
+    "bundles": ["adam"],
+    "sources": [{
+        "registry": "bumporg/agentskills",
+        "ref": ref,
+        "bundles": ["extra"],
+        "layout": "skills",
+    }],
+    "skills": {},
+    "generated_from": ref,
+}
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' skills.lock "$BUMP_REF_OLD"
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/registry" --ref "$BUMP_REF_OLD" \
+        --source-repo "bumporg/agentskills=$TEST_DIR/registry" -o skills.lock >/dev/null
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    BUMP_BARE_DIR_FOR_RUN="$root" run_bump "$TEST_DIR/bump-selffed.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+    local log="$TEST_DIR/bump-selffed.txt"
+
+    assert_contains "$log" "names bumporg/agentskills as both its primary registry and a federated source" \
+        "self-federating: the question this script cannot ask is named, not asked"
+    assert_not_contains "$log" "could not decide whether skills.lock's bumporg/agentskills source is current" \
+        "self-federating: no unanswerable scoped question is put"
+    assert_contains "$log" "0 failed" \
+        "self-federating: not a permanent nightly failure"
+    assert_contains "$log" "1 proposed" \
+        "self-federating: the stale primary is still re-pinned"
+
+    local after="$TEST_DIR/selffed-after.lock"
+    git -C "$root/bumporg_repo-selffed" show \
+        "refs/heads/skills-lock-bump/update:skills.lock" > "$after" 2>/dev/null || : > "$after"
+    if [[ "$(lock_field_of "$after" ref)" == "$BUMP_REF_HEAD" ]]; then
+        pass "self-federating: the primary pin advanced"
+    else
+        fail "self-federating: the primary pin advanced — got $(lock_field_of "$after" ref)"
+    fi
+    if [[ "$(lock_source_ref_of "$after" bumporg/agentskills)" == "$BUMP_REF_OLD" ]]; then
+        pass "self-federating: the self-named source entry is carried through untouched"
+    else
+        fail "self-federating: the self-named source entry is carried through — got $(lock_source_ref_of "$after" bumporg/agentskills)"
+    fi
+    local body="$BUMP_PR_BODY_DIR/bumporg_repo-selffed.body"
+    assert_contains "$body" "this lock's own primary" \
+        "self-federating: the PR body discloses the entry nothing asked about"
+    assert_not_contains "$body" "**unchanged**" \
+        "self-federating: and gives it no verdict, because no question was put"
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h4a: a flag whose name merely BEGINS --only is not --only ───────
 #
 # THE FALSE POSITIVE the capability probe exists to close, and it lands on this
@@ -6688,6 +6781,7 @@ test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
+test_bump_self_federating_lock
 test_bump_only_prefix_flag
 test_bump_generator_error_line
 test_bump_degraded_federated_body
