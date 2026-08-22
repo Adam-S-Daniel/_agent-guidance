@@ -5462,22 +5462,93 @@ with open(path, "w", encoding="utf-8") as handle:
 # probe). The list is asserted here rather than described in a comment,
 # because a comment cannot go red.
 #
-# THE STUB INVENTORY, recorded so the next flag does not rediscover it. There
-# are FOUR generator stand-ins in this file, and only the first is under test
-# here:
+# THE STUB INVENTORY, recorded so the next flag does not rediscover it. TEN
+# generator stand-ins live in this file, in two kinds, and only the first is
+# under test here.
+#
+# HAND-ROLLED, each a whole small generator written for one shortfall:
 #   * write_stub_generator          — the fleet stand-in, all lanes
 #   * generator-no-repin.py         — lacks --repin; the run exits 2 at the one
 #                                     HARD probe before any flag here matters
 #   * generator-no-check-format.py  — lacks --check-format
 #   * generator-format-error.py     — --check-format present, unanswerable
 #   * generator-errline.py          — rejects --check-current, argparse-style
-# The last four carry neither `--only` nor `--repin-source`, so both federated
-# probes degrade in their lanes and emit a `::warning::` apiece. Those lanes
-# pass today only because both probes are SOFT; harden either into an exit 2
-# and they go red without having changed.
+#
+# DERIVED BY SURGERY on write_stub_generator's output, so each keeps every
+# other refusal the stand-in has:
+#   * generator-no-scoped-flags.py     — both scoped flags stripped
+#   * generator-missing-only.py        — only --only stripped
+#   * generator-missing-repin-source.py — only --repin-source stripped
+#   * generator-degraded-fed.py        — both stripped, for the body lane
+#   * generator-only-bundles.py        — --only replaced by --only-bundles
+#
+# COUNTED BY A TEST, not by this comment. An inventory that states a number
+# nothing checks is the defect this repo files against itself, and the first
+# version of this block proved it: it said FOUR above a list of five, three
+# lines before a sentence that only parses for five, while four more stand-ins
+# it never mentioned already existed. The assertion in this test counts them.
+#
+# The four hand-rolled ones carry neither `--only` nor `--repin-source`, so
+# both federated probes degrade in their lanes and emit a `::warning::` apiece.
+# Those lanes pass today only because both probes are SOFT; harden either into
+# an exit 2 and they go red without having changed.
 test_bump_stub_generator_parity() {
     echo ""
     echo "=== Test: the stand-in generator's refusals match the real one's ==="
+
+    # THE INVENTORY ABOVE, CHECKED. Both directions and the two numbers it
+    # states, because a list is only as good as its completeness and the first
+    # version of this block was wrong in every way one can be: it said FOUR
+    # over a list of five, followed by a sentence that only parses for five,
+    # while four stand-ins it never mentioned already existed in the file. A
+    # comment asserting a count nothing counts is what this repo files issues
+    # about; the count is here instead.
+    if python3 -c '
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+block = re.search(r"THE STUB INVENTORY.*?without having changed\\.", src, re.S)
+if not block:
+    sys.exit("the inventory block is gone")
+block = block.group(0)
+listed = re.findall(r"^#   \* (\S+)", block, re.M)
+hand = re.findall(r"^#   \* (\S+)", block.split("DERIVED BY SURGERY")[0], re.M)
+words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+stated = re.search(r"^# (\w+)\n?# ?generator stand-ins|^# ([A-Z]+)\b generator stand-ins", block, re.M)
+stated = re.search(r"([A-Z]+) *\n?#? *generator stand-ins", block)
+if not stated:
+    sys.exit("the inventory no longer states how many stand-ins there are")
+if words.get(stated.group(1).lower()) != len(listed):
+    sys.exit("the inventory says %s but lists %d" % (stated.group(1), len(listed)))
+hand_stated = re.search(r"The (\w+) hand-rolled ones", block)
+if not hand_stated:
+    sys.exit("the inventory no longer says how many stand-ins are hand-rolled")
+if words.get(hand_stated.group(1).lower()) != len(hand) - 1:
+    sys.exit("the inventory says %s hand-rolled but lists %d beside write_stub_generator"
+             % (hand_stated.group(1), len(hand) - 1))
+# Both directions against the file itself, with the inventory removed so its
+# own bullets cannot vouch for themselves.
+body = src.replace(block, "")
+used = set(re.findall(r"generator-[A-Za-z0-9$_.-]+\.py", body))
+literal = {u for u in used if "$" not in u}
+interp = {u.split("$")[0] for u in used if "$" in u}
+problems = []
+if "write_stub_generator" not in listed or "write_stub_generator() {" not in body:
+    problems.append("write_stub_generator is not both listed and defined")
+for name in listed:
+    if name == "write_stub_generator" or name in literal:
+        continue
+    if not any(name.startswith(prefix) for prefix in interp):
+        problems.append("listed but never built: " + name)
+for name in literal:
+    if name not in listed:
+        problems.append("built but not listed: " + name)
+if problems:
+    sys.exit("; ".join(sorted(problems)))
+' "$REPO_ROOT/test/run-tests.sh" 2>"$TEST_DIR/stub-inventory.err"; then
+        pass "stub inventory: it names every stand-in in this file, and only those, in the numbers it states"
+    else
+        fail "stub inventory: it names every stand-in in this file, and only those, in the numbers it states — $(cat "$TEST_DIR/stub-inventory.err")"
+    fi
 
     local dir="$TEST_DIR/stubparity"
     rm -rf "$dir"; mkdir -p "$dir"
