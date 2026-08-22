@@ -1174,43 +1174,75 @@ STUBEOF
 write_strip_scoped_flags() {
     cat > "$1" <<'STRIPEOF'
 #!/usr/bin/env python3
-"""Remove --only and --repin-source from a copy of the stand-in generator."""
+"""Remove --only and/or --repin-source from a copy of the stand-in generator.
+
+    strip-scoped-flags.py <path> [both|only|repin-source]
+
+PARAMETERISED, because the script's own comment makes "BOTH, OR NEITHER" a
+load-bearing invariant and stripping both together is the one case that cannot
+exercise it: a run where FED_ADVANCE_AVAILABLE were set per flag would degrade
+identically. The two one-missing shapes are the ones that would notice.
+"""
 import io
 import sys
 
 path = sys.argv[1]
+which = sys.argv[2] if len(sys.argv) > 2 else "both"
+if which not in ("both", "only", "repin-source"):
+    sys.exit("strip: unknown selection %r" % which)
 text = io.open(path, encoding="utf-8").read()
 
-CUTS = [
+ONLY_CUTS = [
     '    parser.add_argument("--only", metavar="REGISTRY", default=None)\n',
-    '    parser.add_argument("--repin-source", metavar="\'OWNER/REPO@[REF]\'",\n'
-    '                        action="append", default=None)\n',
-    '    if args.repin_source is not None and not args.repin:\n'
-    '        parser.error("--repin-source advances a pin the lock already carries, so it "\n'
-    '                     "only means anything alongside --repin")\n'
     '    if args.only is not None and not args.check_current:\n'
     '        parser.error("--only scopes --check-current; pass it alongside that flag.")\n'
     '    if args.only is not None and args.check_format:\n'
     '        parser.error("--only scopes --check-current alone; --check-format reads the "\n'
     '                     "file alone and cannot be narrowed to one registry.")\n',
 ]
-SWAPS = [
+ONLY_SWAPS = [
     ("select_sources(lock, args.only)", "select_sources(lock, None)"),
+]
+SOURCE_CUTS = [
+    '    parser.add_argument("--repin-source", metavar="\'OWNER/REPO@[REF]\'",\n'
+    '                        action="append", default=None)\n',
+    '    if args.repin_source is not None and not args.repin:\n'
+    '        parser.error("--repin-source advances a pin the lock already carries, so it "\n'
+    '                     "only means anything alongside --repin")\n',
+]
+SOURCE_SWAPS = [
     ("if args.repin_source is not None else", "if False else"),
     ("apply_repin_sources(lock, args.repin_source, overrides)",
      "apply_repin_sources(lock, [], overrides)"),
 ]
 
-for cut in CUTS:
+cuts, swaps, survivors = [], [], []
+if which in ("both", "only"):
+    cuts += ONLY_CUTS
+    swaps += ONLY_SWAPS
+    survivors.append("args.only")
+if which in ("both", "repin-source"):
+    cuts += SOURCE_CUTS
+    swaps += SOURCE_SWAPS
+    survivors.append("args.repin_source")
+
+for cut in cuts:
     if text.count(cut) != 1:
         sys.exit("strip: expected exactly one of:\n%s" % cut)
     text = text.replace(cut, "")
-for old, new in SWAPS:
+for old, new in swaps:
     if text.count(old) != 1:
         sys.exit("strip: expected exactly one %r" % old)
     text = text.replace(old, new)
-if "args.only" in text or "args.repin_source" in text:
-    sys.exit("strip: a reference to a removed flag survived")
+for name in survivors:
+    if name in text:
+        sys.exit("strip: a reference to the removed %s survived" % name)
+# And the converse, which is what makes a PARTIAL strip a real fixture rather
+# than a full one under another name: the flag that was NOT selected has to
+# still be there.
+kept = {"only": "args.repin_source", "repin-source": "args.only"}.get(which)
+if kept and kept not in text:
+    sys.exit("strip: %s was removed but only %s was asked for" % (kept, which))
 
 io.open(path, "w", encoding="utf-8").write(text)
 STRIPEOF
@@ -5660,6 +5692,75 @@ with open(path, "w", encoding="utf-8") as handle:
     rm -rf "$root" "$work"
 }
 
+# ── Test 8h3d: ONE of the two scoped flags missing, either one ────────────
+#
+# The script's own comment makes "BOTH, OR NEITHER" load-bearing — a scoped
+# question with no way to act on it is the report-only behaviour this script
+# already had, and acting without the scoped question is the fleet-wide
+# over-advance ADR 0009 exists to prevent. Stripping both flags together, which
+# is the only shape the degrade test had, cannot exercise that: a run that set
+# FED_ADVANCE_AVAILABLE per flag would degrade identically. These two are the
+# shapes that would notice, and they are reachable — the flags land in
+# agentskills in one PR but a rollback, a partial revert or a pinned checkout
+# can leave either alone.
+test_bump_generator_with_one_scoped_flag() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (one scoped flag present, one missing) ==="
+
+    local which gen log
+    for which in only repin-source; do
+        gen="$TEST_DIR/generator-missing-$which.py"
+        write_stub_generator "$gen"
+        if ! python3 "$TEST_DIR/strip-scoped-flags.py" "$gen" "$which"; then
+            fail "one flag ($which): could not strip just that flag"
+            continue
+        fi
+        # The fixture is a PARTIAL strip or it is nothing: the named flag gone
+        # from --help, the other one still there. Without both halves this
+        # would be the both-missing test wearing a different name.
+        if python3 "$gen" --help 2>&1 | grep -q -- "--$which"; then
+            fail "one flag ($which): --$which is still advertised by the stripped stub"
+        else
+            pass "one flag ($which): --$which is gone from the stripped stub"
+        fi
+        local kept; [[ "$which" == "only" ]] && kept="--repin-source" || kept="--only"
+        if python3 "$gen" --help 2>&1 | grep -q -- "$kept"; then
+            pass "one flag ($which): $kept is still there, so this is a partial strip"
+        else
+            fail "one flag ($which): $kept is still there, so this is a partial strip"
+        fi
+
+        log="$TEST_DIR/bump-onemissing-$which.txt"
+        BUMP_GENERATOR_FOR_RUN="$gen" run_bump "$log" --dry-run
+        unset BUMP_GENERATOR_FOR_RUN
+
+        # Exactly ONE probe warning: the pair degrades together, but each probe
+        # reports only its own flag. Both warnings would mean the probes are
+        # not independent; none would mean the gate armed on half a capability.
+        local warnings
+        warnings=$(grep -c "this run cannot" "$log" || true)
+        if [[ "$warnings" == "1" ]]; then
+            pass "one flag ($which): exactly one probe reports a shortfall"
+        else
+            fail "one flag ($which): exactly one probe reports a shortfall — got $warnings"
+        fi
+        # DEGRADE, never ground the run. Exit 2 is "refused before any repo was
+        # touched", which is what a hard probe would produce; this fleet
+        # fixture always ends 1 because repo-error cannot be assessed.
+        if [[ $BUMP_EXIT -ne 2 ]]; then
+            pass "one flag ($which): the run is not grounded"
+        else
+            fail "one flag ($which): the run is not grounded (exit 2)"
+        fi
+        assert_not_contains "$log" "federated sources whose pins this re-pin advances" \
+            "one flag ($which): no federated pin is advanced on half a capability"
+        # And no argparse rejection reaches the log, which is what would happen
+        # if the gate armed and then passed the flag that is missing.
+        assert_not_contains "$log" "unrecognized arguments" \
+            "one flag ($which): the missing flag is never passed"
+    done
+}
+
 # ── Test 8h4a: a flag whose name merely BEGINS --only is not --only ───────
 #
 # THE FALSE POSITIVE the capability probe exists to close, and it lands on this
@@ -7331,6 +7432,7 @@ test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
+test_bump_generator_with_one_scoped_flag
 test_bump_stub_generator_parity
 test_bump_twice_federated_lock
 test_bump_format_and_federated
