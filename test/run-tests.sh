@@ -5782,12 +5782,13 @@ test_bump_pr_body_slice_arithmetic() {
     echo ""
     echo "=== Test: the PR body's 20-line cap over a concatenated scoped stream ==="
 
-    # The cap is read off the script rather than assumed, so this test cannot
+    # The cap is read off the code rather than assumed, so this test cannot
     # keep measuring a number the code has stopped using.
-    if grep -qF -- 'fed_check_out" | head -20' "$REPO_ROOT/scripts/bump-consumer-locks.sh"; then
-        pass "slice: the script really caps the federated slice at 20 lines"
+    local claims="$REPO_ROOT/scripts/lib/bump-pr-claims.sh"
+    if grep -qF -- 'fed_check_out" | head -20' "$claims"; then
+        pass "slice: the claims library really caps the federated slice at 20 lines"
     else
-        fail "slice: the script really caps the federated slice at 20 lines"
+        fail "slice: the claims library really caps the federated slice at 20 lines"
         return
     fi
 
@@ -5830,9 +5831,313 @@ test_bump_pr_body_slice_arithmetic() {
 
     # And the comment beside the slice must not claim otherwise. This is the
     # absolute that was restated on intuition once already, in the generator.
-    assert_not_contains "$REPO_ROOT/scripts/bump-consumer-locks.sh" \
+    assert_not_contains "$claims" \
         "can never separate a headline from the command" \
         "slice: no comment promises a guarantee this slice does not have"
+}
+
+# ── Test 8h3g: every sentence a bump PR can carry, over every run state ───
+#
+# THE DEFECT CLASS THIS LANE EXISTS FOR, and it is one defect found five
+# separate times by five separate readers: a sentence written for one shape of
+# run is left unbranched when a second shape becomes reachable, and then
+# asserts something that run never established. A degraded body said each
+# source "answered that its bundles have not moved" from a generator with no
+# way to ask; the paragraph beside it explained a `--repin-source` refusal by a
+# generator that had no `--repin-source`; a federated-only header said a source
+# moved "and nothing else" three paragraphs above a block saying one moved
+# "too"; a body pointed at "the ref listed for it below" with nothing listed
+# below; and a body called a partial command "the whole of it".
+#
+# scripts/lib/bump-pr-claims.sh makes the omission a construction error at
+# runtime. This is what makes the claim CHECKABLE, and it is deliberately not
+# a second copy of that file's condition table — a test that restates the
+# conditions passes whenever the conditions are wrong in both places. What it
+# asserts instead are PROHIBITIONS derived from the run state itself: a run
+# with no scoped flags cannot name one, a run that held the pin cannot
+# announce a move, a body that points below must have something below.
+#
+# THE SENTENCE LIST IS NOT WRITTEN HERE. It is read off the library — every
+# `claim_text_*` it defines — and every one of them has to be reachable from
+# some cell of the cross product, so a sentence nothing can emit is a failure
+# too. And every cell's artifacts are checked to be EXACTLY their emitted
+# claims plus whitespace, which is what stops a sentence being typed straight
+# into the composer where no condition governs it.
+#
+# The cross product is 4 x 6 x 2:
+#   PRIMARY   drifted (content) | current, either reason it can still open a
+#             PR (format, federated) | unanswerable
+#   FEDERATED advanced | unchanged | not asked | self-named | self-named
+#             ALONGSIDE a real source | no sources at all
+#   SCOPED    the generator has --check-current --only and --repin-source, or
+#             it does not
+# The brief's three primary states and four federated ones are all in there;
+# the two extra federated columns are the ones the four cannot reach — a lock
+# with no `sources` at all, and a lock that names its own primary as a source
+# BESIDE a real one, which is the only shape where the digest paragraph both
+# points at a list and has an entry that is not in it.
+#
+# Twenty-six of the forty-eight are impossible, and each one is asserted to be
+# impossible rather than skipped: an unanswerable primary must produce no
+# artifact at all, an advance is unreachable without the flag that makes one,
+# and `federated` as a reason means a source moved.
+test_bump_pr_claims_cross_product() {
+    echo ""
+    echo "=== Test: every sentence a bump PR can carry, over every run state ==="
+
+    local claims="$REPO_ROOT/scripts/lib/bump-pr-claims.sh"
+    local dir="$TEST_DIR/claimgrid"
+    rm -rf "$dir"; mkdir -p "$dir/fx"
+
+    # Two locks, because the "advanced" line prints an arrow and the two ends
+    # of it come from two different files: the lock as the default branch has
+    # it, and the re-pinned working copy. One file cannot show a move.
+    cat > "$dir/fx/before.lock" <<'LOCK'
+{"registry": "org/reg", "ref": "aaaaaaaaaaaaaaaa", "bundles": ["b"],
+ "sources": [{"registry": "org/src", "ref": "1111111111111111", "bundles": ["c"]}],
+ "skills": {}, "generated_from": "aaaaaaaaaaaaaaaa"}
+LOCK
+    cat > "$dir/fx/skills.lock" <<'LOCK'
+{"registry": "org/reg", "ref": "bbbbbbbbbbbbbbbb", "bundles": ["b"],
+ "sources": [{"registry": "org/src", "ref": "2222222222222222", "bundles": ["c"]}],
+ "skills": {}, "generated_from": "bbbbbbbbbbbbbbbb"}
+LOCK
+
+    # The renderer. A subshell per cell, so no cell can inherit another's
+    # state — which is the failure mode a single long-lived shell would hide.
+    cat > "$dir/render.sh" <<'RENDER'
+#!/usr/bin/env bash
+set -uo pipefail
+source "$1"
+fx="$2"; out="$3"; reason="$4"; fed="$5"; scoped="$6"
+mkdir -p "$out"
+cd "$fx" || exit 9
+LOCK_REL_PATH="skills.lock"
+LOCK_DIGEST_SHAPE='sha256:<64 hex>'
+BUMPER_SOURCE='`_agent-guidance`'
+primary_registry="org/reg"
+old_ref="aaaaaaaaaaaaaaaa"
+if [[ "$reason" == "content" ]]; then new_ref="bbbbbbbbbbbbbbbb"; else new_ref="$old_ref"; fi
+repin_reason="$reason"
+FED_ADVANCE_AVAILABLE="$scoped"
+case "$fed" in
+    advanced)        source_registries=("org/src"); fed_drifted_regs=("org/src") ;;
+    self_named)      source_registries=("org/reg"); fed_drifted_regs=() ;;
+    self_named_plus) source_registries=("org/reg" "org/src"); fed_drifted_regs=("org/src") ;;
+    none)            source_registries=(); fed_drifted_regs=() ;;
+    *)               source_registries=("org/src"); fed_drifted_regs=() ;;
+esac
+check_out="FAILED: org/reg's bundles have moved on since aaaaaaa, which skills.lock still pins for it."
+format_out="FAILED: skills.lock stores 1 digest that is not sha256:<64 lowercase hex>."
+fed_check_out="FAILED: org/src's bundles have moved on since 1111111, which skills.lock still pins for it."
+primary_lock="$fx/copy.primary.lock"
+lock_file="$fx/before.lock"
+repin_source_flags_shown="--repin-source 'org/src@'"
+status=0
+compose_bump_artifacts || status=1
+printf '%s' "$status" > "$out/status"
+printf '%s' "$CLAIM_ERRORS" > "$out/errors"
+: > "$out/claims"
+for id in ${EMITTED_CLAIMS[@]+"${EMITTED_CLAIMS[@]}"}; do printf '%s\n' "$id" >> "$out/claims"; done
+[[ "$status" == "0" ]] || exit 0
+printf '%s' "$PR_TITLE" > "$out/title"
+printf '%s' "$PR_BODY" > "$out/body"
+printf '%s\n%s\n%s\n%s' "$PR_TITLE" "$COMMIT_SUBJECT" "$COMMIT_BODY" "$PR_BODY" > "$out/all"
+: > "$out/parts.bin"
+for text in ${EMITTED_TEXT[@]+"${EMITTED_TEXT[@]}"}; do printf '%s\0' "$text" >> "$out/parts.bin"; done
+exit 0
+RENDER
+
+    local reason fed scoped cell out expect
+    local r_reach="" r_scoped="" r_held="" r_advance="" r_below="" r_only="" r_whole="" r_label="" r_closure=""
+    local rendered=0 refused=0
+    : > "$dir/all-claims.txt"
+
+    for reason in content format federated unanswerable; do
+        for fed in advanced unchanged not_asked self_named self_named_plus none; do
+            for scoped in true false; do
+                cell="$reason-$fed-$scoped"
+                out="$dir/out/$cell"
+                bash "$dir/render.sh" "$claims" "$dir/fx" "$out" "$reason" "$fed" "$scoped"
+
+                # WHAT THIS CELL IS ALLOWED TO PRODUCE, declared before it is
+                # read. `expect=refuse` is a positive claim about the script —
+                # that this run state cannot yield an artifact — and it is
+                # checked, not assumed.
+                local advancing=false
+                [[ "$fed" == "advanced" || "$fed" == "self_named_plus" ]] && advancing=true
+
+                expect=render
+                if [[ "$reason" == "unanswerable" ]]; then
+                    expect=refuse           # nothing establishes anything
+                elif [[ "$reason" == "federated" ]] && ! $advancing; then
+                    expect=refuse           # `federated` IS a source advance
+                elif $advancing && [[ "$scoped" != "true" ]]; then
+                    expect=refuse           # no flag to advance a pin with
+                fi
+
+                if [[ "$expect" == "refuse" ]]; then
+                    [[ "$(cat "$out/status")" == "1" ]] || r_reach="$r_reach $cell(rendered)"
+                    refused=$((refused + 1))
+                    continue
+                fi
+                if [[ "$(cat "$out/status")" != "0" ]]; then
+                    r_reach="$r_reach $cell(refused: $(cat "$out/errors"))"
+                    continue
+                fi
+                rendered=$((rendered + 1))
+                cat "$out/claims" >> "$dir/all-claims.txt"
+
+                # Prose only: a fenced block is the generator's own verdict,
+                # quoted verbatim, and quoting evidence is not asserting it.
+                awk '/^```/{f=!f; next} !f' "$out/all" > "$out/prose"
+
+                # A run whose generator had neither scoped flag cannot name
+                # one. This is the sentence-level form of the whole defect
+                # class, and it needs no condition table: the flags did not
+                # exist, so any body describing what they did or refused is
+                # describing something that did not happen.
+                # Paragraph by paragraph, because ONE paragraph legitimately
+                # names both flags: the one whose entire job is to say this
+                # generator has neither. Naming a flag to report its absence
+                # is not claiming it was used, and a blanket ban would have to
+                # delete the disclosure that makes a degraded body honest.
+                if [[ "$scoped" != "true" ]] && ! python3 -c '
+import re, sys
+prose = open(sys.argv[1], encoding="utf-8").read()
+for para in re.split(r"\n\s*\n", prose):
+    if re.search(r"--only|--repin-source", para) and "has no" not in para:
+        sys.exit(1)
+' "$out/prose"; then
+                    r_scoped="$r_scoped $cell"
+                fi
+
+                # A held pin is never announced as a move.
+                if [[ "$reason" != "content" ]] \
+                   && grep -qF -- 'newly pinned commit' "$out/all"; then
+                    r_held="$r_held $cell"
+                fi
+                if [[ "$reason" != "content" ]] \
+                   && grep -qF -- 'bbbbbbb' "$out/all"; then
+                    r_held="$r_held $cell(new ref)"
+                fi
+
+                # Nothing moved that this run did not move.
+                if ! $advancing \
+                   && grep -qE -- 'moved too|\*\*advanced\*\*|advance its federated pin' "$out/all"; then
+                    r_advance="$r_advance $cell"
+                fi
+
+                # A pointer at the body's own list has something in that list.
+                if grep -qE -- 'listed for it below|pins listed below|pin below was checked' "$out/all" \
+                   && ! grep -qE '^- `' "$out/body"; then
+                    r_below="$r_below $cell"
+                fi
+
+                # "and nothing else" is exclusive or it is not a claim.
+                if grep -qF -- 'and nothing else' "$out/all" \
+                   && grep -qF -- 'moved too' "$out/all"; then
+                    r_only="$r_only $cell"
+                fi
+                if grep -qF -- 'SHAPE stored in `skills.lock`, and nothing' "$out/all" \
+                   && grep -qF -- '**advanced**' "$out/all"; then
+                    r_only="$r_only $cell(shape)"
+                fi
+
+                # No artifact presents a partial command as a complete one.
+                # The body quotes the generator's remediation line for the
+                # whole, and names its own additions as additions.
+                if grep -qF -- 'whole of it' "$out/all"; then
+                    r_whole="$r_whole $cell"
+                fi
+                if [[ "$reason" == "format" ]] && $advancing \
+                   && ! grep -qF -- "--repin-source 'org/src@'" "$out/all"; then
+                    r_whole="$r_whole $cell(addition unnamed)"
+                fi
+
+                # `unchanged` is a VERDICT and `not asked` is the absence of
+                # one. The lock and the drift set are identical in those two
+                # columns; what separates them is whether anything could ask.
+                if [[ "$fed" == "unchanged" || "$fed" == "not_asked" ]]; then
+                    if [[ "$scoped" == "true" ]]; then
+                        grep -qF -- '**unchanged**' "$out/body" || r_label="$r_label $cell"
+                        grep -qF -- '**not asked**' "$out/body" && r_label="$r_label $cell(both)"
+                    else
+                        grep -qF -- '**not asked**' "$out/body" || r_label="$r_label $cell"
+                        grep -qF -- '**unchanged**' "$out/body" && r_label="$r_label $cell(both)"
+                    fi
+                fi
+
+                # CLOSURE. Every artifact is exactly the claims it emitted,
+                # in order, with whitespace between them — so a sentence typed
+                # into the composer, where no condition governs it, is a
+                # residue this cannot explain.
+                if ! python3 -c '
+import sys
+whole = open(sys.argv[1], encoding="utf-8").read()
+parts = open(sys.argv[2], "rb").read().decode("utf-8").split("\0")[:-1]
+cursor = 0
+for part in parts:
+    found = whole.find(part, cursor)
+    if found < 0:
+        sys.exit("claim not found in artifact: %r" % part[:60])
+    whole = whole[:found] + whole[found + len(part):]
+    cursor = found
+if whole.strip():
+    sys.exit("text outside every claim: %r" % whole.strip()[:120])
+' "$out/all" "$out/parts.bin" 2>"$out/closure.err"; then
+                    r_closure="$r_closure $cell($(head -1 "$out/closure.err"))"
+                fi
+            done
+        done
+    done
+
+    if [[ $rendered -eq 22 && $refused -eq 26 ]]; then
+        pass "claims: the cross product is 48 cells — 22 that produce an artifact, 26 that cannot"
+    else
+        fail "claims: the cross product is 48 cells — 22 that produce an artifact, 26 that cannot (got $rendered / $refused)"
+    fi
+    [[ -z "$r_reach" ]] && pass "claims: every cell produces exactly what its run state allows" \
+        || fail "claims: every cell produces exactly what its run state allows —$r_reach"
+    [[ -z "$r_scoped" ]] && pass "claims: a run with no scoped flags never names one" \
+        || fail "claims: a run with no scoped flags never names one —$r_scoped"
+    [[ -z "$r_held" ]] && pass "claims: a held pin is never announced as a move" \
+        || fail "claims: a held pin is never announced as a move —$r_held"
+    [[ -z "$r_advance" ]] && pass "claims: nothing says a source advanced on a run where none did" \
+        || fail "claims: nothing says a source advanced on a run where none did —$r_advance"
+    [[ -z "$r_below" ]] && pass "claims: a body that points below has something listed below" \
+        || fail "claims: a body that points below has something listed below —$r_below"
+    [[ -z "$r_only" ]] && pass "claims: 'and nothing else' never sits beside a second thing moving" \
+        || fail "claims: 'and nothing else' never sits beside a second thing moving —$r_only"
+    [[ -z "$r_whole" ]] && pass "claims: no body presents a partial command as the whole one" \
+        || fail "claims: no body presents a partial command as the whole one —$r_whole"
+    [[ -z "$r_label" ]] && pass "claims: a source is labelled with the verdict this run actually got" \
+        || fail "claims: a source is labelled with the verdict this run actually got —$r_label"
+    [[ -z "$r_closure" ]] && pass "claims: every artifact is exactly its claims plus whitespace" \
+        || fail "claims: every artifact is exactly its claims plus whitespace —$r_closure"
+
+    # NO DEAD SENTENCES. The registry is read off the library, so this cannot
+    # drift into a hand-maintained list: a claim no cell can reach is either
+    # unreachable prose or a condition nobody can satisfy, and both are the
+    # thing this lane is about.
+    local registered emitted missing
+    # `|| true` because this suite runs under `set -e`: a grep that matched
+    # nothing would take the WHOLE run down with it, Results line and all,
+    # instead of failing the vacuity guard three lines below — which is the
+    # isolation failure this file's own header is about.
+    registered=$(grep -oE '^claim_text_[a-z0-9_]+' "$claims" | sed 's/^claim_text_//' | sort -u || true)
+    emitted=$(sort -u "$dir/all-claims.txt" | grep -v '^$' || true)
+    missing=$(comm -23 <(printf '%s\n' "$registered") <(printf '%s\n' "$emitted") | tr '\n' ' ')
+    if [[ -z "${missing// /}" ]]; then
+        pass "claims: every sentence the library registers is reachable from some run"
+    else
+        fail "claims: every sentence the library registers is reachable from some run — never emitted: $missing"
+    fi
+    if [[ $(printf '%s\n' "$registered" | wc -l) -ge 40 ]]; then
+        pass "claims: the sentence list came off the library, and it is not empty"
+    else
+        fail "claims: the sentence list came off the library, and it is not empty"
+    fi
 }
 
 # ── Test 8h3e: a scoped question that cannot be answered at all ───────────
@@ -7815,6 +8120,7 @@ test_bump_generator_without_scoped_flags
 test_bump_generator_with_one_scoped_flag
 test_bump_scoped_question_unanswerable
 test_bump_pr_body_slice_arithmetic
+test_bump_pr_claims_cross_product
 test_bump_stub_generator_parity
 test_bump_twice_federated_lock
 test_bump_format_and_federated
