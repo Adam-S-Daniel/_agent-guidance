@@ -7063,7 +7063,13 @@ test_bump_script_self_consistency() {
     fi
     # Both of these stood forty lines above the loop that contradicts them, so
     # a reader going top to bottom met the false absolute first.
-    assert_not_contains "$script" "nothing in this system ever advances a federated pin" \
+    #
+    # EACH NEEDLE STOPS AT THE LINE BREAK THE ORIGINAL COMMENT HAD. `grep -F`
+    # matches within one line, so a needle spelling out a sentence that was
+    # wrapped across two comment lines matches nothing in EITHER version — a
+    # green light wired to nothing. Measured against the pre-fix script: the
+    # full-sentence form of this one PASSED while the sentence was still there.
+    assert_not_contains "$script" "nothing in this system ever" \
         "self-consistency: no comment claims a federated pin is never advanced"
     assert_not_contains "$script" "that FAILED: is permanent" \
         "self-consistency: no comment claims a federated FAILED: can never be cleared"
@@ -7081,8 +7087,13 @@ test_bump_script_self_consistency() {
     else
         fail "self-consistency: the cross-repo block agentskills names by heading still exists"
     fi
-    assert_not_contains "$script" "One consequence to expect rather than re-discover"         "self-consistency: it no longer asks for an edit to a paragraph that is gone"
-    assert_not_contains "$script" "make it when that repo is next open"         "self-consistency: and carries no outstanding cross-repo request at all"
+    assert_not_contains "$script" "One consequence to expect rather than re-discover" \
+        "self-consistency: it no longer asks for an edit to a paragraph that is gone"
+    # The wrapped-needle trap again: the request read "It is a one-paragraph
+    # edit over there — make it when that / repo is next open", so only a
+    # single-line fragment of it can match at all.
+    assert_not_contains "$script" "one-paragraph edit over there" \
+        "self-consistency: and carries no outstanding cross-repo request at all"
 }
 
 # ── ADR 0009's cited measurement, against the report it describes ─────────
