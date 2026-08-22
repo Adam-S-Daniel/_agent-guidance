@@ -7085,6 +7085,45 @@ test_bump_script_self_consistency() {
     assert_not_contains "$script" "make it when that repo is next open"         "self-consistency: and carries no outstanding cross-repo request at all"
 }
 
+# ── ADR 0009's cited measurement, against the report it describes ─────────
+#
+# The ADR quotes a three-way measurement of `--check-current` as the evidence
+# for its decision. Two of the three were taken against the generator as it
+# stood BEFORE the paired PR and became checkably false when that PR grouped
+# the report by source — a decision that is right, with stated evidence that is
+# quotable and wrong, which is worse than vague evidence. The relation asserted
+# here is in-repo and real: this suite's own stand-in reproduces the per-source
+# report, so an ADR beside it cannot claim a single headline for every case.
+test_adr_0009_self_consistency() {
+    echo ""
+    echo "=== Test: ADR 0009's cited measurement against the report it describes ==="
+
+    local adr="$REPO_ROOT/docs/decisions/0009-a-federated-pin-advances-on-a-scoped-question.md"
+    local suite="$REPO_ROOT/test/run-tests.sh"
+    if [[ -f "$adr" ]]; then
+        pass "ADR 0009: the record exists to check"
+    else
+        fail "ADR 0009: the record exists to check"
+        return
+    fi
+    if grep -qF 'ONE BLOCK PER DRIFTED SOURCE' "$suite"; then
+        pass "ADR 0009: the stand-in really does print one block per drifted source"
+    else
+        fail "ADR 0009: the stand-in really does print one block per drifted source"
+        return
+    fi
+    assert_not_contains "$adr" "still exactly one headline" \
+        "ADR 0009: it does not claim one headline for several drifted sources"
+    assert_not_contains "$adr" "still naming the primary's clean sha" \
+        "ADR 0009: it does not claim a source-only drift is attributed to the primary"
+    assert_not_contains "$adr" "returns one flat list" \
+        "ADR 0009: it does not describe, in the present tense, a shape the generator no longer has"
+    # And the half that DOES still reproduce has to still be there, or the
+    # absences above are satisfiable by deleting the evidence outright.
+    assert_contains "$adr" "only the primary edited" \
+        "ADR 0009: the measurement that actually justifies the decision is still cited"
+}
+
 test_bump_workflow() {
     echo ""
     echo "=== Test: skills-lock-bump.yml is pinned, scheduled and scoped ==="
@@ -7597,6 +7636,7 @@ test_self_hosted_hook_pin
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
 test_bump_script_self_consistency
+test_adr_0009_self_consistency
 test_bump_workflow
 test_ci_workflow_shape
 test_yq_install_pinned
