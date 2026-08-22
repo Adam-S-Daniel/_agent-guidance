@@ -955,7 +955,21 @@ for repo_name in "${REPOS[@]}"; do
 
     primary_registry=$(echo "$plan" | sed -n 's/^registry //p')
     old_ref=$(echo "$plan" | sed -n 's/^ref //p')
-    mapfile -t source_registries < <(echo "$plan" | sed -n 's/^source //p')
+    # DEDUPED, first occurrence kept. A registry may appear in `sources` more
+    # than once — `plan_sources`' uniqueness check is keyed on BUNDLE, so two
+    # entries may share a registry while carrying different bundles and their
+    # own pins — and every use of this array downstream is keyed on the
+    # REGISTRY NAME: one scoped question per name, one `--repin-source
+    # <name>@` per name, one line per name in the PR body. Left undeduped, the
+    # gate asks the same question twice and then builds the same flag twice,
+    # which the generator refuses as a command-line mistake ("names <reg>
+    # twice; one pin per source") — so the run reports the bumper's own
+    # duplicated flag as the fault and SUPPRESSES the generator's accurate
+    # diagnosis of the lock, which is that it federates that registry twice
+    # and one spec cannot say which entry is meant. Same outcome either way —
+    # nothing is written and the night goes red — and only one of them tells a
+    # human what to fix.
+    mapfile -t source_registries < <(echo "$plan" | sed -n 's/^source //p' | awk '!seen[$0]++')
 
     # Naming the registry is not enough; it has to be the PRIMARY. Everything
     # downstream targets the primary — `primary_dir` is its checkout, --repin

@@ -5179,6 +5179,85 @@ test_bump_generator_without_scoped_flags() {
     fi
 }
 
+# ── Test 8h3c: a lock that federates one registry twice ───────────────────
+#
+# Two things at once, and the second is a policy this run PINS rather than
+# discovers. `source_registries` is keyed on the registry NAME everywhere
+# downstream — one scoped question, one `--repin-source <name>@`, one line in
+# the PR body — so leaving duplicates in it makes the gate ask the same
+# question twice and build the same flag twice. The generator then refuses the
+# bumper's own duplicated flag ("names <reg> twice; one pin per source") and
+# its accurate diagnosis of the LOCK never reaches the log.
+#
+# THE POLICY: with the flag built once, the generator refuses it because one
+# spec names two entries and advancing "it" has two answers. This script does
+# not then drop that source and re-pin the rest. Half-re-pinning a federated
+# lock is the damage ADR 0001 named, and which of two entries a spec meant is
+# an adjudication a retry cannot make — so the failure is counted, the lock is
+# left alone, and the night goes red with the reason a human can act on. That
+# is the same policy already written for a cross-registry basename collision
+# and for the shrink guard.
+test_bump_twice_federated_lock() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a lock federating one registry twice) ==="
+
+    local root="$TEST_DIR/bare-twicefed"
+    local work="$TEST_DIR/work/bumporg-repo-twicefed"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-twicefed" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-twicefed" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-twicefed"
+    echo "# repo-twicefed" > README.md
+    # Primary content-current, so the ONLY thing that can force a re-pin here
+    # is the federated half — and the federated half is the ambiguous one.
+    #
+    # Seeded with ONE source and generated like every other fixture lock, then
+    # the duplicate entry is appended afterwards: the stand-in now refuses to
+    # --repin a twice-federated lock at all, which is the behaviour under test,
+    # so the fixture cannot be filled in that shape. The second entry names a
+    # bundle no registry carries, so it contributes no digests and the
+    # generated `skills` map stays true of the file.
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT" "$BUMP_SRC_REF"
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    doc = json.load(handle)
+first = doc["sources"][0]
+doc["sources"].append({**first, "bundles": ["other"]})
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' skills.lock
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    local before="$TEST_DIR/twicefed-before.lock"
+    cp skills.lock "$before"
+    cd "$REPO_ROOT"
+
+    BUMP_BARE_DIR_FOR_RUN="$root" run_bump "$TEST_DIR/bump-twicefed.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+    local log="$TEST_DIR/bump-twicefed.txt"
+
+    assert_contains "$log" "federates that registry twice" \
+        "twice-federated: the generator's diagnosis of the LOCK is what the run reports"
+    assert_not_contains "$log" "one pin per source" \
+        "twice-federated: not the bumper's own duplicated flag"
+    assert_contains "$log" "1 failed" \
+        "twice-federated: counted, so a human adjudicates rather than a retry"
+    if [[ -z "$(git -C "$root/bumporg_repo-twicefed" rev-parse --verify -q \
+                refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "twice-federated: nothing is proposed — a lock is never half re-pinned"
+    else
+        fail "twice-federated: nothing is proposed — a lock is never half re-pinned"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h3a: the stand-in refuses everything the real generator refuses ─
 #
 # THE HOLLOW-VERIFIER TRAP, in the one place this suite is exposed to it. Every
@@ -7055,6 +7134,7 @@ test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
 test_bump_stub_generator_parity
+test_bump_twice_federated_lock
 test_bump_self_federating_lock
 test_bump_only_prefix_flag
 test_bump_generator_error_line
