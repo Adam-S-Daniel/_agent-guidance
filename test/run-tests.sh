@@ -5563,20 +5563,24 @@ if not hand_stated:
 if words.get(hand_stated.group(1).lower()) != len(hand) - 1:
     sys.exit("the inventory says %s hand-rolled but lists %d beside write_stub_generator"
              % (hand_stated.group(1), len(hand) - 1))
-# Both directions against the file itself, with the inventory removed so its
-# own bullets cannot vouch for themselves.
-body = src.replace(block, "")
+# Both directions, against the CODE of this file — every comment line is
+# dropped first, the inventory bullets among them, so no prose can vouch for a
+# stand-in that nothing builds. And every reference has to be a literal path:
+# a name assembled from a shell variable resolves to nothing a checker can
+# match, and the listed-but-never-built direction used to skip any listed name
+# sharing such a prefix, which let the two partial-strip stand-ins vouch for
+# each other.
+body = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
 used = set(re.findall(r"generator-[A-Za-z0-9$_.-]+\.py", body))
 literal = {u for u in used if "$" not in u}
-interp = {u.split("$")[0] for u in used if "$" in u}
-problems = []
+problems = ["a stand-in is named by interpolation, so nothing can resolve it: " + u
+            for u in sorted(used - literal)]
 if "write_stub_generator" not in listed or "write_stub_generator() {" not in body:
     problems.append("write_stub_generator is not both listed and defined")
 for name in listed:
     if name == "write_stub_generator" or name in literal:
         continue
-    if not any(name.startswith(prefix) for prefix in interp):
-        problems.append("listed but never built: " + name)
+    problems.append("listed but never built: " + name)
 for name in literal:
     if name not in listed:
         problems.append("built but not listed: " + name)
@@ -6325,9 +6329,19 @@ test_bump_generator_with_one_scoped_flag() {
     echo ""
     echo "=== Test: bump-consumer-locks.sh (one scoped flag present, one missing) ==="
 
-    local which gen log
-    for which in only repin-source; do
-        gen="$TEST_DIR/generator-missing-$which.py"
+    # EACH STAND-IN IS NAMED IN FULL, never assembled from $which. An
+    # interpolated path is a name no reader and no checker can resolve back to
+    # a file: the stub inventory's "listed but never built" direction had to
+    # skip any listed name sharing an interpolated prefix, which made
+    # generator-missing-only.py and generator-missing-repin-source.py vouch
+    # for each other. Measured before this: dropping repin-source from this
+    # loop left its stand-in listed in the inventory, built by nothing, and
+    # test_bump_stub_generator_parity at 12 passed / 0 failed.
+    local spec which gen log
+    for spec in "only=$TEST_DIR/generator-missing-only.py" \
+                "repin-source=$TEST_DIR/generator-missing-repin-source.py"; do
+        which="${spec%%=*}"
+        gen="${spec#*=}"
         write_stub_generator "$gen"
         if ! python3 "$TEST_DIR/strip-scoped-flags.py" "$gen" "$which"; then
             fail "one flag ($which): could not strip just that flag"
