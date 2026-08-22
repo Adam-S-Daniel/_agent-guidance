@@ -5692,6 +5692,75 @@ with open(path, "w", encoding="utf-8") as handle:
     rm -rf "$root" "$work"
 }
 
+# ── Test 8h3e: a scoped question that cannot be answered at all ───────────
+#
+# The branch between "this source drifted" and "acting on a question nobody
+# answered", and it had no fixture: every other federated test drives either
+# the FAILED path or the degrade. It is the landing place for a bad --only
+# value, an unreadable source checkout, and any refusal the generator makes
+# about the lock — so a run that read a non-zero exit as drift would re-pin a
+# consumer on the strength of an error.
+#
+# Reached here through an unresolvable SOURCE pin, which is the shape that
+# needs no cooperation from the generator's argument handling: the scoped
+# question is well formed and the answer is ERROR: rather than FAILED:.
+test_bump_scoped_question_unanswerable() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a scoped question with no answer) ==="
+
+    local root="$TEST_DIR/bare-scopederr"
+    local work="$TEST_DIR/work/bumporg-repo-scopederr"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-scopederr" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-scopederr" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-scopederr"
+    echo "# repo-scopederr" > README.md
+    # Seeded and FILLED at a real source ref, then the source pin is rewritten
+    # to a commit no repository has. The digests stay the true ones, so the
+    # only thing wrong with this fixture is the one thing under test — the same
+    # discipline strip_digest_labels uses.
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD" "$BUMP_SRC_REF"
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    doc = json.load(handle)
+doc["sources"][0]["ref"] = "7777777777777777777777777777777777777777"
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' skills.lock
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    BUMP_BARE_DIR_FOR_RUN="$root" run_bump "$TEST_DIR/bump-scopederr.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+    local log="$TEST_DIR/bump-scopederr.txt"
+
+    assert_contains "$log" "could not decide whether skills.lock's bumporg/cms-platform source is current" \
+        "unanswerable scope: reported as a failure to decide, naming the source it was about"
+    assert_contains "$log" "cannot resolve ref" \
+        "unanswerable scope: the generator's own reason survives into the report"
+    assert_contains "$log" "1 failed" \
+        "unanswerable scope: counted, so the scheduled run goes red"
+    assert_not_contains "$log" "federated sources whose pins this re-pin advances" \
+        "unanswerable scope: a non-zero exit is not read as drift"
+    # The PRIMARY is stale here, so a run that fell through would have plenty
+    # to re-pin. Nothing does.
+    if [[ -z "$(git -C "$root/bumporg_repo-scopederr" rev-parse --verify -q \
+                refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "unanswerable scope: nothing is written, though the primary is stale"
+    else
+        fail "unanswerable scope: nothing is written, though the primary is stale"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h3d: ONE of the two scoped flags missing, either one ────────────
 #
 # The script's own comment makes "BOTH, OR NEITHER" load-bearing — a scoped
@@ -7433,6 +7502,7 @@ test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
 test_bump_generator_with_one_scoped_flag
+test_bump_scoped_question_unanswerable
 test_bump_stub_generator_parity
 test_bump_twice_federated_lock
 test_bump_format_and_federated
