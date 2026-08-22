@@ -6801,6 +6801,33 @@ for (const [name, spec] of Object.entries((doc && doc.jobs) || {})) {
 #   * the job can actually fire, and publishes no status context — which is
 #     what puts its `concurrency:` group on the safe side of the rule in
 #     AGENTS.md about required checks.
+# ── The bump script's own comments, checked against the bump script ───────
+#
+# This repo's rule is that a comment must not assert anything a reader cannot
+# check — and the ones with teeth are the ABSOLUTES, because an absolute stays
+# readable long after the code beneath it stops being described by it. Each
+# assertion below is a RELATION between two things in the same file, never a
+# constant: the presence of the behaviour is asserted first, so a claim that
+# nothing does X can only be flagged in a file that visibly does X.
+test_bump_script_self_consistency() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh's comments against its own code ==="
+
+    local script="$REPO_ROOT/scripts/bump-consumer-locks.sh"
+    if grep -qF -- '--repin-source "$reg@"' "$script"; then
+        pass "self-consistency: this script does advance a federated pin, so the claims below have a subject"
+    else
+        fail "self-consistency: this script does advance a federated pin, so the claims below have a subject"
+        return
+    fi
+    # Both of these stood forty lines above the loop that contradicts them, so
+    # a reader going top to bottom met the false absolute first.
+    assert_not_contains "$script" "nothing in this system ever advances a federated pin" \
+        "self-consistency: no comment claims a federated pin is never advanced"
+    assert_not_contains "$script" "that FAILED: is permanent" \
+        "self-consistency: no comment claims a federated FAILED: can never be cleared"
+}
+
 test_bump_workflow() {
     echo ""
     echo "=== Test: skills-lock-bump.yml is pinned, scheduled and scoped ==="
@@ -7309,6 +7336,7 @@ test_sync_workflow_trigger
 test_self_hosted_hook_pin
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
+test_bump_script_self_consistency
 test_bump_workflow
 test_ci_workflow_shape
 test_yq_install_pinned

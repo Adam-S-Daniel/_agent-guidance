@@ -1031,17 +1031,28 @@ for repo_name in "${REPOS[@]}"; do
     #
     # THE QUESTION IS SCOPED TO THE PRIMARY, and that is the design rather
     # than an optimisation. --check-current reads EVERY source a lock names
-    # and emits one FAILED: for the whole run if any of them differs, while
-    # --repin advances ONLY the primary `ref` — nothing in this system ever
-    # advances a federated pin. Deciding on the combined verdict therefore
-    # keys the gate on a fact the re-pin cannot change: the moment a federated
-    # checkout sits ahead of its pin that FAILED: is permanent, and every
-    # commit to the primary registry — docs, a workflow, a Dependabot bump,
-    # the registry's own lock commit — yields a pull request whose entire diff
-    # is `ref` + `generated_from`, with not one digest changed. Handing the
-    # generator a copy of the lock with `sources` removed asks a different
-    # QUESTION rather than reinterpreting the combined answer, so it cannot
-    # drift with the generator's wording.
+    # and emits one FAILED: for the whole run if any of them differs, while a
+    # bare --repin advances ONLY the primary `ref`. So a combined verdict
+    # cannot say WHICH half moved, and the half it does not name is the half
+    # this branch would act on: every commit to the primary registry — docs, a
+    # workflow, a Dependabot bump, the registry's own lock commit — would
+    # yield a pull request for a federated lock whose entire diff is `ref` +
+    # `generated_from`, with not one digest changed, or worse, one that
+    # advanced a federated pin nothing had asked about. Handing the generator
+    # a copy of the lock with `sources` removed asks a different QUESTION
+    # rather than reinterpreting the combined answer, so it cannot drift with
+    # the generator's wording.
+    #
+    # This paragraph used to end with an absolute — that nothing in this
+    # system advances a federated pin — and rested the case for scoping on the
+    # PERMANENCE of a federated FAILED:, a source ahead of its pin being
+    # something no re-pin could clear. Both were true when written and neither
+    # survived the loop forty lines
+    # below, which advances one on a question scoped to that source. Left
+    # standing, a reader going top to bottom met the false absolute before
+    # reaching the code that contradicts it — and this repo's own rule is that
+    # a comment must not assert anything a reader cannot check. The scoping is
+    # still necessary; the reason is attribution, not permanence.
     primary_lock="${lock_file%.lock}.primary.lock"
     if ! primary_only "$lock_file" "$primary_lock" 2>/dev/null; then
         fail "$repo_name: could not scope $LOCK_REL_PATH to its primary registry."
