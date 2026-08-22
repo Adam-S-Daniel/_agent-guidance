@@ -47,6 +47,43 @@ assert_contains() {
 assert_not_contains() {
     if grep -qF -- "$2" "$1" 2>/dev/null; then fail "$3 — did not expect '$2' in $1"; else pass "$3"; fi
 }
+# THE NEEDLE THAT CANNOT MATCH THE TEXT IT GUARDS, closed structurally. The
+# two above are `grep -F` over a file, so a needle only ever matches inside ONE
+# line — and everything they guard here is hard-wrapped: a PR body, a commit
+# message, a block comment. A sentence that spans a wrap therefore matches
+# nothing in either version of the file, which fails an `assert_contains`
+# loudly and passes every `assert_not_contains` SILENTLY.
+#
+# Measured, on the assertion named after the sentence it forbids:
+# `assert_not_contains "$msg" "so the pin does not move and"` guards a commit
+# body reading "...so the primary's pin does not\nmove and every digest...".
+# The realistic one-word regression — `sed "s/so the primary.s pin does not/so
+# the pin does not/"` on the claims library — reproduces EXACTLY the forbidden
+# sentence, and test_bump_format_and_federated came back 19 passed / 0 failed,
+# EXIT 0. Only a two-part edit that also unwrapped the line reddened it.
+#
+# So these two flatten BOTH sides first: every run of whitespace becomes one
+# space, and a comment marker opening a line is dropped, because neither is
+# part of the sentence a reader would quote. A wrap can then no longer hide a
+# claim, and a needle no longer has to be typed to the width of the file it
+# greps. Use them for prose — a body, a title, a commit message, a comment —
+# and keep `assert_contains` for anything where the line structure IS the
+# thing under test (a bullet, a log line, a fenced command).
+_flatten_prose() {   # <file> — writes that file back as one flat line
+    sed -e 's/^[[:space:]]*#[[:space:]]\{0,1\}//' < "$1" | tr -s '[:space:]' ' '
+}
+assert_prose_contains() {
+    local hay needle
+    hay=$(_flatten_prose "$1")
+    needle=$(printf '%s' "$2" | tr -s '[:space:]' ' ')
+    if [[ "$hay" == *"$needle"* ]]; then pass "$3"; else fail "$3 — expected '$2' in $1, unwrapped"; fi
+}
+assert_prose_omits() {
+    local hay needle
+    hay=$(_flatten_prose "$1")
+    needle=$(printf '%s' "$2" | tr -s '[:space:]' ' ')
+    if [[ "$hay" == *"$needle"* ]]; then fail "$3 — did not expect '$2' in $1, unwrapped"; else pass "$3"; fi
+}
 assert_row_contains() {
     if grep -F -- "$2" "$1" | grep -qF -- "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
 }
@@ -4255,11 +4292,11 @@ test_bump_consumer_locks() {
         fail "federated-current: the federated pin advanced — expected ${BUMP_SRC_HEAD:0:7}, got $(lock_source_ref_of "$fedcur" bumporg/cms-platform)"
     fi
     local fedcur_body="$BUMP_PR_BODY_DIR/bumporg_repo-fed-current.body"
-    assert_contains "$fedcur_body" "Federated sources advance one at a time" "federated-current: the PR body says a source advanced, not that the pins are kept"
-    assert_contains "$fedcur_body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}\` → \`bumporg/cms-platform@${BUMP_SRC_HEAD:0:7}" "federated-current: the PR body shows the source pin old → new"
+    assert_prose_contains "$fedcur_body" "Federated sources advance one at a time, and only when asked." "federated-current: the PR body says a source advanced, not that the pins are kept"
+    assert_prose_contains "$fedcur_body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}\` → \`bumporg/cms-platform@${BUMP_SRC_HEAD:0:7}" "federated-current: the PR body shows the source pin old → new"
     assert_not_contains "$fedcur_body" "$TEST_DIR" "federated-current: no path from the machine that ran the bump"
     assert_contains "$fedcur_body" "cms-platform/deploy-site" "federated-current: the body quotes the SOURCE difference that caused this PR"
-    assert_not_contains "$fedcur_body" "**What moved:** \`bumporg/agentskills\`" "federated-current: the body does not announce a primary move"
+    assert_prose_omits "$fedcur_body" "**What moved:** \`bumporg/agentskills\`" "federated-current: the body does not announce a primary move"
 
     # ── BOTH halves moved: one PR, both pins advanced.
     local fedstale="$TEST_DIR/bump-fedstale-new.lock"
@@ -4278,13 +4315,13 @@ test_bump_consumer_locks() {
     # scoped verdict that decided it.
     local fedstale_body="$BUMP_PR_BODY_DIR/bumporg_repo-fed-stale.body"
     local fedstale_title="$BUMP_PR_BODY_DIR/bumporg_repo-fed-stale.title"
-    assert_contains "$fedstale_title" "and advance its federated pin for bumporg/cms-platform" \
+    assert_prose_contains "$fedstale_title" "and advance its federated pin for bumporg/cms-platform" \
         "both moved: the title names both pins"
-    assert_contains "$fedstale_body" "federated pins listed below" \
+    assert_prose_contains "$fedstale_body" "and the federated pins listed below." \
         "both moved: the header names both halves"
-    assert_not_contains "$fedstale_body" "re-derived from the newly pinned commit" \
+    assert_prose_omits "$fedstale_body" "**Every digest here is re-derived from the newly pinned commit**" \
         "both moved: nothing claims one commit for digests from two repositories"
-    assert_contains "$fedstale_body" "each from the pin of the" \
+    assert_prose_contains "$fedstale_body" "and each from the pin of the half it belongs to" \
         "both moved: the body says each half's digests came from its own pin"
     assert_contains "$fedstale_body" "**advanced**" \
         "both moved: the source is listed as advanced"
@@ -4295,9 +4332,9 @@ test_bump_consumer_locks() {
     local fedstale_msg="$TEST_DIR/fedstale-commit-msg.txt"
     git -C "$TEST_DIR/bare/bumporg_repo-fed-stale" log -1 --format=%B \
         refs/heads/skills-lock-bump/update > "$fedstale_msg" 2>/dev/null || : > "$fedstale_msg"
-    assert_contains "$fedstale_msg" "A FEDERATED source moved too" \
+    assert_prose_contains "$fedstale_msg" "A FEDERATED source moved too: bumporg/cms-platform." \
         "both moved: the commit message says the source pin moved as well"
-    assert_not_contains "$fedstale_msg" "re-resolves only the primary ref" \
+    assert_prose_omits "$fedstale_msg" "and re-resolves only the primary ref." \
         "both moved: and does not claim the primary ref was the only one re-resolved"
 
     # ── The federation inverted: everything downstream targets the PRIMARY,
@@ -4425,9 +4462,9 @@ test_bump_consumer_locks() {
     # not only of the ones where a source advanced. repo-stale, which has no
     # sources, is the paired control that keeps the unqualified sentence alive
     # where it IS true.
-    assert_not_contains "$fed_body" "re-derived from the newly pinned commit" \
+    assert_prose_omits "$fed_body" "**Every digest here is re-derived from the newly pinned commit**" \
         "PR body: a federated lock does not claim one commit for every digest"
-    assert_contains "$fed_body" "each from the pin of the" \
+    assert_prose_contains "$fed_body" "and each from the pin of the half it belongs to" \
         "PR body: it names the pin each half's digests came from instead"
 }
 
@@ -5313,27 +5350,27 @@ test_bump_format_and_federated() {
     fi
 
     # ── The TITLE, which is all a PR list shows.
-    assert_contains "$title" "advance its federated pin for bumporg/cms-platform" \
+    assert_prose_contains "$title" "advance its federated pin for bumporg/cms-platform" \
         "format+federated: the title names the pin that moved"
-    assert_not_contains "$title" "hex> (pin unchanged)" \
+    assert_prose_omits "$title" "hex> (pin unchanged)" \
         "format+federated: the title does not read as shape-only"
-    assert_contains "$title" "primary pin unchanged" \
+    assert_prose_contains "$title" "(primary pin unchanged)" \
         "format+federated: and still says which pin did NOT move"
 
     # ── The HEADER and the two sentences that were false.
-    assert_contains "$body" "federated pins listed below" \
+    assert_prose_contains "$body" "and the federated pins listed below." \
         "format+federated: the header names both halves"
-    assert_not_contains "$body" "the digest SHAPE stored in \`skills.lock\`, and nothing" \
+    assert_prose_omits "$body" "the digest SHAPE stored in \`skills.lock\`, and nothing else." \
         "format+federated: the header does not claim nothing else changed"
-    assert_not_contains "$body" "every digest below is the same hex it was" \
+    assert_prose_omits "$body" "and every digest below is the same hex it was, wearing its label." \
         "format+federated: nothing claims every digest is a relabel"
 
     # ── The reproducibility claim, which is the one with a checkable subject.
-    assert_not_contains "$body" "can reproduce this diff from it" \
+    assert_prose_omits "$body" "**That remediation line is the command this PR ran**, \`--ref\` included, so you can reproduce this diff from it." \
         "format+federated: no claim that the quoted line reproduces this diff"
-    assert_contains "$body" "SHAPE half of the command this PR ran" \
+    assert_prose_contains "$body" "**That remediation line is the SHAPE half of the command this PR ran**, \`--ref\` included." \
         "format+federated: the body says which half that line is"
-    assert_contains "$body" "--repin-source 'bumporg/cms-platform@'" \
+    assert_prose_contains "$body" "--repin-source 'bumporg/cms-platform@'" \
         "format+federated: and prints the whole command, --repin-source included"
 
     # ── The evidence for the **advanced** label, which used to be absent on
@@ -5347,20 +5384,20 @@ test_bump_format_and_federated() {
 
     # ── Where the digests came from. Two repositories, so no single commit
     #    is the answer.
-    assert_not_contains "$body" "re-derived from the commit this lock already pinned" \
+    assert_prose_omits "$body" "**Every digest here is re-derived from the commit this lock already pinned**" \
         "format+federated: nothing claims one commit for digests from two repositories"
-    assert_contains "$body" "each from the pin of the" \
+    assert_prose_contains "$body" "and each from the pin of the half it belongs to" \
         "format+federated: the body says each half's digests came from its own pin"
 
     # ── The commit message, the same artifact one layer in.
     local msg="$TEST_DIR/fmtfed-commit-msg.txt"
     git -C "$root/bumporg_repo-fmtfed" log -1 --format=%B \
         refs/heads/skills-lock-bump/update > "$msg" 2>/dev/null || : > "$msg"
-    assert_contains "$msg" "and advance its federated pin for bumporg/cms-platform" \
+    assert_prose_contains "$msg" "and advance its federated pin for bumporg/cms-platform" \
         "format+federated: the commit subject names the pin that moved"
-    assert_contains "$msg" "A FEDERATED source moved too" \
+    assert_prose_contains "$msg" "A FEDERATED source moved too: bumporg/cms-platform." \
         "format+federated: the commit body says so too"
-    assert_not_contains "$msg" "so the pin does not move and" \
+    assert_prose_omits "$msg" "so the pin does not move and" \
         "format+federated: the commit body does not claim no pin moved"
 
     rm -rf "$root" "$work"
@@ -5756,7 +5793,7 @@ with open(path, "w", encoding="utf-8") as handle:
         fail "self-federating: the self-named source entry is carried through — got $(lock_source_ref_of "$after" bumporg/agentskills)"
     fi
     local body="$BUMP_PR_BODY_DIR/bumporg_repo-selffed.body"
-    assert_contains "$body" "this lock's own primary" \
+    assert_prose_contains "$body" "**One \`sources\` entry names \`bumporg/agentskills\`, this lock's own primary registry.**" \
         "self-federating: the PR body discloses the entry nothing asked about"
     assert_not_contains "$body" "**unchanged**" \
         "self-federating: and gives it no verdict, because no question was put"
@@ -5841,11 +5878,14 @@ test_bump_pr_body_slice_arithmetic() {
     # 0 matches before the fix and 0 after. The sentence a reader would
     # actually carry over is agentskills' own, beside its own report, which
     # reads "must never separate a headline from the command that fixes it" —
-    # so that is what this forbids, in the shortest form that catches it
-    # whether it is copied verbatim or rewrapped.
-    assert_contains "$claims" "a later block can lose its command" \
+    # so that is what this forbids, in the shortest form of it. Through
+    # `assert_prose_*`, so the wrap the sentence lands on when it is pasted
+    # into a comment block cannot hide it: measured, pasting it back into the
+    # library across two comment lines reds this, and `assert_not_contains`
+    # did not.
+    assert_prose_contains "$claims" "a later block can lose its command to the cap" \
         "slice: the comment beside the slice states the bound this test measured"
-    assert_not_contains "$claims" "never separate a headline from the command" \
+    assert_prose_omits "$claims" "never separate a headline from the command" \
         "slice: and does not restate the absolute that belongs to the other stream"
 }
 
@@ -6623,11 +6663,11 @@ test_bump_degraded_federated_body() {
     # The two sentences that were false. Asserted as absences AND as a
     # presence, because deleting the disclosure entirely would satisfy the
     # absences alone.
-    assert_not_contains "$body" "answered that its bundles have" \
+    assert_prose_omits "$body" "answered that its bundles have not moved" \
         "degraded body: no claim that a scoped question was asked and answered"
     assert_not_contains "$body" "**unchanged**" \
         "degraded body: a source this run never asked about is not labelled unchanged"
-    assert_contains "$body" "could not ask whether they" \
+    assert_prose_contains "$body" "**Federated sources keep their pins, and this run could not ask whether they should.**" \
         "degraded body: says the question could not be put"
     assert_contains "$body" "**not asked**" \
         "degraded body: each pin carries the only verdict this run has for it"
@@ -7567,14 +7607,17 @@ test_bump_script_self_consistency() {
     # Both of these stood forty lines above the loop that contradicts them, so
     # a reader going top to bottom met the false absolute first.
     #
-    # EACH NEEDLE STOPS AT THE LINE BREAK THE ORIGINAL COMMENT HAD. `grep -F`
-    # matches within one line, so a needle spelling out a sentence that was
-    # wrapped across two comment lines matches nothing in EITHER version — a
-    # green light wired to nothing. Measured against the pre-fix script: the
-    # full-sentence form of this one PASSED while the sentence was still there.
-    assert_not_contains "$script" "nothing in this system ever" \
+    # EACH NEEDLE IS THE WHOLE SENTENCE, through `assert_prose_*`, which
+    # flattens the comment's line breaks and its `#` markers before matching.
+    # It could not be, once: `grep -F` matches within one line, so the
+    # full-sentence form of either of these matched nothing in EITHER version
+    # of the file and PASSED while the sentence was still there — measured
+    # against the pre-fix script. The truncated fragments that replaced them
+    # were live but arbitrary, and each was one rewrap away from the same
+    # green light wired to nothing.
+    assert_prose_omits "$script" "nothing in this system ever advances a federated pin" \
         "self-consistency: no comment claims a federated pin is never advanced"
-    assert_not_contains "$script" "that FAILED: is permanent" \
+    assert_prose_omits "$script" "the moment a federated checkout sits ahead of its pin that FAILED: is permanent" \
         "self-consistency: no comment claims a federated FAILED: can never be cleared"
 
     # _agent-guidance#65. The cross-repo block asked a future reader to rewrite
@@ -7590,12 +7633,13 @@ test_bump_script_self_consistency() {
     else
         fail "self-consistency: the cross-repo block agentskills names by heading still exists"
     fi
-    assert_not_contains "$script" "One consequence to expect rather than re-discover" \
+    assert_prose_omits "$script" "carries a paragraph beginning \"One consequence to expect rather than re-discover\"" \
         "self-consistency: it no longer asks for an edit to a paragraph that is gone"
-    # The wrapped-needle trap again: the request read "It is a one-paragraph
-    # edit over there — make it when that / repo is next open", so only a
-    # single-line fragment of it can match at all.
-    assert_not_contains "$script" "one-paragraph edit over there" \
+    # The request read "It is a one-paragraph edit over there — make it when
+    # that / repo is next open" — wrapped after "that", which is why this is a
+    # prose assertion and not a `grep -F` for a fragment that happens to fit
+    # one line.
+    assert_prose_omits "$script" "It is a one-paragraph edit over there — make it when that repo is next open" \
         "self-consistency: and carries no outstanding cross-repo request at all"
 }
 
@@ -7626,20 +7670,21 @@ test_adr_0009_self_consistency() {
         fail "ADR 0009: the stand-in really does print one block per drifted source"
         return
     fi
-    assert_not_contains "$adr" "still exactly one headline" \
+    assert_prose_omits "$adr" "**all three drifted** — still exactly one headline." \
         "ADR 0009: it does not claim one headline for several drifted sources"
-    # Stops at the line break the old bullet had ("the same headline, still
-    # naming the primary's / clean sha"), for the same reason the needles in
-    # test_bump_script_self_consistency do: a wrapped needle matches nothing in
-    # either version and cannot go red. Measured against the pre-fix ADR — the
-    # full-sentence form passed while the bullet was still there.
-    assert_not_contains "$adr" "still naming the primary's" \
+    # The old bullet wrapped after "primary's" ("the same headline, still
+    # naming the primary's / clean sha"), and a `grep -F` for the sentence
+    # therefore matched nothing in either version and could not go red —
+    # measured against the pre-fix ADR, where the full-sentence form passed
+    # while the bullet was still there. These are prose assertions for that
+    # reason: the whole sentence is the needle, and the ADR may rewrap.
+    assert_prose_omits "$adr" "the same headline, still naming the primary's clean sha" \
         "ADR 0009: it does not claim a source-only drift is attributed to the primary"
-    assert_not_contains "$adr" "returns one flat list" \
+    assert_prose_omits "$adr" "\`check_current\` returns one flat list of differences across every source" \
         "ADR 0009: it does not describe, in the present tense, a shape the generator no longer has"
     # And the half that DOES still reproduce has to still be there, or the
     # absences above are satisfiable by deleting the evidence outright.
-    assert_contains "$adr" "only the primary edited" \
+    assert_prose_contains "$adr" "**only the primary edited, the source exactly at its pin**" \
         "ADR 0009: the measurement that actually justifies the decision is still cited"
 }
 
