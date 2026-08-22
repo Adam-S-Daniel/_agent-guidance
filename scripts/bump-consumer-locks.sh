@@ -1138,8 +1138,16 @@ for repo_name in "${REPOS[@]}"; do
     for reg in ${source_registries[@]+"${source_registries[@]}"}; do
         [[ "$reg" == "$primary_registry" ]] && fed_self_named=true
     done
+    # THE REASON, not just the fact, and the two are not the same on every
+    # run. With the scoped flags present the question is declined BECAUSE the
+    # name has two answers; without them no per-source question could be put
+    # about any source, whatever any name meant. Both sentences live in
+    # lib/bump-pr-claims.sh beside the two PR-body claims that say the same
+    # thing, branching on the same condition — so the log a human reads in a
+    # red nightly cannot contradict the body of the pull request that run
+    # opened, which is what it did until this line was gated.
     if $fed_self_named; then
-        log "$LOCK_REL_PATH names $primary_registry as both its primary registry and a federated source; a scoped question under that one name has two answers, so it is not put and that entry's pin is carried through untouched."
+        log "$(self_named_log_line "$FED_ADVANCE_AVAILABLE" "$LOCK_REL_PATH" "$primary_registry")"
     fi
 
     fed_gate_failed=false

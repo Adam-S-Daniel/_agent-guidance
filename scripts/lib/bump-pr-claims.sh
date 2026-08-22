@@ -654,6 +654,26 @@ case. That entry's pin is carried through exactly as this lock had it. Give the
 two halves two names if either is meant to move on its own."
 }
 
+# THE LOG'S HALF OF THE SAME FACT, and it lives here for the reason the two
+# claims above do. `log()` is not composed by this machinery — it fires from
+# the per-repo loop BEFORE that run knows why it is re-pinning, so
+# `claims_state` has not run, `CLAIM_REASON` does not exist yet and `emit` is
+# not available. What log() is NOT is out of scope: it is the artifact a human
+# reads at 3am in a red nightly, which is exactly when a wrong reason costs
+# the most, and round 2 filed this line in the same defect as the body's.
+#
+# So the sentence sits beside the two body claims that say the same thing,
+# picks its branch on the SAME condition, and is drawn into the cross
+# product's prose — where "a run with no scoped flags never names one" governs
+# it as it governs every other sentence a run can print.
+self_named_log_line() {   # <scoped-available true|false> <lock path> <registry>
+    if [[ "$1" == true ]]; then
+        printf '%s' "$2 names $3 as both its primary registry and a federated source; a scoped question under that one name has two answers, so it is not put and that entry's pin is carried through untouched."
+    else
+        printf '%s' "$2 names $3 as both its primary registry and a federated source; this run's generator cannot put a per-source question about any source, so nothing here asked about that entry either and its pin is carried through untouched."
+    fi
+}
+
 # ── The composer ──────────────────────────────────────────────────────────
 #
 # The ONLY place a bump artifact is built. It reads the run's state, sets

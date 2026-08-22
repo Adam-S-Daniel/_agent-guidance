@@ -5511,7 +5511,7 @@ with open(path, "w", encoding="utf-8") as handle:
 # probe). The list is asserted here rather than described in a comment,
 # because a comment cannot go red.
 #
-# THE STUB INVENTORY, recorded so the next flag does not rediscover it. ELEVEN
+# THE STUB INVENTORY, recorded so the next flag does not rediscover it. TWELVE
 # generator stand-ins live in this file, in two kinds, and only the first is
 # under test here.
 #
@@ -5530,6 +5530,8 @@ with open(path, "w", encoding="utf-8") as handle:
 #   * generator-missing-repin-source.py — only --repin-source stripped
 #   * generator-degraded-fed.py        — both stripped, for the body lane
 #   * generator-degraded-halves.py     — both stripped, for the which-half lane
+#   * generator-degraded-selffed.py    — both stripped, for the self-federating
+#                                        lane where the log and the body must agree
 #   * generator-only-bundles.py        — --only replaced by --only-bundles
 #
 # COUNTED BY A TEST, not by this comment. An inventory that states a number
@@ -5566,7 +5568,8 @@ if not block:
 block = block.group(0)
 listed = re.findall(r"^#   \* (\S+)", block, re.M)
 hand = re.findall(r"^#   \* (\S+)", block.split("DERIVED BY SURGERY")[0], re.M)
-words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11}
+words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+         "twelve": 12}
 stated = re.search(r"([A-Z]+) *\n?#? *generator stand-ins", block)
 if not stated:
     sys.exit("the inventory no longer states how many stand-ins there are")
@@ -5825,6 +5828,125 @@ with open(path, "w", encoding="utf-8") as handle:
     rm -rf "$root" "$work"
 }
 
+# ── Test 8h3b2: a self-federating lock met by a generator with no flags ──
+#
+# THE TWO ARTIFACTS OF ONE RUN, CHECKED AGAINST EACH OTHER. The lock names its
+# own primary as a source AND the generator has neither scoped flag, so the
+# entry's pin is carried through for two independent reasons — and only one of
+# them is a reason this run can stand behind. Round 2 filed the paragraph that
+# explained a `--check-current --only` refusal on a run with no `--only`;
+# round 3 split it into two claims and fixed the PR body, and left the `log()`
+# line saying the scoped reason to whoever reads a nightly.
+#
+# So both artifacts are read here, and the assertion is that they AGREE.
+test_bump_degraded_self_federating_lock() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a self-federating lock, no scoped flags) ==="
+
+    local root="$TEST_DIR/bare-selffed-degraded"
+    local work="$TEST_DIR/work/bumporg-repo-selffed-degraded"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-selffed-degraded" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-selffed-degraded" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-selffed-degraded"
+    echo "# repo-selffed-degraded" > README.md
+    python3 -c '
+import json, sys
+path, ref = sys.argv[1:3]
+doc = {
+    "registry": "bumporg/agentskills",
+    "ref": ref,
+    "bundles": ["adam"],
+    "sources": [{
+        "registry": "bumporg/agentskills",
+        "ref": ref,
+        "bundles": ["extra"],
+        "layout": "skills",
+    }],
+    "skills": {},
+    "generated_from": ref,
+}
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' skills.lock "$BUMP_REF_OLD"
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/registry" --ref "$BUMP_REF_OLD" \
+        --source-repo "bumporg/agentskills=$TEST_DIR/registry" -o skills.lock >/dev/null
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    # The generator, stripped of both scoped flags. Verified before anything
+    # is asserted about the run, or this would be the ORDINARY self-federating
+    # lane wearing a different name.
+    local gen="$TEST_DIR/generator-degraded-selffed.py"
+    write_stub_generator "$gen"
+    if ! python3 "$TEST_DIR/strip-scoped-flags.py" "$gen"; then
+        fail "degraded self-federating: could not strip the stub's federated flags"
+        rm -rf "$root" "$work"
+        return
+    fi
+    if python3 "$gen" --help 2>&1 | grep -q -- '--only'; then
+        fail "degraded self-federating: --only is still advertised by the stripped stub"
+        rm -rf "$root" "$work"
+        return
+    fi
+    pass "degraded self-federating: the stripped stub no longer advertises --only"
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-selffed-degraded.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+    local log="$TEST_DIR/bump-selffed-degraded.txt"
+    local body="$BUMP_PR_BODY_DIR/bumporg_repo-selffed-degraded.body"
+
+    if [[ -s "$body" ]]; then
+        pass "degraded self-federating: the stale primary still gets its PR"
+    else
+        fail "degraded self-federating: the stale primary still gets its PR"
+        rm -rf "$root" "$work"
+        return
+    fi
+
+    # THE LOG. The fact survives the degrade; the reason does not. A run with
+    # no `--only` cannot have declined to put a `--check-current --only`
+    # question BECAUSE the name has two answers — it could not have put one
+    # about any source, whatever the name meant.
+    assert_prose_contains "$log" "names bumporg/agentskills as both its primary registry and a federated source" \
+        "degraded self-federating: the log still names the entry nothing asked about"
+    assert_prose_omits "$log" "a scoped question under that one name has two answers" \
+        "degraded self-federating: and does not give a reason this generator could not have had"
+    assert_prose_contains "$log" "this run's generator cannot put a per-source question about any source" \
+        "degraded self-federating: it gives the reason this run actually has"
+
+    # THE PR BODY OF THE SAME RUN, which must say the same thing. This is the
+    # pair that contradicted each other.
+    assert_prose_contains "$body" "No per-source question was put about any source in this run" \
+        "degraded self-federating: the body gives the degraded reason too"
+    assert_prose_omits "$body" "A \`--check-current --only bumporg/agentskills\` has two answers" \
+        "degraded self-federating: and neither artifact describes a refusal nothing here could make"
+
+    # And the lock: the primary advances, the self-named entry does not.
+    local after="$TEST_DIR/selffed-degraded-after.lock"
+    git -C "$root/bumporg_repo-selffed-degraded" show \
+        "refs/heads/skills-lock-bump/update:skills.lock" > "$after" 2>/dev/null || : > "$after"
+    if [[ "$(lock_field_of "$after" ref)" == "$BUMP_REF_HEAD" ]]; then
+        pass "degraded self-federating: the primary pin still advanced"
+    else
+        fail "degraded self-federating: the primary pin still advanced — got $(lock_field_of "$after" ref)"
+    fi
+    if [[ "$(lock_source_ref_of "$after" bumporg/agentskills)" == "$BUMP_REF_OLD" ]]; then
+        pass "degraded self-federating: the self-named entry is carried through untouched"
+    else
+        fail "degraded self-federating: the self-named entry is carried through untouched — got $(lock_source_ref_of "$after" bumporg/agentskills)"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h3f: what the PR body's 20-line cap does and does not keep ──────
 #
 # The bumper builds `$fed_check_out` by CONCATENATING one
@@ -6068,6 +6190,15 @@ for id in ${EMITTED_CLAIMS[@]+"${EMITTED_CLAIMS[@]}"}; do printf '%s\n' "$id" >>
 printf '%s' "$PR_TITLE" > "$out/title"
 printf '%s' "$PR_BODY" > "$out/body"
 printf '%s\n%s\n%s\n%s' "$PR_TITLE" "$COMMIT_SUBJECT" "$COMMIT_BODY" "$PR_BODY" > "$out/all"
+# The log() line this run would print, which is an artifact of the run like
+# the four above and is governed with them below. It is not part of $out/all,
+# because that file is what the CLOSURE check accounts for claim by claim and
+# this sentence is not emitted through `emit` — see the library's note on why.
+: > "$out/log"
+case "$fed" in
+    self_named|self_named_plus)
+        self_named_log_line "$scoped" "$LOCK_REL_PATH" "$primary_registry" > "$out/log" ;;
+esac
 : > "$out/parts.bin"
 for text in ${EMITTED_TEXT[@]+"${EMITTED_TEXT[@]}"}; do printf '%s\0' "$text" >> "$out/parts.bin"; done
 exit 0
@@ -6116,12 +6247,28 @@ RENDER
                 # Prose only: a fenced block is the generator's own verdict,
                 # quoted verbatim, and quoting evidence is not asserting it.
                 awk '/^```/{f=!f; next} !f' "$out/all" > "$out/prose"
+                # THE LOG LINE IS PROSE TOO, appended as its own paragraph.
+                # Nothing governed log() output until this: the same run's
+                # body was split into a scoped claim and a degraded one while
+                # the log kept printing the scoped reason, so two artifacts of
+                # one run said opposite things about whether a question could
+                # have been put at all.
+                if [[ -s "$out/log" ]]; then
+                    printf '\n\n' >> "$out/prose"
+                    cat "$out/log" >> "$out/prose"
+                fi
 
                 # A run whose generator had neither scoped flag cannot name
-                # one. This is the sentence-level form of the whole defect
-                # class, and it needs no condition table: the flags did not
-                # exist, so any body describing what they did or refused is
-                # describing something that did not happen.
+                # one, or describe a refusal only a generator that HAS one
+                # could have made. This is the sentence-level form of the
+                # whole defect class, and it needs no condition table: the
+                # flags did not exist, so any artifact describing what they
+                # did or refused is describing something that did not happen.
+                # "scoped question" is in the pattern because the sentence
+                # that reached production named neither flag: it said "a
+                # scoped question under that one name has two answers, so it
+                # is not put" on a run that could not have put one under any
+                # name.
                 # Paragraph by paragraph, because ONE paragraph legitimately
                 # names both flags: the one whose entire job is to say this
                 # generator has neither. Naming a flag to report its absence
@@ -6131,7 +6278,7 @@ RENDER
 import re, sys
 prose = open(sys.argv[1], encoding="utf-8").read()
 for para in re.split(r"\n\s*\n", prose):
-    if re.search(r"--only|--repin-source", para) and "has no" not in para:
+    if re.search(r"--only|--repin-source|scoped question", para) and "has no" not in para:
         sys.exit(1)
 ' "$out/prose"; then
                     r_scoped="$r_scoped $cell"
@@ -8265,6 +8412,7 @@ test_bump_stub_generator_parity
 test_bump_twice_federated_lock
 test_bump_format_and_federated
 test_bump_self_federating_lock
+test_bump_degraded_self_federating_lock
 test_bump_only_prefix_flag
 test_bump_generator_error_line
 test_bump_degraded_federated_body
