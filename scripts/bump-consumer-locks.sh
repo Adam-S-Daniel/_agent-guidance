@@ -438,7 +438,7 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 # One repo's failure is counted and the loop continues, exactly as the propose
 # pass does. Nothing here aborts the fleet.
 sweep_bump_prs() {
-    local repo_name numbers_raw number pr_json verdict_line verdict detail merge_out
+    local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local head_oid
     local -a match_args
     local -a numbers
@@ -475,10 +475,23 @@ sweep_bump_prs() {
 
         for number in "${numbers[@]}"; do
             pr_json="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')-pr-$number.json"
-            if ! gh pr view "$number" --repo "$repo_name" --json \
+            # Captured with its reason, the way `gh pr list` above already
+            # does it: an unreadable pull request is a counted failure, and a
+            # counted failure a scheduled run cannot diagnose from its own log
+            # is only half reported.
+            #
+            # THE REDIRECTION ORDER IS LOAD-BEARING AND IS NOT A TIDY-UP.
+            # Redirections are applied left to right, so `2>&1 >"$pr_json"`
+            # first points stderr at wherever stdout goes right now — the
+            # command substitution — and only THEN sends stdout to the file.
+            # The reason lands in $view_err and the JSON lands in $pr_json.
+            # Written the other way round, `>"$pr_json" 2>&1` sends BOTH to the
+            # file: $view_err is always empty and the reason is discarded
+            # again, which is the bug this line is fixing.
+            if ! view_err=$(gh pr view "$number" --repo "$repo_name" --json \
                 number,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
-                > "$pr_json" 2>/dev/null; then
-                fail "$repo_name#$number: could not read the pull request."
+                2>&1 >"$pr_json"); then
+                fail "$repo_name#$number: could not read the pull request — $(head -1 <<< "$view_err")"
                 ((FAIL_COUNT++)) || true
                 continue
             fi

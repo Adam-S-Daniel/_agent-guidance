@@ -1458,6 +1458,17 @@ case "$1" in
                 repo_arg=$(parse_flag_value --repo "$@")
                 jq_filter=$(parse_jq_filter "$@")
                 repo_slug="${repo_arg//\//_}"
+                # The OTHER way a read fails, and the one the live sweep hit:
+                # the PR is listable and perfectly real, but `gh pr view`
+                # refuses this particular --json field set. Real gh writes that
+                # to stderr and exits 1 having written nothing to stdout, so a
+                # caller that discards stderr is left with a failure and no
+                # reason at all. MOCK_PR_VIEW_FAILS names repos where every
+                # view does that.
+                if [[ " ${MOCK_PR_VIEW_FAILS:-} " == *" $repo_slug "* ]]; then
+                    echo "unknown JSON field: \"statusCheckRollup\"" >&2
+                    exit 1
+                fi
                 pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_slug}.json"
                 pr_obj=""
                 [[ -f "$pr_file" ]] && pr_obj=$(jq -c --argjson n "$pr_number" \
@@ -3633,6 +3644,7 @@ run_bump() {   # <output file> [script args...]
     MOCK_AUTO_MERGE_FAILS="${BUMP_AUTO_MERGE_FAILS_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
+    MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
     MOCK_GH_NO_MATCH_FLAG="${BUMP_NO_MATCH_FLAG_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     BUMP_REGISTRY="bumporg/agentskills" \
@@ -5090,6 +5102,48 @@ test_bump_sweep_head_match() {
     assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
 }
 
+# ── Test 8i4: an unreadable pull request reports WHY ─────────────────────
+#
+# `gh pr view` fails in two shapes, and only one of them is self-evident from
+# the sweep's own log. "No such PR" can be inferred from the number; a refused
+# --json field set cannot be inferred from anything, and the sweep's message
+# used to be a bare "could not read the pull request." with the reason sent to
+# /dev/null. A scheduled run that goes red with no diagnosable cause is the
+# failure this asserts against: the reason gh printed has to reach the log,
+# and the run still has to fail.
+test_bump_sweep_view_failure_reports_why() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (an unreadable pull request says why) ==="
+
+    setup_sweep_repos
+    local before_sha log
+    before_sha=$(sweep_main_sha repo-zz-ready)
+
+    BUMP_VIEW_FAILS_FOR_RUN="bumporg_repo-zz-ready" \
+        run_sweep "$TEST_DIR/sweep-view-fails.txt"
+    unset BUMP_VIEW_FAILS_FOR_RUN
+    log="$TEST_DIR/sweep-view-fails.txt"
+
+    assert_contains "$log" "bumporg/repo-zz-ready#111: could not read the pull request" "view failure: the unreadable pull request is named"
+    # The point of the whole change: the reason gh printed, not just that it
+    # failed. Asserting the gh text rather than the script's own prefix is what
+    # makes this test fail if the stderr capture is dropped again.
+    assert_contains "$log" 'unknown JSON field: "statusCheckRollup"' "view failure: gh's own reason reaches the log"
+    assert_not_contains "$log" "bumporg/repo-zz-ready#111: MERGED" "view failure: an unreadable pull request is not merged"
+    if [[ "$(sweep_main_sha repo-zz-ready)" == "$before_sha" ]]; then
+        pass "view failure: the default branch did not move"
+    else
+        fail "view failure: the default branch did not move"
+    fi
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "view failure: the run exits non-zero, so a scheduled run goes red"
+    else
+        fail "view failure: the run exits non-zero, so a scheduled run goes red (got 0)"
+    fi
+    # One repo's unreadable PR is one repo's: the sweep goes on.
+    assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" "view failure: other repos still merge"
+}
+
 # Everything above drives mock repos through the scripts. These five read the
 # REAL files in this checkout, because nothing else does: this repo is dropped
 # from both `sync.sh` and `drift-report.sh` (`grep -v "/${SELF_REPO}$"`), so
@@ -5976,6 +6030,7 @@ test_bump_format_check_unreadable
 test_bump_sweep_dry_run
 test_bump_sweep
 test_bump_sweep_head_match
+test_bump_sweep_view_failure_reports_why
 # This repo's own committed files, not the mock fleet — nothing syncs or
 # reports on _agent-guidance, so these are the only checks they get.
 test_sync_workflow_trigger
