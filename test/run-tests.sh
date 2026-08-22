@@ -6111,20 +6111,27 @@ if (diffs, headline, command) != (cap - 3, cap, cap + 1):
 # claims plus whitespace, which is what stops a sentence being typed straight
 # into the composer where no condition governs it.
 #
-# The cross product is 4 x 6 x 2:
+# The cross product is 4 x 7 x 2:
 #   PRIMARY   drifted (content) | current, either reason it can still open a
 #             PR (format, federated) | unanswerable
 #   FEDERATED advanced | unchanged | not asked | self-named | self-named
-#             ALONGSIDE a real source | no sources at all
+#             ALONGSIDE a source that MOVED | self-named alongside one that
+#             did NOT | no sources at all
 #   SCOPED    the generator has --check-current --only and --repin-source, or
 #             it does not
 # The brief's three primary states and four federated ones are all in there;
-# the two extra federated columns are the ones the four cannot reach — a lock
-# with no `sources` at all, and a lock that names its own primary as a source
-# BESIDE a real one, which is the only shape where the digest paragraph both
-# points at a list and has an entry that is not in it.
+# the three extra federated columns are the ones the four cannot reach — a
+# lock with no `sources` at all, and the two shapes that name the primary as a
+# source BESIDE a real one, which are the only ones where the digest paragraph
+# both points at a list and has an entry that is not in it.
 #
-# Twenty-six of the forty-eight are impossible, and each one is asserted to be
+# THE QUIET ONE IS THERE BECAUSE ITS ABSENCE HID A DEFECT. Until this column
+# existed the grid never rendered `federated_unchanged` beside a self-named
+# entry — self_named_plus always drifts its real source — so that claim's
+# unrestricted "Each was put its own question" was denied two paragraphs
+# further down a body no cell ever built.
+#
+# Thirty of the fifty-six are impossible, and each one is asserted to be
 # impossible rather than skipped: an unanswerable primary must produce no
 # artifact at all, an advance is unreachable without the flag that makes one,
 # and `federated` as a reason means a source moved.
@@ -6171,6 +6178,7 @@ case "$fed" in
     advanced)        source_registries=("org/src"); fed_drifted_regs=("org/src") ;;
     self_named)      source_registries=("org/reg"); fed_drifted_regs=() ;;
     self_named_plus) source_registries=("org/reg" "org/src"); fed_drifted_regs=("org/src") ;;
+    self_named_quiet) source_registries=("org/reg" "org/src"); fed_drifted_regs=() ;;
     none)            source_registries=(); fed_drifted_regs=() ;;
     *)               source_registries=("org/src"); fed_drifted_regs=() ;;
 esac
@@ -6205,12 +6213,12 @@ exit 0
 RENDER
 
     local reason fed scoped cell out expect
-    local r_reach="" r_scoped="" r_held="" r_advance="" r_below="" r_only="" r_whole="" r_label="" r_closure=""
+    local r_reach="" r_scoped="" r_held="" r_advance="" r_below="" r_only="" r_whole="" r_label="" r_closure="" r_each=""
     local rendered=0 refused=0
     : > "$dir/all-claims.txt"
 
     for reason in content format federated unanswerable; do
-        for fed in advanced unchanged not_asked self_named self_named_plus none; do
+        for fed in advanced unchanged not_asked self_named self_named_plus self_named_quiet none; do
             for scoped in true false; do
                 cell="$reason-$fed-$scoped"
                 out="$dir/out/$cell"
@@ -6244,6 +6252,14 @@ RENDER
                 rendered=$((rendered + 1))
                 cat "$out/claims" >> "$dir/all-claims.txt"
 
+                # FLATTENED, because every needle below guards a sentence
+                # in a hard-wrapped artifact and `grep -F` matches inside one
+                # line. Measured on this branch's own artifact needle: a
+                # forbidden sentence that lands across a wrap matches nothing
+                # and the guard passes silently. `$out/body` stays unflattened
+                # for the one check that is about line structure — whether the
+                # body has a `- \`` bullet.
+                tr -s '[:space:]' ' ' < "$out/all" > "$out/flat"
                 # Prose only: a fenced block is the generator's own verdict,
                 # quoted verbatim, and quoting evidence is not asserting it.
                 awk '/^```/{f=!f; next} !f' "$out/all" > "$out/prose"
@@ -6286,51 +6302,66 @@ for para in re.split(r"\n\s*\n", prose):
 
                 # A held pin is never announced as a move.
                 if [[ "$reason" != "content" ]] \
-                   && grep -qF -- 'newly pinned commit' "$out/all"; then
+                   && grep -qF -- 'newly pinned commit' "$out/flat"; then
                     r_held="$r_held $cell"
                 fi
                 if [[ "$reason" != "content" ]] \
-                   && grep -qF -- 'bbbbbbb' "$out/all"; then
+                   && grep -qF -- 'bbbbbbb' "$out/flat"; then
                     r_held="$r_held $cell(new ref)"
                 fi
 
                 # Nothing moved that this run did not move.
                 if ! $advancing \
-                   && grep -qE -- 'moved too|\*\*advanced\*\*|advance its federated pin' "$out/all"; then
+                   && grep -qE -- 'moved too|\*\*advanced\*\*|advance its federated pin' "$out/flat"; then
                     r_advance="$r_advance $cell"
                 fi
 
                 # A pointer at the body's own list has something in that list.
-                if grep -qE -- 'listed for it below|pins listed below|pin below was checked' "$out/all" \
+                if grep -qE -- 'listed for it below|pins listed below|pin below was checked' "$out/flat" \
                    && ! grep -qE '^- `' "$out/body"; then
                     r_below="$r_below $cell"
                 fi
 
                 # "and nothing else" is exclusive or it is not a claim.
-                if grep -qF -- 'and nothing else' "$out/all" \
-                   && grep -qF -- 'moved too' "$out/all"; then
+                if grep -qF -- 'and nothing else' "$out/flat" \
+                   && grep -qF -- 'moved too' "$out/flat"; then
                     r_only="$r_only $cell"
                 fi
-                if grep -qF -- 'SHAPE stored in `skills.lock`, and nothing' "$out/all" \
-                   && grep -qF -- '**advanced**' "$out/all"; then
+                if grep -qF -- 'SHAPE stored in `skills.lock`, and nothing' "$out/flat" \
+                   && grep -qF -- '**advanced**' "$out/flat"; then
                     r_only="$r_only $cell(shape)"
                 fi
 
                 # No artifact presents a partial command as a complete one.
                 # The body quotes the generator's remediation line for the
                 # whole, and names its own additions as additions.
-                if grep -qF -- 'whole of it' "$out/all"; then
+                if grep -qF -- 'whole of it' "$out/flat"; then
                     r_whole="$r_whole $cell"
                 fi
                 if [[ "$reason" == "format" ]] && $advancing \
-                   && ! grep -qF -- "--repin-source 'org/src@'" "$out/all"; then
+                   && ! grep -qF -- "--repin-source 'org/src@'" "$out/flat"; then
                     r_whole="$r_whole $cell(addition unnamed)"
+                fi
+
+                # A HEADER QUANTIFIER IS NOT DENIED FURTHER DOWN ITS OWN
+                # BODY. Same shape as "and nothing else" beside "moved too",
+                # one axis over: the federated header used to say EVERY source
+                # was put its own scoped question, and two paragraphs later
+                # the same body said one was not — the self-named entry, which
+                # gets no line in that list and no question. Neither arm read
+                # CLAIM_SELF_NAMED, and none of the prohibitions here could
+                # see it. Both halves are read off the artifact, so this is
+                # about the body's own coherence rather than a second copy of
+                # the condition table.
+                if grep -qE -- '(Each|Every)( [a-z]+)? was put its' "$out/flat" \
+                   && grep -qE -- 'question was not put|question was put about any source' "$out/flat"; then
+                    r_each="$r_each $cell"
                 fi
 
                 # `unchanged` is a VERDICT and `not asked` is the absence of
                 # one. The lock and the drift set are identical in those two
                 # columns; what separates them is whether anything could ask.
-                if [[ "$fed" == "unchanged" || "$fed" == "not_asked" ]]; then
+                if [[ "$fed" == "unchanged" || "$fed" == "not_asked" || "$fed" == "self_named_quiet" ]]; then
                     if [[ "$scoped" == "true" ]]; then
                         grep -qF -- '**unchanged**' "$out/body" || r_label="$r_label $cell"
                         grep -qF -- '**not asked**' "$out/body" && r_label="$r_label $cell(both)"
@@ -6364,10 +6395,10 @@ if whole.strip():
         done
     done
 
-    if [[ $rendered -eq 22 && $refused -eq 26 ]]; then
-        pass "claims: the cross product is 48 cells — 22 that produce an artifact, 26 that cannot"
+    if [[ $rendered -eq 26 && $refused -eq 30 ]]; then
+        pass "claims: the cross product is 56 cells — 26 that produce an artifact, 30 that cannot"
     else
-        fail "claims: the cross product is 48 cells — 22 that produce an artifact, 26 that cannot (got $rendered / $refused)"
+        fail "claims: the cross product is 56 cells — 26 that produce an artifact, 30 that cannot (got $rendered / $refused)"
     fi
     [[ -z "$r_reach" ]] && pass "claims: every cell produces exactly what its run state allows" \
         || fail "claims: every cell produces exactly what its run state allows —$r_reach"
@@ -6383,6 +6414,8 @@ if whole.strip():
         || fail "claims: 'and nothing else' never sits beside a second thing moving —$r_only"
     [[ -z "$r_whole" ]] && pass "claims: no body presents a partial command as the whole one" \
         || fail "claims: no body presents a partial command as the whole one —$r_whole"
+    [[ -z "$r_each" ]] && pass "claims: a body that says EVERY source was asked has not left one out" \
+        || fail "claims: a body that says EVERY source was asked has not left one out —$r_each"
     [[ -z "$r_label" ]] && pass "claims: a source is labelled with the verdict this run actually got" \
         || fail "claims: a source is labelled with the verdict this run actually got —$r_label"
     [[ -z "$r_closure" ]] && pass "claims: every artifact is exactly its claims plus whitespace" \

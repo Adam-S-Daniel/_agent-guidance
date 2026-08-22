@@ -610,15 +610,22 @@ what \`--repin\` does with a source nothing names. \`--source\` is refused outri
 because that flag REPLACES the inherited \`sources\` array and would silently
 de-federate the lock:"
 }
+# THE QUANTIFIER IS RESTRICTED TO THE LIST, and "listed below" is doing real
+# work in both of these. A `sources` entry naming this lock's own primary
+# registry is a source that gets no line in that list and no scoped question —
+# so an unrestricted "each source was asked" is denied two paragraphs down its
+# own body, by the block that says one was not. That is structurally the
+# "and nothing else" / "moved too" defect one axis over, and the cross product
+# now prohibits it directly.
 claim_text_federated_advanced() {
     printf '%s' "**Federated sources advance one at a time, and only when asked.** Each source
-was put its OWN \`--check-current --only <registry>\` question, and only the ones
-that answered \`FAILED\` were named to \`--repin-source\`. \`--source\` stays refused
-outright, because that flag REPLACES the inherited \`sources\` array and would
-silently de-federate the lock:"
+listed below was put its OWN \`--check-current --only <registry>\` question, and only
+the ones that answered \`FAILED\` were named to \`--repin-source\`. \`--source\` stays
+refused outright, because that flag REPLACES the inherited \`sources\` array and
+would silently de-federate the lock:"
 }
 claim_text_federated_unchanged() {
-    printf '%s' "**Federated sources keep their pins.** Each was put its own
+    printf '%s' "**Federated sources keep their pins.** Each one listed below was put its own
 \`--check-current --only <registry>\` question and answered that its bundles have
 not moved, so none was named to \`--repin-source\`; \`--source\` is refused outright,
 because that flag REPLACES the inherited \`sources\` array and would silently
