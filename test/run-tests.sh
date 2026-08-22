@@ -4619,6 +4619,18 @@ NOREPIN
         fail "no re-pin flag: refuses the run outright (exit $BUMP_EXIT)"
     fi
     assert_not_contains "$TEST_DIR/bump-norepin.txt" "=== bumporg/repo-stale ===" "no re-pin flag: no consumer is processed at all"
+    # AND NOT ONE `::warning::`, which is what makes the stub inventory's
+    # sentence about this stand-in checkable. It carries neither scoped flag,
+    # so a reader would expect the two SOFT probes to degrade and annotate —
+    # but the HARD --repin probe exits 2 above them and neither ever runs. The
+    # inventory said "The four hand-rolled ones ... emit a `::warning::`
+    # apiece" over a set including this one; measured here, this lane emits
+    # zero.
+    if [[ "$(grep -c '::warning::' "$TEST_DIR/bump-norepin.txt" || true)" == "0" ]]; then
+        pass "no re-pin flag: the soft probes below it never run, so nothing is annotated"
+    else
+        fail "no re-pin flag: the soft probes below it never run, so nothing is annotated — got $(grep -c '::warning::' "$TEST_DIR/bump-norepin.txt" || true)"
+    fi
 }
 
 # ── Test 8f2: one owner's listing failure is that owner's failure ─────────
@@ -5526,10 +5538,14 @@ with open(path, "w", encoding="utf-8") as handle:
 # lines before a sentence that only parses for five, while four more stand-ins
 # it never mentioned already existed. The assertion in this test counts them.
 #
-# The four hand-rolled ones carry neither `--only` nor `--repin-source`, so
-# both federated probes degrade in their lanes and emit a `::warning::` apiece.
-# Those lanes pass today only because both probes are SOFT; harden either into
-# an exit 2 and they go red without having changed.
+# The four besides `write_stub_generator` carry neither `--only` nor
+# `--repin-source`. THREE of them degrade both federated probes in their lanes
+# and emit a `::warning::` apiece; generator-no-repin.py emits none at all,
+# because the run exits 2 at the one HARD probe before either soft probe is
+# reached — its own bullet above says so, and test_bump_generator_without_repin
+# counts the warnings to keep this sentence honest. Those three lanes pass
+# today only because both probes are SOFT; harden either into an exit 2 and
+# they go red without having changed.
 test_bump_stub_generator_parity() {
     echo ""
     echo "=== Test: the stand-in generator's refusals match the real one's ==="
@@ -5556,11 +5572,16 @@ if not stated:
     sys.exit("the inventory no longer states how many stand-ins there are")
 if words.get(stated.group(1).lower()) != len(listed):
     sys.exit("the inventory says %s but lists %d" % (stated.group(1), len(listed)))
-hand_stated = re.search(r"The (\w+) hand-rolled ones", block)
+# The off-by-one is STATED, not encoded here: the sentence says "besides
+# `write_stub_generator`", so the number it gives is the list minus that one
+# entry and a reader counting the bullets against it lands on the same answer.
+# The previous wording said "The four hand-rolled ones" over a five-bullet
+# list and left this check subtracting 1 to make it true.
+hand_stated = re.search(r"The (\w+) besides .write_stub_generator.", block)
 if not hand_stated:
-    sys.exit("the inventory no longer says how many stand-ins are hand-rolled")
+    sys.exit("the inventory no longer says how many stand-ins are hand-rolled besides write_stub_generator")
 if words.get(hand_stated.group(1).lower()) != len(hand) - 1:
-    sys.exit("the inventory says %s hand-rolled but lists %d beside write_stub_generator"
+    sys.exit("the inventory says %s besides write_stub_generator but lists %d"
              % (hand_stated.group(1), len(hand) - 1))
 # Both directions, against the CODE of this file — every comment line is
 # dropped first, the inventory bullets among them, so no prose can vouch for a
