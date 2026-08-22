@@ -5858,8 +5858,8 @@ test_bump_pr_body_slice_arithmetic() {
 # source "answered that its bundles have not moved" from a generator with no
 # way to ask; the paragraph beside it explained a `--repin-source` refusal by a
 # generator that had no `--repin-source`; a federated-only header said a source
-# moved "and nothing else" three paragraphs above a block saying one moved
-# "too"; a body pointed at "the ref listed for it below" with nothing listed
+# moved "and nothing else" further up the same body than a block saying one
+# moved "too"; a body pointed at "the ref listed for it below" with nothing listed
 # below; and a body called a partial command "the whole of it".
 #
 # scripts/lib/bump-pr-claims.sh makes the omission a construction error at
@@ -6136,8 +6136,8 @@ if whole.strip():
     local registered emitted missing
     # `|| true` because this suite runs under `set -e`: a grep that matched
     # nothing would take the WHOLE run down with it, Results line and all,
-    # instead of failing the vacuity guard three lines below — which is the
-    # isolation failure this file's own header is about.
+    # instead of failing the vacuity guard below — which is the isolation
+    # failure this file's own header is about.
     registered=$(grep -oE '^claim_text_[a-z0-9_]+' "$claims" | sed 's/^claim_text_//' | sort -u || true)
     emitted=$(sort -u "$dir/all-claims.txt" | grep -v '^$' || true)
     missing=$(comm -23 <(printf '%s\n' "$registered") <(printf '%s\n' "$emitted") | tr '\n' ' ')

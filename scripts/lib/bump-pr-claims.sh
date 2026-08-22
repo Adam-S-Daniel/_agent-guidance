@@ -13,10 +13,11 @@
 # source "answered that its bundles have not moved" from a generator that had
 # no way to ask; the paragraph beside it said `--repin-source` "refuses that
 # name outright" about a flag the same generator did not carry; a
-# federated-only body's header said a source moved "and nothing else" three
-# paragraphs above a block saying one moved "too"; a body sent the reader to
-# "the ref listed for it below" with nothing listed below; and a body called a
-# command "the whole of it" while omitting three of its arguments.
+# federated-only body's header said a source moved "and nothing else" further
+# up the same body than a block saying one moved "too"; a body sent the reader
+# to "the ref listed for it below" with nothing listed below; and a body called
+# a command "the whole of it" while omitting `--repo`, `--source-repo` and
+# `-o`, so it would not run.
 #
 # Every one of those was found by a reader noticing. So the fix is not five
 # more branches — it is making an ungated sentence impossible to write.
@@ -487,7 +488,7 @@ $(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$
 # THE FEDERATED EVIDENCE, appended to whichever primary-side paragraph fired.
 # TWO HEADINGS, because "moved too" asserts that something ELSE moved as well
 # — true of a content or shape re-pin that carries a source advance, and
-# flatly denied by the federated-only header three paragraphs above, which
+# flatly denied by the federated-only header higher up the same body, which
 # says a source moved "and nothing else".
 claim_text_why_fed_evidence_also() {
     printf '%s' "**A FEDERATED source moved too, and its pin advances with this PR.** Its bundles
