@@ -5010,6 +5010,97 @@ test_bump_generator_without_scoped_flags() {
     fi
 }
 
+# ── Test 8h5: a degraded run's PR body says only what it asked ────────────
+#
+# THE WORST OUTPUT THIS SCRIPT HAS, and it was reachable on exactly the window
+# the two soft probes exist to survive. With a generator predating `--only`,
+# `fed_drifted_regs` is empty for every consumer — and the first cut branched
+# the federated disclosure on that emptiness alone, so a degraded run's PR body
+# claimed each source "was put its own `--check-current --only <registry>`
+# question and answered that its bundles have not moved" and labelled it
+# **unchanged**. Both halves false: no such question exists on that generator,
+# and this fixture's source HAS moved.
+#
+# The fixture is repo-fed-stale's shape (both halves moved) in a bare dir of its
+# own. Both halves matter: the stale PRIMARY is the only reason a degraded run
+# opens a PR here at all, and the moved SOURCE is what makes "unchanged" a
+# checkable falsehood rather than an accidental truth.
+test_bump_degraded_federated_body() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (what a degraded run discloses) ==="
+
+    local root="$TEST_DIR/bare-degradedfed"
+    local work="$TEST_DIR/work/bumporg-repo-degraded-fed"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-degraded-fed" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-degraded-fed" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-degraded-fed"
+    echo "# repo-degraded-fed" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD" "$BUMP_SRC_REF"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    local gen="$TEST_DIR/generator-degraded-fed.py"
+    write_stub_generator "$gen"
+    if ! python3 "$TEST_DIR/strip-scoped-flags.py" "$gen"; then
+        fail "degraded body: could not strip the stub's federated flags"
+        rm -rf "$root" "$work"
+        return
+    fi
+    # The strip is the fixture, so it is verified before anything is asserted
+    # about the run — a strip that matched nothing would leave the ORDINARY
+    # path under test while this function reported on the degraded one.
+    if python3 "$gen" --help 2>&1 | grep -q -- '--only'; then
+        fail "degraded body: --only is still advertised by the stripped stub"
+    else
+        pass "degraded body: the stripped stub no longer advertises --only"
+    fi
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-degradedfed.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+    local log="$TEST_DIR/bump-degradedfed.txt"
+    local body="$BUMP_PR_BODY_DIR/bumporg_repo-degraded-fed.body"
+
+    if [[ -s "$body" ]]; then
+        pass "degraded body: the stale primary still gets its PR"
+    else
+        fail "degraded body: the stale primary still gets its PR"
+        rm -rf "$root" "$work"
+        return
+    fi
+    # The two sentences that were false. Asserted as absences AND as a
+    # presence, because deleting the disclosure entirely would satisfy the
+    # absences alone.
+    assert_not_contains "$body" "answered that its bundles have" \
+        "degraded body: no claim that a scoped question was asked and answered"
+    assert_not_contains "$body" "**unchanged**" \
+        "degraded body: a source this run never asked about is not labelled unchanged"
+    assert_contains "$body" "could not ask whether they" \
+        "degraded body: says the question could not be put"
+    assert_contains "$body" "**not asked**" \
+        "degraded body: each pin carries the only verdict this run has for it"
+    assert_contains "$body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}" \
+        "degraded body: names the pin the lock keeps"
+    # And the pin really is kept — the body would be true of a run that
+    # advanced it and said nothing, so the lock is read as well.
+    local after="$TEST_DIR/degradedfed-after.lock"
+    git -C "$root/bumporg_repo-degraded-fed" show \
+        "refs/heads/skills-lock-bump/update:skills.lock" > "$after" 2>/dev/null || : > "$after"
+    if [[ "$(lock_source_ref_of "$after" bumporg/cms-platform)" == "$BUMP_SRC_REF" ]]; then
+        pass "degraded body: the federated pin is carried through, not advanced"
+    else
+        fail "degraded body: the federated pin is carried through — got $(lock_source_ref_of "$after" bumporg/cms-platform)"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h4: "cannot tell" is not "the digests are bad" ──────────────────
 #
 # --check-format exits 1 for a malformed lock AND for a lock it could not read
@@ -6384,6 +6475,7 @@ test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
+test_bump_degraded_federated_body
 test_bump_format_check_unreadable
 # The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,
 # which is the one thing in this repo nothing else undoes. Dry run first, so

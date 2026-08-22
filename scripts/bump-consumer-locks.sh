@@ -1617,6 +1617,21 @@ them."
     # PR body that denies the change in its own diff is the defect the header
     # and the why-paragraph above were already branched to stop.
     #
+    # THREE STATES, not two, and the third is the one that shipped a lie. The
+    # first cut branched on `advanced_any` alone, which is false BOTH when
+    # every scoped question answered OK and when no scoped question could be
+    # asked at all — so on a generator predating `--only` (the merge-order
+    # window the soft probes above exist to survive) every federated consumer
+    # got a PR body asserting a question this run never put, over a list
+    # labelling a source that HAD moved "unchanged". Measured on the fleet
+    # fixture with both flags stripped: `bumporg/repo-fed-stale`, whose source
+    # had moved, was reported as unchanged under that sentence.
+    #
+    # What a degraded run actually knows about a source is: the pin the lock
+    # already carried, and that this run did not verify it. That is what the
+    # third branch says, and the per-source label says the same — `not asked`
+    # rather than a verdict nothing produced.
+    #
     # The OLD pin comes from $lock_file, which is this run's copy of the lock
     # as it stands on the default branch and is never written to; the NEW one
     # from the re-pinned working copy. Two files, so the arrow cannot show the
@@ -1634,12 +1649,24 @@ them."
                 advanced_any=true
                 federated_lines="${federated_lines}
 - \`$(lock_summary "$lock_file" "$reg")\` → \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **advanced**"
-            else
+            elif $FED_ADVANCE_AVAILABLE; then
                 federated_lines="${federated_lines}
 - \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **unchanged**"
+            else
+                federated_lines="${federated_lines}
+- \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **not asked**"
             fi
         done
-        if $advanced_any; then
+        if ! $FED_ADVANCE_AVAILABLE; then
+            federated_note="**Federated sources keep their pins, and this run could not ask whether they
+should.** The generator this run used has no \`--check-current --only <registry>\`,
+so no per-source question was put and no pin below was checked against its own
+registry — each is carried through exactly as this lock already had it, which is
+what \`--repin\` does with a source nothing names. \`--source\` is refused outright,
+because that flag REPLACES the inherited \`sources\` array and would silently
+de-federate the lock:
+${federated_lines}"
+        elif $advanced_any; then
             federated_note="**Federated sources advance one at a time, and only when asked.** Each source
 was put its OWN \`--check-current --only <registry>\` question, and only the ones
 that answered \`FAILED\` were named to \`--repin-source\`. \`--source\` stays refused
