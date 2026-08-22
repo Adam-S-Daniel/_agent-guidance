@@ -1408,6 +1408,38 @@ for repo_name in "${REPOS[@]}"; do
         repin_source_args+=(--repin-source "$reg@")
     done
 
+    # TWO AXES, and every artifact below states both. `$repin_reason` answers
+    # what the PRIMARY half needed — `content`, `format`, or `federated`
+    # meaning the primary needed nothing — and `$fed_advanced` answers whether
+    # a source's pin moves as well. They are INDEPENDENT: a shape repair and a
+    # source advance can ride in one re-pin, and so can a content advance and
+    # a source advance.
+    #
+    # The precedence is deliberate and it is only a precedence over the NAME.
+    # `format` beats `federated` because a lock whose stored digests are
+    # malformed is malformed whatever else is true of it, and that is what the
+    # reader has to be told first. What the precedence must NOT do is silence
+    # the other axis — the first cut branched the title, the header, the
+    # why-paragraph, the digest sentence and the commit message on
+    # `$repin_reason` ALONE, so a format+federated re-pin went out titled
+    # "(pin unchanged)" and bodied "the digest SHAPE ... and nothing else"
+    # over a diff that advanced a source ref and changed one of its digests.
+    # Measured by a verifier on this suite's own fed-current fixture with its
+    # labels stripped.
+    fed_advanced=false
+    [[ ${#fed_drifted_regs[@]} -gt 0 ]] && fed_advanced=true
+
+    # The command this run actually ran, rendered for the body to quote. Built
+    # from the SAME arrays the invocation below uses, so it cannot describe a
+    # different command; `--repo`, `--source-repo` and `-o` are left off for
+    # the same reason the generator's own remediation lines leave them off —
+    # they name this runner's paths, not the reader's.
+    repin_command_shown="python3 scripts/generate_skills_lock.py --repin"
+    [[ ${#repin_ref_args[@]} -gt 0 ]] && repin_command_shown="$repin_command_shown --ref $old_ref"
+    for reg in ${fed_drifted_regs[@]+"${fed_drifted_regs[@]}"}; do
+        repin_command_shown="$repin_command_shown --repin-source '$reg@'"
+    done
+
     # A NEWLY REACHABLE FAILURE, named here rather than left to be met on a
     # red night. Advancing a source's pin re-derives that source's digests at
     # a ref that has MOVED, so a bundle renamed or emptied there, or a skill
@@ -1520,12 +1552,33 @@ with open(sys.argv[1], encoding="utf-8") as handle:
         # unconditionally, which on a format re-pin is false in a diff that
         # disproves it — and, now that the pin is held, would name the same
         # commit in its subject and in its "since" clause.
+        # The federated half, said once and appended to whichever primary-side
+        # message fired. Composed rather than folded into each branch for the
+        # reason the body below is: the two axes are independent, and a branch
+        # that owns the sentence is a branch that has to remember it.
+        fed_subject_clause=""
+        fed_commit_clause=""
+        # "only" is dropped exactly when it stops being true: with a
+        # --repin-source in the command, `ref` is no longer the one ref this
+        # invocation re-resolves.
+        resolves_only="only "
+        if $fed_advanced; then
+            resolves_only=""
+            fed_subject_clause=" and advance its federated pin for ${fed_drifted_regs[*]}"
+            fed_commit_clause="
+
+A FEDERATED source moved too: ${fed_drifted_regs[*]}. Its pin is advanced with
+--repin-source, which merges by registry key into the inherited sources array,
+so no source is added, dropped or reordered. That source's digests are
+re-derived at its OWN new pin, in its own repository."
+        fi
         if [[ "$repin_reason" == "format" ]]; then
-            commit_subject="chore: relabel $LOCK_REL_PATH's digests as ${LOCK_DIGEST_SHAPE}"
+            commit_subject="chore: relabel $LOCK_REL_PATH's digests as ${LOCK_DIGEST_SHAPE}${fed_subject_clause}"
             commit_body="The bundle content at ${old_ref:0:7} has NOT moved; what is wrong is the
 shape of the digests stored here, which are bare hex. Re-pinned at that same
-commit with generate_skills_lock.py --repin --ref, so the pin does not move and
-every digest is recomputed from the ref this lock already attests."
+commit with generate_skills_lock.py --repin --ref, so the primary's pin does not
+move and every digest of its own bundles is recomputed from the ref this lock
+already attests.${fed_commit_clause}"
         elif [[ "$repin_reason" == "federated" ]]; then
             commit_subject="chore: advance $LOCK_REL_PATH's federated pin for ${fed_drifted_regs[*]}"
             commit_body="The primary bundle at ${old_ref:0:7} has NOT moved and its pin is held with
@@ -1533,11 +1586,11 @@ generate_skills_lock.py --repin --ref. What moved is a FEDERATED source, whose o
 pin is advanced with --repin-source; that flag merges by registry key into the
 inherited sources array, so no source is added, dropped or reordered."
         else
-            commit_subject="chore: re-pin $LOCK_REL_PATH onto ${primary_registry}@${new_ref:0:7}"
+            commit_subject="chore: re-pin $LOCK_REL_PATH onto ${primary_registry}@${new_ref:0:7}${fed_subject_clause}"
             commit_body="The bundle content this lock installs has moved since ${old_ref:0:7}, so
 nothing added or changed since then reached an ephemeral session. Generated by
 generate_skills_lock.py --repin, which inherits this repo's own registry,
-bundles and sources and re-resolves only the primary ref."
+bundles and sources and re-resolves ${resolves_only}the primary ref.${fed_commit_clause}"
         fi
 
         git commit -m "$commit_subject
@@ -1604,11 +1657,35 @@ $commit_body" >/dev/null || {
     # digest's hex differs. The ref advances in BOTH cases; what differs is
     # whether that advance is the point or the side effect, and the header is
     # where a reviewer reads it first.
+    # The one sentence in the shape branch that a federated advance falsifies.
+    # `--check-format`'s remediation line carries no `--repin-source`, so on a
+    # run that advanced a source it is not the command that produced this diff
+    # and running it does not reproduce one — which is the exact claim the
+    # paragraph was added to make good.
+    if $fed_advanced; then
+        repro_note="**That remediation line is the SHAPE half of the command this PR ran**,
+\`--ref\` included. The whole of it was \`${repin_command_shown}\`, because a federated
+source moved too; the quoted line alone reproduces the relabelling and not those
+pin advances."
+    else
+        repro_note="**That remediation line is the command this PR ran**, \`--ref\` included, so you
+can reproduce this diff from it."
+    fi
+
     if [[ "$repin_reason" == "format" ]]; then
-        moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`, and nothing
+        if $fed_advanced; then
+            moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`, and the
+federated pins listed below. \`${primary_registry}\`'s pin stays at \`${old_ref:0:7}\` —
+this re-pin is anchored to it with \`--ref\`, so \`ref\` and \`generated_from\` are
+untouched and every digest of ITS OWN bundles is the same hex it was, wearing its
+label. An advanced source's digests are re-derived at its new pin, so those do
+change."
+        else
+            moved_note="**What changed:** the digest SHAPE stored in \`$LOCK_REL_PATH\`, and nothing
 else. \`${primary_registry}\`'s pin stays at \`${old_ref:0:7}\` — this re-pin is
 anchored to it with \`--ref\`, so \`ref\` and \`generated_from\` are untouched and
 every digest below is the same hex it was, wearing its label."
+        fi
         why_note="The bundle content at the pinned ref is UNCHANGED — nothing has diverged, and
 this is not a currency bump. What is wrong is the SHAPE of the digests stored
 here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
@@ -1618,8 +1695,7 @@ here: they are bare hex where the canonical form is \`${LOCK_DIGEST_SHAPE}\`.
 $(sed -n '/^FAILED:/,$p' <<< "$format_out" | head -20 | sed "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`
 
-**That remediation line is the command this PR ran**, \`--ref\` included, so you
-can reproduce this diff from it. It was not always: without \`--ref\` a re-pin
+${repro_note} It was not always: without \`--ref\` a re-pin
 falls through to the registry checkout's HEAD, which would advance the pin here
 while the quoted command named the old one — a body that could not reproduce
 its own diff, and a shape repair doing a content advance's work across every
@@ -1639,29 +1715,21 @@ headed by the move."
         moved_note="**What moved:** a FEDERATED source, and nothing else. \`${primary_registry}\`'s
 pin stays at \`${old_ref:0:7}\` — this re-pin is anchored to it with \`--ref\` — while
 the source pins listed below advance."
-        # The scoped verdict, and only the scoped verdict: each block below was
-        # produced by `--check-current --only <that registry>`, so every
-        # difference line in it belongs to the source named above it. The path
-        # substitution covers BOTH temp copies this run makes — the
-        # primary-scoped one and the full lock the per-source questions are
-        # asked against — because a /tmp path nobody can resolve is the one
-        # line of an otherwise checkable body a reviewer must take on faith.
         why_note="The primary's bundle at the pinned ref is UNCHANGED — this is not a currency
 bump for \`${primary_registry}\`. What has moved is a federated source, whose bundles
-this lock also installs and whose pin only \`--repin-source\` advances.
-\`--check-current --only <registry>\` was asked once per source, and these are the
-ones that answered:
+this lock also installs and whose pin only \`--repin-source\` advances."
+    elif $fed_advanced; then
+        moved_note="**What moved:** \`${primary_registry}\` —
+\`${old_ref:0:7}\` → \`${new_ref:0:7}\`, and the federated pins listed below."
+        why_note="The bundle content at the old ref no longer matches the registry's tree, which
+is why this PR exists: a lock is not wrong for being old, but a lock pinned
+before a skill changed delivers the older skill to every ephemeral session and
+reports \`OK\` while doing it. \`--check-current\`, scoped to the primary, says the two
+have diverged:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$fed_check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
-\`\`\`
-
-**One scoped question per source, never one combined verdict.** A single
-\`--check-current\` over the whole lock reports one \`FAILED:\` anchored on the
-PRIMARY's ref, so a drift in the primary alone reads as federated drift — and
-acting on that would advance every federated pin in the fleet on any night the
-registry had a commit. Attribution here is a property of which question was
-asked. See \`docs/decisions/0009\`."
+$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+\`\`\`"
     else
         moved_note="**What moved:** \`${primary_registry}\` —
 \`${old_ref:0:7}\` → \`${new_ref:0:7}\`."
@@ -1675,6 +1743,53 @@ $(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$
 \`\`\`"
     fi
 
+    # THE FEDERATED EVIDENCE, said once and appended to whichever primary-side
+    # paragraph fired. It used to live inside the `federated` branch alone, so
+    # a content+federated or format+federated re-pin marked a source
+    # **advanced** in the list below while quoting no verdict for it — an
+    # unevidenced claim in a body whose whole design is that every line is
+    # checkable.
+    #
+    # The scoped verdict, and only the scoped verdict: each block was produced
+    # by `--check-current --only <that registry>`, so every difference line in
+    # it belongs to the source named above it. The path substitution covers
+    # BOTH temp copies this run makes — the primary-scoped one and the full
+    # lock the per-source questions are asked against — because a /tmp path
+    # nobody can resolve is the one line of an otherwise checkable body a
+    # reviewer must take on faith.
+    #
+    # WHAT THE 20-LINE CAP DOES AND DOES NOT GUARANTEE HERE, stated because
+    # this slice inherits nothing from the one below it. `$fed_check_out` is a
+    # CONCATENATION of one scoped report per drifted source, so it carries no
+    # primary block at all. What holds: the FIRST block's headline is line 1 of
+    # the slice and its command, when it has one, is line 2, so the pair a
+    # reader needs most cannot be split. What does NOT hold: a later block can
+    # lose its command to the cap — a first source with 17 difference lines
+    # puts the second source's headline on line 20 and its command on line 21.
+    # A block the generator refused a command for cannot be orphaned at all,
+    # because its answer is inside its headline. Measured against
+    # agentskills@ag58-generator, which carries the same arithmetic beside its
+    # own report and names the tests that hold it.
+    if $fed_advanced; then
+        why_note="${why_note}
+
+**A FEDERATED source moved too, and its pin advances with this PR.** Its bundles
+are installed by this lock and only \`--repin-source\` advances its pin.
+\`--check-current --only <registry>\` was asked once per source, and these are the
+ones that answered:
+
+\`\`\`
+$(sed -n '/^FAILED:/,$p' <<< "$fed_check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+\`\`\`
+
+**One scoped question per source, never one combined verdict.** A single
+\`--check-current\` over the whole lock reports one \`FAILED:\` anchored on the
+PRIMARY's ref, so a drift in the primary alone reads as federated drift — and
+acting on that would advance every federated pin in the fleet on any night the
+registry had a commit. Attribution here is a property of which question was
+asked. See \`docs/decisions/0009\`."
+    fi
+
     # The last two unbranched sentences that a held pin makes false. This is
     # the same defect the header carried before it was branched — a paragraph
     # denying a move under a line announcing one — one artifact further down,
@@ -1686,25 +1801,37 @@ $(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$
     # claim on each branch — a newly pinned commit, the commit already pinned,
     # or one ref per source. A shared tail is how the header and the
     # why-paragraph came to contradict their own diffs.
+    # `resolve_note` is on the REASON axis alone, because that axis alone
+    # decides what happened to the primary's own `ref`.
     if [[ "$repin_reason" == "content" ]]; then
+        resolve_note="and re-resolves only \`ref\`"
+    else
+        resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
+    fi
+
+    # `derived_note` is on the FEDERATION axis first, and that is the whole
+    # correction. A lock with sources holds digests published in more than one
+    # repository, so no single commit is where "every digest here" came from —
+    # "re-derived from the newly pinned commit ... published at <ref>" was
+    # false of every federated lock this script has ever re-pinned, and
+    # loudest on the ones where a source advanced. The federated branch was
+    # already worded to avoid exactly that, and the wording was not carried
+    # across; it is one sentence for all three reasons now, so there is
+    # nowhere left for it to be forgotten.
+    if [[ ${#source_registries[@]} -gt 0 ]]; then
+        derived_note="**Every digest here is re-derived from a pinned commit**, materialized with
+\`git archive\` — never from anyone's working tree — and each from the pin of the
+half it belongs to: \`${primary_registry}\`'s own bundles at \`${new_ref:0:7}\`, and each
+federated source's at the ref listed for it below, in the repository that
+publishes it."
+    elif [[ "$repin_reason" == "content" ]]; then
         derived_note="**Every digest here is re-derived from the newly pinned commit**, materialized
 with \`git archive\` — never from anyone's working tree — so the lock describes
 bytes that are actually published at \`${new_ref:0:7}\`."
-        resolve_note="and re-resolves only \`ref\`"
-    elif [[ "$repin_reason" == "federated" ]]; then
-        # Said differently from the format branch on purpose: a federated
-        # re-pin holds the PRIMARY's pin but re-derives the advanced source's
-        # digests at a ref that MOVED, so "the commit this lock already pinned"
-        # would be false of exactly the half this PR is about.
-        derived_note="**Every digest here is re-derived from the commit its own source pins**,
-materialized with \`git archive\` — never from anyone's working tree. The primary's
-half is unchanged at \`${new_ref:0:7}\`; the halves that moved are listed below."
-        resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
     else
         derived_note="**Every digest here is re-derived from the commit this lock already pinned**, materialized
 with \`git archive\` — never from anyone's working tree — so the lock describes
 bytes that are actually published at \`${new_ref:0:7}\`."
-        resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
     fi
 
     # The paragraph that used to end "it cannot be told to change any of them"
@@ -1836,10 +1963,17 @@ ${federated_lines}${self_named_note}"
     # and for the same reason: a PR list shows the title alone, so "re-pin
     # onto <registry>@<sha>" over a diff whose `ref` line is unchanged makes a
     # reviewer open the PR to find out whether the pin moved. It did not.
-    if [[ "$repin_reason" == "format" ]]; then
+    # Both axes, here most of all: a PR list shows the title alone, so a
+    # federated advance that goes unnamed here is a pin moving under a heading
+    # that says nothing moved.
+    if [[ "$repin_reason" == "format" ]] && $fed_advanced; then
+        pr_title="chore: relabel skills.lock digests as ${LOCK_DIGEST_SHAPE} and advance its federated pin for ${fed_drifted_regs[*]} (primary pin unchanged)"
+    elif [[ "$repin_reason" == "format" ]]; then
         pr_title="chore: relabel skills.lock digests as ${LOCK_DIGEST_SHAPE} (pin unchanged)"
     elif [[ "$repin_reason" == "federated" ]]; then
         pr_title="chore: advance skills.lock's federated pin for ${fed_drifted_regs[*]} (primary pin unchanged)"
+    elif $fed_advanced; then
+        pr_title="chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7} and advance its federated pin for ${fed_drifted_regs[*]}"
     else
         pr_title="chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7}"
     fi

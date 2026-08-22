@@ -4238,6 +4238,35 @@ test_bump_consumer_locks() {
     else
         fail "both moved: one re-pin advances the primary AND the federated pin — ref $(lock_field_of "$fedstale" ref), source $(lock_source_ref_of "$fedstale" bumporg/cms-platform)"
     fi
+    # ── ...and every artifact says BOTH pins moved. The lock assertions above
+    # shipped green while this body announced the primary alone, claimed every
+    # digest in it was published at the primary's new ref — untrue of the
+    # cms-platform digests, which come from a different repository at a
+    # different ref — and marked the source **advanced** without quoting the
+    # scoped verdict that decided it.
+    local fedstale_body="$BUMP_PR_BODY_DIR/bumporg_repo-fed-stale.body"
+    local fedstale_title="$BUMP_PR_BODY_DIR/bumporg_repo-fed-stale.title"
+    assert_contains "$fedstale_title" "and advance its federated pin for bumporg/cms-platform" \
+        "both moved: the title names both pins"
+    assert_contains "$fedstale_body" "federated pins listed below" \
+        "both moved: the header names both halves"
+    assert_not_contains "$fedstale_body" "re-derived from the newly pinned commit" \
+        "both moved: nothing claims one commit for digests from two repositories"
+    assert_contains "$fedstale_body" "each from the pin of the" \
+        "both moved: the body says each half's digests came from its own pin"
+    assert_contains "$fedstale_body" "**advanced**" \
+        "both moved: the source is listed as advanced"
+    assert_contains "$fedstale_body" "cms-platform/deploy-site" \
+        "both moved: and the scoped verdict behind that label is quoted"
+    assert_not_contains "$fedstale_body" "$TEST_DIR" \
+        "both moved: no path from the machine that ran the bump"
+    local fedstale_msg="$TEST_DIR/fedstale-commit-msg.txt"
+    git -C "$TEST_DIR/bare/bumporg_repo-fed-stale" log -1 --format=%B \
+        refs/heads/skills-lock-bump/update > "$fedstale_msg" 2>/dev/null || : > "$fedstale_msg"
+    assert_contains "$fedstale_msg" "A FEDERATED source moved too" \
+        "both moved: the commit message says the source pin moved as well"
+    assert_not_contains "$fedstale_msg" "re-resolves only the primary ref" \
+        "both moved: and does not claim the primary ref was the only one re-resolved"
 
     # ── The federation inverted: everything downstream targets the PRIMARY,
     # so a lock that only federates this registry must be left alone rather
@@ -4358,6 +4387,16 @@ test_bump_consumer_locks() {
     # cms-platform skill for an agentskills re-pin.
     assert_contains "$fed_body" "adam/finding-unknowns" "PR body: quotes the primary difference that caused this PR"
     assert_not_contains "$fed_body" "cms-platform/deploy-site" "PR body: does not blame a federated skill for a primary re-pin"
+    # A lock with a federated source holds digests published in TWO
+    # repositories, so "every digest here is re-derived from the newly pinned
+    # commit ... published at <the primary's ref>" was false of this PR too —
+    # not only of the ones where a source advanced. repo-stale, which has no
+    # sources, is the paired control that keeps the unqualified sentence alive
+    # where it IS true.
+    assert_not_contains "$fed_body" "re-derived from the newly pinned commit" \
+        "PR body: a federated lock does not claim one commit for every digest"
+    assert_contains "$fed_body" "each from the pin of the" \
+        "PR body: it names the pin each half's digests came from instead"
 }
 
 # ── Test 8c: a re-run proposes nothing, and repairs an interrupted one ────
@@ -5177,6 +5216,122 @@ test_bump_generator_without_scoped_flags() {
     else
         fail "no scoped flags: the consumer's lock is byte-identical"
     fi
+}
+
+# ── Test 8h2b: a re-pin that is BOTH a shape repair and a source advance ──
+#
+# TWO REASONS AT ONCE, and the combination had no fixture. `repin_reason` is
+# `format` here — a malformed digest is malformed whatever else is true — while
+# `fed_drifted_regs` is non-empty, and every artifact used to branch on the
+# reason ALONE. The result was a PR titled "(pin unchanged)" and bodied "the
+# digest SHAPE ... and nothing else / every digest below is the same hex it
+# was" over a diff that advanced a source ref and changed one of that source's
+# digests, above a body line marking that source **advanced**. Worse, it told
+# the reviewer that the quoted `--check-format` remediation was "the command
+# this PR ran ... so you can reproduce this diff from it", while that line
+# carries no `--repin-source` and reproduces no such thing.
+#
+# Reachable now, not hypothetically: the fleet has eight bare-hex consumer
+# locks and two federated ones, and these PRs merge themselves on the sweep.
+test_bump_format_and_federated() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a shape repair that also advances a source) ==="
+
+    local root="$TEST_DIR/bare-fmtfed"
+    local work="$TEST_DIR/work/bumporg-repo-fmtfed"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-fmtfed" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-fmtfed" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-fmtfed"
+    echo "# repo-fmtfed" > README.md
+    # Primary content-CURRENT and bare (so the shape gate is what fires for it)
+    # with a federated source that HAS moved (so the other axis fires too).
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT" "$BUMP_SRC_REF"
+    strip_digest_labels skills.lock
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    BUMP_BARE_DIR_FOR_RUN="$root" run_bump "$TEST_DIR/bump-fmtfed.txt"
+    unset BUMP_BARE_DIR_FOR_RUN
+    local body="$BUMP_PR_BODY_DIR/bumporg_repo-fmtfed.body"
+    local title="$BUMP_PR_BODY_DIR/bumporg_repo-fmtfed.title"
+    local after="$TEST_DIR/fmtfed-after.lock"
+    git -C "$root/bumporg_repo-fmtfed" show \
+        "refs/heads/skills-lock-bump/update:skills.lock" > "$after" 2>/dev/null || : > "$after"
+    if [[ -s "$body" && -s "$title" && -s "$after" ]]; then
+        pass "format+federated: there is a PR, a title and a pushed lock to assert on"
+    else
+        fail "format+federated: there is a PR, a title and a pushed lock to assert on"
+        rm -rf "$root" "$work"
+        return
+    fi
+
+    # ── The diff. Both halves really do move, so the claims below have a
+    #    subject: the primary's pin held, the source's pin advanced.
+    if [[ "$(lock_field_of "$after" ref)" == "$BUMP_REF_CONTENT" \
+       && "$(lock_source_ref_of "$after" bumporg/cms-platform)" == "$BUMP_SRC_HEAD" ]]; then
+        pass "format+federated: the primary pin is held and the source pin advanced"
+    else
+        fail "format+federated: the primary pin is held and the source pin advanced — ref $(lock_field_of "$after" ref), source $(lock_source_ref_of "$after" bumporg/cms-platform)"
+    fi
+
+    # ── The TITLE, which is all a PR list shows.
+    assert_contains "$title" "advance its federated pin for bumporg/cms-platform" \
+        "format+federated: the title names the pin that moved"
+    assert_not_contains "$title" "hex> (pin unchanged)" \
+        "format+federated: the title does not read as shape-only"
+    assert_contains "$title" "primary pin unchanged" \
+        "format+federated: and still says which pin did NOT move"
+
+    # ── The HEADER and the two sentences that were false.
+    assert_contains "$body" "federated pins listed below" \
+        "format+federated: the header names both halves"
+    assert_not_contains "$body" "the digest SHAPE stored in \`skills.lock\`, and nothing" \
+        "format+federated: the header does not claim nothing else changed"
+    assert_not_contains "$body" "every digest below is the same hex it was" \
+        "format+federated: nothing claims every digest is a relabel"
+
+    # ── The reproducibility claim, which is the one with a checkable subject.
+    assert_not_contains "$body" "can reproduce this diff from it" \
+        "format+federated: no claim that the quoted line reproduces this diff"
+    assert_contains "$body" "SHAPE half of the command this PR ran" \
+        "format+federated: the body says which half that line is"
+    assert_contains "$body" "--repin-source 'bumporg/cms-platform@'" \
+        "format+federated: and prints the whole command, --repin-source included"
+
+    # ── The evidence for the **advanced** label, which used to be absent on
+    #    this path: the scoped verdict is quoted, so the label is checkable.
+    assert_contains "$body" "cms-platform/deploy-site" \
+        "format+federated: the scoped verdict for the advanced source is quoted"
+    assert_contains "$body" "**advanced**" \
+        "format+federated: and the source is listed as advanced"
+    assert_not_contains "$body" "$TEST_DIR" \
+        "format+federated: no path from the machine that ran the bump"
+
+    # ── Where the digests came from. Two repositories, so no single commit
+    #    is the answer.
+    assert_not_contains "$body" "re-derived from the commit this lock already pinned" \
+        "format+federated: nothing claims one commit for digests from two repositories"
+    assert_contains "$body" "each from the pin of the" \
+        "format+federated: the body says each half's digests came from its own pin"
+
+    # ── The commit message, the same artifact one layer in.
+    local msg="$TEST_DIR/fmtfed-commit-msg.txt"
+    git -C "$root/bumporg_repo-fmtfed" log -1 --format=%B \
+        refs/heads/skills-lock-bump/update > "$msg" 2>/dev/null || : > "$msg"
+    assert_contains "$msg" "and advance its federated pin for bumporg/cms-platform" \
+        "format+federated: the commit subject names the pin that moved"
+    assert_contains "$msg" "A FEDERATED source moved too" \
+        "format+federated: the commit body says so too"
+    assert_not_contains "$msg" "so the pin does not move and" \
+        "format+federated: the commit body does not claim no pin moved"
+
+    rm -rf "$root" "$work"
 }
 
 # ── Test 8h3c: a lock that federates one registry twice ───────────────────
@@ -7135,6 +7290,7 @@ test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
 test_bump_stub_generator_parity
 test_bump_twice_federated_lock
+test_bump_format_and_federated
 test_bump_self_federating_lock
 test_bump_only_prefix_flag
 test_bump_generator_error_line
