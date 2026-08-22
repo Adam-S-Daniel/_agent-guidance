@@ -5087,6 +5087,17 @@ test_bump_degraded_federated_body() {
         "degraded body: each pin carries the only verdict this run has for it"
     assert_contains "$body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}" \
         "degraded body: names the pin the lock keeps"
+    # The annotation for the OTHER half of the degraded population. It used to
+    # live inside the primary-is-current branch, so the repos that actually
+    # open a PR in degraded mode — these — got no annotation at all, which is
+    # where the body above is read. Its wording is asserted whole, `::warning::`
+    # included: log() writes to stdout and a green nightly's stdout is read by
+    # nobody, so splitting the prefix off would let this pass on the two probe
+    # warnings alone.
+    assert_contains "$log" "::warning::bumporg/repo-degraded-fed: the primary has moved, and this generator cannot say whether a FEDERATED source has moved with it" \
+        "degraded body: a drifted primary does not silence the federated annotation"
+    assert_not_contains "$log" "::warning::bumporg/repo-degraded-fed: a FEDERATED source has moved on since the ref" \
+        "degraded body: and it does not claim to know which half moved"
     # And the pin really is kept — the body would be true of a run that
     # advanced it and said nothing, so the lock is read as well.
     local after="$TEST_DIR/degradedfed-after.lock"

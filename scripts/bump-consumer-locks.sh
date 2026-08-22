@@ -1042,31 +1042,51 @@ for repo_name in "${REPOS[@]}"; do
         continue
     fi
 
-    if [[ $current_exit -eq 0 ]]; then
-        # THE DEGRADED PATH, and only that. With the scoped flags present the
-        # loop above has already answered per source; this is what is left
-        # when the generator predates them, and it is exactly what this script
-        # did before: ask the combined question, and if anything moved, SAY SO
-        # and act on nothing. Announced as a workflow annotation rather than
-        # through log(), which writes to stdout — and a green nightly's stdout
-        # is read by nobody, which is how a federated source could sit ahead of
-        # its pin indefinitely with a signal that reached no one.
-        if [[ ${#source_registries[@]} -gt 0 ]] && ! $FED_ADVANCE_AVAILABLE; then
-            fed_exit=0
-            fed_out=$(python3 "$GENERATOR" --check-current \
-                --repo "$primary_dir" \
-                ${source_repo_args[@]+"${source_repo_args[@]}"} \
-                -o "$lock_file" 2>&1) || fed_exit=$?
-            if [[ $fed_exit -ne 0 ]]; then
-                if grep -q '^FAILED:' <<< "$fed_out"; then
+    # THE DEGRADED PATH, and only that. With the scoped flags present the loop
+    # above has already answered per source; this is what is left when the
+    # generator predates them, and it is exactly what this script did before:
+    # ask the combined question, and if anything moved, SAY SO and act on
+    # nothing. Announced as a workflow annotation rather than through log(),
+    # which writes to stdout — and a green nightly's stdout is read by nobody,
+    # which is how a federated source could sit ahead of its pin indefinitely
+    # with a signal that reached no one.
+    #
+    # ASKED FOR BOTH OUTCOMES of the primary question, like the scoped loop
+    # above and for the same reason. It used to sit inside the
+    # `current_exit -eq 0` branch, which left it silent on precisely the
+    # degraded repos that DO open a pull request — the ones whose primary also
+    # drifted — so the half of the degraded population whose PR body has a
+    # federated section to be read got no annotation at all.
+    #
+    # TWO WORDINGS, because the combined verdict means different things on
+    # either side of that question and one sentence cannot be true of both. A
+    # combined `--check-current` reports one FAILED: for the whole lock: with
+    # the primary answering OK on its own scoped copy, that FAILED can only be
+    # a source, and the first wording says so. With the primary drifted it can
+    # be the primary alone, so the second says only what is left — that this
+    # generator cannot split the two, and no pin here was verified.
+    if [[ ${#source_registries[@]} -gt 0 ]] && ! $FED_ADVANCE_AVAILABLE; then
+        fed_exit=0
+        fed_out=$(python3 "$GENERATOR" --check-current \
+            --repo "$primary_dir" \
+            ${source_repo_args[@]+"${source_repo_args[@]}"} \
+            -o "$lock_file" 2>&1) || fed_exit=$?
+        if [[ $fed_exit -ne 0 ]]; then
+            if grep -q '^FAILED:' <<< "$fed_out"; then
+                if [[ $current_exit -eq 0 ]]; then
                     echo "::warning::$repo_name: a FEDERATED source has moved on since the ref this lock pins for it, and this generator cannot say which one or advance it — so nothing is re-pinned here." >&2
                 else
-                    fail "$repo_name: could not read this lock's federated half — $(head -1 <<< "$fed_out")"
-                    ((FAIL_COUNT++)) || true
-                    continue
+                    echo "::warning::$repo_name: the primary has moved, and this generator cannot say whether a FEDERATED source has moved with it — a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." >&2
                 fi
+            else
+                fail "$repo_name: could not read this lock's federated half — $(head -1 <<< "$fed_out")"
+                ((FAIL_COUNT++)) || true
+                continue
             fi
         fi
+    fi
+
+    if [[ $current_exit -eq 0 ]]; then
         # ── SECOND QUESTION: are the stored digests the right SHAPE? ───
         # Not a reinterpretation of the verdict above — a different question
         # put to the generator, which is the same discipline the `sources`
