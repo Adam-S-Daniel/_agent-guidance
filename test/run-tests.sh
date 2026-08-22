@@ -5010,6 +5010,78 @@ test_bump_generator_without_scoped_flags() {
     fi
 }
 
+# ── Test 8h4b: a failure report quotes the line that says what went wrong ─
+#
+# argparse writes its `usage:` banner on the FIRST line and
+# `<prog>: error: ...` on the LAST, so `head -1` on a rejected argument reports
+# the one line of that output which says nothing — and a scheduled run then
+# goes red every night with a message nobody can act on. Commit 6744fcf fixed
+# exactly this in the sweep; the federated work reintroduced it on newly
+# reachable paths, so the extraction is a helper now and every generator-output
+# failure report goes through it.
+#
+# Driven through the PRIMARY currency question, which is the one path a
+# generator can reject an argument on while still advertising `--repin` and so
+# clearing this script's only hard probe.
+test_bump_generator_error_line() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (which line of a rejection is reported) ==="
+
+    local root="$TEST_DIR/bare-errline"
+    local work="$TEST_DIR/work/bumporg-repo-errline"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-errline" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-errline" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-errline"
+    echo "# repo-errline" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    # Advertises --repin, so the hard probe passes, and then rejects an
+    # argument the way argparse does: banner first, reason last, on stderr.
+    local gen="$TEST_DIR/generator-errline.py"
+    cat > "$gen" <<'ERRLINE'
+#!/usr/bin/env python3
+"""--repin is advertised; --check-current rejects an argument, argparse-style."""
+import sys
+
+if "--help" in sys.argv:
+    print("usage: gen.py [-h] [--check-current] [--check-format] [--repin]")
+    sys.exit(0)
+if "--check-current" in sys.argv:
+    sys.stderr.write("usage: gen.py [-h] [--check-current] [--check-format] [--repin]\n")
+    sys.stderr.write("gen.py: error: unrecognized arguments: --check-current\n")
+    sys.exit(2)
+sys.exit("this generator must never be asked for anything else")
+ERRLINE
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-errline.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+    local log="$TEST_DIR/bump-errline.txt"
+
+    assert_contains "$log" "could not decide whether skills.lock is current — gen.py: error: unrecognized arguments" \
+        "error line: the reported line is the one that says what went wrong"
+    assert_not_contains "$log" "current — usage:" \
+        "error line: the usage banner is not what the failure quotes"
+    assert_contains "$log" "1 failed" \
+        "error line: still a counted failure, so the scheduled run goes red"
+    if [[ -z "$(git -C "$root/bumporg_repo-errline" rev-parse --verify -q \
+                refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "error line: nothing is re-pinned on an answer nobody got"
+    else
+        fail "error line: nothing is re-pinned on an answer nobody got"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h5: a degraded run's PR body says only what it asked ────────────
 #
 # THE WORST OUTPUT THIS SCRIPT HAS, and it was reachable on exactly the window
@@ -6486,6 +6558,7 @@ test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
+test_bump_generator_error_line
 test_bump_degraded_federated_body
 test_bump_format_check_unreadable
 # The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,

@@ -150,6 +150,32 @@ done
 log()  { echo "  $*"; }
 fail() { echo "  ERROR: $*"; }
 
+# generator_error_line <captured output> — the one line that says WHAT went
+# wrong, for a failure report that has room for one line.
+#
+# `head -1` is wrong for exactly one output shape, and it is the shape a
+# generator VERSION SKEW produces: argparse prints its `usage:` banner on the
+# FIRST line and `<prog>: error: unrecognized arguments: ...` on the LAST, so
+# the first line of that failure is the only line that says nothing. A
+# scheduled run then goes red every night quoting a usage banner, with the
+# cause it holds in hand discarded. That is the same defect commit 6744fcf
+# fixed in the sweep, and this script walked back into it the moment a soft
+# probe could arm a gate against a generator that lacks the flag.
+#
+# Prefers the LAST line carrying an error marker — `ERROR:` is this
+# generator's own report, `: error: ` is argparse's — and falls back to the
+# first non-empty line, which is what every single-line `ERROR:` report the
+# old `head -1` handled correctly already was.
+generator_error_line() {
+    local marked
+    marked=$(grep -E '^ERROR:|: error: ' <<< "$1" | tail -1) || marked=""
+    if [[ -n "$marked" ]]; then
+        printf '%s' "$marked"
+        return 0
+    fi
+    grep -v '^[[:space:]]*$' <<< "$1" | head -1 || true
+}
+
 FAIL_COUNT=0
 OK_COUNT=0
 SKIP_COUNT=0
@@ -1031,7 +1057,7 @@ for repo_name in "${REPOS[@]}"; do
                 fed_check_out="${fed_check_out}${fed_out}
 "
             else
-                fail "$repo_name: could not decide whether $LOCK_REL_PATH's $reg source is current — $(head -1 <<< "$fed_out")"
+                fail "$repo_name: could not decide whether $LOCK_REL_PATH's $reg source is current — $(generator_error_line "$fed_out")"
                 fed_gate_failed=true
                 break
             fi
@@ -1079,7 +1105,7 @@ for repo_name in "${REPOS[@]}"; do
                     echo "::warning::$repo_name: the primary has moved, and this generator cannot say whether a FEDERATED source has moved with it — a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." >&2
                 fi
             else
-                fail "$repo_name: could not read this lock's federated half — $(head -1 <<< "$fed_out")"
+                fail "$repo_name: could not read this lock's federated half — $(generator_error_line "$fed_out")"
                 ((FAIL_COUNT++)) || true
                 continue
             fi
@@ -1156,7 +1182,7 @@ for repo_name in "${REPOS[@]}"; do
                 if grep -q '^FAILED:' <<< "$format_out"; then
                     repin_reason=format
                 else
-                    fail "$repo_name: could not decide whether $LOCK_REL_PATH's digests are well-formed — $(head -1 <<< "$format_out")"
+                    fail "$repo_name: could not decide whether $LOCK_REL_PATH's digests are well-formed — $(generator_error_line "$format_out")"
                     ((FAIL_COUNT++)) || true
                     continue
                 fi
@@ -1194,7 +1220,7 @@ for repo_name in "${REPOS[@]}"; do
         # of those writes a lock nobody asked for. Only its own FAILED verdict
         # means "the bundle moved".
         if ! grep -q '^FAILED:' <<< "$check_out"; then
-            fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(head -1 <<< "$check_out")"
+            fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(generator_error_line "$check_out")"
             ((FAIL_COUNT++)) || true
             continue
         fi
@@ -1326,7 +1352,7 @@ for repo_name in "${REPOS[@]}"; do
         ${repin_source_args[@]+"${repin_source_args[@]}"} \
         ${source_repo_args[@]+"${source_repo_args[@]}"} \
         -o "$LOCK_REL_PATH" 2>&1); then
-        fail "$repo_name: --repin failed — $(head -1 <<< "$repin_out")"
+        fail "$repo_name: --repin failed — $(generator_error_line "$repin_out")"
         ((FAIL_COUNT++)) || true
         cd "$REPO_ROOT"; continue
     fi
