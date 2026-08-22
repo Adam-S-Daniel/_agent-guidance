@@ -5829,11 +5829,24 @@ test_bump_pr_body_slice_arithmetic() {
     assert_not_contains "$sliced" "--repin-source 'org/src-b@'" \
         "slice: while its command falls outside the cap"
 
-    # And the comment beside the slice must not claim otherwise. This is the
-    # absolute that was restated on intuition once already, in the generator.
-    assert_not_contains "$claims" \
-        "can never separate a headline from the command" \
-        "slice: no comment promises a guarantee this slice does not have"
+    # And the comment beside the slice must say the same. TWO HALVES, because
+    # only the pair is checkable: the bound has to be STATED, and the absolute
+    # has to be ABSENT. A lone `assert_not_contains` passes just as well on a
+    # file with no comment at all.
+    #
+    # THE NEEDLE IS THE WORDING THAT EXISTS, not a paraphrase of it. The
+    # previous version of this guard forbade "can never separate a headline
+    # from the command" — a phrase that had never appeared in the file it
+    # grepped, in either version, so it was a green light wired to nothing:
+    # 0 matches before the fix and 0 after. The sentence a reader would
+    # actually carry over is agentskills' own, beside its own report, which
+    # reads "must never separate a headline from the command that fixes it" —
+    # so that is what this forbids, in the shortest form that catches it
+    # whether it is copied verbatim or rewrapped.
+    assert_contains "$claims" "a later block can lose its command" \
+        "slice: the comment beside the slice states the bound this test measured"
+    assert_not_contains "$claims" "never separate a headline from the command" \
+        "slice: and does not restate the absolute that belongs to the other stream"
 }
 
 # ── Test 8h3g: every sentence a bump PR can carry, over every run state ───
