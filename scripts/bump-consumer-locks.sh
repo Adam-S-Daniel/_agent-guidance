@@ -1072,6 +1072,31 @@ for repo_name in "${REPOS[@]}"; do
         --repo "$primary_dir" \
         -o "$primary_lock" 2>&1) || current_exit=$?
 
+    # A non-zero exit is NOT automatically drift, and this is where that has
+    # to be read — before anything else asks anything. The generator reports a
+    # broken lock, an unreachable pinned commit or a mis-pointed --repo with
+    # the same exit code and an ERROR line; re-pinning on the strength of one
+    # of those writes a lock nobody asked for. Only its own FAILED verdict
+    # means "the bundle moved".
+    #
+    # HOISTED ABOVE THE FEDERATED SECTION, and that is a bug fix rather than
+    # tidying. It used to sit in the `else` of the currency branch a hundred
+    # lines below, so a lock whose PRIMARY question could not be answered went
+    # on to be asked a federated question anyway — and on a degraded run the
+    # combined `--check-current` returned the SAME primary-side error, which
+    # that path reports as "could not read this lock's federated half".
+    # Measured on a federated lock pinning an unresolvable primary ref: the
+    # unresolvable ref is the primary's, in the primary's checkout, and the
+    # lock's federated half is intact. A failure report that names the wrong
+    # half sends the reader to the wrong repository. Asked first, the primary
+    # question's own failure is the one that gets reported, and nothing spends
+    # a generator run on a lock already known unreadable.
+    if [[ $current_exit -ne 0 ]] && ! grep -q '^FAILED:' <<< "$check_out"; then
+        fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(generator_error_line "$check_out")"
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+
     # ── WHICH federated sources have moved? ONE SCOPED QUESTION EACH ───
     # This is the whole point of docs/decisions/0009, so it is spelled out
     # rather than left to be inferred from the loop.
@@ -1297,17 +1322,9 @@ for repo_name in "${REPOS[@]}"; do
             log "the pin stays at ${old_ref:0:7}: advancing a federated source is not a primary content advance."
         fi
     else
-        # A non-zero exit is NOT automatically drift. The generator reports a
-        # broken lock, an unreachable pinned commit or a mis-pointed --repo with
-        # the same exit code and an ERROR line; re-pinning on the strength of one
-        # of those writes a lock nobody asked for. Only its own FAILED verdict
-        # means "the bundle moved".
-        if ! grep -q '^FAILED:' <<< "$check_out"; then
-            fail "$repo_name: could not decide whether $LOCK_REL_PATH is current — $(generator_error_line "$check_out")"
-            ((FAIL_COUNT++)) || true
-            continue
-        fi
-
+        # The `^FAILED:` reading was done above, before any federated question
+        # was put, so reaching here means the generator's own verdict said the
+        # bundle moved.
         repin_reason=content
         log "bundle has moved since ${old_ref:0:7} — re-pin needed."
     fi

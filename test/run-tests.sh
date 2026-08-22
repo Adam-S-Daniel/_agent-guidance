@@ -5462,7 +5462,7 @@ with open(path, "w", encoding="utf-8") as handle:
 # probe). The list is asserted here rather than described in a comment,
 # because a comment cannot go red.
 #
-# THE STUB INVENTORY, recorded so the next flag does not rediscover it. TEN
+# THE STUB INVENTORY, recorded so the next flag does not rediscover it. ELEVEN
 # generator stand-ins live in this file, in two kinds, and only the first is
 # under test here.
 #
@@ -5480,6 +5480,7 @@ with open(path, "w", encoding="utf-8") as handle:
 #   * generator-missing-only.py        — only --only stripped
 #   * generator-missing-repin-source.py — only --repin-source stripped
 #   * generator-degraded-fed.py        — both stripped, for the body lane
+#   * generator-degraded-halves.py     — both stripped, for the which-half lane
 #   * generator-only-bundles.py        — --only replaced by --only-bundles
 #
 # COUNTED BY A TEST, not by this comment. An inventory that states a number
@@ -5512,7 +5513,7 @@ if not block:
 block = block.group(0)
 listed = re.findall(r"^#   \* (\S+)", block, re.M)
 hand = re.findall(r"^#   \* (\S+)", block.split("DERIVED BY SURGERY")[0], re.M)
-words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+words = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11}
 stated = re.search(r"^# (\w+)\n?# ?generator stand-ins|^# ([A-Z]+)\b generator stand-ins", block, re.M)
 stated = re.search(r"([A-Z]+) *\n?#? *generator stand-ins", block)
 if not stated:
@@ -6122,6 +6123,119 @@ ERRLINE
     fi
 
     rm -rf "$root" "$work"
+}
+
+# ── Test 8h6b: which HALF a failure names, when either could be blamed ────
+#
+# A failure report that names the wrong half sends its reader to the wrong
+# repository, and on a degraded run the two halves are answered by the SAME
+# generator call — so the report is a choice, not an observation.
+#
+# THE DEFECT THIS HOLDS SHUT. The degraded federated check was moved out of the
+# `current_exit -eq 0` branch so that a stale-primary consumer would still get
+# its "nothing here was verified" annotation. That hoist put a combined
+# `--check-current` in front of a lock whose PRIMARY question had already come
+# back unanswerable, and the combined call returns the SAME primary-side error
+# — which that path reports as "could not read this lock's federated half".
+# Measured on the shape below: the unresolvable ref is the primary's, in the
+# primary's checkout, and the lock's federated half is intact and readable.
+#
+# Two fixtures in one run, because only the pair pins the attribution down. A
+# script that always blamed the primary would pass the first assertion and fail
+# the second; one that always blamed the federated half does the reverse.
+#   * repo-badprim  — a federated lock whose PRIMARY pin no registry contains
+#   * repo-badsrc   — a federated lock whose SOURCE pin its registry does not
+#                     contain, with the primary perfectly readable
+test_bump_which_half_could_not_be_read() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (which half a failure names) ==="
+
+    local root="$TEST_DIR/bare-halves"
+    local work
+    rm -rf "$root"
+    mkdir -p "$root/bumporg_repo-badprim" "$root/bumporg_repo-badsrc"
+
+    local name
+    for name in repo-badprim repo-badsrc; do
+        work="$TEST_DIR/work/bumporg-$name"
+        rm -rf "$work"; mkdir -p "$work"
+        git init --bare --initial-branch=main "$root/bumporg_$name" >/dev/null 2>&1
+        git init --initial-branch=main "$work" >/dev/null 2>&1
+        cd "$work"
+        git config commit.gpgsign false
+        git remote add origin "$root/bumporg_$name"
+        echo "# $name" > README.md
+        if [[ "$name" == "repo-badprim" ]]; then
+            # Primary unreadable, source at a ref its own registry really has.
+            seed_bump_lock skills.lock "bumporg/agentskills" \
+                "9999999999999999999999999999999999999999" "$BUMP_SRC_REF" nofill
+        else
+            # Primary readable, source pinned at a ref cms-platform never had.
+            seed_bump_lock skills.lock "bumporg/agentskills" \
+                "$BUMP_REF_OLD" "8888888888888888888888888888888888888888" nofill
+        fi
+        git add -A
+        git commit -m "init" >/dev/null 2>&1
+        git push origin HEAD:main >/dev/null 2>&1
+        cd "$REPO_ROOT"
+    done
+
+    # DEGRADED, because that is the only mode in which one generator call has
+    # to answer for both halves. With the scoped flags present the two
+    # questions are separate and the attribution is free.
+    local gen="$TEST_DIR/generator-degraded-halves.py"
+    write_stub_generator "$gen"
+    if ! python3 "$TEST_DIR/strip-scoped-flags.py" "$gen"; then
+        fail "halves: could not strip the stub's federated flags"
+        rm -rf "$root"; return
+    fi
+    if python3 "$gen" --help 2>&1 | grep -q -- '--only'; then
+        fail "halves: --only is still advertised by the stripped stub"
+        rm -rf "$root"; return
+    else
+        pass "halves: the stripped stub no longer advertises --only"
+    fi
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-halves.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+    local log="$TEST_DIR/bump-halves.txt"
+
+    # Each repo's own line, isolated, so one repo's message cannot satisfy an
+    # assertion about the other.
+    local prim src
+    prim=$(grep -F 'bumporg/repo-badprim:' "$log" || true)
+    src=$(grep -F 'bumporg/repo-badsrc:' "$log" || true)
+
+    if grep -qF 'could not decide whether skills.lock is current' <<< "$prim"; then
+        pass "halves: an unreadable PRIMARY is reported as the primary question failing"
+    else
+        fail "halves: an unreadable PRIMARY is reported as the primary question failing — got '${prim:-no line at all}'"
+    fi
+    if grep -qF "could not read this lock's federated half" <<< "$prim"; then
+        fail "halves: and never as the federated half — got '$prim'"
+    else
+        pass "halves: and never as the federated half"
+    fi
+    if grep -qF "could not read this lock's federated half" <<< "$src"; then
+        pass "halves: an unreadable SOURCE is still reported as the federated half"
+    else
+        fail "halves: an unreadable SOURCE is still reported as the federated half — got '${src:-no line at all}'"
+    fi
+
+    # Both are counted failures and neither is re-pinned: "cannot say" is never
+    # a licence to write a consumer's lock.
+    assert_contains "$log" "2 failed" "halves: both are counted failures, so the run goes red"
+    for name in repo-badprim repo-badsrc; do
+        if [[ -z "$(git -C "$root/bumporg_$name" rev-parse --verify -q \
+                    refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+            pass "halves: nothing is pushed to $name"
+        else
+            fail "halves: nothing is pushed to $name"
+        fi
+    done
+
+    rm -rf "$root"
 }
 
 # ── Test 8h5: a degraded run's PR body says only what it asked ────────────
@@ -7708,6 +7822,7 @@ test_bump_self_federating_lock
 test_bump_only_prefix_flag
 test_bump_generator_error_line
 test_bump_degraded_federated_body
+test_bump_which_half_could_not_be_read
 test_bump_format_check_unreadable
 # The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,
 # which is the one thing in this repo nothing else undoes. Dry run first, so
