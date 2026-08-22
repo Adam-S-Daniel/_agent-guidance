@@ -664,14 +664,18 @@ write_stub_generator() {
                    caller learns which half moved from the exit code of the
                    question it asked. Refuses a registry the lock does not
                    plan, one that is both primary and source, and any use
-                   outside --check-current.
+                   outside --check-current. Presence is tested with
+                   `is not None`, never truthiness: `--only ''` is a value the
+                   caller passed and is refused, not silently ignored.
   --repin-source '<OWNER/REPO>@[<REF>]'
                    with --repin, advance the pin of ONE federated source the
                    lock already names; an empty REF means that source's HEAD.
                    Merges by registry KEY into the inherited array — never
-                   adds, drops or reorders — and refuses the primary registry,
-                   a registry the lock does not federate, and the same
-                   registry twice. Without --repin it is an argparse error.
+                   adds, drops or reorders. Every reason it declines lives in
+                   `repin_source_blocker`, which --check-current consults
+                   BEFORE it recommends the flag, so this stand-in cannot
+                   print a command it would then reject. Without --repin it is
+                   an argparse error.
   --check-format   exit 0 when every digest STORED in the lock is
                    `sha256:<64 lowercase hex>`; exit 1 with a FAILED: verdict
                    naming the offenders when any is not. Reads the file alone
@@ -762,6 +766,68 @@ def at_ref(repo, ref, bundles, layout):
         return collect(scratch, bundles, layout)
 
 
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def repin_source_blocker(extras, registry, primary_registry):
+    """Why `--repin-source <registry>@` cannot advance that source — or None.
+
+    ONE predicate, read by the flag that REFUSES (apply_repin_sources) and by
+    the report that RECOMMENDS (--check-current), which is the real
+    generator's shape and the reason it has that shape: two sites answering
+    separately is how a tool prints a command it then rejects at exit 1,
+    leaving a drifted lock with no route the tool itself will accept. The
+    fleet bumper builds `--repin-source` from its own list of drifted
+    registries, so it walks into that exit 1 as surely as a human would.
+    """
+    matched = [s for s in extras if s["registry"] == registry]
+    if registry == primary_registry:
+        if matched:
+            return ("this lock names that registry as BOTH its primary registry and a "
+                    "federated source, so under one name there is no spec that reaches "
+                    "the federated entry alone")
+        return ("that is this lock's PRIMARY registry, not a federated source; the "
+                "primary's pin is what --ref (or bare --repin) advances")
+    if not matched:
+        known = ", ".join(dict.fromkeys(s["registry"] for s in extras)) or "none"
+        return ("that is not a source this lock federates (%s); ADDING a source changes "
+                "what the lock means and is a plain generate, not a re-pin" % known)
+    if len(matched) > 1:
+        # Representable and --check green: uniqueness is keyed on BUNDLE, so
+        # two entries may share a registry with different bundles and
+        # independent pins. Merging by registry key would advance BOTH from one
+        # spec — a pin nobody named, with digests nobody reviewed, at exit 0.
+        claimed = "; ".join(", ".join(s["bundles"]) or "no bundles" for s in matched)
+        return ("this lock federates that registry twice, under [%s], each with its own "
+                "pin — so one spec names two sources and advancing 'it' has two answers"
+                % claimed)
+    if not _SHA_RE.fullmatch(matched[0]["ref"]):
+        # A branch name resolves in ANY clone, so it proves nothing about which
+        # repository the checkout is; the pin is the whole proof.
+        return ("this lock pins that source at %r, which is not a commit sha — and the "
+                "commit the lock pins is the ONLY thing that proves the checkout this "
+                "would re-pin from is that registry at all" % matched[0]["ref"])
+    return None
+
+
+def repin_primary_blocker(lock, output):
+    """Why a --repin cannot advance this lock's PRIMARY pin — or None.
+
+    Consulted by the report as well as by --repin, because EVERY command
+    --check-current prints is a `--repin`, the federated one included, so a
+    primary-side refusal rejects a source's remediation too.
+    """
+    pinned = lock.get("ref")
+    if not isinstance(pinned, str) or not pinned:
+        return ("%s: 'ref' is missing or unusable (%r); --repin advances an existing "
+                "pin and this lock has none to advance" % (output, pinned))
+    if not _SHA_RE.fullmatch(pinned):
+        return ("%s pins '%s' at %r, which is not a commit sha — and the commit the lock "
+                "pins is the ONLY thing that proves the clone --repin reads is that "
+                "registry" % (output, lock.get("registry"), pinned))
+    return None
+
+
 def select_sources(lock, only):
     """The real generator's --only, filtering EXTRAS before anything is located.
 
@@ -805,14 +871,13 @@ def apply_repin_sources(lock, specs, overrides):
         if registry in wanted:
             sys.exit("ERROR: --repin-source names %s twice; one pin per source" % registry)
         wanted[registry] = ref
-    known = {source["registry"] for source in extras}
     for registry in wanted:
-        if registry == lock["registry"]:
-            sys.exit("ERROR: --repin-source %s is this lock's PRIMARY registry, not a "
-                     "federated source" % registry)
-        if registry not in known:
-            sys.exit("ERROR: --repin-source %s is not a source this lock federates (%s)"
-                     % (registry, ", ".join(sorted(known)) or "none"))
+        # Read, never re-derived: a second copy of any of these conditions is
+        # how the refusal and the report drift into disagreeing about the same
+        # command.
+        blocker = repin_source_blocker(extras, registry, lock["registry"])
+        if blocker:
+            sys.exit("ERROR: --repin-source %s: %s" % (registry, blocker))
     merged = []
     for source in extras:
         ref = wanted.get(source["registry"])
@@ -823,6 +888,19 @@ def apply_repin_sources(lock, specs, overrides):
             sys.exit("ERROR: %s: no checkout — pass --source-repo '%s=<path>'"
                      % (source["registry"], source["registry"]))
         path = overrides[source["registry"]]
+        # The same identity probe --repin does for the primary, and for the
+        # same reason: the lock names a registry, --source-repo names a
+        # directory, and nothing else ties the two together. A fork or a
+        # same-named repo under another owner sits at that path just as
+        # happily, and HEAD resolves in any git repo at all — so without this
+        # the wrong clone's HEAD is written under the right registry's name at
+        # exit 0. The pin the lock ALREADY carries is the proof, which is only
+        # true because repin_source_blocker has refused a non-sha pin above.
+        if git(path, "cat-file", "-e", "%s^{commit}" % source["ref"]).returncode != 0:
+            sys.exit("ERROR: %s does not contain %s, the commit this lock pins for '%s' "
+                     "— so this checkout is not that registry, and re-pinning from it "
+                     "would write a commit the registry does not have"
+                     % (path, source["ref"], source["registry"]))
         if not ref:
             # Resolved HERE, so a literal `HEAD` can never be written into a lock.
             proc = git(path, "rev-parse", "--verify", "HEAD^{commit}")
@@ -879,12 +957,18 @@ def main():
     # key and never replaces the array, so folding it in would make the one
     # flag that can fix a federated pin an error alongside the only flag it
     # means anything with.
-    if args.repin_source and not args.repin:
+    # `is not None`, never truthiness, in all three. argparse leaves an
+    # unpassed flag as None, so presence is what these guards are about and an
+    # EMPTY value is still a value the caller passed — `--only "$REG"` with an
+    # unset REG is the ordinary failure mode of a shell caller, which the fleet
+    # bumper is. Testing truth let `--only ''` slip both guards and degrade the
+    # run into a different command silently.
+    if args.repin_source is not None and not args.repin:
         parser.error("--repin-source advances a pin the lock already carries, so it "
                      "only means anything alongside --repin")
-    if args.only and not args.check_current:
+    if args.only is not None and not args.check_current:
         parser.error("--only scopes --check-current; pass it alongside that flag.")
-    if args.only and args.check_format:
+    if args.only is not None and args.check_format:
         parser.error("--only scopes --check-current alone; --check-format reads the "
                      "file alone and cannot be narrowed to one registry.")
 
@@ -976,21 +1060,51 @@ def main():
             print("OK: the working tree still matches %s." % scoped_ref)
             return 0
         # ONE BLOCK PER DRIFTED SOURCE, primary first (plan order gives that),
-        # every headline at column 0 and every headline IMMEDIATELY followed by
-        # its own remediation line. bump-consumer-locks.sh branches on
+        # every headline at column 0, and every headline that HAS a remediation
+        # line immediately followed by it. bump-consumer-locks.sh branches on
         # `grep -q '^FAILED:'` and slices `sed -n '/^FAILED:/,$p' | head -20`
         # into a PR body, so a truncation may drop a trailing block but must
         # never separate a headline from the command that fixes it.
+        #
+        # A block whose repair this generator would REFUSE carries no command
+        # at all and states the reason inside its own headline. Printing one
+        # anyway sends its reader — or the fleet bumper, which builds the same
+        # flag from its own list of drifted registries — to an exit 1 with
+        # nothing else offered. Asked before the command is printed, never
+        # after it is rejected.
+        all_extras = list(lock.get("sources") or [])
+        primary_blocked = repin_primary_blocker(lock, output)
+        primary_drifted = any(is_primary for _, is_primary, _ in drifted)
         for source, is_primary, differences in drifted:
             if is_primary:
-                print("FAILED: the bundle has moved on since %s, which %s still pins."
-                      % (lock["ref"], output))
-                print("  python3 scripts/generate_skills_lock.py --repin")
+                if primary_blocked:
+                    print("FAILED: the bundle has moved on since %s, which %s still "
+                          "pins. No re-pin command is printed for it because this "
+                          "generator would refuse one: %s"
+                          % (lock["ref"], output, primary_blocked))
+                else:
+                    print("FAILED: the bundle has moved on since %s, which %s still pins."
+                          % (lock["ref"], output))
+                    print("  python3 scripts/generate_skills_lock.py --repin")
             else:
-                print("FAILED: %s's bundles have moved on since %s, which %s still pins "
-                      "for it." % (source["registry"], source["ref"], output))
-                print("  python3 scripts/generate_skills_lock.py --repin "
-                      "--repin-source '%s@'" % source["registry"])
+                blocker = primary_blocked or repin_source_blocker(
+                    all_extras, source["registry"], lock["registry"])
+                if blocker:
+                    print("FAILED: %s's bundles have moved on since %s, which %s still "
+                          "pins for it. No --repin-source command is printed for it "
+                          "because this generator would refuse one: %s"
+                          % (source["registry"], source["ref"], output, blocker))
+                else:
+                    print("FAILED: %s's bundles have moved on since %s, which %s still "
+                          "pins for it." % (source["registry"], source["ref"], output))
+                    # `--ref` is part of the command, not decoration: --repin
+                    # does not inherit `ref`, so a source-only repair printed
+                    # without one advances the PRIMARY pin as a side effect.
+                    # Dropped when the primary drifted too, because its own
+                    # block is already telling the reader to advance it.
+                    anchor = "" if primary_drifted else "--ref %s " % lock["ref"]
+                    print("  python3 scripts/generate_skills_lock.py --repin "
+                          "%s--repin-source '%s@'" % (anchor, source["registry"]))
             for line in differences:
                 print("  - %s" % line)
         return 1
@@ -999,10 +1113,15 @@ def main():
         # Merged BEFORE planning, so the digests of an advanced source are read
         # at its new ref and the array written below is the merged one.
         extras = (apply_repin_sources(lock, args.repin_source, overrides)
-                  if args.repin_source else list(lock.get("sources") or []))
+                  if args.repin_source is not None else list(lock.get("sources") or []))
         sources = plan(lock, args.repo, overrides, extras)
         # The real generator's probe: a clone that IS this registry contains
-        # the commit the lock already pins.
+        # the commit the lock already pins — which needs that pin to BE a
+        # commit, since `main^{commit}` resolves in every clone with a main
+        # branch and would turn the probe into a formality any impostor passes.
+        primary_blocker = repin_primary_blocker(lock, output)
+        if primary_blocker:
+            sys.exit("ERROR: %s" % primary_blocker)
         if git(args.repo, "cat-file", "-e", "%s^{commit}" % lock["ref"]).returncode != 0:
             sys.exit("ERROR: %s does not contain %s, the commit %s pins for '%s'"
                      % (args.repo, lock["ref"], output, lock["registry"]))
@@ -1066,18 +1185,18 @@ CUTS = [
     '    parser.add_argument("--only", metavar="REGISTRY", default=None)\n',
     '    parser.add_argument("--repin-source", metavar="\'OWNER/REPO@[REF]\'",\n'
     '                        action="append", default=None)\n',
-    '    if args.repin_source and not args.repin:\n'
+    '    if args.repin_source is not None and not args.repin:\n'
     '        parser.error("--repin-source advances a pin the lock already carries, so it "\n'
     '                     "only means anything alongside --repin")\n'
-    '    if args.only and not args.check_current:\n'
+    '    if args.only is not None and not args.check_current:\n'
     '        parser.error("--only scopes --check-current; pass it alongside that flag.")\n'
-    '    if args.only and args.check_format:\n'
+    '    if args.only is not None and args.check_format:\n'
     '        parser.error("--only scopes --check-current alone; --check-format reads the "\n'
     '                     "file alone and cannot be narrowed to one registry.")\n',
 ]
 SWAPS = [
     ("select_sources(lock, args.only)", "select_sources(lock, None)"),
-    ("if args.repin_source else", "if False else"),
+    ("if args.repin_source is not None else", "if False else"),
     ("apply_repin_sources(lock, args.repin_source, overrides)",
      "apply_repin_sources(lock, [], overrides)"),
 ]
@@ -1119,9 +1238,9 @@ path = sys.argv[1]
 text = io.open(path, encoding="utf-8").read()
 
 CUTS = [
-    '    if args.only and not args.check_current:\n'
+    '    if args.only is not None and not args.check_current:\n'
     '        parser.error("--only scopes --check-current; pass it alongside that flag.")\n'
-    '    if args.only and args.check_format:\n'
+    '    if args.only is not None and args.check_format:\n'
     '        parser.error("--only scopes --check-current alone; --check-format reads the "\n'
     '                     "file alone and cannot be narrowed to one registry.")\n',
 ]
@@ -5060,6 +5179,160 @@ test_bump_generator_without_scoped_flags() {
     fi
 }
 
+# ── Test 8h3a: the stand-in refuses everything the real generator refuses ─
+#
+# THE HOLLOW-VERIFIER TRAP, in the one place this suite is exposed to it. Every
+# federated assertion in this file is green against `write_stub_generator`, so
+# a refusal the real generator has and the stand-in lacks is a lane where the
+# fleet script is measured against something that cannot fail. The bumper's
+# gate reads only whether a `FAILED:` line exists, never whether that block
+# carried a repair — so a stand-in that always prints a `--repin-source`
+# command hides that the real generator sometimes prints none and then refuses
+# the flag.
+#
+# Measured against Adam-S-Daniel/agentskills@ag58-generator. These are its
+# refusals as they stand there NOW, including the two its round-3 and round-4
+# work added (the report-side suppression, and the source-checkout identity
+# probe). The list is asserted here rather than described in a comment,
+# because a comment cannot go red.
+#
+# THE STUB INVENTORY, recorded so the next flag does not rediscover it. There
+# are FOUR generator stand-ins in this file, and only the first is under test
+# here:
+#   * write_stub_generator          — the fleet stand-in, all lanes
+#   * generator-no-repin.py         — lacks --repin; the run exits 2 at the one
+#                                     HARD probe before any flag here matters
+#   * generator-no-check-format.py  — lacks --check-format
+#   * generator-format-error.py     — --check-format present, unanswerable
+#   * generator-errline.py          — rejects --check-current, argparse-style
+# The last four carry neither `--only` nor `--repin-source`, so both federated
+# probes degrade in their lanes and emit a `::warning::` apiece. Those lanes
+# pass today only because both probes are SOFT; harden either into an exit 2
+# and they go red without having changed.
+test_bump_stub_generator_parity() {
+    echo ""
+    echo "=== Test: the stand-in generator's refusals match the real one's ==="
+
+    local dir="$TEST_DIR/stubparity"
+    rm -rf "$dir"; mkdir -p "$dir"
+    local gen="$TEST_DIR/registry/scripts/generate_skills_lock.py"
+
+    # One ordinary federated lock, and one that federates the SAME registry
+    # twice — representable, and green to a --check keyed on bundle uniqueness.
+    python3 -c '
+import json, sys
+out, ref, src = sys.argv[1:4]
+def lock(sources, primary_ref=None):
+    return {"registry": "bumporg/agentskills", "ref": primary_ref or ref,
+            "bundles": ["adam"], "sources": sources, "skills": {},
+            "generated_from": primary_ref or ref}
+def source(bundles, r=None):
+    return {"registry": "bumporg/cms-platform", "ref": r or src,
+            "bundles": bundles, "layout": "skills"}
+docs = {
+    "one.lock": lock([source(["cms-platform"])]),
+    "twice.lock": lock([source(["cms-platform"]), source(["other"])]),
+    "branchpin.lock": lock([source(["cms-platform"])], primary_ref="main"),
+}
+for name, doc in docs.items():
+    with open("%s/%s" % (out, name), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+' "$dir" "$BUMP_REF_CONTENT" "$BUMP_SRC_REF"
+
+    local out before after
+    local src_arg="--source-repo=bumporg/cms-platform=$TEST_DIR/cms-platform"
+
+    # 1. `--only ''` is a value the caller passed, not an absent flag. Guarding
+    #    on truthiness silently degrades the run into a DIFFERENT command.
+    before=$(cat "$dir/one.lock")
+    out=$(python3 "$gen" --only '' --repin --repo "$TEST_DIR/registry" \
+          "$src_arg" -o "$dir/one.lock" 2>&1) && out="EXIT0: $out"
+    if grep -q 'EXIT0' <<< "$out"; then
+        fail "stub parity: --only '' is refused, not silently ignored"
+    else
+        pass "stub parity: --only '' is refused, not silently ignored"
+    fi
+    if [[ "$before" == "$(cat "$dir/one.lock")" ]]; then
+        pass "stub parity: and nothing is written while it is refused"
+    else
+        fail "stub parity: and nothing is written while it is refused"
+    fi
+
+    # 2. The source-checkout IDENTITY probe. Point --source-repo at the wrong
+    #    repository and the pin the lock already carries is what catches it —
+    #    without this the impostor's HEAD lands under the right registry's name
+    #    at exit 0.
+    out=$(python3 "$gen" --repin --repo "$TEST_DIR/registry" \
+          --repin-source 'bumporg/cms-platform@' \
+          --source-repo "bumporg/cms-platform=$TEST_DIR/registry" \
+          -o "$dir/one.lock" 2>&1) && out="EXIT0: $out"
+    assert_stub_refusal "$out" "does not contain" \
+        "stub parity: a --source-repo pointing at the wrong repository is refused"
+    if [[ "$before" == "$(cat "$dir/one.lock")" ]]; then
+        pass "stub parity: and the lock is byte-identical afterwards"
+    else
+        fail "stub parity: and the lock is byte-identical afterwards"
+    fi
+
+    # 3. A registry federated TWICE. One spec names two sources, so advancing
+    #    "it" has two answers — and the REPORT must not print a command the
+    #    flag then rejects.
+    out=$(python3 "$gen" --check-current --only bumporg/cms-platform \
+          --repo "$TEST_DIR/registry" "$src_arg" -o "$dir/twice.lock" 2>&1) && out="EXIT0: $out"
+    assert_stub_refusal "$out" "FAILED:" \
+        "stub parity: a twice-federated source still reports its drift"
+    # The COMMAND line, not the flag name: the headline names the flag while
+    # explaining why no command follows, so a bare substring match on
+    # `--repin-source` reports a command that is not there.
+    if grep -qE '^ +python3 .*--repin-source' <<< "$out"; then
+        fail "stub parity: and prints no --repin-source command the flag would refuse"
+    else
+        pass "stub parity: and prints no --repin-source command the flag would refuse"
+    fi
+    assert_stub_refusal "$out" "federates that registry twice" \
+        "stub parity: the headline carries the reason instead of a command"
+    out=$(python3 "$gen" --repin --repo "$TEST_DIR/registry" \
+          --repin-source 'bumporg/cms-platform@' "$src_arg" \
+          -o "$dir/twice.lock" 2>&1) && out="EXIT0: $out"
+    assert_stub_refusal "$out" "federates that registry twice" \
+        "stub parity: and the flag refuses it in the same words"
+
+    # 4. A PRIMARY pinned at a branch name proves nothing about which clone
+    #    --repin is reading: `main^{commit}` resolves anywhere.
+    out=$(python3 "$gen" --repin --repo "$TEST_DIR/registry" "$src_arg" \
+          -o "$dir/branchpin.lock" 2>&1) && out="EXIT0: $out"
+    assert_stub_refusal "$out" "which is not a commit sha" \
+        "stub parity: a --repin whose pin is a branch name is refused"
+
+    # 5. The two refusals the stand-in already had, kept under the predicate so
+    #    the consolidation cannot have dropped them.
+    out=$(python3 "$gen" --repin --repo "$TEST_DIR/registry" \
+          --repin-source 'bumporg/agentskills@' "$src_arg" \
+          -o "$dir/one.lock" 2>&1) && out="EXIT0: $out"
+    assert_stub_refusal "$out" "PRIMARY registry" \
+        "stub parity: --repin-source naming the primary is refused"
+    out=$(python3 "$gen" --repin --repo "$TEST_DIR/registry" \
+          --repin-source 'bumporg/nowhere@' "$src_arg" \
+          -o "$dir/one.lock" 2>&1) && out="EXIT0: $out"
+    assert_stub_refusal "$out" "not a source this lock federates" \
+        "stub parity: --repin-source naming an unfederated registry is refused"
+
+    rm -rf "$dir"
+    cd "$REPO_ROOT"
+}
+
+# assert_stub_refusal <captured output> <needle> <label> — the command must
+# have FAILED (the caller prefixes EXIT0: when it did not) and said why.
+assert_stub_refusal() {
+    if grep -q '^EXIT0' <<< "$1"; then
+        fail "$3 — the generator exited 0"
+    elif grep -qF -- "$2" <<< "$1"; then
+        pass "$3"
+    else
+        fail "$3 — expected '$2' in: $(head -3 <<< "$1")"
+    fi
+}
+
 # ── Test 8h3b: a lock that federates its own primary registry ─────────────
 #
 # Representable, and nothing rejects it: `plan_sources`' uniqueness check is
@@ -6781,6 +7054,7 @@ test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
+test_bump_stub_generator_parity
 test_bump_self_federating_lock
 test_bump_only_prefix_flag
 test_bump_generator_error_line
