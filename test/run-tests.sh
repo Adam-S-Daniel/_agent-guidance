@@ -1097,6 +1097,55 @@ io.open(path, "w", encoding="utf-8").write(text)
 STRIPEOF
 }
 
+# write_only_bundles_stub <path> — a one-purpose editor that gives a copy of
+# the stand-in generator NO `--only` and an unrelated flag whose name merely
+# BEGINS `--only`. The false-positive fixture for the capability probe, and it
+# has to be built by surgery for the same reason the strip above is: an editor
+# that quietly matched nothing would leave the real `--only` in place and the
+# probe test would pass against the flag it is meant to be missing.
+#
+# `--only-bundles` is inert here — the point is entirely what ARGPARSE does
+# with it. `allow_abbrev` is on by default, so `--only <registry>` is an
+# unambiguous prefix of `--only-bundles` and is silently accepted as one.
+write_only_bundles_stub() {
+    cat > "$1" <<'ONLYBUNDLESEOF'
+#!/usr/bin/env python3
+"""Replace --only with an unrelated --only-bundles in the stand-in generator."""
+import io
+import re
+import sys
+
+path = sys.argv[1]
+text = io.open(path, encoding="utf-8").read()
+
+CUTS = [
+    '    if args.only and not args.check_current:\n'
+    '        parser.error("--only scopes --check-current; pass it alongside that flag.")\n'
+    '    if args.only and args.check_format:\n'
+    '        parser.error("--only scopes --check-current alone; --check-format reads the "\n'
+    '                     "file alone and cannot be narrowed to one registry.")\n',
+]
+SWAPS = [
+    ('    parser.add_argument("--only", metavar="REGISTRY", default=None)\n',
+     '    parser.add_argument("--only-bundles", metavar="LIST", default=None)\n'),
+    ("select_sources(lock, args.only)", "select_sources(lock, None)"),
+]
+
+for cut in CUTS:
+    if text.count(cut) != 1:
+        sys.exit("only-bundles: expected exactly one of:\n%s" % cut)
+    text = text.replace(cut, "")
+for old, new in SWAPS:
+    if text.count(old) != 1:
+        sys.exit("only-bundles: expected exactly one %r" % old)
+    text = text.replace(old, new)
+if re.search(r"args\.only(?!_bundles)", text):
+    sys.exit("only-bundles: a reference to the removed --only survived")
+
+io.open(path, "w", encoding="utf-8").write(text)
+ONLYBUNDLESEOF
+}
+
 # ── Set up the skills.lock bump fixtures ───────────────────────────────────
 #
 # bump-consumer-locks.sh does not compute a lock; it decides WHICH repos need
@@ -1160,6 +1209,7 @@ setup_bump_repos() {
              "$TEST_DIR/registry/plugins/adam/skills/writing-adrs"
     write_stub_generator "$TEST_DIR/registry/scripts/generate_skills_lock.py"
     write_strip_scoped_flags "$TEST_DIR/strip-scoped-flags.py"
+    write_only_bundles_stub "$TEST_DIR/only-bundles-stub.py"
 
     echo "v1" > "$TEST_DIR/registry/plugins/adam/skills/finding-unknowns/SKILL.md"
     echo "v1" > "$TEST_DIR/registry/plugins/adam/skills/writing-adrs/SKILL.md"
@@ -5010,6 +5060,86 @@ test_bump_generator_without_scoped_flags() {
     fi
 }
 
+# ── Test 8h4a: a flag whose name merely BEGINS --only is not --only ───────
+#
+# THE FALSE POSITIVE the capability probe exists to close, and it lands on this
+# suite's own negative control. `grep -q -- '--only'` over --help matches any
+# longer flag beginning with those characters, and argparse's default
+# `allow_abbrev=True` then accepts `--only <registry>` as an unambiguous prefix
+# abbreviation of that other flag — so the gate arms, the "scoped" question is
+# silently an UNSCOPED one, and its FAILED: for a primary-only drift is read as
+# source drift. The lock that must not move is the measurement: this fixture's
+# source is content-CURRENT but pinned behind its own HEAD, so "left alone" and
+# "advanced to HEAD" are different bytes.
+test_bump_only_prefix_flag() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a flag that only looks like --only) ==="
+
+    local root="$TEST_DIR/bare-onlypfx"
+    local work="$TEST_DIR/work/bumporg-repo-onlypfx"
+    rm -rf "$root" "$work"
+    mkdir -p "$root/bumporg_repo-onlypfx" "$work"
+    git init --bare --initial-branch=main "$root/bumporg_repo-onlypfx" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$root/bumporg_repo-onlypfx"
+    echo "# repo-onlypfx" > README.md
+    # repo-federated's shape: stale primary, source content-current and pinned
+    # behind its own HEAD.
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD" "$BUMP_SRC_CONTENT"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    local gen="$TEST_DIR/generator-only-bundles.py"
+    write_stub_generator "$gen"
+    if ! python3 "$TEST_DIR/only-bundles-stub.py" "$gen"; then
+        fail "only-prefix: could not build the --only-bundles stub"
+        rm -rf "$root" "$work"
+        return
+    fi
+    # The fixture's two load-bearing properties, verified before the run so a
+    # PASS below cannot come from a stub that failed to be built.
+    if python3 "$gen" --help 2>&1 | grep -q -- '--only'; then
+        pass "only-prefix: --help still contains the characters a substring probe matched"
+    else
+        fail "only-prefix: --help still contains the characters a substring probe matched"
+    fi
+    if python3 "$gen" --only x --check-current -o "$work/skills.lock" 2>&1 \
+       | grep -q -- 'unrecognized arguments'; then
+        fail "only-prefix: argparse swallows --only as a prefix abbreviation"
+    else
+        pass "only-prefix: argparse swallows --only as a prefix abbreviation"
+    fi
+
+    BUMP_BARE_DIR_FOR_RUN="$root" BUMP_GENERATOR_FOR_RUN="$gen" \
+        run_bump "$TEST_DIR/bump-onlypfx.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_GENERATOR_FOR_RUN
+    local log="$TEST_DIR/bump-onlypfx.txt"
+
+    assert_contains "$log" "has no '--check-current --only <REGISTRY>'" \
+        "only-prefix: the missing gate primitive is announced, not inferred from a substring"
+    assert_not_contains "$log" "federated sources whose pins this re-pin advances" \
+        "only-prefix: no federated pin is advanced on a question that was never scoped"
+    local after="$TEST_DIR/onlypfx-after.lock"
+    git -C "$root/bumporg_repo-onlypfx" show \
+        "refs/heads/skills-lock-bump/update:skills.lock" > "$after" 2>/dev/null || : > "$after"
+    if [[ "$(lock_source_ref_of "$after" bumporg/cms-platform)" == "$BUMP_SRC_CONTENT" ]]; then
+        pass "only-prefix: the federated pin is exactly where it was"
+    else
+        fail "only-prefix: the federated pin is exactly where it was — got $(lock_source_ref_of "$after" bumporg/cms-platform)"
+    fi
+    if [[ "$(lock_field_of "$after" ref)" == "$BUMP_REF_HEAD" ]]; then
+        pass "only-prefix: the stale primary is still re-pinned, so the degrade cost nothing else"
+    else
+        fail "only-prefix: the stale primary is still re-pinned — got $(lock_field_of "$after" ref)"
+    fi
+
+    rm -rf "$root" "$work"
+}
+
 # ── Test 8h4b: a failure report quotes the line that says what went wrong ─
 #
 # argparse writes its `usage:` banner on the FIRST line and
@@ -6558,6 +6688,7 @@ test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
+test_bump_only_prefix_flag
 test_bump_generator_error_line
 test_bump_degraded_federated_body
 test_bump_format_check_unreadable

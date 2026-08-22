@@ -733,14 +733,48 @@ fi
 # and this one — a fleet-wide outage produced by the ordering of two green
 # PRs. Degrading costs nothing that was ever promised: the federated half goes
 # back to being reported and not acted on, which is what it was before.
+#
+# A CAPABILITY CHECK, never a substring of --help, and this is the one probe
+# on which that distinction has teeth. `grep -q -- '--only'` matches any
+# longer flag whose name merely BEGINS `--only`, and argparse's default
+# `allow_abbrev=True` then accepts `--only <registry>` as an unambiguous
+# prefix abbreviation of that other flag — so the gate arms and the scoped
+# question silently becomes an UNSCOPED one, whose FAILED: for a primary-only
+# drift this script reads as source drift. Measured on this repo's own
+# negative-control fixture with the stub's `--only` replaced by an unrelated
+# `--only-bundles`: no warning, no error, and the federated pin advanced on a
+# drift that was entirely the primary's. Prose in another flag's help text
+# arms it just as well.
+#
+# So each flag is asked to REFUSE, which is a behaviour no prefix match and no
+# help text can fake: passed on its own, `--only` and `--repin-source` each
+# name the flag they only mean anything beside, and the generator says so and
+# exits 2. Nothing is written: neither probe passes `--repin`, the refusal
+# happens in argparse's post-parse block before any path is opened, and `-o`
+# names /dev/null anyway. That `-o` is there because it is REQUIRED by some
+# generators (the suite's stand-in among them) and optional in others, and an
+# argparse "the following arguments are required" is not this flag's refusal —
+# without it the probe degrades every run that meets such a generator.
+#
+# The cost is that this reads the generator's WORDING, which a gate must never
+# do. This is not a gate: it decides only whether to ASK, and it fails in the
+# safe direction. Reword either refusal in agentskills and every run degrades
+# loudly to report-only until this needle is updated, which is the behaviour
+# the fleet had before these flags existed.
+#
+# Each probe degrades on EITHER of two outcomes, and both matter: the command
+# succeeding at all (a generator that accepts a lone `--only` is not refusing
+# it, whatever it did instead), or the refusal not being this flag's.
 FED_ADVANCE_AVAILABLE=true
-if ! grep -q -- '--only' <<< "$generator_help"; then
+if only_probe=$(python3 "$GENERATOR" --only probe/probe -o /dev/null 2>&1) \
+   || ! grep -q -- '--only scopes --check-current' <<< "$only_probe"; then
     FED_ADVANCE_AVAILABLE=false
-    echo "::warning::$GENERATOR has no '--check-current --only <REGISTRY>'; this run cannot ask which HALF of a federated lock moved, so a federated source that has moved on is reported and left alone. Update the registry checkout to advance those pins." >&2
+    echo "::warning::$GENERATOR has no '--check-current --only <REGISTRY>' (a lone --only was not refused the way that flag refuses one); this run cannot ask which HALF of a federated lock moved, so a federated source that has moved on is reported and left alone. Update the registry checkout to advance those pins." >&2
 fi
-if ! grep -q -- '--repin-source' <<< "$generator_help"; then
+if repin_source_probe=$(python3 "$GENERATOR" --repin-source 'probe/probe@' -o /dev/null 2>&1) \
+   || ! grep -q -- '--repin-source advances a pin the lock already carries' <<< "$repin_source_probe"; then
     FED_ADVANCE_AVAILABLE=false
-    echo "::warning::$GENERATOR has no '--repin --repin-source <REGISTRY>@'; this run cannot advance a federated source's pin, so one that has moved on is reported and left alone. Update the registry checkout to advance those pins." >&2
+    echo "::warning::$GENERATOR has no '--repin --repin-source <REGISTRY>@' (a lone --repin-source was not refused the way that flag refuses one); this run cannot advance a federated source's pin, so one that has moved on is reported and left alone. Update the registry checkout to advance those pins." >&2
 fi
 
 # `gh pr merge --match-head-commit <sha>` refuses the merge if the head moved
