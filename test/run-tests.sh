@@ -7125,7 +7125,12 @@ test_adr_0009_self_consistency() {
     fi
     assert_not_contains "$adr" "still exactly one headline" \
         "ADR 0009: it does not claim one headline for several drifted sources"
-    assert_not_contains "$adr" "still naming the primary's clean sha" \
+    # Stops at the line break the old bullet had ("the same headline, still
+    # naming the primary's / clean sha"), for the same reason the needles in
+    # test_bump_script_self_consistency do: a wrapped needle matches nothing in
+    # either version and cannot go red. Measured against the pre-fix ADR — the
+    # full-sentence form passed while the bullet was still there.
+    assert_not_contains "$adr" "still naming the primary's" \
         "ADR 0009: it does not claim a source-only drift is attributed to the primary"
     assert_not_contains "$adr" "returns one flat list" \
         "ADR 0009: it does not describe, in the present tense, a shape the generator no longer has"
