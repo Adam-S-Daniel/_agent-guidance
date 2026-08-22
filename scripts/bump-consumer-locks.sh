@@ -684,6 +684,39 @@ if ! grep -q -- '--check-format' <<< "$generator_help"; then
     echo "::warning::$GENERATOR has no --check-format; this run can only ask whether each bundle has MOVED, not whether a lock's stored digests are the canonical sha256:<hex>. A lock malformed that way will keep reporting 'no re-pin needed' until the generator carries the flag." >&2
 fi
 
+# ── Can the generator say WHICH source moved, and advance just that one? ──
+# Two flags, one capability, and they are only useful together.
+# `--check-current --only <REGISTRY>` is the GATE primitive: it asks about one
+# registry the lock plans, so this script learns which half drifted from the
+# exit code of the question it ASKED rather than from the wording of a
+# combined answer. `--repin --repin-source '<REGISTRY>@'` is the REMEDY: it
+# merges one source's pin into the inherited `sources` array by registry key,
+# so it can never add, drop or reorder a source.
+#
+# BOTH, OR NEITHER, and the flag pair is deliberately not split into two
+# capabilities. A scoped question with no way to act on it is the report-only
+# behaviour this script already had; acting without the scoped question is the
+# failure docs/decisions/0009 exists to prevent, because a full-lock verdict
+# says FAILED for a PRIMARY-only drift and would advance every federated pin
+# on every routine bump night.
+#
+# SOFT, exactly like --check-format above, and for a sharper version of the
+# same reason: this script's generator comes from a checkout of the registry's
+# DEFAULT BRANCH, and these flags arrive there in their own pull request. A
+# hard probe would ground every nightly run in the window between that merge
+# and this one — a fleet-wide outage produced by the ordering of two green
+# PRs. Degrading costs nothing that was ever promised: the federated half goes
+# back to being reported and not acted on, which is what it was before.
+FED_ADVANCE_AVAILABLE=true
+if ! grep -q -- '--only' <<< "$generator_help"; then
+    FED_ADVANCE_AVAILABLE=false
+    echo "::warning::$GENERATOR has no '--check-current --only <REGISTRY>'; this run cannot ask which HALF of a federated lock moved, so a federated source that has moved on is reported and left alone. Update the registry checkout to advance those pins." >&2
+fi
+if ! grep -q -- '--repin-source' <<< "$generator_help"; then
+    FED_ADVANCE_AVAILABLE=false
+    echo "::warning::$GENERATOR has no '--repin --repin-source <REGISTRY>@'; this run cannot advance a federated source's pin, so one that has moved on is reported and left alone. Update the registry checkout to advance those pins." >&2
+fi
+
 # `gh pr merge --match-head-commit <sha>` refuses the merge if the head moved
 # since we read it, which is what makes the sweep's verdict and its merge one
 # decision instead of two. Probed rather than assumed: unlike --repin the flag
@@ -878,7 +911,7 @@ for repo_name in "${REPOS[@]}"; do
             [[ "$s" == "$BUMP_REGISTRY" ]] && federates_registry=true
         done
         if $federates_registry; then
-            log "$LOCK_REL_PATH federates $BUMP_REGISTRY but pins $primary_registry as its primary — --repin advances only the primary ref, so that federated pin is a human's to advance; skipping."
+            log "$LOCK_REL_PATH federates $BUMP_REGISTRY but pins $primary_registry as its primary — advancing it here means re-pinning $primary_registry, which is another registry's decision and not this run's; skipping."
         else
             log "$LOCK_REL_PATH pins $primary_registry and never names $BUMP_REGISTRY — skipping."
         fi
@@ -887,12 +920,13 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Locate every checkout this lock needs ──────────────────────────
-    # --repin advances ONLY the primary ref, but it re-derives EVERY digest,
-    # including each federated source's at that source's own unchanged pin. A
-    # missing checkout therefore means the lock cannot be rebuilt at all, and
-    # skipping is the only safe outcome: half-re-pinning a federated lock is
-    # the exact damage ADR 0001 named. (The currency question below is scoped
-    # to the primary and would not need them; the rebuild does.)
+    # --repin re-derives EVERY digest, each source's at whatever ref that
+    # source ends the run pinning — its own unchanged pin, or the advanced one
+    # if `--repin-source` names it. A missing checkout therefore means the lock
+    # cannot be rebuilt at all, and skipping is the only safe outcome:
+    # half-re-pinning a federated lock is the exact damage ADR 0001 named.
+    # (The primary currency question below is scoped to the primary and would
+    # not need them; the per-source questions and the rebuild both do.)
 
     missing_checkout=""
     for reg in "$primary_registry" ${source_registries[@]+"${source_registries[@]}"}; do
@@ -946,17 +980,78 @@ for repo_name in "${REPOS[@]}"; do
     # malformed). Reset per repo — a leftover value would carry one consumer's
     # reason into the next consumer's PR body.
     repin_reason=""
+    fed_drifted_regs=()
+    fed_check_out=""
     current_exit=0
     check_out=$(python3 "$GENERATOR" --check-current \
         --repo "$primary_dir" \
         -o "$primary_lock" 2>&1) || current_exit=$?
 
+    # ── WHICH federated sources have moved? ONE SCOPED QUESTION EACH ───
+    # This is the whole point of docs/decisions/0009, so it is spelled out
+    # rather than left to be inferred from the loop.
+    #
+    # THE THING NOT TO DO, because it is the obvious refactor and it is
+    # catastrophic: run `--check-current` once over the FULL lock and read its
+    # single verdict as "the federated half moved". Measured against the real
+    # generator on a two-source lock — primary edited, both sources sitting
+    # exactly at their pins — that run prints ONE `FAILED:` headline, anchored
+    # on the PRIMARY's ref, and exits 1. So a combined verdict says "federated
+    # drift" on every night the primary registry has a new commit, and every
+    # federated pin in the fleet would be advanced to its source's HEAD by a
+    # routine bump. ADR 0005 reserved that advance for a human precisely
+    # because it is not reversible by another bump.
+    #
+    # Asking one scoped question per source makes attribution a property of
+    # WHICH QUESTION WAS ASKED rather than of what the answer said — the same
+    # discipline `primary_only` above already applies to the primary half, and
+    # for the same stated reason: it cannot drift with the generator's wording.
+    #
+    # Asked for BOTH outcomes of the primary question, not just the current
+    # one. A stale primary and a moved source are independent facts and both
+    # can be true; the re-pin that fixes one is the re-pin that fixes the
+    # other, and splitting them across two nights would open two PRs whose
+    # diffs overlap.
+    #
+    # The else-fail discipline is verbatim what the primary branch below uses:
+    # a non-zero exit is NOT drift. A bad `--only` value lands on exactly that
+    # path, because the generator raises for it and exits 1 with an ERROR:
+    # line and no `^FAILED:` at all.
+    fed_gate_failed=false
+    if [[ ${#source_registries[@]} -gt 0 ]] && $FED_ADVANCE_AVAILABLE; then
+        for reg in "${source_registries[@]}"; do
+            fed_exit=0
+            fed_out=$(python3 "$GENERATOR" --check-current --only "$reg" \
+                --repo "$primary_dir" \
+                ${source_repo_args[@]+"${source_repo_args[@]}"} \
+                -o "$lock_file" 2>&1) || fed_exit=$?
+            [[ $fed_exit -eq 0 ]] && continue
+            if grep -q '^FAILED:' <<< "$fed_out"; then
+                fed_drifted_regs+=("$reg")
+                fed_check_out="${fed_check_out}${fed_out}
+"
+            else
+                fail "$repo_name: could not decide whether $LOCK_REL_PATH's $reg source is current — $(head -1 <<< "$fed_out")"
+                fed_gate_failed=true
+                break
+            fi
+        done
+    fi
+    if $fed_gate_failed; then
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+
     if [[ $current_exit -eq 0 ]]; then
-        # The primary is current. A federated half that has moved decides
-        # nothing here — this script cannot advance it — but it is worth
-        # saying out loud, because that re-pin is a human's and otherwise has
-        # no signal at all (ADR 0005, "Left open").
-        if [[ ${#source_registries[@]} -gt 0 ]]; then
+        # THE DEGRADED PATH, and only that. With the scoped flags present the
+        # loop above has already answered per source; this is what is left
+        # when the generator predates them, and it is exactly what this script
+        # did before: ask the combined question, and if anything moved, SAY SO
+        # and act on nothing. Announced as a workflow annotation rather than
+        # through log(), which writes to stdout — and a green nightly's stdout
+        # is read by nobody, which is how a federated source could sit ahead of
+        # its pin indefinitely with a signal that reached no one.
+        if [[ ${#source_registries[@]} -gt 0 ]] && ! $FED_ADVANCE_AVAILABLE; then
             fed_exit=0
             fed_out=$(python3 "$GENERATOR" --check-current \
                 --repo "$primary_dir" \
@@ -964,7 +1059,7 @@ for repo_name in "${REPOS[@]}"; do
                 -o "$lock_file" 2>&1) || fed_exit=$?
             if [[ $fed_exit -ne 0 ]]; then
                 if grep -q '^FAILED:' <<< "$fed_out"; then
-                    log "WARN: a FEDERATED source has moved on since the ref this lock pins for it — advancing that pin is a human's job, so nothing is re-pinned here."
+                    echo "::warning::$repo_name: a FEDERATED source has moved on since the ref this lock pins for it, and this generator cannot say which one or advance it — so nothing is re-pinned here." >&2
                 else
                     fail "$repo_name: could not read this lock's federated half — $(head -1 <<< "$fed_out")"
                     ((FAIL_COUNT++)) || true
@@ -1048,7 +1143,7 @@ for repo_name in "${REPOS[@]}"; do
             fi
         fi
 
-        if [[ -z "$repin_reason" ]]; then
+        if [[ -z "$repin_reason" && ${#fed_drifted_regs[@]} -eq 0 ]]; then
             log "bundle content unchanged since ${old_ref:0:7} — no re-pin needed."
             ((SKIP_COUNT++)) || true
             continue
@@ -1058,8 +1153,20 @@ for repo_name in "${REPOS[@]}"; do
         # is what a reader of this log (and of the PR it produces) has to be
         # able to tell apart: nothing moved, and the lock is still being
         # rewritten.
-        log "bundle content unchanged since ${old_ref:0:7}, but this lock's stored digests are not ${LOCK_DIGEST_SHAPE} — re-pin needed to relabel them."
-        log "the pin stays at ${old_ref:0:7}: a shape repair is not a content advance."
+        #
+        # `federated` is a THIRD value of $repin_reason, not an overload of
+        # either existing one: the shape question and the currency question are
+        # independent of it, and a run can have both. It is set only where
+        # neither of those fired, so it answers "why does this PR exist at all"
+        # for the one case where the answer is a source's pin and nothing else.
+        if [[ "$repin_reason" == "format" ]]; then
+            log "bundle content unchanged since ${old_ref:0:7}, but this lock's stored digests are not ${LOCK_DIGEST_SHAPE} — re-pin needed to relabel them."
+            log "the pin stays at ${old_ref:0:7}: a shape repair is not a content advance."
+        else
+            repin_reason=federated
+            log "bundle content unchanged since ${old_ref:0:7}, but a federated source has moved — re-pin needed to advance its pin."
+            log "the pin stays at ${old_ref:0:7}: advancing a federated source is not a primary content advance."
+        fi
     else
         # A non-zero exit is NOT automatically drift. The generator reports a
         # broken lock, an unreachable pinned commit or a mis-pointed --repo with
@@ -1076,8 +1183,21 @@ for repo_name in "${REPOS[@]}"; do
         log "bundle has moved since ${old_ref:0:7} — re-pin needed."
     fi
 
+    # Said once, after both branches, because a federated advance rides along
+    # with whichever question forced the re-pin and is not a fourth reason.
+    if [[ ${#fed_drifted_regs[@]} -gt 0 ]]; then
+        log "federated sources whose pins this re-pin advances: ${fed_drifted_regs[*]}"
+    fi
+
     if $DRY_RUN; then
-        log "[DRY RUN] Would re-pin $LOCK_REL_PATH onto $primary_registry's current commit and open a PR on $BRANCH_NAME"
+        # Branched because the pin only moves for a content re-pin. The
+        # unconditional wording claimed an advance onto the registry's current
+        # commit, which a format or federated-only re-pin does not make.
+        if [[ "$repin_reason" == "content" ]]; then
+            log "[DRY RUN] Would re-pin $LOCK_REL_PATH onto $primary_registry's current commit and open a PR on $BRANCH_NAME"
+        else
+            log "[DRY RUN] Would re-pin $LOCK_REL_PATH with its pin held at ${old_ref:0:7} and open a PR on $BRANCH_NAME"
+        fi
         ((SKIP_COUNT++)) || true
         continue
     fi
@@ -1149,14 +1269,41 @@ for repo_name in "${REPOS[@]}"; do
     # commit out of `$primary_dir`. Nothing is stranded by holding the pin
     # either — currency is a separate question asked afresh every night, so a
     # bundle that later moves gets its own PR, headed by the move.
+    # `!= content` rather than `== format`, and the third case is why: a
+    # re-pin forced ONLY by a federated source must hold the primary's pin for
+    # the same reason a shape repair does. Advancing a source is not a primary
+    # content advance, and the primary's own currency was asked and answered
+    # `OK` on the branch that got here.
     repin_ref_args=()
-    if [[ "$repin_reason" == "format" ]]; then
+    if [[ "$repin_reason" != "content" ]]; then
         repin_ref_args=(--ref "$old_ref")
     fi
 
+    # EXACTLY the registries whose own scoped question returned FAILED, never
+    # all of `source_registries`. This is the line the gate above exists to
+    # protect: passing every source here is what turns a primary-only drift
+    # into a fleet-wide advance of every federated pin. The empty ref means
+    # "that source's HEAD", resolved by the generator before it is written, so
+    # a literal `HEAD` can never reach a lock.
+    repin_source_args=()
+    for reg in ${fed_drifted_regs[@]+"${fed_drifted_regs[@]}"}; do
+        repin_source_args+=(--repin-source "$reg@")
+    done
+
+    # A NEWLY REACHABLE FAILURE, named here rather than left to be met on a
+    # red night. Advancing a source's pin re-derives that source's digests at
+    # a ref that has MOVED, so a bundle renamed or emptied there, or a skill
+    # basename that now collides across registries, lands on this path (or on
+    # the shrink refusal below) where before it could not: a federated source
+    # was only ever re-digested at its own unchanged pin. The policy is the
+    # one already written into both refusals — count the failure, leave the
+    # lock alone, and let the run go red — because a cross-registry collision
+    # is an adjudication between two registries and neither this script nor a
+    # retry can make it. See docs/decisions/0009.
     if ! repin_out=$(python3 "$GENERATOR" --repin \
         --repo "$primary_dir" \
         ${repin_ref_args[@]+"${repin_ref_args[@]}"} \
+        ${repin_source_args[@]+"${repin_source_args[@]}"} \
         ${source_repo_args[@]+"${source_repo_args[@]}"} \
         -o "$LOCK_REL_PATH" 2>&1); then
         fail "$repo_name: --repin failed — $(head -1 <<< "$repin_out")"
@@ -1261,6 +1408,12 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 shape of the digests stored here, which are bare hex. Re-pinned at that same
 commit with generate_skills_lock.py --repin --ref, so the pin does not move and
 every digest is recomputed from the ref this lock already attests."
+        elif [[ "$repin_reason" == "federated" ]]; then
+            commit_subject="chore: advance $LOCK_REL_PATH's federated pin for ${fed_drifted_regs[*]}"
+            commit_body="The primary bundle at ${old_ref:0:7} has NOT moved and its pin is held with
+generate_skills_lock.py --repin --ref. What moved is a FEDERATED source, whose own
+pin is advanced with --repin-source; that flag merges by registry key into the
+inherited sources array, so no source is added, dropped or reordered."
         else
             commit_subject="chore: re-pin $LOCK_REL_PATH onto ${primary_registry}@${new_ref:0:7}"
             commit_body="The bundle content this lock installs has moved since ${old_ref:0:7}, so
@@ -1307,12 +1460,15 @@ $commit_body" >/dev/null || {
     # pinned commit rather than from anyone's working tree, that a federated
     # source's own pin is untouched, and that nothing here was hand-written.
     #
-    # The quoted verdict is the PRIMARY-scoped one, so every difference line in
-    # it belongs to the ref this PR advances. Its `-o` path is rewritten back
-    # to the consumer's own `skills.lock`: the generator names the file it was
-    # given, which here is a copy under this run's mktemp directory, and a
-    # /tmp path nobody can resolve is the one line of an otherwise checkable
-    # body that a reviewer has to take on faith.
+    # Every quoted verdict is a SCOPED one — the primary-scoped copy for a
+    # content re-pin, `--check-current --only <registry>` for a federated one —
+    # so every difference line in it belongs to the pin named beside it. The
+    # `-o` path is rewritten back to the consumer's own `skills.lock`: the
+    # generator names the file it was given, which here is a copy under this
+    # run's mktemp directory, and a /tmp path nobody can resolve is the one
+    # line of an otherwise checkable body that a reviewer has to take on faith.
+    # BOTH copies are substituted, because the two scoped questions are asked
+    # against two different temp files.
     #
     # WHY THIS PR EXISTS, in the words of the question that actually forced
     # it. This body used to state the bundle-moved reason unconditionally,
@@ -1361,6 +1517,33 @@ this lands the shape is right and the anti-churn gate goes back to proposing
 nothing until the bundle actually moves. If the bundle later does move, that
 is a separate question asked afresh every night and arrives as its own PR,
 headed by the move."
+    elif [[ "$repin_reason" == "federated" ]]; then
+        moved_note="**What moved:** a FEDERATED source, and nothing else. \`${primary_registry}\`'s
+pin stays at \`${old_ref:0:7}\` — this re-pin is anchored to it with \`--ref\` — while
+the source pins listed below advance."
+        # The scoped verdict, and only the scoped verdict: each block below was
+        # produced by `--check-current --only <that registry>`, so every
+        # difference line in it belongs to the source named above it. The path
+        # substitution covers BOTH temp copies this run makes — the
+        # primary-scoped one and the full lock the per-source questions are
+        # asked against — because a /tmp path nobody can resolve is the one
+        # line of an otherwise checkable body a reviewer must take on faith.
+        why_note="The primary's bundle at the pinned ref is UNCHANGED — this is not a currency
+bump for \`${primary_registry}\`. What has moved is a federated source, whose bundles
+this lock also installs and whose pin only \`--repin-source\` advances.
+\`--check-current --only <registry>\` was asked once per source, and these are the
+ones that answered:
+
+\`\`\`
+$(sed -n '/^FAILED:/,$p' <<< "$fed_check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
+\`\`\`
+
+**One scoped question per source, never one combined verdict.** A single
+\`--check-current\` over the whole lock reports one \`FAILED:\` anchored on the
+PRIMARY's ref, so a drift in the primary alone reads as federated drift — and
+acting on that would advance every federated pin in the fleet on any night the
+registry had a commit. Attribution here is a property of which question was
+asked. See \`docs/decisions/0009\`."
     else
         moved_note="**What moved:** \`${primary_registry}\` —
 \`${old_ref:0:7}\` → \`${new_ref:0:7}\`."
@@ -1370,7 +1553,7 @@ before a skill changed delivers the older skill to every ephemeral session and
 reports \`OK\` while doing it. \`--check-current\` says the two have diverged:
 
 \`\`\`
-$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed "s#$primary_lock#$LOCK_REL_PATH#g")
+$(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
     fi
 
@@ -1380,26 +1563,97 @@ $(sed -n '/^FAILED:/,$p' <<< "$check_out" | head -20 | sed "s#$primary_lock#$LOC
     # and it is why both halves are asserted from both sides in the tests: an
     # unconditional sentence in a two-reason body is a contradiction waiting
     # for the second reason to fire.
-    if [[ "$repin_reason" == "format" ]]; then
-        derived_note="**Every digest here is re-derived from the commit this lock already pinned**"
+    # The whole sentence per branch, not a fragment plus a shared tail: the
+    # tail names the ref the digests were read at, and that is a different
+    # claim on each branch — a newly pinned commit, the commit already pinned,
+    # or one ref per source. A shared tail is how the header and the
+    # why-paragraph came to contradict their own diffs.
+    if [[ "$repin_reason" == "content" ]]; then
+        derived_note="**Every digest here is re-derived from the newly pinned commit**, materialized
+with \`git archive\` — never from anyone's working tree — so the lock describes
+bytes that are actually published at \`${new_ref:0:7}\`."
+        resolve_note="and re-resolves only \`ref\`"
+    elif [[ "$repin_reason" == "federated" ]]; then
+        # Said differently from the format branch on purpose: a federated
+        # re-pin holds the PRIMARY's pin but re-derives the advanced source's
+        # digests at a ref that MOVED, so "the commit this lock already pinned"
+        # would be false of exactly the half this PR is about.
+        derived_note="**Every digest here is re-derived from the commit its own source pins**,
+materialized with \`git archive\` — never from anyone's working tree. The primary's
+half is unchanged at \`${new_ref:0:7}\`; the halves that moved are listed below."
         resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
     else
-        derived_note="**Every digest here is re-derived from the newly pinned commit**"
-        resolve_note="and re-resolves only \`ref\`"
+        derived_note="**Every digest here is re-derived from the commit this lock already pinned**, materialized
+with \`git archive\` — never from anyone's working tree — so the lock describes
+bytes that are actually published at \`${new_ref:0:7}\`."
+        resolve_note="and here it was given \`--ref\`, so even \`ref\` is unchanged"
     fi
 
+    # The paragraph that used to end "it cannot be told to change any of them"
+    # unconditionally. That is still true of `registry` and `bundles`, and it
+    # was true of `sources` for as long as inheritance was the only thing that
+    # carried a source forward. `--repin-source` merges ONE pin into that
+    # inherited array by registry key, so on a run where it fired the sentence
+    # has to say what actually happened — and say what it still cannot do.
+    if [[ ${#fed_drifted_regs[@]} -gt 0 ]]; then
+        if [[ "$repin_reason" == "content" ]]; then
+            primary_ref_clause="The primary's own \`ref\` advanced to \`${new_ref:0:7}\`."
+        else
+            primary_ref_clause="The primary's own \`ref\` was held at \`${old_ref:0:7}\` with \`--ref\`."
+        fi
+        generated_note="That command inherits this repo's own \`registry\` and \`bundles\` from the lock
+already committed here, and it takes \`sources\` from there too: \`--repin-source\`
+merged the advanced pins listed above INTO that inherited array by registry key, so
+it could not add, drop or reorder a source. \`--source\`, which REPLACES the array
+outright, stays refused alongside \`--repin\`. ${primary_ref_clause}"
+    else
+        generated_note="That command inherits this repo's own \`registry\`, \`bundles\` and \`sources\` from
+the lock already committed here ${resolve_note}; it cannot be told to change any of
+them."
+    fi
+
+    # Branched, because the old text ("Advancing one of these is still a
+    # human's job") becomes false the moment a `--repin-source` fires — and a
+    # PR body that denies the change in its own diff is the defect the header
+    # and the why-paragraph above were already branched to stop.
+    #
+    # The OLD pin comes from $lock_file, which is this run's copy of the lock
+    # as it stands on the default branch and is never written to; the NEW one
+    # from the re-pinned working copy. Two files, so the arrow cannot show the
+    # same value twice.
     federated_note="This lock has no federated sources."
     if [[ ${#source_registries[@]} -gt 0 ]]; then
         federated_lines=""
+        advanced_any=false
         for reg in "${source_registries[@]}"; do
-            federated_lines="${federated_lines}
+            fed_moved=false
+            for moved_reg in ${fed_drifted_regs[@]+"${fed_drifted_regs[@]}"}; do
+                [[ "$moved_reg" == "$reg" ]] && fed_moved=true
+            done
+            if $fed_moved; then
+                advanced_any=true
+                federated_lines="${federated_lines}
+- \`$(lock_summary "$lock_file" "$reg")\` → \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **advanced**"
+            else
+                federated_lines="${federated_lines}
 - \`$(lock_summary "$LOCK_REL_PATH" "$reg")\` — **unchanged**"
+            fi
         done
-        federated_note="**Federated sources keep their pins.** \`--repin\` advances the primary
-\`ref\` only; it refuses \`--source\` outright, because that flag REPLACES the
-inherited \`sources\` array and would silently de-federate the lock. Advancing
-one of these is still a human's job:
+        if $advanced_any; then
+            federated_note="**Federated sources advance one at a time, and only when asked.** Each source
+was put its OWN \`--check-current --only <registry>\` question, and only the ones
+that answered \`FAILED\` were named to \`--repin-source\`. \`--source\` stays refused
+outright, because that flag REPLACES the inherited \`sources\` array and would
+silently de-federate the lock:
 ${federated_lines}"
+        else
+            federated_note="**Federated sources keep their pins.** Each was put its own
+\`--check-current --only <registry>\` question and answered that its bundles have
+not moved, so none was named to \`--repin-source\`; \`--source\` is refused outright,
+because that flag REPLACES the inherited \`sources\` array and would silently
+de-federate the lock:
+${federated_lines}"
+        fi
     fi
 
     existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
@@ -1419,6 +1673,8 @@ ${federated_lines}"
     # reviewer open the PR to find out whether the pin moved. It did not.
     if [[ "$repin_reason" == "format" ]]; then
         pr_title="chore: relabel skills.lock digests as ${LOCK_DIGEST_SHAPE} (pin unchanged)"
+    elif [[ "$repin_reason" == "federated" ]]; then
+        pr_title="chore: advance skills.lock's federated pin for ${fed_drifted_regs[*]} (primary pin unchanged)"
     else
         pr_title="chore: re-pin skills.lock onto ${primary_registry}@${new_ref:0:7}"
     fi
@@ -1442,18 +1698,14 @@ proposes the same change again. See \`docs/decisions/0006\`.
 
 ${why_note}
 
-${derived_note}, materialized
-with \`git archive\` — never from anyone's working tree — so the lock describes
-bytes that are actually published at \`${new_ref:0:7}\`.
+${derived_note}
 
 $federated_note
 
 **Generated, never hand-edited.** The whole change is
-\`generate_skills_lock.py --repin\`'s output. That command inherits this repo's
-own \`registry\`, \`bundles\` and \`sources\` from the lock already committed here
-${resolve_note}; it cannot be told to change any of them. Nothing
+\`generate_skills_lock.py --repin\`'s output. ${generated_note} Nothing
 in \`_agent-guidance\` composes a lock of its own — see its
-\`docs/decisions/0005\`.
+\`docs/decisions/0005\` and \`docs/decisions/0009\`.
 EOF
 )"); then
         log "PR created."

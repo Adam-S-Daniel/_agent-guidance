@@ -655,7 +655,23 @@ write_stub_generator() {
                    still matches the checkout's working tree; exit 1 with a
                    FAILED: verdict when it has moved; exit 1 with an ERROR:
                    line when it cannot tell (an unresolvable pinned ref).
-                   Every source is read, primary first.
+                   Every source is read, primary first, and each drifted
+                   source gets its OWN FAILED: headline and its own
+                   remediation line — the bumper slices `/^FAILED:/,$p` and
+                   `head -20` into a PR body, so a headline separated from its
+                   fix is the one truncation that must not be representable.
+  --only REGISTRY  scope --check-current to ONE registry the lock plans, so a
+                   caller learns which half moved from the exit code of the
+                   question it asked. Refuses a registry the lock does not
+                   plan, one that is both primary and source, and any use
+                   outside --check-current.
+  --repin-source '<OWNER/REPO>@[<REF>]'
+                   with --repin, advance the pin of ONE federated source the
+                   lock already names; an empty REF means that source's HEAD.
+                   Merges by registry KEY into the inherited array — never
+                   adds, drops or reorders — and refuses the primary registry,
+                   a registry the lock does not federate, and the same
+                   registry twice. Without --repin it is an argparse error.
   --check-format   exit 0 when every digest STORED in the lock is
                    `sha256:<64 lowercase hex>`; exit 1 with a FAILED: verdict
                    naming the offenders when any is not. Reads the file alone
@@ -746,7 +762,78 @@ def at_ref(repo, ref, bundles, layout):
         return collect(scratch, bundles, layout)
 
 
-def plan(lock, repo, overrides):
+def select_sources(lock, only):
+    """The real generator's --only, filtering EXTRAS before anything is located.
+
+    Filtering up front rather than filtering plan()'s output is what keeps an
+    unrelated source's missing checkout from deciding this source's answer:
+    plan() exits on the first source it has no override for.
+
+    Returns (extras subset, include_primary).
+    """
+    extras = list(lock.get("sources") or [])
+    if only is None:
+        return extras, True
+    matched = [source for source in extras if source["registry"] == only]
+    if only == lock["registry"]:
+        if matched:
+            sys.exit("ERROR: --only %s: this lock names it as BOTH its primary registry "
+                     "and a federated source, so scoping to it has two answers" % only)
+        return [], True
+    if not matched:
+        planned = ", ".join(dict.fromkeys(
+            [lock["registry"]] + [source["registry"] for source in extras]))
+        sys.exit("ERROR: --only %s: not a registry this lock plans. It plans %s — name "
+                 "one of those exactly as the lock spells it." % (only, planned))
+    return matched, False
+
+
+def apply_repin_sources(lock, specs, overrides):
+    """Merge --repin-source pins into the INHERITED array. Never adds, never drops.
+
+    An untouched source comes back BY REFERENCE, so it re-serializes byte for
+    byte; a named one comes back as a copy with only `ref` replaced, so key
+    order survives too. That is the merge-by-key property `--source` does not
+    have, and it is what the fleet's non-de-federation assertion rests on.
+    """
+    extras = list(lock.get("sources") or [])
+    wanted = {}
+    for spec in specs:
+        registry, sep, ref = spec.rpartition("@")
+        if not sep:
+            sys.exit("ERROR: --repin-source %r: expected '<OWNER/REPO>@[<ref>]'" % spec)
+        if registry in wanted:
+            sys.exit("ERROR: --repin-source names %s twice; one pin per source" % registry)
+        wanted[registry] = ref
+    known = {source["registry"] for source in extras}
+    for registry in wanted:
+        if registry == lock["registry"]:
+            sys.exit("ERROR: --repin-source %s is this lock's PRIMARY registry, not a "
+                     "federated source" % registry)
+        if registry not in known:
+            sys.exit("ERROR: --repin-source %s is not a source this lock federates (%s)"
+                     % (registry, ", ".join(sorted(known)) or "none"))
+    merged = []
+    for source in extras:
+        ref = wanted.get(source["registry"])
+        if ref is None:
+            merged.append(source)            # untouched, byte-identical
+            continue
+        if source["registry"] not in overrides:
+            sys.exit("ERROR: %s: no checkout — pass --source-repo '%s=<path>'"
+                     % (source["registry"], source["registry"]))
+        path = overrides[source["registry"]]
+        if not ref:
+            # Resolved HERE, so a literal `HEAD` can never be written into a lock.
+            proc = git(path, "rev-parse", "--verify", "HEAD^{commit}")
+            if proc.returncode != 0:
+                sys.exit("ERROR: cannot resolve HEAD in %s" % path)
+            ref = proc.stdout.decode().strip()
+        merged.append({**source, "ref": ref})
+    return merged
+
+
+def plan(lock, repo, overrides, extras):
     sources = [{
         "registry": lock["registry"],
         "ref": lock["ref"],
@@ -754,7 +841,7 @@ def plan(lock, repo, overrides):
         "layout": DEFAULT_LAYOUT,
         "path": Path(repo),
     }]
-    for source in lock.get("sources") or []:
+    for source in extras:
         key = source["registry"]
         if key not in overrides:
             sys.exit("ERROR: %s: no checkout — pass --source-repo '%s=<path>'" % (key, key))
@@ -771,8 +858,11 @@ def plan(lock, repo, overrides):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-current", action="store_true")
+    parser.add_argument("--only", metavar="REGISTRY", default=None)
     parser.add_argument("--check-format", action="store_true")
     parser.add_argument("--repin", action="store_true")
+    parser.add_argument("--repin-source", metavar="'OWNER/REPO@[REF]'",
+                        action="append", default=None)
     parser.add_argument("--repo")
     parser.add_argument("--ref")
     parser.add_argument("--registry")
@@ -785,6 +875,18 @@ def main():
     if args.repin and (args.registry or args.bundles or args.source):
         parser.error("--repin inherits the lock's identity; --registry / --bundles / "
                      "--source would override it")
+    # --repin-source is deliberately NOT in that list. It merges by registry
+    # key and never replaces the array, so folding it in would make the one
+    # flag that can fix a federated pin an error alongside the only flag it
+    # means anything with.
+    if args.repin_source and not args.repin:
+        parser.error("--repin-source advances a pin the lock already carries, so it "
+                     "only means anything alongside --repin")
+    if args.only and not args.check_current:
+        parser.error("--only scopes --check-current; pass it alongside that flag.")
+    if args.only and args.check_format:
+        parser.error("--only scopes --check-current alone; --check-format reads the "
+                     "file alone and cannot be narrowed to one registry.")
 
     overrides = dict(spec.split("=", 1) for spec in args.source_repo)
     output = Path(args.output)
@@ -842,13 +944,22 @@ def main():
             print("  - %s" % name)
         return 1
 
-    sources = plan(lock, args.repo, overrides)
-
     if args.check_current:
-        differences = []
-        for source in sources:
+        selected, include_primary = select_sources(lock, args.only)
+        sources = plan(lock, args.repo, overrides, selected)
+        if not include_primary:
+            # Dropped AFTER planning: a scoped run should still refuse a lock
+            # that cannot be planned at all. It is the READING of the primary
+            # that a scoped question has no business doing.
+            sources = sources[1:]
+        # The ref of the FIRST source this run planned. Unscoped that is the
+        # primary, so these bytes are what they always were.
+        scoped_ref = lock["ref"] if include_primary else selected[0]["ref"]
+        drifted = []
+        for index, source in enumerate(sources):
             pinned = at_ref(source["path"], source["ref"], source["bundles"], source["layout"])
             here = collect(source["path"], source["bundles"], source["layout"])
+            differences = []
             for name in sorted(set(here) - set(pinned)):
                 differences.append("added: '%s' is in the working tree but not at %s"
                                    % (name, source["ref"]))
@@ -859,16 +970,37 @@ def main():
                 if pinned[name] != here[name]:
                     differences.append("changed: '%s' differs from its content at %s"
                                        % (name, source["ref"]))
-        if not differences:
-            print("OK: the working tree still matches %s." % lock["ref"])
+            if differences:
+                drifted.append((source, include_primary and index == 0, differences))
+        if not drifted:
+            print("OK: the working tree still matches %s." % scoped_ref)
             return 0
-        print("FAILED: the bundle has moved on since %s, which %s still pins."
-              % (lock["ref"], output))
-        for line in differences:
-            print("  - %s" % line)
+        # ONE BLOCK PER DRIFTED SOURCE, primary first (plan order gives that),
+        # every headline at column 0 and every headline IMMEDIATELY followed by
+        # its own remediation line. bump-consumer-locks.sh branches on
+        # `grep -q '^FAILED:'` and slices `sed -n '/^FAILED:/,$p' | head -20`
+        # into a PR body, so a truncation may drop a trailing block but must
+        # never separate a headline from the command that fixes it.
+        for source, is_primary, differences in drifted:
+            if is_primary:
+                print("FAILED: the bundle has moved on since %s, which %s still pins."
+                      % (lock["ref"], output))
+                print("  python3 scripts/generate_skills_lock.py --repin")
+            else:
+                print("FAILED: %s's bundles have moved on since %s, which %s still pins "
+                      "for it." % (source["registry"], source["ref"], output))
+                print("  python3 scripts/generate_skills_lock.py --repin "
+                      "--repin-source '%s@'" % source["registry"])
+            for line in differences:
+                print("  - %s" % line)
         return 1
 
     if args.repin:
+        # Merged BEFORE planning, so the digests of an advanced source are read
+        # at its new ref and the array written below is the merged one.
+        extras = (apply_repin_sources(lock, args.repin_source, overrides)
+                  if args.repin_source else list(lock.get("sources") or []))
+        sources = plan(lock, args.repo, overrides, extras)
         # The real generator's probe: a clone that IS this registry contains
         # the commit the lock already pins.
         if git(args.repo, "cat-file", "-e", "%s^{commit}" % lock["ref"]).returncode != 0:
@@ -891,10 +1023,12 @@ def main():
             "ref": new_ref,
             "bundles": lock["bundles"],
         }
-        # Inherited verbatim — never rebuilt from flags. This is the whole
-        # federation property the fleet test asserts.
-        if lock.get("sources"):
-            document["sources"] = lock["sources"]
+        # Inherited — never rebuilt from flags. A source --repin-source did
+        # not name comes through by reference and re-serializes byte for byte;
+        # a named one differs in `ref` alone. This is the whole federation
+        # property the fleet test asserts.
+        if extras:
+            document["sources"] = extras
         document["skills"] = label(dict(sorted(skills.items())))
         document["generated_from"] = new_ref
         output.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n",
@@ -909,6 +1043,58 @@ if __name__ == "__main__":
     sys.exit(main())
 STUBEOF
     chmod +x "$1"
+}
+
+# write_strip_scoped_flags <path> — a one-purpose editor that removes the two
+# federated flags from a copy of the stand-in generator, so a run can meet the
+# generator that predates them. Written to a file rather than inlined because
+# it has to state, in code, exactly which lines it expects to find: a
+# text-surgery strip that silently matches nothing produces a stub with the
+# flags still in it, and the degraded-path test would then be exercising the
+# ordinary path while reporting PASS.
+write_strip_scoped_flags() {
+    cat > "$1" <<'STRIPEOF'
+#!/usr/bin/env python3
+"""Remove --only and --repin-source from a copy of the stand-in generator."""
+import io
+import sys
+
+path = sys.argv[1]
+text = io.open(path, encoding="utf-8").read()
+
+CUTS = [
+    '    parser.add_argument("--only", metavar="REGISTRY", default=None)\n',
+    '    parser.add_argument("--repin-source", metavar="\'OWNER/REPO@[REF]\'",\n'
+    '                        action="append", default=None)\n',
+    '    if args.repin_source and not args.repin:\n'
+    '        parser.error("--repin-source advances a pin the lock already carries, so it "\n'
+    '                     "only means anything alongside --repin")\n'
+    '    if args.only and not args.check_current:\n'
+    '        parser.error("--only scopes --check-current; pass it alongside that flag.")\n'
+    '    if args.only and args.check_format:\n'
+    '        parser.error("--only scopes --check-current alone; --check-format reads the "\n'
+    '                     "file alone and cannot be narrowed to one registry.")\n',
+]
+SWAPS = [
+    ("select_sources(lock, args.only)", "select_sources(lock, None)"),
+    ("if args.repin_source else", "if False else"),
+    ("apply_repin_sources(lock, args.repin_source, overrides)",
+     "apply_repin_sources(lock, [], overrides)"),
+]
+
+for cut in CUTS:
+    if text.count(cut) != 1:
+        sys.exit("strip: expected exactly one of:\n%s" % cut)
+    text = text.replace(cut, "")
+for old, new in SWAPS:
+    if text.count(old) != 1:
+        sys.exit("strip: expected exactly one %r" % old)
+    text = text.replace(old, new)
+if "args.only" in text or "args.repin_source" in text:
+    sys.exit("strip: a reference to a removed flag survived")
+
+io.open(path, "w", encoding="utf-8").write(text)
+STRIPEOF
 }
 
 # ── Set up the skills.lock bump fixtures ───────────────────────────────────
@@ -942,13 +1128,20 @@ STUBEOF
 #   bumporg/repo-error       pins a commit no registry contains → a per-repo
 #                            failure, never a re-pin. Sorts THIRD of ten, so
 #                            the repos after it prove the run survived it
-#   bumporg/repo-fed-current primary content-current, federated source BEHIND
-#                            its registry's HEAD → no PR. The gate reads the
-#                            primary alone; a combined verdict would re-pin
-#                            this repo on every registry commit forever, with
-#                            not one digest changing
-#   bumporg/repo-federated   stale primary + a cms-platform source → PR, with
-#                            the sources array carried through untouched
+#   bumporg/repo-fed-current primary content-current, federated source MOVED →
+#                            a PR that advances the SOURCE pin and holds the
+#                            primary's. Each half is asked its own scoped
+#                            question, so which one moved decides which one
+#                            moves
+#   bumporg/repo-fed-stale   BOTH halves moved → one PR advancing both pins
+#   bumporg/repo-federated   THE NEGATIVE CONTROL, and the reason this whole
+#                            gate is per-source: stale primary + a federated
+#                            source that is content-CURRENT but pinned behind
+#                            its own HEAD → the primary ref advances and
+#                            sources[0].ref must NOT. A combined verdict says
+#                            FAILED here (the primary moved) and would advance
+#                            the federated pin too, on every routine bump
+#                            night, across the fleet
 #   bumporg/repo-inverted    the federation inverted — cms-platform primary,
 #                            the bumped registry only a source → skipped, so
 #                            no other registry's pin is advanced under this
@@ -966,6 +1159,7 @@ setup_bump_repos() {
              "$TEST_DIR/registry/plugins/adam/skills/finding-unknowns" \
              "$TEST_DIR/registry/plugins/adam/skills/writing-adrs"
     write_stub_generator "$TEST_DIR/registry/scripts/generate_skills_lock.py"
+    write_strip_scoped_flags "$TEST_DIR/strip-scoped-flags.py"
 
     echo "v1" > "$TEST_DIR/registry/plugins/adam/skills/finding-unknowns/SKILL.md"
     echo "v1" > "$TEST_DIR/registry/plugins/adam/skills/writing-adrs/SKILL.md"
@@ -1001,21 +1195,29 @@ setup_bump_repos() {
     git config commit.gpgsign false
     git add -A && git commit -m "deploy-site" >/dev/null 2>&1
     BUMP_SRC_REF=$(git rev-parse HEAD)
-    # Captured BEFORE this second commit, so the pin every federated fixture
-    # carries is genuinely behind this registry's HEAD. Without it a re-pin
-    # that re-resolved each sources[].ref to HEAD would leave the lock byte
-    # for byte where it was, and the assertions that its pin "did not move"
-    # could not fail.
+    # Captured BEFORE this second commit, so a fixture pinning it is genuinely
+    # BEHIND this source's content. Without it a re-pin that re-resolved each
+    # sources[].ref to HEAD would leave the lock byte for byte where it was,
+    # and the assertions that its pin "did not move" could not fail.
     echo "deploy v2" > "$TEST_DIR/cms-platform/skills/deploy-site/SKILL.md"
     echo "publish v2" > "$TEST_DIR/cms-platform/plugins/cms-platform/skills/publish-site/SKILL.md"
     git add -A && git commit -m "deploy v2" >/dev/null 2>&1
+    BUMP_SRC_CONTENT=$(git rev-parse HEAD)
+    # The federated twin of the registry's "docs only" commit above, and the
+    # reason THE NEGATIVE CONTROL can fail at all. A source pinned at
+    # BUMP_SRC_CONTENT is content-CURRENT while its ref sits behind HEAD, so a
+    # run that advanced it anyway writes BUMP_SRC_HEAD and is caught. Pin the
+    # negative control at HEAD instead and "did not advance" and "advanced to
+    # HEAD" are the same bytes — a green light wired to nothing.
+    echo "# cms-platform" > README.md
+    git add -A && git commit -m "docs only" >/dev/null 2>&1
     BUMP_SRC_HEAD=$(git rev-parse HEAD)
 
     BUMP_CHECKOUTS_ARG="bumporg/agentskills=$TEST_DIR/registry bumporg/cms-platform=$TEST_DIR/cms-platform"
 
     local name bare work
     for name in agentskills repo-current repo-diverged repo-error \
-                repo-fed-current repo-federated repo-inverted \
+                repo-fed-current repo-fed-stale repo-federated repo-inverted \
                 repo-no-lock repo-other-registry repo-stale; do
         bare="$TEST_DIR/bare/bumporg_$name"
         work="$TEST_DIR/work/bumporg-$name"
@@ -1035,16 +1237,35 @@ setup_bump_repos() {
                 seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT"
                 ;;
             repo-federated)
+                # THE NEGATIVE CONTROL. Its source is pinned at
+                # $BUMP_SRC_CONTENT — content-current, ref behind that source's
+                # HEAD — while its PRIMARY is stale. So the primary's question
+                # answers FAILED and the source's answers OK, and the only
+                # thing that keeps sources[0].ref where it is is that the two
+                # were asked separately.
+                #
                 # The sources baseline is written by the FIXTURE, before the
                 # generator ever sees this lock. Comparing generator output
                 # against generator output is a tautology: a generator that
                 # mangles or drops `sources` mangles the baseline identically
                 # and the byte-for-byte assertion still passes.
                 seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD" \
-                    "$BUMP_SRC_REF" fill "$TEST_DIR/repo-federated.sources.expected"
+                    "$BUMP_SRC_CONTENT" fill "$TEST_DIR/repo-federated.sources.expected"
                 ;;
             repo-fed-current)
+                # The mirror of the negative control: the PRIMARY is
+                # content-current and the SOURCE has moved. The re-pin this
+                # produces must hold the primary's pin and advance the
+                # source's — the opposite assignment, from the opposite pair
+                # of answers.
                 seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_CONTENT" \
+                    "$BUMP_SRC_REF"
+                ;;
+            repo-fed-stale)
+                # Both halves moved. One PR, both pins advanced: a stale
+                # primary and a moved source are independent facts, and the
+                # re-pin that fixes one is the re-pin that fixes the other.
+                seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD" \
                     "$BUMP_SRC_REF"
                 ;;
             repo-inverted)
@@ -3671,6 +3892,18 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 ' "$1" "$2"
 }
 
+lock_source_ref_of() {   # <file> <source registry> — that source's pinned ref
+    python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = json.load(handle)
+for source in doc.get("sources") or []:
+    if source.get("registry") == sys.argv[2]:
+        print(source.get("ref", ""))
+        break
+' "$1" "$2"
+}
+
 lock_skill_digest() {   # <file> <skill key>
     python3 -c '
 import json, sys
@@ -3717,7 +3950,7 @@ test_bump_dry_run() {
 
     local r
     for r in repo-stale repo-federated repo-current repo-error agentskills \
-             repo-fed-current repo-inverted; do
+             repo-fed-current repo-fed-stale repo-inverted; do
         assert_no_bump_branch "$r" "dry-run: nothing pushed to bumporg/$r"
     done
     if [[ ! -s "$BUMP_PR_LOG" ]]; then
@@ -3799,14 +4032,43 @@ test_bump_consumer_locks() {
     assert_contains "$log" "never names bumporg/agentskills — skipping" "other registry: skipped"
     assert_no_bump_branch repo-other-registry "other registry: nothing pushed"
 
-    # ── ANTI-CHURN, federated edition. --check-current reports ONE verdict for
-    # every source a lock names, while --repin advances only the primary. Gate
-    # on the combined answer and this repo — primary current, federated source
-    # behind its registry's HEAD — gets a pull request for EVERY commit to the
-    # primary registry, forever, with not one digest in the diff.
-    assert_contains "$log" "a FEDERATED source has moved on since the ref this lock pins for it" "federated-current: the moved federated half is reported, not acted on"
+    # ── ONE SCOPED QUESTION PER HALF, and the answers drive different pins.
+    # repo-fed-current is the mirror of the negative control below: its PRIMARY
+    # is content-current and its SOURCE has moved, so the re-pin must hold the
+    # primary's pin and advance the source's. Gate on a COMBINED verdict and
+    # this pair is indistinguishable from the negative control's, which is the
+    # whole reason the question is asked per source.
     assert_contains "$log" "bundle content unchanged since ${BUMP_REF_CONTENT:0:7}" "federated-current: the primary is judged on its own content"
-    assert_no_bump_branch repo-fed-current "federated-current: no branch — a federated advance is not a primary re-pin"
+    assert_contains "$log" "a federated source has moved — re-pin needed" "federated-current: the moved federated half is what forces the re-pin"
+    assert_contains "$log" "federated sources whose pins this re-pin advances: bumporg/cms-platform" "federated-current: the source whose pin advances is named"
+    local fedcur="$TEST_DIR/bump-fedcur-new.lock"
+    bump_lock_at repo-fed-current "refs/heads/skills-lock-bump/update" > "$fedcur"
+    if [[ "$(lock_field_of "$fedcur" ref)" == "$BUMP_REF_CONTENT" ]]; then
+        pass "federated-current: the PRIMARY pin is held — advancing a source is not a content advance"
+    else
+        fail "federated-current: the PRIMARY pin is held — expected ${BUMP_REF_CONTENT:0:7}, got $(lock_field_of "$fedcur" ref)"
+    fi
+    if [[ "$(lock_source_ref_of "$fedcur" bumporg/cms-platform)" == "$BUMP_SRC_HEAD" ]]; then
+        pass "federated-current: the federated pin advanced to its own registry's HEAD"
+    else
+        fail "federated-current: the federated pin advanced — expected ${BUMP_SRC_HEAD:0:7}, got $(lock_source_ref_of "$fedcur" bumporg/cms-platform)"
+    fi
+    local fedcur_body="$BUMP_PR_BODY_DIR/bumporg_repo-fed-current.body"
+    assert_contains "$fedcur_body" "Federated sources advance one at a time" "federated-current: the PR body says a source advanced, not that the pins are kept"
+    assert_contains "$fedcur_body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}\` → \`bumporg/cms-platform@${BUMP_SRC_HEAD:0:7}" "federated-current: the PR body shows the source pin old → new"
+    assert_not_contains "$fedcur_body" "$TEST_DIR" "federated-current: no path from the machine that ran the bump"
+    assert_contains "$fedcur_body" "cms-platform/deploy-site" "federated-current: the body quotes the SOURCE difference that caused this PR"
+    assert_not_contains "$fedcur_body" "**What moved:** \`bumporg/agentskills\`" "federated-current: the body does not announce a primary move"
+
+    # ── BOTH halves moved: one PR, both pins advanced.
+    local fedstale="$TEST_DIR/bump-fedstale-new.lock"
+    bump_lock_at repo-fed-stale "refs/heads/skills-lock-bump/update" > "$fedstale"
+    if [[ "$(lock_field_of "$fedstale" ref)" == "$BUMP_REF_HEAD" \
+          && "$(lock_source_ref_of "$fedstale" bumporg/cms-platform)" == "$BUMP_SRC_HEAD" ]]; then
+        pass "both moved: one re-pin advances the primary AND the federated pin"
+    else
+        fail "both moved: one re-pin advances the primary AND the federated pin — ref $(lock_field_of "$fedstale" ref), source $(lock_source_ref_of "$fedstale" bumporg/cms-platform)"
+    fi
 
     # ── The federation inverted: everything downstream targets the PRIMARY,
     # so a lock that only federates this registry must be left alone rather
@@ -3823,7 +4085,7 @@ test_bump_consumer_locks() {
     fi
 
     # ── The stale consumer: ref advanced, digests re-derived.
-    assert_contains "$log" "2 proposed" "bump: exactly the two stale consumers were proposed"
+    assert_contains "$log" "4 proposed" "bump: exactly the four consumers needing a re-pin were proposed"
     local stale_new="$TEST_DIR/bump-stale-new.lock"
     bump_lock_at repo-stale "refs/heads/skills-lock-bump/update" > "$stale_new"
     if [[ -s "$stale_new" ]]; then
@@ -3871,12 +4133,15 @@ test_bump_consumer_locks() {
         fail "federated: the sources array survives a bump byte-for-byte — got $(lock_sources_json "$fed_new")"
     fi
     assert_contains "$fed_new" "bumporg/cms-platform" "federated: the second registry is still named"
-    assert_contains "$fed_new" "$BUMP_SRC_REF" "federated: the second registry's own pin did not move"
-    # The negative half. Its registry HAS moved on (two commits), so a re-pin
-    # that re-resolved each sources[].ref to that source's HEAD would be the
-    # de-federation-by-currency bug — and would be indistinguishable from
-    # "unchanged" if the fixture had a single commit.
-    assert_not_contains "$fed_new" "$BUMP_SRC_HEAD" "federated: the federated pin was not re-resolved to its registry's HEAD"
+    # ── THE NEGATIVE CONTROL, and the single assertion this whole change
+    # turns on. This repo's PRIMARY is stale, so the full-lock --check-current
+    # answers FAILED for it — and a gate that read that combined verdict as
+    # "the federated half moved" would pass --repin-source for this source and
+    # write $BUMP_SRC_HEAD here. Its source is content-CURRENT but pinned
+    # BEHIND its own HEAD, so "did not advance" and "advanced to HEAD" are
+    # different bytes and the wrong answer cannot hide.
+    assert_contains "$fed_new" "$BUMP_SRC_CONTENT" "negative control: a primary-only drift leaves the federated pin exactly where it was"
+    assert_not_contains "$fed_new" "$BUMP_SRC_HEAD" "negative control: a primary-only drift does NOT advance the federated pin to its source's HEAD"
     if [[ "$(lock_field_of "$fed_new" ref)" == "$BUMP_REF_HEAD" ]]; then
         pass "federated: the primary ref still advanced"
     else
@@ -3917,7 +4182,8 @@ test_bump_consumer_locks() {
     assert_not_contains "$body" "$TEST_DIR" "PR body: no path from the machine that ran the bump"
     local fed_body="$BUMP_PR_BODY_DIR/bumporg_repo-federated.body"
     assert_contains "$fed_body" "Federated sources keep their pins" "PR body: discloses that the federated half is untouched"
-    assert_contains "$fed_body" "bumporg/cms-platform@${BUMP_SRC_REF:0:7}" "PR body: names the federated pin that did not move"
+    assert_contains "$fed_body" "bumporg/cms-platform@${BUMP_SRC_CONTENT:0:7}" "PR body: names the federated pin that did not move"
+    assert_not_contains "$fed_body" "**advanced**" "PR body: nothing claims a federated advance on a primary-only drift"
     # The quoted verdict is the primary-scoped one, so every difference line in
     # it belongs to the ref this PR advances. A combined verdict would blame a
     # cms-platform skill for an agentskills re-pin.
@@ -3931,24 +4197,29 @@ test_bump_idempotent() {
     echo ""
     echo "=== Test: bump-consumer-locks.sh (re-run) ==="
 
-    local stale_before fed_before prs_before
+    local stale_before fed_before fedcur_before fedstale_before prs_before
     stale_before=$(bump_branch_sha repo-stale)
     fed_before=$(bump_branch_sha repo-federated)
+    fedcur_before=$(bump_branch_sha repo-fed-current)
+    fedstale_before=$(bump_branch_sha repo-fed-stale)
     prs_before=$(wc -l < "$BUMP_PR_LOG")
 
     # The steady state after a bump: branch pushed, PR open, and main still
     # carrying the stale lock until someone merges it. The mock has no memory,
-    # so the open PRs are supplied here.
-    MOCK_OPEN_PR_REPOS="bumporg_repo-stale bumporg_repo-federated" \
+    # so the open PRs are supplied here — EVERY repo the previous run proposed
+    # for, or the re-run opens a second PR on the one that was left out.
+    MOCK_OPEN_PR_REPOS="bumporg_repo-stale bumporg_repo-federated bumporg_repo-fed-current bumporg_repo-fed-stale" \
         run_bump "$TEST_DIR/bump-rerun.txt"
 
     assert_contains "$TEST_DIR/bump-rerun.txt" "0 proposed" "re-run: nothing proposed"
     assert_contains "$TEST_DIR/bump-rerun.txt" "is already open for this branch" "re-run: the open PR is left alone"
     if [[ "$(bump_branch_sha repo-stale)" == "$stale_before" \
-          && "$(bump_branch_sha repo-federated)" == "$fed_before" ]]; then
-        pass "re-run: no second commit — both bump branches are untouched"
+          && "$(bump_branch_sha repo-federated)" == "$fed_before" \
+          && "$(bump_branch_sha repo-fed-current)" == "$fedcur_before" \
+          && "$(bump_branch_sha repo-fed-stale)" == "$fedstale_before" ]]; then
+        pass "re-run: no second commit — every bump branch is untouched"
     else
-        fail "re-run: no second commit — both bump branches are untouched"
+        fail "re-run: no second commit — every bump branch is untouched"
     fi
     if [[ "$(wc -l < "$BUMP_PR_LOG")" == "$prs_before" ]]; then
         pass "re-run: no second pull request"
@@ -3964,7 +4235,9 @@ test_bump_idempotent() {
     assert_contains "$TEST_DIR/bump-strand.txt" "not pushing again" "stranded: the matching branch is not re-pushed"
     assert_contains "$TEST_DIR/bump-strand.txt" "PR created" "stranded: the missing PR is opened"
     if [[ "$(bump_branch_sha repo-stale)" == "$stale_before" \
-          && "$(bump_branch_sha repo-federated)" == "$fed_before" ]]; then
+          && "$(bump_branch_sha repo-federated)" == "$fed_before" \
+          && "$(bump_branch_sha repo-fed-current)" == "$fedcur_before" \
+          && "$(bump_branch_sha repo-fed-stale)" == "$fedstale_before" ]]; then
         pass "stranded: still no second commit"
     else
         fail "stranded: still no second commit"
@@ -4648,6 +4921,93 @@ NOFORMAT
         "old generator: proposes nothing it could not justify"
 
     rm -rf "$root" "$work"
+}
+
+# ── Test 8h3b: a generator too old to scope, or to advance a source ───────
+#
+# The two federated flags arrive in the registry's own pull request, and this
+# script's generator comes from a checkout of that registry's DEFAULT BRANCH.
+# So there is a window — however short — in which the nightly meets a
+# generator that has neither. A hard probe would ground every run in that
+# window over the ordering of two green PRs, which is why both probes are soft
+# and why this test exists: the required behaviour is DEGRADE to exactly what
+# this script did before (report the federated half, act on nothing), say so
+# where a scheduled run's reader will actually see it, and leave the lock
+# alone.
+#
+# Run against a copy of the real fixture stub with the two flags STRIPPED,
+# rather than a hand-written toy, so the degraded run still answers the
+# primary and shape questions truthfully and the only difference is the two
+# missing flags. The strip is verified line by line and aborts if the stub
+# moved out from under it — a strip that silently did nothing would leave the
+# flags present and this whole test asserting the ordinary path.
+test_bump_generator_without_scoped_flags() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a generator with no federated flags) ==="
+
+    local gen="$TEST_DIR/generator-no-scoped-flags.py"
+    write_stub_generator "$gen"
+    python3 "$TEST_DIR/strip-scoped-flags.py" "$gen" || {
+        fail "no scoped flags: could not strip the stub's federated flags"
+        return
+    }
+    # Proof the strip did what its name says, before anything is asserted
+    # about the run: the flags must be gone from --help AND rejected if passed.
+    if python3 "$gen" --help 2>&1 | grep -q -- '--only'; then
+        fail "no scoped flags: --only is still advertised by the stripped stub"
+    else
+        pass "no scoped flags: the stripped stub no longer advertises --only"
+    fi
+    if python3 "$gen" --help 2>&1 | grep -q -- '--repin-source'; then
+        fail "no scoped flags: --repin-source is still advertised by the stripped stub"
+    else
+        pass "no scoped flags: the stripped stub no longer advertises --repin-source"
+    fi
+
+    local before_lock="$TEST_DIR/fedcur-before-degraded.lock"
+    bump_lock_at repo-fed-current main > "$before_lock"
+
+    BUMP_GENERATOR_FOR_RUN="$gen" run_bump "$TEST_DIR/bump-noscoped.txt" --dry-run
+    unset BUMP_GENERATOR_FOR_RUN
+    local log="$TEST_DIR/bump-noscoped.txt"
+
+    assert_contains "$log" "has no '--check-current --only <REGISTRY>'" \
+        "no scoped flags: the missing gate primitive is announced, by name"
+    assert_contains "$log" "has no '--repin --repin-source <REGISTRY>@'" \
+        "no scoped flags: the missing remedy is announced too"
+    assert_contains "$log" "::warning::" \
+        "no scoped flags: announced as an annotation, which survives to a scheduled run's summary"
+    # Exit 2 is what this script uses for "the run is refused before any repo
+    # is touched", which is what a HARD probe would have produced. Anything
+    # else means the run went ahead — this fleet fixture always ends 1 because
+    # repo-error cannot be assessed, and that failure is not this one.
+    if [[ $BUMP_EXIT -ne 2 ]]; then
+        pass "no scoped flags: degrades instead of grounding the run"
+    else
+        fail "no scoped flags: degrades instead of grounding the run (exit 2 — the run was refused)"
+    fi
+    assert_contains "$log" "=== bumporg/repo-stale ===" \
+        "no scoped flags: every consumer is still assessed"
+    # Degrading means behaving as this script did before: the moved federated
+    # half is reported and nothing is re-pinned for it. repo-fed-current's
+    # primary is content-current, so with no scoped question there is no
+    # reason left to propose anything for it at all.
+    # The `::warning::` prefix is asserted as part of the SAME needle, not on
+    # its own line: `log()` writes to stdout, and a green nightly's stdout is
+    # read by nobody. Split the two and the escalation from log() to an
+    # annotation passes on the probe's warnings alone, while this line quietly
+    # goes back to being invisible.
+    assert_contains "$log" "::warning::bumporg/repo-fed-current: a FEDERATED source has moved on since the ref this lock pins for it, and this generator cannot say which one or advance it" \
+        "no scoped flags: the moved federated half is reported as an annotation, not acted on"
+    assert_not_contains "$log" "federated sources whose pins this re-pin advances" \
+        "no scoped flags: no federated pin is advanced on a question this generator could not answer"
+    local after_lock="$TEST_DIR/fedcur-after-degraded.lock"
+    bump_lock_at repo-fed-current main > "$after_lock"
+    if cmp -s "$before_lock" "$after_lock"; then
+        pass "no scoped flags: the consumer's lock is byte-identical"
+    else
+        fail "no scoped flags: the consumer's lock is byte-identical"
+    fi
 }
 
 # ── Test 8h4: "cannot tell" is not "the digests are bad" ──────────────────
@@ -6023,6 +6383,7 @@ test_bump_bundle_vanished
 test_bump_format_gate_empty_skills
 test_bump_digest_format_gate
 test_bump_generator_without_check_format
+test_bump_generator_without_scoped_flags
 test_bump_format_check_unreadable
 # The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,
 # which is the one thing in this repo nothing else undoes. Dry run first, so

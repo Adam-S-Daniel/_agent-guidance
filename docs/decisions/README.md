@@ -22,6 +22,7 @@ a page.
 | [0006](0006-bump-prs-land-on-a-sweep.md) | The bumper's own pull requests land on a sweep, not on a reviewer |
 | [0007](0007-sha-pins-carry-no-version-comment.md) | A SHA pin carries no version comment |
 | [0008](0008-downloaded-binaries-are-pinned-and-digest-checked.md) | A downloaded binary is pinned by version and by digest, and the digest lives here |
+| [0009](0009-a-federated-pin-advances-on-a-scoped-question.md) | A federated pin advances, and only on a question scoped to that source |
 
 ## Format
 
