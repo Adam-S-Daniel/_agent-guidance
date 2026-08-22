@@ -5692,6 +5692,77 @@ with open(path, "w", encoding="utf-8") as handle:
     rm -rf "$root" "$work"
 }
 
+# ── Test 8h3f: what the PR body's 20-line cap does and does not keep ──────
+#
+# The bumper builds `$fed_check_out` by CONCATENATING one
+# `--check-current --only <registry>` report per drifted source and slices it
+# with `sed -n '/^FAILED:/,$p' | head -20` into a PR body. That slice is a NEW
+# consumer of the cap and inherits no guarantee from the unscoped one beside
+# it: a scoped stream carries no primary block at all, so "the primary's
+# headline and command survive" is not merely unhelpful there, it is about a
+# block that is not present.
+#
+# So the comment beside that slice states a bounded claim rather than an
+# absolute, and this test is what makes the claim checkable — it runs the exact
+# pipeline over a synthetic stream and measures the SLICED output, which is the
+# only thing a reader of the PR body ever sees.
+test_bump_pr_body_slice_arithmetic() {
+    echo ""
+    echo "=== Test: the PR body's 20-line cap over a concatenated scoped stream ==="
+
+    # The cap is read off the script rather than assumed, so this test cannot
+    # keep measuring a number the code has stopped using.
+    if grep -qF -- 'fed_check_out" | head -20' "$REPO_ROOT/scripts/bump-consumer-locks.sh"; then
+        pass "slice: the script really caps the federated slice at 20 lines"
+    else
+        fail "slice: the script really caps the federated slice at 20 lines"
+        return
+    fi
+
+    local stream="$TEST_DIR/fedslice.in" sliced="$TEST_DIR/fedslice.out" i
+    # Two scoped blocks, each 1 headline + 1 remediation + its differences.
+    # Seventeen differences in the first is the exact arithmetic the comment
+    # names: 1 + 1 + 17 = 19, so the second headline lands on line 20 and its
+    # command on line 21.
+    {
+        echo "FAILED: org/src-a's bundles have moved on since aaaaaaa, which skills.lock still pins for it."
+        echo "  python3 scripts/generate_skills_lock.py --repin --ref bbbbbbb --repin-source 'org/src-a@'"
+        for i in $(seq 1 17); do
+            echo "  - changed: 'src-a/skill-$i' differs from its content at aaaaaaa"
+        done
+        echo "FAILED: org/src-b's bundles have moved on since ccccccc, which skills.lock still pins for it."
+        echo "  python3 scripts/generate_skills_lock.py --repin --ref bbbbbbb --repin-source 'org/src-b@'"
+        echo "  - changed: 'src-b/skill-1' differs from its content at ccccccc"
+    } > "$stream"
+    sed -n '/^FAILED:/,$p' "$stream" | head -20 > "$sliced"
+
+    # WHAT HOLDS: the first block's headline is line 1 and its command line 2,
+    # whichever block is first, so the pair a reader needs most cannot be split.
+    if [[ "$(sed -n '1p' "$sliced")" == FAILED:\ org/src-a* ]]; then
+        pass "slice: the first block's headline is the first line kept"
+    else
+        fail "slice: the first block's headline is the first line kept — got '$(sed -n '1p' "$sliced")'"
+    fi
+    if grep -qF -- "--repin-source 'org/src-a@'" <<< "$(sed -n '2p' "$sliced")"; then
+        pass "slice: and its command is the line under it"
+    else
+        fail "slice: and its command is the line under it — got '$(sed -n '2p' "$sliced")'"
+    fi
+
+    # WHAT DOES NOT HOLD, and is stated rather than promised away: a LATER
+    # block can keep its headline and lose the command beneath it.
+    assert_contains "$sliced" "org/src-b's bundles have moved" \
+        "slice: a later block's headline can be the last line kept"
+    assert_not_contains "$sliced" "--repin-source 'org/src-b@'" \
+        "slice: while its command falls outside the cap"
+
+    # And the comment beside the slice must not claim otherwise. This is the
+    # absolute that was restated on intuition once already, in the generator.
+    assert_not_contains "$REPO_ROOT/scripts/bump-consumer-locks.sh" \
+        "can never separate a headline from the command" \
+        "slice: no comment promises a guarantee this slice does not have"
+}
+
 # ── Test 8h3e: a scoped question that cannot be answered at all ───────────
 #
 # The branch between "this source drifted" and "acting on a question nobody
@@ -7503,6 +7574,7 @@ test_bump_generator_without_check_format
 test_bump_generator_without_scoped_flags
 test_bump_generator_with_one_scoped_flag
 test_bump_scoped_question_unanswerable
+test_bump_pr_body_slice_arithmetic
 test_bump_stub_generator_parity
 test_bump_twice_federated_lock
 test_bump_format_and_federated
