@@ -96,8 +96,8 @@ scoped_flag_pair() {
 # for the two arms of the degraded per-repo annotation's remedy. Derived for
 # the direction that matters: the self-federating lane FORBIDS the actionable
 # arm, and a re-typed negative needle goes green the moment the sentence is
-# reworded — which is a reword plus a gate slipping, the two-part edit this
-# branch has met three times.
+# reworded — which, with a gate slipping at the same time, is the two-part
+# edit this branch keeps meeting.
 degraded_fed_remedy_text() {
     bash -c 'source "$1"; degraded_fed_remedy "$2" "$3"' _ \
         "$REPO_ROOT/scripts/lib/bump-pr-claims.sh" "$1" "$2"
@@ -8122,6 +8122,42 @@ test_bump_script_self_consistency() {
     # one line.
     assert_prose_omits "$script" "It is a one-paragraph edit over there — make it when that repo is next open" \
         "self-consistency: and carries no outstanding cross-repo request at all"
+
+    # ── EVERY PER-REPO SENTENCE ABOUT THE SCOPED SHORTFALL NAMES THE PAIR,
+    #    which is what makes the library's claim to hold the whole set of them
+    #    checkable rather than a comment a reader has to trust.
+    #
+    #    THE SPLIT IS THE POINT. Above the per-repo loop there are exactly two
+    #    sentences that may name ONE scoped flag: the `--only` probe's warning
+    #    and the `--repin-source` probe's. Each is emitted by the probe that
+    #    tested that one flag, so each names what it measured. Below the loop
+    #    header nothing has measured either flag on its own —
+    #    FED_ADVANCE_AVAILABLE is the conjunction and it is all a per-repo
+    #    sentence has — so a per-repo sentence naming one conjunct is false on
+    #    the generator carrying the other. That was the shipped defect: two
+    #    annotations in this half said "this generator cannot say which one" /
+    #    "cannot say whether a FEDERATED source has moved with it".
+    #
+    #    Nothing else covers this half. The cross product governs the PR body
+    #    and the self-named log line; these `::warning::`s are neither, and a
+    #    sixth sentence added here tomorrow would be guarded by nothing.
+    #    SENTENCES ONLY, which is why this reads the lines that PRINT rather
+    #    than every line naming a flag. Below the loop header the flags are
+    #    also passed to the generator and interpolated into
+    #    `repin_source_flags_shown`; neither is a sentence, and the second is
+    #    a value the claims library governs.
+    local below scoped_offenders
+    below=$(awk '/^for repo_name in /{f=1} f' "$script")
+    scoped_offenders=$(printf '%s\n' "$below" \
+        | grep -nE -- '::warning::|^[[:space:]]*(log|fail) "' \
+        | grep -E -- '--check-current --only|--repin-source|scoped question' \
+        | grep -vF -- '${SCOPED_FLAG_PAIR}' \
+        | grep -vE '^[[:space:]]*[0-9]+:[[:space:]]*#' || true)
+    if [[ -z "$scoped_offenders" ]]; then
+        pass "self-consistency: every per-repo sentence about the scoped shortfall names the PAIR, not one flag"
+    else
+        fail "self-consistency: every per-repo sentence about the scoped shortfall names the PAIR, not one flag — $(printf '%s' "$scoped_offenders" | head -3 | tr '\n' ' ')"
+    fi
 }
 
 # ── ADR 0009's cited measurement, against the report it describes ─────────

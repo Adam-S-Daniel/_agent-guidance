@@ -66,13 +66,15 @@
 # WHY A CONSTANT AND NOT A PHRASE PER SENTENCE. `FED_ADVANCE_AVAILABLE` (and
 # `CLAIM_SCOPED_AVAILABLE`, which is assigned straight from it) goes false when
 # EITHER probe fails, so what a degraded run knows is that the generator did
-# not carry BOTH. Four sentences — two PR-body claims, the self-named log line
-# and the bumper's own degraded annotation — were written as if it meant the
-# `--check-current --only` probe alone. On a generator that HAS `--only` and
-# lacks only `--repin-source` (the shape the suite's own strip-scoped-flags.py
-# builds in its `repin-source` mode) each of those four says something the run
-# did not establish, in a real PR body, contradicting the same run's own
-# annotation, which named the other flag.
+# not carry BOTH. Every sentence that reports the shortfall was written as if
+# it meant the `--check-current --only` probe alone — the two PR-body claims
+# below, the self-named log line, and BOTH of the bumper's degraded per-repo
+# annotations, which is the whole set that interpolates this variable now. On
+# a generator that HAS `--only` and lacks only `--repin-source` (the shape the
+# suite's own strip-scoped-flags.py builds in its `repin-source` mode) each of
+# them says something the run did not establish, in a real PR body,
+# contradicting the same run's own probe annotation, which named the other
+# flag.
 #
 # Splitting the boolean in two would be the other repair and it is the wrong
 # one: the probe block's "BOTH, OR NEITHER" note is a deliberate design — a
