@@ -6394,9 +6394,28 @@ for sentence in re.split(r"(?<=[.!?:])\s+", prose):
                     r_advance="$r_advance $cell"
                 fi
 
-                # A pointer at the body's own list has something in that list.
-                if grep -qE -- 'listed for it below|pins listed below|pin below was checked' "$out/flat" \
-                   && ! grep -qE '^- `' "$out/body"; then
+                # A pointer at the body's own list has something in that
+                # list. THE POINTER IS RECOGNISED BY ITS SHAPE, not by a list
+                # of the phrasings that existed when this was written: the
+                # three alternatives here were a hand copy of the body's
+                # wordings, and when two more pointers were added ("Each
+                # source listed below…", "Each one listed below…") neither
+                # matched any of them, so two of the four pointers in the
+                # artifact sat outside the guard that exists for them.
+                #
+                # The one form that must NOT count is the NEGATIVE pointer —
+                # "that entry is not listed below", which a body prints
+                # precisely when there is nothing below — so it is removed
+                # before the positive one is looked for. That needle is
+                # hand-typed and it is the safe direction to be wrong in: if
+                # the negation is reworded this guard goes RED over a body
+                # that is fine, rather than green over one that is not.
+                if python3 -c '
+import re, sys
+flat = open(sys.argv[1], encoding="utf-8").read()
+flat = re.sub(r"\b(is|are) not listed below", "", flat)
+sys.exit(0 if re.search(r"listed below|below was checked", flat) else 1)
+' "$out/flat" && ! grep -qE '^- `' "$out/body"; then
                     r_below="$r_below $cell"
                 fi
 
@@ -6444,18 +6463,43 @@ for sentence in re.split(r"(?<=[.!?:])\s+", prose):
                     r_whole="$r_whole $cell(addition incomplete)"
                 fi
 
-                # A HEADER QUANTIFIER IS NOT DENIED FURTHER DOWN ITS OWN
-                # BODY. Same shape as "and nothing else" beside "moved too",
-                # one axis over: the federated header used to say EVERY source
-                # was put its own scoped question, and two paragraphs later
-                # the same body said one was not — the self-named entry, which
-                # gets no line in that list and no question. Neither arm read
-                # CLAIM_SELF_NAMED, and none of the prohibitions here could
-                # see it. Both halves are read off the artifact, so this is
-                # about the body's own coherence rather than a second copy of
-                # the condition table.
-                if grep -qE -- '(Each|Every)( [a-z]+)? was put its' "$out/flat" \
-                   && grep -qE -- 'question was not put|question was put about any source' "$out/flat"; then
+                # A QUANTIFIED CLAIM ABOUT SCOPED QUESTIONS NAMES THE LIST IT
+                # RANGES OVER. Same shape as "and nothing else" beside "moved
+                # too", one axis over: the federated header used to say EVERY
+                # source was put its own scoped question, and two paragraphs
+                # later the same body said one was not — the self-named entry,
+                # which gets no line in that list and no question.
+                #
+                # THE RESTRICTION IS THE INVARIANT, which is why this no longer
+                # pairs a quantifier against a denial. Matching the denial too
+                # made the guard an approximation of one sentence: it read
+                # `(Each|Every)( [a-z]+)? was put its`, whose single optional
+                # word cannot span "Each federated source was put its OWN" —
+                # measured, that restores the unrestricted claim over a body
+                # that still says one source's question "was not put", at
+                # 13 passed / 0 failed here and 681 passed / 0 failed on the
+                # full gate. It also saw none of the three OTHER unrestricted
+                # quantifiers in the same artifact ("was asked once per source",
+                # "One scoped question per source"), which are denied by that
+                # same paragraph in exactly the same way.
+                #
+                # So the rule is the property itself: a sentence that puts a
+                # universal quantifier beside the scoped question has to say
+                # WHICH sources — and the only list a reader can check is the
+                # one printed below it, which r_below above proves is there.
+                if ! python3 -c '
+import re, sys
+prose = open(sys.argv[1], encoding="utf-8").read()
+for sentence in re.split(r"(?<=[.!?:])\s+", prose):
+    flat = " ".join(sentence.split())
+    if not re.search(r"--check-current --only|scoped question", flat):
+        continue
+    if not re.search(r"\b(each|every)\b|\b(once|one)\b[^.]{0,40}\bper[- ]source\b",
+                     flat, re.I):
+        continue
+    if "listed below" not in flat:
+        sys.exit(1)
+' "$out/prose"; then
                     r_each="$r_each $cell"
                 fi
 
@@ -6515,8 +6559,8 @@ if whole.strip():
         || fail "claims: 'and nothing else' never sits beside a second thing moving —$r_only"
     [[ -z "$r_whole" ]] && pass "claims: no body presents a partial command as the whole one" \
         || fail "claims: no body presents a partial command as the whole one —$r_whole"
-    [[ -z "$r_each" ]] && pass "claims: a body that says EVERY source was asked has not left one out" \
-        || fail "claims: a body that says EVERY source was asked has not left one out —$r_each"
+    [[ -z "$r_each" ]] && pass "claims: a quantified claim about scoped questions names the list it ranges over" \
+        || fail "claims: a quantified claim about scoped questions names the list it ranges over —$r_each"
     [[ -z "$r_label" ]] && pass "claims: a source is labelled with the verdict this run actually got" \
         || fail "claims: a source is labelled with the verdict this run actually got —$r_label"
     [[ -z "$r_closure" ]] && pass "claims: every artifact is exactly its claims plus whitespace" \

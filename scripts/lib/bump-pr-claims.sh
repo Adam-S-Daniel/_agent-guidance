@@ -547,11 +547,19 @@ $(failed_slice <<< "$check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "
 # — true of a content or shape re-pin that carries a source advance, and
 # flatly denied by the federated-only header higher up the same body, which
 # says a source moved "and nothing else".
+#
+# AND BOTH QUANTIFIERS ARE RESTRICTED TO THE LIST, for the reason the two
+# per-source disclosure headers below already are: a `sources` entry naming
+# this lock's own primary registry is never scoped a question, so "once per
+# source" over the lock's sources is denied further down the same body by the
+# block that says one was not asked. That block and these paragraphs render
+# into one artifact on the self-named-plus shape, which is a lock this fleet
+# can hold today.
 claim_text_why_fed_evidence_also() {
     printf '%s' "**A FEDERATED source moved too, and its pin advances with this PR.** Its bundles
 are installed by this lock and only \`--repin-source\` advances its pin.
-\`--check-current --only <registry>\` was asked once per source, and these are the
-ones that answered:
+\`--check-current --only <registry>\` was asked once per source listed below, and
+these are the ones that answered:
 
 \`\`\`
 $(failed_slice <<< "$fed_check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
@@ -559,14 +567,14 @@ $(failed_slice <<< "$fed_check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" 
 }
 claim_text_why_fed_evidence_only() {
     printf '%s' "**The scoped question that says so.** \`--check-current --only <registry>\` was
-asked once per source, and these are the ones that answered:
+asked once per source listed below, and these are the ones that answered:
 
 \`\`\`
 $(failed_slice <<< "$fed_check_out" | sed -e "s#$primary_lock#$LOCK_REL_PATH#g" -e "s#$lock_file#$LOCK_REL_PATH#g")
 \`\`\`"
 }
 claim_text_why_fed_one_question() {
-    printf '%s' "**One scoped question per source, never one combined verdict.** A single
+    printf '%s' "**One scoped question per source listed below, never one combined verdict.** A single
 \`--check-current\` over the whole lock reports one \`FAILED:\` anchored on the
 PRIMARY's ref, so a drift in the primary alone reads as federated drift — and
 acting on that would advance every federated pin in the fleet on any night the
