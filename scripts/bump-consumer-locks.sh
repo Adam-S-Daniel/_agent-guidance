@@ -1236,11 +1236,11 @@ for repo_name in "${REPOS[@]}"; do
                     # to a checkout upgrade while the same run's PR body said
                     # "No federated source in this lock could be asked about."
                     # Two artifacts of one run, disagreeing.
-                    if [[ $fed_listed_sources -gt 0 ]]; then
-                        fed_degraded_remedy="Update the registry checkout to ask one scoped question per source."
-                    else
-                        fed_degraded_remedy="No scoped question is available for this lock even with that checkout updated: every 'sources' entry here names $primary_registry, its own primary registry, which has two answers under one name. Give the two halves two names if either is meant to move on its own."
-                    fi
+                    # Both arms live in lib/bump-pr-claims.sh beside the
+                    # self-named log line, for the reason that one does: a
+                    # guard on either has to read it from there rather than
+                    # re-type it.
+                    fed_degraded_remedy="$(degraded_fed_remedy "$fed_listed_sources" "$primary_registry")"
                     echo "::warning::$repo_name: the primary has moved, and this run did not ask whether a FEDERATED source has moved with it — this generator has no ${SCOPED_FLAG_PAIR} pair, and a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. $fed_degraded_remedy" >&2
                 fi
             else

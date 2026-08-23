@@ -740,6 +740,27 @@ self_named_log_line() {   # <scoped-available true|false> <lock path> <registry>
     fi
 }
 
+# THE DEGRADED PER-REPO ANNOTATION'S REMEDY, here for the reason
+# self_named_log_line above is: it is a sentence a run PRINTS about the scoped
+# flags, and a guard on it has to be able to read it from the same place the
+# body's claims are read from. Left in the script, the two arms could only be
+# guarded by re-typing them in the test — and a re-typed NEGATIVE needle is
+# the shape this whole branch exists to remove: reword the sentence and the
+# assertion that forbids it goes quietly green.
+#
+# TWO ARMS, because "update the checkout" is advice whose result is ZERO
+# scoped questions on a lock every one of whose `sources` entries names its
+# own primary registry: this script never scopes a question to that name and
+# `--repin-source` refuses it, so the limitation is a permanent property of
+# the LOCK, not of the generator's age.
+degraded_fed_remedy() {   # <count of sources a question could be put about> <primary registry>
+    if [[ "$1" -gt 0 ]]; then
+        printf '%s' "Update the registry checkout to ask one scoped question per source."
+    else
+        printf '%s' "No scoped question is available for this lock even with that checkout updated: every 'sources' entry here names $2, its own primary registry, which has two answers under one name. Give the two halves two names if either is meant to move on its own."
+    fi
+}
+
 # ── The composer ──────────────────────────────────────────────────────────
 #
 # The ONLY place a bump artifact is built. It reads the run's state, sets

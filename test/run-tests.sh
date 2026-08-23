@@ -92,6 +92,16 @@ assert_prose_omits() {
 scoped_flag_pair() {
     bash -c 'source "$1"; printf "%s" "$SCOPED_FLAG_PAIR"' _ "$REPO_ROOT/scripts/lib/bump-pr-claims.sh"
 }
+# degraded_fed_remedy_text <listed-source-count> <primary registry> — the same,
+# for the two arms of the degraded per-repo annotation's remedy. Derived for
+# the direction that matters: the self-federating lane FORBIDS the actionable
+# arm, and a re-typed negative needle goes green the moment the sentence is
+# reworded — which is a reword plus a gate slipping, the two-part edit this
+# branch has met three times.
+degraded_fed_remedy_text() {
+    bash -c 'source "$1"; degraded_fed_remedy "$2" "$3"' _ \
+        "$REPO_ROOT/scripts/lib/bump-pr-claims.sh" "$1" "$2"
+}
 # assert_scoped_probe_warnings <log> <count> <label> — how many of the two SOFT
 # federated probes annotated this run. There are exactly two of them in
 # bump-consumer-locks.sh, a `--only` probe and a `--repin-source` one, and each
@@ -5979,9 +5989,9 @@ with open(path, "w", encoding="utf-8") as handle:
     #    OTHER arm — a lock that does have an askable source, where the
     #    remedy is the right advice — is asserted in test_bump_degraded_-
     #    federated_body, so neither arm can be deleted unnoticed.
-    assert_prose_omits "$log" "Update the registry checkout to ask one scoped question per source" \
+    assert_prose_omits "$log" "$(degraded_fed_remedy_text 1 bumporg/agentskills)" \
         "degraded self-federating: no remedy is offered that would yield no question"
-    assert_prose_contains "$log" "No scoped question is available for this lock even with that checkout updated" \
+    assert_prose_contains "$log" "$(degraded_fed_remedy_text 0 bumporg/agentskills)" \
         "degraded self-federating: the annotation says why, instead of sending the reader to a no-op"
 
     # And the lock: the primary advances, the self-named entry does not.
@@ -7141,7 +7151,7 @@ test_bump_degraded_federated_body() {
     # not its own primary registry, so an updated checkout really would put
     # one scoped question about it — which is what makes the other arm, in
     # test_bump_degraded_self_federating_lock, a branch rather than a deletion.
-    assert_prose_contains "$log" "Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." \
+    assert_prose_contains "$log" "Every federated pin here is carried through unverified. $(degraded_fed_remedy_text 1 bumporg/cms-platform)" \
         "degraded body: and the remedy is offered where it would actually yield a question"
     # And the pin really is kept — the body would be true of a run that
     # advanced it and said nothing, so the lock is read as well.
