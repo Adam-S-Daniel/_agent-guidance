@@ -427,7 +427,7 @@ $(failed_slice <<< "$format_out" | sed "s#$lock_file#$LOCK_REL_PATH#g")
 # addition: what this run put on the end of that line, which is checkable
 # against the diff, rather than a whole invocation that is not.
 #
-# BOTH additions, because there are two and the first cut named one. The
+# BOTH flags, because there are two and the first cut named one. The
 # invocation adds a `--repin-source` per DRIFTED source and a `--source-repo`
 # per source the lock NAMES; the second is how the generator is pointed at a
 # clone that is not the sibling `../<repo-name>` it would otherwise look for,
@@ -436,11 +436,23 @@ $(failed_slice <<< "$format_out" | sed "s#$lock_file#$LOCK_REL_PATH#g")
 # stop at "no checkout at ..." before it writes. Incomplete rather than false, which
 # is a weaker defect than calling half a command the whole of it and costs
 # the reader the same afternoon.
+#
+# "APPENDED" IS SAID OF ONE AND NOT THE OTHER, and the asymmetry is not
+# stylistic. The quoted line never carries a `--repin-source` — agentskills'
+# `_addressing` builds no such flag — so naming that one as an addition holds
+# on every run. It CAN carry a `--source-repo`, but only for a source whose
+# default sibling clone is missing: read on ag58-generator (e118b8e),
+# `_addressing` skips the flag whenever `source_checkout(repo, source,
+# {}).is_dir()`. The fleet workflow checks both registries out as siblings
+# under `registries/`, so there the quoted line has none and this run really
+# does add it — but that is a property of the machine's layout and not of the
+# claim. Saying the run PASSED it is true under either layout, which is the
+# only kind of sentence this file is allowed to print.
 claim_text_repro_shape_half() {
     printf '%s' "**That remediation line is the SHAPE half of the command this PR ran**,
 \`--ref\` included. This run appended \`${repin_source_flags_shown}\` to it, because a
-federated source moved too, and \`${repin_source_repo_shown}\` to point the generator
-at a clone of each source this lock names; the quoted line alone
+federated source moved too, and it passed \`${repin_source_repo_shown}\` to point the
+generator at a clone of each source this lock names; the quoted line alone
 reproduces the relabelling and not those pin advances."
 }
 claim_text_repro_whole() {
