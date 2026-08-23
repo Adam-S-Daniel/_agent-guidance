@@ -84,6 +84,18 @@ assert_prose_omits() {
     needle=$(printf '%s' "$2" | tr -s '[:space:]' ' ')
     if [[ "$hay" == *"$needle"* ]]; then fail "$3 — did not expect '$2' in $1, unwrapped"; else pass "$3"; fi
 }
+# assert_scoped_probe_warnings <log> <count> <label> — how many of the two SOFT
+# federated probes annotated this run. There are exactly two of them in
+# bump-consumer-locks.sh, a `--only` probe and a `--repin-source` one, and each
+# emits one `::warning::` when the generator does not refuse its flag the way
+# the real one does. A stand-in carrying NEITHER flag therefore gets two, not
+# one — which is what makes this a count rather than a presence check. The
+# stub inventory states that number in prose; this is what stops it drifting.
+assert_scoped_probe_warnings() {
+    local n
+    n=$(grep -cE "::warning::.*has no '--(check-current --only|repin --repin-source)" "$1" 2>/dev/null || true)
+    if [[ "$n" == "$2" ]]; then pass "$3"; else fail "$3 — expected $2, got ${n:-0} in $1"; fi
+}
 assert_row_contains() {
     if grep -F -- "$2" "$1" | grep -qF -- "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
 }
@@ -4631,6 +4643,8 @@ NOREPIN
     else
         fail "no re-pin flag: the soft probes below it never run, so nothing is annotated — got $(grep -c '::warning::' "$TEST_DIR/bump-norepin.txt" || true)"
     fi
+    assert_scoped_probe_warnings "$TEST_DIR/bump-norepin.txt" 0 \
+        "no re-pin flag: neither soft federated probe annotated anything"
 }
 
 # ── Test 8f2: one owner's listing failure is that owner's failure ─────────
@@ -5195,6 +5209,8 @@ NOFORMAT
 
     assert_contains "$TEST_DIR/bump-noformat.txt" "has no --check-format" \
         "old generator: the missing flag is announced, by name"
+    assert_scoped_probe_warnings "$TEST_DIR/bump-noformat.txt" 2 \
+        "old generator: both soft federated probes degraded, one warning each"
     if [[ $BUMP_EXIT -eq 0 ]]; then
         pass "old generator: degrades instead of failing the run"
     else
@@ -5549,13 +5565,16 @@ with open(path, "w", encoding="utf-8") as handle:
 # it never mentioned already existed. The assertion in this test counts them.
 #
 # The four besides `write_stub_generator` carry neither `--only` nor
-# `--repin-source`. THREE of them degrade both federated probes in their lanes
-# and emit a `::warning::` apiece; generator-no-repin.py emits none at all,
-# because the run exits 2 at the one HARD probe before either soft probe is
-# reached — its own bullet above says so, and test_bump_generator_without_repin
-# counts the warnings to keep this sentence honest. Those three lanes pass
-# today only because both probes are SOFT; harden either into an exit 2 and
-# they go red without having changed.
+# `--repin-source`. There are TWO soft federated probes, so three of these four
+# lanes are annotated TWICE — one `::warning::` per probe, not one per lane.
+# generator-no-repin.py is annotated not at all, because the run exits 2 at the
+# one HARD probe before either soft probe is reached; its own bullet above says
+# so. Every one of those four numbers is COUNTED, by assert_scoped_probe_warnings
+# in each lane, because the previous wording of this sentence said "a
+# `::warning::` apiece" over a set that included the silent one and nothing
+# could tell it was wrong twice over. Those three lanes pass today only because
+# both probes are SOFT; harden either into an exit 2 and they go red without
+# having changed.
 test_bump_stub_generator_parity() {
     echo ""
     echo "=== Test: the stand-in generator's refusals match the real one's ==="
@@ -6763,6 +6782,8 @@ ERRLINE
 
     assert_contains "$log" "could not decide whether skills.lock is current — gen.py: error: unrecognized arguments" \
         "error line: the reported line is the one that says what went wrong"
+    assert_scoped_probe_warnings "$log" 2 \
+        "error line: both soft federated probes degraded, one warning each"
     assert_not_contains "$log" "current — usage:" \
         "error line: the usage banner is not what the failure quotes"
     assert_contains "$log" "1 failed" \
@@ -7059,6 +7080,8 @@ FORMATERR
     assert_contains "$TEST_DIR/bump-formaterr.txt" \
         "could not decide whether skills.lock's digests are well-formed" \
         "unanswerable shape: reported as a failure to decide, not as a verdict"
+    assert_scoped_probe_warnings "$TEST_DIR/bump-formaterr.txt" 2 \
+        "format unreadable: both soft federated probes degraded, one warning each"
     assert_contains "$TEST_DIR/bump-formaterr.txt" "1 failed" \
         "unanswerable shape: counted, so the scheduled run goes red"
     assert_contains "$TEST_DIR/bump-formaterr.txt" "0 proposed" \
