@@ -1134,9 +1134,21 @@ for repo_name in "${REPOS[@]}"; do
     # what `--repin-source` would do with it, since it refuses the primary's
     # name outright. No lock in this fleet has that shape today; nothing else
     # rejects it either.
+    #
+    # COUNTED AS WELL AS FLAGGED, because a remedy below depends on the
+    # difference. `fed_listed_sources` is the sources a scoped question COULD
+    # be put about — everything the lock names except its own primary
+    # registry — and it is the same distinction `CLAIM_LISTED_SOURCES` draws
+    # in the claims library, derived here because this loop runs long before
+    # `claims_state` does.
     fed_self_named=false
+    fed_listed_sources=0
     for reg in ${source_registries[@]+"${source_registries[@]}"}; do
-        [[ "$reg" == "$primary_registry" ]] && fed_self_named=true
+        if [[ "$reg" == "$primary_registry" ]]; then
+            fed_self_named=true
+        else
+            fed_listed_sources=$((fed_listed_sources + 1))
+        fi
     done
     # THE REASON, not just the fact, and the two are not the same on every
     # run. With the scoped flags present the question is declined BECAUSE the
@@ -1210,7 +1222,26 @@ for repo_name in "${REPOS[@]}"; do
                 if [[ $current_exit -eq 0 ]]; then
                     echo "::warning::$repo_name: a FEDERATED source has moved on since the ref this lock pins for it, and this run did not ask which one or advance it — this generator has no ${SCOPED_FLAG_PAIR} pair, and a scoped question this script cannot act on is one it does not put. Nothing is re-pinned here." >&2
                 else
-                    echo "::warning::$repo_name: the primary has moved, and this run did not ask whether a FEDERATED source has moved with it — this generator has no ${SCOPED_FLAG_PAIR} pair, and a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." >&2
+                    # THE REMEDY IS GATED ON THERE BEING ONE, which is the same
+                    # defect 89c6231 closed on the log() line eight lines above
+                    # and left standing here. "Update the registry checkout to
+                    # ask one scoped question per source" is an instruction
+                    # whose result is ZERO scoped questions on a lock whose only
+                    # `sources` entry names its own primary registry: this
+                    # script never scopes a question to that name and
+                    # `--repin-source` refuses it, so the limitation is a
+                    # permanent property of the LOCK and not of the generator's
+                    # age. Measured on a real run of the degraded
+                    # self-federating fixture: this annotation sent the reader
+                    # to a checkout upgrade while the same run's PR body said
+                    # "No federated source in this lock could be asked about."
+                    # Two artifacts of one run, disagreeing.
+                    if [[ $fed_listed_sources -gt 0 ]]; then
+                        fed_degraded_remedy="Update the registry checkout to ask one scoped question per source."
+                    else
+                        fed_degraded_remedy="No scoped question is available for this lock even with that checkout updated: every 'sources' entry here names $primary_registry, its own primary registry, which has two answers under one name. Give the two halves two names if either is meant to move on its own."
+                    fi
+                    echo "::warning::$repo_name: the primary has moved, and this run did not ask whether a FEDERATED source has moved with it — this generator has no ${SCOPED_FLAG_PAIR} pair, and a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. $fed_degraded_remedy" >&2
                 fi
             else
                 fail "$repo_name: could not read this lock's federated half — $(generator_error_line "$fed_out")"

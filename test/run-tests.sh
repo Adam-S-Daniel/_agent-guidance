@@ -5964,6 +5964,26 @@ with open(path, "w", encoding="utf-8") as handle:
     assert_prose_omits "$body" "A \`--check-current --only bumporg/agentskills\` has two answers" \
         "degraded self-federating: and neither artifact describes a refusal nothing here could make"
 
+    # ── AND THE PER-REPO ANNOTATION OF THE SAME RUN, which is the third
+    #    artifact and was the one nothing here read. It told the reader to
+    #    "Update the registry checkout to ask one scoped question per source"
+    #    over a lock whose only `sources` entry names its own primary
+    #    registry — a remedy whose result is ZERO scoped questions, because
+    #    this script never scopes a question to that name and
+    #    `--repin-source` refuses it. The same run's body says so outright:
+    #    "No federated source in this lock could be asked about."
+    #
+    #    Both halves asserted, because the fix is a branch and only one arm
+    #    of it is exercised here: the unactionable remedy is gone, and what
+    #    replaced it says why no checkout upgrade would add a question. The
+    #    OTHER arm — a lock that does have an askable source, where the
+    #    remedy is the right advice — is asserted in test_bump_degraded_-
+    #    federated_body, so neither arm can be deleted unnoticed.
+    assert_prose_omits "$log" "Update the registry checkout to ask one scoped question per source" \
+        "degraded self-federating: no remedy is offered that would yield no question"
+    assert_prose_contains "$log" "No scoped question is available for this lock even with that checkout updated" \
+        "degraded self-federating: the annotation says why, instead of sending the reader to a no-op"
+
     # And the lock: the primary advances, the self-named entry does not.
     local after="$TEST_DIR/selffed-degraded-after.lock"
     git -C "$root/bumporg_repo-selffed-degraded" show \
@@ -7117,6 +7137,12 @@ test_bump_degraded_federated_body() {
         "degraded body: a drifted primary does not silence the federated annotation"
     assert_not_contains "$log" "::warning::bumporg/repo-degraded-fed: a FEDERATED source has moved on since the ref" \
         "degraded body: and it does not claim to know which half moved"
+    # THE ARM WHERE THE REMEDY IS ACTIONABLE. This lock names a source that is
+    # not its own primary registry, so an updated checkout really would put
+    # one scoped question about it — which is what makes the other arm, in
+    # test_bump_degraded_self_federating_lock, a branch rather than a deletion.
+    assert_prose_contains "$log" "Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." \
+        "degraded body: and the remedy is offered where it would actually yield a question"
     # And the pin really is kept — the body would be true of a run that
     # advanced it and said nothing, so the lock is read as well.
     local after="$TEST_DIR/degradedfed-after.lock"
