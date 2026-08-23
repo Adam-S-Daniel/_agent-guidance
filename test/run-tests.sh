@@ -84,6 +84,14 @@ assert_prose_omits() {
     needle=$(printf '%s' "$2" | tr -s '[:space:]' ' ')
     if [[ "$hay" == *"$needle"* ]]; then fail "$3 — did not expect '$2' in $1, unwrapped"; else pass "$3"; fi
 }
+# scoped_flag_pair — the library's own SCOPED_FLAG_PAIR, read out of the file
+# rather than re-typed here. Every needle that guards a sentence about the two
+# scoped flags is built from this, so a reworded pair moves the claim and its
+# guard together instead of leaving a guard matching a string nothing prints —
+# which is the failure this branch has been closing one instance at a time.
+scoped_flag_pair() {
+    bash -c 'source "$1"; printf "%s" "$SCOPED_FLAG_PAIR"' _ "$REPO_ROOT/scripts/lib/bump-pr-claims.sh"
+}
 # assert_scoped_probe_warnings <log> <count> <label> — how many of the two SOFT
 # federated probes annotated this run. There are exactly two of them in
 # bump-consumer-locks.sh, a `--only` probe and a `--repin-source` one, and each
@@ -5302,7 +5310,7 @@ test_bump_generator_without_scoped_flags() {
     # read by nobody. Split the two and the escalation from log() to an
     # annotation passes on the probe's warnings alone, while this line quietly
     # goes back to being invisible.
-    assert_contains "$log" "::warning::bumporg/repo-fed-current: a FEDERATED source has moved on since the ref this lock pins for it, and this generator cannot say which one or advance it" \
+    assert_prose_contains "$log" "::warning::bumporg/repo-fed-current: a FEDERATED source has moved on since the ref this lock pins for it, and this run did not ask which one or advance it — this generator has no $(scoped_flag_pair) pair" \
         "no scoped flags: the moved federated half is reported as an annotation, not acted on"
     assert_not_contains "$log" "federated sources whose pins this re-pin advances" \
         "no scoped flags: no federated pin is advanced on a question this generator could not answer"
@@ -5946,7 +5954,7 @@ with open(path, "w", encoding="utf-8") as handle:
         "degraded self-federating: the log still names the entry nothing asked about"
     assert_prose_omits "$log" "a scoped question under that one name has two answers" \
         "degraded self-federating: and does not give a reason this generator could not have had"
-    assert_prose_contains "$log" "this run's generator cannot put a per-source question about any source" \
+    assert_prose_contains "$log" "this run's generator has no $(scoped_flag_pair) pair" \
         "degraded self-federating: it gives the reason this run actually has"
 
     # THE PR BODY OF THE SAME RUN, which must say the same thing. This is the
@@ -6242,6 +6250,9 @@ RENDER
 
     local reason fed scoped cell out expect
     local r_reach="" r_scoped="" r_held="" r_advance="" r_below="" r_only="" r_whole="" r_label="" r_closure="" r_each=""
+    # Read once, out of the library, for the degraded-sentence check below.
+    local pair_needle
+    pair_needle="$(scoped_flag_pair)"
     local rendered=0 refused=0
     : > "$dir/all-claims.txt"
 
@@ -6302,27 +6313,66 @@ RENDER
                     cat "$out/log" >> "$out/prose"
                 fi
 
-                # A run whose generator had neither scoped flag cannot name
-                # one, or describe a refusal only a generator that HAS one
-                # could have made. This is the sentence-level form of the
-                # whole defect class, and it needs no condition table: the
-                # flags did not exist, so any artifact describing what they
-                # did or refused is describing something that did not happen.
-                # "scoped question" is in the pattern because the sentence
-                # that reached production named neither flag: it said "a
-                # scoped question under that one name has two answers, so it
-                # is not put" on a run that could not have put one under any
-                # name.
-                # Paragraph by paragraph, because ONE paragraph legitimately
-                # names both flags: the one whose entire job is to say this
-                # generator has neither. Naming a flag to report its absence
-                # is not claiming it was used, and a blanket ban would have to
-                # delete the disclosure that makes a degraded body honest.
-                if [[ "$scoped" != "true" ]] && ! python3 -c '
-import re, sys
+                # A degraded run may name a scoped flag ONLY to report that
+                # the generator did not carry it — never to describe what one
+                # did or refused, because the flags were not there to do or
+                # refuse anything. That much this check always said. Two
+                # things it did not, both measured:
+                #
+                #   * The exemption was the two-word substring "has no"
+                #     ANYWHERE IN THE PARAGRAPH, and the one paragraph that
+                #     legitimately carries those words is the disclosure — so
+                #     the single place the shipped defect lived was the place
+                #     the prohibition could not reach. Rewriting
+                #     self_named_degraded to say "`--repin-source` refuses it
+                #     outright. This generator has no scoped flag." put the
+                #     production defect back and the full gate stayed at
+                #     681 passed / 0 failed.
+                #   * "has no <one flag>" is not a thing a degraded run
+                #     established. FED_ADVANCE_AVAILABLE goes false when
+                #     EITHER probe fails, so the only absence in evidence is
+                #     the absence of the PAIR; a body naming one conjunct is
+                #     false on the generator that carries the other.
+                #
+                #   * A sentence can be false about the flags without naming
+                #     one. The degraded log line said "this run's generator
+                #     cannot put a per-source question about any source" —
+                #     no flag spelled, and false of a generator that carries
+                #     `--only`. Reverting that line to its old wording left
+                #     this lane at 13 passed / 0 failed while the flag-naming
+                #     rule below was already live, so the trigger reads
+                #     capability ascription too, not just flag spellings.
+                #
+                # So: sentence by sentence, and the exemption is the library's
+                # own ${SCOPED_FLAG_PAIR} — READ OUT OF THE LIBRARY, not
+                # re-typed here, and matched whitespace-normalised so the wrap
+                # a claim happens to take cannot decide whether it is checked.
+                if [[ "$scoped" != "true" ]] && ! SCOPED_PAIR="$pair_needle" python3 -c '
+import os, re, sys
 prose = open(sys.argv[1], encoding="utf-8").read()
-for para in re.split(r"\n\s*\n", prose):
-    if re.search(r"--only|--repin-source|scoped question", para) and "has no" not in para:
+pair = " ".join(os.environ["SCOPED_PAIR"].split())
+if not pair:
+    sys.exit("the library exports no SCOPED_FLAG_PAIR to check against")
+# TWO WAYS A SENTENCE REACHES THIS. Naming a flag is the obvious one. The
+# other is ascribing a CAPABILITY to the generator without naming any flag at
+# all, which is the shape the log line shipped in — "this run\u0027s generator
+# cannot put a per-source question about any source" names nothing, and is
+# false of a generator carrying --only and not --repin-source. A needle list
+# of flag spellings could not see it.
+MODAL = r"\b(can|cannot|could|able|unable|has|have|had|carries|carried|lacks|supports)\b"
+for sentence in re.split(r"(?<=[.!?:])\s+", prose):
+    flat = " ".join(sentence.split())
+    names_flag = re.search(r"--only|--repin-source|scoped question", flat)
+    rates_generator = "generator" in flat and re.search(MODAL, flat)
+    if not (names_flag or rates_generator):
+        continue
+    # The pair, in this sentence, reported as ABSENT in this sentence. Both
+    # halves matter: the pair alone would let "<pair> refused that name"
+    # through, and an absence word alone is what the paragraph-wide "has no"
+    # already was.
+    if pair not in flat:
+        sys.exit(1)
+    if not re.search(r"\b(has|have|had|carries|carried) (no|neither)\b", flat):
         sys.exit(1)
 ' "$out/prose"; then
                     r_scoped="$r_scoped $cell"
@@ -6641,6 +6691,30 @@ test_bump_generator_with_one_scoped_flag() {
         # if the gate armed and then passed the flag that is missing.
         assert_not_contains "$log" "unrecognized arguments" \
             "one flag ($which): the missing flag is never passed"
+
+        # ── THE HALF-CAPABILITY RUN IS THE ONE THAT NOTICES a sentence
+        #    written as if the gate were one flag. `FED_ADVANCE_AVAILABLE`
+        #    goes false when EITHER probe fails, so on this generator every
+        #    degraded sentence naming one conjunct as the reason is FALSE
+        #    about the flag it names — and it contradicts this same run's
+        #    annotation, which named the other one.
+        #
+        #    Measured before this lane asserted anything: with `--only`
+        #    present and `--repin-source` stripped, the per-repo annotation
+        #    read "this generator cannot say whether a FEDERATED source has
+        #    moved with it" and the PR body of the same run read "The
+        #    generator this run used has no `--check-current --only
+        #    <registry>`". It had both.
+        #
+        #    The needle is the library's own SCOPED_FLAG_PAIR, read out of
+        #    the file rather than re-typed, so a reworded pair cannot leave a
+        #    guard matching a string nothing prints.
+        local pair
+        pair="$(scoped_flag_pair)"
+        assert_prose_contains "$log" "has no $pair pair" \
+            "one flag ($which): the degraded annotation names the PAIR, which is what this run established"
+        assert_prose_omits "$log" "this generator cannot say whether a FEDERATED source has moved with it" \
+            "one flag ($which): and not one conjunct it does not establish"
     done
 }
 
@@ -6995,7 +7069,7 @@ test_bump_degraded_federated_body() {
     # included: log() writes to stdout and a green nightly's stdout is read by
     # nobody, so splitting the prefix off would let this pass on the two probe
     # warnings alone.
-    assert_contains "$log" "::warning::bumporg/repo-degraded-fed: the primary has moved, and this generator cannot say whether a FEDERATED source has moved with it" \
+    assert_prose_contains "$log" "::warning::bumporg/repo-degraded-fed: the primary has moved, and this run did not ask whether a FEDERATED source has moved with it — this generator has no $(scoped_flag_pair) pair" \
         "degraded body: a drifted primary does not silence the federated annotation"
     assert_not_contains "$log" "::warning::bumporg/repo-degraded-fed: a FEDERATED source has moved on since the ref" \
         "degraded body: and it does not claim to know which half moved"

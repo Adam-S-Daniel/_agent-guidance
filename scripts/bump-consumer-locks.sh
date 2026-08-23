@@ -1208,9 +1208,9 @@ for repo_name in "${REPOS[@]}"; do
         if [[ $fed_exit -ne 0 ]]; then
             if grep -q '^FAILED:' <<< "$fed_out"; then
                 if [[ $current_exit -eq 0 ]]; then
-                    echo "::warning::$repo_name: a FEDERATED source has moved on since the ref this lock pins for it, and this generator cannot say which one or advance it — so nothing is re-pinned here." >&2
+                    echo "::warning::$repo_name: a FEDERATED source has moved on since the ref this lock pins for it, and this run did not ask which one or advance it — this generator has no ${SCOPED_FLAG_PAIR} pair, and a scoped question this script cannot act on is one it does not put. Nothing is re-pinned here." >&2
                 else
-                    echo "::warning::$repo_name: the primary has moved, and this generator cannot say whether a FEDERATED source has moved with it — a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." >&2
+                    echo "::warning::$repo_name: the primary has moved, and this run did not ask whether a FEDERATED source has moved with it — this generator has no ${SCOPED_FLAG_PAIR} pair, and a combined --check-current answers for the whole lock at once. Every federated pin here is carried through unverified. Update the registry checkout to ask one scoped question per source." >&2
                 fi
             else
                 fail "$repo_name: could not read this lock's federated half — $(generator_error_line "$fed_out")"

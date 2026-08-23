@@ -60,6 +60,30 @@
 # suite can render an artifact for a run state without a fleet, a clone or a
 # network.
 
+# SCOPED_FLAG_PAIR — the two flags named as the ONE thing a degraded run has
+# established the absence of, written once so no sentence can name half of it.
+#
+# WHY A CONSTANT AND NOT A PHRASE PER SENTENCE. `FED_ADVANCE_AVAILABLE` (and
+# `CLAIM_SCOPED_AVAILABLE`, which is assigned straight from it) goes false when
+# EITHER probe fails, so what a degraded run knows is that the generator did
+# not carry BOTH. Four sentences — two PR-body claims, the self-named log line
+# and the bumper's own degraded annotation — were written as if it meant the
+# `--check-current --only` probe alone. On a generator that HAS `--only` and
+# lacks only `--repin-source` (the shape the suite's own strip-scoped-flags.py
+# builds in its `repin-source` mode) each of those four says something the run
+# did not establish, in a real PR body, contradicting the same run's own
+# annotation, which named the other flag.
+#
+# Splitting the boolean in two would be the other repair and it is the wrong
+# one: the probe block's "BOTH, OR NEITHER" note is a deliberate design — a
+# scoped question this script cannot act on is one it does not ask — so the
+# pair really is the unit, and the sentences were the half that drifted.
+#
+# Interpolated rather than re-typed so a needle can be DERIVED from it: the
+# cross product reads this variable out of the library and requires it,
+# whitespace-normalised, in every degraded sentence that names a scoped flag.
+SCOPED_FLAG_PAIR='`--check-current --only <REGISTRY>` and `--repin --repin-source <REGISTRY>@`'
+
 # failed_slice — the piece of a generator report a PR body quotes, read from
 # stdin: from the first `FAILED:` headline to the end of the report, capped at
 # 20 lines. THE ONE DEFINITION OF THAT PIPELINE, and it is a function rather
@@ -626,12 +650,13 @@ claim_text_federated_none() { printf '%s' "This lock has no federated sources.";
 claim_text_federated_none_askable() { printf '%s' "**No federated source in this lock could be asked about.**"; }
 claim_text_federated_degraded() {
     printf '%s' "**Federated sources keep their pins, and this run could not ask whether they
-should.** The generator this run used has no \`--check-current --only <registry>\`,
-so no per-source question was put and no pin below was checked against its own
-registry — each is carried through exactly as this lock already had it, which is
-what \`--repin\` does with a source nothing names. \`--source\` is refused outright,
-because that flag REPLACES the inherited \`sources\` array and would silently
-de-federate the lock:"
+should.** The generator this run used has no ${SCOPED_FLAG_PAIR} pair, and this
+script puts a scoped question only where it can also advance the pin that answer
+names. So no per-source question was put and no pin below was checked against its
+own registry — each is carried through exactly as this lock already had it, which
+is what \`--repin\` does with a source nothing names. \`--source\` is refused
+outright, because that flag REPLACES the inherited \`sources\` array and would
+silently de-federate the lock:"
 }
 # THE QUANTIFIER IS RESTRICTED TO THE LIST, and "listed below" is doing real
 # work in both of these. A `sources` entry naming this lock's own primary
@@ -673,15 +698,18 @@ that one name, so the question was not put; \`--repin-source\` refuses that name
 outright for the same reason. That entry's pin is carried through exactly as this
 lock had it. Give the two halves two names if either is meant to move on its own."
 }
-# The same fact with the reason this run can actually stand behind. It has no
-# scoped flags at all, so "the question was not put because the name has two
-# answers" describes a refusal nothing here could have made.
+# The same fact with the reason this run can actually stand behind. "The
+# question was not put because the name has two answers" describes a refusal
+# nothing here could have made — and "this generator has no flag that could
+# scope one", the first repair, is false of the half-capability generator that
+# carries `--only` and not `--repin-source`. What is true on every degraded run
+# is the absence of the PAIR, so that is what this says.
 claim_text_self_named_degraded() {
     printf '%s' "**One \`sources\` entry names \`${primary_registry}\`, this lock's own primary
-registry.** No per-source question was put about any source in this run, and this
-generator has no flag that could scope one to a name meaning two things in any
-case. That entry's pin is carried through exactly as this lock had it. Give the
-two halves two names if either is meant to move on its own."
+registry.** No per-source question was put about any source in this run: this
+generator has no ${SCOPED_FLAG_PAIR} pair, and this script asks nothing it could
+not act on. That entry's pin is carried through exactly as this lock had it. Give
+the two halves two names if either is meant to move on its own."
 }
 
 # THE LOG'S HALF OF THE SAME FACT, and it lives here for the reason the two
@@ -700,7 +728,7 @@ self_named_log_line() {   # <scoped-available true|false> <lock path> <registry>
     if [[ "$1" == true ]]; then
         printf '%s' "$2 names $3 as both its primary registry and a federated source; a scoped question under that one name has two answers, so it is not put and that entry's pin is carried through untouched."
     else
-        printf '%s' "$2 names $3 as both its primary registry and a federated source; this run's generator cannot put a per-source question about any source, so nothing here asked about that entry either and its pin is carried through untouched."
+        printf '%s' "$2 names $3 as both its primary registry and a federated source; this run's generator has no ${SCOPED_FLAG_PAIR} pair, so no per-source question was put about any source and that entry's pin is carried through untouched."
     fi
 }
 
