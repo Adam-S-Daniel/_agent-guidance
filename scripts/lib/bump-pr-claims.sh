@@ -426,11 +426,19 @@ $(failed_slice <<< "$format_out" | sed "s#$lock_file#$LOCK_REL_PATH#g")
 # placeholders and this one would not run. So the addition is named as an
 # addition: what this run put on the end of that line, which is checkable
 # against the diff, rather than a whole invocation that is not.
+#
+# BOTH additions, because there are two and the first cut named one. The
+# invocation adds a `--repin-source` per DRIFTED source and a `--source-repo`
+# per source the lock NAMES, and a re-pin of a lock with sources exits 1
+# without the second — "<registry>: no checkout at <path>". A reader who took
+# the quoted line and appended what this paragraph named got a command that
+# fails. Incomplete rather than false, which is a weaker defect than calling
+# half a command the whole of it and costs the reader the same afternoon.
 claim_text_repro_shape_half() {
     printf '%s' "**That remediation line is the SHAPE half of the command this PR ran**,
 \`--ref\` included. This run appended \`${repin_source_flags_shown}\` to it, because a
-federated source moved too; the quoted line alone reproduces the relabelling and
-not those pin advances."
+federated source moved too; the quoted line alone
+reproduces the relabelling and not those pin advances."
 }
 claim_text_repro_whole() {
     printf '%s' "**That remediation line is the command this PR ran**, \`--ref\` included, so you
@@ -696,7 +704,7 @@ self_named_log_line() {   # <scoped-available true|false> <lock path> <registry>
 #   primary_registry old_ref new_ref repin_reason
 #   fed_drifted_regs[] source_registries[] FED_ADVANCE_AVAILABLE
 #   check_out format_out fed_check_out primary_lock lock_file
-#   repin_source_flags_shown
+#   repin_source_flags_shown repin_source_repo_shown
 compose_bump_artifacts() {
     CLAIM_ERRORS=""
     EMITTED_CLAIMS=()

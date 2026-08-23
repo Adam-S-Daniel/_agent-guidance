@@ -5383,7 +5383,12 @@ test_bump_format_and_federated() {
     assert_prose_contains "$body" "**That remediation line is the SHAPE half of the command this PR ran**, \`--ref\` included." \
         "format+federated: the body says which half that line is"
     assert_prose_contains "$body" "--repin-source 'bumporg/cms-platform@'" \
-        "format+federated: and prints the whole command, --repin-source included"
+        "format+federated: and names the --repin-source this run appended"
+    # BOTH additions. Without a --source-repo for every source the lock names
+    # the reconstructed command exits 1 — "no checkout at <path>" — so naming
+    # only the flags above hands the reader a failure.
+    assert_prose_contains "$body" "--source-repo 'bumporg/cms-platform=<a clone of it>'" \
+        "format+federated: and the --source-repo without which that command exits 1"
 
     # ── The evidence for the **advanced** label, which used to be absent on
     #    this path: the scoped verdict is quoted, so the label is checkable.
@@ -6188,6 +6193,7 @@ fed_check_out="FAILED: org/src's bundles have moved on since 1111111, which skil
 primary_lock="$fx/copy.primary.lock"
 lock_file="$fx/before.lock"
 repin_source_flags_shown="--repin-source 'org/src@'"
+repin_source_repo_shown="--source-repo 'org/src=<a clone of it>'"
 status=0
 compose_bump_artifacts || status=1
 printf '%s' "$status" > "$out/status"
@@ -6341,6 +6347,16 @@ for para in re.split(r"\n\s*\n", prose):
                 if [[ "$reason" == "format" ]] && $advancing \
                    && ! grep -qF -- "--repin-source 'org/src@'" "$out/flat"; then
                     r_whole="$r_whole $cell(addition unnamed)"
+                fi
+                # AND NAMED COMPLETELY. A command the body says this run RAN
+                # has to be one that would run: a --repin of a lock with
+                # sources exits 1 without a --source-repo for each of them, so
+                # naming the --repin-source additions alone hands the reader a
+                # failure. Incomplete rather than false, which is the shape
+                # the "whole of it" fix left behind.
+                if grep -qF -- 'half of the command this PR ran' "$out/flat" \
+                   && ! grep -qF -- '--source-repo' "$out/flat"; then
+                    r_whole="$r_whole $cell(addition incomplete)"
                 fi
 
                 # A HEADER QUANTIFIER IS NOT DENIED FURTHER DOWN ITS OWN
