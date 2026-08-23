@@ -102,6 +102,16 @@ degraded_fed_remedy_text() {
     bash -c 'source "$1"; degraded_fed_remedy "$2" "$3"' _ \
         "$REPO_ROOT/scripts/lib/bump-pr-claims.sh" "$1" "$2"
 }
+# self_named_log_line_text <scoped true|false> <lock path> <registry> — and the
+# same for the self-named log line, whose two branches a lane has to tell
+# apart. log() output is the one artifact the cross product's CLOSURE check
+# cannot account for claim by claim, so a hand-copied needle here has nothing
+# behind it: reword the scoped branch and the assertion forbidding it in the
+# DEGRADED lane passes over a run printing it.
+self_named_log_line_text() {
+    bash -c 'source "$1"; self_named_log_line "$2" "$3" "$4"' _ \
+        "$REPO_ROOT/scripts/lib/bump-pr-claims.sh" "$1" "$2" "$3"
+}
 # assert_scoped_probe_warnings <log> <count> <label> — how many of the two SOFT
 # federated probes annotated this run. There are exactly two of them in
 # bump-consumer-locks.sh, a `--only` probe and a `--repin-source` one, and each
@@ -5962,9 +5972,9 @@ with open(path, "w", encoding="utf-8") as handle:
     # about any source, whatever the name meant.
     assert_prose_contains "$log" "names bumporg/agentskills as both its primary registry and a federated source" \
         "degraded self-federating: the log still names the entry nothing asked about"
-    assert_prose_omits "$log" "a scoped question under that one name has two answers" \
+    assert_prose_omits "$log" "$(self_named_log_line_text true skills.lock bumporg/agentskills)" \
         "degraded self-federating: and does not give a reason this generator could not have had"
-    assert_prose_contains "$log" "this run's generator has no $(scoped_flag_pair) pair" \
+    assert_prose_contains "$log" "$(self_named_log_line_text false skills.lock bumporg/agentskills)" \
         "degraded self-federating: it gives the reason this run actually has"
 
     # THE PR BODY OF THE SAME RUN, which must say the same thing. This is the
