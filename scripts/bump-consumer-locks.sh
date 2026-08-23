@@ -1485,23 +1485,31 @@ for repo_name in "${REPOS[@]}"; do
         repin_source_flags_shown="${repin_source_flags_shown}${repin_source_flags_shown:+ }--repin-source '$reg@'"
     done
 
-    # AND THE OTHER ADDITION, which naming only the first left out. A --repin
-    # of a lock that names sources needs a checkout for every one of them:
-    # without a --source-repo the generator exits 1 with "<registry>: no
-    # checkout at <path>". So a body that names the --repin-source flags alone
-    # is not false, it is incomplete in the one way that matters — a reader
-    # who takes the quoted remediation line and appends what the body names
-    # gets a command that does not run.
+    # AND THE OTHER ADDITION, which naming only the first left out. The
+    # generator finds a source's clone by looking beside `--repo` at the
+    # sibling `../<repo-name>`, and `--source-repo` is what overrides that
+    # lookup; a source whose clone is anywhere else stops the run at
+    # "<registry>: no checkout at <path>". This script cannot rely on the
+    # sibling layout at all — its clones are wherever `BUMP_CHECKOUTS` put
+    # them — so it passes one `--source-repo` per source, every run, at the
+    # invocation below. A body naming only the `--repin-source` flags is
+    # therefore not false but incomplete, in the one way that costs the
+    # reader an afternoon: append what it names to the quoted remediation
+    # line and the command can stop before it writes anything.
     #
-    # Built from `source_registries` and not from `fed_drifted_regs`, because
-    # the invocation passes one per SOURCE and not one per source that moved.
-    # Shown with a placeholder rather than the real checkout path: those paths
-    # are this machine's, and a PR body carries no path from the machine that
-    # ran the bump — the quoted remediation line uses the same device for
-    # --repo.
+    # Derived from `source_repo_args` — the array the invocation below
+    # actually passes — rather than rebuilt from `source_registries` beside
+    # it, so it cannot come to describe flags this run did not pass. That is
+    # the same rule the sibling above states for `fed_drifted_regs`.
+    #
+    # The path is replaced with a placeholder: `source_repo_args` carries this
+    # machine's checkout directories, and a PR body carries no path from the
+    # machine that ran the bump. The quoted remediation line uses the same
+    # device for `--repo`.
     repin_source_repo_shown=""
-    for reg in ${source_registries[@]+"${source_registries[@]}"}; do
-        repin_source_repo_shown="${repin_source_repo_shown}${repin_source_repo_shown:+ }--source-repo '$reg=<a clone of it>'"
+    for arg in ${source_repo_args[@]+"${source_repo_args[@]}"}; do
+        [[ "$arg" == "--source-repo" ]] && continue
+        repin_source_repo_shown="${repin_source_repo_shown}${repin_source_repo_shown:+ }--source-repo '${arg%%=*}=<a clone of it>'"
     done
 
     # A NEWLY REACHABLE FAILURE, named here rather than left to be met on a

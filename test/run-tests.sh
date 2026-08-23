@@ -5384,11 +5384,14 @@ test_bump_format_and_federated() {
         "format+federated: the body says which half that line is"
     assert_prose_contains "$body" "--repin-source 'bumporg/cms-platform@'" \
         "format+federated: and names the --repin-source this run appended"
-    # BOTH additions. Without a --source-repo for every source the lock names
-    # the reconstructed command exits 1 — "no checkout at <path>" — so naming
-    # only the flags above hands the reader a failure.
+    # BOTH additions. The generator looks for a source's clone beside --repo
+    # at the sibling ../<repo-name>, and --source-repo is what overrides that
+    # lookup — so a reconstructed command carrying only the flags above can
+    # stop at "no checkout at <path>" before it writes. The needle carries the
+    # PLACEHOLDER, not this machine's path — the `$TEST_DIR` assertion further
+    # down forbids a real one from reaching a PR body at all.
     assert_prose_contains "$body" "--source-repo 'bumporg/cms-platform=<a clone of it>'" \
-        "format+federated: and the --source-repo without which that command exits 1"
+        "format+federated: and the --source-repo that points it at each source's clone"
 
     # ── The evidence for the **advanced** label, which used to be absent on
     #    this path: the scoped verdict is quoted, so the label is checkable.

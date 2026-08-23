@@ -429,15 +429,18 @@ $(failed_slice <<< "$format_out" | sed "s#$lock_file#$LOCK_REL_PATH#g")
 #
 # BOTH additions, because there are two and the first cut named one. The
 # invocation adds a `--repin-source` per DRIFTED source and a `--source-repo`
-# per source the lock NAMES, and a re-pin of a lock with sources exits 1
-# without the second — "<registry>: no checkout at <path>". A reader who took
-# the quoted line and appended what this paragraph named got a command that
-# fails. Incomplete rather than false, which is a weaker defect than calling
-# half a command the whole of it and costs the reader the same afternoon.
+# per source the lock NAMES; the second is how the generator is pointed at a
+# clone that is not the sibling `../<repo-name>` it would otherwise look for,
+# which this script cannot assume its own are. A reader who took the quoted
+# line and appended only what the first half named got a command that can
+# stop at "no checkout at ..." before it writes. Incomplete rather than false, which
+# is a weaker defect than calling half a command the whole of it and costs
+# the reader the same afternoon.
 claim_text_repro_shape_half() {
     printf '%s' "**That remediation line is the SHAPE half of the command this PR ran**,
 \`--ref\` included. This run appended \`${repin_source_flags_shown}\` to it, because a
-federated source moved too; the quoted line alone
+federated source moved too, and \`${repin_source_repo_shown}\` to point the generator
+at a clone of each source this lock names; the quoted line alone
 reproduces the relabelling and not those pin advances."
 }
 claim_text_repro_whole() {
