@@ -6352,13 +6352,26 @@ for para in re.split(r"\n\s*\n", prose):
                     r_whole="$r_whole $cell(addition unnamed)"
                 fi
                 # AND NAMED COMPLETELY. A command the body says this run RAN
-                # has to be one that would run: a --repin of a lock with
-                # sources exits 1 without a --source-repo for each of them, so
-                # naming the --repin-source additions alone hands the reader a
-                # failure. Incomplete rather than false, which is the shape
-                # the "whole of it" fix left behind.
-                if grep -qF -- 'half of the command this PR ran' "$out/flat" \
-                   && ! grep -qF -- '--source-repo' "$out/flat"; then
+                # has to be one that would run: the generator looks for a
+                # source's clone at the sibling ../<repo-name> beside --repo
+                # and stops at "no checkout at ..." when it is not there, so a
+                # reconstruction carrying the --repin-source additions alone
+                # can fail before it writes. Incomplete rather than false,
+                # which is the shape the "whole of it" fix left behind.
+                #
+                # Keyed off the CELL, not off a sentence. The first cut
+                # selected cells by grepping the artifact for "half of the
+                # command this PR ran" — a hand copy of the claim's own
+                # opening, so rewording the claim silently deselected every
+                # cell and the check passed over a body that named no
+                # --source-repo at all. Measured: rewording that clause to
+                # "SHAPE half of what this PR ran" and dropping the flag left
+                # test_bump_pr_claims_cross_product at 13 passed / 0 failed.
+                # `format` + advancing is the condition claim_holds uses to
+                # emit repro_shape_half, and it is what the sibling check
+                # above already keys on.
+                if [[ "$reason" == "format" ]] && $advancing \
+                   && ! grep -qF -- "--source-repo 'org/src=" "$out/flat"; then
                     r_whole="$r_whole $cell(addition incomplete)"
                 fi
 
