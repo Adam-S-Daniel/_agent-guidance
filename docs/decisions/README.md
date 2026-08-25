@@ -23,6 +23,7 @@ a page.
 | [0007](0007-sha-pins-carry-no-version-comment.md) | A SHA pin carries no version comment |
 | [0008](0008-downloaded-binaries-are-pinned-and-digest-checked.md) | A downloaded binary is pinned by version and by digest, and the digest lives here |
 | [0009](0009-a-federated-pin-advances-on-a-scoped-question.md) | A federated pin advances, and only on a question scoped to that source |
+| [0010](0010-the-hook-pin-is-re-pinned-from-here.md) | The hook pin is re-pinned nightly too, and only ever proposed |
 
 ## Format
 

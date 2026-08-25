@@ -8005,6 +8005,42 @@ for (const spec of Object.values((doc && doc.jobs) || {})) {
 ' "$REPO_ROOT" "$1"
 }
 
+# workflow_step_by_run <file> <needle> — facts about the FIRST job step whose
+# `run:` body contains <needle>, one per line:
+#
+#   found
+#   if <expression>        the step's `if:`, or "-" when it sets none
+#   env <NAME>             one per key in the step's `env:`
+#   interpolates           emitted only if the run body contains a `${{ }}`
+#
+# Parsed with the same real parser as its siblings, and here the distinction is
+# not theoretical: the first version of test_hook_pin_workflow_wiring grepped
+# the workflow for `if: success() || failure()` and PASSED with that key
+# deleted, because the comment three lines above it quotes the string verbatim.
+# A grep cannot tell a key from prose about the key. This can.
+workflow_step_by_run() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const needle = process.argv[3];
+for (const spec of Object.values((doc && doc.jobs) || {})) {
+  for (const step of (spec && spec.steps) || []) {
+    if (typeof step.run !== "string" || !step.run.includes(needle)) continue;
+    console.log("found");
+    console.log("if " + (step.if === undefined ? "-" : String(step.if)));
+    for (const key of Object.keys(step.env || {})) console.log("env " + key);
+    if (/\$\{\{/.test(step.run)) console.log("interpolates");
+    process.exit(0);
+  }
+}
+' "$REPO_ROOT" "$1" "$2"
+}
+
 # workflow_shape <file> — a fact per line about a workflow's TRIGGERS, its
 # JOBS, and every place a `concurrency:` key appears:
 #
@@ -8627,6 +8663,438 @@ test_yq_install_pinned() {
     fi
 }
 
+# ── Test 9: bump-hook-pin.sh ──────────────────────────────────────────────
+#
+# The other pin. bump-consumer-locks.sh moves every consumer's `skills.lock`;
+# this one moves the hook that READS that lock, which until ADR 0010 moved only
+# when somebody hand-edited repos.yml. Four properties carry the lane, and each
+# has a fixture rather than a flag:
+#
+#   * ANTI-CHURN, keyed on the hook's DIGEST and not on the registry's HEAD.
+#     `hook_pin_advance_registry` moves the registry forward WITHOUT touching
+#     the hook — the ordinary case, since the registry moves for skills, docs
+#     and ADRs. A re-pinner keyed on "is `ref` the newest commit" opens a pull
+#     request here every night forever, which is the failure the lock lane's
+#     `repo-current` fixture exists to prevent one lane over.
+#   * THE PIN AND THE SELF-HOSTED COPY MOVE TOGETHER. This repo cannot receive
+#     the hook it publishes the pin for ($SELF_REPO, ADR 0004 fact 5), so it
+#     carries its own copy and test 7b requires that copy to hash to
+#     `skills_bootstrap.sha256`. A bump that moved the pin alone would open a
+#     pull request that fails its own repo's CI, every time it had anything to
+#     say. The assertion is on both files in one commit.
+#   * THE WRITE IS SURGICAL. repos.yml is ~90% comment by line count and every
+#     comment is prose an ADR points at, so the bump must change two scalar
+#     lines and nothing else. Asserted by counting comment lines across the
+#     write, not by eyeballing a diff.
+#   * IT REFUSES A HOOK IT CANNOT VOUCH FOR. A pin records where the hook is
+#     and what it hashes to, and is equally happy recording a file that dies at
+#     line 1 — delivery would then hand every allowlisted repo a hook that
+#     fails in every session, with a correct digest, so sync.sh's own integrity
+#     check passes it straight through.
+#
+# Deterministic and offline like the rest of the suite: a local registry repo,
+# a local bare repo, the shared mock `gh`, no network, no sleeps, no
+# wall-clock.
+
+HOOK_PIN_DIR="$TEST_DIR/hookpin"
+HOOK_PIN_PR_LOG="$TEST_DIR/hook-pin-pr.log"
+HOOK_PIN_BODY_DIR="$TEST_DIR/hook-pin-bodies"
+HOOK_PIN_EXIT=0
+# Created empty so every later `wc -l`/`grep` on it is total rather than an
+# abort under `set -euo pipefail` — the same harness lesson the lock lane's
+# BUMP_PR_LOG carries.
+: > "$HOOK_PIN_PR_LOG"
+
+# A hook whose bytes vary by marker and which really does parse as bash, so
+# `bash -n` passing is a fact about the fixture rather than an accident.
+hook_pin_hook_text() {   # <marker>
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n# skills-bootstrap fixture: %s\necho "{}"\n' "$1"
+}
+
+hook_pin_commit_hook() {   # <marker> <commit subject>
+    local reg="$HOOK_PIN_DIR/registry"
+    hook_pin_hook_text "$1" > "$reg/.claude/hooks/skills-bootstrap.sh"
+    chmod +x "$reg/.claude/hooks/skills-bootstrap.sh"
+    git -C "$reg" add -A
+    git -C "$reg" commit -q -m "$2"
+}
+
+# Move the registry forward WITHOUT touching the hook. This is what the
+# registry does most days, and the fixture that makes anti-churn testable.
+hook_pin_advance_registry() {   # <subject>
+    local reg="$HOOK_PIN_DIR/registry"
+    echo "$1" >> "$reg/CHANGELOG.md"
+    git -C "$reg" add -A
+    git -C "$reg" commit -q -m "$1"
+}
+
+hook_pin_registry_head() { git -C "$HOOK_PIN_DIR/registry" rev-parse HEAD; }
+
+# The guidance repo as it stands on its default branch: a heavily commented
+# repos.yml pinning the OLD hook, plus the self-hosted copy of that same hook.
+hook_pin_seed_target() {   # <pinned ref> <pinned sha256> <hook marker>
+    local work="$HOOK_PIN_DIR/work" bare="$HOOK_PIN_DIR/bare/pinorg_guidance"
+    rm -rf "$work" "$bare"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    git -C "$work" config commit.gpgsign false
+    git -C "$work" remote add origin "$bare"
+    mkdir -p "$work/.claude/hooks"
+    hook_pin_hook_text "$3" > "$work/.claude/hooks/skills-bootstrap.sh"
+    chmod +x "$work/.claude/hooks/skills-bootstrap.sh"
+    # Comment lines on BOTH sides of the two scalars that move, and a block
+    # after this one, so a write that re-serialises the document instead of
+    # patching two lines cannot pass the comment-count assertion by luck.
+    cat > "$work/repos.yml" <<YAML
+# ── fixture repos.yml ──────────────────────────────────────────────────────
+# A comment above the block.
+exclude: []
+default_sections: []
+
+# ── skills-bootstrap hook delivery ─────────────────────────────────────────
+#
+# A long explanatory comment that must survive the write untouched.
+skills_bootstrap:
+  # a comment between the key and the registry
+  registry: pinorg/agentskills
+  path: .claude/hooks/skills-bootstrap.sh
+  ref: $1
+  # a comment between ref and sha256
+  sha256: $2
+  repos:
+    - repo-adopted
+
+# A trailing block, after the one that moves.
+cron_coverage:
+  fleet: [repo-adopted]
+  out_of_scope: []
+YAML
+    git -C "$work" add -A
+    git -C "$work" commit -q -m "seed"
+    git -C "$work" push -q origin main
+}
+
+run_hook_pin() {   # <output file> [script args...]
+    local out="$1"; shift
+    HOOK_PIN_EXIT=0
+    MOCK_BARE_DIR="$HOOK_PIN_DIR/bare" \
+    MOCK_PR_LOG="$HOOK_PIN_PR_LOG" \
+    MOCK_PR_BODY_DIR="$HOOK_PIN_BODY_DIR" \
+    MOCK_PR_DIR="${HOOK_PIN_PR_DIR_FOR_RUN:-}" \
+    REPOS_YML="$HOOK_PIN_DIR/work/repos.yml" \
+    BUMP_CHECKOUTS="pinorg/agentskills=$HOOK_PIN_DIR/registry" \
+    HOOK_PIN_REPO="pinorg/guidance" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/bump-hook-pin.sh" "$@" > "$out" 2>&1 || HOOK_PIN_EXIT=$?
+}
+
+hook_pin_branch_sha() {
+    git -C "$HOOK_PIN_DIR/bare/pinorg_guidance" rev-parse --verify -q \
+        "refs/heads/hook-pin-bump/update" 2>/dev/null || true
+}
+
+hook_pin_file_at() {   # <ref> <path>
+    git -C "$HOOK_PIN_DIR/bare/pinorg_guidance" show "$1:$2" 2>/dev/null || true
+}
+
+assert_no_hook_pin_branch() {   # <label>
+    if [[ -z "$(hook_pin_branch_sha)" ]]; then pass "$1"; else fail "$1 — a hook-pin branch was pushed"; fi
+}
+
+# ── Test 9a: the registry moved but the hook did not ─────────────────────
+
+test_hook_pin_unchanged() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh (registry advanced, hook unchanged) ==="
+
+    rm -rf "$HOOK_PIN_DIR"
+    mkdir -p "$HOOK_PIN_DIR/registry/.claude/hooks" "$HOOK_PIN_DIR/bare"
+    git init --initial-branch=main "$HOOK_PIN_DIR/registry" >/dev/null 2>&1
+    git -C "$HOOK_PIN_DIR/registry" config commit.gpgsign false
+    hook_pin_commit_hook "v1" "add the hook"
+
+    local pinned_ref pinned_sha
+    pinned_ref=$(hook_pin_registry_head)
+    pinned_sha=$(hook_pin_hook_text "v1" | sha256sum | cut -d' ' -f1)
+
+    # The registry moves on, for something that is not the hook.
+    hook_pin_advance_registry "an unrelated skill edit"
+    hook_pin_advance_registry "an ADR"
+
+    hook_pin_seed_target "$pinned_ref" "$pinned_sha" "v1"
+
+    local out="$TEST_DIR/hook-pin-unchanged.txt"
+    run_hook_pin "$out"
+
+    if [[ $HOOK_PIN_EXIT -eq 0 ]]; then
+        pass "hook pin: a run with nothing to do exits 0"
+    else
+        fail "hook pin: a run with nothing to do exits 0 — got $HOOK_PIN_EXIT: $(cat "$out")"
+    fi
+    assert_contains "$out" "byte-identical to the pinned one" \
+        "hook pin: it says the hook is unchanged"
+    assert_no_hook_pin_branch "hook pin: two commits past the pin, it still proposes nothing"
+    if [[ ! -s "$HOOK_PIN_PR_LOG" ]]; then
+        pass "hook pin: no pull request is opened for a registry that only moved"
+    else
+        fail "hook pin: it opened a pull request for a hook that did not change"
+    fi
+}
+
+# ── Test 9b: --dry-run decides and writes nothing ────────────────────────
+
+test_hook_pin_dry_run() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh --dry-run ==="
+
+    hook_pin_commit_hook "v2" "change the hook"
+
+    local out="$TEST_DIR/hook-pin-dry.txt"
+    run_hook_pin "$out" --dry-run
+
+    assert_contains "$out" "The hook has CHANGED" "hook pin: the dry run notices the change"
+    assert_contains "$out" "DRY RUN — would re-pin" "hook pin: the dry run says what it would do"
+    assert_no_hook_pin_branch "hook pin: --dry-run pushes nothing"
+    if [[ ! -s "$HOOK_PIN_PR_LOG" ]]; then
+        pass "hook pin: --dry-run opens no pull request"
+    else
+        fail "hook pin: --dry-run opened a pull request"
+    fi
+
+    # FAILING CLOSED on the write side. `--dry-runn` must stop the run, not
+    # leave DRY_RUN=false and go on to clone, commit and push under a token
+    # that can do all three.
+    out="$TEST_DIR/hook-pin-typo.txt"
+    run_hook_pin "$out" --dry-runn
+    if [[ $HOOK_PIN_EXIT -eq 2 ]]; then
+        pass "hook pin: a mistyped --dry-run is refused, not treated as a live run"
+    else
+        fail "hook pin: a mistyped --dry-run exited $HOOK_PIN_EXIT, not 2 — $(cat "$out")"
+    fi
+    assert_no_hook_pin_branch "hook pin: the mistyped flag pushed nothing"
+}
+
+# ── Test 9c: the real bump — both files, and only those two lines ────────
+
+test_hook_pin_proposes() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh (the hook changed) ==="
+
+    local target_ref target_sha comments_before
+    target_ref=$(hook_pin_registry_head)
+    target_sha=$(hook_pin_hook_text "v2" | sha256sum | cut -d' ' -f1)
+    comments_before=$(grep -c '^[[:space:]]*#' "$HOOK_PIN_DIR/work/repos.yml")
+
+    local out="$TEST_DIR/hook-pin-propose.txt"
+    run_hook_pin "$out"
+
+    if [[ $HOOK_PIN_EXIT -eq 0 ]]; then
+        pass "hook pin: the bump run exits 0"
+    else
+        fail "hook pin: the bump run exits 0 — got $HOOK_PIN_EXIT: $(cat "$out")"
+    fi
+
+    local branch_sha; branch_sha=$(hook_pin_branch_sha)
+    if [[ -n "$branch_sha" ]]; then
+        pass "hook pin: the bump branch was pushed"
+    else
+        fail "hook pin: the bump branch was pushed — $(cat "$out")"
+        return
+    fi
+
+    local pushed_yml="$TEST_DIR/hook-pin-pushed.yml"
+    hook_pin_file_at "$branch_sha" "repos.yml" > "$pushed_yml"
+
+    assert_contains "$pushed_yml" "ref: $target_ref" "hook pin: ref moved to the registry's head"
+    assert_contains "$pushed_yml" "sha256: $target_sha" "hook pin: sha256 is the digest of the bytes at that commit"
+
+    # THE PIN AND THE SELF-HOSTED COPY IN ONE COMMIT. Compared as a digest
+    # rather than by marker: the digest is the thing test 7b checks, so this
+    # asserts the property that test actually enforces.
+    local pushed_hook_sha
+    pushed_hook_sha=$(hook_pin_file_at "$branch_sha" ".claude/hooks/skills-bootstrap.sh" | sha256sum | cut -d' ' -f1)
+    if [[ "$pushed_hook_sha" == "$target_sha" ]]; then
+        pass "hook pin: the self-hosted hook moved in the same commit, to the digest the pin now names"
+    else
+        fail "hook pin: the self-hosted hook hashes to ${pushed_hook_sha:0:12}… but the new pin says ${target_sha:0:12}… — test 7b would fail on this bump's own PR"
+    fi
+
+    # THE WRITE IS SURGICAL. Every comment line survives, and the old values
+    # are gone rather than merely joined by the new ones.
+    local comments_after; comments_after=$(grep -c '^[[:space:]]*#' "$pushed_yml")
+    if [[ "$comments_after" == "$comments_before" ]]; then
+        pass "hook pin: all $comments_before comment lines survived the write"
+    else
+        fail "hook pin: repos.yml went from $comments_before comment lines to $comments_after — the write re-serialised the document instead of patching two lines"
+    fi
+    assert_contains "$pushed_yml" "A long explanatory comment that must survive the write untouched." \
+        "hook pin: the block's own explanatory comment is intact"
+    assert_contains "$pushed_yml" "# A trailing block, after the one that moves." \
+        "hook pin: the block after the edited one is intact"
+
+    # Exactly two lines differ from the seed, and they are the two scalars.
+    local changed
+    changed=$(diff <(git -C "$HOOK_PIN_DIR/bare/pinorg_guidance" show main:repos.yml) "$pushed_yml" \
+        | grep -c '^[<>]' || true)
+    if [[ "$changed" == "4" ]]; then
+        pass "hook pin: exactly two lines of repos.yml changed"
+    else
+        fail "hook pin: $((changed / 2)) lines of repos.yml changed, expected 2"
+    fi
+
+    if grep -q "pr-created" "$HOOK_PIN_PR_LOG"; then
+        pass "hook pin: a pull request was opened"
+    else
+        fail "hook pin: no pull request was opened"
+    fi
+
+    # The body has to disclose the thing a reviewer cannot see in the diff:
+    # that merging fans a hook into the whole allowlist.
+    local body="$HOOK_PIN_BODY_DIR/target.body"
+    if [[ -f "$body" ]]; then
+        assert_contains "$body" "What merging this does" "hook pin: the body states what merging does"
+        assert_contains "$body" "$target_ref" "hook pin: the body names the commit being pinned"
+    else
+        fail "hook pin: no PR body was captured at $body"
+    fi
+}
+
+# ── Test 9d: it does not propose the same bump twice ─────────────────────
+#
+# Without this the script goes red every night a pin PR waits for review: the
+# anti-churn test compares against the DEFAULT branch, which an open PR has not
+# changed, so a second run rebuilds the same commit with a later timestamp and
+# pushes a non-fast-forward onto its own branch.
+
+test_hook_pin_already_proposed() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh (a bump PR is already open) ==="
+
+    local before; before=$(hook_pin_branch_sha)
+    mkdir -p "$TEST_DIR/hook-pin-prs"
+    cat > "$TEST_DIR/hook-pin-prs/pinorg_guidance.json" <<'JSON'
+[{"number": 77, "headRefName": "hook-pin-bump/update"}]
+JSON
+
+    local out="$TEST_DIR/hook-pin-open.txt"
+    HOOK_PIN_PR_DIR_FOR_RUN="$TEST_DIR/hook-pin-prs" run_hook_pin "$out"
+
+    if [[ $HOOK_PIN_EXIT -eq 0 ]]; then
+        pass "hook pin: a run with a PR already open exits 0"
+    else
+        fail "hook pin: a run with a PR already open exits 0 — got $HOOK_PIN_EXIT: $(cat "$out")"
+    fi
+    assert_contains "$out" "PR #77 already proposes a hook pin bump" \
+        "hook pin: it names the open PR rather than pushing again"
+    if [[ "$(hook_pin_branch_sha)" == "$before" ]]; then
+        pass "hook pin: the existing bump branch was left exactly as it was"
+    else
+        fail "hook pin: the bump branch was rewritten while a PR was open on it"
+    fi
+}
+
+# ── Test 9e: it refuses a hook it cannot vouch for ───────────────────────
+
+test_hook_pin_refuses_broken_hook() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh (the hook at HEAD does not parse) ==="
+
+    local before; before=$(hook_pin_branch_sha)
+    # Valid UTF-8, obviously a shell script, and unparseable: an unterminated
+    # `if`. `bash -n` is the only thing between this and every allowlisted
+    # repo running it at session start.
+    printf '#!/usr/bin/env bash\nif [ -z "$x" ]; then\n  echo broken\n' \
+        > "$HOOK_PIN_DIR/registry/.claude/hooks/skills-bootstrap.sh"
+    git -C "$HOOK_PIN_DIR/registry" add -A
+    git -C "$HOOK_PIN_DIR/registry" commit -q -m "a hook that does not parse"
+
+    local out="$TEST_DIR/hook-pin-broken.txt"
+    run_hook_pin "$out"
+
+    if [[ $HOOK_PIN_EXIT -ne 0 ]]; then
+        pass "hook pin: a hook that does not parse fails the run"
+    else
+        fail "hook pin: a hook that does not parse was accepted — $(cat "$out")"
+    fi
+    assert_contains "$out" "does not parse as bash" "hook pin: it says why it refused"
+    if [[ "$(hook_pin_branch_sha)" == "$before" ]]; then
+        pass "hook pin: nothing was pushed for the unparseable hook"
+    else
+        fail "hook pin: it pushed a branch for a hook that does not parse"
+    fi
+
+    # An empty hook is the other shape a digest is equally happy to record.
+    : > "$HOOK_PIN_DIR/registry/.claude/hooks/skills-bootstrap.sh"
+    git -C "$HOOK_PIN_DIR/registry" add -A
+    git -C "$HOOK_PIN_DIR/registry" commit -q -m "an empty hook"
+    out="$TEST_DIR/hook-pin-empty.txt"
+    run_hook_pin "$out"
+    if [[ $HOOK_PIN_EXIT -ne 0 ]]; then
+        pass "hook pin: an empty hook fails the run"
+    else
+        fail "hook pin: an empty hook was accepted — $(cat "$out")"
+    fi
+    assert_contains "$out" "is empty at" "hook pin: it says the hook was empty"
+}
+
+# ── Test 9f: the workflow really runs it ─────────────────────────────────
+#
+# The script above can be perfect and deliver nothing if no workflow calls it —
+# which is precisely the failure ADR 0010 exists to close, one level up. This
+# asserts the wiring rather than trusting it.
+
+test_hook_pin_workflow_wiring() {
+    echo ""
+    echo "=== Test: skills-lock-bump.yml runs the hook-pin bumper ==="
+
+    local wf="$REPO_ROOT/.github/workflows/skills-lock-bump.yml"
+    if [[ ! -f "$wf" ]]; then
+        fail "hook pin wiring: $wf is missing"
+        return
+    fi
+    # PARSED, NOT GREPPED, and the reason is recorded on workflow_step_by_run:
+    # the first version of this test grepped for `if: success() || failure()`
+    # and passed with that key deleted, matching the comment that quotes it.
+    local facts="$TEST_DIR/hook-pin-wiring.txt" err="$TEST_DIR/hook-pin-wiring.err"
+    if ! workflow_step_by_run "$wf" "scripts/bump-hook-pin.sh" > "$facts" 2> "$err"; then
+        fail "hook pin wiring: could not parse $wf — $(head -1 "$err")"
+        return
+    fi
+    if grep -qxF "found" "$facts"; then
+        pass "hook pin wiring: the nightly workflow has a step that runs the script"
+    else
+        fail "hook pin wiring: no step in $wf runs scripts/bump-hook-pin.sh — the script exists and nothing calls it, which is the failure ADR 0010 exists to close"
+        return
+    fi
+
+    # The step must survive a failure in the lock pass: the two lanes share a
+    # checkout and a token and nothing else, so an owner whose consumer bump
+    # failed is no reason to leave the hook pin stale another day. `always()`
+    # is NOT acceptable — it would also run after a cancellation, which is the
+    # one case where someone has deliberately stopped the run mid-flight.
+    local step_if; step_if=$(awk '$1 == "if" { $1 = ""; sub(/^ /, ""); print }' "$facts")
+    if [[ "$step_if" == "success() || failure()" ]]; then
+        pass "hook pin wiring: the step's if: is success() || failure()"
+    else
+        fail "hook pin wiring: the step's if: is '${step_if:-nothing}', not 'success() || failure()' — a failed lock pass would freeze the hook pin indefinitely, and always() would push after a cancellation"
+    fi
+
+    # `${{ inputs.* }}` reaches the script through the environment, never
+    # interpolated into the `run:` body — Actions echoes the rendered command
+    # to a log this account treats as public (AGENTS.md, "Data exposure in CI
+    # and public repos").
+    if grep -qxF "env DRY_RUN" "$facts"; then
+        pass "hook pin wiring: the dry-run input is passed through the environment"
+    else
+        fail "hook pin wiring: the step declares no DRY_RUN env key — the input is reaching the script some other way"
+    fi
+    if grep -qxF "interpolates" "$facts"; then
+        fail "hook pin wiring: the run: body interpolates a \${{ }} expression — it is rendered into the shell line Actions echoes to the log"
+    else
+        pass "hook pin wiring: the run: body interpolates nothing"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -8713,6 +9181,15 @@ test_bump_sweep_dry_run
 test_bump_sweep
 test_bump_sweep_head_match
 test_bump_sweep_view_failure_reports_why
+# The hook-pin lane, in a fixture dir of its own. Ordered: unchanged (nothing
+# to do) → dry run → the real bump → a second run with that PR open → the
+# refusals. Each step depends on the registry state the previous one left.
+test_hook_pin_unchanged
+test_hook_pin_dry_run
+test_hook_pin_proposes
+test_hook_pin_already_proposed
+test_hook_pin_refuses_broken_hook
+test_hook_pin_workflow_wiring
 # This repo's own committed files, not the mock fleet — nothing syncs or
 # reports on _agent-guidance, so these are the only checks they get.
 test_sync_workflow_trigger

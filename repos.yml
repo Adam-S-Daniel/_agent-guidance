@@ -61,6 +61,15 @@ skills_bootstrap:
   # because sync.yml's `paths:` filter watches THIS file. It did not until
   # 2026-08-19, and a pin bump alone fired no run at all; drop that entry and
   # the claim silently becomes false again rather than failing.
+  #
+  # `ref` AND `sha256` ARE MACHINE-PROPOSED — do not hand-edit them.
+  # `scripts/bump-hook-pin.sh` runs nightly from skills-lock-bump.yml and opens
+  # a pull request here whenever the hook's BYTES change upstream, recomputing
+  # the digest from the bytes at the commit it proposes. Editing either by hand
+  # is not forbidden, just redundant and easy to get half-right — a ref moved
+  # without its digest is a fleet with delivery disabled until someone notices.
+  # It stops at proposing: merging is what fans a new hook into every repo
+  # below, so no bot does that. See docs/decisions/0010.
   registry: Adam-S-Daniel/agentskills
   path: .claude/hooks/skills-bootstrap.sh
   ref: f92569e2be0031e8e54acf8f3294c1c89f31f5eb
