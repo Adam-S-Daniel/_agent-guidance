@@ -455,6 +455,65 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 #
 # One repo's failure is counted and the loop continues, exactly as the propose
 # pass does. Nothing here aborts the fleet.
+# delete_bump_branch <repo> <branch> — remove a bump branch that is fully
+# merged. Returns 0 when the branch is gone afterwards, 1 otherwise.
+#
+# WHY THIS EXISTS AT ALL. The proposer refuses to force-push a branch whose
+# content it did not write, which is right — that rule is what stops it
+# clobbering someone's work. But a MERGED bump PR whose branch was never
+# deleted trips the same rule, and the repo then receives no lock update
+# again, ever, with nothing anywhere going red: the bumper exits 0, and the
+# consumer's own session-start verdict reads OK while it serves a stale
+# bundle. Measured 2026-08-25: five of ten lock-carrying repos had been stuck
+# that way since 2026-08-21 — agentskills-private, fastmail-actions,
+# repo-settings, wsl-automation and jodidaniel/scratch-claude-002.
+#
+# So the bot cleans up after itself. It created the branch; leaving it behind
+# is what disables the next run.
+#
+# Deleting an ALREADY-ABSENT ref is success, not failure: `--delete-branch`
+# on the merge, or a repo with "automatically delete head branches" enabled,
+# may have removed it microseconds earlier, and a WARN there would train a
+# reader to ignore the line that matters.
+delete_bump_branch() {
+    local repo_name="$1" branch="$2" delete_out
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "[DRY RUN] Would delete $repo_name's $branch."
+        return 0
+    fi
+    if delete_out=$(gh api -X DELETE "repos/$repo_name/git/refs/heads/$branch" 2>&1); then
+        log "$repo_name: deleted $branch."
+        return 0
+    fi
+    if grep -qiE 'not found|does not exist|reference does not exist' <<< "$delete_out"; then
+        log "$repo_name: $branch was already gone."
+        return 0
+    fi
+    log "$repo_name: WARN could not delete $branch — $(head -1 <<< "$delete_out")"
+    return 1
+}
+
+# branch_adds_nothing_to_base <repo> <branch> — true when every commit on
+# <branch> is already contained in the repo's default branch.
+#
+# Asked of GitHub rather than of git, because the propose pass clones with
+# `--depth 1`: there is no history locally for `merge-base --is-ancestor` to
+# walk, and deepening every consumer's clone to answer one question is a poor
+# trade. The compare API answers it directly — `behind` and `identical` both
+# mean the branch carries nothing the base lacks, so deleting it is provably
+# lossless. Anything else (`ahead`, `diverged`) means real work would be
+# thrown away, and the caller must refuse instead.
+#
+# An unreadable answer is NOT a yes. Every failure path here returns 1, so a
+# rate limit or a network blip leaves the branch alone.
+branch_adds_nothing_to_base() {
+    local repo_name="$1" branch="$2" base status
+    base=$(gh api "repos/$repo_name" --jq '.default_branch' 2>/dev/null) || return 1
+    [[ -n "$base" ]] || return 1
+    status=$(gh api "repos/$repo_name/compare/$base...$branch" --jq '.status' 2>/dev/null) || return 1
+    [[ "$status" == "behind" || "$status" == "identical" ]]
+}
+
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local head_oid
@@ -564,6 +623,15 @@ sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", o
                 ${match_args[@]+"${match_args[@]}"} 2>&1); then
                 log "$repo_name#$number: MERGED with a merge commit — $detail"
                 ((MERGE_COUNT++)) || true
+                # The branch this bot created is the bot's to clean up. Left
+                # behind, it is what makes the NEXT run refuse to propose here
+                # — see delete_bump_branch. Deliberately not folded into
+                # `gh pr merge --delete-branch`: a deletion that fails there
+                # can take the merge's exit code with it, turning a landed
+                # merge into a reported failure and a wrong MERGE_COUNT.
+                # Separate call, separate consequence: the merge already
+                # counted, and a failed delete warns without unwinding it.
+                delete_bump_branch "$repo_name" "$BRANCH_NAME" || true
             else
                 fail "$repo_name#$number: merge was refused — $(head -1 <<< "$merge_out")"
                 ((FAIL_COUNT++)) || true
@@ -1638,9 +1706,30 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     fi
 
     if $branch_exists && ! $branch_matches; then
-        log "WARN: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
-        ((SKIP_COUNT++)) || true
-        cd "$REPO_ROOT"; continue
+        # Before refusing, ask whether there is anything left to protect.
+        #
+        # The refusal below is about UNKNOWN content — work someone pushed
+        # that a force-push would destroy. A branch whose every commit is
+        # already in the default branch is not that: it is the leftover of a
+        # bump PR that merged and was never cleaned up, and it carries
+        # nothing. Deleting it there is provably lossless, and it is the
+        # difference between a repo that recovers on its own and one that is
+        # stuck until a human notices — which, measured 2026-08-25, took four
+        # days across five repos precisely because nothing ever went red.
+        #
+        # Gated on `branch_adds_nothing_to_base`, which returns false on any
+        # unreadable answer, so the refusal still stands whenever the question
+        # cannot be settled.
+        if branch_adds_nothing_to_base "$repo_name" "$BRANCH_NAME" \
+           && delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
+            log "$BRANCH_NAME was a merged leftover and carried nothing the default branch lacks — deleted it, and proposing the re-pin now."
+            branch_exists=false
+            git fetch --prune origin >/dev/null 2>&1 || true
+        else
+            log "WARN: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
+            ((SKIP_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
     fi
 
     if $branch_exists; then

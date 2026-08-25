@@ -1496,7 +1496,7 @@ setup_bump_repos() {
     local name bare work
     for name in agentskills repo-current repo-diverged repo-error \
                 repo-fed-current repo-fed-stale repo-federated repo-inverted \
-                repo-no-lock repo-other-registry repo-stale; do
+                repo-leftover repo-no-lock repo-other-registry repo-stale; do
         bare="$TEST_DIR/bare/bumporg_$name"
         work="$TEST_DIR/work/bumporg-$name"
         mkdir -p "$bare" "$work"
@@ -1508,7 +1508,7 @@ setup_bump_repos() {
         echo "# $name" > README.md
 
         case "$name" in
-            agentskills|repo-stale|repo-diverged)
+            agentskills|repo-stale|repo-diverged|repo-leftover)
                 seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
                 ;;
             repo-current)
@@ -1582,6 +1582,18 @@ setup_bump_repos() {
     git commit -m "a reviewer's own edit on the bump branch" >/dev/null 2>&1
     git push origin HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
     git checkout -q main
+
+    # repo-leftover is repo-diverged's opposite, and the distinction is the
+    # whole point of the self-heal: its bump branch also carries content the
+    # run would not push, but every commit on it is ALREADY on main — the
+    # residue of a bump PR that merged and whose branch nobody deleted.
+    #
+    # Pointed straight at main, so the compare API answers "identical" and the
+    # branch is provably carrying nothing. Measured 2026-08-25, this was the
+    # real fleet's state in five repos at once, and it silently disabled the
+    # re-pinner in every one of them.
+    cd "$TEST_DIR/work/bumporg-repo-leftover"
+    git push origin main:refs/heads/skills-lock-bump/update >/dev/null 2>&1
 
     # Byte-exact pre-run copies of the two locks no bump may touch.
     cp "$TEST_DIR/work/bumporg-repo-current/skills.lock" "$TEST_DIR/repo-current.lock.orig"
@@ -1867,9 +1879,79 @@ case "$1" in
         ;;
     api)
         shift  # remove 'api'
+        # `-X DELETE` puts a flag where the path used to be. Parsed rather
+        # than assumed, so a caller that omits it still lands on GET.
+        api_method="GET"
+        if [[ "$1" == "-X" || "$1" == "--method" ]]; then
+            api_method="$2"; shift 2
+        fi
         api_path="$1"
         shift
         jq_filter=$(parse_jq_filter "$@")
+
+        # DELETE repos/{owner}/{repo}/git/refs/heads/{branch}
+        # What delete_bump_branch calls to clean up after a merged bump PR.
+        if [[ "$api_method" == "DELETE" \
+              && "$api_path" =~ ^repos/([^/]+)/([^/]+)/git/refs/heads/(.+)$ ]]; then
+            repo_slug="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+            del_branch="${BASH_REMATCH[3]}"
+            bare_path="${MOCK_BARE_DIR}/${repo_slug}"
+            if [[ -d "$bare_path" ]] \
+               && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
+                git -C "$bare_path" update-ref -d "refs/heads/$del_branch"
+                exit 0
+            fi
+            # Real gh prints the error body to stdout and exits non-zero. The
+            # wording matters: delete_bump_branch treats "Reference does not
+            # exist" as success, so a mock that said something else would make
+            # the already-gone path untestable.
+            echo '{"message":"Reference does not exist","status":"422"}'
+            exit 1
+        fi
+
+        # repos/{owner}/{repo}/compare/{base}...{head} — answers
+        # branch_adds_nothing_to_base. Computed from the bare repo rather than
+        # hardcoded, so a fixture's real topology decides the verdict.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/compare/(.+)\.\.\.(.+)$ ]]; then
+            repo_slug="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+            cmp_base="${BASH_REMATCH[3]}"
+            cmp_head="${BASH_REMATCH[4]}"
+            bare_path="${MOCK_BARE_DIR}/${repo_slug}"
+            if [[ ! -d "$bare_path" ]]; then
+                echo '{"message":"Not Found","status":"404"}'
+                exit 1
+            fi
+            base_sha=$(git -C "$bare_path" rev-parse --verify -q "$cmp_base" 2>/dev/null || true)
+            head_sha=$(git -C "$bare_path" rev-parse --verify -q "$cmp_head" 2>/dev/null || true)
+            if [[ -z "$base_sha" || -z "$head_sha" ]]; then
+                echo '{"message":"Not Found","status":"404"}'
+                exit 1
+            fi
+            if [[ "$base_sha" == "$head_sha" ]]; then
+                cmp_status="identical"
+            elif git -C "$bare_path" merge-base --is-ancestor "$head_sha" "$base_sha" 2>/dev/null; then
+                cmp_status="behind"
+            elif git -C "$bare_path" merge-base --is-ancestor "$base_sha" "$head_sha" 2>/dev/null; then
+                cmp_status="ahead"
+            else
+                cmp_status="diverged"
+            fi
+            json="{\"status\": \"$cmp_status\"}"
+            if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
+            exit 0
+        fi
+
+        # repos/{owner}/{repo} — repo metadata; only default_branch is read.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)$ ]]; then
+            repo_slug="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+            if [[ ! -d "${MOCK_BARE_DIR}/${repo_slug}" ]]; then
+                echo '{"message":"Not Found","status":"404"}'
+                exit 1
+            fi
+            json='{"default_branch": "main"}'
+            if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
+            exit 0
+        fi
 
         # repos/{owner}/{repo}/contents/{path}
         if [[ "$api_path" =~ repos/([^/]+)/([^/]+)/contents/(.+) ]]; then
@@ -4385,6 +4467,32 @@ test_bump_consumer_locks() {
 
     # ── A bump branch that already carries someone else's commit.
     assert_contains "$log" "refusing to force-push" "diverged: an open bump branch with other content is refused"
+
+    # ── The SELF-HEAL, and why it is not the same case as the one above.
+    # Both branches carry content this run would not push. The difference is
+    # whether anything would be lost: repo-diverged holds a commit that exists
+    # nowhere else, repo-leftover holds only what main already has. The first
+    # must be refused forever; the second must be cleaned up, or the repo
+    # never receives another lock update and NOTHING goes red to say so — the
+    # bumper exits 0 and the consumer's own verdict reads OK while it serves a
+    # stale bundle. Five repos sat in exactly that state for four days.
+    assert_contains "$log" "was a merged leftover and carried nothing the default branch lacks" \
+        "leftover: a fully-merged bump branch is deleted rather than refused"
+    if [[ -n "$(bump_branch_sha repo-leftover)" ]]; then
+        # Re-pushed by this same run after the delete, which is the point: the
+        # branch is not merely gone, the re-pin it was blocking got proposed.
+        pass "leftover: the re-pin was proposed after the branch was freed"
+    else
+        fail "leftover: expected a fresh bump branch after the leftover was deleted, found none"
+    fi
+    local leftover_lock="$TEST_DIR/leftover-branch.lock"
+    git -C "$TEST_DIR/bare/bumporg_repo-leftover" show \
+        "refs/heads/skills-lock-bump/update:skills.lock" > "$leftover_lock" 2>/dev/null || : > "$leftover_lock"
+    if [[ "$(lock_field_of "$leftover_lock" ref)" == "$BUMP_REF_HEAD" ]]; then
+        pass "leftover: the freshly pushed branch carries the new ref, not the leftover content"
+    else
+        fail "leftover: expected ref $BUMP_REF_HEAD on the new bump branch, got $(lock_field_of "$leftover_lock" ref)"
+    fi
     if [[ -n "$diverged_before" && "$(bump_branch_sha repo-diverged)" == "$diverged_before" ]]; then
         pass "diverged: the reviewer's commit is still the branch tip"
     else
@@ -4392,7 +4500,10 @@ test_bump_consumer_locks() {
     fi
 
     # ── The stale consumer: ref advanced, digests re-derived.
-    assert_contains "$log" "4 proposed" "bump: exactly the four consumers needing a re-pin were proposed"
+    # Five, not four, since repo-leftover joined the fixture set: its bump
+    # branch is a merged leftover, so the self-heal frees the name and the
+    # re-pin it was blocking is proposed in the same run.
+    assert_contains "$log" "5 proposed" "bump: exactly the five consumers needing a re-pin were proposed"
     local stale_new="$TEST_DIR/bump-stale-new.lock"
     bump_lock_at repo-stale "refs/heads/skills-lock-bump/update" > "$stale_new"
     if [[ -s "$stale_new" ]]; then
@@ -4525,7 +4636,7 @@ test_bump_idempotent() {
     # carrying the stale lock until someone merges it. The mock has no memory,
     # so the open PRs are supplied here — EVERY repo the previous run proposed
     # for, or the re-run opens a second PR on the one that was left out.
-    MOCK_OPEN_PR_REPOS="bumporg_repo-stale bumporg_repo-federated bumporg_repo-fed-current bumporg_repo-fed-stale" \
+    MOCK_OPEN_PR_REPOS="bumporg_repo-stale bumporg_repo-federated bumporg_repo-fed-current bumporg_repo-fed-stale bumporg_repo-leftover" \
         run_bump "$TEST_DIR/bump-rerun.txt"
 
     assert_contains "$TEST_DIR/bump-rerun.txt" "0 proposed" "re-run: nothing proposed"
