@@ -1,12 +1,18 @@
-name: Bump consumer skills.lock
+name: Bump the fleet's skills pins
 
-# Daily re-pin of every consumer's `skills.lock` onto the registry's current
+# Daily re-pin of the TWO pins that together decide what an ephemeral session
+# gets: every consumer's `skills.lock` (which bundles, at which registry commit)
+# and this repo's `skills_bootstrap` pin (the hook that reads that lock). The
+# lock half is passes 1-2 and came first; the hook half is pass 3, and ADR 0010
+# is why a workflow named for the lock now moves both.
+#
+# Pass 1-2 re-pin every consumer's `skills.lock` onto the registry's current
 # commit, one pull request per repo. ADR 0001 held the bootstrap allowlist at
 # two repos precisely because nothing did this; ADR 0004 widened it to ten
 # while this was still only anticipated ("a companion PR adds the re-pinner"),
 # naming the ordering as the risk it took. See docs/decisions/0005.
 #
-# The run has two passes, and the order is load-bearing: it SWEEPS first —
+# The lock half has two passes, and the order is load-bearing: it SWEEPS first —
 # merging the bump PRs the PREVIOUS night opened, where the checks are green
 # and the diff is still the lock alone — and only then proposes new ones. A PR
 # merged seconds after it was opened is merged before any check has started;
@@ -214,4 +220,56 @@ jobs:
             ./scripts/bump-consumer-locks.sh --dry-run
           else
             ./scripts/bump-consumer-locks.sh
+          fi
+
+      # ── Pass 3 — the HOOK pin ────────────────────────────────────────────
+      #
+      # The two passes above move every consumer's `skills.lock`: WHICH bundles
+      # at WHICH registry commit. This one moves the thing that READS that lock
+      # — `repos.yml`'s `skills_bootstrap.ref`/`sha256`, the pinned
+      # skills-bootstrap hook that sync.sh delivers to the allowlist.
+      #
+      # It is here, in this workflow, because the two pins are answers to one
+      # question ("is the fleet running the registry's current skills
+      # machinery?") and were previously kept in step by nothing at all. The
+      # lock half has been automatic since ADR 0005; the hook half moved only
+      # when somebody hand-edited repos.yml, which is how agentskills #131
+      # ended up delivered as a lock to consumers still running the hook from
+      # six days earlier. See docs/decisions/0010.
+      #
+      # `if: success() || failure()` — NOT `always()`. The two passes share a
+      # checkout and a token and nothing else: an owner whose consumer bump
+      # failed is no reason to leave the hook pin stale for another day, so a
+      # failed step above must not skip this one. `always()` would also run it
+      # after a CANCELLATION, which is the one case where someone has
+      # deliberately stopped the run mid-flight and a push is the last thing
+      # they want.
+      - name: Bump the skills-bootstrap hook pin
+        if: success() || failure()
+        env:
+          # repos.yml lives in THIS repo, which is Adam-S-Daniel's, so this
+          # pass needs only that owner's installation token. If it was not
+          # minted the script cannot clone or push and says so; the verify step
+          # above has already warned about the missing installation.
+          GH_TOKEN: ${{ steps.token_adam_s_daniel.outputs.token }}
+          # The repo carrying repos.yml, and so the repo the pull request is
+          # opened on. Taken from the run rather than written out, so a fork or
+          # a rename does not leave this pointing at the original.
+          HOOK_PIN_REPO: ${{ github.repository }}
+          # Only the registry that owns the hook is needed here — the
+          # federated source has no `skills_bootstrap` pin — but the same
+          # string is passed as above so there is one spelling of "where the
+          # checkouts are" in this file rather than two that can drift.
+          BUMP_CHECKOUTS: >-
+            Adam-S-Daniel/agentskills=${{ github.workspace }}/registries/agentskills
+            Adam-S-Daniel/cms-platform=${{ github.workspace }}/registries/cms-platform
+          # Through the environment, never interpolated into the `run:` body —
+          # same rule, same incident, as the step above.
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          chmod +x scripts/bump-hook-pin.sh
+          if [[ "$DRY_RUN" == "true" ]]; then
+            ./scripts/bump-hook-pin.sh --dry-run
+          else
+            ./scripts/bump-hook-pin.sh
           fi
