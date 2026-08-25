@@ -644,7 +644,6 @@ tree in both cases.
   `cms-platform`'s `repo-settings.yml` for the three above.
 
 <!-- END MANAGED SECTION -->
-
 ## Repo-specific additions
 
 **`AGENTS.md` in this repo is a generated artifact.** Everything above the marker
