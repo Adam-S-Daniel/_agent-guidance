@@ -154,10 +154,96 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# ── yq preflight ───────────────────────────────────────────────────────────
+#
+# THE INCIDENT, and it is one missing guard wearing two costumes. Every
+# repos.yml read in this repo was spelled `yq ... 2>/dev/null || true`, which
+# collapses three different answers into one: the key is legitimately absent,
+# yq could not parse the file, and yq is not installed at all. Only the first
+# is normal; `|| true` turned the other two into an EMPTY LIST, exit 0, and
+# not one line in the log. An empty exclusion list is not an inert one —
+# sync.sh's filter then matches nothing, and the run clones a repo repos.yml
+# excludes and pushes the managed AGENTS.md straight to its default branch,
+# which is the contamination that exclusion exists to prevent. Measured with
+# a `yq` stubbed to exit 1: drift-report.sh printed "Found 1 repo(s)" and
+# reported on the excluded repo, where the same run with a working yq printed
+# "excluded by repos.yml" and "Found 0 repo(s)".
+#
+# The second costume is FLAVOUR, and it is why the probe below runs a command
+# instead of reading a version string. Two unrelated programs install as
+# `yq`: mikefarah's Go one, which this repo's workflows fetch version-pinned
+# and digest-verified (docs/decisions/0008; Test 7h holds all four copies of
+# that step identical), and kislyuk's Python wrapper around jq, which Debian
+# ships as `yq` and which forwards `-o=json` to jq and dies with "jq: Unknown
+# option -o=json" — a message that blames repos.yml for a tool problem, and
+# the message the nightly hook-pin bump actually died with. `-o=json -I0` is
+# the exact invocation bump-hook-pin.sh's round-trip check depends on, so
+# probing it asks the question this repo really has, and asks it once, up
+# front, rather than letting the answer arrive as an empty array or a
+# misattributed parse error halfway down.
+#
+# THIS BLOCK IS DUPLICATED VERBATIM in sync.sh, drift-report.sh,
+# bump-consumer-locks.sh and bump-hook-pin.sh. All four are standalone entry
+# points and only one of them sources anything today (a file about pull
+# request prose), so a library existing solely to hold this guard would be an
+# abstraction invented for one `if`. The four copies must move together.
+if ! command -v yq >/dev/null 2>&1; then
+    echo "::error::yq is not on PATH, and this script reads repos.yml with it." >&2
+    echo "::error::Install mikefarah yq (https://github.com/mikefarah/yq) — CI installs it version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
+    # Captured rather than echoed straight through, and branched, so that
+    # "yq --version itself fell over" and "yq --version answered something
+    # unexpected" stay separate sentences instead of both reaching the log as
+    # an empty string. The flavour is then named as the LIKELY cause, not
+    # asserted: all this run established is that the probe failed, and a
+    # sentence claiming more than the run established is the defect
+    # lib/bump-pr-claims.sh exists to make unwritable.
+    if ! yq_found=$(yq --version 2>&1); then
+        yq_found="'yq --version' itself failed: ${yq_found:-no output}"
+    else
+        yq_found="'yq --version' says: ${yq_found:-no output}"
+    fi
+    echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
+    echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 log()  { echo "  $*"; }
 fail() { echo "  ERROR: $*"; }
+
+# read_repos_yml <yq expression> — the one way this script reads repos.yml.
+#
+# It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
+# spelling collapsed into one: a key that is legitimately absent (yq prints
+# nothing and exits 0 — a normal empty result, which each caller's `[[ -n ]]`
+# guard already handles), a repos.yml yq cannot parse, and a yq that fell
+# over. Only a NON-ZERO EXIT is a failure, and a failure now stops the run,
+# because the lists read through here decide which repos this script writes
+# to: a silently empty one is not a smaller run, it is a run against the
+# wrong set.
+#
+# Command substitution, never `< <(...)`. Process substitution discards the
+# exit status of the command inside it, so simply dropping `|| true` from one
+# of those reads would have changed the visible behaviour not at all — the
+# same trap named beside the `gh repo list` capture further down. The `exit 2`
+# below leaves only the substitution's subshell on its own; what stops the run
+# is `set -e` seeing the assignment that captured it come back non-zero, so
+# every caller must assign the result rather than pipe it.
+#
+# Duplicated in sync.sh, drift-report.sh and bump-consumer-locks.sh for the
+# reason given above the yq preflight, and it must move with them.
+read_repos_yml() {
+    local expr="$1" out
+    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+        exit 2
+    fi
+    printf '%s\n' "$out"
+}
 
 # generator_error_line <captured output> — the one line that says WHAT went
 # wrong, for a failure report that has room for one line.
@@ -646,9 +732,10 @@ sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", o
 
 EXCLUDED_REPOS=()
 if [[ -f "$REPOS_YML" ]]; then
+    excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
     while IFS= read -r r; do
         [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
-    done < <(yq -r '.exclude // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$excluded_raw"
 fi
 
 # The registry this run bumps. Defaulted from the same key sync.sh reads for
@@ -656,7 +743,7 @@ fi
 # rather than a second copy that can disagree with it.
 BUMP_REGISTRY="${BUMP_REGISTRY:-}"
 if [[ -z "$BUMP_REGISTRY" && -f "$REPOS_YML" ]]; then
-    BUMP_REGISTRY=$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BUMP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
 fi
 if [[ -z "$BUMP_REGISTRY" ]]; then
     echo "ERROR: no registry to bump — set BUMP_REGISTRY, or give repos.yml a skills_bootstrap.registry." >&2
@@ -980,21 +1067,82 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Fetch the lock ─────────────────────────────────────────────────
-    # On HTTP errors (404 when the file is absent) gh api prints the raw error
-    # JSON body to stdout — the --jq filter is not applied — so `|| true` alone
-    # would leave garbage here and base64-decode it into a "lock". Discard
-    # output on failure explicitly.
+    # Captured with its exit status, and the output read only on success,
+    # because this one call carries TWO hazards and the obvious `|| true`
+    # gets each of them wrong in its own way.
+    #
+    # The stdout half: on an HTTP error gh api prints the raw error JSON body
+    # to stdout — the --jq filter is not applied — so `|| true` alone would
+    # leave that body in $encoded and base64-decode it into something this run
+    # would go on to call a "lock".
+    #
+    # The status half, which a bare `2>/dev/null` quietly reintroduces once the
+    # first is fixed: the exit status is the ONLY thing separating "this repo
+    # declares no bundles" from "the credential can no longer read file
+    # contents". Throw it away and every 401, 403, 429, 5xx, DNS or TLS failure
+    # is reported as a fact the run never established. That is worst
+    # fleet-wide, because Contents permission is granted App-wide: a credential
+    # that can still enumerate both owners but no longer read a file makes
+    # EVERY consumer answer "no skills.lock", the whole re-pin pass becomes a
+    # no-op, and — since eight of the ten allowlist entries in repos.yml
+    # genuinely are `lock: pending` — the summary prints "0 merged, 0 proposed,
+    # N skipped, 0 failed", which is exactly what a healthy night prints.
+    # Nothing goes red, scheduled-run-health sees a success, and every consumer
+    # serves a frozen bundle until somebody notices by hand.
     if ! encoded=$(gh api "repos/$repo_name/contents/$LOCK_REL_PATH" \
-        --jq '.content' 2>/dev/null); then
-        encoded=""
+        --jq '.content' 2>&1); then
+        # $encoded holds diagnostics now and never a lock: gh has written the
+        # error body to stdout and its own status line to stderr, and this
+        # capture has both. `head -1` would therefore quote the body and never
+        # name the status, so prefer gh's own `gh: ` line where there is one.
+        api_err=$(grep -m1 '^gh: ' <<< "$encoded" || head -1 <<< "$encoded")
+
+        # A 404 on the PATH is the only outcome that MAY mean "absent", and
+        # even it means that only once the REPO itself answers: GitHub replies
+        # 404 rather than 403 when a credential is not authorized to know a
+        # thing exists, so an unprobed 404 is as much a scope gap as a missing
+        # file (AGENTS.md, "A GitHub 404 means 'not authorized', not 'not
+        # there'"). Anything else is a failure, counted and named, the way the
+        # sweep's `gh pr list` and the discovery `gh repo list` above already
+        # refuse the same conflation. Both surfaces of the status are matched
+        # because only one of them may reach us: gh's own line carries
+        # "(HTTP 404)" on stderr, while the API's error body carries
+        # "status":"404" on stdout.
+        if [[ "$encoded" != *"(HTTP 404)"* \
+              && ! "$encoded" =~ \"status\":[[:space:]]*\"404\" ]]; then
+            fail "$repo_name: could not read $LOCK_REL_PATH — ${api_err:-no diagnostic output from gh}"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        # The probe that tells the two 404s apart. It asks about the REPO, not
+        # the file: a repo that answers has told us the credential can see it
+        # and the file really is not there, whereas a repo that 404s too has
+        # told us nothing about the file at all.
+        if ! repo_probe=$(gh api "repos/$repo_name" --silent 2>&1); then
+            probe_err=$(grep -m1 '^gh: ' <<< "$repo_probe" || head -1 <<< "$repo_probe")
+            fail "$repo_name: $LOCK_REL_PATH answered 404 and so did the repo itself — a scope gap, not a missing lock — ${probe_err:-no diagnostic output from gh}"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        # Not a fault, and by far the commonest outcome: most repos in the
+        # fleet declare no bundles at all. Logged rather than silent so a run
+        # says what it considered — and reached only via the probe above, so
+        # the line now asserts something this run actually established.
+        log "no $LOCK_REL_PATH — nothing to re-pin."
+        ((SKIP_COUNT++)) || true
+        continue
     fi
 
     if [[ -z "$encoded" ]]; then
-        # Not a fault, and by far the commonest outcome: most repos in the
-        # fleet declare no bundles at all. Logged rather than silent so a run
-        # says what it considered.
-        log "no $LOCK_REL_PATH — nothing to re-pin."
-        ((SKIP_COUNT++)) || true
+        # Reachable only on a 200 that carried no content at all; the "this
+        # repo has no lock" case arrives as the 404 handled above and never
+        # lands here. An empty success is a fault rather than an absence:
+        # decoding it would hand lock_plan an empty file, and the run would
+        # then report a parse error that names the wrong cause.
+        fail "$repo_name: the API answered for $LOCK_REL_PATH but returned no content."
+        ((FAIL_COUNT++)) || true
         continue
     fi
 

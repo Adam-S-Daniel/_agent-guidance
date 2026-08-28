@@ -38,6 +38,13 @@ SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
 MARKER="## Repo-specific additions"
 BRANCH_NAME="agents-md-sync/update"
+# The committer identity every commit this sync makes is written under (set on
+# each clone below) AND the identity the PR-fallback force-push guard
+# recognises as its own work. One constant because those two must never drift:
+# were the commits written under one address and the guard looking for another,
+# the guard would read this sync's own stale branch as a stranger's and refuse
+# every repo it had ever proposed to.
+SYNC_BOT_EMAIL="agents-md-sync[bot]@users.noreply.github.com"
 DRY_RUN=false
 WORK_DIR=$(mktemp -d)
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
@@ -54,9 +61,90 @@ fi
 
 REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
 
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
-
 trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Parsed as a closed set rather than sniffed, exactly as bump-consumer-locks.sh
+# and bump-hook-pin.sh do and for the same reason. `[[ "${1:-}" == "--dry-run" ]]`
+# alone fails OPEN: `-n`, `--dry-runn`, and the flag given anywhere but first
+# all left DRY_RUN=false, and the run then went on to clone every repo in the
+# fleet, commit, push STRAIGHT to their default branches (this sync holds a
+# ruleset bypass, so protection does not catch it) and force-push a branch —
+# while the operator who typed the flag believed nothing was written. A flag
+# whose whole meaning is "write nothing" has to fail CLOSED, so an argument
+# this script does not recognise stops it. After the trap, so a usage exit
+# still removes the work directory.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true ;;
+        -h|--help)
+            echo "Usage: $(basename "${BASH_SOURCE[0]}") [--dry-run]"
+            echo "Environment: see the header of this script."
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown argument '$1'." >&2
+            echo "Usage: $(basename "${BASH_SOURCE[0]}") [--dry-run]" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+# ── yq preflight ───────────────────────────────────────────────────────────
+#
+# THE INCIDENT, and it is one missing guard wearing two costumes. Every
+# repos.yml read in this repo was spelled `yq ... 2>/dev/null || true`, which
+# collapses three different answers into one: the key is legitimately absent,
+# yq could not parse the file, and yq is not installed at all. Only the first
+# is normal; `|| true` turned the other two into an EMPTY LIST, exit 0, and
+# not one line in the log. An empty exclusion list is not an inert one —
+# sync.sh's filter then matches nothing, and the run clones a repo repos.yml
+# excludes and pushes the managed AGENTS.md straight to its default branch,
+# which is the contamination that exclusion exists to prevent. Measured with
+# a `yq` stubbed to exit 1: drift-report.sh printed "Found 1 repo(s)" and
+# reported on the excluded repo, where the same run with a working yq printed
+# "excluded by repos.yml" and "Found 0 repo(s)".
+#
+# The second costume is FLAVOUR, and it is why the probe below runs a command
+# instead of reading a version string. Two unrelated programs install as
+# `yq`: mikefarah's Go one, which this repo's workflows fetch version-pinned
+# and digest-verified (docs/decisions/0008; Test 7h holds all four copies of
+# that step identical), and kislyuk's Python wrapper around jq, which Debian
+# ships as `yq` and which forwards `-o=json` to jq and dies with "jq: Unknown
+# option -o=json" — a message that blames repos.yml for a tool problem, and
+# the message the nightly hook-pin bump actually died with. `-o=json -I0` is
+# the exact invocation bump-hook-pin.sh's round-trip check depends on, so
+# probing it asks the question this repo really has, and asks it once, up
+# front, rather than letting the answer arrive as an empty array or a
+# misattributed parse error halfway down.
+#
+# THIS BLOCK IS DUPLICATED VERBATIM in sync.sh, drift-report.sh,
+# bump-consumer-locks.sh and bump-hook-pin.sh. All four are standalone entry
+# points and only one of them sources anything today (a file about pull
+# request prose), so a library existing solely to hold this guard would be an
+# abstraction invented for one `if`. The four copies must move together.
+if ! command -v yq >/dev/null 2>&1; then
+    echo "::error::yq is not on PATH, and this script reads repos.yml with it." >&2
+    echo "::error::Install mikefarah yq (https://github.com/mikefarah/yq) — CI installs it version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
+    # Captured rather than echoed straight through, and branched, so that
+    # "yq --version itself fell over" and "yq --version answered something
+    # unexpected" stay separate sentences instead of both reaching the log as
+    # an empty string. The flavour is then named as the LIKELY cause, not
+    # asserted: all this run established is that the probe failed, and a
+    # sentence claiming more than the run established is the defect
+    # lib/bump-pr-claims.sh exists to make unwritable.
+    if ! yq_found=$(yq --version 2>&1); then
+        yq_found="'yq --version' itself failed: ${yq_found:-no output}"
+    else
+        yq_found="'yq --version' says: ${yq_found:-no output}"
+    fi
+    echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
+    echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -82,19 +170,51 @@ read_sections_from_yaml() {
     yq -r '.sections // [] | .[]' 2>/dev/null || true
 }
 
+# read_repos_yml <yq expression> — the one way this script reads repos.yml.
+#
+# It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
+# spelling collapsed into one: a key that is legitimately absent (yq prints
+# nothing and exits 0 — a normal empty result, which each caller's `[[ -n ]]`
+# guard already handles), a repos.yml yq cannot parse, and a yq that fell
+# over. Only a NON-ZERO EXIT is a failure, and a failure now stops the run,
+# because the lists read through here decide which repos this script writes
+# to: a silently empty one is not a smaller run, it is a run against the
+# wrong set.
+#
+# Command substitution, never `< <(...)`. Process substitution discards the
+# exit status of the command inside it, so simply dropping `|| true` from one
+# of those reads would have changed the visible behaviour not at all — the
+# same trap named beside the `gh repo list` capture further down. The `exit 2`
+# below leaves only the substitution's subshell on its own; what stops the run
+# is `set -e` seeing the assignment that captured it come back non-zero, so
+# every caller must assign the result rather than pipe it.
+#
+# Duplicated in sync.sh, drift-report.sh and bump-consumer-locks.sh for the
+# reason given above the yq preflight, and it must move with them.
+read_repos_yml() {
+    local expr="$1" out
+    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+        exit 2
+    fi
+    printf '%s\n' "$out"
+}
+
 # ── Load central repos.yml (exclusions + default sections) ─────────────────
 
 EXCLUDED_REPOS=()
 DEFAULT_SECTIONS=()
 
 if [[ -f "$REPOS_YML" ]]; then
+    excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
     while IFS= read -r r; do
         [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
-    done < <(yq -r '.exclude // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$excluded_raw"
 
+    sections_raw=$(read_repos_yml '.default_sections // [] | .[]')
     while IFS= read -r s; do
         [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
-    done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$sections_raw"
 fi
 
 # ── skills-bootstrap hook delivery config ──────────────────────────────────
@@ -110,14 +230,15 @@ BOOTSTRAP_REF=""
 BOOTSTRAP_SHA256=""
 
 if [[ -f "$REPOS_YML" ]]; then
-    BOOTSTRAP_REGISTRY=$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML" 2>/dev/null || echo "")
-    BOOTSTRAP_PATH=$(yq -r '.skills_bootstrap.path // ""' "$REPOS_YML" 2>/dev/null || echo "")
-    BOOTSTRAP_REF=$(yq -r '.skills_bootstrap.ref // ""' "$REPOS_YML" 2>/dev/null || echo "")
-    BOOTSTRAP_SHA256=$(yq -r '.skills_bootstrap.sha256 // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
+    BOOTSTRAP_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
+    BOOTSTRAP_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
+    BOOTSTRAP_SHA256=$(read_repos_yml '.skills_bootstrap.sha256 // ""')
 
+    bootstrap_repos_raw=$(read_repos_yml '.skills_bootstrap.repos // [] | .[]')
     while IFS= read -r r; do
         [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
-    done < <(yq -r '.skills_bootstrap.repos // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$bootstrap_repos_raw"
 fi
 
 # Enabled only when the pin is fully specified. A half-filled block (a ref
@@ -223,19 +344,32 @@ ensure_bootstrap_blob || true
 echo "Scanning repos for: $ORG (excluding $SELF_REPO)"
 echo ""
 
-# Capture repo list via command substitution so failures propagate under set -e.
-# Process substitution <(...) silently swallows errors, which would cause the
-# script to report success while doing nothing.
-repo_list_raw=$(
+# Captured through a command substitution, never process substitution: <(...)
+# silently swallows the error and the script would report success while doing
+# nothing. The failure branch is explicit because a bare `set -e` death here is
+# the wrong shape too — sync.yml mints one App token per owner with
+# continue-on-error, and its verify step promises that a failed mint only means
+# "its repos will be skipped this run", but it exports no base GH_TOKEN. So a
+# failed mint leaves GH_TOKEN unset, this `gh repo list` exits non-zero and,
+# with SYNC_OWNERS ordered "Adam-S-Daniel jodidaniel", the run ends on the
+# FIRST owner: the second owner is never scanned and no "=== Sync complete ==="
+# summary is printed. Counted per owner instead, so the run still goes red at
+# the end and names the owner it could not read, after serving every owner it
+# could.
+if ! repo_list_raw=$(
     gh repo list "$ORG" \
         --no-archived \
         --source \
         --json nameWithOwner \
         --limit 1000 \
-        --jq '.[].nameWithOwner'
-)
+        --jq '.[].nameWithOwner' 2>&1
+); then
+    fail "$ORG: could not list repos — $(head -1 <<< "$repo_list_raw")"
+    ((FAIL_COUNT++)) || true
+    continue
+fi
 
-mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sort)
+mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sed '/^$/d' | sort)   # drop the blank line an empty owner produces
 
 # ── Filter repos excluded via repos.yml ─────────────────────────────────────
 if [[ ${#EXCLUDED_REPOS[@]} -gt 0 ]]; then
@@ -316,7 +450,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # Configure git identity for commits (not inherited in fresh clones)
     git config user.name "agents-md-sync[bot]"
-    git config user.email "agents-md-sync[bot]@users.noreply.github.com"
+    git config user.email "$SYNC_BOT_EMAIL"
 
     # Embed token in remote URL so git push can authenticate in CI (no TTY).
     # gh-repo-clone sets an HTTPS remote but does not persist credentials for
@@ -667,11 +801,29 @@ Sections: ${sections[*]:-none}
 Managed content updated by the central _agent-guidance repository.${bootstrap_note}"
     fi
 
-    git commit -m "$commit_message" || {
+    # "git commit failed" and "there was nothing to commit" are separate
+    # answers and are asked separately. Control only reaches here when the diff
+    # check above found something to change, so in practice every trip through
+    # the second branch is a real error — and the fleet's own tooling makes one
+    # error the common one: cms-platform's dev-hooks-sync installs a global
+    # core.hooksPath whose secrets-scan pre-commit guard FAILS CLOSED when
+    # gitleaks is absent from PATH. That is correct for a security gate and
+    # fatal here, because it refuses EVERY per-repo commit. Folded into
+    # "Nothing to commit." and counted as a benign skip, that printed
+    # "=== Sync complete: 0 synced, 20 skipped, 0 failed ===" and exited 0
+    # having pushed nothing anywhere — a whole fleet silently unsynced by a
+    # green run. A refused commit is a per-repo FAILURE that names the reason.
+    if git diff --cached --quiet; then
         log "Nothing to commit."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"; continue
-    }
+    fi
+
+    if ! commit_out=$(git commit -m "$commit_message" 2>&1); then
+        fail "$repo_name: commit refused — $(head -1 <<< "$commit_out")"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # ── Deliver: push directly, fall back to a PR ──────────────────────
     # The sync App has a ruleset bypass on fleet-managed repos (declared in
@@ -708,13 +860,64 @@ Managed content updated by the central _agent-guidance repository.${bootstrap_no
             cd "$REPO_ROOT"; continue
         }
 
-        # Force-push: a stale agents-md-sync/update branch from the old PR-era
-        # (built on a since-superseded default branch) has diverged from this
-        # run's HEAD, so a plain push is rejected (fetch first). Force is safe
-        # here — the branch is bot-owned, this sync is its only writer, and it
-        # is regenerated from the current default branch every run; force just
-        # replaces a stale proposal. The default branch itself stays gated by
-        # the repo's protection.
+        # ── Force only over commits this sync itself wrote ─────────────
+        # The force-push keeps the one case it exists for: a stale
+        # agents-md-sync/update from the old PR-era, built on a
+        # since-superseded default branch, has diverged from this run's HEAD,
+        # so a plain push is rejected (fetch first) and without force the repo
+        # would never receive another update. What is NOT true is the
+        # justification this comment used to carry — "the branch is bot-owned,
+        # this sync is its only writer". On the cms-platform-managed repos this
+        # fallback opens a PR and arms auto-merge, so a maintainer can push a
+        # conflict resolution or a reviewer-requested fix onto that branch; the
+        # next run then overwrote it and logged only "PR #N already exists —
+        # branch updated". agentskills' AGENTS.md still asserts the invariant
+        # this restores: the sync must not discard reviewer commits on an open
+        # PR.
+        #
+        # So the invariant is now the narrower, true one. Every commit the
+        # remote branch carries that the default branch does not already
+        # contain must have been written under $SYNC_BOT_EMAIL; one foreign
+        # committer and this repo is refused and NAMED, so the run goes red
+        # rather than silently overwriting a human's work. "Could not ask" is
+        # never read as "nothing is there": an existing branch whose commits
+        # cannot be listed refuses too.
+        branch_foreign_commits=""
+        ls_remote_status=0
+        git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1 \
+            || ls_remote_status=$?
+        if [[ $ls_remote_status -eq 0 ]]; then
+            # The --depth 1 clone still answers this: a plain `git fetch` of the
+            # branch brings its commits down to the clone's existing shallow
+            # boundary, and the range walk terminates at the graft rather than
+            # erroring (measured on git 2.43). No refspec is given, so the
+            # fetch writes FETCH_HEAD and cannot collide with the local branch
+            # of the same name that was just checked out.
+            if ! git fetch origin "$BRANCH_NAME" >/dev/null 2>&1 \
+               || ! branch_commit_emails=$(git log --format='%ce' \
+                    "origin/$default_branch..FETCH_HEAD" 2>/dev/null); then
+                fail "$repo_name: could not read $BRANCH_NAME to see whose commits it carries — refusing to force-push."
+                ((FAIL_COUNT++)) || true
+                cd "$REPO_ROOT"; continue
+            fi
+            branch_foreign_commits=$(grep -v -x -F "$SYNC_BOT_EMAIL" <<< "$branch_commit_emails" || true)
+        elif [[ $ls_remote_status -ne 2 ]]; then
+            # 2 is ls-remote's own "no matching ref" — the branch does not
+            # exist, so there is nothing on the remote to protect and the push
+            # below simply creates it. Any other status is a transport or auth
+            # failure, which is not an answer to the question that was asked.
+            fail "$repo_name: could not tell whether $BRANCH_NAME exists — refusing to force-push."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+
+        if [[ -n "$branch_foreign_commits" ]]; then
+            fail "$repo_name: $BRANCH_NAME carries a commit this sync did not write (committer $(head -1 <<< "$branch_foreign_commits")) — refusing to force-push over it. Merge or close its PR, or delete the branch, then re-run."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+
+        # The default branch itself stays gated by the repo's protection.
         if ! git push -u --force origin "$BRANCH_NAME"; then
             fail "push failed for $repo_name"
             ((FAIL_COUNT++)) || true

@@ -50,6 +50,62 @@ fi
 
 REPOS_YML="${REPOS_YML:-$REPO_ROOT/repos.yml}"
 
+# ── yq preflight ───────────────────────────────────────────────────────────
+#
+# THE INCIDENT, and it is one missing guard wearing two costumes. Every
+# repos.yml read in this repo was spelled `yq ... 2>/dev/null || true`, which
+# collapses three different answers into one: the key is legitimately absent,
+# yq could not parse the file, and yq is not installed at all. Only the first
+# is normal; `|| true` turned the other two into an EMPTY LIST, exit 0, and
+# not one line in the log. An empty exclusion list is not an inert one —
+# sync.sh's filter then matches nothing, and the run clones a repo repos.yml
+# excludes and pushes the managed AGENTS.md straight to its default branch,
+# which is the contamination that exclusion exists to prevent. Measured with
+# a `yq` stubbed to exit 1: drift-report.sh printed "Found 1 repo(s)" and
+# reported on the excluded repo, where the same run with a working yq printed
+# "excluded by repos.yml" and "Found 0 repo(s)".
+#
+# The second costume is FLAVOUR, and it is why the probe below runs a command
+# instead of reading a version string. Two unrelated programs install as
+# `yq`: mikefarah's Go one, which this repo's workflows fetch version-pinned
+# and digest-verified (docs/decisions/0008; Test 7h holds all four copies of
+# that step identical), and kislyuk's Python wrapper around jq, which Debian
+# ships as `yq` and which forwards `-o=json` to jq and dies with "jq: Unknown
+# option -o=json" — a message that blames repos.yml for a tool problem, and
+# the message the nightly hook-pin bump actually died with. `-o=json -I0` is
+# the exact invocation bump-hook-pin.sh's round-trip check depends on, so
+# probing it asks the question this repo really has, and asks it once, up
+# front, rather than letting the answer arrive as an empty array or a
+# misattributed parse error halfway down.
+#
+# THIS BLOCK IS DUPLICATED VERBATIM in sync.sh, drift-report.sh,
+# bump-consumer-locks.sh and bump-hook-pin.sh. All four are standalone entry
+# points and only one of them sources anything today (a file about pull
+# request prose), so a library existing solely to hold this guard would be an
+# abstraction invented for one `if`. The four copies must move together.
+if ! command -v yq >/dev/null 2>&1; then
+    echo "::error::yq is not on PATH, and this script reads repos.yml with it." >&2
+    echo "::error::Install mikefarah yq (https://github.com/mikefarah/yq) — CI installs it version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
+    # Captured rather than echoed straight through, and branched, so that
+    # "yq --version itself fell over" and "yq --version answered something
+    # unexpected" stay separate sentences instead of both reaching the log as
+    # an empty string. The flavour is then named as the LIKELY cause, not
+    # asserted: all this run established is that the probe failed, and a
+    # sentence claiming more than the run established is the defect
+    # lib/bump-pr-claims.sh exists to make unwritable.
+    if ! yq_found=$(yq --version 2>&1); then
+        yq_found="'yq --version' itself failed: ${yq_found:-no output}"
+    else
+        yq_found="'yq --version' says: ${yq_found:-no output}"
+    fi
+    echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
+    echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 strip_volatile() {
@@ -121,19 +177,51 @@ fetch_file_content() {
     return 0
 }
 
+# read_repos_yml <yq expression> — the one way this script reads repos.yml.
+#
+# It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
+# spelling collapsed into one: a key that is legitimately absent (yq prints
+# nothing and exits 0 — a normal empty result, which each caller's `[[ -n ]]`
+# guard already handles), a repos.yml yq cannot parse, and a yq that fell
+# over. Only a NON-ZERO EXIT is a failure, and a failure now stops the run,
+# because the lists read through here decide which repos this script writes
+# to: a silently empty one is not a smaller run, it is a run against the
+# wrong set.
+#
+# Command substitution, never `< <(...)`. Process substitution discards the
+# exit status of the command inside it, so simply dropping `|| true` from one
+# of those reads would have changed the visible behaviour not at all — the
+# same trap named beside the `gh repo list` capture further down. The `exit 2`
+# below leaves only the substitution's subshell on its own; what stops the run
+# is `set -e` seeing the assignment that captured it come back non-zero, so
+# every caller must assign the result rather than pipe it.
+#
+# Duplicated in sync.sh, drift-report.sh and bump-consumer-locks.sh for the
+# reason given above the yq preflight, and it must move with them.
+read_repos_yml() {
+    local expr="$1" out
+    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+        exit 2
+    fi
+    printf '%s\n' "$out"
+}
+
 # ── Load central repos.yml (exclusions + default sections) ─────────────────
 
 EXCLUDED_REPOS=()
 DEFAULT_SECTIONS=()
 
 if [[ -f "$REPOS_YML" ]]; then
+    excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
     while IFS= read -r r; do
         [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
-    done < <(yq -r '.exclude // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$excluded_raw"
 
+    sections_raw=$(read_repos_yml '.default_sections // [] | .[]')
     while IFS= read -r s; do
         [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
-    done < <(yq -r '.default_sections // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$sections_raw"
 fi
 
 # ── cron-coverage classification (the fleet list's only drift alarm) ───────
@@ -149,11 +237,11 @@ fi
 CRON_CLASSIFIED=()
 
 if [[ -f "$REPOS_YML" ]]; then
+    cron_classified_raw=$(read_repos_yml \
+        '((.cron_coverage.fleet // []) + (.cron_coverage.out_of_scope // [])) | .[]')
     while IFS= read -r r; do
         [[ -n "$r" ]] && CRON_CLASSIFIED+=("$r")
-    done < <(yq -r \
-        '((.cron_coverage.fleet // []) + (.cron_coverage.out_of_scope // [])) | .[]' \
-        "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$cron_classified_raw"
 fi
 
 cron_classified() {
@@ -172,12 +260,13 @@ BOOTSTRAP_PATH=""
 BOOTSTRAP_REF=""
 
 if [[ -f "$REPOS_YML" ]]; then
-    BOOTSTRAP_REGISTRY=$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML" 2>/dev/null || echo "")
-    BOOTSTRAP_PATH=$(yq -r '.skills_bootstrap.path // ""' "$REPOS_YML" 2>/dev/null || echo "")
-    BOOTSTRAP_REF=$(yq -r '.skills_bootstrap.ref // ""' "$REPOS_YML" 2>/dev/null || echo "")
+    BOOTSTRAP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
+    BOOTSTRAP_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
+    BOOTSTRAP_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
+    bootstrap_repos_raw=$(read_repos_yml '.skills_bootstrap.repos // [] | .[]')
     while IFS= read -r r; do
         [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
-    done < <(yq -r '.skills_bootstrap.repos // [] | .[]' "$REPOS_YML" 2>/dev/null || true)
+    done <<< "$bootstrap_repos_raw"
 fi
 
 bootstrap_allowlisted() {
@@ -191,6 +280,13 @@ bootstrap_allowlisted() {
 # The pinned hook, fetched lazily so a report run that touches no allowlisted
 # repo costs nothing. Fetch failure is not fatal: the column degrades to
 # "unverified" rather than the whole report failing.
+#
+# This is the ONE fetch_file_content call site that deliberately keeps the bare
+# `|| VAR=""` shape every other one in this file had to give up. It can, because
+# both outcomes it collapses are already the withheld one: an absent pinned hook
+# and a short read of it both leave PINNED_HOOK empty, pinned_hook returns 1, and
+# the cell reads "unverified" — a cell that says the comparison did not happen. A
+# separate rc branch here would be a branch that changes nothing.
 PINNED_HOOK=""
 PINNED_HOOK_TRIED=false
 pinned_hook() {
@@ -245,6 +341,14 @@ print(" + ".join(parts))
 # reproduces its effective view there.
 IGNORE_PROBE_DIR=""
 
+# Set by bootstrap_blocked when it returns 2, naming the ignore file it could not
+# read in full, so the row's note can say WHICH path went unread. It is a global
+# rather than something printed on stdout because bootstrap_blocked has to run in
+# the caller's shell: run it in a command substitution and the memoized
+# IGNORE_PROBE_DIR it assigns is lost with the subshell, so every call would mint
+# a fresh temp dir that the EXIT trap below never sees.
+IGNORE_UNREADABLE_PATH=""
+
 # The probe outlives any single call — it is reused across every repo in the
 # run, which is what memoizing it above is for — so the earliest safe moment to
 # remove it is the end of the run. sync.sh pairs its own `mktemp -d` with an
@@ -264,10 +368,26 @@ cleanup_ignore_probe() {
 }
 trap cleanup_ignore_probe EXIT
 
+# Returns 0 blocked, 1 not blocked, 2 could not read the ignore rules in full.
+# That third answer has to exist because the two verdicts this decides hand a
+# human OPPOSITE instructions: **blocked** says "does not self-heal, change that
+# repo's .gitignore", **missing** says "the next sync delivers it". A short read
+# of either ignore file used to be swallowed into "no rules at all", which is the
+# branch that prints the reassuring one for a repo the sync is in fact skipping
+# with a warning every night.
 bootstrap_blocked() {
-    local repo_name="$1" root_ignore claude_ignore probe
-    root_ignore=$(fetch_file_content "$repo_name" ".gitignore") || root_ignore=""
-    claude_ignore=$(fetch_file_content "$repo_name" ".claude/.gitignore") || claude_ignore=""
+    local repo_name="$1" root_ignore claude_ignore probe rc=0
+    IGNORE_UNREADABLE_PATH=""
+    root_ignore=$(fetch_file_content "$repo_name" ".gitignore") || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        IGNORE_UNREADABLE_PATH=".gitignore"
+        return 2
+    fi
+    claude_ignore=$(fetch_file_content "$repo_name" ".claude/.gitignore") || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        IGNORE_UNREADABLE_PATH=".claude/.gitignore"
+        return 2
+    fi
     [[ -z "$root_ignore$claude_ignore" ]] && return 1
 
     if [[ -z "$IGNORE_PROBE_DIR" ]]; then
@@ -299,6 +419,11 @@ bootstrap_blocked() {
 # per-owner token must not leak into owner B's iteration).
 BASE_GH_TOKEN="${GH_TOKEN:-}"
 
+# Owners whose repo listing could not be read at all this run. Reported in the
+# published table (below) and counted here, because "this owner has no drift" and
+# "this owner was never looked at" must not render as the same silence.
+OWNER_FAILURES=()
+
 # ── Scan each owner ──────────────────────────────────────────────────────
 
 for ORG in "${OWNERS[@]}"; do
@@ -326,14 +451,38 @@ echo "Scanning repos for: $ORG (excluding $SELF_REPO)"
 # Capture repo list via command substitution so failures propagate under set -e.
 # Process substitution <(...) silently swallows errors, which would cause the
 # script to report success while doing nothing.
-repo_list_raw=$(
+#
+# The failure branch is explicit because a bare `set -e` death here is the wrong
+# shape too, for the same reason bump-consumer-locks.sh spells one out: with
+# SYNC_OWNERS ordered "Adam-S-Daniel jodidaniel", one owner missing its App
+# installation ends the run before the OTHER owner is scanned at all. That costs
+# more here than it does there, because this script's entire output is a
+# published dashboard — the run dies with no report to publish and nothing
+# anywhere naming the owner that could not be read. Counted per owner instead,
+# and written INTO the report as its own section so a reader of drift-report.md
+# can tell an owner with no drift from an owner nobody looked at.
+if ! repo_list_raw=$(
     gh repo list "$ORG" \
         --no-archived \
         --source \
         --json nameWithOwner \
         --limit 1000 \
-        --jq '.[].nameWithOwner'
-)
+        --jq '.[].nameWithOwner' 2>&1
+); then
+    echo "::error::$ORG: could not list repos — $(head -1 <<< "$repo_list_raw")" >&2
+    {
+        echo ""
+        echo "## $ORG"
+        echo ""
+        echo "> Organization: \`$ORG\` — **not scanned this run**"
+        echo ""
+        echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | Open PR | Sections | Notes |"
+        echo "|------------|--------|------------|-------------------|------------------|---------|----------|-------|"
+        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | \`gh repo list $ORG\` failed — no repo under this owner was checked this run; see the run log |"
+    } >> "$OUTPUT_FILE"
+    OWNER_FAILURES+=("$ORG")
+    continue
+fi
 
 # Measured against the RAW discovery output, not the filtered list: this repo
 # itself and every repos.yml-excluded repo still have to be classified for cron
@@ -346,7 +495,7 @@ while IFS= read -r r; do
     cron_classified "$r" || CRON_UNCLASSIFIED+=("$r")
 done < <(echo "$repo_list_raw" | sort)
 
-mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sort)
+mapfile -t REPOS < <(echo "$repo_list_raw" | grep -v "/${SELF_REPO}$" | sed '/^$/d' | sort)   # drop the blank line an empty owner produces
 
 # ── Filter repos excluded via repos.yml ─────────────────────────────────────
 if [[ ${#EXCLUDED_REPOS[@]} -gt 0 ]]; then
@@ -395,20 +544,38 @@ for repo_name in "${REPOS[@]}"; do
     sections_display="—"
     notes=""
 
+    # Every path this row could not read IN FULL. `fetch_file_content` returns 2
+    # only for a verified short read and 0 for a legitimate 404, so a name landing
+    # in here always means "the bytes never arrived", never "the file is not
+    # there" — the distinction #81 turned on. One entry is enough to withhold the
+    # whole row; see the block just before the row is written.
+    fetch_failed_paths=()
+
     # ── Resolve sections from repo's .agents-sync.yml ──────────────────
 
     sections=()
 
-    remote_yaml=$(fetch_file_content "$repo_name" ".agents-sync.yml") || remote_yaml=""
-    if [[ -n "$remote_yaml" ]]; then
+    sections_rc=0
+    remote_yaml=$(fetch_file_content "$repo_name" ".agents-sync.yml") || sections_rc=$?
+    if [[ "$sections_rc" -ne 0 ]]; then
+        # This is #81's cascade arriving through a DIFFERENT file, and it is the
+        # nastiest of the set because the wrong answer it produces is a plausible
+        # one. Falling back to DEFAULT_SECTIONS on a short read builds `expected`
+        # from a section list the repo never asked for, diffs it against an
+        # AGENTS.md that arrived complete and is in fact correct, and publishes
+        # **drift-detected** — indistinguishable from real drift, with the sync
+        # then asked to "fix" a file that was already right.
+        fetch_failed_paths+=(".agents-sync.yml")
+        sections_display="?"
+    elif [[ -n "$remote_yaml" ]]; then
         while IFS= read -r s; do
             [[ -n "$s" ]] && sections+=("$s")
         done < <(echo "$remote_yaml" | yq -r '.sections // [] | .[]' 2>/dev/null || true)
+        sections_display="${sections[*]:-none}"
     else
         sections=("${DEFAULT_SECTIONS[@]}")
+        sections_display="${sections[*]:-none}"
     fi
-
-    sections_display="${sections[*]:-none}"
 
     # ── Fetch current AGENTS.md ────────────────────────────────────────
 
@@ -418,9 +585,11 @@ for repo_name in "${REPOS[@]}"; do
     current_agents=$(fetch_file_content "$repo_name" "AGENTS.md") || agents_rc=$?
 
     if [[ "$agents_rc" -ne 0 ]]; then
-        status="**fetch-failed**"
+        # The status and the note are no longer set here: every other call site in
+        # this loop now records the same way, and one shared block below turns the
+        # ledger into the row's verdict.
+        fetch_failed_paths+=("AGENTS.md")
         has_marker="?"
-        notes="${notes:+$notes; }could not read AGENTS.md in full — columns withheld rather than guessed"
     elif [[ -z "$current_agents" ]]; then
         status="**no-agents-md**"
         notes="AGENTS.md not found in repo"
@@ -438,48 +607,64 @@ for repo_name in "${REPOS[@]}"; do
             has_marker="no"
         fi
 
-        # Build expected managed content and compare
-        expected=$("$BUILD_SCRIPT" "${sections[@]}" 2>/dev/null || true)
-
-        if [[ -z "$expected" ]]; then
-            status="**update-failed**"
-            notes="Could not build expected content"
+        # Build expected managed content and compare. Skipped outright when the
+        # section list did not arrive in full: `expected` is built FROM that list,
+        # so diffing against it would measure the DEFAULT_SECTIONS fallback rather
+        # than the repo, and publish that as drift.
+        if [[ "$sections_rc" -ne 0 ]]; then
+            # Nothing honest to compare — the status column stays "unknown" and
+            # the shared block below marks the row fetch-failed.
+            :
         else
-            # Extract managed section from current file
-            if [[ "$has_marker" == "yes" ]]; then
-                # ANCHORED (^…$). Unanchored, this address matches the BEGIN
-                # header on LINE 1 — which quotes the marker — and deletes from
-                # there to EOF, leaving current_managed EMPTY. Compared against
-                # a 728-line expected block that can never match, so EVERY repo
-                # reported drift-detected and the dashboard was structurally
-                # incapable of ever printing up-to-date. All 18 rows of the
-                # 2026-08-27 report read drift-detected for this reason.
-                #
-                # This is the same first-occurrence trap check-agents-md.sh was
-                # written to catch, in the script that reports on it. Measured:
-                # unanchored keeps 0 bytes, anchored keeps 42,794 — byte-equal
-                # to build-agents-md.sh's output for this repo's own AGENTS.md.
-                current_managed=$(echo "$current_agents" | sed "/^${MARKER}\$/,\$d")
-            else
-                current_managed="$current_agents"
-            fi
+            expected=$("$BUILD_SCRIPT" "${sections[@]}" 2>/dev/null || true)
 
-            expected_clean=$(echo "$expected" | strip_volatile)
-            current_clean=$(echo "$current_managed" | strip_volatile)
-
-            if diff -q <(echo "$expected_clean") <(echo "$current_clean") &>/dev/null; then
-                status="**up-to-date**"
+            if [[ -z "$expected" ]]; then
+                status="**update-failed**"
+                notes="Could not build expected content"
             else
-                status="**drift-detected**"
+                # Extract managed section from current file
+                if [[ "$has_marker" == "yes" ]]; then
+                    # ANCHORED (^…$). Unanchored, this address matches the BEGIN
+                    # header on LINE 1 — which quotes the marker — and deletes from
+                    # there to EOF, leaving current_managed EMPTY. Compared against
+                    # a 728-line expected block that can never match, so EVERY repo
+                    # reported drift-detected and the dashboard was structurally
+                    # incapable of ever printing up-to-date. All 18 rows of the
+                    # 2026-08-27 report read drift-detected for this reason.
+                    #
+                    # This is the same first-occurrence trap check-agents-md.sh was
+                    # written to catch, in the script that reports on it. Measured:
+                    # unanchored keeps 0 bytes, anchored keeps 42,794 — byte-equal
+                    # to build-agents-md.sh's output for this repo's own AGENTS.md.
+                    current_managed=$(echo "$current_agents" | sed "/^${MARKER}\$/,\$d")
+                else
+                    current_managed="$current_agents"
+                fi
+
+                expected_clean=$(echo "$expected" | strip_volatile)
+                current_clean=$(echo "$current_managed" | strip_volatile)
+
+                if diff -q <(echo "$expected_clean") <(echo "$current_clean") &>/dev/null; then
+                    status="**up-to-date**"
+                else
+                    status="**drift-detected**"
+                fi
             fi
         fi
     fi
 
     # ── Check CLAUDE.md bridge status ───────────────────────────────────
 
-    current_claude=$(fetch_file_content "$repo_name" "CLAUDE.md") || current_claude=""
+    claude_rc=0
+    current_claude=$(fetch_file_content "$repo_name" "CLAUDE.md") || claude_rc=$?
 
-    if [[ -z "$current_claude" ]]; then
+    if [[ "$claude_rc" -ne 0 ]]; then
+        # `missing` is not a neutral word in this column — its legend reads "sync
+        # adds the bridge in its next PR" — so a short read of a CLAUDE.md that
+        # already imports @AGENTS.md manufactures a to-do out of a correct file.
+        fetch_failed_paths+=("CLAUDE.md")
+        bridge_cell="?"
+    elif [[ -z "$current_claude" ]]; then
         bridge_cell="missing"
     else
         bridge_status=$(echo "$current_claude" | "$BRIDGE_SCRIPT" -)
@@ -496,67 +681,119 @@ for repo_name in "${REPOS[@]}"; do
     # only thing that would ever say so (the sync has no delete semantics).
 
     bootstrap_cell="—"
-    current_hook=$(fetch_file_content "$repo_name" "$HOOK_REL_PATH") || current_hook=""
+    hook_rc=0
+    current_hook=$(fetch_file_content "$repo_name" "$HOOK_REL_PATH") || hook_rc=$?
 
-    if bootstrap_allowlisted "$repo_name"; then
-        current_lock=$(fetch_file_content "$repo_name" "$LOCK_REL_PATH") || current_lock=""
+    if [[ "$hook_rc" -ne 0 ]]; then
+        # Every verdict below reads the hook — whether it is there at all, and
+        # whether it still matches the pin — so a short read of it decides
+        # nothing. Left unanswered rather than answered "absent", which on an
+        # allowlisted repo publishes **missing** ("the next sync delivers it") and
+        # off the allowlist silently drops a live **unmanaged** hook that is
+        # running in every session and that no sync will ever remove.
+        fetch_failed_paths+=("$HOOK_REL_PATH")
+        bootstrap_cell="?"
+    elif bootstrap_allowlisted "$repo_name"; then
+        lock_rc=0
+        current_lock=$(fetch_file_content "$repo_name" "$LOCK_REL_PATH") || lock_rc=$?
 
-        if [[ -n "$current_lock" ]]; then
-            notes="${notes:+$notes; }lock: $(echo "$current_lock" | lock_summary)"
-        fi
-
-        if [[ -z "$current_lock" ]]; then
-            # Delivery correctly withheld — not a fault, and not a to-do for
-            # the sync. The repo has not declared its bundles yet. Tested
-            # BEFORE the hook: sync.sh skips a lock-less repo whether or not
-            # a hook is sitting there, so a hook present here is not `ok` —
-            # it prints `skills: DEGRADED` into every session, forever, and
-            # no sync will ever revisit it.
-            if [[ -n "$current_hook" ]]; then
-                bootstrap_cell="**degraded**"
-            else
-                bootstrap_cell="no-lock"
-            fi
-        elif [[ -z "$current_hook" ]]; then
-            # Three reasons the hook can be absent. Only one self-heals.
-            settings_probe=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH") || settings_probe=""
-            settings_state="missing"
-            [[ -n "$settings_probe" ]] && \
-                settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -)
-
-            blocked=no
-            [[ "$settings_state" != "unparseable" ]] && \
-                { bootstrap_blocked "$repo_name" && blocked=yes || true; }
-
-            if [[ "$settings_state" == "unparseable" ]]; then
-                bootstrap_cell="**refused**"
-                notes="$notes; \`settings.json\` unparseable"
-            elif [[ "$blocked" == yes ]]; then
-                bootstrap_cell="**blocked**"
-                notes="$notes; \`.claude/\` gitignored"
-            else
-                bootstrap_cell="**missing**"
-            fi
+        if [[ "$lock_rc" -ne 0 ]]; then
+            # `no-lock` and **degraded** both turn on the lock being ABSENT, and
+            # both are addressed to a human ("commit a lock", "remove the hook").
+            # A short read cannot tell absence from truncation, so it answers
+            # neither — and the lock summary in Notes is withheld with them, since
+            # it would otherwise print pins parsed out of a fragment.
+            fetch_failed_paths+=("$LOCK_REL_PATH")
+            bootstrap_cell="?"
         else
-            current_settings=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH") || current_settings=""
-            if [[ -z "$current_settings" ]]; then
-                bootstrap_status="missing"
-            else
-                bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+            if [[ -n "$current_lock" ]]; then
+                notes="${notes:+$notes; }lock: $(echo "$current_lock" | lock_summary)"
             fi
 
-            if [[ "$bootstrap_status" != "registered" ]]; then
-                # The silent-death case: the file is there, nothing runs it.
-                bootstrap_cell="**no-entry**"
-            elif ! pinned_hook; then
-                bootstrap_cell="unverified"
-            elif [[ "$current_hook" == "$PINNED_HOOK" ]]; then
-                # Both sides come through the same command-substitution path,
-                # so trailing-newline differences cancel; content is compared,
-                # not bytes-on-disk (sync.sh's cmp is the authoritative check).
-                bootstrap_cell="ok"
+            if [[ -z "$current_lock" ]]; then
+                # Delivery correctly withheld — not a fault, and not a to-do for
+                # the sync. The repo has not declared its bundles yet. Tested
+                # BEFORE the hook: sync.sh skips a lock-less repo whether or not
+                # a hook is sitting there, so a hook present here is not `ok` —
+                # it prints `skills: DEGRADED` into every session, forever, and
+                # no sync will ever revisit it.
+                if [[ -n "$current_hook" ]]; then
+                    bootstrap_cell="**degraded**"
+                else
+                    bootstrap_cell="no-lock"
+                fi
+            elif [[ -z "$current_hook" ]]; then
+                # Three reasons the hook can be absent. Only one self-heals.
+                settings_rc=0
+                settings_probe=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH") || settings_rc=$?
+
+                if [[ "$settings_rc" -ne 0 ]]; then
+                    # **refused** and **missing** are both read off this one file
+                    # and they are opposite instructions — "fix that file by hand,
+                    # it will not self-heal" against "the next sync handles it".
+                    fetch_failed_paths+=("$SETTINGS_REL_PATH")
+                    bootstrap_cell="?"
+                else
+                    settings_state="missing"
+                    [[ -n "$settings_probe" ]] && \
+                        settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+
+                    # bootstrap_blocked now answers three ways, so its status is
+                    # captured rather than read as a bare true/false: 2 means the
+                    # ignore rules themselves came back short, and that is not the
+                    # same fact as "nothing is ignored".
+                    blocked=no
+                    blocked_rc=0
+                    if [[ "$settings_state" != "unparseable" ]]; then
+                        bootstrap_blocked "$repo_name" || blocked_rc=$?
+                        [[ "$blocked_rc" -eq 0 ]] && blocked=yes
+                    fi
+
+                    if [[ "$blocked_rc" -eq 2 ]]; then
+                        fetch_failed_paths+=("$IGNORE_UNREADABLE_PATH")
+                        bootstrap_cell="?"
+                    elif [[ "$settings_state" == "unparseable" ]]; then
+                        bootstrap_cell="**refused**"
+                        notes="$notes; \`settings.json\` unparseable"
+                    elif [[ "$blocked" == yes ]]; then
+                        bootstrap_cell="**blocked**"
+                        notes="$notes; \`.claude/\` gitignored"
+                    else
+                        bootstrap_cell="**missing**"
+                    fi
+                fi
             else
-                bootstrap_cell="**drifted**"
+                settings_rc=0
+                current_settings=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH") || settings_rc=$?
+
+                if [[ "$settings_rc" -ne 0 ]]; then
+                    # **no-entry** is the loudest verdict this column has — its
+                    # legend reads "nothing runs it — Silently dead" — and a short
+                    # read is exactly what manufactures one out of a repo whose
+                    # SessionStart entry is present and correct.
+                    fetch_failed_paths+=("$SETTINGS_REL_PATH")
+                    bootstrap_cell="?"
+                else
+                    if [[ -z "$current_settings" ]]; then
+                        bootstrap_status="missing"
+                    else
+                        bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+                    fi
+
+                    if [[ "$bootstrap_status" != "registered" ]]; then
+                        # The silent-death case: the file is there, nothing runs it.
+                        bootstrap_cell="**no-entry**"
+                    elif ! pinned_hook; then
+                        bootstrap_cell="unverified"
+                    elif [[ "$current_hook" == "$PINNED_HOOK" ]]; then
+                        # Both sides come through the same command-substitution path,
+                        # so trailing-newline differences cancel; content is compared,
+                        # not bytes-on-disk (sync.sh's cmp is the authoritative check).
+                        bootstrap_cell="ok"
+                    else
+                        bootstrap_cell="**drifted**"
+                    fi
+                fi
             fi
         fi
     elif [[ -n "$current_hook" ]] && [[ "$repo_name" != "$BOOTSTRAP_REGISTRY" ]]; then
@@ -588,6 +825,24 @@ for repo_name in "${REPOS[@]}"; do
     if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
         open_pr="#$pr_number"
         [[ "$status" == "**drift-detected**" ]] && status="**pr-open**"
+    fi
+
+    # ── Withhold the row when any part of it could not be read ─────────
+    #
+    # One partial read is enough to make the whole row untrustworthy, so Status
+    # says so rather than publishing a verdict assembled from bytes that never
+    # all arrived. Until now that promise was kept at exactly ONE of this loop's
+    # call sites: a short read of anything but AGENTS.md still published a
+    # confident cell — `missing`, `no-lock`, **no-entry**, **blocked** — which is
+    # #81's entire failure mode wearing a different file's name, and it made the
+    # legend's "every other column is withheld rather than guessed" false.
+    #
+    # Placed after the open-PR check on purpose: **pr-open** is a verdict too, and
+    # a row nobody could read must not be overwritten by one.
+    if [[ ${#fetch_failed_paths[@]} -gt 0 ]]; then
+        status="**fetch-failed**"
+        failed_list=$(printf '`%s`, ' "${fetch_failed_paths[@]}")
+        notes="${notes:+$notes; }could not read ${failed_list%, } in full — the columns those files feed are withheld (\`?\`) rather than guessed"
     fi
 
     # ── Write row ──────────────────────────────────────────────────────
@@ -627,7 +882,7 @@ done
     echo "| **pr-open** | A sync PR is already open for this repo |"
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
-    echo "| **fetch-failed** | \`AGENTS.md\` could not be read in full — the decoded byte count disagreed with the API's own \`size\`. Every other column for this repo is withheld rather than guessed; see issue #81 |"
+    echo "| **fetch-failed** | A file this row is built from could not be read in full — the decoded byte count disagreed with the API's own \`size\`. **Notes** names the file; every column it feeds is withheld as \`?\` rather than guessed; see issue #81 |"
     echo ""
     echo "**CLAUDE.md bridge legend**"
     echo ""
@@ -636,6 +891,7 @@ done
     echo "| bridge-ok | CLAUDE.md imports \`@AGENTS.md\` (line-start, outside code fences) |"
     echo "| **no-import** | CLAUDE.md exists but never imports \`@AGENTS.md\` — Claude Code will not see the managed guidance |"
     echo "| missing | No CLAUDE.md yet — sync adds the bridge in its next PR |"
+    echo "| ? | \`CLAUDE.md\` could not be read in full — withheld, not guessed (the row reads **fetch-failed**) |"
     echo ""
     echo "**skills-bootstrap legend**"
     echo ""
@@ -656,6 +912,7 @@ done
     echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"
     echo "| unverified | Could not fetch the pinned hook this run — the drift comparison was skipped |"
     echo "| — | Not allowlisted and no hook present |"
+    echo "| ? | A file this column is decided from (the hook, \`skills.lock\`, \`.claude/settings.json\`, or the repo's ignore rules) could not be read in full — withheld, not guessed (the row reads **fetch-failed**) |"
     echo ""
     echo "**Cron-coverage classification**"
     echo ""
@@ -674,3 +931,11 @@ done
 
 echo ""
 echo "Drift report written to $OUTPUT_FILE"
+
+# Deliberately not an exit code. drift-report.yml's publish step carries no
+# `if: always()`, so failing here would suppress the very report that now holds
+# the unreadable owner's section; the per-owner `::error::` above is what makes
+# the run itself say so.
+if [[ ${#OWNER_FAILURES[@]} -gt 0 ]]; then
+    echo "  ${#OWNER_FAILURES[@]} owner(s) could not be listed and were not scanned: ${OWNER_FAILURES[*]}"
+fi

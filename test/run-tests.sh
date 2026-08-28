@@ -124,8 +124,120 @@ assert_scoped_probe_warnings() {
     n=$(grep -cE "::warning::.*has no '--(check-current --only|repin --repin-source)" "$1" 2>/dev/null || true)
     if [[ "$n" == "$2" ]]; then pass "$3"; else fail "$3 — expected $2, got ${n:-0} in $1"; fi
 }
+# THE NEEDLE THAT MATCHES THE WRONG CELL, and it is the same defect as the two
+# above one column over. `grep -F "$repo" | grep -qF "$needle"` narrows to the
+# ROW and then stops narrowing, so the needle is free to match any cell in it —
+# including the repo NAME, which every row carries twice (label and URL).
+#
+# Measured, on the three assertions that had nothing behind them:
+#   * `repo-adopted` / `ok` — every row also carries `bridge-ok` in the
+#     CLAUDE.md column, and `ok` is a substring of it. Substituting the
+#     skills-bootstrap cell `| ok |` -> `| **drifted** |` and re-running the old
+#     pipeline still matched. Those were the ONLY positive assertions in the
+#     whole suite that this column ever produces `ok`, so nothing anywhere
+#     asserted the happy path.
+#   * `repo-no-lock` / `no-lock` — the row names `bootorg/repo-no-lock` twice,
+#     so the needle matched the repo before it ever reached the cell.
+#   * `repo-up-to-date-no-claude` / `up-to-date` — same shape a third time, and
+#     worse: the fixture is NAMED after the status it is asserting. The test
+#     one screen down already knew about this trap and spelled its own grep
+#     `\*\*up-to-date\*\*` for exactly this reason; this helper did not.
+#
+# So it splits the matched row on `|`, trims each cell, and requires a cell to
+# EQUAL the needle. A verdict cell is a whole cell — `ok`, `no-lock`,
+# `**blocked**`, `?` — so exactness costs the callers nothing and is what makes
+# `ok` stop matching `bridge-ok`. Note the needle must now carry the bolding
+# the report writes (`**up-to-date**`, not `up-to-date`): the asterisks are in
+# the cell, and a needle without them is asserting a cell that does not exist.
+#
+# Prose that ACCUMULATES belongs in assert_row_note_contains below, not here.
 assert_row_contains() {
-    if grep -F -- "$2" "$1" | grep -qF -- "$3"; then pass "$4"; else fail "$4 — expected '$3' in row '$2' of $1"; fi
+    local file="$1" key="$2" needle="$3" label="$4"
+    local rows status=0 row
+    rows=$(grep -F -- "$key" "$file") || status=$?
+    # Three answers, not two: grep exits 2 when it could not read the file at
+    # all, and folding that into "no such row" would report a missing report as
+    # a wrong verdict — the same conflation the scripts under test are being
+    # fixed for.
+    if [[ $status -gt 1 ]]; then
+        fail "$label — grep could not read $file (exit $status)"
+        return
+    fi
+    if [[ $status -eq 1 ]]; then
+        fail "$label — no row containing '$key' in $file"
+        return
+    fi
+    while IFS= read -r row; do
+        if _row_cell_equals "$row" "$needle"; then pass "$label"; return; fi
+    done <<< "$rows"
+    fail "$label — no cell of the row(s) matching '$key' in $file is exactly '$needle'"
+}
+_row_cell_equals() {   # <row> <needle> — some `|`-delimited cell equals <needle>
+    local row="$1" needle="$2" cell
+    local -a cells
+    IFS='|' read -r -a cells <<< "$row"
+    for cell in "${cells[@]}"; do
+        cell="${cell#"${cell%%[![:space:]]*}"}"   # ltrim
+        cell="${cell%"${cell##*[![:space:]]}"}"   # rtrim
+        [[ "$cell" == "$needle" ]] && return 0
+    done
+    return 1
+}
+# assert_row_note_contains <file> <row-key> <needle> <label> — a substring of
+# the row's LAST cell, which is Notes.
+#
+# Notes is the one column exactness would be wrong for: drift-report.sh builds
+# it by appending (`notes="${notes:+$notes; }..."`), so a row can legitimately
+# carry a lock summary AND a gitignore reason AND a fetch-failed list at once,
+# and a whole-cell needle would have to be re-typed every time an unrelated
+# clause joined it. Scoping to the Notes cell is what keeps the assertion real
+# anyway: a needle here can no longer match the repo name, a verdict cell, or
+# the legend rows further down the document.
+assert_row_note_contains() {
+    local file="$1" key="$2" needle="$3" label="$4"
+    local rows status=0 row notes trimmed
+    rows=$(grep -F -- "$key" "$file") || status=$?
+    if [[ $status -gt 1 ]]; then
+        fail "$label — grep could not read $file (exit $status)"
+        return
+    fi
+    if [[ $status -eq 1 ]]; then
+        fail "$label — no row containing '$key' in $file"
+        return
+    fi
+    while IFS= read -r row; do
+        trimmed="${row%"${row##*[![:space:]]}"}"   # rtrim, so the closing `|` is last
+        trimmed="${trimmed%|}"
+        notes="${trimmed##*|}"
+        if [[ "$notes" == *"$needle"* ]]; then pass "$label"; return; fi
+    done <<< "$rows"
+    fail "$label — the Notes cell of the row(s) matching '$key' in $file does not contain '$needle'"
+}
+# The exact negation of assert_row_contains, and it needs to be a helper rather
+# than an `assert_not_contains` over the whole document: every verdict this
+# suite forbids in a cell — `missing`, `no-lock`, `**no-entry**` — is also a
+# LEGEND row further down the same file, so a document-wide negative needle
+# matches unconditionally and the assertion can only ever fail. That is the same
+# vacuity assert_row_contains was just fixed for, inverted.
+assert_row_lacks_cell() {
+    local file="$1" key="$2" needle="$3" label="$4"
+    local rows status=0 row
+    rows=$(grep -F -- "$key" "$file") || status=$?
+    if [[ $status -gt 1 ]]; then
+        fail "$label — grep could not read $file (exit $status)"
+        return
+    fi
+    if [[ $status -eq 1 ]]; then
+        fail "$label — no row containing '$key' in $file, so this asserts nothing"
+        return
+    fi
+    while IFS= read -r row; do
+        if _row_cell_equals "$row" "$needle"; then
+            fail "$label — a cell of the row matching '$key' in $file is exactly '$needle'"
+            return
+        fi
+    done <<< "$rows"
+    pass "$label"
 }
 # Ordering between two things a run printed. Both greps are captured with an
 # explicit failure branch: a needle that is absent exits 1, and under the
@@ -441,10 +553,26 @@ MD
     # A pre-existing, DIVERGED stale agents-md-sync/update branch from the old
     # PR-era: built on a sibling commit (not an ancestor of the sync's fresh
     # HEAD), so the fallback's branch push is non-fast-forward and must force.
+    #
+    # COMMITTED UNDER THE SYNC BOT'S OWN IDENTITY, and that is the whole point
+    # of the fixture rather than a detail of it. sync.sh now force-pushes only
+    # over commits it can see are its own — every commit the remote branch adds
+    # to the default branch has to carry $SYNC_BOT_EMAIL — so the identity on
+    # this commit is what decides which of two opposite behaviours this repo
+    # exercises. The prose above already says what this branch IS ("from the
+    # old PR-era", i.e. written by an earlier run of this same sync), and until
+    # the guard shipped nothing made the fixture say it: the commit inherited
+    # the suite's global `test-runner <test@localhost>`, which is a stranger.
+    # Left that way it drove the REFUSAL path, and the four assertions below
+    # about the force-push landing failed against a guard that was working
+    # exactly as designed. The stranger's branch is a real case and gets its
+    # own repo, in its own org, in setup_foreign_branch_repo.
     git checkout -b agents-md-sync/update >/dev/null 2>&1
     printf 'stale old sync content\n' > AGENTS.md
     git add AGENTS.md
-    git commit -m "stale sync" >/dev/null 2>&1
+    git -c user.name="agents-md-sync[bot]" \
+        -c user.email="agents-md-sync[bot]@users.noreply.github.com" \
+        commit -m "stale sync" >/dev/null 2>&1
     git push origin HEAD:agents-md-sync/update >/dev/null 2>&1
     git checkout main >/dev/null 2>&1
     # Hook installed AFTER the setup pushes so seeding succeeds; only the
@@ -503,6 +631,51 @@ YAML
     git push origin HEAD:main >/dev/null 2>&1
     # Pre-existing stale sync branch left behind by the old branch + PR model.
     git push origin HEAD:agents-md-sync/update >/dev/null 2>&1
+
+    # Mock repo 13: fgnorg/repo-foreign-branch — the mirror image of repo 10,
+    # and the reason repo 10's stale commit had to grow an explicit identity.
+    #
+    # Same shape: protected default branch, so the sync falls back to the PR
+    # path, and a diverged agents-md-sync/update already sitting on the remote
+    # so the fallback's push is non-fast-forward. The ONE difference is who
+    # wrote the commit on that branch — here a human, at a `@users.noreply`
+    # address that is not $SYNC_BOT_EMAIL.
+    #
+    # That difference is the whole invariant. The force-push used to be
+    # justified as "the branch is bot-owned, this sync is its only writer",
+    # which is not true on the cms-platform-managed repos: the fallback opens a
+    # PR and arms auto-merge, so a maintainer can push a conflict resolution or
+    # a reviewer-requested fix onto that branch, and the next nightly run
+    # overwrote it and logged only "PR #N already exists — branch updated". Its
+    # own org's guidance forbids exactly that ("it could discard reviewer
+    # commits on an open PR"). A separate org rather than a third protorg repo
+    # because this repo must FAIL, and protorg's test asserts "2 synced, 0
+    # failed" — adding a failing repo there would move a count that is
+    # asserting something else.
+    local repo13_bare="$TEST_DIR/bare/fgnorg_repo-foreign-branch"
+    local repo13_work="$TEST_DIR/work/repo-foreign-branch"
+    mkdir -p "$repo13_bare" "$repo13_work"
+    git init --bare --initial-branch=main "$repo13_bare" >/dev/null 2>&1
+    git init --initial-branch=main "$repo13_work" >/dev/null 2>&1
+    cd "$repo13_work"
+    git config commit.gpgsign false
+    git remote add origin "$repo13_bare"
+    cat > .agents-sync.yml <<'YAML'
+sections:
+  - python
+YAML
+    git add .agents-sync.yml
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    git checkout -b agents-md-sync/update >/dev/null 2>&1
+    printf 'a reviewer fixed the conflict by hand\n' > AGENTS.md
+    git add AGENTS.md
+    git -c user.name="A Reviewer" \
+        -c user.email="reviewer@users.noreply.github.com" \
+        commit -m "address review feedback on the sync PR" >/dev/null 2>&1
+    git push origin HEAD:agents-md-sync/update >/dev/null 2>&1
+    git checkout main >/dev/null 2>&1
+    install_reject_main_hook "$repo13_bare"
 
     cd "$REPO_ROOT"
 }
@@ -681,7 +854,8 @@ skills_bootstrap:
     - repo-ignored
     - repo-no-lock
     - repo-unparseable
-# Every repo the mock \`gh repo list\` can return, across all five mock orgs, so
+# Every repo the mock \`gh repo list\` can return, across all six mock orgs that
+# hold any, so
 # the drift report's cron-coverage classification check finds nothing to flag.
 # Silence is this block's pass condition, and test_drift_report asserts it; the
 # flagging path gets its own fixture in test_drift_report_cron_classification.
@@ -693,8 +867,9 @@ cron_coverage:
   fleet: [repo-with-sync, repo-no-sync, repo-with-existing, repo-existing-no-marker,
           repo-with-claude-md, repo-up-to-date-no-claude, repo-fix-claude,
           _agent-guidance, repo-owner2-only, repo-protected, repo-protected-fix,
-          repo-stale, agentskills, repo-adopted, repo-hook-no-lock, repo-ignored,
-          repo-no-lock, repo-not-allowed, repo-unparseable]
+          repo-stale, repo-foreign-branch, agentskills, repo-adopted,
+          repo-hook-no-lock, repo-ignored, repo-no-lock, repo-not-allowed,
+          repo-unparseable]
   out_of_scope: [repo-excluded]
 YAML
 
@@ -1789,6 +1964,27 @@ case "$1" in
                           {"nameWithOwner":"stalorg/repo-stale"}
                         ]'
                         ;;
+                    fgnorg)
+                        json='[
+                          {"nameWithOwner":"fgnorg/repo-foreign-branch"}
+                        ]'
+                        ;;
+                    emptyorg)
+                        # An owner that really does hold nothing. Distinct from
+                        # `failorg` below, and the distinction is the point:
+                        # this one ANSWERS, with an empty list. `--jq
+                        # '.[].nameWithOwner'` over `[]` prints nothing at all,
+                        # so `repo_list_raw` is the empty string — and `echo ""`
+                        # is one blank LINE, which mapfile turns into a
+                        # one-element array holding "". Both scripts then
+                        # believed they had found one repo whose name is the
+                        # empty string and went on to clone it. The `sed
+                        # '/^$/d'` in each is what this fixture exists to hold
+                        # in place; a hand-written `[]` here rather than falling
+                        # through to the `*)` default so the intent survives
+                        # someone editing that default.
+                        json='[]'
+                        ;;
                     bootorg)
                         # bootorg/agentskills is ABSENT by default: it is the
                         # registry the hook is fetched from, not a sync target.
@@ -1966,6 +2162,21 @@ case "$1" in
             repo_slug="${owner}_${repo}"
             bare_path="${MOCK_BARE_DIR}/${repo_slug}"
 
+            # The OTHER way a contents read fails, and the one no fixture could
+            # previously produce: an HTTP error that is NOT 404. A credential
+            # that lost Contents permission, a rate limit, a 5xx. Real gh writes
+            # its own `gh: ... (HTTP 403)` line to stderr AND the API's error
+            # body to stdout with the --jq filter unapplied, so both surfaces
+            # are emitted here — bump-consumer-locks.sh matches on either, and a
+            # mock that produced only one of them would let half that guard rot.
+            # MOCK_CONTENTS_HTTP_FAIL names repos (owner_repo) where every
+            # contents call answers this way.
+            if [[ " ${MOCK_CONTENTS_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
+                echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+                echo '{"message":"Resource not accessible by integration","status":"403"}'
+                exit 1
+            fi
+
             if [[ -d "$bare_path" ]]; then
                 content=$(git -C "$bare_path" show "main:$file_path" 2>/dev/null || true)
                 if [[ -n "$content" ]]; then
@@ -1978,7 +2189,37 @@ case "$1" in
                     # MOCK_TRUNCATE_CONTENTS=<n> serves the first n base64 chars
                     # while still declaring the honest size -- i.e. the exact
                     # shape of #81: a short body that looks like a whole file.
+                    #
+                    # MOCK_TRUNCATE_PATHS restricts that to a space-separated
+                    # list of paths, and it exists because the global switch
+                    # alone made the #81 guard UNTESTABLE at every call site but
+                    # one. Truncate everything and AGENTS.md truncates too; the
+                    # AGENTS.md branch is the first fetch in the row, it records
+                    # the failure, and the row is already **fetch-failed** before
+                    # CLAUDE.md, `.agents-sync.yml`, `skills.lock` or
+                    # `.claude/settings.json` is ever asked for. Every other
+                    # site's rc=2 handling was therefore shadowed by the first
+                    # one, and a suite that only ever truncated globally would
+                    # have gone green with all of them still spelled
+                    # `|| VAR=""`.
+                    #
+                    # Real truncation is SIZE-driven, so in production it is
+                    # per-file by nature: one big file in a repo comes back
+                    # short while the small ones beside it arrive whole. That is
+                    # the shape this reproduces, and it is the shape the #81
+                    # fixtures could not — they are all tiny, so nothing in them
+                    # ever crossed a size cliff on its own.
+                    truncate_this=false
                     if [[ -n "${MOCK_TRUNCATE_CONTENTS:-}" ]]; then
+                        if [[ -z "${MOCK_TRUNCATE_PATHS:-}" ]]; then
+                            truncate_this=true
+                        else
+                            for tp in ${MOCK_TRUNCATE_PATHS}; do
+                                [[ "$tp" == "$file_path" ]] && truncate_this=true && break
+                            done
+                        fi
+                    fi
+                    if $truncate_this; then
                         encoded="${encoded:0:$MOCK_TRUNCATE_CONTENTS}"
                     fi
                     json="{\"size\": $size, \"content\": \"$encoded\"}"
@@ -2020,6 +2261,17 @@ case "$1" in
                     # the very field that guard reads would make the guard
                     # untestable — it exists precisely because a listing filter
                     # is a query, not a guarantee.
+                    # A listing that cannot be answered at all — a 401, a rate
+                    # limit, a network blip. Real gh writes the diagnostic to
+                    # stderr and exits non-zero having written nothing usable to
+                    # stdout, which is what makes "no open pull request" and "I
+                    # could not ask" indistinguishable to a caller that reads
+                    # only the string. MOCK_PR_LIST_FAILS names repos
+                    # (owner_repo) whose listing does that.
+                    if [[ " ${MOCK_PR_LIST_FAILS:-} " == *" ${repo_arg//\//_} "* ]]; then
+                        echo "gh: Bad credentials (HTTP 401)" >&2
+                        exit 1
+                    fi
                     json='[]'
                     pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_arg//\//_}.json"
                     [[ -f "$pr_file" ]] && json=$(cat "$pr_file")
@@ -2971,6 +3223,138 @@ test_drift_report_partial_read() {
     ) || true
 }
 
+# ── Test 4a2: a partial read of ONE file, at each call site (#81) ─────────
+#
+# The test above drives the guard through exactly ONE of the six places this
+# loop reads a file, and could not have driven it through any other. Truncating
+# globally truncates AGENTS.md too; AGENTS.md is fetched early, its branch
+# records the failure, and the row is **fetch-failed** before CLAUDE.md,
+# `.agents-sync.yml`, `skills.lock` or `.claude/settings.json` is asked for at
+# all. So the other five sites kept the `|| VAR=""` spelling — a short read
+# arriving as an EMPTY STRING — and the suite stayed green over it. That is
+# issue #81 itself, still live, one file's name over.
+#
+# The fixtures made it unreachable rather than merely untested: they are all a
+# few hundred bytes, so nothing in them crosses a size cliff on its own, while
+# in production truncation is size-driven and therefore per-file by nature.
+# MOCK_TRUNCATE_PATHS is what supplies that asymmetry.
+#
+# Each case below names the CONFIDENT WRONG ANSWER the old spelling produced,
+# and asserts it is gone as well as asserting the withheld one is there. Both
+# halves are needed: `?` appearing somewhere in the row does not establish that
+# `missing` left it.
+#
+# `bootorg/repo-adopted` is the fixture for all four because it is the only one
+# carrying every file at once — a lock, a registered settings.json, a delivered
+# hook, a bridging CLAUDE.md and its own `.agents-sync.yml` — so one repo can
+# exercise four call sites and each case differs only in which path is short.
+drift_report_bootorg() {   # <output file> [space-separated paths to truncate]
+    local out="$1" paths="${2:-}"
+    # 4 base64 characters decode to 3 bytes, so this is a real truncation of any
+    # file over 3 bytes long — every fixture file here is hundreds. `${paths:+4}`
+    # leaves MOCK_TRUNCATE_CONTENTS empty when no path was named, which is what
+    # makes the same helper serve the control run.
+    MOCK_TRUNCATE_CONTENTS="${paths:+4}" \
+    MOCK_TRUNCATE_PATHS="$paths" \
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1 || true
+}
+
+test_drift_report_partial_read_per_file() {
+    echo ""
+    echo "=== Test: drift-report.sh (a partial read of ONE file, per call site, #81) ==="
+
+    local rpt="$REPO_ROOT/drift-report.md"
+
+    # ── CONTROL, and it carries more weight here than the usual one. Every
+    # assertion below is "this cell stopped saying X", which a fetch that had
+    # died outright would also satisfy. The control pins the four cells to the
+    # confident values they legitimately hold when every byte arrives.
+    drift_report_bootorg "$TEST_DIR/drift-perfile-control.txt"
+    assert_row_contains "$rpt" "repo-adopted" "ok" \
+        "per-file (control): with every file whole, skills-bootstrap reads ok"
+    assert_row_contains "$rpt" "repo-adopted" "bridge-ok" \
+        "per-file (control): with every file whole, the CLAUDE.md bridge reads bridge-ok"
+    assert_row_contains "$rpt" "repo-adopted" "python" \
+        "per-file (control): with every file whole, Sections comes from .agents-sync.yml"
+    if ! grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$rpt"; then
+        pass "per-file (control): a complete run flags no row fetch-failed"
+    else
+        fail "per-file (control): a complete run already has a fetch-failed row, so the cases below prove nothing"
+    fi
+
+    # ── CLAUDE.md. Wrong answer: `missing`, whose legend reads "sync adds the
+    # bridge in its next PR" — a to-do manufactured out of a CLAUDE.md that is
+    # already bridging correctly.
+    drift_report_bootorg "$TEST_DIR/drift-perfile-claude.txt" "CLAUDE.md"
+    assert_row_contains "$rpt" "repo-adopted" "**fetch-failed**" \
+        "per-file CLAUDE.md: the row's Status is fetch-failed"
+    assert_row_contains "$rpt" "repo-adopted" "?" \
+        "per-file CLAUDE.md: the bridge column is withheld"
+    assert_row_lacks_cell "$rpt" "repo-adopted" "missing" \
+        "per-file CLAUDE.md: the row does NOT claim the bridge is missing"
+    assert_row_note_contains "$rpt" "repo-adopted" '`CLAUDE.md`' \
+        "per-file CLAUDE.md: Notes name the file that could not be read"
+
+    # ── .agents-sync.yml. Wrong answer is the nastiest of the four because it
+    # is plausible: the section list falls back to DEFAULT_SECTIONS (`rust` in
+    # this fixture), `expected` is built from sections the repo never asked for,
+    # and the row publishes **drift-detected** against an AGENTS.md that is in
+    # fact correct.
+    drift_report_bootorg "$TEST_DIR/drift-perfile-sections.txt" ".agents-sync.yml"
+    assert_row_contains "$rpt" "repo-adopted" "**fetch-failed**" \
+        "per-file .agents-sync.yml: the row's Status is fetch-failed"
+    assert_row_lacks_cell "$rpt" "repo-adopted" "rust" \
+        "per-file .agents-sync.yml: Sections does NOT fall back to default_sections"
+    assert_row_lacks_cell "$rpt" "repo-adopted" "**drift-detected**" \
+        "per-file .agents-sync.yml: no drift is declared against a section list that never arrived"
+    assert_row_note_contains "$rpt" "repo-adopted" '`.agents-sync.yml`' \
+        "per-file .agents-sync.yml: Notes name the file that could not be read"
+
+    # ── skills.lock. Wrong answer: the lock reads absent, and with a hook
+    # sitting beside it that is **degraded** — a standing "remove the hook by
+    # hand" addressed to a human about a repo that is fine.
+    drift_report_bootorg "$TEST_DIR/drift-perfile-lock.txt" "skills.lock"
+    assert_row_contains "$rpt" "repo-adopted" "**fetch-failed**" \
+        "per-file skills.lock: the row's Status is fetch-failed"
+    assert_row_contains "$rpt" "repo-adopted" "?" \
+        "per-file skills.lock: the skills-bootstrap column is withheld"
+    assert_row_lacks_cell "$rpt" "repo-adopted" "no-lock" \
+        "per-file skills.lock: the row does NOT claim the repo declared no bundles"
+    assert_row_lacks_cell "$rpt" "repo-adopted" "**degraded**" \
+        "per-file skills.lock: the row does NOT declare a degraded hook off a short read"
+    assert_row_note_contains "$rpt" "repo-adopted" '`skills.lock`' \
+        "per-file skills.lock: Notes name the file that could not be read"
+
+    # ── .claude/settings.json. Wrong answer: **no-entry**, the loudest verdict
+    # this column has ("nothing runs it — Silently dead"), invented out of a
+    # settings.json whose SessionStart entry is present and correct.
+    drift_report_bootorg "$TEST_DIR/drift-perfile-settings.txt" ".claude/settings.json"
+    assert_row_contains "$rpt" "repo-adopted" "**fetch-failed**" \
+        "per-file settings.json: the row's Status is fetch-failed"
+    assert_row_contains "$rpt" "repo-adopted" "?" \
+        "per-file settings.json: the skills-bootstrap column is withheld"
+    assert_row_lacks_cell "$rpt" "repo-adopted" "**no-entry**" \
+        "per-file settings.json: the row does NOT claim the hook is registered nowhere"
+    assert_row_note_contains "$rpt" "repo-adopted" '`.claude/settings.json`' \
+        "per-file settings.json: Notes name the file that could not be read"
+
+    # Every case must have gone through the guard rather than through some other
+    # path that happens to print `?`; the ::error:: is what says the byte counts
+    # disagreed.
+    if grep -q '::error::.*refusing to report on a partial read' "$TEST_DIR/drift-perfile-settings.txt"; then
+        pass "per-file: the short read is announced loudly, not just rendered as ?"
+    else
+        fail "per-file: no ::error:: naming the partial read"
+    fi
+
+    # Restore the untruncated bootorg report for anything that runs after this.
+    drift_report_bootorg "$TEST_DIR/drift-perfile-restore.txt"
+}
+
 # ── Test 4: drift-report.sh ───────────────────────────────────────────────
 
 test_drift_report() {
@@ -3010,7 +3394,7 @@ test_drift_report() {
     #
     # A fixture that IS in sync must therefore say so. This is the assertion
     # that can fail; the name checks above cannot.
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-up-to-date-no-claude" "up-to-date" \
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-up-to-date-no-claude" "**up-to-date**" \
         "drift report: an in-sync repo reports up-to-date, not drift"
 
     # And an empty open-PR list must render as "none". `.[0].number` over `[]`
@@ -3063,15 +3447,15 @@ test_drift_report_bootstrap() {
     assert_row_contains "$rpt" "repo-adopted" "ok" "drift report: repo-adopted is ok"
     # The cheapest answer to invisible lock staleness: print what each lock
     # pins, per federated source.
-    assert_row_contains "$rpt" "repo-adopted" "lock: agentskills@1111111 + cms-platform@2222222" "drift report: repo-adopted's federated lock pins are shown"
+    assert_row_note_contains "$rpt" "repo-adopted" "lock: agentskills@1111111 + cms-platform@2222222" "drift report: repo-adopted's federated lock pins are shown"
     assert_row_contains "$rpt" "repo-no-lock" "no-lock" "drift report: repo-no-lock shows the withheld state"
 
     # ── The three states that never self-heal must not hide inside
     #    `**missing**`, whose whole meaning is "the next sync delivers it".
     assert_row_contains "$rpt" "repo-ignored" "**blocked**" "drift report: a gitignored .claude/ is blocked, not missing"
-    assert_row_contains "$rpt" "repo-ignored" '`.claude/` gitignored' "drift report: repo-ignored's Notes name the reason"
+    assert_row_note_contains "$rpt" "repo-ignored" '`.claude/` gitignored' "drift report: repo-ignored's Notes name the reason"
     assert_row_contains "$rpt" "repo-unparseable" "**refused**" "drift report: an unparseable settings.json is refused, not missing"
-    assert_row_contains "$rpt" "repo-unparseable" '`settings.json` unparseable' "drift report: repo-unparseable's Notes name the reason"
+    assert_row_note_contains "$rpt" "repo-unparseable" '`settings.json` unparseable' "drift report: repo-unparseable's Notes name the reason"
     assert_row_contains "$rpt" "repo-hook-no-lock" "**degraded**" "drift report: a hook with no lock is degraded, not no-lock and not ok"
 
     # A `.gitignore` that says nothing about `.claude/` must not blocked-flag
@@ -3281,6 +3665,113 @@ test_drift_report_multi_owner() {
     fi
 }
 
+# ── Test 4f: one owner's listing failure does not end the scan ────────────
+#
+# The same per-owner conflation sync.sh and bump-consumer-locks.sh both have a
+# test for, and it costs MORE here, because this script's entire output is a
+# published dashboard. Under `set -e` a non-zero `gh repo list` ended the run
+# mid-loop: with SYNC_OWNERS ordered "Adam-S-Daniel jodidaniel", one owner
+# missing its App installation meant the OTHER owner was never scanned, the run
+# died with no report to publish, and nothing anywhere named the owner that had
+# gone unread.
+#
+# The report itself has to say so, not just the log: a section that is absent
+# and a section with no drift in it render as the same silence to whoever opens
+# drift-report.md, and only one of them means "nobody looked".
+test_drift_report_owner_list_failure() {
+    echo ""
+    echo "=== Test: drift-report.sh (one owner cannot be listed) ==="
+
+    local out="$TEST_DIR/drift-owner-fail.txt" exit_code=0
+    local rpt="$REPO_ROOT/drift-report.md"
+
+    SYNC_OWNERS="failorg testorg" \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "::error::failorg: could not list repos" \
+        "drift owner listing: the failing owner is announced loudly"
+    assert_contains "$out" "Scanning repos for: testorg" \
+        "drift owner listing: the SECOND owner is still scanned"
+    assert_contains "$out" "1 owner(s) could not be listed" \
+        "drift owner listing: the run summarises what went unread"
+
+    # In the PUBLISHED report, not only the log.
+    assert_contains "$rpt" "## failorg" \
+        "drift owner listing: the report carries a section for the unread owner"
+    assert_contains "$rpt" "not scanned this run" \
+        "drift owner listing: that section says nobody looked"
+    assert_row_contains "$rpt" "(owner not readable)" "**fetch-failed**" \
+        "drift owner listing: its placeholder row reads fetch-failed"
+    # And the other owner really did produce rows, so this is not a report that
+    # merely failed politely.
+    assert_row_contains "$rpt" "testorg/repo-with-existing" "bridge-ok" \
+        "drift owner listing: the readable owner's rows are still published"
+
+    # Deliberately NOT an exit code: drift-report.yml's publish step carries no
+    # `if: always()`, so failing here would suppress the very report that now
+    # holds the unreadable owner's section.
+    if [[ $exit_code -eq 0 ]]; then
+        pass "drift owner listing: exits 0 so the report still publishes"
+    else
+        fail "drift owner listing: exits 0 so the report still publishes — got $exit_code"
+    fi
+
+    # Restore a single-owner report for anything that runs after this.
+    (
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1
+    ) || true
+}
+
+# ── Test 4g: an owner that holds nothing is not one nameless repo ─────────
+#
+# sync.sh's twin of this is test_sync_empty_owner; the same blank line reached
+# the same `mapfile` here and put a row in the PUBLISHED report for a repo
+# whose name is the empty string, complete with a broken github.com link.
+test_drift_report_empty_owner() {
+    echo ""
+    echo "=== Test: drift-report.sh (an owner with no repos) ==="
+
+    local out="$TEST_DIR/drift-empty-owner.txt"
+    local rpt="$REPO_ROOT/drift-report.md"
+
+    (
+        GITHUB_REPOSITORY_OWNER=emptyorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1
+    ) || true
+
+    assert_contains "$rpt" "0 repo(s) scanned" \
+        "drift empty owner: the report says zero, not one"
+    assert_contains "$rpt" "(no repos found)" \
+        "drift empty owner: it renders the explicit empty-fleet row"
+    assert_not_contains "$rpt" "1 repo(s) scanned" \
+        "drift empty owner: no phantom repo was counted"
+    # The phantom's signature in the published table: a row whose repo cell is
+    # an empty-named link. Scoped to a ROW so the legend cannot satisfy it.
+    if grep -qE '^\| \[`\`\]|^\| \[``\]' "$rpt"; then
+        fail "drift empty owner: the report carries an empty-named repo row"
+    else
+        pass "drift empty owner: no empty-named repo row was written"
+    fi
+
+    (
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1
+    ) || true
+}
+
 # ── Test 3d: protected default branch → PR fallback + auto-merge ──────────
 
 test_sync_protected_fallback() {
@@ -3350,6 +3841,294 @@ test_sync_protected_fallback() {
 
     assert_contains "$TEST_DIR/sync-protected-output.txt" "2 synced" "protected: both repos synced via fallback"
     assert_contains "$TEST_DIR/sync-protected-output.txt" "0 failed" "protected: no repo failures on the fallback path"
+}
+
+# ── Test 3f: an argument sync.sh does not recognise stops it ──────────────
+#
+# `[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true` reads exactly one position
+# for exactly one spelling and has no else. `-n`, `--dry-runn`, and `--dry-run`
+# anywhere but first therefore all left DRY_RUN=false — and this script's
+# not-dry-run path clones every repo in the fleet, commits, and pushes STRAIGHT
+# to their default branches, which the sync App's ruleset bypass does not stop.
+# An operator who typed the flag and got a real run had no signal at all: the
+# log looks like an ordinary sync, because it is one.
+#
+# So the fingerprint below covers every ref of every bare repo, not just the
+# ones this org would touch. "Wrote nothing" is the claim; anything less than
+# the whole fleet is a smaller claim wearing the same words.
+bare_fleet_fingerprint() {
+    local bare
+    for bare in "$TEST_DIR"/bare/*; do
+        [[ -d "$bare" ]] || continue
+        printf '%s %s\n' "$(basename "$bare")" \
+            "$(git -C "$bare" show-ref 2>/dev/null | sort | sha256sum | cut -d' ' -f1)"
+    done
+}
+
+test_sync_unknown_argument() {
+    echo ""
+    echo "=== Test: sync.sh (an unrecognised argument) ==="
+
+    local before after out exit_code arg
+    before=$(bare_fleet_fingerprint)
+
+    # Three spellings, and the third is the one with teeth: `--dry-run` in
+    # second position is not a typo at all, it is the flag the operator meant,
+    # in a position the old check could not see.
+    for arg in "-n" "--dry-runn" "--verbose --dry-run"; do
+        out="$TEST_DIR/sync-badarg.txt"
+        exit_code=0
+        # shellcheck disable=SC2086  # deliberate word-splitting: $arg is an
+        # argument LIST, and the two-argument case is the whole point of it.
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" $arg > "$out" 2>&1 || exit_code=$?
+
+        if [[ $exit_code -eq 2 ]]; then
+            pass "sync bad argument '$arg': refuses the run (exit 2)"
+        else
+            fail "sync bad argument '$arg': refuses the run (exit 2) — got $exit_code: $(head -3 "$out")"
+        fi
+        assert_contains "$out" "unknown argument" "sync bad argument '$arg': named rather than ignored"
+        # The proof that it stopped BEFORE doing anything, not merely that it
+        # complained: discovery is the first thing a real run prints.
+        assert_not_contains "$out" "Scanning repos for" \
+            "sync bad argument '$arg': never reached discovery"
+    done
+
+    after=$(bare_fleet_fingerprint)
+    if [[ "$before" == "$after" ]]; then
+        pass "sync bad argument: not one ref of one bare repo moved"
+    else
+        fail "sync bad argument: the fleet was written to — $(diff <(echo "$before") <(echo "$after") | tr '\n' ' ')"
+    fi
+}
+
+# ── Test 3g: an owner that cannot be listed is that owner's failure ───────
+#
+# The same shape bump-consumer-locks.sh already has a test for, in the script
+# that writes to every repo in the fleet. sync.yml mints one App token per
+# owner with continue-on-error and exports no base GH_TOKEN, so a failed mint
+# leaves GH_TOKEN unset and `gh repo list` exits non-zero — under `set -e`,
+# mid-loop. With SYNC_OWNERS ordered "Adam-S-Daniel jodidaniel", losing the
+# FIRST installation ended the whole run: the second owner was never scanned,
+# and no "=== Sync complete ===" line was printed, so the log's last word was a
+# raw gh error. The workflow's own warning says the opposite — "its repos will
+# be skipped this run".
+#
+# Driven with --dry-run so the assertions are about control flow and this test
+# leaves no state behind; the failing branch runs before any dry-run gate.
+test_sync_owner_list_failure() {
+    echo ""
+    echo "=== Test: sync.sh (one owner cannot be listed) ==="
+
+    local out="$TEST_DIR/sync-owner-fail.txt" exit_code=0 before after
+    before=$(bare_fleet_fingerprint)
+
+    SYNC_OWNERS="failorg testorg" \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" --dry-run > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "failorg: could not list repos" \
+        "sync owner listing: the owner that failed is named"
+    assert_contains "$out" "Scanning repos for: testorg" \
+        "sync owner listing: the SECOND owner is still scanned"
+    assert_contains "$out" "=== Sync complete" \
+        "sync owner listing: the run still prints its summary"
+    assert_contains "$out" "1 failed" \
+        "sync owner listing: counted as a per-owner failure"
+    if [[ $exit_code -ne 0 ]]; then
+        pass "sync owner listing: the run exits non-zero"
+    else
+        fail "sync owner listing: the run exits non-zero (got 0)"
+    fi
+
+    after=$(bare_fleet_fingerprint)
+    if [[ "$before" == "$after" ]]; then
+        pass "sync owner listing: --dry-run still wrote nothing"
+    else
+        fail "sync owner listing: --dry-run wrote to the fleet"
+    fi
+}
+
+# ── Test 3h: an owner that holds nothing is not one nameless repo ─────────
+#
+# `gh repo list --jq '.[].nameWithOwner'` over `[]` prints NOTHING, so
+# `repo_list_raw` is the empty string — and `echo "$repo_list_raw"` is one
+# blank line, which `grep -v` passes through and `mapfile` turns into a
+# one-element array holding "". Both scripts then reported "Found 1 repo(s)"
+# and went on to `gh repo clone <owner>/` — a phantom with no name, produced by
+# an owner that answered honestly. It is the mirror of the failing owner above
+# and must not render as it: "holds nothing" and "could not be asked" are
+# different facts, and only one of them is a failure.
+test_sync_empty_owner() {
+    echo ""
+    echo "=== Test: sync.sh (an owner with no repos) ==="
+
+    local out="$TEST_DIR/sync-empty-owner.txt" exit_code=0
+
+    GITHUB_REPOSITORY_OWNER=emptyorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "No repos found in emptyorg" \
+        "sync empty owner: says the owner holds nothing"
+    assert_not_contains "$out" "Found 1 repo(s)" \
+        "sync empty owner: does not invent a repo out of a blank line"
+    # The consequence, not just the count. The per-repo header is
+    # `echo "=== $repo_name ==="`, so a phantom prints `===  ===` — an empty
+    # name between two spaces, a string nothing else in this log produces.
+    #
+    # It is spelled this way because the obvious alternative does not work:
+    # `MOCK_BARE_DIR/` with an empty repo slug is a real DIRECTORY, so the mock
+    # clones it happily and never says "mock repo not found". Measured against
+    # the reverted script — it printed `===  ===`, cloned the bare root, and
+    # died at exit 128, while an assertion on the mock's error message passed.
+    assert_not_contains "$out" "===  ===" \
+        "sync empty owner: no per-repo header for a nameless repo"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "sync empty owner: an empty owner is not a failure"
+    else
+        fail "sync empty owner: an empty owner is not a failure — got exit $exit_code"
+    fi
+}
+
+# ── Test 3i: a refused `git commit` is a failure, not a benign skip ───────
+#
+# `git commit ... || { log "Nothing to commit."; ((SKIP_COUNT++)); continue; }`
+# reads every non-zero commit as "there was nothing to commit", and the fleet's
+# own tooling makes one non-zero commit the common one: cms-platform's
+# dev-hooks-sync installs a global core.hooksPath whose secrets-scan pre-commit
+# guard FAILS CLOSED when gitleaks is missing from PATH. That is correct for a
+# security gate and fatal here, because it refuses EVERY per-repo commit —
+# which printed "0 synced, 20 skipped, 0 failed", exited 0, and left the whole
+# fleet unsynced behind a green run.
+#
+# The hook is installed via GIT_CONFIG_GLOBAL rather than by touching the
+# machine's real gitconfig, and the run gets a throwaway copy of the pristine
+# bares so there is genuinely something to commit no matter where in the file
+# this test is ordered.
+test_sync_commit_refused() {
+    echo ""
+    echo "=== Test: sync.sh (a pre-commit hook refuses the commit) ==="
+
+    local hookdir="$TEST_DIR/refusing-hooks"
+    mkdir -p "$hookdir"
+    cat > "$hookdir/pre-commit" <<'HOOK'
+#!/bin/sh
+echo "secrets-scan: gitleaks not found on PATH - refusing to commit" >&2
+exit 1
+HOOK
+    chmod +x "$hookdir/pre-commit"
+
+    local gcfg="$TEST_DIR/refusing-gitconfig"
+    cat > "$gcfg" <<CFG
+[user]
+	name = test-runner
+	email = test@localhost
+[core]
+	hooksPath = $hookdir
+CFG
+
+    rm -rf "$TEST_DIR/bare-commit-refused"
+    cp -a "$TEST_DIR/bare-pristine" "$TEST_DIR/bare-commit-refused"
+
+    local out="$TEST_DIR/sync-commit-refused.txt" exit_code=0
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare-commit-refused" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    GIT_CONFIG_GLOBAL="$gcfg" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "commit refused" \
+        "commit refused: the run says the commit was refused"
+    assert_contains "$out" "secrets-scan" \
+        "commit refused: it quotes the hook's own reason"
+    assert_not_contains "$out" "Nothing to commit." \
+        "commit refused: a refusal is NOT reported as an empty diff"
+    assert_not_contains "$out" "0 failed" \
+        "commit refused: not counted as a clean run"
+    if [[ $exit_code -ne 0 ]]; then
+        pass "commit refused: the run exits non-zero"
+    else
+        fail "commit refused: the run exits non-zero (got 0)"
+    fi
+
+    # Nothing may have reached the throwaway fleet either: a refused commit
+    # leaves HEAD where it was, and the push that follows would otherwise
+    # publish the base commit and look like a successful sync.
+    local sha_before sha_after
+    sha_before=$(git -C "$TEST_DIR/bare-pristine/testorg_repo-with-sync" rev-parse main)
+    sha_after=$(git -C "$TEST_DIR/bare-commit-refused/testorg_repo-with-sync" rev-parse main)
+    if [[ "$sha_before" == "$sha_after" ]]; then
+        pass "commit refused: main did not move"
+    else
+        fail "commit refused: main moved from $sha_before to $sha_after"
+    fi
+
+    rm -rf "$TEST_DIR/bare-commit-refused"
+}
+
+# ── Test 3j: a foreign commit on the sync branch blocks the force-push ────
+#
+# The counterpart to test_sync_protected_fallback, which asserts the force-push
+# still LANDS over this sync's own stale branch. Here the branch carries a
+# commit somebody else wrote, and the whole justification the force-push used
+# to carry — "the branch is bot-owned, this sync is its only writer" — is false
+# on exactly the repos the fallback runs on: it opens a PR and arms auto-merge,
+# so a maintainer can push a conflict resolution onto that branch, and the next
+# nightly run overwrote it while logging "branch updated".
+test_sync_foreign_branch_commit() {
+    echo ""
+    echo "=== Test: sync.sh (a foreign commit on agents-md-sync/update) ==="
+
+    local bare="$TEST_DIR/bare/fgnorg_repo-foreign-branch"
+    local before after out exit_code=0
+    before=$(git -C "$bare" rev-parse "refs/heads/agents-md-sync/update")
+
+    out="$TEST_DIR/sync-foreign.txt"
+    GITHUB_REPOSITORY_OWNER=fgnorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_PR_LOG="$TEST_DIR/pr-foreign.log" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "carries a commit this sync did not write" \
+        "foreign branch: the refusal says whose branch it is"
+    assert_contains "$out" "reviewer@users.noreply.github.com" \
+        "foreign branch: it names the committer it found"
+    assert_contains "$out" "1 failed" \
+        "foreign branch: counted as a repo failure, not a skip"
+    if [[ $exit_code -ne 0 ]]; then
+        pass "foreign branch: the run exits non-zero"
+    else
+        fail "foreign branch: the run exits non-zero (got 0)"
+    fi
+
+    after=$(git -C "$bare" rev-parse "refs/heads/agents-md-sync/update")
+    if [[ "$before" == "$after" ]]; then
+        pass "foreign branch: the reviewer's commit is still the branch tip"
+    else
+        fail "foreign branch: the branch was force-pushed over — $before -> $after"
+    fi
+    # And the bytes, not only the sha: the assertion above would also hold if
+    # the branch had been deleted and recreated at the same object.
+    local tip_file
+    tip_file=$(git -C "$bare" show "refs/heads/agents-md-sync/update:AGENTS.md" 2>/dev/null || true)
+    if [[ "$tip_file" == "a reviewer fixed the conflict by hand" ]]; then
+        pass "foreign branch: the reviewer's content survived intact"
+    else
+        fail "foreign branch: the reviewer's AGENTS.md is gone — branch tip now reads '$tip_file'"
+    fi
 }
 
 # ── Test 3e: stale PR/branch cleanup after a direct push ──────────────────
@@ -4417,6 +5196,7 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
+    MOCK_CONTENTS_HTTP_FAIL="${BUMP_CONTENTS_FAIL_FOR_RUN:-}" \
     MOCK_GH_NO_MATCH_FLAG="${BUMP_NO_MATCH_FLAG_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     BUMP_REGISTRY="bumporg/agentskills" \
@@ -5016,6 +5796,87 @@ test_bump_owner_list_failure() {
     fi
 
     rm -rf "$TEST_DIR/bare-owner"
+}
+
+# ── Test 8f3: a lock that cannot be read is not a lock that is absent ─────
+#
+# `gh api .../contents/skills.lock --jq .content 2>/dev/null || encoded=""`
+# threw away the ONE thing separating "this repo declares no bundles" from "the
+# credential can no longer read file contents". Contents permission is granted
+# App-wide, so a credential that can still enumerate both owners but no longer
+# read a file makes EVERY consumer answer "no skills.lock": the whole re-pin
+# pass becomes a no-op and — since eight of the ten allowlist entries in the
+# real repos.yml genuinely are `lock: pending` — the summary prints "0 merged,
+# 0 proposed, N skipped, 0 failed", which is exactly what a healthy night
+# prints. Nothing goes red, scheduled-run-health sees a success, and every
+# consumer serves a frozen bundle until somebody notices by hand.
+#
+# BOTH halves are asserted in one run, and they have to be: the fix is only
+# correct if a genuine 404 still reads as the benign skip it has always been.
+# `--dry-run` because what is under test is the reading, and a run that writes
+# nothing can sit anywhere in this ordered lane.
+test_bump_contents_unreadable() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the lock could not be read) ==="
+
+    local out="$TEST_DIR/bump-contents-fail.txt"
+    local ctl="$TEST_DIR/bump-contents-control.txt"
+    local prs_before
+    prs_before=$(wc -l < "$BUMP_PR_LOG")
+
+    # The CONTROL run, and here it does double duty. It is the usual "prove the
+    # fetch is not simply dead" check, and it is also what makes the count below
+    # attributable: this lane already carries `repo-error`, a deliberate
+    # cannot-be-assessed fixture, so the summary is never at zero failures and a
+    # hardcoded "1 failed" would be asserting somebody else's failure.
+    run_bump "$ctl" --dry-run
+
+    BUMP_CONTENTS_FAIL_FOR_RUN="bumporg_repo-stale" \
+        run_bump "$out" --dry-run
+    unset BUMP_CONTENTS_FAIL_FOR_RUN
+
+    # The 403 half: named, counted, and red.
+    assert_contains "$out" "repo-stale: could not read skills.lock" \
+        "unreadable lock: the repo and the file are both named"
+    assert_contains "$out" "HTTP 403" \
+        "unreadable lock: the diagnostic quotes gh's own status line"
+
+    local ctl_failed inj_failed
+    ctl_failed=$(sed -n 's/.*, \([0-9][0-9]*\) failed ===.*/\1/p' "$ctl" | tail -1)
+    inj_failed=$(sed -n 's/.*, \([0-9][0-9]*\) failed ===.*/\1/p' "$out" | tail -1)
+    if [[ -n "$ctl_failed" && -n "$inj_failed" && "$inj_failed" -eq $((ctl_failed + 1)) ]]; then
+        pass "unreadable lock: counted as exactly one more failure than the same run without it"
+    else
+        fail "unreadable lock: failure count went from '${ctl_failed:-unparsed}' to '${inj_failed:-unparsed}', expected +1"
+    fi
+    assert_not_contains "$ctl" "could not read skills.lock" \
+        "unreadable lock (control): the same run without the injection reads every lock fine"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "unreadable lock: the run exits non-zero"
+    else
+        fail "unreadable lock: the run exits non-zero (got 0)"
+    fi
+    # The sentence the old code printed for this repo, which asserted something
+    # the run had not established.
+    if grep -q "repo-stale" <<< "$(grep 'no skills.lock' "$out" || true)"; then
+        fail "unreadable lock: repo-stale was still reported as having no lock"
+    else
+        pass "unreadable lock: repo-stale is NOT reported as declaring no bundles"
+    fi
+
+    # The 404 half, in the SAME run: bumporg/repo-no-lock really has no
+    # skills.lock, the repo itself answers, and that must still be the quiet
+    # skip it has always been rather than collateral from the stricter branch.
+    assert_contains "$out" "no skills.lock — nothing to re-pin" \
+        "unreadable lock: a genuine 404 on a repo that answers is still a benign skip"
+    assert_not_contains "$out" "repo-no-lock: could not read" \
+        "unreadable lock: the benign skip was not promoted to a failure"
+
+    if [[ "$(wc -l < "$BUMP_PR_LOG")" == "$prs_before" ]]; then
+        pass "unreadable lock: no pull request opened"
+    else
+        fail "unreadable lock: no pull request opened — $(cat "$BUMP_PR_LOG")"
+    fi
 }
 
 # ── Test 8g: a push a ruleset refuses is a failure, not a stale branch ─────
@@ -9083,6 +9944,7 @@ run_hook_pin() {   # <output file> [script args...]
     MOCK_PR_LOG="$HOOK_PIN_PR_LOG" \
     MOCK_PR_BODY_DIR="$HOOK_PIN_BODY_DIR" \
     MOCK_PR_DIR="${HOOK_PIN_PR_DIR_FOR_RUN:-}" \
+    MOCK_PR_LIST_FAILS="${HOOK_PIN_PR_LIST_FAILS_FOR_RUN:-}" \
     REPOS_YML="$HOOK_PIN_DIR/work/repos.yml" \
     BUMP_CHECKOUTS="pinorg/agentskills=$HOOK_PIN_DIR/registry" \
     HOOK_PIN_REPO="pinorg/guidance" \
@@ -9261,6 +10123,109 @@ test_hook_pin_proposes() {
     fi
 }
 
+# ── Test 9c2: a failing `gh pr list` stops the run ───────────────────────
+#
+# `gh pr list ... 2>/dev/null || true` made "there is no open pull request" and
+# "I could not ask" the same empty string — gh prints an HTTP error body to
+# stdout and never runs the --jq filter. The refusal further down then stated
+# the first as a FACT and printed a remedy for it: "Delete that branch (its PR
+# is not open)". Deleting the head branch of an open pull request closes it on
+# GitHub and discards whatever review was pending, so the wrong answer here is
+# not merely wrong, it is an instruction to destroy the thing it misread.
+test_hook_pin_pr_list_failure() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh (the open-PR query cannot be answered) ==="
+
+    local out="$TEST_DIR/hook-pin-listfail.txt"
+    local prs_before
+    prs_before=$(wc -l < "$HOOK_PIN_PR_LOG")
+
+    HOOK_PIN_PR_LIST_FAILS_FOR_RUN="pinorg_guidance" run_hook_pin "$out"
+
+    assert_contains "$out" "could not list open pull requests" \
+        "pr-list failure: the run says the question went unanswered"
+    if [[ $HOOK_PIN_EXIT -ne 0 ]]; then
+        pass "pr-list failure: the run exits non-zero"
+    else
+        fail "pr-list failure: the run exits non-zero (got 0): $(cat "$out")"
+    fi
+    # The two things the old spelling let it do on an unanswered question.
+    assert_not_contains "$out" "Delete that branch" \
+        "pr-list failure: it does NOT advise deleting a branch whose PR it could not check"
+    assert_no_hook_pin_branch "pr-list failure: nothing was pushed"
+    if [[ "$(wc -l < "$HOOK_PIN_PR_LOG")" == "$prs_before" ]]; then
+        pass "pr-list failure: no pull request opened"
+    else
+        fail "pr-list failure: no pull request opened — $(cat "$HOOK_PIN_PR_LOG")"
+    fi
+}
+
+# ── Test 9c3: a branch that outlived its pull request is ADOPTED ──────────
+#
+# The permanent-and-invisible state, and the one combination this script may
+# not produce. One night the branch pushes and `gh pr create` dies — a
+# transient 5xx, a rate limit, an App holding Contents:write but not Pull
+# requests:write — so the branch exists and the pull request does not. The same
+# dead end is reached with no failure at all if somebody CLOSES the bump PR
+# without deleting its branch.
+#
+# From there the default branch still carries the OLD pin, so every later run
+# gets past anti-churn, finds no open pull request, rebuilds the same commit on
+# the same parent with only a later committer timestamp, and pushes a
+# non-fast-forward onto its own already-correct branch. The old arm logged a
+# WARN and exited 0 — green every night, so scheduled-run-health never fires,
+# while all ten allowlisted repos keep delivering the pre-change hook. Nothing
+# else reaps this branch: sync.sh's stale-branch cleanup is scoped to
+# `agents-md-sync/update`.
+#
+# This test needs no fixture of its own — it is exactly the state
+# test_hook_pin_proposes leaves behind, read with no MOCK_PR_DIR, which is what
+# makes it the state a real run lands in.
+test_hook_pin_orphaned_branch() {
+    echo ""
+    echo "=== Test: bump-hook-pin.sh (a branch whose PR never opened) ==="
+
+    local out="$TEST_DIR/hook-pin-orphan.txt"
+    local before prs_before
+    before=$(hook_pin_branch_sha)
+    prs_before=$(grep -c "pr-created" "$HOOK_PIN_PR_LOG" || true)
+
+    if [[ -z "$before" ]]; then
+        fail "orphaned branch: no bump branch exists, so this test asserts nothing"
+        return
+    fi
+
+    run_hook_pin "$out"
+
+    if [[ $HOOK_PIN_EXIT -eq 0 ]]; then
+        pass "orphaned branch: the run exits 0"
+    else
+        fail "orphaned branch: the run exits 0 — got $HOOK_PIN_EXIT: $(cat "$out")"
+    fi
+    assert_contains "$out" "adopting that branch rather than pushing again" \
+        "orphaned branch: it recognises the branch as its own proposal"
+
+    # THE POINT: the run must REACH `gh pr create`. Without that it is merely a
+    # politer version of the same stall.
+    local prs_after
+    prs_after=$(grep -c "pr-created" "$HOOK_PIN_PR_LOG" || true)
+    if [[ "$prs_after" -gt "$prs_before" ]]; then
+        pass "orphaned branch: the missing pull request was finally opened"
+    else
+        fail "orphaned branch: still no pull request — $prs_before before, $prs_after after"
+    fi
+
+    # And it adopted rather than rewrote: the branch this run reused is the one
+    # the previous run pushed, byte for byte.
+    if [[ "$(hook_pin_branch_sha)" == "$before" ]]; then
+        pass "orphaned branch: the existing branch was reused, not re-pushed"
+    else
+        fail "orphaned branch: the branch was rewritten — $before -> $(hook_pin_branch_sha)"
+    fi
+    assert_not_contains "$out" "refusing to force-push over it" \
+        "orphaned branch: it is NOT mistaken for a stranger's branch"
+}
+
 # ── Test 9d: it does not propose the same bump twice ─────────────────────
 #
 # Without this the script goes red every night a pin PR waits for review: the
@@ -9397,6 +10362,256 @@ test_hook_pin_workflow_wiring() {
     fi
 }
 
+# ── Test 10: a yq that cannot answer stops every script that reads repos.yml
+#
+# `yq ... 2>/dev/null || true` collapsed three answers into one: the key is
+# legitimately absent, repos.yml will not parse, and yq is not there at all.
+# Only the first is normal, and the other two arrived as an EMPTY LIST, exit 0,
+# and not one line in the log. An empty exclusion list is not an inert one —
+# sync.sh's filter matches nothing, and the run clones a repo repos.yml
+# EXCLUDES and pushes the managed AGENTS.md straight to its default branch,
+# which is the contamination that exclusion exists to prevent.
+#
+# Two flavours, because the second is what actually happened. mikefarah's Go yq
+# is what this repo's workflows install version-pinned; kislyuk's Python
+# jq-wrapper is what Debian ships under the same name, and it forwards
+# `-o=json` to jq and dies with "jq: Unknown option -o=json" — a message that
+# blames repos.yml for a tool problem, and the message the nightly hook-pin
+# bump died with. So the stub below is not a generic "broken command": it is
+# that flavour, answering `--version` perfectly happily, which is exactly why a
+# version probe would not have caught it.
+#
+# The ABSENT case gets a symlink farm rather than a shell trick because
+# `command -v` searches PATH and there is no way to shadow a name into
+# non-existence. The farm holds only the handful of tools each script uses
+# BEFORE its preflight, which is all it needs: the run is supposed to stop
+# there, and a farm that let it get further would be testing something else.
+setup_yq_stub_dirs() {
+    # The wrong flavour.
+    mkdir -p "$TEST_DIR/bin-yq-python"
+    cat > "$TEST_DIR/bin-yq-python/yq" <<'STUB'
+#!/bin/sh
+# Stands in for kislyuk's python-yq: a real program, correctly installed,
+# answering --version without complaint, that does not understand the one flag
+# this repo's repos.yml reads depend on.
+case "${1:-}" in
+    --version) echo "yq 3.4.3"; exit 0 ;;
+esac
+for arg in "$@"; do
+    case "$arg" in
+        -o=json)
+            echo "jq: Unknown option -o=json" >&2
+            echo "Use jq --help for help with command-line options," >&2
+            exit 1
+            ;;
+    esac
+done
+exit 0
+STUB
+    chmod +x "$TEST_DIR/bin-yq-python/yq"
+
+    # No yq at all. Only what runs before the preflight, resolved from the live
+    # PATH rather than hardcoded to /usr/bin, so this works on any runner.
+    mkdir -p "$TEST_DIR/bin-noyq"
+    local tool resolved
+    for tool in sh bash env basename dirname git mktemp python3 sed date cat \
+                grep head cut tr sort wc rm mkdir cp ls sha256sum base64 jq diff; do
+        resolved=$(command -v "$tool" 2>/dev/null) || continue
+        ln -sf "$resolved" "$TEST_DIR/bin-noyq/$tool"
+    done
+}
+
+test_yq_preflight() {
+    echo ""
+    echo "=== Test: every repos.yml reader refuses a yq it cannot use ==="
+
+    setup_yq_stub_dirs
+
+    local script exit_code out fingerprint_before fingerprint_after
+    fingerprint_before=$(bare_fleet_fingerprint)
+
+    for script in sync.sh drift-report.sh bump-consumer-locks.sh bump-hook-pin.sh; do
+        # ── WRONG FLAVOUR
+        out="$TEST_DIR/yq-flavour-${script%.sh}.txt"
+        exit_code=0
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        BUMP_REGISTRY="bumporg/agentskills" \
+        HOOK_PIN_REPO="pinorg/guidance" \
+        PATH="$TEST_DIR/bin-yq-python:$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/$script" > "$out" 2>&1 || exit_code=$?
+
+        if [[ $exit_code -eq 2 ]]; then
+            pass "yq flavour ($script): refuses the run (exit 2)"
+        else
+            fail "yq flavour ($script): refuses the run (exit 2) — got $exit_code: $(head -3 "$out")"
+        fi
+        assert_contains "$out" "does not accept '-o=json -I0'" \
+            "yq flavour ($script): names the flag it probed"
+        assert_contains "$out" "yq 3.4.3" \
+            "yq flavour ($script): quotes what the yq on PATH actually says"
+        assert_contains "$out" "mikefarah" \
+            "yq flavour ($script): names the yq this repo requires"
+
+        # ── ABSENT
+        out="$TEST_DIR/yq-absent-${script%.sh}.txt"
+        exit_code=0
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        BUMP_REGISTRY="bumporg/agentskills" \
+        HOOK_PIN_REPO="pinorg/guidance" \
+        PATH="$TEST_DIR/bin-noyq" \
+        "$REPO_ROOT/scripts/$script" > "$out" 2>&1 || exit_code=$?
+
+        if [[ $exit_code -eq 2 ]]; then
+            pass "yq absent ($script): refuses the run (exit 2)"
+        else
+            fail "yq absent ($script): refuses the run (exit 2) — got $exit_code: $(head -3 "$out")"
+        fi
+        assert_contains "$out" "yq is not on PATH" \
+            "yq absent ($script): says which tool is missing"
+    done
+
+    # THE CONSEQUENCE, which is what the exit code is protecting against. With
+    # an empty exclusion list sync.sh clones and pushes to `repo-excluded`; both
+    # runs above must have stopped before discovery ever happened.
+    assert_not_contains "$TEST_DIR/yq-flavour-sync.txt" "Scanning repos for" \
+        "yq flavour (sync.sh): never reached repo discovery"
+    assert_not_contains "$TEST_DIR/yq-absent-sync.txt" "Scanning repos for" \
+        "yq absent (sync.sh): never reached repo discovery"
+    assert_not_contains "$TEST_DIR/yq-flavour-sync.txt" "repo-excluded" \
+        "yq flavour (sync.sh): the excluded repo was never touched"
+
+    fingerprint_after=$(bare_fleet_fingerprint)
+    if [[ "$fingerprint_before" == "$fingerprint_after" ]]; then
+        pass "yq preflight: eight refused runs wrote nothing to the fleet"
+    else
+        fail "yq preflight: the fleet was written to by a run with a broken yq"
+    fi
+}
+
+# ── Test 11: the Dependabot sweep's listing failure is not an empty sweep ──
+#
+# Extracted from the workflow and RUN, rather than asserted about as text. The
+# step is 300 lines of ordinary bash with no `${{ }}` in it (checked below, so
+# this stays true if someone adds one), which makes executing it the honest
+# test: what is under test is control flow — that a failed `gh pr list` reaches
+# `exit 1` instead of falling into the branch that prints "No open Dependabot
+# PRs — nothing to sweep" and exits 0.
+#
+# That branch is why this matters more here than the shape usually does. This
+# sweep is the only path that lands a Dependabot PR unattended on this repo,
+# and the scheduled-run-health audit scans only for failure / startup_failure /
+# timed_out — so an exit-0 sweep is invisible to the one alarm watching these
+# crons. A listing failing for weeks would stall the whole dependency pipeline
+# with no signal at all.
+workflow_run_body() {   # <file> <needle> — the first job step's `run:` body
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const needle = process.argv[3];
+for (const spec of Object.values((doc && doc.jobs) || {})) {
+  for (const step of (spec && spec.steps) || []) {
+    if (typeof step.run !== "string" || !step.run.includes(needle)) continue;
+    process.stdout.write(step.run);
+    process.exit(0);
+  }
+}
+process.exit(1);
+' "$REPO_ROOT" "$1" "$2"
+}
+
+test_dependabot_sweep_list_failure() {
+    echo ""
+    echo "=== Test: dependabot-auto-merge.yml (the sweep's PR listing fails) ==="
+
+    local wf="$REPO_ROOT/.github/workflows/dependabot-auto-merge.yml"
+    local body="$TEST_DIR/sweep-step.sh"
+
+    if ! workflow_run_body "$wf" 'app/dependabot' > "$body" 2>"$TEST_DIR/sweep-extract.err"; then
+        fail "sweep: could not extract the sweep step — $(cat "$TEST_DIR/sweep-extract.err")"
+        return
+    fi
+    # Executing it is only valid while it is plain bash. A `${{ }}` would be a
+    # syntax error here rather than a wrong answer, but say so plainly instead
+    # of letting the shell report it.
+    if grep -qF '${{' "$body"; then
+        fail "sweep: the step now interpolates \${{ }} — extract-and-run no longer models it"
+        return
+    fi
+    if ! bash -n "$body" 2>"$TEST_DIR/sweep-syntax.err"; then
+        fail "sweep: the extracted step is not valid bash — $(head -1 "$TEST_DIR/sweep-syntax.err")"
+        return
+    fi
+
+    # A `gh` whose `pr list` cannot answer: the diagnostic goes to stderr and
+    # nothing usable to stdout, which is what real gh does and what made "no
+    # open PRs" and "I could not ask" the same empty string.
+    mkdir -p "$TEST_DIR/bin-sweepfail"
+    cat > "$TEST_DIR/bin-sweepfail/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+    echo "gh: Bad credentials (HTTP 401)" >&2
+    exit 1
+fi
+echo "mock gh: unexpected call: $*" >&2
+exit 1
+GHSTUB
+    chmod +x "$TEST_DIR/bin-sweepfail/gh"
+
+    local out="$TEST_DIR/sweep-out.txt" exit_code=0
+    PATH="$TEST_DIR/bin-sweepfail:$PATH" bash "$body" > "$out" 2>&1 || exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        pass "sweep: a failed PR listing exits non-zero"
+    else
+        fail "sweep: a failed PR listing exits non-zero (got 0): $(cat "$out")"
+    fi
+    assert_contains "$out" "could not list open Dependabot PRs" \
+        "sweep: it says the listing failed"
+    assert_contains "$out" "HTTP 401" \
+        "sweep: it quotes gh's own reason"
+    assert_not_contains "$out" "No open Dependabot PRs" \
+        "sweep: it does NOT report an empty sweep it never established"
+
+    # The negative control, and it is what makes the assertions above mean
+    # anything: with a `gh pr list` that ANSWERS with an empty list, the very
+    # same script must take the quiet branch and exit 0. Without this, a script
+    # that failed unconditionally would pass every assertion above.
+    mkdir -p "$TEST_DIR/bin-sweepempty"
+    cat > "$TEST_DIR/bin-sweepempty/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+    exit 0
+fi
+echo "mock gh: unexpected call: $*" >&2
+exit 1
+GHSTUB
+    chmod +x "$TEST_DIR/bin-sweepempty/gh"
+
+    local ctl="$TEST_DIR/sweep-control.txt" ctl_code=0
+    PATH="$TEST_DIR/bin-sweepempty:$PATH" bash "$body" > "$ctl" 2>&1 || ctl_code=$?
+
+    if [[ $ctl_code -eq 0 ]]; then
+        pass "sweep (control): a genuinely empty listing still exits 0"
+    else
+        fail "sweep (control): a genuinely empty listing still exits 0 — got $ctl_code: $(cat "$ctl")"
+    fi
+    assert_contains "$ctl" "No open Dependabot PRs" \
+        "sweep (control): an empty listing takes the quiet branch"
+    # And the emptiness guard itself: `mapfile <<<""` yields ONE empty element,
+    # which would make a genuinely empty list into a bogus PR "number".
+    assert_not_contains "$ctl" "Open Dependabot PR(s):" \
+        "sweep (control): an empty listing did not become one nameless PR"
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -9412,9 +10627,17 @@ test_build_script
 test_bridge_status
 test_bootstrap_status
 test_register_bootstrap_hook
+# Before the first sync that writes anything, so "not one ref moved" is
+# measured against pristine bares rather than against whatever the previous
+# test left.
+test_sync_unknown_argument
 test_sync_dry_run
+test_sync_owner_list_failure
+test_sync_empty_owner
 test_sync_full
+test_sync_commit_refused
 test_sync_protected_fallback
+test_sync_foreign_branch_commit
 test_sync_stale_cleanup
 test_sync_failure_exit_code
 test_sync_round_trip_no_marker
@@ -9427,6 +10650,10 @@ test_sync_bootstrap
 test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
+# Immediately after the test that establishes bootorg/repo-adopted's confident
+# verdicts, because those are exactly what its control run re-asserts before
+# truncating one file at a time.
+test_drift_report_partial_read_per_file
 test_drift_report_cron_classification
 test_drift_report_marker_is_whole_line
 test_drift_report_partial_read
@@ -9442,6 +10669,8 @@ test_drift_report
 test_sync_multi_owner
 test_sync_per_owner_token
 test_drift_report_multi_owner
+test_drift_report_owner_list_failure
+test_drift_report_empty_owner
 test_check_cron_coverage
 # The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
 # the bares the sync and drift-report lanes share. Fixed order: the two runs
@@ -9453,6 +10682,7 @@ test_check_cron_coverage
 test_bump_unknown_argument
 test_bump_generator_without_repin
 test_bump_owner_list_failure
+test_bump_contents_unreadable
 test_bump_dry_run
 test_bump_missing_source_checkout
 test_bump_consumer_locks
@@ -9490,7 +10720,9 @@ test_bump_sweep_view_failure_reports_why
 # refusals. Each step depends on the registry state the previous one left.
 test_hook_pin_unchanged
 test_hook_pin_dry_run
+test_hook_pin_pr_list_failure
 test_hook_pin_proposes
+test_hook_pin_orphaned_branch
 test_hook_pin_already_proposed
 test_hook_pin_refuses_broken_hook
 test_hook_pin_workflow_wiring
@@ -9506,6 +10738,8 @@ test_bump_workflow
 test_ci_workflow_shape
 test_yq_install_pinned
 test_check_agents_md
+test_yq_preflight
+test_dependabot_sweep_list_failure
 
 echo ""
 echo "========================================="

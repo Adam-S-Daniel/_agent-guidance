@@ -76,7 +76,27 @@ jobs:
           BASE="origin/${{ github.event.pull_request.base.ref }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
 
-          mapfile -t CHANGED < <(git diff --name-only "$BASE"..."$HEAD")
+          # Command substitution, never `mapfile < <(git diff ...)`: process
+          # substitution observes NEITHER `set -e` nor `set -o pipefail` — the
+          # status belongs to a subshell nothing reads — so a `git diff` that
+          # dies (a base ref the fetch step above did not land, a head sha
+          # force-pushed out from under us) leaves CHANGED empty. An empty
+          # CHANGED walks the loop below zero times, leaves REJECT at 0, and
+          # writes `safe=true`: this gate would FAIL OPEN and certify a diff
+          # nobody could read, which is the one outcome it exists to prevent.
+          # Measured against the previous shape with `git diff` exiting 128 —
+          # it wrote safe=true and the step still exited 0.
+          if ! changed_raw=$(git diff --name-only "$BASE"..."$HEAD" 2>&1); then
+            echo "::error::could not diff ${BASE}...${HEAD} — refusing to certify a diff we cannot read: ${changed_raw%%$'\n'*}"
+            exit 1
+          fi
+          # The emptiness guard is not defensive noise: `mapfile <<<""` yields
+          # ONE empty element, so a genuinely empty diff would otherwise become
+          # a single "" filename and be reported as a non-manifest path.
+          CHANGED=()
+          if [ -n "$changed_raw" ]; then
+            mapfile -t CHANGED <<<"$changed_raw"
+          fi
           echo "Files changed (${BASE}...${HEAD}):"
           printf '  %s\n' "${CHANGED[@]}"
 
@@ -153,8 +173,47 @@ jobs:
           set -euo pipefail
           echo "::notice::Dependabot auto-merge sweep starting."
 
-          mapfile -t PR_NUMBERS < <(gh pr list --state open --author "app/dependabot" \
-            --json number --jq '.[].number')
+          # Captured through a command substitution, never process
+          # substitution, for the reason scripts/sync.sh and
+          # scripts/bump-consumer-locks.sh already give at their own
+          # `gh repo list`: `< <(...)` swallows the exit status, so a
+          # `gh pr list` that dies on a 401, a rate limit or a network blip
+          # leaves PR_NUMBERS empty and control falls into the "no open
+          # Dependabot PRs" branch below — which exits 0 while its own log
+          # line positively asserts something false.
+          #
+          # That shape is worse HERE than almost anywhere else. Per this
+          # workflow's header, this sweep is the ONLY path that lands a
+          # Dependabot PR unattended on this repo; and per the exit-code
+          # comment at the foot of this step, the scheduled-run-health audit
+          # only scans for failure / startup_failure / timed_out, so an exit-0
+          # sweep is invisible to the one alarm watching these crons. A
+          # listing that has been failing for weeks would therefore stall the
+          # entire dependency pipeline with no signal at all. A genuinely
+          # empty result still takes the -eq 0 branch and exits 0 legitimately;
+          # only a failed query goes red.
+          #
+          # `--limit 100` because `gh pr list` silently defaults to 30 — a
+          # quieter version of the same lie, since a truncated page reads
+          # exactly like a complete one.
+          if ! pr_list=$(gh pr list --state open --author "app/dependabot" \
+            --limit 100 --json number --jq '.[].number' 2>&1); then
+            echo "::error::could not list open Dependabot PRs — refusing to report an empty sweep: ${pr_list%%$'\n'*}"
+            exit 1
+          fi
+
+          # An explicit `if` rather than `[ -n "$pr_list" ] && mapfile ...`,
+          # for the same reason `diagnose_blocked` below gives about
+          # `cond && return`: a false test makes the AND-list itself non-zero,
+          # and whether `set -e` is exempt there is exactly the shell subtlety
+          # not worth relying on inside a job that merges to a protected
+          # branch. The emptiness guard itself is mandatory — `mapfile <<<""`
+          # yields ONE empty element, which would turn a genuinely empty list
+          # into a bogus PR "number" the loop below would try to `gh pr view`.
+          PR_NUMBERS=()
+          if [ -n "$pr_list" ]; then
+            mapfile -t PR_NUMBERS <<<"$pr_list"
+          fi
 
           if [ "${#PR_NUMBERS[@]}" -eq 0 ]; then
             echo "::notice::No open Dependabot PRs — nothing to sweep."
@@ -274,7 +333,25 @@ jobs:
             # Re-run the SAME inline manifest-path allowlist as job
             # `auto-merge` above — keep the two blocks in lockstep.
             REJECT=0
-            mapfile -t CHANGED < <(git diff --name-only "origin/${base}...dependabot-sweep/pr-${num}")
+            # Command substitution for the same reason as job `auto-merge`'s
+            # copy of this gate above: `< <(git diff ...)` throws the status
+            # away, an empty CHANGED walks the loop zero times, REJECT stays 0
+            # and the re-check PASSES. Measured against the previous shape
+            # with `git diff` exiting 128 — the sweep printed "manifest clean"
+            # and went on to MERGE the PR whose diff it had just failed to
+            # read. Skip rather than fail the run, matching the `git fetch`
+            # guard a few lines above: both mean "could not establish the
+            # facts about this PR", the PR stays unmerged either way, and the
+            # next sweep re-evaluates it from scratch.
+            if ! changed_raw=$(git diff --name-only "origin/${base}...dependabot-sweep/pr-${num}" 2>&1); then
+              echo "::warning::skip #${num} — could not diff origin/${base}...pr-${num} for the manifest re-check: ${changed_raw%%$'\n'*}"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            CHANGED=()
+            if [ -n "$changed_raw" ]; then
+              mapfile -t CHANGED <<<"$changed_raw"
+            fi
             for f in "${CHANGED[@]}"; do
               case "$f" in
                 package.json|*/package.json|package-lock.json|*/package-lock.json) ;;

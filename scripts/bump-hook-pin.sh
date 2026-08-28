@@ -99,6 +99,62 @@ done
 echo "=== Hook pin bump ==="
 $DRY_RUN && log "DRY RUN — deciding and reporting, writing and pushing nothing."
 
+# ── yq preflight ───────────────────────────────────────────────────────────
+#
+# THE INCIDENT, and it is one missing guard wearing two costumes. Every
+# repos.yml read in this repo was spelled `yq ... 2>/dev/null || true`, which
+# collapses three different answers into one: the key is legitimately absent,
+# yq could not parse the file, and yq is not installed at all. Only the first
+# is normal; `|| true` turned the other two into an EMPTY LIST, exit 0, and
+# not one line in the log. An empty exclusion list is not an inert one —
+# sync.sh's filter then matches nothing, and the run clones a repo repos.yml
+# excludes and pushes the managed AGENTS.md straight to its default branch,
+# which is the contamination that exclusion exists to prevent. Measured with
+# a `yq` stubbed to exit 1: drift-report.sh printed "Found 1 repo(s)" and
+# reported on the excluded repo, where the same run with a working yq printed
+# "excluded by repos.yml" and "Found 0 repo(s)".
+#
+# The second costume is FLAVOUR, and it is why the probe below runs a command
+# instead of reading a version string. Two unrelated programs install as
+# `yq`: mikefarah's Go one, which this repo's workflows fetch version-pinned
+# and digest-verified (docs/decisions/0008; Test 7h holds all four copies of
+# that step identical), and kislyuk's Python wrapper around jq, which Debian
+# ships as `yq` and which forwards `-o=json` to jq and dies with "jq: Unknown
+# option -o=json" — a message that blames repos.yml for a tool problem, and
+# the message the nightly hook-pin bump actually died with. `-o=json -I0` is
+# the exact invocation bump-hook-pin.sh's round-trip check depends on, so
+# probing it asks the question this repo really has, and asks it once, up
+# front, rather than letting the answer arrive as an empty array or a
+# misattributed parse error halfway down.
+#
+# THIS BLOCK IS DUPLICATED VERBATIM in sync.sh, drift-report.sh,
+# bump-consumer-locks.sh and bump-hook-pin.sh. All four are standalone entry
+# points and only one of them sources anything today (a file about pull
+# request prose), so a library existing solely to hold this guard would be an
+# abstraction invented for one `if`. The four copies must move together.
+if ! command -v yq >/dev/null 2>&1; then
+    echo "::error::yq is not on PATH, and this script reads repos.yml with it." >&2
+    echo "::error::Install mikefarah yq (https://github.com/mikefarah/yq) — CI installs it version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
+    # Captured rather than echoed straight through, and branched, so that
+    # "yq --version itself fell over" and "yq --version answered something
+    # unexpected" stay separate sentences instead of both reaching the log as
+    # an empty string. The flavour is then named as the LIKELY cause, not
+    # asserted: all this run established is that the probe failed, and a
+    # sentence claiming more than the run established is the defect
+    # lib/bump-pr-claims.sh exists to make unwritable.
+    if ! yq_found=$(yq --version 2>&1); then
+        yq_found="'yq --version' itself failed: ${yq_found:-no output}"
+    else
+        yq_found="'yq --version' says: ${yq_found:-no output}"
+    fi
+    echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
+    echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+
 # ── Read the current pin ───────────────────────────────────────────────────
 #
 # Read with a real parser, never a line scan — the house rule, and repos.yml is
@@ -258,8 +314,20 @@ log "target repo: $TARGET_REPO"
 # someone into `--force`, which is a force-push over a branch a reviewer may
 # have committed to. Neither is acceptable for a nightly job, and both are
 # avoided by simply not proposing twice.
-existing_pr=$(gh pr list --repo "$TARGET_REPO" --head "$BRANCH_NAME" --state open \
-    --json number --jq '.[0].number // empty' 2>/dev/null || true)
+# Captured with its exit status, and read only on success. `gh` prints an HTTP
+# error body to STDOUT and never runs the --jq filter, so the `2>/dev/null ||
+# true` this replaces made "there is no open pull request" and "I could not
+# ask" the same empty string — and the refusal further down then stated the
+# first as a fact, beside a remedy (delete the branch) that CLOSES an open pull
+# request on GitHub and discards whatever review was pending on it. An
+# unanswerable question stops the run instead, exactly as
+# bump-consumer-locks.sh's sweep already handles it.
+if ! pr_list_out=$(gh pr list --repo "$TARGET_REPO" --head "$BRANCH_NAME" --state open \
+    --json number --jq '.[0].number // empty' 2>&1); then
+    fail "could not list open pull requests on $TARGET_REPO — $(head -1 <<< "$pr_list_out")"
+    exit 1
+fi
+existing_pr="$pr_list_out"
 if [[ -n "$existing_pr" ]]; then
     log "PR #$existing_pr already proposes a hook pin bump on $BRANCH_NAME — leaving it alone."
     log "It will be re-evaluated against the registry once that PR is merged or closed."
@@ -499,27 +567,86 @@ READS that lock moved only when someone hand-edited repos.yml. This is that
 bump, proposed automatically: the hook's bytes changed at $PIN_REGISTRY, so the
 recorded ref and digest no longer describe the current one." >/dev/null
 
-push_ok=true
-push_out=$(git push origin "HEAD:refs/heads/$BRANCH_NAME" 2>&1) || push_ok=false
-if ! $push_ok; then
-    # Matched on git's own non-fast-forward wording rather than the bare word
-    # "rejected", which the server also prints for a ruleset refusal (GH013) or
-    # a pre-receive hook — calling one of those a stale branch prints a remedy
-    # for a branch that does not exist. Never force-pushed: a bump branch
-    # someone has committed to is a branch with a reviewer's work on it.
-    if grep -qiE 'non-fast-forward|fetch first|updates were rejected because' <<< "$push_out"; then
-        # Reached only when the branch exists with no OPEN pull request on it —
-        # a closed-but-not-deleted bump branch, or someone's hand-pushed work
-        # parked there. Not a run failure: nothing is broken, one branch name is
-        # occupied, and the remedy is a person's. Exits 0 so a nightly job does
-        # not cry wolf, and says exactly what to do.
-        log "WARN: $BRANCH_NAME already exists and does not fast-forward — refusing to force-push over it. Delete that branch (its PR is not open) and the next run re-proposes."
-        echo ""
-        echo "=== Hook pin bump complete: blocked on a stale branch ==="
-        exit 0
+# ── Does the branch already carry exactly THIS pin? ────────────────────────
+#
+# Asked before pushing, and it is the whole difference between a branch that
+# outlived its pull request being adopted and being stranded forever. The
+# sequence that produced it: one night this script pushes $BRANCH_NAME and then
+# `gh pr create` dies — a transient 5xx, a rate limit, an App installation
+# holding Contents:write but not Pull requests:write — so the branch exists and
+# the pull request does not. The default branch still carries the old pin, so
+# every later run gets past anti-churn, finds no OPEN pull request, rebuilds
+# the same commit on the same parent with only a later committer timestamp, and
+# pushes a non-fast-forward onto its own already-correct branch. The identical
+# dead end is reached with no failure at all if somebody simply CLOSES the bump
+# PR without deleting its branch. Nothing else reaps this branch — sync.sh's
+# stale-branch cleanup is scoped to `agents-md-sync/update` — so the hook pin
+# would never be proposed again, while all ten allowlisted repos kept
+# delivering the pre-change hook.
+#
+# So: read the pin the remote branch actually carries and compare it with the
+# one this run computed. Equal means that branch already IS the proposal and
+# the only thing missing is the pull request, which the step below opens. This
+# is bump-consumer-locks.sh's `branch_matches` fall-through, in the same shape
+# and for the reason written out beside it there.
+#
+# Every read sits inside the `if` condition so an unreadable answer — a fetch
+# that fails, a branch with no repos.yml, a repos.yml yq cannot parse — leaves
+# `branch_matches` false instead of aborting the run under `set -e`. Collapsing
+# "cannot tell" into "does not match" is safe in this one direction only: it
+# lands on the refusal below, which writes nothing.
+branch_matches=false
+if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+    REMOTE_REPOS_YML="$WORK_DIR/repos-on-branch.yml"
+    if git fetch --depth 1 origin "$BRANCH_NAME" >/dev/null 2>&1 \
+       && git show "FETCH_HEAD:repos.yml" > "$REMOTE_REPOS_YML" 2>/dev/null \
+       && remote_ref=$(yq -r '.skills_bootstrap.ref // ""' "$REMOTE_REPOS_YML" 2>/dev/null) \
+       && remote_sha=$(yq -r '.skills_bootstrap.sha256 // ""' "$REMOTE_REPOS_YML" 2>/dev/null) \
+       && [[ "$remote_ref" == "$TARGET_REF" && "$remote_sha" == "$TARGET_SHA256" ]]; then
+        branch_matches=true
     fi
-    fail "push failed — $(head -1 <<< "$push_out")"
-    exit 1
+fi
+
+if $branch_matches; then
+    # The push is skipped rather than attempted. Our commit and the remote one
+    # differ only in committer timestamp, so pushing would be refused as a
+    # non-fast-forward and land in the arm below — which is precisely the
+    # stranding this check exists to undo.
+    log "$BRANCH_NAME already carries exactly this pin but has no open pull request — adopting that branch rather than pushing again."
+else
+    push_ok=true
+    push_out=$(git push origin "HEAD:refs/heads/$BRANCH_NAME" 2>&1) || push_ok=false
+    if ! $push_ok; then
+        # Matched on git's own non-fast-forward wording rather than the bare word
+        # "rejected", which the server also prints for a ruleset refusal (GH013) or
+        # a pre-receive hook — calling one of those a stale branch prints a remedy
+        # for a branch that does not exist. Never force-pushed: a bump branch
+        # someone has committed to is a branch with a reviewer's work on it.
+        if grep -qiE 'non-fast-forward|fetch first|updates were rejected because' <<< "$push_out"; then
+            # Reached only when the branch exists, carries a pin that is NOT the
+            # one this run computed, and has no open pull request: the check
+            # above adopted the matching case, and the open-PR question was
+            # asked — and answered, not merely attempted — long before this.
+            # So what is parked on the name is a closed-but-undeleted proposal
+            # for some other pin, or somebody's hand-pushed work.
+            #
+            # IT EXITS NON-ZERO, and that reverses what this arm used to do.
+            # Exiting 0 was justified as not crying wolf for a nightly job, but
+            # a wolf that never arrives is not this state: the default branch
+            # still holds the old pin, so tomorrow's run repeats every step and
+            # lands right back here, and the night after that, for as long as
+            # the branch exists — green every time, so scheduled-run-health
+            # never fires either, while the fleet keeps delivering the
+            # pre-change hook to every ephemeral session. Permanent AND
+            # invisible is the one combination this script may not produce; that
+            # silence is the failure ADR 0010 exists to end.
+            fail "$BRANCH_NAME already exists and does not fast-forward — refusing to force-push over it. Free the name (delete that branch, or merge what is on it) and the next run re-proposes."
+            echo "::error::$TARGET_REPO: $BRANCH_NAME is occupied by a different pin and has no open pull request — the skills-bootstrap hook re-pin will not be proposed again until that branch is freed." >&2
+            exit 1
+        fi
+        fail "push failed — $(head -1 <<< "$push_out")"
+        exit 1
+    fi
 fi
 
 if gh pr create --repo "$TARGET_REPO" --head "$BRANCH_NAME" \
