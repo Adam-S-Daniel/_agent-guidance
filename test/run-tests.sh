@@ -2817,6 +2817,57 @@ MD
 }
 
 
+# ── Test: the marker is matched as a WHOLE LINE, not a substring ──────────
+#
+# The managed block's own BEGIN header quotes the marker verbatim:
+#   <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+# so a substring match calls the marker present in a file that only mentions it.
+# Both of drift-report.sh's marker operations were substring matches; the `sed`
+# one deleted the entire file and made every repo report drift-detected.
+#
+# This asserts the two expressions directly, because the failure they produce
+# downstream (an empty managed block) looks identical to a legitimately empty
+# one, and a row-level test cannot tell those apart.
+test_drift_report_marker_is_whole_line() {
+    echo ""
+    echo "=== Test: drift-report.sh (marker matched as a whole line) ==="
+
+    local marker='## Repo-specific additions'
+    local header='<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->'
+
+    # A file that only MENTIONS the marker does not have it.
+    if ! printf '%s\nbody\n' "$header" | grep -qxF "$marker"; then
+        pass "marker: a file that only quotes the marker is not credited with it"
+    else
+        fail "marker: the header comment was mistaken for the marker"
+    fi
+
+    # A file that really has it, does.
+    if printf '%s\n%s\ntail\n' "$header" "$marker" | grep -qxF "$marker"; then
+        pass "marker: a real marker line is found"
+    else
+        fail "marker: a real marker line was missed"
+    fi
+
+    # The slice must keep the managed half, not annihilate the file. Unanchored
+    # this returns 0 lines; that is the bug, and this is its regression test.
+    local doc kept
+    doc=$(printf '%s\nmanaged-1\nmanaged-2\n%s\nrepo-specific\n' "$header" "$marker")
+    kept=$(printf '%s\n' "$doc" | sed "/^${marker}\$/,\$d" | wc -l)
+    if [[ "$kept" -eq 3 ]]; then
+        pass "marker: the anchored slice keeps the managed block (3 lines)"
+    else
+        fail "marker: anchored slice kept $kept lines, expected 3"
+    fi
+
+    kept=$(printf '%s\n' "$doc" | sed "/${marker}/,\$d" | wc -l)
+    if [[ "$kept" -eq 0 ]]; then
+        pass "marker: (control) the UNanchored slice really does delete everything"
+    else
+        fail "marker: control failed — unanchored slice kept $kept lines, so this test proves nothing"
+    fi
+}
+
 # ── Test: drift-report.sh refuses to report on a partial read (#81) ────────
 #
 # The bug: six repos were reported as missing their AGENTS.md marker, and then
@@ -2851,11 +2902,13 @@ test_drift_report_partial_read() {
     # unscoped `grep -q fetch-failed` matches this document unconditionally --
     # an assertion that cannot fail, which is the exact defect this test exists
     # to catch. Rows start '| [`owner/repo`](...'; legend entries do not.
-    if grep -q 'repo-with-sync' "$REPO_ROOT/drift-report.md" &&
+    local ctl_ok
+    ctl_ok=$(grep -cE '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$REPO_ROOT/drift-report.md" || true)
+    if [[ "$ctl_ok" -gt 0 ]] &&
        ! grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$REPO_ROOT/drift-report.md"; then
-        pass "partial read (control): untruncated run reports normally, flags nothing"
+        pass "partial read (control): untruncated run produces up-to-date rows and flags nothing"
     else
-        fail "partial read (control): expected a normal report with no fetch-failed row"
+        fail "partial read (control): expected up-to-date rows and no fetch-failed row (got $ctl_ok up-to-date)"
     fi
 
     if ! echo "$control" | grep -q '::error::.*partial read'; then
@@ -2882,10 +2935,24 @@ test_drift_report_partial_read() {
         fail "partial read: expected a fetch-failed row, got none"
     fi
 
-    if ! grep -qE '^\| \[`[^`]+`\].*drift-detected' "$REPO_ROOT/drift-report.md"; then
-        pass "partial read: does NOT report a false drift-detected"
+    # The invariant, rather than a named fixture: a partial read must never
+    # produce a CONFIDENT verdict. Naming a repo is brittle here -- which
+    # fixtures carry an AGENTS.md depends on which sync tests have run, and a
+    # fixture small enough that a 200-char truncation is a no-op fetches whole
+    # and may legitimately drift. What must hold regardless is that no row
+    # claims to have compared a file it did not receive.
+    #
+    # This has teeth because the control run above produces up-to-date rows for
+    # every fixture: if the guard stopped working, they would reappear here.
+    local up_to_date
+    # `\*\*up-to-date\*\*`, not `up-to-date`: the status cell is bolded and the
+    # repo NAME is not -- and one fixture is called `repo-up-to-date-no-claude`,
+    # so a bare substring match reads a status off the repo's name.
+    up_to_date=$(grep -cE '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$REPO_ROOT/drift-report.md" || true)
+    if [[ "$up_to_date" -eq 0 ]]; then
+        pass "partial read: no row claims up-to-date off a short read"
     else
-        fail "partial read: reported drift-detected off a short read -- the #81 cascade is back"
+        fail "partial read: $up_to_date row(s) claimed up-to-date from a partial fetch -- the #81 cascade is back; rows: $(grep -E '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$REPO_ROOT/drift-report.md" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
     fi
 
     if echo "$out" | grep -q '::error::.*refusing to report on a partial read'; then
@@ -2930,6 +2997,31 @@ test_drift_report() {
     assert_contains "$REPO_ROOT/drift-report.md" "7 repo(s) scanned" "drift report shows repo count"
     assert_not_contains "$REPO_ROOT/drift-report.md" "_agent-guidance" "drift report excludes self"
     assert_not_contains "$REPO_ROOT/drift-report.md" "repo-excluded" "drift report excludes repos.yml-excluded repo"
+
+    # ── The Status column, which until 2026-08-28 nothing asserted ────────
+    #
+    # That absence is how an unanchored `sed` address survived: it matched the
+    # managed block's BEGIN header (which quotes the marker verbatim) on line 1
+    # and deleted to EOF, so `current_managed` was always EMPTY, so EVERY repo
+    # compared unequal and reported drift-detected. The report was structurally
+    # incapable of printing up-to-date, and all 18 rows of the 2026-08-27 run
+    # said drift-detected. The suite ran green throughout, because it only ever
+    # asserted that repo NAMES and headings appeared.
+    #
+    # A fixture that IS in sync must therefore say so. This is the assertion
+    # that can fail; the name checks above cannot.
+    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-up-to-date-no-claude" "up-to-date" \
+        "drift report: an in-sync repo reports up-to-date, not drift"
+
+    # And an empty open-PR list must render as "none". `.[0].number` over `[]`
+    # produces the literal string "null", which is non-empty — so every repo
+    # showed `#null` in the Open PR column AND had its real status overwritten
+    # by **pr-open**, hiding genuine drift behind a phantom pull request.
+    if ! grep -qF -- '#null' "$REPO_ROOT/drift-report.md"; then
+        pass "drift report: an empty PR list renders as none, not #null"
+    else
+        fail "drift report: an empty PR list rendered as #null; rows: $(grep -F -- '#null' "$REPO_ROOT/drift-report.md" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
+    fi
 
     # CLAUDE.md bridge column
     assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge" "drift report has CLAUDE.md bridge column"
@@ -9336,6 +9428,7 @@ test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
 test_drift_report_cron_classification
+test_drift_report_marker_is_whole_line
 test_drift_report_partial_read
 test_drift_report_bootstrap_unmanaged
 test_drift_report_bootstrap_registry
