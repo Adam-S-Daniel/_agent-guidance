@@ -56,13 +56,59 @@ strip_volatile() {
     grep -v '^<!-- Last synced:' || true
 }
 
+# Fetch a file's contents from a repo's default branch.
+#
+#   stdout : the file's bytes, or empty when the file is genuinely absent
+#   exit 0 : the bytes are COMPLETE — verified against the API's own byte count
+#   exit 2 : the response could not be turned into the whole file. The caller
+#            must not draw a conclusion from stdout; there is nothing usable.
+#
+# The verification is the point, and it is why this asks for the JSON instead of
+# piping `--jq .content` straight into base64. The JSON carries `size`, and
+# comparing the decode against it is what separates "this file does not contain
+# X" from "I did not receive all of this file".
+#
+# Issue #81: six repos were reported as missing their AGENTS.md marker and then
+# as drift-detected, because the bytes this function returned were not the bytes
+# in the repo — `git show origin/main:AGENTS.md` found the marker in every one.
+# Nothing downstream could tell, because a short read and a real absence looked
+# identical: both are just a string without the marker in it. Every column the
+# row then produced was wrong, and the report published them with no hint.
+#
+# Note what is NOT claimed here: the mechanism was never reproduced. Fetching the
+# same file over the same endpoint with curl returns a complete body, and the
+# `jq -r .content | base64 -d` half handles a 95 KB payload correctly in
+# isolation, so the fault lies somewhere this repo cannot exercise without a
+# `gh` binary and an installation token. That is precisely why the fix is a
+# check rather than a repair: it does not need to know the cause to refuse to
+# publish the consequence.
+#
+# On HTTP errors gh api prints the raw error JSON body to stdout (the --jq
+# filter is not applied) — discard output on failure, don't decode it.
 fetch_file_content() {
     local repo="$1" path="$2"
-    local encoded
-    # On HTTP errors gh api prints the raw error JSON body to stdout (the
-    # --jq filter is not applied) — discard output on failure, don't decode it.
-    encoded=$(gh api "repos/$repo/contents/$path" --jq '.content' 2>/dev/null) || encoded=""
-    [[ -n "$encoded" ]] && echo "$encoded" | base64 -d 2>/dev/null || true
+    local json size tmp actual
+
+    json=$(gh api "repos/$repo/contents/$path" 2>/dev/null) || return 0
+
+    # A directory listing is a JSON array and has no .size — treat as absent,
+    # exactly as the previous implementation did.
+    size=$(printf '%s' "$json" | jq -r 'if type == "object" then (.size // empty) else empty end' 2>/dev/null) || size=""
+    [[ -n "$size" ]] || return 0
+
+    tmp=$(mktemp) || return 2
+    printf '%s' "$json" | jq -r '.content // empty' 2>/dev/null | base64 -d >"$tmp" 2>/dev/null || true
+    actual=$(wc -c <"$tmp")
+
+    if [[ "$actual" -ne "$size" ]]; then
+        echo "::error::$repo/$path: decoded $actual bytes but the API reports $size — refusing to report on a partial read (issue #81)" >&2
+        rm -f "$tmp"
+        return 2
+    fi
+
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
 }
 
 # ── Load central repos.yml (exclusions + default sections) ─────────────────
@@ -141,7 +187,7 @@ pinned_hook() {
     if ! $PINNED_HOOK_TRIED; then
         PINNED_HOOK_TRIED=true
         [[ -n "$BOOTSTRAP_REGISTRY" && -n "$BOOTSTRAP_PATH" && -n "$BOOTSTRAP_REF" ]] || return 1
-        PINNED_HOOK=$(fetch_file_content "$BOOTSTRAP_REGISTRY" "$BOOTSTRAP_PATH?ref=$BOOTSTRAP_REF")
+        PINNED_HOOK=$(fetch_file_content "$BOOTSTRAP_REGISTRY" "$BOOTSTRAP_PATH?ref=$BOOTSTRAP_REF") || PINNED_HOOK=""
     fi
     [[ -n "$PINNED_HOOK" ]]
 }
@@ -210,8 +256,8 @@ trap cleanup_ignore_probe EXIT
 
 bootstrap_blocked() {
     local repo_name="$1" root_ignore claude_ignore probe
-    root_ignore=$(fetch_file_content "$repo_name" ".gitignore")
-    claude_ignore=$(fetch_file_content "$repo_name" ".claude/.gitignore")
+    root_ignore=$(fetch_file_content "$repo_name" ".gitignore") || root_ignore=""
+    claude_ignore=$(fetch_file_content "$repo_name" ".claude/.gitignore") || claude_ignore=""
     [[ -z "$root_ignore$claude_ignore" ]] && return 1
 
     if [[ -z "$IGNORE_PROBE_DIR" ]]; then
@@ -343,7 +389,7 @@ for repo_name in "${REPOS[@]}"; do
 
     sections=()
 
-    remote_yaml=$(fetch_file_content "$repo_name" ".agents-sync.yml")
+    remote_yaml=$(fetch_file_content "$repo_name" ".agents-sync.yml") || remote_yaml=""
     if [[ -n "$remote_yaml" ]]; then
         while IFS= read -r s; do
             [[ -n "$s" ]] && sections+=("$s")
@@ -356,9 +402,16 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Fetch current AGENTS.md ────────────────────────────────────────
 
-    current_agents=$(fetch_file_content "$repo_name" "AGENTS.md")
+    # Distinguished on purpose: an unreadable AGENTS.md is not an absent one,
+    # and reporting the first as the second is what made #81 silent.
+    agents_rc=0
+    current_agents=$(fetch_file_content "$repo_name" "AGENTS.md") || agents_rc=$?
 
-    if [[ -z "$current_agents" ]]; then
+    if [[ "$agents_rc" -ne 0 ]]; then
+        status="**fetch-failed**"
+        has_marker="?"
+        notes="${notes:+$notes; }could not read AGENTS.md in full — columns withheld rather than guessed"
+    elif [[ -z "$current_agents" ]]; then
         status="**no-agents-md**"
         notes="AGENTS.md not found in repo"
     else
@@ -396,7 +449,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Check CLAUDE.md bridge status ───────────────────────────────────
 
-    current_claude=$(fetch_file_content "$repo_name" "CLAUDE.md")
+    current_claude=$(fetch_file_content "$repo_name" "CLAUDE.md") || current_claude=""
 
     if [[ -z "$current_claude" ]]; then
         bridge_cell="missing"
@@ -415,10 +468,10 @@ for repo_name in "${REPOS[@]}"; do
     # only thing that would ever say so (the sync has no delete semantics).
 
     bootstrap_cell="—"
-    current_hook=$(fetch_file_content "$repo_name" "$HOOK_REL_PATH")
+    current_hook=$(fetch_file_content "$repo_name" "$HOOK_REL_PATH") || current_hook=""
 
     if bootstrap_allowlisted "$repo_name"; then
-        current_lock=$(fetch_file_content "$repo_name" "$LOCK_REL_PATH")
+        current_lock=$(fetch_file_content "$repo_name" "$LOCK_REL_PATH") || current_lock=""
 
         if [[ -n "$current_lock" ]]; then
             notes="${notes:+$notes; }lock: $(echo "$current_lock" | lock_summary)"
@@ -438,7 +491,7 @@ for repo_name in "${REPOS[@]}"; do
             fi
         elif [[ -z "$current_hook" ]]; then
             # Three reasons the hook can be absent. Only one self-heals.
-            settings_probe=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH")
+            settings_probe=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH") || settings_probe=""
             settings_state="missing"
             [[ -n "$settings_probe" ]] && \
                 settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -)
@@ -457,7 +510,7 @@ for repo_name in "${REPOS[@]}"; do
                 bootstrap_cell="**missing**"
             fi
         else
-            current_settings=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH")
+            current_settings=$(fetch_file_content "$repo_name" "$SETTINGS_REL_PATH") || current_settings=""
             if [[ -z "$current_settings" ]]; then
                 bootstrap_status="missing"
             else
@@ -531,6 +584,7 @@ done
     echo "| **pr-open** | A sync PR is already open for this repo |"
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
+    echo "| **fetch-failed** | \`AGENTS.md\` could not be read in full — the decoded byte count disagreed with the API's own \`size\`. Every other column for this repo is withheld rather than guessed; see issue #81 |"
     echo ""
     echo "**CLAUDE.md bridge legend**"
     echo ""

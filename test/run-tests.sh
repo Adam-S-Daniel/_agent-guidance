@@ -1969,8 +1969,19 @@ case "$1" in
             if [[ -d "$bare_path" ]]; then
                 content=$(git -C "$bare_path" show "main:$file_path" 2>/dev/null || true)
                 if [[ -n "$content" ]]; then
+                    # `size` is not decoration: the real contents API always
+                    # sends it, and fetch_file_content verifies its decode
+                    # against it. A mock that omits it cannot exercise the
+                    # check, which is exactly how #81 shipped green.
+                    size=$(echo "$content" | wc -c)
                     encoded=$(echo "$content" | base64 -w 0)
-                    json="{\"content\": \"$encoded\"}"
+                    # MOCK_TRUNCATE_CONTENTS=<n> serves the first n base64 chars
+                    # while still declaring the honest size -- i.e. the exact
+                    # shape of #81: a short body that looks like a whole file.
+                    if [[ -n "${MOCK_TRUNCATE_CONTENTS:-}" ]]; then
+                        encoded="${encoded:0:$MOCK_TRUNCATE_CONTENTS}"
+                    fi
+                    json="{\"size\": $size, \"content\": \"$encoded\"}"
                     if [[ -n "$jq_filter" ]]; then
                         echo "$json" | jq -r "$jq_filter"
                     else
@@ -2803,6 +2814,94 @@ MD
     else
         fail "round-trip idempotency: cycle 2 and cycle 3 outputs byte-identical"
     fi
+}
+
+
+# ── Test: drift-report.sh refuses to report on a partial read (#81) ────────
+#
+# The bug: six repos were reported as missing their AGENTS.md marker, and then
+# as drift-detected, because fetch_file_content returned fewer bytes than the
+# file actually has. A short read and a genuine absence are indistinguishable
+# downstream -- both are just a string without the marker in it -- so every
+# column in those rows was wrong and the report published them with no hint.
+#
+# The fix verifies the decode against the API's own `size`. This drives that
+# path with MOCK_TRUNCATE_CONTENTS, which serves a short body while still
+# declaring the honest size.
+#
+# NOTE the negative control. A test that only asserts the truncated case fails
+# would ALSO pass if fetch_file_content were broken outright and returned
+# nothing for anyone, so the same fixture runs untruncated first and must
+# produce a normal report. Without that, this cannot tell "the guard works"
+# from "the fetch is dead".
+test_drift_report_partial_read() {
+    echo ""
+    echo "=== Test: drift-report.sh (refuses to report on a partial read, #81) ==="
+
+    local control
+    control=$(
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+
+    # Scope to TABLE ROWS. The legend also names every status, so an
+    # unscoped `grep -q fetch-failed` matches this document unconditionally --
+    # an assertion that cannot fail, which is the exact defect this test exists
+    # to catch. Rows start '| [`owner/repo`](...'; legend entries do not.
+    if grep -q 'repo-with-sync' "$REPO_ROOT/drift-report.md" &&
+       ! grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$REPO_ROOT/drift-report.md"; then
+        pass "partial read (control): untruncated run reports normally, flags nothing"
+    else
+        fail "partial read (control): expected a normal report with no fetch-failed row"
+    fi
+
+    if ! echo "$control" | grep -q '::error::.*partial read'; then
+        pass "partial read (control): no spurious ::error:: on a complete fetch"
+    else
+        fail "partial read (control): complete fetch wrongly flagged as partial"
+    fi
+
+    # Same fixtures, truncated. 200 base64 chars decodes to ~150 bytes: far
+    # short of any AGENTS.md, and short of the marker.
+    local out
+    out=$(
+        MOCK_TRUNCATE_CONTENTS=200 \
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+
+    if grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$REPO_ROOT/drift-report.md"; then
+        pass "partial read: the row reports fetch-failed instead of a guessed status"
+    else
+        fail "partial read: expected a fetch-failed row, got none"
+    fi
+
+    if ! grep -qE '^\| \[`[^`]+`\].*drift-detected' "$REPO_ROOT/drift-report.md"; then
+        pass "partial read: does NOT report a false drift-detected"
+    else
+        fail "partial read: reported drift-detected off a short read -- the #81 cascade is back"
+    fi
+
+    if echo "$out" | grep -q '::error::.*refusing to report on a partial read'; then
+        pass "partial read: emits a loud ::error:: naming both byte counts"
+    else
+        fail "partial read: the short read was silent -- no ::error:: annotation"
+    fi
+
+    # Restore a clean report for any test that runs after this one.
+    (
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1
+    ) || true
 }
 
 # ── Test 4: drift-report.sh ───────────────────────────────────────────────
@@ -9237,6 +9336,7 @@ test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
 test_drift_report_cron_classification
+test_drift_report_partial_read
 test_drift_report_bootstrap_unmanaged
 test_drift_report_bootstrap_registry
 test_drift_report_probe_cleanup
