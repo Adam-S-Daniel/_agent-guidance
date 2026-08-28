@@ -24,10 +24,7 @@
 #
 # What remains below is the policy exclusion list: repos that discovery WOULD
 # reach and that we choose not to sync.
-exclude:
-  - civic-platform-agents  # out of scope per agentskills#18
-  - civic-iac-policy       # out of scope per agentskills#18
-  - civic-azure-infra      # out of scope per agentskills#18
+exclude: []
 default_sections: []
 
 # ── skills-bootstrap hook delivery ─────────────────────────────────────────
@@ -186,13 +183,6 @@ skills_bootstrap:
     #     a page and a deploy workflow from then); everything after that is the
     #     AGENTS.md sync bot. Nobody opens a session there, so the bundle would
     #     cost always-on context in sessions that never happen.
-    #   civic-platform-agents, civic-iac-policy, civic-azure-infra — in
-    #     `exclude:` above, and exclusion is applied BEFORE this allowlist is
-    #     consulted. Both scripts do print "excluded by repos.yml" for the repo;
-    #     what neither ever says is that an allowlist entry was ignored. An
-    #     entry here could therefore only ever be a no-op that reads like a
-    #     decision; the suite asserts the two keys stay disjoint so the
-    #     contradiction cannot be introduced unnoticed.
     #   forks and archived repos — never reached by discovery at all
     #     (`gh repo list --source --no-archived`), so they are not a choice
     #     this key can express. See the header of `exclude:` above.
@@ -265,12 +255,6 @@ cron_coverage:
     # only workflow (`deploy.yml`) is push-triggered, so there is no scheduled
     # run to cover. Give it a cron anyone depends on and it moves to `fleet:`.
     - scratch-claude-002
-    # Out of scope per agentskills#18 — the same three repos `exclude:` above
-    # keeps out of the AGENTS.md sync, listed again because that key answers a
-    # different question and a reader of one should not have to find the other.
-    - civic-azure-infra
-    - civic-iac-policy
-    - civic-platform-agents
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file
