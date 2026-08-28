@@ -3017,8 +3017,11 @@ test_drift_report() {
     # produces the literal string "null", which is non-empty — so every repo
     # showed `#null` in the Open PR column AND had its real status overwritten
     # by **pr-open**, hiding genuine drift behind a phantom pull request.
-    assert_not_contains "$REPO_ROOT/drift-report.md" "#null" \
-        "drift report: an empty PR list renders as none, not #null"
+    if ! grep -qF -- '#null' "$REPO_ROOT/drift-report.md"; then
+        pass "drift report: an empty PR list renders as none, not #null"
+    else
+        fail "drift report: an empty PR list rendered as #null; rows: $(grep -F -- '#null' "$REPO_ROOT/drift-report.md" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
+    fi
 
     # CLAUDE.md bridge column
     assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge" "drift report has CLAUDE.md bridge column"
