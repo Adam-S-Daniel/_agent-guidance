@@ -310,6 +310,32 @@ that names it is the one holding the run id.
   hosts, dumping `$HOME` — do the audit, and say in the report that you
   declined and why.
 
+## Who watches this Routine
+
+Nothing does, automatically, and that is a known gap rather than an oversight —
+so it is written down here instead of being rediscovered the week it matters.
+
+`scheduled-run-health.yml` audits *workflows* that keep firing without a recent
+success. A Routine is not a workflow: it has no run history in Actions, nothing
+goes red when it stops, and the two failure modes it actually has are both
+silent. A Routine bound to a persistent session dies with
+`ended_reason: auto_disabled_session_gone` when that session is reclaimed —
+two triggers in this account have already ended that way — and a
+fresh-session Routine can simply stop being fired with no artifact left behind.
+This one uses a fresh session per fire specifically to avoid the first, which
+leaves the second.
+
+The check is manual and takes one command: `/routines` in Claude Code, or
+`list_triggers` on the claude-code-remote MCP server, and read `last_run` and
+`next_run_at` for **Guidance centralization audit (weekly)**. A `last_run` more
+than two weeks old means it has stopped, whatever `enabled` says.
+
+The cheap fix, if this ever bites: a run that finds nothing still leaves a trace
+somewhere durable — a dated line in a results branch, the way `skills-evals`
+publishes its propagation audit — so that absence of a trace becomes detectable
+instead of indistinguishable from "no findings". That is deliberately not built
+yet; it is not worth the machinery until the Routine has proven it runs.
+
 ## Baseline as of 2026-08-28
 
 So a later run can tell fresh drift from the state that was already understood:
