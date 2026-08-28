@@ -63,3 +63,77 @@ finding belongs here too.
 Sorting is by registrable key with the leading `*.` stripped, so each wildcard
 sits beside its apex, wildcard first. It is presentational only — the
 environment does not care about order.
+
+---
+
+## 2026-08-28 — three apex/host additions, measured not inferred
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change:** three domains ADDED. Nothing removed, nothing rewritten.
+
+```
++ decapcms.org
++ playwright.azureedge.net
++ unpkg.com
+```
+
+### How these were established
+
+Not by reading the list. Each was probed from inside a session running under
+this allowlist, with `curl -s -o /dev/null -w '%{http_code}' https://<host>`.
+A `000` is the egress proxy refusing to connect; any HTTP status means the
+host was reached.
+
+| Probe | Result | What it establishes |
+|---|---|---|
+| `decapcms.org` | `000` blocked | The apex is not reachable… |
+| `www.decapcms.org` | `301` reached | …while a subdomain of it is. |
+| `unpkg.com` | `000` blocked | Not in the list, and not in Trusted either. |
+| `playwright.azureedge.net` | `000` blocked | The apex is not reachable… |
+| `cdn.playwright.dev` | `400` reached | …though its sibling Playwright entry works. |
+
+The first two rows are the load-bearing pair. They **prove**, rather than
+assume, that `*.example.com` matches subdomains and does **not** match the
+apex — the trap named in this file's header, now measured on this exact
+environment.
+
+### Per-domain justification
+
+- **`unpkg.com`** — the `/admin` shells load the Decap CMS bundle from
+  `https://unpkg.com/decap-cms@…` (confirmed in `cms-platform/theme/admin/*.html`).
+  A session running the `@admin-read` / `@admin-write` Playwright lanes drives a
+  real browser at `/admin`, so the session itself fetches this. Without it Decap
+  never mounts and only the static "PENDING" banner renders — the failure mode
+  already written up in `adamdaniel.ai/AGENTS.md` under "Running the admin e2e
+  lane in a sandboxed / Claude-Code-web session". Not covered by Trusted.
+- **`playwright.azureedge.net`** — one of the three hosts Playwright fetches
+  browser binaries from (`adamdaniel.ai/docs/TESTING.md`). The list already
+  carried `*.playwright.azureedge.net`, which matches *subdomains of* that host
+  — and the binaries are on the host itself, so that entry was matching nothing
+  reachable. The apex is the fix; the wildcard is left in place as harmless.
+- **`decapcms.org`** — the Decap documentation site, and the apex half of the
+  `*.decapcms.org` entry that was already here. This resolves an open question
+  from the entry above: `*.decapcms.org` is **not** a stray. It sits in the same
+  category as the `docs.microsoft.com` and `learn.microsoft.com` pairs already
+  in this list — reference material an agent reads — and both of those were
+  correctly listed in apex + wildcard form. This one was not.
+
+### Deliberately NOT applied
+
+Two further corrections were identified and **rejected for this list**, because
+they are needed only where CI runs, and belong in
+`network-allowlist-github-runners.txt` instead:
+
+- **`*.githubusercontent.com`** — release-binary downloads (`gitleaks`,
+  `actionlint`, `yq`) redirect from `github.com/.../releases/download/...` to
+  `objects.githubusercontent.com`. Real, but Anthropic's Trusted list already
+  carries `objects.`, `release-assets.` and `raw.githubusercontent.com`, and the
+  package-manager checkbox is on. Adding it here would be redundant.
+- **`*.amazonaws.com`** — `aws s3 sync` / `cloudfront create-invalidation` in
+  the deploy lanes, and the Decap OAuth proxy on API Gateway. A deploy is a
+  runner concern, and Trusted covers `*.amazonaws.com` regardless.
+
+If the package-manager checkbox is ever **unchecked**, both of the above stop
+being redundant and must be added here explicitly. That is the single change
+that would invalidate this entry.

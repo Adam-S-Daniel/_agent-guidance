@@ -6,6 +6,7 @@ claude.ai
 *.claude.com
 claude.com
 *.decapcms.org
+decapcms.org
 *.docs.microsoft.com
 docs.microsoft.com
 *.download.prss.microsoft.com
@@ -22,3 +23,5 @@ jodidaniel.com
 *.learn.microsoft.com
 learn.microsoft.com
 *.playwright.azureedge.net
+playwright.azureedge.net
+unpkg.com
