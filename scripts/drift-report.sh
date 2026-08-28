@@ -91,10 +91,20 @@ fetch_file_content() {
 
     json=$(gh api "repos/$repo/contents/$path" 2>/dev/null) || return 0
 
-    # A directory listing is a JSON array and has no .size — treat as absent,
-    # exactly as the previous implementation did.
-    size=$(printf '%s' "$json" | jq -r 'if type == "object" then (.size // empty) else empty end' 2>/dev/null) || size=""
-    [[ -n "$size" ]] || return 0
+    # A directory listing is a JSON array and legitimately has no .size — that
+    # is an absence, not a failure. But an OBJECT without .size is a failure:
+    # the contents API always sends it for a file, so its absence means the
+    # response is not what it claims to be. Failing open there would re-create
+    # the very bug this function exists to stop, one level up -- an unusable
+    # response quietly reported as "the file is not there".
+    if printf '%s' "$json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        return 0
+    fi
+    size=$(printf '%s' "$json" | jq -r '.size // empty' 2>/dev/null) || size=""
+    if [[ -z "$size" ]]; then
+        echo "::error::$repo/$path: response carries no .size — cannot verify completeness, refusing to report on it (issue #81)" >&2
+        return 2
+    fi
 
     tmp=$(mktemp) || return 2
     printf '%s' "$json" | jq -r '.content // empty' 2>/dev/null | base64 -d >"$tmp" 2>/dev/null || true
@@ -416,7 +426,13 @@ for repo_name in "${REPOS[@]}"; do
         notes="AGENTS.md not found in repo"
     else
         # Check marker header
-        if echo "$current_agents" | grep -qF "$MARKER"; then
+        # -x (whole line), not a bare substring match. The managed block's own
+        # BEGIN header QUOTES the marker verbatim —
+        #   <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+        # — so `grep -qF` calls the marker present in a file that merely
+        # mentions it, and this file mentions it three times before the real
+        # heading ever arrives.
+        if echo "$current_agents" | grep -qxF "$MARKER"; then
             has_marker="yes"
         else
             has_marker="no"
@@ -431,7 +447,19 @@ for repo_name in "${REPOS[@]}"; do
         else
             # Extract managed section from current file
             if [[ "$has_marker" == "yes" ]]; then
-                current_managed=$(echo "$current_agents" | sed "/$MARKER/,\$d")
+                # ANCHORED (^…$). Unanchored, this address matches the BEGIN
+                # header on LINE 1 — which quotes the marker — and deletes from
+                # there to EOF, leaving current_managed EMPTY. Compared against
+                # a 728-line expected block that can never match, so EVERY repo
+                # reported drift-detected and the dashboard was structurally
+                # incapable of ever printing up-to-date. All 18 rows of the
+                # 2026-08-27 report read drift-detected for this reason.
+                #
+                # This is the same first-occurrence trap check-agents-md.sh was
+                # written to catch, in the script that reports on it. Measured:
+                # unanchored keeps 0 bytes, anchored keeps 42,794 — byte-equal
+                # to build-agents-md.sh's output for this repo's own AGENTS.md.
+                current_managed=$(echo "$current_agents" | sed "/^${MARKER}\$/,\$d")
             else
                 current_managed="$current_agents"
             fi
@@ -539,6 +567,9 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Check for open sync PR ─────────────────────────────────────────
 
+    # `// empty` is load-bearing: `.[0].number` over an empty array renders the
+    # literal string "null", which is non-empty, so every repo with no open sync
+    # PR reported `#null` AND had its real status overwritten by **pr-open**.
     pr_number=$(gh pr list --repo "$repo_name" --head "$BRANCH_NAME" \
         --json number --jq '.[0].number' 2>/dev/null || true)
 
