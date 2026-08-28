@@ -117,10 +117,13 @@ So: `git show origin/main:<path>` (or a shallow clone) answers about the repo;
 the report answers about a dashboard. Prefer the repo. This is the same rule
 as base.md's "To ask whether repo X has file Y, ask the repo."
 
-**If that marker bug is still open, do not silently work around it.** Check
-whether an issue already exists; open one if not, with the size correlation and
-the two-repo reproduction. A dashboard that is quietly wrong in the column that
-decides "is this repo receiving the guidance" is worth fixing at the source.
+**That marker bug is tracked as issue #81.** Check whether it is still open
+before relying on the report's `Has marker` or `Status` columns; if it has been
+closed, confirm the fix by re-checking one repo over ~50 KB against `git show`
+before trusting the column again. Do not silently work around it while it is
+open, and do not re-file it. A dashboard that is quietly wrong in the column
+that decides "is this repo receiving the guidance" is worth fixing at the
+source.
 
 ## 2. The three audits
 
