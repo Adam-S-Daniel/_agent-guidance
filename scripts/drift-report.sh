@@ -571,9 +571,21 @@ for repo_name in "${REPOS[@]}"; do
     # literal string "null", which is non-empty, so every repo with no open sync
     # PR reported `#null` AND had its real status overwritten by **pr-open**.
     pr_number=$(gh pr list --repo "$repo_name" --head "$BRANCH_NAME" \
-        --json number --jq '.[0].number' 2>/dev/null || true)
+        --json number --jq '.[0].number // empty' 2>/dev/null || true)
 
-    if [[ -n "$pr_number" ]]; then
+    # Validate the SHAPE, don't trust the renderer. `-n` accepted anything the
+    # far side happened to print, and what it printed was "null": jq renders
+    # `.[0].number` over an empty array as the literal string, and whether the
+    # `// empty` above suppresses it depends on which jq is answering -- this
+    # sandbox's jq 1.7 prints nothing, the CI runner's prints `null`, on the
+    # same commit. Every repo then published `#null` in the Open PR column AND
+    # had its real status overwritten by **pr-open**, hiding genuine drift
+    # behind a phantom pull request.
+    #
+    # A PR number is a number. Anything else -- "null", an error string, a
+    # truncated body -- is not a PR, and refusing it here closes the whole
+    # class rather than the one renderer that exposed it.
+    if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
         open_pr="#$pr_number"
         [[ "$status" == "**drift-detected**" ]] && status="**pr-open**"
     fi
