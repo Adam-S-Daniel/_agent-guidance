@@ -78,9 +78,9 @@ whole history is revisions of "the gate must not certify what it did not read".
   because the drift report is a report; if that turns out to be too quiet, the
   next move is a `ci`-labelled issue, not a louder log line.
 - **Two keys now answer "is this repo in scope?"** — `exclude:` for the
-  AGENTS.md sync and `cron_coverage.out_of_scope` for this. The three `civic-*`
-  repos are in both, spelled out twice on purpose: they are different questions
-  with the same current answer, and collapsing them would silently couple a
+  AGENTS.md sync and `cron_coverage.out_of_scope` for this. A repo can land in
+  both, spelled out twice on purpose: they are different questions that can
+  share the same current answer, and collapsing them would silently couple a
   future change to one into a change to the other.
 - **A repo cloned but not listed is now invisible in the opposite direction.**
   The gate audits the declared fleet, so an unlisted repo sitting on the disk is
