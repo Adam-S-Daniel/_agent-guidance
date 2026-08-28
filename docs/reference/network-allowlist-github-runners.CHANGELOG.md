@@ -96,6 +96,8 @@ observed-traffic audit.
   session-infrastructure domains for an interactive agent. Nothing in CI reads
   documentation or talks to Claude. Carrying them here would widen the runner's
   reach for no build step's benefit.
-- **`*.decapcms.org`** — no evidence anything fetches it; the Decap bundle
-  comes from `unpkg.com` (above). Its presence in the Claude list is under
-  review in that file's own changelog.
+- **`decapcms.org` / `*.decapcms.org`** — the Decap **documentation** site.
+  Resolved 2026-08-28: it is reference material an agent reads, not something
+  any build step fetches — the Decap bundle comes from `unpkg.com` (above). It
+  belongs in the Claude environment list, where it now appears in apex +
+  wildcard form, and correctly does not belong here. CI reads no documentation.
