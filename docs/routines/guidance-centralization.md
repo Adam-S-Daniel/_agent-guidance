@@ -328,5 +328,28 @@ So a later run can tell fresh drift from the state that was already understood:
 - **One repo-owned skill:** `adamdaniel.ai`'s `embeddable-tool-pages`,
   deliberately site-owned — it is site content, not platform machinery, so no
   registry ships it. Not a centralization finding.
-- **Nothing was promoted to `base.md` in the run that wrote this file.** The
-  repo-specific sections were read and judged correctly repo-specific.
+- **The centralization audit (§2A) was NOT completed in the run that wrote this
+  file.** That run surveyed sizes and skimmed; it did not do the judgement pass.
+  Do not read this baseline as "the fleet was clean on 2026-08-28" — read it as
+  "the mechanical state was measured, the judgement was not." The first
+  validation fire on 2026-08-28 is the first real pass.
+  Two candidates the skim already surfaced, so the first pass starts from
+  evidence rather than from scratch. Both still need the judgement applied —
+  neither is pre-approved:
+  - **`gh api ... --jq` on an HTTP error prints the raw error JSON body to
+    stdout** — the `--jq` filter never runs — and exits non-zero, so
+    `out=$(cmd) || true` captures that garbage instead of an empty result;
+    discard explicitly with `out=$(cmd) || out=""`. This sits in `agentskills`'
+    repo-specific section, where it records that it broke `sync.sh`'s
+    `default_sections` once — and it has since been *independently re-derived*
+    as a code comment in this repo's own `scripts/drift-report.sh:62`. Same
+    knowledge, two repos, absent from `base.md`. A rule that has already been
+    learned twice is the clearest possible promotion signal.
+  - **"AST always, never regex, for code-shape lints"** in `cms-platform`,
+    which labels itself *"Adam's standing rule"* — i.e. it says on its face
+    that it is not repo-specific. `base.md` currently carries only the narrower
+    case (parse workflow YAML with the `yaml` package, never a regex or line
+    scan). Consider whether the general rule belongs there with the YAML case
+    as its instance.
+  Check both against §2A's standard before proposing either; "it appears in two
+  repos" is evidence, not a verdict.
