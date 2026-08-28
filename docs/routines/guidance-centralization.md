@@ -229,6 +229,47 @@ First-party counts as of 2026-08-28, for comparison against a later run:
 No repo has first-party Go, Rust, TypeScript or C#. If a run ever proposes
 those four sections for anyone, re-check the exclusions above first.
 
+## 2.5 What a fired session can actually do — detect, then choose a mode
+
+**A Routine created through the MCP `create_trigger` tool stores no MCP
+connectors**, and the platform says so at creation time: *"this trigger stores
+no MCP connectors, so the sessions it fires will run without connector
+(`mcp__<server>__*`) tools."* Measured on the 2026-08-28 validation fire: the
+fired session's record carried no `sources` at all — an empty authorized
+repository set — so there is also no `add_repo` to widen it with, because
+`add_repo` is itself a connector tool.
+
+That is a capability boundary, not a bug, and it decides how the run works. So
+**detect first, then pick a mode.** Do not assume either way, and do not report
+an action you could not take:
+
+1. Try to load `mcp__github__*` and `mcp__Claude_Code_Remote__add_repo` with
+   ToolSearch. Attempting is the test; being told they exist is not.
+2. Clone what you need over `https://github.com/...`. This is the path that
+   works with no connectors and no attached repos, and it is enough for the
+   whole of §2 — every audit in this spec is a read.
+
+**FULL mode** — connectors present. Audit, open pull requests, dispatch
+`sync.yml` where §4 calls for it, read run conclusions, verify per consumer.
+
+**REPORT mode** — connectors absent (the default today). Do the same audit, and
+instead of opening pull requests, hand back the change ready to apply: the exact
+file, the exact edit, the reason, and the URL of the thing to act on. A finding
+described precisely enough to apply in one paste is worth most of a PR; a
+finding described vaguely is worth nothing. Say in the status line which mode
+you ran in, and never write "PRs opened: 0" as though nothing was found when
+what you mean is that you could not open one.
+
+If a clone fails for a private repo, that is a genuine BLOCKED for that repo —
+name it and say what you tried, per §0. Do not let it silently shrink the audit.
+
+**The upgrade path, if the operator wants FULL mode:** connectors cannot be
+attached to a Routine from inside a session — recreate or edit this Routine from
+the Routines UI at <https://claude.ai/settings/integrations> (Routines), where a
+GitHub connector can be granted, or create it from a session that holds a
+passable connector grant. Until then REPORT mode is the honest ceiling, and a
+run that pretends otherwise is worse than one that says so.
+
 ## 3. Making changes
 
 - **One logical change per pull request**, each with a commit message that
