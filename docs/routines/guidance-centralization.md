@@ -178,15 +178,12 @@ exactly one `^## Repo-specific additions$` line, and its managed half matches
 `./scripts/build-agents-md.sh <that repo's sections>`.
 
 A repo that is neither receiving nor excluded is a finding. So is an excluded
-repo whose stated reason has expired — `exclude:` currently holds three
-`civic-*` repos "out of scope per agentskills#18"; if that ever stops being
-true, the entry is the thing to change.
+repo whose stated reason has expired — verify each entry in `exclude:` still
+holds; if one ever stops being true, the entry is the thing to change.
 
 Also check the **CLAUDE.md bridge**: guidance that is synced but not imported
 is not read. `CLAUDE.md` must contain a line-start `@AGENTS.md` outside code
-fences. `civic-platform-agents` has a `CLAUDE.md` that never imports it — which
-is consistent, because that repo is excluded, and it is listed here so the next
-run does not re-derive that as a finding.
+fences.
 
 ### C. Sections
 
@@ -410,7 +407,8 @@ So a later run can tell fresh drift from the state that was already understood:
   drifting" as a fact.
 - **Marker present** on `origin/main` in every non-excluded repo, verified by
   `git show`, including the six the report denies.
-- **Bridge OK** everywhere except `civic-platform-agents`, which is excluded.
+- **Bridge OK** everywhere in scope at the time; the repos then excluded have
+  since been deleted, so the exclusion no longer applies.
 - **Zero `.agents-sync.yml` files** fleet-wide; `default_sections: []`.
 - **One repo-owned skill:** `adamdaniel.ai`'s `embeddable-tool-pages`,
   deliberately site-owned — it is site content, not platform machinery, so no

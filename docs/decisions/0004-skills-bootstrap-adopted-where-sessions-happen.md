@@ -115,9 +115,7 @@ contaminate (the latter's own SessionStart hook installs the marketplace, and
 `E1-HOOK-RESULT.md` / `E1-CLOUD-RESULT.md` are its readings); `4A`, `jc`,
 `rss-inator`, `scratch-jules-001` and `squarespacetemp` are dormant — no human
 commit since 2026-03, or since 2024-10 for `jc`, and everything after that is
-the `AGENTS.md` sync bot; the three `civic-*` repos are in `exclude:`, which per
-fact 6 wins without ever saying an allowlist entry was ignored; forks and
-archived repos are never discovered at all.
+the `AGENTS.md` sync bot; forks and archived repos are never discovered at all.
 
 **This repo self-hosts, and is deliberately NOT allowlisted.** It now carries
 its own `skills.lock`, the hook at the pinned ref, and a SessionStart
