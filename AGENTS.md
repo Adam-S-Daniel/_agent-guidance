@@ -1,6 +1,6 @@
 <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
 <!-- Source: _agent-guidance -->
-<!-- Sections: typescript -->
+<!-- Sections: go -->
 
 # AGENTS.md
 
@@ -769,16 +769,18 @@ tree in both cases.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
 
-## TypeScript
+## Go
 
-- Do not use `any`. Use `unknown` and narrow with type guards when the type is genuinely uncertain.
-- Prefer `interface` for object shapes that may be extended; use `type` for unions and intersections.
-- Enable and respect the project's `tsconfig.json` strict settings.
-- Use `as const` assertions instead of type casts where possible.
-- Co-locate types with the code that uses them; export types only when consumed externally.
-- Ensure generic functions have meaningful constraint bounds, not unbounded `<T>`.
+- Always check returned errors — never assign to `_` without justification.
+- Use `context.Context` as the first parameter for functions that do I/O or may be cancelled.
+- Prefer returning errors over panicking; reserve `panic` for truly unrecoverable situations.
+- Run `go vet` and `golangci-lint` before considering a change complete.
+- Use table-driven tests.
+- Keep interfaces small (1–3 methods) and define them at the point of use, not at the point of implementation.
+- Use `defer` for cleanup to guarantee execution on all code paths.
 
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
 
-<!-- Add your repo-specific agent guidance below this line -->
+Keep this custom content!
+Do not delete me.
