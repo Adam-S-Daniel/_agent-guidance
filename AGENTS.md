@@ -1,6 +1,6 @@
 <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
 <!-- Source: _agent-guidance -->
-<!-- Sections: go -->
+<!-- Sections: python docker -->
 
 # AGENTS.md
 
@@ -769,18 +769,27 @@ tree in both cases.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
 
-## Go
+## Python
 
-- Always check returned errors — never assign to `_` without justification.
-- Use `context.Context` as the first parameter for functions that do I/O or may be cancelled.
-- Prefer returning errors over panicking; reserve `panic` for truly unrecoverable situations.
-- Run `go vet` and `golangci-lint` before considering a change complete.
-- Use table-driven tests.
-- Keep interfaces small (1–3 methods) and define them at the point of use, not at the point of implementation.
-- Use `defer` for cleanup to guarantee execution on all code paths.
+- Use type hints on all function signatures.
+- Format with the project's configured formatter (black, ruff format, etc.) — do not mix styles.
+- Prefer `pathlib.Path` over `os.path` for filesystem operations.
+- Use context managers (`with`) for files, locks, and database connections.
+- Raise specific exceptions; never use bare `except:` or `except Exception`.
+- Use `logging` instead of `print()` for any output that is not user-facing CLI output.
+- Pin dependencies in `requirements.txt` or lock files; do not add unpinned deps.
+
+## Docker
+
+- Use multi-stage builds to keep final images small.
+- Pin base image tags to a specific digest or version; never use `latest` in production Dockerfiles.
+- Run the application as a non-root user (`USER` directive).
+- Combine related `RUN` commands to reduce layers; order layers from least to most frequently changing.
+- Do not copy secrets or credentials into the image — use build-time secrets or runtime mounts.
+- Include a `.dockerignore` that excludes `.git`, `node_modules`, build artifacts, and secrets.
+- Use `HEALTHCHECK` instructions for services that run as long-lived processes.
 
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
 
-Keep this custom content!
-Do not delete me.
+<!-- Add your repo-specific agent guidance below this line -->
