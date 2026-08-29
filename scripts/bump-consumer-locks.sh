@@ -250,9 +250,30 @@ fail() { echo "  ERROR: $*"; }
 # silent empty list, and still one the four disagreed about until this copy
 # landed.
 read_repos_yml() {
-    local expr="$1" out
-    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
-        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+    local expr="$1" out err err_file rc=0
+    # Streams captured SEPARATELY. `2>&1` answered the failure path's question
+    # by corrupting the success path's answer: yq writes to stderr while
+    # exiting 0 (deprecation and expression warnings), and everything this
+    # returns is PARSED — the exclusion list, default_sections, the
+    # skills_bootstrap allowlist and its registry pin. Not a hypothetical
+    # stderr: the mikefarah yq this repo pins answers `-j` with the right value
+    # on stdout, "Flag --tojson has been deprecated" on stderr, and exit 0
+    # (measured, v4.44.3). Measured with a yq wrapper that prints one "[WARN]"
+    # line to stderr and then succeeds: sync.sh logged "Sections: yq: [WARN]
+    # this expression syntax is deprecated rust" for a repo whose sections are
+    # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
+    # delivered this run."
+    if ! err_file=$(mktemp); then
+        echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
+        exit 2
+    fi
+    out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
+    # Read and removed UNCONDITIONALLY, before the branch, so the success path
+    # cannot leak the file either.
+    err=$(head -1 "$err_file")
+    rm -f "$err_file"
+    if [[ $rc -ne 0 ]]; then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
         exit 2
     fi
     printf '%s\n' "$out"
@@ -615,6 +636,7 @@ branch_adds_nothing_to_base() {
 
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
+    local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
     local head_oid
     local -a match_args
     local -a numbers
@@ -635,10 +657,43 @@ sweep_bump_prs() {
         # never runs, so `|| true` here would read that JSON as a list of PR
         # numbers. Silence is not an option either — "could not ask" and "no
         # open PRs" are the same empty string, and only one of them is fine.
-        if ! numbers_raw=$(gh pr list --repo "$repo_name" \
+        #
+        # And the streams are kept APART, because the paragraph above reasons
+        # only about the FAILURE path while `2>&1` applies on SUCCESS too. What
+        # comes back is DATA: each line is mapfile'd into $numbers and used as a
+        # PR NUMBER THIS SWEEP THEN ACTS ON. gh writes to stderr while exiting 0
+        # in ordinary conditions — deprecation notices, auth-expiry warnings —
+        # so a merged capture invents a pull request on a night that has none.
+        # Measured on a harness lifting this capture and the mapfile below
+        # verbatim, with a gh stubbed to exit 0 having listed no open PR: merged
+        # and with one "gh: warning: authentication token is nearing expiry"
+        # line on stderr, $numbers came back one long and the sweep went on to
+        # call `gh pr view "gh: warning: authentication token is nearing
+        # expiry"`; separated, $numbers is empty and the repo is skipped. Same
+        # mechanism as bump-hook-pin.sh's open-PR query, in the opposite
+        # direction: there a phantom line SUPPRESSES the night's work, here it
+        # manufactures work that does not exist.
+        #
+        # mktemp is checked because this loop counts per-repo failures rather
+        # than aborting the fleet — under `set -e` an unchecked assignment here
+        # would end the run for every repo after this one.
+        if ! list_err_file=$(mktemp); then
+            fail "$repo_name: could not create a temp file to capture gh's diagnostics"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+        numbers_rc=0
+        numbers_raw=$(gh pr list --repo "$repo_name" \
             --head "$BRANCH_NAME" --state open --json number \
-            --jq '.[].number' 2>&1); then
-            fail "$repo_name: could not list bump pull requests — $(head -1 <<< "$numbers_raw")"
+            --jq '.[].number' 2>"$list_err_file") || numbers_rc=$?
+        # Read then removed UNCONDITIONALLY, before the branch, so neither the
+        # `continue` below nor the success path can leak the file. The message
+        # quotes only this and never $numbers_raw, which holds the API's raw
+        # error body on that path (AGENTS.md, "Sanitize error output").
+        numbers_err=$(head -1 "$list_err_file")
+        rm -f "$list_err_file"
+        if [[ $numbers_rc -ne 0 ]]; then
+            fail "$repo_name: could not list bump pull requests — ${numbers_err:-no diagnostic output from gh}"
             ((FAIL_COUNT++)) || true
             continue
         fi
@@ -672,10 +727,29 @@ sweep_bump_prs() {
                 continue
             fi
 
-            if ! verdict_line=$(pr_merge_verdict "$pr_json" "$BRANCH_NAME" \
-                "$PR_AUTHOR" "$LOCK_REL_PATH" 2>&1); then
+            # Streams kept APART: this line IS the merge gate's answer, split
+            # into a verdict and a detail immediately below, so a stderr line
+            # from a run that exited 0 becomes the verdict. It fails SAFE — the
+            # first token of noise is not "READY", so the merge is refused —
+            # but the sweep then stalls on every repo, logging "not merged —"
+            # followed by that noise, which names no cause a reader can act on.
+            # Same producer and same measured mechanism as the shrink check
+            # below: a local `python3 -c`, which writes to stderr at exit 0
+            # when the inherited environment asks it to.
+            if ! verdict_err_file=$(mktemp); then
+                fail "$repo_name#$number: could not create a temp file to capture the merge gate's diagnostics"
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+            verdict_rc=0
+            verdict_line=$(pr_merge_verdict "$pr_json" "$BRANCH_NAME" \
+                "$PR_AUTHOR" "$LOCK_REL_PATH" 2>"$verdict_err_file") || verdict_rc=$?
+            # Read then removed UNCONDITIONALLY, before the branch.
+            verdict_err=$(head -1 "$verdict_err_file")
+            rm -f "$verdict_err_file"
+            if [[ $verdict_rc -ne 0 ]]; then
                 # "Cannot judge it" is not permission to merge it.
-                fail "$repo_name#$number: could not judge whether this pull request is safe to merge — $(head -1 <<< "$verdict_line")"
+                fail "$repo_name#$number: could not judge whether this pull request is safe to merge — ${verdict_err:-no diagnostic output}"
                 ((FAIL_COUNT++)) || true
                 continue
             fi
@@ -1007,15 +1081,42 @@ echo ""
 # comment and warning promise that owner's repos are merely "skipped this
 # run". Counted per owner instead, so the scheduled run still goes red and
 # names which owner could not be read.
-if ! repo_list_raw=$(
+#
+# Streams kept APART for the reason the fetch below states at length: what this
+# returns is DATA — every line becomes a REPO NAME in the fleet loop — and gh
+# writes to stderr while exiting 0 in ordinary conditions (deprecation notices,
+# auth-expiry warnings), so `2>&1` puts those lines in the list. Measured on a
+# harness lifting this capture and the mapfile below verbatim, with a gh
+# stubbed to print two real repo names to stdout, one "gh: warning:
+# authentication token is nearing expiry" line to stderr, and exit 0: merged,
+# REPOS came back three long with "gh: warning: authentication token is nearing
+# expiry" as its third entry, which the loop then asks GitHub about as though
+# it were a repository. Separated, REPOS is the two real names.
+#
+# mktemp is checked because this owner loop counts per-owner failures rather
+# than aborting the fleet — under `set -e` an unchecked assignment here would
+# end the run before the remaining owners are scanned, which is the exact
+# shape the paragraph above rejects.
+if ! list_err_file=$(mktemp); then
+    fail "$ORG: could not create a temp file to capture gh's diagnostics"
+    ((FAIL_COUNT++)) || true
+    continue
+fi
+list_rc=0
+repo_list_raw=$(
     gh repo list "$ORG" \
         --no-archived \
         --source \
         --json nameWithOwner \
         --limit 1000 \
-        --jq '.[].nameWithOwner' 2>&1
-); then
-    fail "$ORG: could not list repos — $(head -1 <<< "$repo_list_raw")"
+        --jq '.[].nameWithOwner' 2>"$list_err_file"
+) || list_rc=$?
+# Read then removed UNCONDITIONALLY, before the branch, so neither the
+# `continue` below nor the success path can leak the file.
+list_err=$(head -1 "$list_err_file")
+rm -f "$list_err_file"
+if [[ $list_rc -ne 0 ]]; then
+    fail "$ORG: could not list repos — ${list_err:-no diagnostic output from gh}"
     ((FAIL_COUNT++)) || true
     continue
 fi
@@ -1080,9 +1181,9 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Fetch the lock ─────────────────────────────────────────────────
-    # Captured with its exit status, and the output read only on success,
-    # because this one call carries TWO hazards and the obvious `|| true`
-    # gets each of them wrong in its own way.
+    # Captured with its exit status, and its streams kept APART, because this
+    # one call carries THREE hazards: two were in the shape it used to have,
+    # and the third arrived with the fix for them.
     #
     # The stdout half: on an HTTP error gh api prints the raw error JSON body
     # to stdout — the --jq filter is not applied — so `|| true` alone would
@@ -1102,13 +1203,56 @@ for repo_name in "${REPOS[@]}"; do
     # N skipped, 0 failed", which is exactly what a healthy night prints.
     # Nothing goes red, scheduled-run-health sees a success, and every consumer
     # serves a frozen bundle until somebody notices by hand.
-    if ! encoded=$(gh api "repos/$repo_name/contents/$LOCK_REL_PATH" \
-        --jq '.content' 2>&1); then
-        # $encoded holds diagnostics now and never a lock: gh has written the
-        # error body to stdout and its own status line to stderr, and this
-        # capture has both. `head -1` would therefore quote the body and never
-        # name the status, so prefer gh's own `gh: ` line where there is one.
-        api_err=$(grep -m1 '^gh: ' <<< "$encoded" || head -1 <<< "$encoded")
+    #
+    # The STREAM half, which reaching for `2>&1` so the diagnostic could be
+    # quoted introduced: `2>&1` applies on SUCCESS too, and it answers the
+    # failure path's question by corrupting the success path's answer. What
+    # comes back here is DATA, not a diagnostic — a base64 payload this loop
+    # decodes some sixty lines below — and gh writes to stderr while exiting 0
+    # in ordinary conditions: deprecation notices, auth-expiry warnings.
+    # Measured on a harness lifting this call and that decode verbatim, with a
+    # gh stubbed to print one "gh: this API endpoint is deprecated" line to
+    # stderr, the correct base64 to stdout, and exit 0 — merged, the decode
+    # fails and the run reports "could not decode skills.lock" and counts the
+    # repo FAILED; separated, it decodes to the lock. A healthy consumer turned
+    # into a counted failure by a notice that changed nothing. sync.sh's read
+    # of .agents-sync.yml carried the identical defect, and its comment already
+    # names THIS call as the disambiguation it copied — the stream half of the
+    # fix simply did not travel with it.
+    #
+    # mktemp is checked because this loop counts per-repo failures rather than
+    # aborting the fleet — under `set -e` an unchecked assignment here would
+    # end the run for every repo after this one.
+    if ! api_err_file=$(mktemp); then
+        fail "$repo_name: could not create a temp file to capture gh's diagnostics"
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+    api_rc=0
+    encoded=$(gh api "repos/$repo_name/contents/$LOCK_REL_PATH" \
+        --jq '.content' 2>"$api_err_file") || api_rc=$?
+    # Read then removed UNCONDITIONALLY, before the branch, so none of the
+    # `continue`s below can leak the file, and so the success path cannot
+    # either; the value is only ever USED on the failure path.
+    api_stderr=$(cat "$api_err_file")
+    rm -f "$api_err_file"
+
+    if [[ $api_rc -ne 0 ]]; then
+        # gh's own diagnostic, and only gh's: $encoded holds the API's raw
+        # error body on this path, and the house rule forbids echoing a
+        # response body into a public log (AGENTS.md, "Sanitize error
+        # output"). With the streams separated that body is out of this
+        # message's reach, which the merged capture could not promise.
+        #
+        # The STATUS line is preferred over the first line, because on a stderr
+        # of its own gh's ordinary notices arrive BEFORE the error it is being
+        # asked about. Measured with a stub printing "gh: this API endpoint is
+        # deprecated" and then "gh: Not Found (HTTP 404)": `head -1` quotes the
+        # deprecation notice and never names the status, this quotes
+        # "gh: Not Found (HTTP 404)".
+        api_err=$(grep -m1 '(HTTP ' <<< "$api_stderr" \
+            || grep -m1 '^gh: ' <<< "$api_stderr" \
+            || head -1 <<< "$api_stderr")
 
         # A 404 on the PATH is the only outcome that MAY mean "absent", and
         # even it means that only once the REPO itself answers: GitHub replies
@@ -1118,10 +1262,11 @@ for repo_name in "${REPOS[@]}"; do
         # there'"). Anything else is a failure, counted and named, the way the
         # sweep's `gh pr list` and the discovery `gh repo list` above already
         # refuse the same conflation. Both surfaces of the status are matched
-        # because only one of them may reach us: gh's own line carries
-        # "(HTTP 404)" on stderr, while the API's error body carries
-        # "status":"404" on stdout.
-        if [[ "$encoded" != *"(HTTP 404)"* \
+        # because only one of them may reach us — and separating the streams
+        # is what lets each be read where it actually lands: gh's own line
+        # carries "(HTTP 404)" on stderr, while the API's error body carries
+        # "status":"404" on stdout, which on this path is what $encoded holds.
+        if [[ "$api_stderr" != *"(HTTP 404)"* \
               && ! "$encoded" =~ \"status\":[[:space:]]*\"404\" ]]; then
             fail "$repo_name: could not read $LOCK_REL_PATH — ${api_err:-no diagnostic output from gh}"
             ((FAIL_COUNT++)) || true
@@ -1168,8 +1313,30 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Which registries does it name? ─────────────────────────────────
 
-    if ! plan=$(lock_plan "$lock_file" 2>&1); then
-        fail "$repo_name: $LOCK_REL_PATH is unusable — $plan"
+    # Streams kept APART, same reason as the fetch above: what comes back is
+    # DATA — three prefixed line kinds the three `sed -n` extractions below
+    # read, and `source_registries` drives one `--repin-source <name>@` flag
+    # apiece. The producer here is a local `python3 -c` rather than gh, and
+    # that narrows the risk without removing it: python writes to stderr while
+    # exiting 0 whenever the environment asks it to, and the environment is
+    # inherited. Measured on this box, `PYTHONVERBOSE=1 python3 -c` exits 0 and
+    # writes several hundred lines to stderr; folded in by `2>&1` they become
+    # candidate `plan` lines, and only the `^registry `/`^ref `/`^source `
+    # anchors keep them out of the parsed values. Separated, nothing has to
+    # rely on that anchoring holding.
+    if ! plan_err_file=$(mktemp); then
+        fail "$repo_name: could not create a temp file to capture the lock reader's diagnostics"
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+    plan_rc=0
+    plan=$(lock_plan "$lock_file" 2>"$plan_err_file") || plan_rc=$?
+    # Read then removed UNCONDITIONALLY, before the branch, so neither the
+    # `continue` below nor the success path can leak the file.
+    plan_err=$(cat "$plan_err_file")
+    rm -f "$plan_err_file"
+    if [[ $plan_rc -ne 0 ]]; then
+        fail "$repo_name: $LOCK_REL_PATH is unusable — ${plan_err:-no diagnostic output}"
         ((FAIL_COUNT++)) || true
         continue
     fi
@@ -1804,8 +1971,30 @@ for repo_name in "${REPOS[@]}"; do
     # its old skills, so merging one deletes the installed skills in every
     # ephemeral session in that repo. Refused per repo and counted, so the
     # scheduled run goes red and a human decides before it fans out.
-    if ! shrink=$(skills_shrink_reason "$lock_file" "$LOCK_REL_PATH" 2>&1); then
-        fail "$repo_name: could not compare the re-pinned lock with the one on the default branch — $(head -1 <<< "$shrink")"
+    #
+    # Streams kept APART, and on this refusal it matters most of the three:
+    # the value is TESTED FOR EMPTINESS just below, and empty is what lets the
+    # re-pin through. Any line on stderr from a run that EXITED 0 therefore
+    # invents a shrink that did not happen, refuses a healthy re-pin, counts a
+    # failure, and prints that line as the reason. Measured on a harness
+    # lifting this capture and the emptiness test verbatim against two
+    # identical locks: with the streams merged and `PYTHONVERBOSE=1` inherited
+    # — a plain environment variable, python3 still exiting 0 — the run
+    # reported "refusing to propose this re-pin" and counted the repo FAILED;
+    # separated, it reports no shrink and the re-pin proceeds.
+    if ! shrink_err_file=$(mktemp); then
+        fail "$repo_name: could not create a temp file to capture the shrink check's diagnostics"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+    shrink_rc=0
+    shrink=$(skills_shrink_reason "$lock_file" "$LOCK_REL_PATH" 2>"$shrink_err_file") || shrink_rc=$?
+    # Read then removed UNCONDITIONALLY, before the branch, so no `continue`
+    # below leaks it and the success path cannot either.
+    shrink_err=$(head -1 "$shrink_err_file")
+    rm -f "$shrink_err_file"
+    if [[ $shrink_rc -ne 0 ]]; then
+        fail "$repo_name: could not compare the re-pinned lock with the one on the default branch — ${shrink_err:-no diagnostic output}"
         ((FAIL_COUNT++)) || true
         cd "$REPO_ROOT"; continue
     fi

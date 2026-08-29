@@ -189,9 +189,30 @@ SKIP_COUNT=0
 # bump-hook-pin.sh for the reason given above the yq preflight, and it must
 # move with them.
 read_repos_yml() {
-    local expr="$1" out
-    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
-        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+    local expr="$1" out err err_file rc=0
+    # Streams captured SEPARATELY. `2>&1` answered the failure path's question
+    # by corrupting the success path's answer: yq writes to stderr while
+    # exiting 0 (deprecation and expression warnings), and everything this
+    # returns is PARSED — the exclusion list, default_sections, the
+    # skills_bootstrap allowlist and its registry pin. Not a hypothetical
+    # stderr: the mikefarah yq this repo pins answers `-j` with the right value
+    # on stdout, "Flag --tojson has been deprecated" on stderr, and exit 0
+    # (measured, v4.44.3). Measured with a yq wrapper that prints one "[WARN]"
+    # line to stderr and then succeeds: sync.sh logged "Sections: yq: [WARN]
+    # this expression syntax is deprecated rust" for a repo whose sections are
+    # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
+    # delivered this run."
+    if ! err_file=$(mktemp); then
+        echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
+        exit 2
+    fi
+    out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
+    # Read and removed UNCONDITIONALLY, before the branch, so the success path
+    # cannot leak the file either.
+    err=$(head -1 "$err_file")
+    rm -f "$err_file"
+    if [[ $rc -ne 0 ]]; then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
         exit 2
     fi
     printf '%s\n' "$out"
@@ -373,15 +394,41 @@ echo ""
 # summary is printed. Counted per owner instead, so the run still goes red at
 # the end and names the owner it could not read, after serving every owner it
 # could.
-if ! repo_list_raw=$(
+#
+# Streams captured SEPARATELY, for the reason read_repos_yml gives above: what
+# this returns is the FLEET, split into $REPOS and looped over, so a line gh
+# writes to stderr while exiting 0 — a deprecation notice, an auth-expiry
+# warning — does not merely decorate the log, it becomes a repository NAME.
+# `sed '/^$/d'` is no defence: the injected line is not blank. Measured against
+# this script with a gh stubbed to print one "gh: warning: your token will
+# expire soon" line to stderr and one real repo to stdout, exit 0 — merged, the
+# run printed "Found 2 repo(s):", opened "=== gh: warning: your token will
+# expire soon ===", tried to read .agents-sync.yml from a path built out of the
+# warning and ended "0 synced, 0 skipped, 2 failed"; separated, it prints
+# "Found 1 repo(s)" and syncs it. mktemp is checked because this owner loop
+# counts per-owner failures rather than aborting the fleet — under `set -e` an
+# unchecked assignment here would end the run before the next owner is scanned,
+# which is the exact failure the paragraph above exists to prevent.
+if ! repo_list_err_file=$(mktemp); then
+    fail "$ORG: could not create a temp file to capture gh's diagnostics"
+    ((FAIL_COUNT++)) || true
+    continue
+fi
+repo_list_rc=0
+repo_list_raw=$(
     gh repo list "$ORG" \
         --no-archived \
         --source \
         --json nameWithOwner \
         --limit 1000 \
-        --jq '.[].nameWithOwner' 2>&1
-); then
-    fail "$ORG: could not list repos — $(head -1 <<< "$repo_list_raw")"
+        --jq '.[].nameWithOwner' 2>"$repo_list_err_file"
+) || repo_list_rc=$?
+# Read and removed unconditionally, before the branch, so the `continue` below
+# cannot leak the file and the success path cannot either.
+repo_list_err=$(head -1 "$repo_list_err_file")
+rm -f "$repo_list_err_file"
+if [[ $repo_list_rc -ne 0 ]]; then
+    fail "$ORG: could not list repos — ${repo_list_err:-no diagnostic output from gh}"
     ((FAIL_COUNT++)) || true
     continue
 fi
@@ -487,7 +534,22 @@ for repo_name in "${REPOS[@]}"; do
         # (AGENTS.md, "Sanitize error output"). With the streams separated
         # that body is no longer in reach of this message, which is what the
         # merged capture could not promise.
-        api_err=$(grep -m1 '^gh: ' <<< "$api_stderr" || head -1 <<< "$api_stderr")
+        # The line carrying the STATUS is preferred over the merely first one.
+        # gh's deprecation and auth-expiry notices are themselves `gh: `-prefixed
+        # and arrive BEFORE the error, so `grep -m1 '^gh: '` named the notice on
+        # exactly the runs the paragraph above describes. Measured with a gh
+        # stubbed to print "gh: this API endpoint is deprecated" then "gh: API
+        # rate limit exceeded (HTTP 403)" and exit 1: it reported "could not read
+        # .agents-sync.yml — gh: this API endpoint is deprecated", which sends
+        # the operator after the wrong fault. This picks the line only; the 404
+        # disambiguation below still matches "(HTTP 404)" anywhere in
+        # $api_stderr, so what the run DOES is unchanged — only what it says it
+        # saw. Three-step fallback because none of the three is guaranteed: the
+        # last is the old behaviour, kept for a diagnostic gh writes in neither
+        # shape.
+        api_err=$(grep -m1 '^gh: .*(HTTP ' <<< "$api_stderr" \
+            || grep -m1 '^gh: ' <<< "$api_stderr" \
+            || head -1 <<< "$api_stderr")
 
         # A 404 on the PATH is the only outcome that MAY mean "absent", and even
         # it means that only once the REPO itself answers: GitHub replies 404
@@ -534,9 +596,39 @@ for repo_name in "${REPOS[@]}"; do
         # run logged "Sections: none" and exited 0. `set -o pipefail` is what
         # makes one capture answer for both stages, so a base64 body that is not
         # a file is refused here too rather than decoding to nothing.
-        if ! repo_sections_raw=$( { base64 -d <<< "$remote_yaml" \
-                | yq -r '.sections // [] | .[]'; } 2>&1 ); then
-            fail "$repo_name: could not read the sections from .agents-sync.yml — ${repo_sections_raw:-no diagnostic output}"
+        #
+        # Streams SEPARATED, and this is the capture in this script where that
+        # matters most: what it returns is DATA — split into $sections and handed
+        # to "$BUILD_SCRIPT" — so a line either stage writes to stderr while the
+        # pipeline still exits 0 becomes a SECTION NAME. Not hypothetical: the
+        # mikefarah yq this repo pins answers `-j` with the right value on
+        # stdout, "Flag --tojson has been deprecated" on stderr, and exit 0
+        # (measured, v4.44.3). Measured against this script with a yq wrapper
+        # that prints one deprecation line to stderr and then succeeds, over an
+        # .agents-sync.yml declaring [python, docker] — merged, the run logged
+        # "Sections: Flag --r has been deprecated, please use --unwrapScalar
+        # python docker"; separated, "Sections: python docker". And the
+        # corruption does not stop at the log: `build-agents-md.sh Flag python
+        # docker` exits 0 and emits 45,677 bytes against 45,598 for `python
+        # docker`, with the header rewritten to "Sections: Flag python docker"
+        # plus an appended "WARNING: unknown section 'Flag'" — content this
+        # script would then see as changed, commit, and push. The brace group is
+        # what puts BOTH stages' stderr in the file; mktemp is checked because
+        # this loop counts per-repo failures rather than aborting the fleet.
+        if ! sections_err_file=$(mktemp); then
+            fail "$repo_name: could not create a temp file to capture the section read's diagnostics"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+        sections_read_rc=0
+        repo_sections_raw=$( { base64 -d <<< "$remote_yaml" \
+                | yq -r '.sections // [] | .[]'; } 2>"$sections_err_file" ) || sections_read_rc=$?
+        # Read and removed unconditionally, before the branch: the value is only
+        # ever USED in the failure branch, but the file must go either way.
+        sections_err=$(head -1 "$sections_err_file")
+        rm -f "$sections_err_file"
+        if [[ $sections_read_rc -ne 0 ]]; then
+            fail "$repo_name: could not read the sections from .agents-sync.yml — ${sections_err:-no diagnostic output}"
             ((FAIL_COUNT++)) || true
             continue
         fi

@@ -2301,6 +2301,18 @@ case "$1" in
                         json='[]'
                         ;;
                 esac
+                # A diagnostic written alongside a listing that SUCCEEDS —
+                # the shape gh takes in ordinary conditions (deprecation
+                # notices, auth-expiry warnings). It matters here more than
+                # anywhere else in this mock: every caller of `gh repo list`
+                # splits the captured value into REPO NAMES, so a merged
+                # `2>&1` does not decorate a log, it invents a repository. The
+                # `failorg` arm above is stderr with a FAILURE; this is stderr
+                # with exit 0, which nothing in the suite could produce.
+                # MOCK_REPO_LIST_STDERR_NOTICE names the orgs that get it.
+                if [[ " ${MOCK_REPO_LIST_STDERR_NOTICE:-} " == *" $org "* ]]; then
+                    echo "gh: warning: authentication token is nearing expiry" >&2
+                fi
                 # Find --jq filter in remaining args
                 jq_filter=$(parse_jq_filter "$@")
                 if [[ -n "$jq_filter" ]]; then
@@ -2466,6 +2478,34 @@ case "$1" in
                 exit 1
             fi
 
+            # A 404 that reaches the caller on STDERR ONLY, which every reader
+            # of this endpoint claims to handle and none of them was ever asked
+            # to. sync.sh and bump-consumer-locks.sh both disambiguate "the file
+            # is absent" from "the credential cannot see it" by matching TWO
+            # surfaces — `(HTTP 404)` in gh's own stderr line and
+            # `"status":"404"` in the body gh leaves on stdout — and both say in
+            # a comment that "only one of them may reach us". The default 404
+            # below emits the body and no status line, so until this knob the
+            # stderr half of every one of those conditions was dead text:
+            # measured, replacing sync.sh's needle with "(HTTP 404 NEVERMATCH)"
+            # left the suite at 907 passed / 0 failed while breaking the stdout
+            # regex moved 7 assertions.
+            #
+            # The asymmetry is real, not invented for the test: GitHub's REST
+            # errors do not all carry a `status` field (the documented 404 body
+            # is `message` + `documentation_url`), while gh's own
+            # `gh: Not Found (HTTP 404)` line is written for every one of them.
+            # MOCK_CONTENTS_404_STDERR_ONLY names repos (owner_repo) whose
+            # missing files answer that way. Left OFF, the default below is
+            # unchanged, which is what keeps the stdout half independently
+            # detectable.
+            if [[ " ${MOCK_CONTENTS_404_STDERR_ONLY:-} " == *" $repo_slug "* ]] \
+               && ! git -C "$bare_path" cat-file -e "main:$file_path" 2>/dev/null; then
+                echo "gh: Not Found (HTTP 404)" >&2
+                echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content"}'
+                exit 1
+            fi
+
             if [[ -d "$bare_path" ]]; then
                 content=$(git -C "$bare_path" show "main:$file_path" 2>/dev/null || true)
                 if [[ -n "$content" ]]; then
@@ -2510,6 +2550,23 @@ case "$1" in
                     fi
                     if $truncate_this; then
                         encoded="${encoded:0:$MOCK_TRUNCATE_CONTENTS}"
+                    fi
+                    # A diagnostic written alongside a call that SUCCEEDS.
+                    # Real gh does this in ordinary conditions — deprecation
+                    # notices, auth-expiry warnings — and every reader of this
+                    # endpoint captures the payload in a command substitution,
+                    # so a merged `2>&1` folds the notice into base64 that is
+                    # then decoded and parsed. Nothing in this mock could
+                    # produce that shape before: MOCK_CONTENTS_HTTP_FAIL above
+                    # exits 1, so the only stderr the suite ever saw came with a
+                    # failure, and the separation on the SUCCESS path was
+                    # untested — measured, reverting sync.sh's split capture to
+                    # the merged spelling left the suite at 907 passed / 0
+                    # failed. MOCK_CONTENTS_STDERR_NOTICE names repos
+                    # (owner_repo) that get the notice; the content and the
+                    # exit-0 status are unchanged, which is the whole point.
+                    if [[ " ${MOCK_CONTENTS_STDERR_NOTICE:-} " == *" $repo_slug "* ]]; then
+                        echo "gh: this API endpoint is deprecated" >&2
                     fi
                     json="{\"size\": $size, \"content\": \"$encoded\"}"
                     if [[ -n "$jq_filter" ]]; then
@@ -2560,6 +2617,20 @@ case "$1" in
                     if [[ " ${MOCK_PR_LIST_FAILS:-} " == *" ${repo_arg//\//_} "* ]]; then
                         echo "gh: Bad credentials (HTTP 401)" >&2
                         exit 1
+                    fi
+                    # The same diagnostic written by a listing that SUCCEEDS,
+                    # which is the harder case and had no fixture at all. Both
+                    # readers of this listing decide on the SHAPE of the value,
+                    # not on the exit status: bump-hook-pin.sh asks
+                    # `.[0].number // empty` and treats an empty answer as "no
+                    # PR is open", so one stderr line folded in makes a quiet
+                    # night look like an already-proposed one and the whole
+                    # script a silent no-op; the bumper's sweep mapfiles the
+                    # answer into PR NUMBERS it then acts on. Neither failure
+                    # goes red anywhere. MOCK_PR_LIST_STDERR_NOTICE names repos
+                    # (owner_repo) whose listing writes it.
+                    if [[ " ${MOCK_PR_LIST_STDERR_NOTICE:-} " == *" ${repo_arg//\//_} "* ]]; then
+                        echo "gh: warning: authentication token is nearing expiry" >&2
                     fi
                     json='[]'
                     pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_arg//\//_}.json"
@@ -2886,6 +2957,49 @@ test_sync_dry_run() {
     assert_contains "$TEST_DIR/sync-output.txt" "[DRY RUN]" "respects dry-run flag"
     assert_not_contains "$TEST_DIR/sync-output.txt" "=== testorg/repo-excluded ===" "excludes repo listed in repos.yml"
     assert_contains "$TEST_DIR/sync-output.txt" "excluded by repos.yml" "logs exclusion reason"
+
+    # ── the 404 that arrives on STDERR ONLY ──────────────────────────────
+    #
+    # sync.sh tells "this repo ships no .agents-sync.yml" from "the credential
+    # could not read it" by matching TWO surfaces of the status — `(HTTP 404)`
+    # in gh's own stderr line and `"status":"404"` in the body gh leaves on
+    # stdout — and its comment says outright that "only one of them may reach
+    # us". Until MOCK_CONTENTS_404_STDERR_ONLY the mock produced only the stdout
+    # one, so the stderr needle was never executed against anything: measured,
+    # replacing it with "(HTTP 404 NEVERMATCH)" left the suite at 907 passed /
+    # 0 failed, while breaking the stdout regex moved 7 assertions.
+    #
+    # `repo-no-sync` is the fixture because its `.agents-sync.yml` really is
+    # absent, so the correct verdict is the one this run already asserts
+    # elsewhere: fall back to `default_sections` (rust) and count no failure.
+    # `--dry-run` keeps the leg free of writes, so it can sit here in the
+    # ordered lane before the first run that touches the fleet.
+    local before404 after404 out404="$TEST_DIR/sync-404-stderr.txt" exit404=0
+    before404=$(bare_fleet_fingerprint)
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_CONTENTS_404_STDERR_ONLY="testorg_repo-no-sync" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" --dry-run > "$out404" 2>&1 || exit404=$?
+
+    assert_contains "$out404" "Sections: rust" \
+        "404 on stderr (sync): a status gh reports only on stderr is still read as absent"
+    assert_not_contains "$out404" "could not read .agents-sync.yml" \
+        "404 on stderr (sync): the absent file was not promoted to a failed read"
+    assert_contains "$out404" "0 failed" \
+        "404 on stderr (sync): counted as no failure"
+    if [[ $exit404 -eq 0 ]]; then
+        pass "404 on stderr (sync): the run exits 0"
+    else
+        fail "404 on stderr (sync): the run exits 0 — got $exit404"
+    fi
+    after404=$(bare_fleet_fingerprint)
+    if [[ "$before404" == "$after404" ]]; then
+        pass "404 on stderr (sync): --dry-run still wrote nothing"
+    else
+        fail "404 on stderr (sync): --dry-run wrote to the fleet"
+    fi
 }
 
 # ── Test 3: sync.sh full run ──────────────────────────────────────────────
@@ -4045,6 +4159,37 @@ test_drift_report_sync_yml_unparseable() {
     sync_yaml_fixture_write 'sections:
   - python
 '
+
+    # ── the same file, a yq that PARSES it, and a line on stderr ─────────
+    #
+    # The third door onto **drift-detected**, and the only one that opens on a
+    # run where nothing failed. The two legs above are about a section list the
+    # script could not establish; this is about one it established correctly
+    # and then had a diagnostic appended to. yq writes to stderr while exiting
+    # 0 — the build this repo pins does it for `-j` (see setup_noisy_yq_dir) —
+    # so `2>&1` on this capture puts that line in $sections, `expected` is
+    # built from a phantom section, and the row this report PUBLISHES is
+    # **drift-detected** against an AGENTS.md that is in fact correct.
+    #
+    # The Sections assertion is the load-bearing one and it is spelled as a
+    # WHOLE-CELL match on purpose: the corrupted cell still ends in `python`, so
+    # a substring needle would pass against exactly the output this leg exists
+    # to forbid.
+    setup_noisy_yq_dir
+    local nrpt="$TEST_DIR/drift-syncyml-noisy-yq.md"
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$nrpt" \
+    PATH="$TEST_DIR/bin-yq-noisy:$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$TEST_DIR/drift-syncyml-noisy-yq.txt" 2>&1 || true
+
+    assert_row_contains "$nrpt" "repo-sync-yml" "python" \
+        "drift noisy yq: the Sections cell is the section list and nothing else"
+    assert_row_lacks_cell "$nrpt" "repo-sync-yml" "**drift-detected**" \
+        "drift noisy yq: a correct AGENTS.md is not published as drifted"
+    assert_row_lacks_cell "$nrpt" "repo-sync-yml" "**fetch-failed**" \
+        "drift noisy yq: a noisy but successful parse is not a failed read"
 }
 
 # ── Test 4j: the marker is read from a here-string, not through a pipe ─────
@@ -4394,6 +4539,21 @@ published_bump_branches() {   # [bare dir — defaults to the shared fleet]
     local bare dir="${1:-$TEST_DIR/bare}"
     for bare in "$dir"/*; do
         [[ -d "$bare" ]] || continue
+        # A directory that is not a repository publishes no bump branches, and
+        # is skipped BEFORE the pipeline below rather than after it. Not
+        # tidiness: `git for-each-ref` exits 128 there, `pipefail` carries that
+        # through the inner `| sed` and then through the outer `| sort`, and
+        # every caller here assigns this function's output BARE — so under this
+        # file's `set -euo pipefail` a stray directory ends the whole run
+        # instead of one test. Only the LAST iteration's status survives, which
+        # is why it stayed latent; test_harness_published_bump_branches pins it.
+        #
+        # The probe is `|| continue` rather than a blanket `|| true` on the
+        # pipeline on purpose: a for-each-ref that fails inside a REAL
+        # repository still propagates, so this cannot quietly start reporting an
+        # empty fleet — which, compared before and against after, would pass
+        # every caller vacuously.
+        git -C "$bare" rev-parse --git-dir >/dev/null 2>&1 || continue
         # `--format` carries no repo name of its own: a bare's basename is
         # prefixed afterwards so a `%` in one could never be read as a format
         # directive.
@@ -4401,6 +4561,83 @@ published_bump_branches() {   # [bare dir — defaults to the shared fleet]
             'refs/heads/skills-lock-bump/*' 2>/dev/null \
             | sed "s|^|$(basename "$bare") |"
     done | sort
+}
+
+# ── the harness's own regression test, for the helper directly above ──────
+#
+# `published_bump_branches` is called in a BARE assignment
+# (`before=$(published_bump_branches ...)`), so under this file's own
+# `set -euo pipefail` a non-zero return from it does not fail a test — it ends
+# the RUN, mid-suite, with no Results line and every test after it unexecuted.
+# That is the same class of harness-isolation failure the empty `$BUMP_PR_LOG`
+# above is pre-created to prevent.
+#
+# The path that returns non-zero is a directory under the bare dir that is not
+# a git repository: `git for-each-ref` exits 128, `pipefail` carries that
+# through the inner `| sed`, the `for` compound's status becomes 128, and
+# `pipefail` carries it through the outer `| sort`. Its sibling
+# `bare_fleet_fingerprint` is immune by accident of shape — its git call sits
+# inside `$( ... )` as a printf argument, so the status is absorbed.
+#
+# ORDER-DEPENDENT, which is why it was latent rather than loud: only the LAST
+# iteration's status survives to become the compound's. Measured in a
+# standalone `set -euo pipefail` probe over two directories — the non-repo
+# sorting FIRST returned `SURVIVED, before=[]` and exit 0, the same non-repo
+# sorting LAST killed the probe at exit 128 before its next line ran. Today
+# every entry under $TEST_DIR/bare is a bare repo and the last alphabetically
+# is `testorg_repo-with-sync`, so nothing triggers it; one fixture directory
+# named past that and the suite stops reporting.
+#
+# Asserted on the helper's RETURN STATUS rather than by planting the directory
+# in the shared fleet: the status is the root cause, planting it live would
+# make every unrelated fingerprint comparison depend on this fixture, and — if
+# the guard were ever removed — a live plant would take the whole suite down
+# instead of failing one line.
+test_harness_published_bump_branches() {
+    echo ""
+    echo "=== Test: the harness's own bump-branch listing survives a non-repo ==="
+
+    local scratch="$TEST_DIR/pbb-probe" rc=0 out
+    rm -rf "$scratch"
+    mkdir -p "$scratch"
+    git init --bare --initial-branch=main "$scratch/aaa_repo" >/dev/null 2>&1
+    # Sorts after `aaa_repo`, so its status is the one the loop ends on.
+    mkdir -p "$scratch/zzz_not_a_repo"
+
+    out=$(published_bump_branches "$scratch") || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "harness: a non-repo directory sorting last does not abort the run"
+    else
+        fail "harness: published_bump_branches returned $rc — under set -e that ends the suite, not this test"
+    fi
+    if [[ -z "$out" ]]; then
+        pass "harness: and it reports no bump branches for a fleet that has none"
+    else
+        fail "harness: it reported bump branches where there are none — [$out]"
+    fi
+
+    # The other half of the claim: the guard must not have turned the helper
+    # into one that reports nothing at all. A real bump branch still shows up.
+    local work="$TEST_DIR/pbb-probe-work"
+    rm -rf "$work"
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    git -C "$work" config commit.gpgsign false
+    echo probe > "$work/f"
+    git -C "$work" add f >/dev/null 2>&1
+    git -C "$work" -c user.name="A Human" -c user.email="human@example.com" \
+        commit -q -m "probe" >/dev/null 2>&1
+    git -C "$work" push -q "$scratch/aaa_repo" \
+        HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
+
+    rc=0
+    out=$(published_bump_branches "$scratch") || rc=$?
+    if [[ $rc -eq 0 && "$out" == *"aaa_repo refs/heads/skills-lock-bump/update"* ]]; then
+        pass "harness: a real bump branch is still listed, with its repo name"
+    else
+        fail "harness: the bump branch was not listed (rc=$rc) — [$out]"
+    fi
+
+    rm -rf "$scratch" "$work"
 }
 
 test_sync_unknown_argument() {
@@ -4618,6 +4855,98 @@ test_sync_empty_owner() {
         pass "sync empty owner: an empty owner is not a failure"
     else
         fail "sync empty owner: an empty owner is not a failure — got exit $exit_code"
+    fi
+}
+
+# ── Test 3h2: a repo listing that SUCCEEDS noisily is still an empty one ──
+#
+# The twin of test_sync_empty_owner one layer down. There the phantom repo came
+# from a blank line the script produced itself; here it comes from gh, which
+# writes to stderr while exiting 0 in ordinary conditions — deprecation
+# notices, auth-expiry warnings — so a `gh repo list ... 2>&1` capture folds
+# those lines into the fleet. `sed '/^$/d'` is no defence: the injected line is
+# not blank, and every one of the three scripts below then treats it as a
+# REPOSITORY NAME.
+#
+# `emptyorg` is the fixture because it makes the injected line the ONLY entry,
+# so a merged capture cannot hide behind real repos: "0 repos" and "1 repo
+# called `gh: warning: ...`" are as far apart as two answers get. It also
+# writes nothing whichever way the scripts behave, so this test is safe to run
+# anywhere in the order.
+#
+# One knob, three scripts, because all three share the capture verbatim — and
+# they are asserted separately because their wrong answers differ in kind:
+# sync.sh CLONES the phantom, drift-report.sh PUBLISHES it as a table row with
+# a broken github.com link, and bump-consumer-locks.sh asks GitHub about it.
+test_repo_list_stderr_notice() {
+    echo ""
+    echo '=== Test: a `gh repo list` that succeeds noisily is still empty ==='
+
+    local out rpt exit_code before after
+    before=$(bare_fleet_fingerprint)
+
+    # ── sync.sh ──────────────────────────────────────────────────────────
+    out="$TEST_DIR/repolist-notice-sync.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=emptyorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_REPO_LIST_STDERR_NOTICE="emptyorg" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "No repos found in emptyorg" \
+        "repo list notice (sync): the owner still holds nothing"
+    assert_not_contains "$out" "Found 1 repo(s)" \
+        "repo list notice (sync): gh's warning did not become a repo"
+    assert_not_contains "$out" "=== gh: warning" \
+        "repo list notice (sync): no per-repo header for the warning"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "repo list notice (sync): a noisy empty owner is not a failure"
+    else
+        fail "repo list notice (sync): a noisy empty owner is not a failure — got $exit_code"
+    fi
+
+    # ── drift-report.sh ──────────────────────────────────────────────────
+    out="$TEST_DIR/repolist-notice-drift.txt"
+    rpt="$TEST_DIR/repolist-notice-drift.md"
+    (
+        GITHUB_REPOSITORY_OWNER=emptyorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        MOCK_REPO_LIST_STDERR_NOTICE="emptyorg" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1
+    ) || true
+
+    assert_contains "$rpt" "0 repo(s) scanned" \
+        "repo list notice (drift): the report still says zero"
+    assert_not_contains "$rpt" "1 repo(s) scanned" \
+        "repo list notice (drift): the warning was not counted as a repo"
+    # The consequence this report can produce and the other two cannot: the
+    # phantom is PUBLISHED, under its own name and its own broken link.
+    assert_not_contains "$rpt" "gh: warning" \
+        "repo list notice (drift): the warning is not published as a table row"
+
+    # ── bump-consumer-locks.sh ───────────────────────────────────────────
+    out="$TEST_DIR/repolist-notice-bump.txt"
+    BUMP_OWNERS_FOR_RUN="emptyorg" \
+    BUMP_REPO_LIST_NOTICE_FOR_RUN="emptyorg" \
+        run_bump "$out" --dry-run
+    unset BUMP_OWNERS_FOR_RUN BUMP_REPO_LIST_NOTICE_FOR_RUN
+
+    assert_contains "$out" "No repos found in emptyorg" \
+        "repo list notice (bumper): the owner still holds nothing"
+    assert_not_contains "$out" "Found 1 repo(s)" \
+        "repo list notice (bumper): gh's warning did not become a repo"
+    assert_not_contains "$out" "=== gh: warning" \
+        "repo list notice (bumper): no per-repo header for the warning"
+
+    after=$(bare_fleet_fingerprint)
+    if [[ "$before" == "$after" ]]; then
+        pass "repo list notice: none of the three wrote to the fleet"
+    else
+        fail "repo list notice: the fleet was written to"
     fi
 }
 
@@ -5014,6 +5343,77 @@ test_sync_agents_sync_yml_unreadable() {
         pass "sync yml control: the run exits 0"
     else
         fail "sync yml control: the run exits 0 — got $exit_code"
+    fi
+
+    # ── the read that SUCCEEDS and still writes to stderr ────────────────
+    #
+    # The control above and the 403 leg above that are both about a call whose
+    # STATUS answers the question. This one is about a call that answers it
+    # correctly and writes a line to stderr on the way — gh's ordinary
+    # deprecation and auth-expiry notices — which is the condition under which
+    # capturing `2>&1` corrupts the SUCCESS path in order to make the failure
+    # path's message convenient. The captured value here is not a diagnostic
+    # anybody quotes: it is a base64 payload, decoded and parsed a few lines
+    # later, so a notice folded into it makes base64 refuse a repo that is
+    # perfectly healthy — a counted failure, a red scheduled run, and a
+    # consumer left unsynced by a message that changed nothing.
+    #
+    # Nothing in this suite could produce that shape until
+    # MOCK_CONTENTS_STDERR_NOTICE existed: the only stderr the contents mock
+    # wrote came with `exit 1`. Measured — with the knob off and sync.sh's
+    # split capture reverted to `2>&1`, the suite stayed at 907 passed / 0
+    # failed; with the knob on it moves.
+    out="$TEST_DIR/sync-syncyml-notice.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_CONTENTS_STDERR_NOTICE="sfailorg_repo-sync-yml" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "Sections: python" \
+        "sync yml notice: a notice on gh's stderr does not reach the payload"
+    assert_not_contains "$out" "could not read the sections from .agents-sync.yml" \
+        "sync yml notice: the healthy repo is not reported as unreadable"
+    assert_contains "$out" "0 failed" \
+        "sync yml notice: a notice that changed nothing counts no failure"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "sync yml notice: the run exits 0"
+    else
+        fail "sync yml notice: the run exits 0 — got $exit_code"
+    fi
+
+    # ── the same question, asked of yq instead of gh ─────────────────────
+    #
+    # The section list is read by a PIPELINE — `base64 -d | yq` — and sync.sh
+    # captures both stages' stderr through one brace group. yq is the noisier
+    # of the two: the build this repo pins answers `-j` correctly and still
+    # prints a deprecation line (see setup_noisy_yq_dir). Folded in, that line
+    # becomes a SECTION NAME: the log says so, and `build-agents-md.sh` accepts
+    # it, emits a header naming it and an "unknown section" warning, and sync.sh
+    # is the one script of the four that COMMITS what it built.
+    #
+    # This leg also exercises read_repos_yml's separation, in all four
+    # scripts' shared copy — the noisy yq is on PATH for the whole run, so
+    # every repos.yml read passes through it too.
+    setup_noisy_yq_dir
+    out="$TEST_DIR/sync-syncyml-noisy-yq.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin-yq-noisy:$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_contains "$out" "Sections: python" \
+        "sync yml noisy yq: a deprecation line does not become a section name"
+    assert_not_contains "$out" "Sections: Flag" \
+        "sync yml noisy yq: the section list starts at the first real section"
+    assert_contains "$out" "0 failed" \
+        "sync yml noisy yq: a noisy but correct yq counts no failure"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "sync yml noisy yq: the run exits 0"
+    else
+        fail "sync yml noisy yq: the run exits 0 — got $exit_code"
     fi
 }
 
@@ -6083,12 +6483,16 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
     MOCK_CONTENTS_HTTP_FAIL="${BUMP_CONTENTS_FAIL_FOR_RUN:-}" \
+    MOCK_CONTENTS_STDERR_NOTICE="${BUMP_CONTENTS_NOTICE_FOR_RUN:-}" \
+    MOCK_CONTENTS_404_STDERR_ONLY="${BUMP_CONTENTS_404_STDERR_FOR_RUN:-}" \
+    MOCK_REPO_LIST_STDERR_NOTICE="${BUMP_REPO_LIST_NOTICE_FOR_RUN:-}" \
+    MOCK_PR_LIST_STDERR_NOTICE="${BUMP_PR_LIST_NOTICE_FOR_RUN:-}" \
     MOCK_GH_NO_MATCH_FLAG="${BUMP_NO_MATCH_FLAG_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     BUMP_REGISTRY="bumporg/agentskills" \
     BUMP_CHECKOUTS="${BUMP_CHECKOUTS_FOR_RUN:-$BUMP_CHECKOUTS_ARG}" \
     BUMP_GENERATOR="${BUMP_GENERATOR_FOR_RUN:-}" \
-    PATH="$TEST_DIR/bin:$PATH" \
+    PATH="${BUMP_PATH_PREFIX_FOR_RUN:+$BUMP_PATH_PREFIX_FOR_RUN:}$TEST_DIR/bin:$PATH" \
     "$REPO_ROOT/scripts/bump-consumer-locks.sh" "$@" > "$out" 2>&1 || BUMP_EXIT=$?
 }
 
@@ -6175,6 +6579,97 @@ test_bump_dry_run() {
     else
         fail "dry-run: no pull request opened — $(cat "$BUMP_PR_LOG")"
     fi
+
+    # ── the same run, under a python3 that writes to stderr ──────────────
+    #
+    # gh is not this script's only noisy producer: the lock-plan reader is a
+    # local `python3 -c`, and python writes to stderr while exiting 0 whenever
+    # the inherited environment asks it to (see setup_noisy_python_dir).
+    #
+    # WHAT THIS DOES AND DOES NOT PROVE, because the difference matters. It
+    # pins the ANCHORING — the `^registry `/`^ref `/`^source ` prefixes the
+    # three `sed -n` extractions match — and nothing more. It does NOT
+    # discriminate `lock_plan`'s split capture from the merged one: measured,
+    # reverting that capture to `2>&1` left every line below passing, because
+    # with the anchors in place one unanchored extra line changes no parsed
+    # value. The separation there is defence in depth, and this leg is a
+    # passenger with respect to it, which is said out loud rather than left for
+    # the next reader to discover. The capture where the same noise DOES change
+    # the answer is the shrink check, and it has its own test.
+    setup_noisy_python_dir
+    BUMP_PATH_PREFIX_FOR_RUN="$TEST_DIR/bin-py-noisy" \
+        run_bump "$TEST_DIR/bump-dry-noisy-py.txt" --dry-run
+    unset BUMP_PATH_PREFIX_FOR_RUN
+    local npy="$TEST_DIR/bump-dry-noisy-py.txt"
+
+    assert_contains "$npy" "[DRY RUN] Would re-pin skills.lock" \
+        "noisy python: the re-pin the quiet run would make is still made"
+    assert_not_contains "$npy" "skills.lock is unusable" \
+        "noisy python: a diagnostic on stderr is not read as a broken lock"
+    assert_not_contains "$npy" "DeprecationWarning" \
+        "noisy python: the diagnostic reaches no operator-facing line"
+}
+
+# ── Test 8a1b: the shrink check under a python3 that writes to stderr ─────
+#
+# The one capture in this script whose value is TESTED FOR EMPTINESS, which is
+# what makes a noisy success change the answer here and nowhere else in the
+# same family. `skills_shrink_reason` prints a reason when the re-pinned lock
+# would delete skills and prints NOTHING when it would not, so empty is the
+# permission to proceed. Merge its streams and any line the producer writes on
+# a run that exited 0 becomes a reason: the script refuses a healthy re-pin,
+# counts the repo FAILED, and prints that line as the cause. Measured in a
+# standalone `set -euo pipefail` probe of the exact shape — separated,
+# "re-pin proceeds"; merged, "REFUSED re-pin: sys:1: DeprecationWarning: ...".
+#
+# A REAL propose run, not a dry one, because the shrink check sits after the
+# dry-run gate and a dry run never reaches it — which is also why
+# test_bump_dry_run's noisy-python leg above must not be read as covering it.
+# Its own MOCK_BARE_DIR, on the model of test_bump_push_rejected, so a run that
+# does push leaves the shared fleet untouched.
+test_bump_shrink_check_noisy_python() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the shrink check under a noisy python3) ==="
+
+    local bare="$TEST_DIR/bare-noisypy/bumporg_repo-noisypy"
+    local work="$TEST_DIR/work/bumporg-repo-noisypy"
+    rm -rf "$TEST_DIR/bare-noisypy" "$work"
+    mkdir -p "$bare" "$work"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# repo-noisypy" > README.md
+    # A lock pinned at the OLD ref: genuinely stale, so a re-pin is due, and
+    # its skill set is unchanged by that re-pin, so the honest shrink answer is
+    # the empty one.
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+
+    setup_noisy_python_dir
+    BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-noisypy" \
+    BUMP_PATH_PREFIX_FOR_RUN="$TEST_DIR/bin-py-noisy" \
+        run_bump "$TEST_DIR/bump-noisypy.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_PATH_PREFIX_FOR_RUN
+    local out="$TEST_DIR/bump-noisypy.txt"
+
+    assert_not_contains "$out" "refusing to propose this re-pin" \
+        "noisy python shrink: a diagnostic on stderr is not read as a vanished bundle"
+    assert_contains "$out" "1 proposed" \
+        "noisy python shrink: the re-pin this consumer is due is actually proposed"
+    assert_contains "$out" "0 failed" \
+        "noisy python shrink: a noisy but correct producer counts no failure"
+    if [[ -n "$(git -C "$bare" rev-parse --verify -q refs/heads/skills-lock-bump/update 2>/dev/null || true)" ]]; then
+        pass "noisy python shrink: the bump branch was pushed"
+    else
+        fail "noisy python shrink: no bump branch was pushed — $(cat "$out")"
+    fi
+
+    rm -rf "$TEST_DIR/bare-noisypy" "$work"
 }
 
 # ── Test 8a2: a federated source with no checkout is skipped, not halved ──
@@ -6778,6 +7273,63 @@ test_bump_contents_unreadable() {
         pass "unreadable lock: no pull request opened"
     else
         fail "unreadable lock: no pull request opened — $(cat "$BUMP_PR_LOG")"
+    fi
+
+    # ── the THIRD way this read goes wrong: it succeeds, noisily ─────────
+    #
+    # Both halves above turn on the exit STATUS. This one is about a call that
+    # exits 0 with the right payload on stdout and a notice on stderr — gh's
+    # ordinary deprecation and auth-expiry lines — which a merged `2>&1`
+    # capture folds into the base64 this loop decodes some sixty lines later.
+    # base64 then refuses it, and a consumer that is perfectly healthy is
+    # counted FAILED by a message that changed nothing.
+    #
+    # Attributed the same way the 403 half is, against the same control run:
+    # the claim is that the failure count does NOT move, which is a claim the
+    # bare number could not make on a lane that already carries `repo-error`.
+    local nout="$TEST_DIR/bump-contents-notice.txt" notice_failed
+    BUMP_CONTENTS_NOTICE_FOR_RUN="bumporg_repo-stale" \
+        run_bump "$nout" --dry-run
+    unset BUMP_CONTENTS_NOTICE_FOR_RUN
+
+    assert_not_contains "$nout" "could not decode skills.lock" \
+        "noisy lock read: a notice on gh's stderr does not reach the payload"
+    assert_not_contains "$nout" "repo-stale: could not read skills.lock" \
+        "noisy lock read: the healthy repo is not reported as unreadable"
+    notice_failed=$(sed -n 's/.*, \([0-9][0-9]*\) failed ===.*/\1/p' "$nout" | tail -1)
+    if [[ -n "$ctl_failed" && -n "$notice_failed" && "$notice_failed" -eq "$ctl_failed" ]]; then
+        pass "noisy lock read: the failure count is unchanged from the same run without the notice"
+    else
+        fail "noisy lock read: failure count went from '${ctl_failed:-unparsed}' to '${notice_failed:-unparsed}', expected no change"
+    fi
+
+    # ── and the 404 that arrives on STDERR ONLY ──────────────────────────
+    #
+    # The 404 half above is served the way the mock has always served it: an
+    # error BODY on stdout carrying `"status":"404"`, and nothing on stderr. The
+    # script matches TWO surfaces for that status and says in a comment that
+    # "only one of them may reach us" — but until MOCK_CONTENTS_404_STDERR_ONLY
+    # existed only the stdout one was ever produced, so the stderr needle was
+    # dead text. GitHub's REST errors do not all carry a `status` field, while
+    # gh writes its own `gh: Not Found (HTTP 404)` line for every one of them,
+    # so the stderr-only shape is the realistic half, not the contrived one.
+    #
+    # The verdict must be identical to the stdout-only 404's: a benign skip,
+    # not a counted failure.
+    local sout="$TEST_DIR/bump-contents-404-stderr.txt" stderr404_failed
+    BUMP_CONTENTS_404_STDERR_FOR_RUN="bumporg_repo-no-lock" \
+        run_bump "$sout" --dry-run
+    unset BUMP_CONTENTS_404_STDERR_FOR_RUN
+
+    assert_contains "$sout" "no skills.lock — nothing to re-pin" \
+        "404 on stderr: a status gh reports only on stderr is still read as absent"
+    assert_not_contains "$sout" "repo-no-lock: could not read" \
+        "404 on stderr: the benign skip was not promoted to a failure"
+    stderr404_failed=$(sed -n 's/.*, \([0-9][0-9]*\) failed ===.*/\1/p' "$sout" | tail -1)
+    if [[ -n "$ctl_failed" && -n "$stderr404_failed" && "$stderr404_failed" -eq "$ctl_failed" ]]; then
+        pass "404 on stderr: the failure count is unchanged from the same run without it"
+    else
+        fail "404 on stderr: failure count went from '${ctl_failed:-unparsed}' to '${stderr404_failed:-unparsed}', expected no change"
     fi
 }
 
@@ -9528,6 +10080,61 @@ test_bump_sweep_dry_run() {
     else
         fail "sweep dry-run: the pull request is still open"
     fi
+
+    # ── a listing that SUCCEEDS and still writes to stderr ───────────────
+    #
+    # Every refusal above turns on what the listing SAID. This one is about
+    # what a listing that said the right thing also wrote to stderr on the way
+    # — gh's ordinary deprecation and auth-expiry lines, emitted while exiting
+    # 0. Merged into the capture they are mapfile'd into $numbers alongside the
+    # real ones and become PR NUMBERS THIS SWEEP THEN ACTS ON, so the mechanism
+    # runs in the opposite direction to bump-hook-pin.sh's: there a phantom line
+    # suppresses the night's work, here it manufactures work that does not
+    # exist. Against a real repo it is a merge attempt on a number nobody
+    # opened.
+    #
+    # The signature is `$repo_name#$number` with the warning in the number
+    # position, which nothing a healthy run prints can produce; the surviving
+    # real merge below is the control that keeps the absence assertion from
+    # passing over a sweep that simply did nothing.
+    BUMP_PR_LIST_NOTICE_FOR_RUN="bumporg_repo-zz-ready" \
+        run_sweep "$TEST_DIR/sweep-dry-notice.txt" --dry-run
+    unset BUMP_PR_LIST_NOTICE_FOR_RUN
+    local nlog="$TEST_DIR/sweep-dry-notice.txt"
+
+    assert_not_contains "$nlog" "#gh: warning" \
+        "sweep notice: a notice on gh's stderr does not become a PR number"
+    assert_contains "$nlog" "[DRY RUN] Would merge bumporg/repo-zz-ready#111" \
+        "sweep notice (control): the real pull request on that repo is still swept"
+
+    # ── the merge GATE's own answer, under a noisy python3 ───────────────
+    #
+    # The listing above is one of two captures in this sweep whose value is
+    # data; the other is the verdict `pr_merge_verdict` prints, which is split
+    # into a verdict word and a detail on the very next line. Its producer is a
+    # local `python3 -c`, and python writes to stderr while exiting 0 whenever
+    # the inherited environment asks it to (see setup_noisy_python_dir).
+    #
+    # It fails SAFE — noise is not the word "READY", so no merge happens — and
+    # that is exactly what makes it worth a test rather than not: the sweep
+    # then stalls on every repo it should have merged, logging "not merged —"
+    # followed by a diagnostic that names no cause a reader can act on, and
+    # nothing about the run looks broken. The assertion is therefore that the
+    # merge the quiet run would make is still identified.
+    setup_noisy_python_dir
+    BUMP_PATH_PREFIX_FOR_RUN="$TEST_DIR/bin-py-noisy" \
+        run_sweep "$TEST_DIR/sweep-dry-noisy-py.txt" --dry-run
+    unset BUMP_PATH_PREFIX_FOR_RUN
+    local pylog="$TEST_DIR/sweep-dry-noisy-py.txt"
+
+    assert_contains "$pylog" "[DRY RUN] Would merge bumporg/repo-zz-ready#111" \
+        "sweep noisy python: the merge gate's verdict is the verdict, not a diagnostic"
+    # The stall's exact signature, measured against the merged spelling:
+    # `bumporg/repo-zz-ready#111: not merged — DeprecationWarning: an
+    # inherited-environment diagnostic`. Anchored on the two halves together so
+    # the needle cannot match a line where the diagnostic merely appears.
+    assert_not_contains "$pylog" "not merged — DeprecationWarning" \
+        "sweep noisy python: no repo is stalled by a reason naming no cause"
 }
 
 # ── Test 8i2: the sweep itself ────────────────────────────────────────────
@@ -10847,6 +11454,7 @@ run_hook_pin() {   # <output file> [script args...]
     MOCK_PR_BODY_DIR="$HOOK_PIN_BODY_DIR" \
     MOCK_PR_DIR="${HOOK_PIN_PR_DIR_FOR_RUN:-}" \
     MOCK_PR_LIST_FAILS="${HOOK_PIN_PR_LIST_FAILS_FOR_RUN:-}" \
+    MOCK_PR_LIST_STDERR_NOTICE="${HOOK_PIN_PR_LIST_NOTICE_FOR_RUN:-}" \
     REPOS_YML="$HOOK_PIN_DIR/work/repos.yml" \
     BUMP_CHECKOUTS="pinorg/agentskills=$HOOK_PIN_DIR/registry" \
     HOOK_PIN_REPO="pinorg/guidance" \
@@ -10961,6 +11569,40 @@ test_hook_pin_dry_run() {
         fail "hook pin: a mistyped --dry-run exited $HOOK_PIN_EXIT, not 2 — $(cat "$out")"
     fi
     assert_no_hook_pin_branch "hook pin: the mistyped flag pushed nothing"
+
+    # ── the listing that SUCCEEDS and still writes to stderr ─────────────
+    #
+    # This script's open-PR query is the sharpest instance of the whole class,
+    # because it decides on the SHAPE of the answer rather than on the status:
+    # `--jq '.[0].number // empty'` prints nothing and exits 0 when no pull
+    # request is open, so EMPTY is the entire signal for "there is work to do".
+    # gh writes to stderr while exiting 0 in ordinary conditions, and a merged
+    # capture turns that emptiness into a PR number — after which the script
+    # reports the bump as already proposed, prints its own success banner and
+    # exits 0 having written nothing. Nothing goes red, scheduled-run-health
+    # sees a success, and the pin never advances: the exact failure this script
+    # exists to close, wearing the log of a healthy night.
+    #
+    # `--dry-run` because the decision under test happens before any write, and
+    # this leg should not be the one that publishes a branch the next test
+    # measures.
+    out="$TEST_DIR/hook-pin-prlist-notice.txt"
+    HOOK_PIN_PR_LIST_NOTICE_FOR_RUN="pinorg_guidance" \
+        run_hook_pin "$out" --dry-run
+    unset HOOK_PIN_PR_LIST_NOTICE_FOR_RUN
+
+    assert_contains "$out" "DRY RUN — would re-pin" \
+        "hook pin notice: a notice on gh's stderr does not become a PR number"
+    assert_not_contains "$out" "already proposes a hook pin bump" \
+        "hook pin notice: no phantom pull request is reported"
+    assert_not_contains "$out" "already proposed" \
+        "hook pin notice: the run does not exit through the no-op banner"
+    if [[ $HOOK_PIN_EXIT -eq 0 ]]; then
+        pass "hook pin notice: the run exits 0"
+    else
+        fail "hook pin notice: the run exits 0 — got $HOOK_PIN_EXIT: $(cat "$out")"
+    fi
+    assert_no_hook_pin_branch "hook pin notice: --dry-run still pushes nothing"
 }
 
 # ── Test 9c: the real bump — both files, and only those two lines ────────
@@ -11427,6 +12069,66 @@ STUB
     done
 }
 
+# ── A yq that WORKS and still writes to stderr ────────────────────────────
+#
+# The third flavour, and the one the two above cannot stand in for: both of
+# them exist to be REFUSED, and every assertion about them is about a run that
+# stopped. This one answers correctly, exits 0, and writes one line to stderr
+# while doing it — which is the condition under which folding the two streams
+# together corrupts a value nobody ever looks at twice.
+#
+# It is not a hypothetical. The mikefarah yq this repo pins does exactly this:
+# measured on this box with v4.44.3,
+# `printf 'sections:\n  - python\n' | yq -j -r '.sections // [] | .[]'`
+# writes `python` to stdout, `Flag --tojson has been deprecated, please use
+# -o=json instead` to stderr, and exits 0. That line is what the stub prints,
+# verbatim — on EVERY call rather than only on the ones that pass `-j`, because
+# what is being tested is each capture site's handling of a noisy success and
+# not yq's own flag parsing.
+#
+# It delegates to the real yq rather than faking an answer, and the real yq is
+# resolved ONCE here and baked in as an absolute path: resolved from inside the
+# stub it would find itself, because this directory goes on the front of PATH.
+setup_noisy_yq_dir() {
+    local real
+    real=$(command -v yq) || return 1
+    mkdir -p "$TEST_DIR/bin-yq-noisy"
+    cat > "$TEST_DIR/bin-yq-noisy/yq" <<STUB
+#!/bin/sh
+# A correct yq that is not a silent one. See setup_noisy_yq_dir.
+echo "Flag --tojson has been deprecated, please use -o=json instead" >&2
+exec "$real" "\$@"
+STUB
+    chmod +x "$TEST_DIR/bin-yq-noisy/yq"
+}
+
+# ── A python3 that WORKS and still writes to stderr ───────────────────────
+#
+# The same third flavour as setup_noisy_yq_dir, for the other producer the
+# bumper captures from. Three of its captures are fed by a LOCAL `python3 -c`
+# rather than by gh — the lock-plan reader, the merge-gate verdict and the
+# shrink check — and python writes to stderr while exiting 0 whenever the
+# INHERITED environment asks it to. Measured on this box, `PYTHONVERBOSE=1
+# python3 -c pass` exits 0 having written several hundred lines to stderr;
+# `PYTHONWARNINGS=always` is the same shape with fewer lines.
+#
+# A wrapper is used rather than setting PYTHONVERBOSE for the run because the
+# real variable would also flood the stub generator's own captures with
+# hundreds of lines and turn a targeted test into a test of everything at once.
+# One line, on every call, is the same hazard at a size the log can show.
+setup_noisy_python_dir() {
+    local real
+    real=$(command -v python3) || return 1
+    mkdir -p "$TEST_DIR/bin-py-noisy"
+    cat > "$TEST_DIR/bin-py-noisy/python3" <<STUB
+#!/bin/sh
+# A correct python3 that is not a silent one. See setup_noisy_python_dir.
+echo "sys:1: DeprecationWarning: an inherited-environment diagnostic" >&2
+exec "$real" "\$@"
+STUB
+    chmod +x "$TEST_DIR/bin-py-noisy/python3"
+}
+
 test_yq_preflight() {
     echo ""
     echo "=== Test: every repos.yml reader refuses a yq it cannot use ==="
@@ -11683,6 +12385,10 @@ test_sync_per_owner_token
 test_drift_report_multi_owner
 test_drift_report_owner_list_failure
 test_drift_report_empty_owner
+# Sited after the three empty-owner tests it generalises, and it runs all three
+# scripts itself rather than riding any one of them.
+test_repo_list_stderr_notice
+test_harness_published_bump_branches
 test_drift_report_contents_unreadable
 test_drift_report_sync_yml_unparseable
 test_drift_report_marker_not_through_a_pipe
@@ -11704,6 +12410,7 @@ test_bump_consumer_locks
 test_bump_idempotent
 test_bump_shallow_registry
 test_bump_push_rejected
+test_bump_shrink_check_noisy_python
 test_bump_bundle_vanished
 test_bump_format_gate_empty_skills
 test_bump_digest_format_gate

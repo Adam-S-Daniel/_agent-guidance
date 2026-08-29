@@ -178,10 +178,27 @@ fetch_file_content() {
 
     err=$(mktemp) || return 2
     json=$(gh api "repos/$repo/contents/$path" 2>"$err") || rc=$?
-    # First line only, and from the FILE rather than through a pipe: gh's own
+    # From the FILE rather than through a pipe, and ONE line of it: gh's own
     # diagnostic is what is wanted here, not whatever body followed it, and the
     # house rule forbids echoing an API response into a public log.
-    err_text=$(head -1 "$err" 2>/dev/null || true)
+    #
+    # The line carrying the STATUS, though, not merely the first one — and here
+    # that is more than tidiness, because $err_text is read twice: the `(HTTP
+    # nnn)` regex below extracts the status from it, and the operator-facing
+    # message quotes it. gh's deprecation and auth-expiry notices are themselves
+    # `gh: `-prefixed and arrive BEFORE the error, so `head -1` handed both uses
+    # the notice: the status match then fell through to the stdout body's
+    # `.status`, and where that body carries none, a genuine 404 stopped looking
+    # like one and the row went fetch-failed instead of absent. Measured with a
+    # gh stubbed to print "gh: this API endpoint is deprecated" then "gh: Not
+    # Found (HTTP 404)" and exit 1. Three-step fallback because none of the
+    # three is guaranteed; the last is the old behaviour, kept for a diagnostic
+    # gh writes in neither shape, and the trailing `|| true` keeps an empty
+    # stderr from tripping `set -e`.
+    err_text=$(grep -m1 '^gh: .*(HTTP ' "$err" \
+        || grep -m1 '^gh: ' "$err" \
+        || head -1 "$err" 2>/dev/null \
+        || true)
     rm -f "$err"
 
     if [[ "$rc" -ne 0 ]]; then
@@ -261,9 +278,30 @@ fetch_file_content() {
 # bump-hook-pin.sh for the reason given above the yq preflight, and it must
 # move with them.
 read_repos_yml() {
-    local expr="$1" out
-    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
-        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+    local expr="$1" out err err_file rc=0
+    # Streams captured SEPARATELY. `2>&1` answered the failure path's question
+    # by corrupting the success path's answer: yq writes to stderr while
+    # exiting 0 (deprecation and expression warnings), and everything this
+    # returns is PARSED — the exclusion list, default_sections, the
+    # skills_bootstrap allowlist and its registry pin. Not a hypothetical
+    # stderr: the mikefarah yq this repo pins answers `-j` with the right value
+    # on stdout, "Flag --tojson has been deprecated" on stderr, and exit 0
+    # (measured, v4.44.3). Measured with a yq wrapper that prints one "[WARN]"
+    # line to stderr and then succeeds: sync.sh logged "Sections: yq: [WARN]
+    # this expression syntax is deprecated rust" for a repo whose sections are
+    # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
+    # delivered this run."
+    if ! err_file=$(mktemp); then
+        echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
+        exit 2
+    fi
+    out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
+    # Read and removed UNCONDITIONALLY, before the branch, so the success path
+    # cannot leak the file either.
+    err=$(head -1 "$err_file")
+    rm -f "$err_file"
+    if [[ $rc -ne 0 ]]; then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
         exit 2
     fi
     printf '%s\n' "$out"
@@ -537,15 +575,42 @@ echo "Scanning repos for: $ORG (excluding $SELF_REPO)"
 # anywhere naming the owner that could not be read. Counted per owner instead,
 # and written INTO the report as its own section so a reader of drift-report.md
 # can tell an owner with no drift from an owner nobody looked at.
-if ! repo_list_raw=$(
-    gh repo list "$ORG" \
-        --no-archived \
-        --source \
-        --json nameWithOwner \
-        --limit 1000 \
-        --jq '.[].nameWithOwner' 2>&1
-); then
-    echo "::error::$ORG: could not list repos — $(head -1 <<< "$repo_list_raw")" >&2
+#
+# Streams captured SEPARATELY, for the reason read_repos_yml gives above: what
+# this returns is the FLEET, split into $REPOS and looped over, so a line gh
+# writes to stderr while exiting 0 — a deprecation notice, an auth-expiry
+# warning — does not merely decorate the log, it becomes a repository NAME and
+# this script PUBLISHES it as a table row. `sed '/^$/d'` is no defence: the
+# injected line is not blank. Measured against this script with a gh stubbed to
+# print one "gh: warning: your token will expire soon" line to stderr and one
+# real repo to stdout, exit 0 — merged, drift-report.md gained a
+# **fetch-failed** row titled `gh: warning: your token will expire soon`,
+# linked to github.com/gh: warning:...; separated, only the real repo is
+# reported. mktemp is checked because this loop counts per-owner failures
+# rather than aborting: under `set -e` an unchecked assignment here would kill
+# the run with no report to publish at all, which is the fault the paragraph
+# above exists to prevent.
+if ! repo_list_err_file=$(mktemp); then
+    echo "::error::$ORG: could not create a temp file to capture gh's diagnostics" >&2
+    repo_list_rc=1
+    repo_list_err="mktemp failed"
+else
+    repo_list_rc=0
+    repo_list_raw=$(
+        gh repo list "$ORG" \
+            --no-archived \
+            --source \
+            --json nameWithOwner \
+            --limit 1000 \
+            --jq '.[].nameWithOwner' 2>"$repo_list_err_file"
+    ) || repo_list_rc=$?
+    # Read and removed unconditionally, before the branch, so neither the
+    # `continue` below nor the success path can leak the file.
+    repo_list_err=$(head -1 "$repo_list_err_file")
+    rm -f "$repo_list_err_file"
+fi
+if [[ $repo_list_rc -ne 0 ]]; then
+    echo "::error::$ORG: could not list repos — ${repo_list_err:-no diagnostic output from gh}" >&2
     {
         echo ""
         echo "## $ORG"
@@ -659,16 +724,44 @@ for repo_name in "${REPOS[@]}"; do
         # published **drift-detected**: word for word the wrong answer the fetch
         # guard above it exists to prevent, reached through the other door.
         #
-        # Command substitution, so the status is the yq run's own, and stderr is
-        # folded into it so the log can say what yq objected to rather than just
-        # that it objected. A parse failure joins the same ledger as a failed
-        # read, because to this row they are the same fact: no section list, so
-        # nothing honest to compare against. `sections_rc` carries it forward to
-        # the comparison below for the same reason.
+        # Command substitution, so the status is the yq run's own. A parse
+        # failure joins the same ledger as a failed read, because to this row
+        # they are the same fact: no section list, so nothing honest to compare
+        # against. `sections_rc` carries it forward to the comparison below for
+        # the same reason.
+        #
+        # Streams SEPARATED rather than folded together so the log could quote
+        # what yq objected to. Folding them answered the failure path's question
+        # by corrupting the success path's answer: what this returns is DATA —
+        # split into $sections, which `expected` is built from — and yq writes
+        # to stderr while exiting 0 (the mikefarah build this repo pins answers
+        # `-j` with the right value on stdout, "Flag --tojson has been
+        # deprecated" on stderr, and exit 0; measured, v4.44.3). A notice that
+        # changed nothing therefore produced this report's worst output:
+        # **drift-detected** against an AGENTS.md that is in fact correct — the
+        # same wrong answer the fetch guard above exists to prevent, reached
+        # through a third door. Measured against this script with a yq wrapper
+        # printing one deprecation line to stderr and then succeeding, over a
+        # repo whose .agents-sync.yml says [python] and whose AGENTS.md was
+        # built from [python] — merged: "| **drift-detected** | ... | Flag --r
+        # has been deprecated, please use --unwrapScalar python |"; separated:
+        # "| **up-to-date** | ... | python |". mktemp failure takes the parse
+        # failure's own path, because the row cannot establish a section list
+        # either way and must not print one it did not verify.
         parse_rc=0
-        remote_sections_raw=$(yq -r '.sections // [] | .[]' <<<"$remote_yaml" 2>&1) || parse_rc=$?
+        parse_err=""
+        if ! parse_err_file=$(mktemp); then
+            parse_rc=2
+            parse_err="could not create a temp file for yq's diagnostics"
+        else
+            remote_sections_raw=$(yq -r '.sections // [] | .[]' <<<"$remote_yaml" 2>"$parse_err_file") || parse_rc=$?
+            # Read and removed unconditionally, before the branch, so the
+            # success path cannot leak the file either.
+            parse_err=$(head -1 "$parse_err_file")
+            rm -f "$parse_err_file"
+        fi
         if [[ "$parse_rc" -ne 0 ]]; then
-            echo "::error::$repo_name/.agents-sync.yml: yq could not parse it — $(head -1 <<< "$remote_sections_raw")" >&2
+            echo "::error::$repo_name/.agents-sync.yml: yq could not parse it — ${parse_err:-no diagnostic output}" >&2
             fetch_failed_paths+=(".agents-sync.yml")
             sections_rc=$parse_rc
             sections_display="?"

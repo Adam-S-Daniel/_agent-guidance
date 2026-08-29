@@ -190,9 +190,30 @@ fi
 # silent empty list, and still one the four disagreed about until this copy
 # landed.
 read_repos_yml() {
-    local expr="$1" out
-    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
-        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+    local expr="$1" out err err_file rc=0
+    # Streams captured SEPARATELY. `2>&1` answered the failure path's question
+    # by corrupting the success path's answer: yq writes to stderr while
+    # exiting 0 (deprecation and expression warnings), and everything this
+    # returns is PARSED — the exclusion list, default_sections, the
+    # skills_bootstrap allowlist and its registry pin. Not a hypothetical
+    # stderr: the mikefarah yq this repo pins answers `-j` with the right value
+    # on stdout, "Flag --tojson has been deprecated" on stderr, and exit 0
+    # (measured, v4.44.3). Measured with a yq wrapper that prints one "[WARN]"
+    # line to stderr and then succeeds: sync.sh logged "Sections: yq: [WARN]
+    # this expression syntax is deprecated rust" for a repo whose sections are
+    # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
+    # delivered this run."
+    if ! err_file=$(mktemp); then
+        echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
+        exit 2
+    fi
+    out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
+    # Read and removed UNCONDITIONALLY, before the branch, so the success path
+    # cannot leak the file either.
+    err=$(head -1 "$err_file")
+    rm -f "$err_file"
+    if [[ $rc -ne 0 ]]; then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
         exit 2
     fi
     printf '%s\n' "$out"
@@ -365,9 +386,43 @@ log "target repo: $TARGET_REPO"
 # request on GitHub and discards whatever review was pending on it. An
 # unanswerable question stops the run instead, exactly as
 # bump-consumer-locks.sh's sweep already handles it.
-if ! pr_list_out=$(gh pr list --repo "$TARGET_REPO" --head "$BRANCH_NAME" --state open \
-    --json number --jq '.[0].number // empty' 2>&1); then
-    fail "could not list open pull requests on $TARGET_REPO — $(head -1 <<< "$pr_list_out")"
+#
+# Streams captured SEPARATELY, and on this call that is not tidiness — a merged
+# capture turns the whole script into a silent no-op. What comes back is DATA,
+# not a diagnostic: `.[0].number // empty` prints NOTHING and exits 0 when no
+# pull request is open, and the EMPTINESS of that answer is the entire
+# decision below. gh writes to stderr while exiting 0 in ordinary conditions —
+# deprecation notices, auth-expiry warnings — so `2>&1` makes a night with no
+# open PR indistinguishable from a night with one. Measured against this
+# script with a gh stubbed to exit 0 having printed no PR: with stderr silent
+# it logs "DRY RUN — would re-pin example/registry 0000000 → 78848fd" and
+# proposes the bump; with one "gh: warning: authentication token is nearing
+# expiry" line on stderr and the same exit 0 it logs "PR #gh: warning:
+# authentication token is nearing expiry already proposes a hook pin bump on
+# hook-pin-bump/update — leaving it alone", prints "=== Hook pin bump complete:
+# already proposed ===" and exits 0 having written nothing. Nothing anywhere
+# goes red — scheduled-run-health sees a success — and the pin never advances,
+# which is the precise failure this whole script exists to close.
+#
+# mktemp is checked because under `set -e` an unchecked assignment failure ends
+# the run without saying why, and every other refusal on this path names its
+# reason first.
+if ! pr_err_file=$(mktemp); then
+    fail "could not create a temp file to capture gh's diagnostics"
+    exit 1
+fi
+pr_list_rc=0
+pr_list_out=$(gh pr list --repo "$TARGET_REPO" --head "$BRANCH_NAME" --state open \
+    --json number --jq '.[0].number // empty' 2>"$pr_err_file") || pr_list_rc=$?
+# Read then removed UNCONDITIONALLY, before the branch, so the success path
+# cannot leak the file either. The failure path deliberately quotes only this,
+# never $pr_list_out: that variable holds the API's raw error body on an HTTP
+# error, and the house rule forbids echoing a response body into a public log
+# (AGENTS.md, "Sanitize error output").
+pr_list_err=$(head -1 "$pr_err_file")
+rm -f "$pr_err_file"
+if [[ $pr_list_rc -ne 0 ]]; then
+    fail "could not list open pull requests on $TARGET_REPO — ${pr_list_err:-no diagnostic output from gh}"
     exit 1
 fi
 existing_pr="$pr_list_out"
