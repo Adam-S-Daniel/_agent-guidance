@@ -105,9 +105,9 @@ skills_bootstrap:
     # like any other repo, and nothing here is a source of truth this sync
     # could clobber. A wrong reason left standing is worse than a missing one —
     # it survives review by looking already-decided.
-    # lock: pending agentskills-private#8 — inert until that merges.
+    # lock: committed — PR #8 merged 2026-08-19.
     - agentskills-private
-    # lock: pending claude-memory-map#19 — inert until that merges.
+    # lock: committed — PR #19 merged 2026-08-19.
     - claude-memory-map
     # cms-platform and GHA-bench both gitignore `.claude/` — cms-platform with
     # an explanatory comment, GHA-bench as a bare `/.claude/` entry (the
@@ -121,7 +121,7 @@ skills_bootstrap:
     # companion merges.
     # lock + ignore: pending cms-platform#275 — inert until that merges.
     - cms-platform
-    # lock: pending fastmail-actions#8 — inert until that merges.
+    # lock: committed — PR #8 merged 2026-08-19.
     - fastmail-actions
     # lock + ignore: pending GHA-bench#49 — inert until that merges.
     - GHA-bench
@@ -130,7 +130,7 @@ skills_bootstrap:
     # delivered the hook on its next run (2026-08-18). The stale note said the
     # drift report reads `no-lock`; it reads `ok`.
     - jodidaniel.com
-    # lock: pending repo-settings#17 — inert until that merges.
+    # lock: committed — PR #17 merged 2026-08-19.
     - repo-settings
     # The `scratch-` prefix is a misnomer this list should not repeat: it is a
     # live portfolio site whose `main` deploys to sprites.dev. NOT "on every
@@ -138,9 +138,9 @@ skills_bootstrap:
     # sync commit deploys nothing. ADR 0001 shelved it as scratch on the
     # strength of the name alone; see `cron_coverage.out_of_scope` below, where
     # it stays out for a different and still-good reason.
-    # lock: pending scratch-claude-002#15 — inert until that merges.
+    # lock: committed — PR #15 merged 2026-08-19.
     - scratch-claude-002
-    # lock: pending wsl-automation#9 — inert until that merges.
+    # lock: committed — PR #9 merged 2026-08-19.
     - wsl-automation
     #
     # DELIBERATELY NOT LISTED — each for a reason, none by default:
