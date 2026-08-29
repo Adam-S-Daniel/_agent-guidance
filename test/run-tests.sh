@@ -145,6 +145,28 @@ assert_scoped_line() {
         fail "$label — no line of $file carries both '$anchor' and '$needle'"
     fi
 }
+# The exact negation, and it needs to be a helper for the same reason
+# assert_row_lacks_cell does: the needle these legs forbid is a line the run
+# legitimately PRINTS somewhere — a gh notice reaches the log on its own
+# whenever the script under test is captured with `2>&1` — so an unscoped
+# `assert_not_contains` could only ever fail. What is being asserted is not
+# "the notice is absent" but "the notice is not the line the operator was
+# handed", which is a claim about ONE line and has to be checked on that line.
+#
+# An absent anchor FAILS, exactly as above: "no line said that" is this
+# assertion being unable to establish its claim, not the claim holding. That is
+# the vacuity this whole family of helpers keeps being fixed for.
+assert_scoped_line_lacks() {
+    local file="$1" anchor="$2" needle="$3" label="$4" hits
+    hits=$(grep -F -- "$anchor" "$file" 2>/dev/null) || hits=""
+    if [[ -z "$hits" ]]; then
+        fail "$label — no line of $file carries '$anchor', so this asserts nothing"
+    elif grep -qF -- "$needle" <<< "$hits"; then
+        fail "$label — a line of $file carrying '$anchor' also carries '$needle'"
+    else
+        pass "$label"
+    fi
+}
 # repo_section <file> <header line> — the block a fleet walker prints for ONE
 # repo: everything between its `=== <owner>/<repo> ===` header and the next
 # `=== ` line (the following repo, or the run summary).
@@ -2472,6 +2494,36 @@ case "$1" in
             # mock that produced only one of them would let half that guard rot.
             # MOCK_CONTENTS_HTTP_FAIL names repos (owner_repo) where every
             # contents call answers this way.
+            # A notice that arrives BEFORE the error, on the same stream.
+            #
+            # This is the shape every reader of this endpoint claims to handle
+            # and none of them could be asked about: the suite's two stderr
+            # paths are mutually exclusive by construction —
+            # MOCK_CONTENTS_STDERR_NOTICE writes only where the fetch SUCCEEDS
+            # and exits 0, MOCK_CONTENTS_HTTP_FAIL and the 404 knob only where
+            # it fails — so no mock anywhere emitted a gh stderr with more than
+            # ONE line, and "which line does the operator get shown" had exactly
+            # one possible answer whatever the selection rule was.
+            #
+            # The notice is deliberately `gh: `-prefixed and status-free, which
+            # is what makes it discriminating rather than merely present: it
+            # defeats a `head -1` AND a plain `grep -m1 '^gh: '`, so only a rule
+            # that prefers the line CARRYING THE STATUS reaches the right one.
+            # Real gh notices look like this (the auth-expiry and deprecation
+            # warnings it writes alongside a perfectly ordinary response), and
+            # sync.sh's own comment records the measurement that motivated the
+            # rule: two lines in this order reported "could not read
+            # .agents-sync.yml — gh: this API endpoint is deprecated" and sent
+            # the operator after the wrong fault.
+            #
+            # It carries no response BODY and never will: the house rule
+            # (AGENTS.md, "Sanitize error output") is that a diagnostic quotes a
+            # status and a machine error type, so a fixture that tempted a
+            # reader to quote a body would be testing for the wrong behaviour.
+            if [[ " ${MOCK_CONTENTS_STDERR_PRENOTICE:-} " == *" $repo_slug "* ]]; then
+                echo "gh: your authentication token expires in 3 days" >&2
+            fi
+
             if [[ " ${MOCK_CONTENTS_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
                 echo "gh: Resource not accessible by integration (HTTP 403)" >&2
                 echo '{"message":"Resource not accessible by integration","status":"403"}'
@@ -4062,9 +4114,13 @@ test_drift_report_contents_unreadable() {
     local out="$TEST_DIR/drift-contents-403.txt"
     local rpt="$TEST_DIR/drift-contents-403.md"
 
+    # See the sync leg's note on MOCK_CONTENTS_STDERR_PRENOTICE: it is what
+    # makes gh's stderr more than one line long, and so what gives the scoped
+    # assertion below something to be wrong about.
     GITHUB_REPOSITORY_OWNER=sfailorg \
     MOCK_BARE_DIR="$TEST_DIR/bare" \
     MOCK_CONTENTS_HTTP_FAIL="sfailorg_repo-sync-yml" \
+    MOCK_CONTENTS_STDERR_PRENOTICE="sfailorg_repo-sync-yml" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     DRIFT_REPORT_OUTPUT="$rpt" \
     PATH="$TEST_DIR/bin:$PATH" \
@@ -4074,6 +4130,8 @@ test_drift_report_contents_unreadable() {
         "drift 403: the run refuses to call an unreadable file an absent one"
     assert_scoped_line "$out" "the contents read failed" "HTTP 403" \
         "drift 403: the ::error:: quotes gh's own status line"
+    assert_scoped_line_lacks "$out" "the contents read failed" "token expires" \
+        "drift 403: the ::error:: names the status, not the notice ahead of it"
     assert_row_contains "$rpt" "repo-sync-yml" "**fetch-failed**" \
         "drift 403: the row's Status is fetch-failed"
     # The confident verdicts a 0-with-empty-stdout return used to publish, for
@@ -4942,6 +5000,27 @@ test_repo_list_stderr_notice() {
     assert_not_contains "$out" "=== gh: warning" \
         "repo list notice (bumper): no per-repo header for the warning"
 
+    # A DELIBERATE BROAD SAFETY NET, and a passenger with respect to the defect
+    # this test is named for — said out loud rather than left for the next
+    # reader to discover, the way the noisy-python leg's is.
+    #
+    # It cannot discriminate here, and the reason is structural rather than
+    # accidental: the scenario is an owner that holds NOTHING, so no per-repo
+    # loop body runs whatever the listing said, and the phantom the merged
+    # capture invents is the string `gh: warning ...`, which names no bare repo
+    # the mock can clone — so every write path against it fails before it
+    # writes. Measured 2026-08-29: with sync.sh's and drift-report.sh's repo-list
+    # captures reverted to `2>&1`, seven assertions above went red (the sync run
+    # reported `Found 1 repo(s)` and opened a `=== gh: warning` section, and the
+    # drift report published a row for it) while this fingerprint stayed green.
+    #
+    # Moving the legs to an owner that DOES hold repos would not repair it — it
+    # would break it the other way. sync.sh writes to healthy repos by design,
+    # so the fingerprint would then differ on every run, correct or not, and the
+    # assertion would have to be deleted rather than strengthened. What it is
+    # kept for is the case it CAN see: these three runs each reach real git
+    # machinery, and if a later edit gives this test a non-empty owner, or lets
+    # a failed listing fall through to a write, this is already standing there.
     after=$(bare_fleet_fingerprint)
     if [[ "$before" == "$after" ]]; then
         pass "repo list notice: none of the three wrote to the fleet"
@@ -5261,10 +5340,16 @@ test_sync_agents_sync_yml_unreadable() {
 
     # ── the read that FAILS, for a reason that is not a 404 ──────────────
     before=$(git -C "$bare" show-ref | sort | sha256sum)
+    # MOCK_CONTENTS_STDERR_PRENOTICE puts an ordinary gh notice on stderr AHEAD
+    # of the status line, which is the only way this leg can say anything about
+    # WHICH line the operator is handed. Without it gh's stderr is one line
+    # long, every selection rule picks it, and the `HTTP 403` assertion below
+    # holds against a script that simply takes the first thing it finds.
     out="$TEST_DIR/sync-syncyml-403.txt"; exit_code=0
     GITHUB_REPOSITORY_OWNER=sfailorg \
     MOCK_BARE_DIR="$TEST_DIR/bare" \
     MOCK_CONTENTS_HTTP_FAIL="sfailorg_repo-sync-yml" \
+    MOCK_CONTENTS_STDERR_PRENOTICE="sfailorg_repo-sync-yml" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     PATH="$TEST_DIR/bin:$PATH" \
     "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
@@ -5273,6 +5358,13 @@ test_sync_agents_sync_yml_unreadable() {
         "sync yml 403: the repo and the file are both named"
     assert_scoped_line "$out" "could not read .agents-sync.yml" "HTTP 403" \
         "sync yml 403: the failure quotes gh's own status line"
+    # The behaviour, not the implementation: the operator's line names the
+    # status, and the notice that arrived first is not what it names. Spelled
+    # against the message rather than against whatever selects it, because that
+    # selection is being factored into a shared helper and applied at ten call
+    # sites — an assertion shaped like the mechanism would break on the move.
+    assert_scoped_line_lacks "$out" "could not read .agents-sync.yml" "token expires" \
+        "sync yml 403: the operator gets the status line, not the notice ahead of it"
     assert_contains "$out" "1 failed" \
         "sync yml 403: counted as a repo failure"
     # The wrong answer, named: an unreadable file must not fall through to the
@@ -5393,9 +5485,16 @@ test_sync_agents_sync_yml_unreadable() {
     # it, emits a header naming it and an "unknown section" warning, and sync.sh
     # is the one script of the four that COMMITS what it built.
     #
-    # This leg also exercises read_repos_yml's separation, in all four
-    # scripts' shared copy — the noisy yq is on PATH for the whole run, so
-    # every repos.yml read passes through it too.
+    # The noisy yq is on PATH for the whole run, so sync.sh's SEVEN repos.yml
+    # reads pass through it too, before the per-repo loop starts. That is a
+    # second defect in the same shape and it gets its own assertions below,
+    # because exercising a path is not asserting anything about it: with this
+    # leg's assertions as they stood, reverting read_repos_yml here to the old
+    # `2>&1` left the whole suite green while this very run logged "WARN: could
+    # not fetch Flag --tojson has been deprecated, please use -o=json instead /
+    # bootorg/agentskills/Flag ... — skills-bootstrap not delivered this run."
+    # (measured 2026-08-29). sync.sh's copy is the ONLY one a sync run loads;
+    # test_repos_yml_scalars_under_noisy_yq covers the other three.
     setup_noisy_yq_dir
     out="$TEST_DIR/sync-syncyml-noisy-yq.txt"; exit_code=0
     GITHUB_REPOSITORY_OWNER=sfailorg \
@@ -5410,6 +5509,16 @@ test_sync_agents_sync_yml_unreadable() {
         "sync yml noisy yq: the section list starts at the first real section"
     assert_contains "$out" "0 failed" \
         "sync yml noisy yq: a noisy but correct yq counts no failure"
+    # read_repos_yml's own separation, in sync.sh's copy. The registry and the
+    # ref are read as SCALARS, so a folded-in warning does not decorate them —
+    # it becomes their first line, and the fetch is then made against a
+    # repository whose name starts with a deprecation notice.
+    assert_contains "$out" "pinned hook fetched from bootorg/agentskills@3333333" \
+        "sync yml noisy yq: the skills_bootstrap registry and ref are the bare pins"
+    assert_not_contains "$out" "skills-bootstrap not delivered" \
+        "sync yml noisy yq: a noisy repos.yml read does not withhold the hook"
+    assert_not_contains "$out" "Flag --tojson" \
+        "sync yml noisy yq: nothing yq wrote to stderr reached a parsed value"
     if [[ $exit_code -eq 0 ]]; then
         pass "sync yml noisy yq: the run exits 0"
     else
@@ -6484,6 +6593,7 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
     MOCK_CONTENTS_HTTP_FAIL="${BUMP_CONTENTS_FAIL_FOR_RUN:-}" \
     MOCK_CONTENTS_STDERR_NOTICE="${BUMP_CONTENTS_NOTICE_FOR_RUN:-}" \
+    MOCK_CONTENTS_STDERR_PRENOTICE="${BUMP_CONTENTS_PRENOTICE_FOR_RUN:-}" \
     MOCK_CONTENTS_404_STDERR_ONLY="${BUMP_CONTENTS_404_STDERR_FOR_RUN:-}" \
     MOCK_REPO_LIST_STDERR_NOTICE="${BUMP_REPO_LIST_NOTICE_FOR_RUN:-}" \
     MOCK_PR_LIST_STDERR_NOTICE="${BUMP_PR_LIST_NOTICE_FOR_RUN:-}" \
@@ -7212,9 +7322,15 @@ test_bump_contents_unreadable() {
     # hardcoded "1 failed" would be asserting somebody else's failure.
     run_bump "$ctl" --dry-run
 
+    # The injected run also carries a gh notice AHEAD of the status line on the
+    # same stream (MOCK_CONTENTS_STDERR_PRENOTICE). Without it gh's stderr is
+    # one line long here, and the scoped assertion below cannot distinguish a
+    # script that prefers the status line from one that takes whatever came
+    # first — which is the whole of the rule it is meant to hold.
     BUMP_CONTENTS_FAIL_FOR_RUN="bumporg_repo-stale" \
+    BUMP_CONTENTS_PRENOTICE_FOR_RUN="bumporg_repo-stale" \
         run_bump "$out" --dry-run
-    unset BUMP_CONTENTS_FAIL_FOR_RUN
+    unset BUMP_CONTENTS_FAIL_FOR_RUN BUMP_CONTENTS_PRENOTICE_FOR_RUN
 
     # The 403 half: named, counted, and red.
     assert_contains "$out" "repo-stale: could not read skills.lock" \
@@ -7223,6 +7339,12 @@ test_bump_contents_unreadable() {
     # assert_scoped_line.
     assert_scoped_line "$out" "could not read skills.lock" "HTTP 403" \
         "unreadable lock: the diagnostic quotes gh's own status line"
+    # A claim about WHICH line, which the pair above cannot make on its own.
+    # Behaviour-shaped on purpose: it says the operator's line names the status
+    # and not the notice, and says nothing about how that line gets chosen, so
+    # it survives the selection moving into a shared helper.
+    assert_scoped_line_lacks "$out" "could not read skills.lock" "token expires" \
+        "unreadable lock: the diagnostic is the status line, not the notice ahead of it"
 
     local ctl_failed inj_failed
     ctl_failed=$(sed -n 's/.*, \([0-9][0-9]*\) failed ===.*/\1/p' "$ctl" | tail -1)
@@ -11458,7 +11580,7 @@ run_hook_pin() {   # <output file> [script args...]
     REPOS_YML="$HOOK_PIN_DIR/work/repos.yml" \
     BUMP_CHECKOUTS="pinorg/agentskills=$HOOK_PIN_DIR/registry" \
     HOOK_PIN_REPO="pinorg/guidance" \
-    PATH="$TEST_DIR/bin:$PATH" \
+    PATH="${HOOK_PIN_PATH_PREFIX_FOR_RUN:+$HOOK_PIN_PATH_PREFIX_FOR_RUN:}$TEST_DIR/bin:$PATH" \
     "$REPO_ROOT/scripts/bump-hook-pin.sh" "$@" > "$out" 2>&1 || HOOK_PIN_EXIT=$?
 }
 
@@ -11535,6 +11657,143 @@ test_hook_pin_unchanged() {
         pass "hook pin: no pull request is opened for a registry that only moved"
     else
         fail "hook pin: it opened a pull request for a hook that did not change"
+    fi
+}
+
+# ── Test 9a2: read_repos_yml's stream separation, in the three copies the
+#    sync leg cannot reach ──────────────────────────────────────────────────
+#
+# `read_repos_yml` is duplicated verbatim in sync.sh, drift-report.sh,
+# bump-consumer-locks.sh and bump-hook-pin.sh, and one process loads exactly
+# one of those copies. test_sync_agents_sync_yml_unreadable's noisy-yq leg
+# covers sync.sh's; this covers the other three, because nothing did — measured
+# 2026-08-29, reverting any single copy to the old `out=$(yq ... 2>&1)`
+# spelling left the suite at 959 passed / 0 failed.
+#
+# What `2>&1` corrupts is the SINGLE-VALUE reads specifically, and that is why
+# each leg below is keyed on one. A list expression (`.exclude // [] | .[]`)
+# merely gains a bogus FIRST ELEMENT that matches no repo name, so the
+# exclusion list is not an observable at all; a scalar comes back as TWO LINES
+# with the real answer second, and every consumer of it then reasons about the
+# warning. Each needle here was checked both ways against these same fixtures:
+#
+#   drift-report.sh         `default_sections` decides the Sections cell of a
+#                           repo with no `.agents-sync.yml`. Healthy: `rust`.
+#                           Reverted: a cell reading `Flag --tojson has been
+#                           deprecated, please use -o=json instead rust`,
+#                           PUBLISHED into the report.
+#   bump-consumer-locks.sh  `.skills_bootstrap.registry` decides which checkout
+#                           is the registry. Healthy: `Bumping consumer locks
+#                           onto bumporg/agentskills`, exit 0. Reverted:
+#                           `ERROR: no checkout configured for Flag --tojson …`
+#                           and exit 2, before any repo is looked at.
+#   bump-hook-pin.sh        all four pins at once. Healthy: `current pin:
+#                           pinorg/agentskills@… digest <sha12>` and an
+#                           unchanged verdict. Reverted: `BUMP_CHECKOUTS names
+#                           no path for Flag --tojson …` and exit 1.
+#
+# Sited here because this is the first point in the run where all three
+# fixtures exist together: bumporg's registry checkout from setup_bump_repos,
+# and $HOOK_PIN_DIR from test_hook_pin_unchanged immediately above — whose
+# "nothing to do" state the dry run below re-reads and does not disturb.
+test_repos_yml_scalars_under_noisy_yq() {
+    echo ""
+    echo "=== Test: read_repos_yml keeps yq's streams apart (drift, bumper, hook pin) ==="
+
+    setup_noisy_yq_dir
+    local noisy_bin="$TEST_DIR/bin-yq-noisy"
+    local out rpt exit_code
+
+    # ── drift-report.sh ──────────────────────────────────────────────────
+    out="$TEST_DIR/noisy-yq-drift.txt"
+    rpt="$TEST_DIR/noisy-yq-drift.md"
+    exit_code=0
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$noisy_bin:$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1 || exit_code=$?
+
+    # A WHOLE-CELL match, for the reason the sync-yml leg gives: the corrupted
+    # cell still ENDS in `rust`, so a substring needle would pass against
+    # exactly the output this leg exists to forbid.
+    assert_row_contains "$rpt" "repo-no-sync" "rust" \
+        "noisy yq (drift): default_sections is the section list and nothing else"
+    assert_not_contains "$rpt" "Flag --tojson" \
+        "noisy yq (drift): nothing yq wrote to stderr is published in the report"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "noisy yq (drift): the run exits 0"
+    else
+        fail "noisy yq (drift): the run exits 0 — got $exit_code"
+    fi
+
+    # ── bump-consumer-locks.sh ───────────────────────────────────────────
+    #
+    # Invoked directly rather than through run_bump, and BUMP_REGISTRY is
+    # deliberately left unset: the script reads the pin only when that variable
+    # is empty (`BUMP_REGISTRY="${BUMP_REGISTRY:-}"`), and run_bump hardcodes
+    # it — so riding that helper would short-circuit the one read this leg is
+    # about. The repos.yml is derived from the shared fixture with that single
+    # key repointed at the registry bumporg actually has a checkout for.
+    local bump_yml="$TEST_DIR/repos-noisy-yq-bump.yml"
+    sed 's|^  registry: bootorg/agentskills$|  registry: bumporg/agentskills|' \
+        "$TEST_DIR/repos.yml" > "$bump_yml"
+    # Asserted rather than assumed: a sed that matched nothing leaves the pin
+    # naming a registry with no checkout, which fails the leg below for a
+    # reason that has nothing to do with yq's stderr.
+    if grep -qF "registry: bumporg/agentskills" "$bump_yml"; then
+        pass "noisy yq (bumper): the derived repos.yml pins the registry bumporg holds"
+    else
+        fail "noisy yq (bumper): the derived repos.yml does not pin bumporg/agentskills, so the run below would fail for the wrong reason"
+    fi
+
+    out="$TEST_DIR/noisy-yq-bump.txt"
+    GITHUB_REPOSITORY_OWNER=bumporg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_PR_LOG="$BUMP_PR_LOG" \
+    MOCK_PR_BODY_DIR="$BUMP_PR_BODY_DIR" \
+    REPOS_YML="$bump_yml" \
+    BUMP_CHECKOUTS="$BUMP_CHECKOUTS_ARG" \
+    PATH="$noisy_bin:$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/bump-consumer-locks.sh" --dry-run > "$out" 2>&1 || true
+
+    # No exit-code assertion here, and that is deliberate rather than an
+    # omission: bumporg carries `repo-error`, whose lock pins a ref that cannot
+    # resolve, so a walk of that whole owner counts one failure and exits 1
+    # whatever yq does. The discriminating fact is upstream of the walk — the
+    # corrupted read never reaches a repo at all, because the two-line registry
+    # matches no BUMP_CHECKOUTS entry and the script refuses at that point.
+    assert_contains "$out" "Bumping consumer locks onto bumporg/agentskills" \
+        "noisy yq (bumper): the registry pin is the bare OWNER/REPO"
+    assert_not_contains "$out" "no checkout configured for" \
+        "noisy yq (bumper): the registry it resolved is one the run has a checkout for"
+    assert_not_contains "$out" "Flag --tojson" \
+        "noisy yq (bumper): nothing yq wrote to stderr reached a value it acts on"
+
+    # ── bump-hook-pin.sh ─────────────────────────────────────────────────
+    #
+    # The one of the four that reads all four pins, so the digest below is the
+    # sharpest needle available: `${PIN_SHA256:0:12}` is a warning's first
+    # twelve characters the moment the streams are folded together.
+    local pinned_sha
+    pinned_sha=$(hook_pin_hook_text "v1" | sha256sum | cut -d' ' -f1)
+    out="$TEST_DIR/noisy-yq-hook-pin.txt"
+    HOOK_PIN_PATH_PREFIX_FOR_RUN="$noisy_bin" run_hook_pin "$out" --dry-run
+    unset HOOK_PIN_PATH_PREFIX_FOR_RUN
+
+    assert_contains "$out" "current pin: pinorg/agentskills@" \
+        "noisy yq (hook pin): the registry pin is the bare OWNER/REPO"
+    assert_contains "$out" "digest ${pinned_sha:0:12}" \
+        "noisy yq (hook pin): the sha256 pin is the bare digest"
+    assert_contains "$out" "byte-identical to the pinned one" \
+        "noisy yq (hook pin): the pins it read still describe the hook on disk"
+    assert_not_contains "$out" "Flag --tojson" \
+        "noisy yq (hook pin): nothing yq wrote to stderr reached a pin"
+    if [[ $HOOK_PIN_EXIT -eq 0 ]]; then
+        pass "noisy yq (hook pin): the run exits 0"
+    else
+        fail "noisy yq (hook pin): the run exits 0 — got $HOOK_PIN_EXIT"
     fi
 }
 
@@ -12200,6 +12459,82 @@ test_yq_preflight() {
     fi
 }
 
+# ── Test 7k: the helpers the four repos.yml readers each carry a copy of ───
+#
+# `read_repos_yml` and `pick_diagnostic` are duplicated VERBATIM in sync.sh,
+# drift-report.sh, bump-consumer-locks.sh and bump-hook-pin.sh, for the reason
+# the yq-preflight comment gives at length: all four are standalone entry
+# points, only one of them sources anything today, and a library existing to
+# hold two functions would be an abstraction invented for them. The cost of
+# that decision is skew, and skew here is silent — an edit that lands in three
+# copies and not the fourth changes nothing any other test observes, so it
+# ships green and the fourth script keeps the old behaviour until somebody
+# reads it.
+#
+# Nothing asserted this before. `test_yq_install_pinned` above is the only
+# other "all four copies are identical" check in the suite and it is about a
+# different thing entirely — the yq INSTALL step in four workflow files — so
+# the sentence "the four copies must move together", written three times in
+# the scripts themselves, was enforced by nobody.
+#
+# This test compares each file against the others and knows nothing about what
+# the helpers should CONTAIN: a deliberate change to `read_repos_yml` is meant
+# to fail here once, in the copies not yet moved, and pass as soon as all four
+# carry it. The behaviour those helpers must have is asserted elsewhere —
+# test_sync_agents_sync_yml_unreadable's noisy-yq leg and
+# test_repos_yml_scalars_under_noisy_yq for the stream separation,
+# test_yq_preflight for the refusal.
+test_shared_repos_yml_helpers_are_identical() {
+    echo ""
+    echo "=== Test: the helpers duplicated across the four repos.yml readers agree ==="
+
+    local -a readers=(sync.sh drift-report.sh bump-consumer-locks.sh bump-hook-pin.sh)
+    local -a digests names
+    local helper script body found min_lines n i mismatched
+
+    for helper in read_repos_yml pick_diagnostic; do
+        digests=(); names=(); found=0; min_lines=""
+        for script in "${readers[@]}"; do
+            body=$(sed -n "/^${helper}() {/,/^}/p" "$REPO_ROOT/scripts/$script")
+            [[ -n "$body" ]] || continue
+            found=$((found + 1))
+            n=$(printf '%s\n' "$body" | wc -l)
+            [[ -z "$min_lines" || $n -lt $min_lines ]] && min_lines=$n
+            names+=("$script")
+            digests+=("$(printf '%s\n' "$body" | sha256sum | cut -d' ' -f1)")
+        done
+
+        # VACUITY GUARD, and this test needs one more than most: the whole
+        # assertion below is "these strings are equal", and the EMPTY STRING
+        # equals itself four times over. `sed -n '/^f() {/,/^}/p'` yields
+        # nothing at all for a file that has no such function — rename the
+        # helper, or break the pattern, and the comparison reports perfect
+        # agreement about four things it never read. So establish first that
+        # four bodies came back and that none is a stub. The real bodies are
+        # tens of lines — 29 and 25 when this was written, and they move as the
+        # helpers grow — so the floor is deliberately set far below any
+        # legitimate body and far above a degenerate one-line match, rather
+        # than at a number that would need maintaining.
+        if [[ $found -eq 4 && ${min_lines:-0} -ge 5 ]]; then
+            pass "$helper: extracted all 4 copies, shortest body $min_lines lines"
+        else
+            fail "$helper: extracted $found copies (want 4), shortest ${min_lines:-0} lines (want >= 5) — the comparison below would be vacuous, so it was skipped"
+            continue
+        fi
+
+        mismatched=""
+        for ((i = 1; i < ${#digests[@]}; i++)); do
+            [[ "${digests[$i]}" == "${digests[0]}" ]] \
+                || mismatched="${mismatched:+$mismatched, }${names[$i]}"
+        done
+        if [[ -z "$mismatched" ]]; then
+            pass "$helper: all 4 copies are byte-identical"
+        else
+            fail "$helper: ${names[0]}'s copy differs from $mismatched — these four are duplicated verbatim on purpose and must move together; port the change to every copy in the same commit"
+        fi
+    done
+}
+
 # ── Test 11: the Dependabot sweep's listing failure is not an empty sweep ──
 #
 # Extracted from the workflow and RUN, rather than asserted about as text. The
@@ -12441,6 +12776,11 @@ test_bump_sweep_view_failure_reports_why
 # to do) → dry run → the real bump → a second run with that PR open → the
 # refusals. Each step depends on the registry state the previous one left.
 test_hook_pin_unchanged
+# Sited here for its fixtures, not its subject: it is the first point in the
+# run where bumporg's registry checkout and $HOOK_PIN_DIR both exist. It reads
+# the hook-pin fixture in dry-run and leaves it in the same "nothing to do"
+# state test_hook_pin_dry_run below expects.
+test_repos_yml_scalars_under_noisy_yq
 test_hook_pin_dry_run
 test_hook_pin_pr_list_failure
 test_hook_pin_proposes
@@ -12461,6 +12801,7 @@ test_ci_workflow_shape
 test_yq_install_pinned
 test_check_agents_md
 test_yq_preflight
+test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
 
 echo ""

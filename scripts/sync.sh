@@ -166,6 +166,78 @@ FAIL_COUNT=0
 OK_COUNT=0
 SKIP_COUNT=0
 
+# pick_diagnostic <producer> <file> — the ONE line of a captured stderr that a
+# one-line failure report should quote.
+#
+# Every caller has the same shape: a command's stderr was redirected to a file
+# so the failure could be named without quoting the command's STDOUT, which on
+# a gh HTTP error is the API's raw response body — and AGENTS.md ("Sanitize
+# error output") forbids putting one of those in a public log. Separating the
+# streams settled WHICH STREAM to quote. It left open WHICH LINE, and `head -1`
+# is wrong for both producers this repo captures, in OPPOSITE directions. That
+# is why the producer is a parameter and not one rule:
+#
+#   gh    — gh's ordinary notices are `gh: `-prefixed too and are written
+#           BEFORE the error it is being asked about, so the first line is the
+#           notice and the operator is sent after the wrong fault. gh writes
+#           its own status as `gh: <message> (HTTP <code>)`, so that line is
+#           preferred, then any `gh: ` line, then the first non-blank line.
+#   tool  — python3 and yq write their warnings and traces FIRST and the fatal
+#           line LAST: a traceback ends in `SomeError: message`, and argparse
+#           prints its `usage:` banner first and `<prog>: error: ...` last. So
+#           the LAST non-blank line is the one that says what went wrong.
+#
+# Measured with the twelve stderr shapes these callers actually see (a
+# deprecation notice then `gh: Not Found (HTTP 404)`; an auth-expiry warning
+# then `(HTTP 403)`; a bare `(HTTP 401)`; a line gh did not write; empty; a
+# yq deprecation then `Error:`; an argparse usage banner then `: error: `; a
+# python traceback): `gh` picks the status line in each gh case and `tool` the
+# fatal line in each tool case, where plain `head -1` picks the notice and the
+# usage banner.
+#
+# Blank lines are skipped in EVERY branch, which is not tidiness: measured on
+# a stderr of "real error\n\n\n", plain `tail -1` quotes the empty string, and
+# on "\n\nmock gh: boom\n" plain `head -1` does the same. A producer that pads
+# its stderr would otherwise be reported as having said nothing.
+#
+# An unknown producer returns 2 with a message rather than an empty string,
+# because it can only be a construction error here: every call site passes a
+# literal.
+#
+# This is NOT generator_error_line's job, which stays where it is in
+# bump-consumer-locks.sh: that one reads a captured STRING of the lock
+# generator's MERGED output and additionally knows that generator's own
+# `ERROR:` marker. This one reads a stderr FILE.
+#
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them.
+pick_diagnostic() {
+    local producer="$1" file="$2" line
+    # A file the caller never created (its mktemp failed) is not a fault here;
+    # the caller reports that itself, and it has no diagnostic to quote.
+    [[ -r "$file" ]] || return 0
+    case "$producer" in
+        gh)
+            line=$(grep -m1 '^gh: .*(HTTP ' "$file" \
+                || grep -m1 '^gh: ' "$file" \
+                || grep -m1 -v '^[[:space:]]*$' "$file" \
+                || true)
+            ;;
+        tool)
+            # `|| true` inside the substitution because `set -o pipefail` makes
+            # a grep that selected nothing (an empty or all-blank stderr) fail
+            # the whole pipeline.
+            line=$(grep -v '^[[:space:]]*$' "$file" | tail -1 || true)
+            ;;
+        *)
+            echo "::error::pick_diagnostic: unknown producer '$producer'" >&2
+            return 2
+            ;;
+    esac
+    printf '%s' "$line"
+}
+
 # read_repos_yml <yq expression> — the one way this script reads repos.yml.
 #
 # It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
@@ -202,14 +274,14 @@ read_repos_yml() {
     # this expression syntax is deprecated rust" for a repo whose sections are
     # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
     # delivered this run."
-    if ! err_file=$(mktemp); then
+    if ! err_file=$(mktemp -p "$WORK_DIR"); then
         echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
         exit 2
     fi
     out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
     # Read and removed UNCONDITIONALLY, before the branch, so the success path
     # cannot leak the file either.
-    err=$(head -1 "$err_file")
+    err=$(pick_diagnostic tool "$err_file")
     rm -f "$err_file"
     if [[ $rc -ne 0 ]]; then
         echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
@@ -409,7 +481,7 @@ echo ""
 # counts per-owner failures rather than aborting the fleet — under `set -e` an
 # unchecked assignment here would end the run before the next owner is scanned,
 # which is the exact failure the paragraph above exists to prevent.
-if ! repo_list_err_file=$(mktemp); then
+if ! repo_list_err_file=$(mktemp -p "$WORK_DIR"); then
     fail "$ORG: could not create a temp file to capture gh's diagnostics"
     ((FAIL_COUNT++)) || true
     continue
@@ -425,7 +497,7 @@ repo_list_raw=$(
 ) || repo_list_rc=$?
 # Read and removed unconditionally, before the branch, so the `continue` below
 # cannot leak the file and the success path cannot either.
-repo_list_err=$(head -1 "$repo_list_err_file")
+repo_list_err=$(pick_diagnostic gh "$repo_list_err_file")
 rm -f "$repo_list_err_file"
 if [[ $repo_list_rc -ne 0 ]]; then
     fail "$ORG: could not list repos — ${repo_list_err:-no diagnostic output from gh}"
@@ -513,7 +585,7 @@ for repo_name in "${REPOS[@]}"; do
     # failure path reads it. mktemp is checked because this loop counts per-repo
     # failures rather than aborting the fleet — under `set -e` an unchecked
     # assignment here would end the run for every repo after this one.
-    if ! api_err_file=$(mktemp); then
+    if ! api_err_file=$(mktemp -p "$WORK_DIR"); then
         fail "$repo_name: could not create a temp file to capture gh's diagnostics"
         ((FAIL_COUNT++)) || true
         continue
@@ -521,36 +593,30 @@ for repo_name in "${REPOS[@]}"; do
     api_rc=0
     remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
         --jq '.content' 2>"$api_err_file") || api_rc=$?
-    # Read then removed unconditionally, so no `continue` below can leak it;
-    # the value is only ever USED in the failure branch. Same shape as
-    # drift-report.sh's fetch_file_content, which reads the same endpoint.
+    # BOTH reads happen here, unconditionally, so no `continue` below can leak
+    # the file and neither can the success path; the two values are only ever
+    # USED in the failure branch. Same shape as drift-report.sh's
+    # fetch_file_content, which reads the same endpoint.
+    #
+    # $api_stderr is the WHOLE stderr, and it is read for one thing only: the
+    # "(HTTP 404)" needle below, which must match the status wherever in the
+    # stderr it lands. $api_err is the ONE line the operator is shown — gh's
+    # own diagnostic, and only gh's, because on an HTTP error gh prints the
+    # API's raw error body to stdout with the --jq filter unapplied and the
+    # house rule forbids echoing a response body into a public log (AGENTS.md,
+    # "Sanitize error output"). Which line that is, and why the status one is
+    # preferred over the merely first, is pick_diagnostic's comment; the
+    # measurement that put it there was taken here, with a gh stubbed to print
+    # "gh: this API endpoint is deprecated" then "gh: API rate limit exceeded
+    # (HTTP 403)" and exit 1, which reported "could not read .agents-sync.yml —
+    # gh: this API endpoint is deprecated" and sent the operator after the wrong
+    # fault. Only the message changed: the 404 disambiguation still reads
+    # $api_stderr entire.
     api_stderr=$(cat "$api_err_file")
+    api_err=$(pick_diagnostic gh "$api_err_file")
     rm -f "$api_err_file"
 
     if [[ $api_rc -ne 0 ]]; then
-        # gh's own diagnostic, and only gh's: on an HTTP error gh prints the
-        # API's raw error body to stdout with the --jq filter unapplied, and
-        # the house rule forbids echoing a response body into a public log
-        # (AGENTS.md, "Sanitize error output"). With the streams separated
-        # that body is no longer in reach of this message, which is what the
-        # merged capture could not promise.
-        # The line carrying the STATUS is preferred over the merely first one.
-        # gh's deprecation and auth-expiry notices are themselves `gh: `-prefixed
-        # and arrive BEFORE the error, so `grep -m1 '^gh: '` named the notice on
-        # exactly the runs the paragraph above describes. Measured with a gh
-        # stubbed to print "gh: this API endpoint is deprecated" then "gh: API
-        # rate limit exceeded (HTTP 403)" and exit 1: it reported "could not read
-        # .agents-sync.yml — gh: this API endpoint is deprecated", which sends
-        # the operator after the wrong fault. This picks the line only; the 404
-        # disambiguation below still matches "(HTTP 404)" anywhere in
-        # $api_stderr, so what the run DOES is unchanged — only what it says it
-        # saw. Three-step fallback because none of the three is guaranteed: the
-        # last is the old behaviour, kept for a diagnostic gh writes in neither
-        # shape.
-        api_err=$(grep -m1 '^gh: .*(HTTP ' <<< "$api_stderr" \
-            || grep -m1 '^gh: ' <<< "$api_stderr" \
-            || head -1 <<< "$api_stderr")
-
         # A 404 on the PATH is the only outcome that MAY mean "absent", and even
         # it means that only once the REPO itself answers: GitHub replies 404
         # rather than 403 when a credential is not authorized to know a thing
@@ -572,9 +638,42 @@ for repo_name in "${REPOS[@]}"; do
         # the file: a repo that answers has told us the credential can see it
         # and the file really is not there, whereas a repo that 404s too has
         # told us nothing about the file at all.
-        if ! repo_probe=$(gh api "repos/$repo_name" --silent 2>&1); then
-            probe_err=$(grep -m1 '^gh: ' <<< "$repo_probe" || head -1 <<< "$repo_probe")
-            fail "$repo_name: .agents-sync.yml answered 404 and so did the repo itself — a scope gap, not a missing file — ${probe_err:-no diagnostic output from gh}"
+        #
+        # Streams SEPARATED, and this call is why the paragraph above must be
+        # read as a claim about the contents read alone: it was left on `2>&1`
+        # when that one was converted, so "with the streams separated that body
+        # is no longer in reach of this message" was true twenty lines up and
+        # false here. `2>&1` puts whatever gh writes to STDOUT into the captured
+        # value, and an HTTP error is exactly where gh has the API's raw error
+        # body to write — which the `head -1` fallback then quoted verbatim into
+        # a public run log, the thing AGENTS.md ("Sanitize error output")
+        # forbids. Rather than rely on which of `--silent` and the error path
+        # wins, stdout is discarded outright and only stderr is kept.
+        if ! probe_err_file=$(mktemp -p "$WORK_DIR"); then
+            fail "$repo_name: could not create a temp file to capture the repo probe's diagnostics"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+        probe_rc=0
+        gh api "repos/$repo_name" --silent >/dev/null 2>"$probe_err_file" || probe_rc=$?
+        # Read then removed unconditionally, before the branch, so neither the
+        # `continue` below nor the success path can leak the file.
+        probe_stderr=$(cat "$probe_err_file")
+        probe_err=$(pick_diagnostic gh "$probe_err_file")
+        rm -f "$probe_err_file"
+        if [[ $probe_rc -ne 0 ]]; then
+            # The probe FAILING is not the same answer as the probe saying 404,
+            # and only the second one establishes a scope gap. This branch used
+            # to assert "and so did the repo itself" for every non-zero exit —
+            # so a 403, a 5xx or a DNS failure was reported to the operator as a
+            # 404-and-404, which is a claim the run never made. Same rule as the
+            # file read above it: name what was established, not what would be
+            # convenient.
+            if [[ "$probe_stderr" == *"(HTTP 404)"* ]]; then
+                fail "$repo_name: .agents-sync.yml answered 404 and so did the repo itself — a scope gap, not a missing file — ${probe_err:-no diagnostic output from gh}"
+            else
+                fail "$repo_name: .agents-sync.yml answered 404, and the repo probe that tells a scope gap from a missing file did not answer either — this run established neither — ${probe_err:-no diagnostic output from gh}"
+            fi
             ((FAIL_COUNT++)) || true
             continue
         fi
@@ -615,7 +714,7 @@ for repo_name in "${REPOS[@]}"; do
         # script would then see as changed, commit, and push. The brace group is
         # what puts BOTH stages' stderr in the file; mktemp is checked because
         # this loop counts per-repo failures rather than aborting the fleet.
-        if ! sections_err_file=$(mktemp); then
+        if ! sections_err_file=$(mktemp -p "$WORK_DIR"); then
             fail "$repo_name: could not create a temp file to capture the section read's diagnostics"
             ((FAIL_COUNT++)) || true
             continue
@@ -625,7 +724,7 @@ for repo_name in "${REPOS[@]}"; do
                 | yq -r '.sections // [] | .[]'; } 2>"$sections_err_file" ) || sections_read_rc=$?
         # Read and removed unconditionally, before the branch: the value is only
         # ever USED in the failure branch, but the file must go either way.
-        sections_err=$(head -1 "$sections_err_file")
+        sections_err=$(pick_diagnostic tool "$sections_err_file")
         rm -f "$sections_err_file"
         if [[ $sections_read_rc -ne 0 ]]; then
             fail "$repo_name: could not read the sections from .agents-sync.yml — ${sections_err:-no diagnostic output}"

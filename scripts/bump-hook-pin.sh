@@ -158,6 +158,78 @@ if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
     exit 2
 fi
 
+# pick_diagnostic <producer> <file> — the ONE line of a captured stderr that a
+# one-line failure report should quote.
+#
+# Every caller has the same shape: a command's stderr was redirected to a file
+# so the failure could be named without quoting the command's STDOUT, which on
+# a gh HTTP error is the API's raw response body — and AGENTS.md ("Sanitize
+# error output") forbids putting one of those in a public log. Separating the
+# streams settled WHICH STREAM to quote. It left open WHICH LINE, and `head -1`
+# is wrong for both producers this repo captures, in OPPOSITE directions. That
+# is why the producer is a parameter and not one rule:
+#
+#   gh    — gh's ordinary notices are `gh: `-prefixed too and are written
+#           BEFORE the error it is being asked about, so the first line is the
+#           notice and the operator is sent after the wrong fault. gh writes
+#           its own status as `gh: <message> (HTTP <code>)`, so that line is
+#           preferred, then any `gh: ` line, then the first non-blank line.
+#   tool  — python3 and yq write their warnings and traces FIRST and the fatal
+#           line LAST: a traceback ends in `SomeError: message`, and argparse
+#           prints its `usage:` banner first and `<prog>: error: ...` last. So
+#           the LAST non-blank line is the one that says what went wrong.
+#
+# Measured with the twelve stderr shapes these callers actually see (a
+# deprecation notice then `gh: Not Found (HTTP 404)`; an auth-expiry warning
+# then `(HTTP 403)`; a bare `(HTTP 401)`; a line gh did not write; empty; a
+# yq deprecation then `Error:`; an argparse usage banner then `: error: `; a
+# python traceback): `gh` picks the status line in each gh case and `tool` the
+# fatal line in each tool case, where plain `head -1` picks the notice and the
+# usage banner.
+#
+# Blank lines are skipped in EVERY branch, which is not tidiness: measured on
+# a stderr of "real error\n\n\n", plain `tail -1` quotes the empty string, and
+# on "\n\nmock gh: boom\n" plain `head -1` does the same. A producer that pads
+# its stderr would otherwise be reported as having said nothing.
+#
+# An unknown producer returns 2 with a message rather than an empty string,
+# because it can only be a construction error here: every call site passes a
+# literal.
+#
+# This is NOT generator_error_line's job, which stays where it is in
+# bump-consumer-locks.sh: that one reads a captured STRING of the lock
+# generator's MERGED output and additionally knows that generator's own
+# `ERROR:` marker. This one reads a stderr FILE.
+#
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them.
+pick_diagnostic() {
+    local producer="$1" file="$2" line
+    # A file the caller never created (its mktemp failed) is not a fault here;
+    # the caller reports that itself, and it has no diagnostic to quote.
+    [[ -r "$file" ]] || return 0
+    case "$producer" in
+        gh)
+            line=$(grep -m1 '^gh: .*(HTTP ' "$file" \
+                || grep -m1 '^gh: ' "$file" \
+                || grep -m1 -v '^[[:space:]]*$' "$file" \
+                || true)
+            ;;
+        tool)
+            # `|| true` inside the substitution because `set -o pipefail` makes
+            # a grep that selected nothing (an empty or all-blank stderr) fail
+            # the whole pipeline.
+            line=$(grep -v '^[[:space:]]*$' "$file" | tail -1 || true)
+            ;;
+        *)
+            echo "::error::pick_diagnostic: unknown producer '$producer'" >&2
+            return 2
+            ;;
+    esac
+    printf '%s' "$line"
+}
+
 # read_repos_yml <yq expression> — the one way this script reads repos.yml.
 #
 # It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
@@ -203,14 +275,14 @@ read_repos_yml() {
     # this expression syntax is deprecated rust" for a repo whose sections are
     # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
     # delivered this run."
-    if ! err_file=$(mktemp); then
+    if ! err_file=$(mktemp -p "$WORK_DIR"); then
         echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
         exit 2
     fi
     out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
     # Read and removed UNCONDITIONALLY, before the branch, so the success path
     # cannot leak the file either.
-    err=$(head -1 "$err_file")
+    err=$(pick_diagnostic tool "$err_file")
     rm -f "$err_file"
     if [[ $rc -ne 0 ]]; then
         echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
@@ -306,6 +378,16 @@ if [[ ! -s "$HOOK_FILE" ]]; then
     fail "$PIN_PATH is empty at ${TARGET_REF:0:7} — refusing to pin it."
     exit 1
 fi
+#
+# `head -1` here, NOT pick_diagnostic, and deliberately: bash is a third
+# producer whose stderr matches neither arm. It writes the DIAGNOSTIC first and
+# an echo of the offending source last — measured, `bash -n` on a file whose
+# second line is a stray `}` prints "…: line 2: syntax error near unexpected
+# token `}'" and then "…: line 2: `}'". So the `tool` arm's last-line rule would
+# quote the source fragment and name no fault, and the `gh` arm's `^gh: ` needle
+# matches nothing. A third arm for a single call site would be an abstraction
+# invented for one `if`, which is the same argument the yq preflight makes
+# against a library; the first line is simply right here. Do not "unify" this.
 if ! bash -n "$HOOK_FILE" 2>"$WORK_DIR/syntax.err"; then
     fail "$PIN_PATH does not parse as bash at ${TARGET_REF:0:7} — refusing to fan a broken hook across the fleet: $(head -1 "$WORK_DIR/syntax.err")"
     exit 1
@@ -407,7 +489,7 @@ log "target repo: $TARGET_REPO"
 # mktemp is checked because under `set -e` an unchecked assignment failure ends
 # the run without saying why, and every other refusal on this path names its
 # reason first.
-if ! pr_err_file=$(mktemp); then
+if ! pr_err_file=$(mktemp -p "$WORK_DIR"); then
     fail "could not create a temp file to capture gh's diagnostics"
     exit 1
 fi
@@ -419,7 +501,7 @@ pr_list_out=$(gh pr list --repo "$TARGET_REPO" --head "$BRANCH_NAME" --state ope
 # never $pr_list_out: that variable holds the API's raw error body on an HTTP
 # error, and the house rule forbids echoing a response body into a public log
 # (AGENTS.md, "Sanitize error output").
-pr_list_err=$(head -1 "$pr_err_file")
+pr_list_err=$(pick_diagnostic gh "$pr_err_file")
 rm -f "$pr_err_file"
 if [[ $pr_list_rc -ne 0 ]]; then
     fail "could not list open pull requests on $TARGET_REPO — ${pr_list_err:-no diagnostic output from gh}"

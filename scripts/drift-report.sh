@@ -49,6 +49,46 @@ TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
 BRANCH_NAME="agents-md-sync/update"
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
 
+# A run-scoped scratch dir for every short-lived temp file below, paired with an
+# EXIT trap — the shape sync.sh, bump-consumer-locks.sh and bump-hook-pin.sh
+# already have and this script did not.
+#
+# The files themselves are each removed by an unconditional `rm -f` a line or
+# two after they are read, so on every path the script actually takes nothing is
+# left behind. The trap is for the paths it does NOT take: a signal between the
+# mktemp and the rm — a cancelled Actions job, a `timeout-minutes` wall, an
+# operator ^C during a long `gh` call — leaves the file in $TMPDIR forever.
+#
+# It is installed HERE, at the top, rather than beside the ignore probe it also
+# cleans up, because that one is installed ~470 lines down and read_repos_yml
+# runs before it: a trap that exists only from the ignore probe onward cannot
+# cover the earliest capture in the script. That ordering is the whole reason
+# this is one trap at the top rather than an extension of the old one.
+WORK_DIR=$(mktemp -d)
+
+# The ONE EXIT trap this script installs. Both directories are removed here
+# rather than from two handlers, because a second `trap ... EXIT` REPLACES the
+# first rather than adding to it — installing one per resource would silently
+# disarm whichever was registered earlier.
+#
+# The ignore probe is removed from here rather than from its own handler for a
+# second reason too: it outlives any single call (it is memoized and reused
+# across every repo in the run), so the end of the run is the earliest safe
+# moment to remove it either way.
+cleanup() {
+    rm -rf "$WORK_DIR"
+    # `:-` because this runs on paths that exit long before IGNORE_PROBE_DIR is
+    # declared, and `set -u` would otherwise make the trap itself the error. The
+    # emptiness test is not here to stop `rm -rf ""`, which is a silent no-op;
+    # it is here to keep the trap's exit status 0, so cleanup can never rewrite
+    # the script's own exit code. It also leaves the `:?` unreachable — that is a
+    # backstop for the day the test is dropped, not a path this takes today.
+    if [[ -n "${IGNORE_PROBE_DIR:-}" ]]; then
+        rm -rf "${IGNORE_PROBE_DIR:?}"
+    fi
+}
+trap cleanup EXIT
+
 # Resolve the owner(s) to scan: SYNC_OWNERS (space-separated) takes
 # precedence, then GITHUB_REPOSITORY_OWNER, then fall back to git remote.
 if [[ -n "${SYNC_OWNERS:-}" ]]; then
@@ -123,6 +163,78 @@ strip_volatile() {
     grep -v '^<!-- Last synced:' || true
 }
 
+# pick_diagnostic <producer> <file> — the ONE line of a captured stderr that a
+# one-line failure report should quote.
+#
+# Every caller has the same shape: a command's stderr was redirected to a file
+# so the failure could be named without quoting the command's STDOUT, which on
+# a gh HTTP error is the API's raw response body — and AGENTS.md ("Sanitize
+# error output") forbids putting one of those in a public log. Separating the
+# streams settled WHICH STREAM to quote. It left open WHICH LINE, and `head -1`
+# is wrong for both producers this repo captures, in OPPOSITE directions. That
+# is why the producer is a parameter and not one rule:
+#
+#   gh    — gh's ordinary notices are `gh: `-prefixed too and are written
+#           BEFORE the error it is being asked about, so the first line is the
+#           notice and the operator is sent after the wrong fault. gh writes
+#           its own status as `gh: <message> (HTTP <code>)`, so that line is
+#           preferred, then any `gh: ` line, then the first non-blank line.
+#   tool  — python3 and yq write their warnings and traces FIRST and the fatal
+#           line LAST: a traceback ends in `SomeError: message`, and argparse
+#           prints its `usage:` banner first and `<prog>: error: ...` last. So
+#           the LAST non-blank line is the one that says what went wrong.
+#
+# Measured with the twelve stderr shapes these callers actually see (a
+# deprecation notice then `gh: Not Found (HTTP 404)`; an auth-expiry warning
+# then `(HTTP 403)`; a bare `(HTTP 401)`; a line gh did not write; empty; a
+# yq deprecation then `Error:`; an argparse usage banner then `: error: `; a
+# python traceback): `gh` picks the status line in each gh case and `tool` the
+# fatal line in each tool case, where plain `head -1` picks the notice and the
+# usage banner.
+#
+# Blank lines are skipped in EVERY branch, which is not tidiness: measured on
+# a stderr of "real error\n\n\n", plain `tail -1` quotes the empty string, and
+# on "\n\nmock gh: boom\n" plain `head -1` does the same. A producer that pads
+# its stderr would otherwise be reported as having said nothing.
+#
+# An unknown producer returns 2 with a message rather than an empty string,
+# because it can only be a construction error here: every call site passes a
+# literal.
+#
+# This is NOT generator_error_line's job, which stays where it is in
+# bump-consumer-locks.sh: that one reads a captured STRING of the lock
+# generator's MERGED output and additionally knows that generator's own
+# `ERROR:` marker. This one reads a stderr FILE.
+#
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them.
+pick_diagnostic() {
+    local producer="$1" file="$2" line
+    # A file the caller never created (its mktemp failed) is not a fault here;
+    # the caller reports that itself, and it has no diagnostic to quote.
+    [[ -r "$file" ]] || return 0
+    case "$producer" in
+        gh)
+            line=$(grep -m1 '^gh: .*(HTTP ' "$file" \
+                || grep -m1 '^gh: ' "$file" \
+                || grep -m1 -v '^[[:space:]]*$' "$file" \
+                || true)
+            ;;
+        tool)
+            # `|| true` inside the substitution because `set -o pipefail` makes
+            # a grep that selected nothing (an empty or all-blank stderr) fail
+            # the whole pipeline.
+            line=$(grep -v '^[[:space:]]*$' "$file" | tail -1 || true)
+            ;;
+        *)
+            echo "::error::pick_diagnostic: unknown producer '$producer'" >&2
+            return 2
+            ;;
+    esac
+    printf '%s' "$line"
+}
+
 # Fetch a file's contents from a repo's default branch.
 #
 #   stdout : the file's bytes, or empty when the file is genuinely absent
@@ -176,14 +288,14 @@ fetch_file_content() {
     local repo="$1" path="$2"
     local json size tmp actual err err_text why rc=0 http_status http_re
 
-    err=$(mktemp) || return 2
+    err=$(mktemp -p "$WORK_DIR") || return 2
     json=$(gh api "repos/$repo/contents/$path" 2>"$err") || rc=$?
     # From the FILE rather than through a pipe, and ONE line of it: gh's own
     # diagnostic is what is wanted here, not whatever body followed it, and the
     # house rule forbids echoing an API response into a public log.
     #
     # The line carrying the STATUS, though, not merely the first one — and here
-    # that is more than tidiness, because $err_text is read twice: the `(HTTP
+    # that is more than tidiness, because $err_text is read TWICE: the `(HTTP
     # nnn)` regex below extracts the status from it, and the operator-facing
     # message quotes it. gh's deprecation and auth-expiry notices are themselves
     # `gh: `-prefixed and arrive BEFORE the error, so `head -1` handed both uses
@@ -191,14 +303,12 @@ fetch_file_content() {
     # `.status`, and where that body carries none, a genuine 404 stopped looking
     # like one and the row went fetch-failed instead of absent. Measured with a
     # gh stubbed to print "gh: this API endpoint is deprecated" then "gh: Not
-    # Found (HTTP 404)" and exit 1. Three-step fallback because none of the
-    # three is guaranteed; the last is the old behaviour, kept for a diagnostic
-    # gh writes in neither shape, and the trailing `|| true` keeps an empty
-    # stderr from tripping `set -e`.
-    err_text=$(grep -m1 '^gh: .*(HTTP ' "$err" \
-        || grep -m1 '^gh: ' "$err" \
-        || head -1 "$err" 2>/dev/null \
-        || true)
+    # Found (HTTP 404)" and exit 1.
+    #
+    # That preference is now pick_diagnostic's, spelled once for all four
+    # scripts; this call site is the reason the `gh` arm prefers the status line
+    # rather than merely a `gh: ` one.
+    err_text=$(pick_diagnostic gh "$err")
     rm -f "$err"
 
     if [[ "$rc" -ne 0 ]]; then
@@ -240,7 +350,7 @@ fetch_file_content() {
         return 2
     fi
 
-    tmp=$(mktemp) || return 2
+    tmp=$(mktemp -p "$WORK_DIR") || return 2
     printf '%s' "$json" | jq -r '.content // empty' 2>/dev/null | base64 -d >"$tmp" 2>/dev/null || true
     actual=$(wc -c <"$tmp")
 
@@ -291,14 +401,14 @@ read_repos_yml() {
     # this expression syntax is deprecated rust" for a repo whose sections are
     # "rust", and "WARN: could not fetch yq: [WARN] ... — skills-bootstrap not
     # delivered this run."
-    if ! err_file=$(mktemp); then
+    if ! err_file=$(mktemp -p "$WORK_DIR"); then
         echo "::error::repos.yml: could not create a temp file for yq's diagnostics" >&2
         exit 2
     fi
     out=$(yq -r "$expr" "$REPOS_YML" 2>"$err_file") || rc=$?
     # Read and removed UNCONDITIONALLY, before the branch, so the success path
     # cannot leak the file either.
-    err=$(head -1 "$err_file")
+    err=$(pick_diagnostic tool "$err_file")
     rm -f "$err_file"
     if [[ $rc -ne 0 ]]; then
         echo "::error::repos.yml: yq failed reading '$expr' — ${err:-no output}" >&2
@@ -460,27 +570,13 @@ IGNORE_PROBE_DIR=""
 # rather than something printed on stdout because bootstrap_blocked has to run in
 # the caller's shell: run it in a command substitution and the memoized
 # IGNORE_PROBE_DIR it assigns is lost with the subshell, so every call would mint
-# a fresh temp dir that the EXIT trap below never sees.
+# a fresh temp dir that the EXIT trap above never sees.
 IGNORE_UNREADABLE_PATH=""
 
-# The probe outlives any single call — it is reused across every repo in the
-# run, which is what memoizing it above is for — so the earliest safe moment to
-# remove it is the end of the run. sync.sh pairs its own `mktemp -d` with an
-# EXIT trap the same way; this one needs a function rather than that one-liner
-# because the directory does not exist yet when the trap is installed. Nothing
-# else in this script traps, so there is no handler to chain onto.
-cleanup_ignore_probe() {
-    # On a run that probed nothing — no allowlisted repo missing its hook — the
-    # variable is still "". The test is not here to stop `rm -rf ""`, which is a
-    # silent no-op; it is here to keep the trap's exit status 0, so cleanup can
-    # never rewrite the script's own exit code. It also leaves the `:?` below
-    # unreachable — that is a backstop for the day the test is dropped, not a
-    # path this takes today.
-    if [[ -n "$IGNORE_PROBE_DIR" ]]; then
-        rm -rf "${IGNORE_PROBE_DIR:?}"
-    fi
-}
-trap cleanup_ignore_probe EXIT
+# Removed by `cleanup` at the top of this script, not by a handler of its own:
+# a second `trap ... EXIT` would replace that one rather than join it. On a run
+# that probed nothing — no allowlisted repo missing its hook — the variable is
+# still "", which `cleanup` handles.
 
 # Returns 0 blocked, 1 not blocked, 2 could not read the ignore rules in full.
 # That third answer has to exist because the two verdicts this decides hand a
@@ -590,10 +686,19 @@ echo "Scanning repos for: $ORG (excluding $SELF_REPO)"
 # rather than aborting: under `set -e` an unchecked assignment here would kill
 # the run with no report to publish at all, which is the fault the paragraph
 # above exists to prevent.
-if ! repo_list_err_file=$(mktemp); then
+if ! repo_list_err_file=$(mktemp -p "$WORK_DIR"); then
     echo "::error::$ORG: could not create a temp file to capture gh's diagnostics" >&2
     repo_list_rc=1
     repo_list_err="mktemp failed"
+    # The published row's note, set on BOTH arms rather than written once below.
+    # Until this existed the shared block asserted "`gh repo list <org>` failed"
+    # for every non-zero $repo_list_rc — and on THIS arm gh was never invoked at
+    # all, so the report published a claim about a call the run did not make.
+    # Before the mktemp branch existed the only way in was a genuine gh failure
+    # and the sentence was true; adding a second entrance is what made it false,
+    # which is the class of defect lib/bump-pr-claims.sh exists to make
+    # unwritable. Each arm now names the cause it actually established.
+    repo_list_note="this run could not create a temp file to capture \`gh repo list\`'s diagnostics, so the listing was never attempted — no repo under this owner was checked this run; see the run log"
 else
     repo_list_rc=0
     repo_list_raw=$(
@@ -606,8 +711,9 @@ else
     ) || repo_list_rc=$?
     # Read and removed unconditionally, before the branch, so neither the
     # `continue` below nor the success path can leak the file.
-    repo_list_err=$(head -1 "$repo_list_err_file")
+    repo_list_err=$(pick_diagnostic gh "$repo_list_err_file")
     rm -f "$repo_list_err_file"
+    repo_list_note="\`gh repo list $ORG\` failed — no repo under this owner was checked this run; see the run log"
 fi
 if [[ $repo_list_rc -ne 0 ]]; then
     echo "::error::$ORG: could not list repos — ${repo_list_err:-no diagnostic output from gh}" >&2
@@ -619,7 +725,7 @@ if [[ $repo_list_rc -ne 0 ]]; then
         echo ""
         echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | Open PR | Sections | Notes |"
         echo "|------------|--------|------------|-------------------|------------------|---------|----------|-------|"
-        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | \`gh repo list $ORG\` failed — no repo under this owner was checked this run; see the run log |"
+        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | $repo_list_note |"
     } >> "$OUTPUT_FILE"
     OWNER_FAILURES+=("$ORG")
     continue
@@ -750,14 +856,14 @@ for repo_name in "${REPOS[@]}"; do
         # either way and must not print one it did not verify.
         parse_rc=0
         parse_err=""
-        if ! parse_err_file=$(mktemp); then
+        if ! parse_err_file=$(mktemp -p "$WORK_DIR"); then
             parse_rc=2
             parse_err="could not create a temp file for yq's diagnostics"
         else
             remote_sections_raw=$(yq -r '.sections // [] | .[]' <<<"$remote_yaml" 2>"$parse_err_file") || parse_rc=$?
             # Read and removed unconditionally, before the branch, so the
             # success path cannot leak the file either.
-            parse_err=$(head -1 "$parse_err_file")
+            parse_err=$(pick_diagnostic tool "$parse_err_file")
             rm -f "$parse_err_file"
         fi
         if [[ "$parse_rc" -ne 0 ]]; then
