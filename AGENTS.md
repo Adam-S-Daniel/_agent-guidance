@@ -370,6 +370,29 @@ e2e and lint were FAILURE while the session reported CI green and moved on.)
 - Treat "watch done" as "now verify", never as "passed". Don't launch a watch
   and go passive without a definite verify-the-rollup step on resume.
 
+### A pipe into `grep -q` is a race, and one passing test proves nothing
+
+`echo "$big" | grep -q` under `pipefail` is the same trap with a timer on it.
+`grep -q` exits at the first match; once the payload passes the 64 KiB pipe
+buffer the writer still has bytes to write, takes SIGPIPE, and `pipefail` turns
+141 into a false negative — a marker that IS present reads as absent.
+
+It defeated its own investigation for a week (issue #81), because the disproof
+was one probe per size. Twenty trials per size against the real file: 48 kB
+0/20, 56 kB 0/20, 64 kB 0/20, 72 kB 2/20, 95 kB 18/20. At 95 kB a single shot
+passes about one time in ten, which is exactly what that issue recorded as
+"passed at every size". In production it presented as the largest `AGENTS.md`
+in the fleet, and only that one, reporting false drift.
+
+- **Feed the data as an argument or a here-string, never through a pipe** into
+  a command that exits early: `grep -qxF -- "$m" <<<"$s"`, or `grep -qxF -- "$m"
+  file`, or pure bash `[[ $'\n'"$s"$'\n' == *$'\n'"$m"$'\n'* ]]`.
+- **A size-dependent bug needs trials, not a probe.** If what you are clearing
+  could be a race, one green run is not evidence — say how many trials you ran.
+- The same shape is safe when the value is captured inside `$( ... || true )`,
+  because the status is discarded. That is correct by accident, so say so where
+  you find it rather than leaving the next reader to re-derive it.
+
 ## A successful `git push` does not mean your commit exists
 
 Same shape as the trap above — an exit code that belongs to a different command
