@@ -652,6 +652,20 @@ duplicate the check exists to prevent. Name the branch predictably so a later
 run can find it: `routine/repos-yml-classify-<name>` for an addition,
 `routine/repos-yml-remove-<name>` for a removal.
 
+**`list_pull_requests`'s own `merged` field is not trustworthy either — verify
+the merge state of any hit with `pull_request_read`, not by reading `merged`
+off the list.** Measured 2026-08-29 on `_agent-guidance` #85 and #100, both
+genuinely merged: `list_pull_requests` reported `"state":"closed","merged":false`
+for each, while `pull_request_read` `method: "get"` on the same two numbers
+returned `"merged":true` with a populated `merged_at`. So "PR open" versus
+"PR closed unmerged" versus "PR merged" — the three states Step 7 branches
+on — cannot be read off the list result at all; treat a `list_pull_requests`
+hit as a candidate number to resolve, and resolve every one of them with
+`pull_request_read` before deciding which of the three lines below applies.
+This is the same shape §3's CI-check sequence already warns about for check
+runs and commit statuses — a bulk field is not the per-item truth — just
+found in a different tool this time.
+
 A pull request opened **outside this Routine** counts the same way — this is
 not hypothetical: `_agent-guidance` #84 ("Remove civic-* repo references")
 proposed exactly set (c)'s edit, was opened from an interactive session under
