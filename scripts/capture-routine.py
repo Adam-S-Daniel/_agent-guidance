@@ -25,6 +25,11 @@ WHERE THE INPUT COMES FROM
         provisioned per session by the host, so a subprocess Claude Code
         reports "no MCP server named claude-code-remote is connected" and
         finds no such deferred tool.
+      - There is no config to read it out of either. Inside a session that is
+        demonstrably using the server, `claude mcp list` answers "No MCP
+        servers configured" and `claude mcp get claude-code-remote` answers
+        "No MCP server named ...". The server is injected by the host and
+        carries no URL any committed script could dial.
 
     So the fetch is left to the caller, in whichever of the two shapes fits:
 
