@@ -6102,6 +6102,29 @@ test_sync_bootstrap() {
         pass "repo-ignored: no hook committed into a repo that gitignores .claude/"
     fi
 
+    # THE FAIL-SAFE, asserted end-to-end rather than trusted. A repo that
+    # gitignores .claude/ can never receive fleet-memory, so it must keep the
+    # FULL guidance inlined. Shipping it the stub instead would delete its
+    # guidance and leave a note pointing at a delivery that cannot happen —
+    # and it would do so silently, since the stub is a perfectly well-formed
+    # AGENTS.md. Sentinels are derived, not hardcoded, so reorganising either
+    # file is a rename here and not a failure.
+    local full_sentinel stub_sentinel
+    full_sentinel=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/base.md")
+    stub_sentinel=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/stub.md")
+    if [[ -z "$full_sentinel" || -z "$stub_sentinel" ]]; then
+        fail "repo-ignored: could not derive full/stub sentinels — the assertions below would be vacuous"
+    else
+        if [[ -f "$ignored/.claude/hooks/fleet-memory.sh" ]]; then
+            fail "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        else
+            pass "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        fi
+        assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
+        assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
+        assert_contains "$ignored/AGENTS.md" "Mode: full" "repo-ignored: AGENTS.md records full mode"
+    fi
+
     # ── repo-unparseable: refuse to edit, deliver nothing, leave it alone.
     assert_contains "$TEST_DIR/sync-bootstrap.txt" "is not parseable JSON — refusing to edit it" "repo-unparseable: refusal is logged"
     local unparse="$TEST_DIR/verify-bootstrap-unparseable"
@@ -6109,6 +6132,10 @@ test_sync_bootstrap() {
         fail "repo-unparseable: could not clone"
         return
     }
+    # Same fail-safe on the other undeliverable shape: a settings.json we will
+    # not rewrite means the hook can never be registered there.
+    assert_contains "$unparse/AGENTS.md" "$full_sentinel" "repo-unparseable: keeps the FULL guidance inline (undeliverable repo)"
+    assert_contains "$unparse/AGENTS.md" "Mode: full" "repo-unparseable: AGENTS.md records full mode"
     if cmp -s "$unparse/.claude/settings.json" "$TEST_DIR/repo-unparseable.settings.orig"; then
         pass "repo-unparseable: settings.json byte-identical (never rewritten)"
     else
