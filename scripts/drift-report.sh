@@ -44,6 +44,10 @@ LOCK_REL_PATH="skills.lock"
 # concern: nothing in CI sets this, so the default keeps the published path
 # exactly where drift-report.yml expects to find it.
 OUTPUT_FILE="${DRIFT_REPORT_OUTPUT:-$REPO_ROOT/drift-report.md}"
+# Machine-readable companion to the report, for a reader that is a workflow
+# rather than a person. Derived from OUTPUT_FILE so the two always travel
+# together, including when a caller redirects the report to its own path.
+SKILLS_SIDECAR="${OUTPUT_FILE%.md}-skills-unclassified.txt"
 MARKER="## Repo-specific additions"
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
 BRANCH_NAME="agents-md-sync/update"
@@ -501,6 +505,33 @@ bootstrap_allowlisted() {
     return 1
 }
 
+# ── skills-bootstrap CLASSIFICATION (the other half of the allowlist) ──────
+#
+# `repos:` is a decision and `out_of_scope:` is the other half of the same
+# decision; a repo in neither has not been decided about, and until this block
+# existed that state was indistinguishable from a settled one. Exactly the
+# shape `cron_classified` above audits, for the reason ADR 0003 gives, and now
+# ADR 0011: the offline gate (scripts/check-registry.js) can only assert the
+# two keys do not CONTRADICT each other, because whether they together still
+# COVER the account is a discovery question and discovery happens here.
+#
+# Free, like the cron one: the names are already in hand and this is a set
+# lookup, not another API call.
+SKILLS_CLASSIFIED=()
+skills_classified_raw=$(read_repos_yml \
+    '((.skills_bootstrap.repos // []) + ((.skills_bootstrap.out_of_scope // []) | map(.repo))) | .[]')
+while IFS= read -r r; do
+    [[ -n "$r" ]] && SKILLS_CLASSIFIED+=("$r")
+done <<< "$skills_classified_raw"
+
+skills_classified() {
+    local short="${1##*/}" entry
+    for entry in ${SKILLS_CLASSIFIED[@]+"${SKILLS_CLASSIFIED[@]}"}; do
+        [[ "$short" == "$entry" ]] && return 0
+    done
+    return 1
+}
+
 # The pinned hook, fetched lazily so a report run that touches no allowlisted
 # repo costs nothing. Fetch failure is not fatal: the column degrades to
 # "unverified" rather than the whole report failing.
@@ -624,6 +655,13 @@ bootstrap_blocked() {
     echo "> Last generated: $TIMESTAMP"
 } > "$OUTPUT_FILE"
 
+# Written unconditionally and emptied here, so an ABSENT sidecar means the
+# script did not run rather than that it found nothing -- the same distinction
+# this file draws everywhere else. Truncated at the same point as the report
+# and appended to per owner: doing it inside the loop would leave only the last
+# owner's names, which is a wrong answer that looks like a right one.
+: > "$SKILLS_SIDECAR"
+
 # Base GH_TOKEN captured before the per-owner loop, so each iteration can
 # restore it when the owner has no per-owner token of its own (owner A's
 # per-owner token must not leak into owner B's iteration).
@@ -737,6 +775,9 @@ fi
 # appear here at all (`--source`, `--no-archived`), which is why repos.yml
 # records them as structurally out of scope rather than expecting them.
 CRON_UNCLASSIFIED=()
+# The SKILLS side is NOT computed here: its denominator is the delivery set,
+# which the exclude filter below has not produced yet. See the block after it.
+SKILLS_UNCLASSIFIED=()
 while IFS= read -r r; do
     [[ -n "$r" ]] || continue
     cron_classified "$r" || CRON_UNCLASSIFIED+=("$r")
@@ -761,6 +802,18 @@ if [[ ${#EXCLUDED_REPOS[@]} -gt 0 ]]; then
     done
     REPOS=("${FILTERED_REPOS[@]}")
 fi
+
+# ── Unclassified for skills-bootstrap, over the DELIVERY set ───────────────
+# A DIFFERENT denominator from the cron pass above, and the difference is the
+# point rather than an inconsistency. Cron classifies every discovered name,
+# self and `exclude:`d repos included, because a cron can exist in any of them.
+# Skills delivery cannot reach either: sync.sh drops $SELF_REPO before the loop
+# and never visits an excluded repo, so demanding a skills decision about one
+# would demand a decision that could not be acted on. `REPOS` here is exactly
+# what the sync visits, which is the set the question is about.
+for r in ${REPOS[@]+"${REPOS[@]}"}; do
+    skills_classified "$r" || SKILLS_UNCLASSIFIED+=("$r")
+done
 
 echo "Found ${#REPOS[@]} repo(s)"
 echo ""
@@ -1204,6 +1257,30 @@ if [[ ${#CRON_UNCLASSIFIED[@]} -gt 0 ]]; then
         done
     } >> "$OUTPUT_FILE"
     echo "  ${#CRON_UNCLASSIFIED[@]} repo(s) unclassified for cron coverage"
+fi
+
+# ── Unclassified for skills-bootstrap ──────────────────────────────────────
+# Same contract as the cron block above and the same silence-is-the-pass rule.
+# A name here is a repo nobody has decided about: it belongs in
+# `skills_bootstrap.repos` (delivered) or `skills_bootstrap.out_of_scope`
+# (with the reason it is not), and defaulting either way silently is the
+# failure ADR 0011 exists to end.
+#
+# A SIDECAR as well as a report line, because a report is read by a human who
+# opens it and this needs to reach one who does not. Written unconditionally,
+# empty when there is nothing to say, so its absence means the script did not
+# run rather than that it found nothing — the same distinction this file makes
+# everywhere else.
+if [[ ${#SKILLS_UNCLASSIFIED[@]} -gt 0 ]]; then
+    {
+        echo ""
+        echo "> **Unclassified for skills-bootstrap (${#SKILLS_UNCLASSIFIED[@]}):**"
+        for r in "${SKILLS_UNCLASSIFIED[@]}"; do
+            echo "> - \`$r\` — add it to \`repos.yml\` under \`skills_bootstrap.repos\` (deliver the hook) or \`skills_bootstrap.out_of_scope\` (with the reason not to)"
+        done
+    } >> "$OUTPUT_FILE"
+    printf '%s\n' "${SKILLS_UNCLASSIFIED[@]}" >> "$SKILLS_SIDECAR"
+    echo "  ${#SKILLS_UNCLASSIFIED[@]} repo(s) unclassified for skills-bootstrap"
 fi
 
 done

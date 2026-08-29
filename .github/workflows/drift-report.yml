@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write              # force-pushes the regenerated report to drift-report
+  issues: write                # files the unclassified-repo nudge (ADR 0011)
 
 jobs:
   report:
@@ -106,10 +107,80 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f drift-report.md
+          git add -f drift-report.md drift-report-skills-unclassified.txt
           if git diff --cached --quiet; then
             echo "No changes to report — leaving the drift-report-latest branch as is."
             exit 0
           fi
           git commit -m "chore: nightly drift report [skip ci]"
           git push --force origin HEAD:refs/heads/drift-report-latest
+
+      # AFTER the publish, and that ORDER IS THE POINT. This step can fail --
+      # a token without issues:write, a rate limit -- and the report must
+      # already be on the results branch when it does. drift-report.sh's own
+      # findings are deliberately not an exit code for the same reason: the
+      # publish step carries no `if: always()`, so anything that reds before it
+      # suppresses the very artifact the run exists to produce.
+      #
+      # A `ci`-labelled ISSUE rather than a louder log line, which ADR 0003
+      # pre-authorised and ADR 0011 acts on: this workflow is a 06:00 cron, and
+      # a scheduled run notifies nobody. drift-report.yml itself was red for 26
+      # consecutive nights before a human happened to open the Actions tab.
+      #
+      # NOTHING is interpolated into this script. `${{ }}` renders into the
+      # command line and the command line is echoed to a public log; the repo
+      # names here are already public in the report, but the habit is the
+      # guard, so they arrive as files and env instead.
+      - name: Nudge on repos nobody has classified
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIDECAR: drift-report-skills-unclassified.txt
+          ISSUE_TITLE: "Unclassified for skills-bootstrap"
+        run: |
+          set -euo pipefail
+
+          # ABSENT is not EMPTY. An empty sidecar is drift-report.sh saying it
+          # looked and found nothing; an absent one means it did not get that
+          # far, and closing an open nudge on that would be concluding "all
+          # classified" from a run that classified nothing.
+          if [[ ! -f "$SIDECAR" ]]; then
+            echo "::warning::$SIDECAR was not written — the report did not reach the classification pass, so nothing is concluded here"
+            exit 0
+          fi
+
+          existing=$(gh issue list --state open --label ci             --search "$ISSUE_TITLE in:title" --json number,title             --jq "[.[] | select(.title == env.ISSUE_TITLE)] | .[0].number // empty")
+
+          if [[ ! -s "$SIDECAR" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --comment                 "Every discovered repo is now classified under \`skills_bootstrap.repos\` or \`skills_bootstrap.out_of_scope\`. Closed by the nightly drift report."
+              echo "closed #$existing — nothing unclassified"
+            else
+              echo "nothing unclassified, and no open nudge to close"
+            fi
+            exit 0
+          fi
+
+          # Body from a FILE, never an argument: a name is untrusted input as
+          # far as this script is concerned, and a here-doc keeps it out of the
+          # command line and out of the log.
+          {
+            echo "\`drift-report.sh\` discovered repositories that are in neither half of \`skills_bootstrap\`:"
+            echo
+            sed 's/^/- `/; s/$/`/' "$SIDECAR"
+            echo
+            echo "Each one needs a decision, not a default:"
+            echo
+            echo "- add it to \`skills_bootstrap.repos\` to deliver the SessionStart hook there, or"
+            echo "- add it to \`skills_bootstrap.out_of_scope\` with the reason not to."
+            echo
+            echo "\`scripts/check-registry.js\` will then accept the registry again, and this issue closes itself on the next nightly run."
+            echo
+            echo "Background: [ADR 0011](../blob/main/docs/decisions/0011-skills-bootstrap-scope-is-exhaustive.md)."
+          } > /tmp/nudge-body.md
+
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --body-file /tmp/nudge-body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label ci --body-file /tmp/nudge-body.md
+          fi
