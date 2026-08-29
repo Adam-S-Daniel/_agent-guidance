@@ -257,8 +257,9 @@ fetch_file_content() {
 # is `set -e` seeing the assignment that captured it come back non-zero, so
 # every caller must assign the result rather than pipe it.
 #
-# Duplicated in sync.sh, drift-report.sh and bump-consumer-locks.sh for the
-# reason given above the yq preflight, and it must move with them.
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them.
 read_repos_yml() {
     local expr="$1" out
     if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then

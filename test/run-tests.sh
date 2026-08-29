@@ -830,6 +830,17 @@ YAML
 # starts VALID: the parse leg breaks it on the remote inside the test, so the
 # same fixture supplies the control ("this repo reads fine") and the injury,
 # and no mock has to pretend a file is unparseable.
+#
+# IT CARRIES AN AGENTS.md, and that is not decoration. The wrong answer the
+# drift leg forbids is **drift-detected**, and drift-report.sh only ever reaches
+# the comparison that can produce it through the `else` of `[[ -z
+# "$current_agents" ]]`. With no AGENTS.md the row is **no-agents-md** before
+# any section list is consulted, so the guard held whatever the script did —
+# measured against the pre-fix parse spelling, which published exactly the row
+# that guard forbids everywhere else and still left it passing here. The file is
+# built from the real build script for this repo's own `sections: [python]`, so
+# it is the shape the bug needed: an AGENTS.md that is in fact CORRECT, which a
+# section list collapsed to zero then reports as drifted.
 setup_sync_yaml_failure_repo() {
     local bare="$TEST_DIR/bare/sfailorg_repo-sync-yml"
     local work="$TEST_DIR/work/repo-sync-yml"
@@ -843,7 +854,16 @@ setup_sync_yaml_failure_repo() {
 sections:
   - python
 YAML
-    git add .agents-sync.yml
+    # Built the way testorg/repo-up-to-date-no-claude's is, through the real
+    # build script, so it cannot drift from what drift-report.sh will compare
+    # it against.
+    local managed marker_block
+    managed=$("$REPO_ROOT/scripts/build-agents-md.sh" python)
+    marker_block="$(printf '%s\n\n%s\n' \
+        "## Repo-specific additions" \
+        "<!-- Add your repo-specific agent guidance below this line -->")"
+    printf '%s\n%s\n' "$managed" "$marker_block" > AGENTS.md
+    git add .agents-sync.yml AGENTS.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
@@ -3942,13 +3962,21 @@ test_drift_report_contents_unreadable() {
         "drift 403: the ::error:: quotes gh's own status line"
     assert_row_contains "$rpt" "repo-sync-yml" "**fetch-failed**" \
         "drift 403: the row's Status is fetch-failed"
-    # The four confident verdicts a 0-with-empty-stdout return used to publish.
+    # The confident verdicts a 0-with-empty-stdout return used to publish, for
+    # the call sites THIS fixture actually reaches.
     assert_row_lacks_cell "$rpt" "repo-sync-yml" "**no-agents-md**" \
         "drift 403: it does NOT report the repo as having no AGENTS.md"
     assert_row_lacks_cell "$rpt" "repo-sync-yml" "missing" \
         "drift 403: it does NOT report the CLAUDE.md bridge as missing"
-    assert_row_lacks_cell "$rpt" "repo-sync-yml" "no-lock" \
-        "drift 403: it does NOT report the repo as declaring no bundles"
+    # No `no-lock` assertion, for the same reason the skills.lock leg of
+    # test_drift_report_partial_read_per_file carries none, one column over:
+    # that verdict is assigned only inside `elif bootstrap_allowlisted`, and
+    # this repo is not on the fixture repos.yml's `skills_bootstrap.repos`, so
+    # the branch is unreachable for it whatever fetch_file_content returns.
+    # Measured by restoring the pre-#81 `return 0` in fetch_file_content: every
+    # other assertion in this test fails and a `no-lock` guard sails through.
+    # The lock call site's #81 contract is asserted where it IS reachable — the
+    # **degraded** case in the per-file test.
     assert_row_contains "$rpt" "repo-sync-yml" "?" \
         "drift 403: the columns those files feed are withheld"
 
@@ -3998,6 +4026,16 @@ test_drift_report_sync_yml_unparseable() {
         "drift yml parse: the row's Status is fetch-failed"
     assert_row_lacks_cell "$rpt" "repo-sync-yml" "**drift-detected**" \
         "drift yml parse: no drift is declared against a section list that never parsed"
+    # This one guards the OTHER mis-fix of the same door, not the historical
+    # one, and it is worth saying so because the historical one cannot reach it:
+    # the empty-section collapse leaves Sections reading `none`, and `rust`
+    # arrives only if somebody decides an unparseable file should fall back to
+    # `default_sections`. Measured — replacing the parse-failure arm with
+    # `sections=("${DEFAULT_SECTIONS[@]}")` publishes `rust` in the Sections
+    # cell and fails exactly this line. The needle is not `none`, which would be
+    # the collapse's own wrong answer: `none` is also what the Open PR column
+    # holds on every row with no open PR, and assert_row_lacks_cell matches any
+    # cell, so it would fail against a correct run.
     assert_row_lacks_cell "$rpt" "repo-sync-yml" "rust" \
         "drift yml parse: Sections does NOT fall back to default_sections"
     assert_row_note_contains "$rpt" "repo-sync-yml" '`.agents-sync.yml`' \
@@ -4034,19 +4072,47 @@ test_drift_report_marker_not_through_a_pipe() {
 
     local rpt="$TEST_DIR/drift-bigmarker.md"
     local agents_md="$TEST_DIR/work/repo-big-agents-md/AGENTS.md"
-    local trials=20 i size wrong=0 row
+    local marker_line="## Repo-specific additions"
+    local trials=20 i size wrong=0 row marker_at after
 
-    size=$(wc -c < "$agents_md")
-    if [[ "$size" -gt 73728 ]]; then
-        pass "big marker: the fixture is past the 72 kB size where the race was measured ($size bytes)"
-    else
-        fail "big marker: the fixture is only $size bytes — below 72 kB the old spelling answered correctly anyway, so this test would prove nothing"
-    fi
-    # And the marker really is early enough for grep to finish first.
-    if grep -qxF "## Repo-specific additions" "$agents_md"; then
+    # Asserted FIRST, because the byte arithmetic below is derived from it.
+    if grep -qxF -- "$marker_line" "$agents_md"; then
         pass "big marker: the fixture really does carry the marker as a whole line"
     else
         fail "big marker: the fixture has no marker line, so 'yes' below would mean nothing"
+        return
+    fi
+
+    # THE QUANTITY IS THE BYTES AFTER THE MARKER, not the size of the file, and
+    # the arithmetic is written out because the whole-file guard this replaces
+    # could stay green over a fixture that had stopped discriminating.
+    #
+    # `echo "$current_agents" | grep -q` loses only while the WRITER still has
+    # bytes outstanding at the moment grep exits. grep exits at the first match,
+    # having consumed the file up to the end of the marker line; by then the
+    # writer has been able to push at most that much, plus the 64 KiB the
+    # kernel's pipe buffer holds on its behalf. So the writer is still blocked —
+    # and can still take SIGPIPE — exactly when
+    #
+    #     total bytes − (byte offset of the END of the marker line) > 64 KiB
+    #
+    # The file's SIZE says nothing about that on its own, and the collapse is
+    # measured rather than argued. Moving this fixture's marker to sit AFTER its
+    # filler leaves 10,001 bytes behind it in a file that is BIGGER than before
+    # (124,906 bytes) — and the trials below then caught the piped spelling in
+    # 1 of 20 runs, three times over, against 20 of 20 on the fixture as built.
+    # The `size > 72 kB` guard this replaces read PASS on that degraded fixture.
+    # So the failure this shape forecloses is not a fixture that shrinks — it is
+    # a marker that migrates late, which leaves the size assertion green, the
+    # TRIALS=20 detection budget below sized for a rate it no longer has, and
+    # the whole test one scheduling accident away from a tautology.
+    size=$(wc -c < "$agents_md")
+    marker_at=$(grep -m1 -bxF -- "$marker_line" "$agents_md" | cut -d: -f1)
+    after=$(( size - marker_at - ${#marker_line} - 1 ))   # -1 for the newline
+    if [[ "$after" -gt 65536 ]]; then
+        pass "big marker: $after bytes follow the marker line, clear of the 64 KiB pipe buffer (file $size bytes, marker at byte $marker_at)"
+    else
+        fail "big marker: only $after bytes follow the marker line (file $size bytes, marker at byte $marker_at) — that fits inside the 64 KiB pipe buffer, so the writer never blocks and the old spelling would answer correctly however large the file is"
     fi
 
     for (( i = 1; i <= trials; i++ )); do
@@ -4303,25 +4369,38 @@ bare_fleet_fingerprint() {   # [bare dir — defaults to the shared fleet]
     done
 }
 
-# default_branch_fingerprint [bare dir] — every bare's `refs/heads/main`, and
-# nothing else.
+# published_bump_branches [bare dir] — every `skills-lock-bump/*` ref in the
+# fleet, one line per branch, sorted.
 #
-# The narrower claim, for bump-consumer-locks.sh. bare_fleet_fingerprint above
-# covers every ref because sync.sh's "wrote nothing" really does mean every ref;
-# the bumper's does not, and pretending otherwise would make its assertion fail
-# for a correct reason. Its FIRST pass is the sweep, which reaps a bump branch
-# whose PR already merged (bumporg/repo-leftover is the fixture for exactly
-# that, and the real fleet had five of them at once) — a deliberate write that
-# happens long before the propose pass reaches a `git commit`. What a refused
-# commit must never do is publish CONTENT, and content is published to a
-# default branch, so that is what this measures.
-default_branch_fingerprint() {   # [bare dir — defaults to the shared fleet]
+# The narrower claim, for bump-consumer-locks.sh, and it is narrowed along a
+# different axis than it used to be. bare_fleet_fingerprint above covers every
+# ref because sync.sh's "wrote nothing" really does mean every ref; the
+# bumper's does not, because its FIRST pass is the sweep, which reaps a bump
+# branch whose PR already merged (bumporg/repo-leftover is the fixture for
+# exactly that, and the real fleet had five of them at once) — a deliberate
+# write that happens long before the propose pass reaches a `git commit`. So
+# this is compared as a SUBSET, not for equality: a reap removes a line and is
+# fine, a publish adds one and is the thing under test.
+#
+# It replaces a fingerprint over `refs/heads/main`, which measured a surface
+# this lane cannot touch: the bumper's only push is `HEAD:refs/heads/$BRANCH_NAME`,
+# so no refusal it mishandles can move a default branch, and that assertion was
+# true before and after any fix. Measured — with the commit refusal's
+# `cd "$REPO_ROOT"; continue` removed, so the push publishes the BASE commit
+# exactly as AGENTS.md's "a successful `git push` does not mean your commit
+# exists" describes, four consumers gained a bump branch and the old assertion
+# still read "no repo's default branch moved: PASS".
+published_bump_branches() {   # [bare dir — defaults to the shared fleet]
     local bare dir="${1:-$TEST_DIR/bare}"
     for bare in "$dir"/*; do
         [[ -d "$bare" ]] || continue
-        printf '%s %s\n' "$(basename "$bare")" \
-            "$(git -C "$bare" rev-parse --verify -q refs/heads/main 2>/dev/null || echo none)"
-    done
+        # `--format` carries no repo name of its own: a bare's basename is
+        # prefixed afterwards so a `%` in one could never be read as a format
+        # directive.
+        git -C "$bare" for-each-ref --format='%(refname) %(objectname)' \
+            'refs/heads/skills-lock-bump/*' 2>/dev/null \
+            | sed "s|^|$(basename "$bare") |"
+    done | sort
 }
 
 test_sync_unknown_argument() {
@@ -4598,7 +4677,7 @@ CFG
     # trap that left test_bump_contents_unreadable with an assertion that could
     # not fail. The NAMED repo is the attributable form, and it is asserted for
     # both.
-    local script out exit_code before after label refused_repo exit_attributable
+    local script out exit_code before after gained label refused_repo exit_attributable
     for script in sync.sh bump-consumer-locks.sh; do
         label="commit refused ($script)"
         if [[ "$script" == "sync.sh" ]]; then
@@ -4614,11 +4693,11 @@ CFG
         rm -rf "$TEST_DIR/bare-commit-refused"
         cp -a "$TEST_DIR/bare-pristine" "$TEST_DIR/bare-commit-refused"
         # The widest claim each script can honestly make — see
-        # default_branch_fingerprint for why the bumper's is the narrower one.
+        # published_bump_branches for why the bumper's is the narrower one.
         if [[ "$script" == "sync.sh" ]]; then
             before=$(bare_fleet_fingerprint "$TEST_DIR/bare-commit-refused")
         else
-            before=$(default_branch_fingerprint "$TEST_DIR/bare-commit-refused")
+            before=$(published_bump_branches "$TEST_DIR/bare-commit-refused")
         fi
 
         out="$TEST_DIR/commit-refused-$script.txt"
@@ -4670,19 +4749,29 @@ CFG
 
         # Nothing may have reached the throwaway fleet either: a refused commit
         # leaves HEAD where it was, and the push that follows would otherwise
-        # publish the base commit and look like a successful run. Over every ref
-        # of every bare, because "wrote nothing" is the claim.
+        # publish the base commit and look like a successful run.
         if [[ "$script" == "sync.sh" ]]; then
+            # Over every ref of every bare, because "wrote nothing" is the claim.
             after=$(bare_fleet_fingerprint "$TEST_DIR/bare-commit-refused")
             label="$label: not one ref of one bare repo moved"
+            if [[ "$before" == "$after" ]]; then
+                pass "$label"
+            else
+                fail "$label — $(diff <(echo "$before") <(echo "$after") | tr '\n' ' ')"
+            fi
         else
-            after=$(default_branch_fingerprint "$TEST_DIR/bare-commit-refused")
-            label="$label: no repo's default branch moved"
-        fi
-        if [[ "$before" == "$after" ]]; then
-            pass "$label"
-        else
-            fail "$label — $(diff <(echo "$before") <(echo "$after") | tr '\n' ' ')"
+            # GAINED, not changed: the sweep legitimately reaps
+            # bumporg/repo-leftover's branch in this same run, so equality here
+            # would fail for a correct reason. What the refusal must never do is
+            # ADD a branch — that is the base commit reaching a remote.
+            after=$(published_bump_branches "$TEST_DIR/bare-commit-refused")
+            label="$label: no bump branch was published"
+            gained=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+            if [[ -z "$gained" ]]; then
+                pass "$label"
+            else
+                fail "$label — $(echo "$gained" | tr '\n' ' ')"
+            fi
         fi
     done
 
@@ -10976,6 +11065,39 @@ test_hook_pin_pr_list_failure() {
     local prs_before
     prs_before=$(wc -l < "$HOOK_PIN_PR_LOG")
 
+    # ── The occupied branch the forbidden remedy is ABOUT, seeded for the
+    # length of this test and removed again at the end.
+    #
+    # Without it the scenario cannot reach the refusal at all: nothing in this
+    # lane has pushed a bump branch yet at this point, so the old spelling's
+    # empty answer pushed cleanly, opened a pull request, and printed no remedy
+    # — measured, and the needle below then matched nothing whatever the script
+    # did, which is the shape of a guard that cannot fail. `occupied` means BOTH
+    # halves of that arm's condition: a commit `main` does not contain, so the
+    # push is a non-fast-forward, carrying a repos.yml that is NOT this run's
+    # pin, so the adoption check above the refusal does not claim the branch
+    # first.
+    #
+    # Torn down again because the next test in the lane pushes this same branch
+    # name for real, and a stranger's commit parked on it would refuse that push
+    # for a reason that test is not about.
+    local bare="$HOOK_PIN_DIR/bare/pinorg_guidance"
+    local occupied="$TEST_DIR/hook-pin-occupied" occupied_sha
+    rm -rf "$occupied"
+    git clone -q "$bare" "$occupied"
+    git -C "$occupied" config commit.gpgsign false
+    echo "somebody else's work, on the name this bumper wants" > "$occupied/NOTES.md"
+    git -C "$occupied" add -A
+    git -C "$occupied" -c user.name="A Human" -c user.email="human@example.com" \
+        commit -q -m "a commit this bumper did not write"
+    git -C "$occupied" push -q origin "HEAD:refs/heads/hook-pin-bump/update"
+    occupied_sha=$(hook_pin_branch_sha)
+    if [[ -z "$occupied_sha" ]]; then
+        fail "pr-list failure: the occupied branch was not seeded, so the remedy below is unreachable"
+        rm -rf "$occupied"
+        return
+    fi
+
     HOOK_PIN_PR_LIST_FAILS_FOR_RUN="pinorg_guidance" run_hook_pin "$out"
 
     assert_contains "$out" "could not list open pull requests" \
@@ -10997,12 +11119,21 @@ test_hook_pin_pr_list_failure() {
     else
         fail "pr-list failure: could not read the occupied-branch remedy out of bump-hook-pin.sh, so this assertion has no needle"
     fi
-    assert_no_hook_pin_branch "pr-list failure: nothing was pushed"
+    # Not assert_no_hook_pin_branch: a branch legitimately exists now, and the
+    # claim is that this run left it exactly as it found it.
+    if [[ "$(hook_pin_branch_sha)" == "$occupied_sha" ]]; then
+        pass "pr-list failure: the occupied branch was left exactly as it was"
+    else
+        fail "pr-list failure: the occupied branch was written to — $occupied_sha -> $(hook_pin_branch_sha)"
+    fi
     if [[ "$(wc -l < "$HOOK_PIN_PR_LOG")" == "$prs_before" ]]; then
         pass "pr-list failure: no pull request opened"
     else
         fail "pr-list failure: no pull request opened — $(cat "$HOOK_PIN_PR_LOG")"
     fi
+
+    git -C "$bare" update-ref -d "refs/heads/hook-pin-bump/update"
+    rm -rf "$occupied"
 }
 
 # ── Test 9c3: a branch that outlived its pull request is ADOPTED ──────────

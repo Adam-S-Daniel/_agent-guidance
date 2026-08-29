@@ -185,8 +185,9 @@ SKIP_COUNT=0
 # is `set -e` seeing the assignment that captured it come back non-zero, so
 # every caller must assign the result rather than pipe it.
 #
-# Duplicated in sync.sh, drift-report.sh and bump-consumer-locks.sh for the
-# reason given above the yq preflight, and it must move with them.
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them.
 read_repos_yml() {
     local expr="$1" out
     if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
@@ -423,8 +424,9 @@ for repo_name in "${REPOS[@]}"; do
 
     sections=()
 
-    # This one call carries two hazards, and the shape it used to have got the
-    # second of them wrong in a way that WRITES.
+    # This one call carries three hazards. Two were in the shape it used to
+    # have, and it got the second of them wrong in a way that WRITES; the third
+    # arrived with the fix for the other two, which is why it is described last.
     #
     # The stdout half, which the old comment had right: on an HTTP error gh api
     # prints the raw error JSON body to stdout — the --jq filter is not applied
@@ -446,13 +448,46 @@ for repo_name in "${REPOS[@]}"; do
     # so 1,159 bytes of guidance this repo opted INTO would be stripped and
     # pushed. The same disambiguation bump-consumer-locks.sh makes over
     # skills.lock, for the same reason.
-    if ! remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
-        --jq '.content' 2>&1); then
-        # remote_yaml holds diagnostics now and never a file: gh has written the
-        # error body to stdout and its own status line to stderr, and this
-        # capture has both. `head -1` would therefore quote the body and never
-        # name the status, so prefer gh's own `gh: ` line where there is one.
-        api_err=$(grep -m1 '^gh: ' <<< "$remote_yaml" || head -1 <<< "$remote_yaml")
+    #
+    # The STREAM half, which the fix for those two introduced by reaching for
+    # `2>&1` so the diagnostic could be quoted: `2>&1` applies on SUCCESS too,
+    # and it answers the failure path's question by corrupting the success
+    # path's answer. gh writes to stderr while exiting 0 in ordinary conditions
+    # — deprecation notices, auth warnings — and a merged capture folds those
+    # lines into the base64 payload that is decoded and parsed below. Measured
+    # with a gh stubbed to print one "gh: this API endpoint is deprecated" line
+    # to stderr and the correct content to stdout, exit 0: merged, the run
+    # reported "could not read the sections from .agents-sync.yml — base64:
+    # invalid input" and counted the repo FAILED; separated, it reports
+    # "Sections: python docker". A healthy repo turned into a failure by a
+    # notice that changed nothing.
+    #
+    # So: stdout stays the file, stderr goes to $api_err_file, and only the
+    # failure path reads it. mktemp is checked because this loop counts per-repo
+    # failures rather than aborting the fleet — under `set -e` an unchecked
+    # assignment here would end the run for every repo after this one.
+    if ! api_err_file=$(mktemp); then
+        fail "$repo_name: could not create a temp file to capture gh's diagnostics"
+        ((FAIL_COUNT++)) || true
+        continue
+    fi
+    api_rc=0
+    remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
+        --jq '.content' 2>"$api_err_file") || api_rc=$?
+    # Read then removed unconditionally, so no `continue` below can leak it;
+    # the value is only ever USED in the failure branch. Same shape as
+    # drift-report.sh's fetch_file_content, which reads the same endpoint.
+    api_stderr=$(cat "$api_err_file")
+    rm -f "$api_err_file"
+
+    if [[ $api_rc -ne 0 ]]; then
+        # gh's own diagnostic, and only gh's: on an HTTP error gh prints the
+        # API's raw error body to stdout with the --jq filter unapplied, and
+        # the house rule forbids echoing a response body into a public log
+        # (AGENTS.md, "Sanitize error output"). With the streams separated
+        # that body is no longer in reach of this message, which is what the
+        # merged capture could not promise.
+        api_err=$(grep -m1 '^gh: ' <<< "$api_stderr" || head -1 <<< "$api_stderr")
 
         # A 404 on the PATH is the only outcome that MAY mean "absent", and even
         # it means that only once the REPO itself answers: GitHub replies 404
@@ -460,9 +495,11 @@ for repo_name in "${REPOS[@]}"; do
         # exists, so an unprobed 404 is as much a scope gap as a missing file
         # (AGENTS.md, "A GitHub 404 means 'not authorized', not 'not there'").
         # Both surfaces of the status are matched because only one of them may
-        # reach us: gh's own line carries "(HTTP 404)" on stderr, while the
-        # API's error body carries "status":"404" on stdout.
-        if [[ "$remote_yaml" != *"(HTTP 404)"* \
+        # reach us, and separating the streams is what lets each be read where
+        # it actually lands: gh's own line carries "(HTTP 404)" on stderr, while
+        # the API's error body carries "status":"404" on stdout — which, on this
+        # path, is what $remote_yaml holds.
+        if [[ "$api_stderr" != *"(HTTP 404)"* \
               && ! "$remote_yaml" =~ \"status\":[[:space:]]*\"404\" ]]; then
             fail "$repo_name: could not read .agents-sync.yml — ${api_err:-no diagnostic output from gh}"
             ((FAIL_COUNT++)) || true
@@ -993,8 +1030,20 @@ Managed content updated by the central _agent-guidance repository.${bootstrap_no
             # from the current tip the range is 1 commit and is allowed; forked
             # from `main~2` it is the bot's commit plus `human commit 1` and is
             # refused on human@example.com. Nothing else differs between the two
-            # runs. It is invisible to the suite because its fixtures clone by
-            # local path, where git hardlinks and ignores --depth entirely.
+            # runs.
+            #
+            # The suite reproduces it, and only recently: for as long as the
+            # git mock cloned by LOCAL PATH, git took its hardlink optimisation
+            # and ignored `--depth` silently, so every fixture handed these
+            # scripts full history and no test in the suite had ever exercised a
+            # shallow clone — this guard shipped green while refusing the one
+            # case it exists for. The mock now clones over `file://`, which
+            # forces upload-pack and honours `--depth`, and
+            # ancorg/repo-stale-ancestor is the fixture built to be read through
+            # the graft: its branch forks from an ANCESTOR of main, so
+            # `origin/main..FETCH_HEAD` is [bot "stale sync", human "H0 init"]
+            # shallow and [bot "stale sync"] deepened. Delete the deepening and
+            # that fixture goes red on the human committer.
             #
             # `--unshallow` is fatal on a repository that is already complete
             # ("--unshallow on a complete repository does not make sense", exit
