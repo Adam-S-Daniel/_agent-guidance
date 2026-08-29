@@ -6478,6 +6478,246 @@ YML
     unset -f assert_reg
 }
 
+# ── Test 6c: capture-routine.py ───────────────────────────────
+#
+# The snapshot in docs/routines/ is the only prior copy of a Routine that is
+# edited on claude.ai, so the ways this script can be wrong are the ways that
+# copy silently stops meaning anything: a field the policy has never seen and
+# quietly drops, an identifier reaching a public repo, runtime state making the
+# file permanently stale, or a render that is not reproducible so --check can
+# never be trusted. Each has a test below, and each refusal is checked against
+# the positive above it.
+
+test_capture_routine() {
+    echo ""
+    echo "=== Test: capture-routine.py (the Routine snapshot must refuse, not guess) ==="
+
+    local script="$REPO_ROOT/scripts/capture-routine.py"
+    local dir="$TEST_DIR/routine"
+    mkdir -p "$dir"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        fail "routine: python3 is missing — the capture script cannot be exercised"
+        return
+    fi
+
+    # One synthetic routine record, matching the shape `list_triggers` returns.
+    # Deliberately fake throughout: the values below are what the redaction
+    # assertions grep for, so a real id here would be both a leak and a test
+    # that proves nothing.
+    write_fixture() {   # <name> [python mutation over `r`]
+        local name="$1" mutation="${2:-pass}"
+        python3 - "$dir/$name.json" "$mutation" <<'PY'
+import json, sys
+out, mutation = sys.argv[1], sys.argv[2]
+prompt = "Read the spec.\n\n```bash\necho hi\n```\n"
+r = {
+    "id": "trig_FIXTUREfixtureFIXTUREfixture",
+    "name": "Fixture routine",
+    "enabled": True,
+    "cron_expression": "0 7 * * 0",
+    "created_at": "2026-01-01T00:00:00Z",
+    "created_kind": "ROUTINE_CREATED_KIND_ROUTINE",
+    "created_via": "meta_mcp",
+    "creator": {"account_uuid": "ACCOUNTUUIDfixture0000"},
+    "derived_state": {"folders_state": "FOLDERS_STATE_NONE", "model": "", "prompt": prompt},
+    "next_run_at": "NEXTRUNfixture0000",
+    "last_fired_at": "2026-01-02T00:00:00Z",
+    "last_run": {"status": "ROUTINE_RUN_STATUS_SUCCEEDED", "fired_at": "2026-01-02T00:00:00Z",
+                 "finished_at": "2026-01-02T00:01:00Z", "session_id": "SESSIONfixture0000"},
+    "updated_at": "2026-01-03T00:00:00Z",
+    "notifications": {"channel": {"push": True, "email": False, "slack": False}},
+    "mcp_connections": [{"name": "fixture-mcp", "url": "https://mcp.example.com/",
+                         "connector_uuid": "CONNECTORUUIDfixture0000"}],
+    "job_config": {"ccr": {
+        "environment_id": "ENVIRONMENTfixture0000",
+        "events": [{"data": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
+                             "session_id": "", "parent_tool_use_id": None,
+                             "message": {"role": "user", "content": prompt}}}],
+        "session_context": {
+            "allowed_tools": ["preset:default", "Bash"],
+            "autofix_on_pr_create": True,
+            "sources": [{"git_repository": {"url": "https://github.com/testorg/repo-one"}},
+                        {"git_repository": {"url": "https://github.com/testorg/repo-two"}}],
+            "outcomes": [{"git_repository": {"git_info": {"repo": "testorg/repo-one",
+                                                          "branches": ["claude/fixture"]}}}],
+        }}},
+}
+exec(mutation)
+json.dump({"data": [r]}, open(out, "w"))
+PY
+    }
+
+    # <fixture> <expected-exit> <needle> <label>
+    assert_cap() {
+        local fixture="$1" want="$2" needle="$3" label="$4" out rc=0
+        out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+                  --input "$dir/$fixture.json" --out "$dir/$fixture.md" 2>&1) || rc=$?
+        if [[ "$rc" == "$want" ]] && grep -qF -- "$needle" <<<"$out"; then
+            pass "$label"
+        else
+            fail "$label — expected exit $want containing '$needle'; got exit $rc: $(head -2 <<<"$out" | tr '\n' ' ')"
+        fi
+    }
+
+    # ── The positive. Every refusal below is only meaningful against this.
+    write_fixture good
+    assert_cap good 0 "wrote" "routine: a well-formed record renders a snapshot"
+
+    # ── REFUSALS (exit 2): the question could not be answered honestly.
+    write_fixture unknown 'r["brand_new_field"] = "surprise"'
+    assert_cap unknown 2 "brand_new_field" \
+        "routine: a field the policy has never classified REFUSES and names it"
+
+    write_fixture skew 'r["derived_state"]["prompt"] += "drifted"'
+    assert_cap skew 2 "disagree" \
+        "routine: derived_state.prompt disagreeing with the seed event is a refusal"
+
+    write_fixture twoev 'r["job_config"]["ccr"]["events"].append(r["job_config"]["ccr"]["events"][0])'
+    assert_cap twoev 2 "exactly one seed event" \
+        "routine: two seed events make the prompt ambiguous, so it refuses"
+
+    write_fixture noprompt 'r["job_config"]["ccr"]["events"][0]["data"]["message"]["content"] = ""'
+    assert_cap noprompt 2 "no prompt text" \
+        "routine: an empty prompt is a refusal, not an empty snapshot"
+
+    printf '{"data":[]}' > "$dir/empty.json"
+    assert_cap empty 2 "zero routines" \
+        "routine: zero routines refuses — an empty list and an unauthorised one look alike"
+
+    printf 'not json' > "$dir/notjson.json"
+    assert_cap notjson 2 "not JSON" \
+        "routine: a non-JSON payload is a refusal"
+
+    local out rc=0
+    out=$(python3 "$script" --id trig_ABSENT --input "$dir/good.json" \
+              --out "$dir/absent.md" 2>&1) || rc=$?
+    if [[ $rc -eq 2 ]] && grep -qF "will not guess" <<<"$out"; then
+        pass "routine: an id that is not in the response refuses rather than picking one"
+    else
+        fail "routine: absent id should exit 2; got $rc"
+    fi
+
+    # ── Redaction. This repo is public, so identifiers must not reach the file.
+    local snap="$dir/good.md" leaked=0 lit
+    for lit in ACCOUNTUUIDfixture0000 ENVIRONMENTfixture0000 CONNECTORUUIDfixture0000 \
+               SESSIONfixture0000 MESSAGEUUIDfixture0000; do
+        if grep -qF -- "$lit" "$snap"; then
+            fail "routine: $lit leaked into the snapshot"
+            leaked=1
+        fi
+    done
+    [[ $leaked -eq 0 ]] && pass "routine: every redacted identifier is absent from the snapshot"
+
+    # The control that keeps the five greps above from being wired to nothing:
+    # a literal that IS expected must be found by the same method.
+    if grep -qF -- "trig_FIXTUREfixtureFIXTUREfixture" "$snap"; then
+        pass "routine: control — the leak check finds a literal that is present"
+    else
+        fail "routine: control failed — the leak greps cannot see the file at all"
+    fi
+
+    # ── Volatility. Committing runtime state guarantees a permanently stale file.
+    if grep -qF -- "NEXTRUNfixture0000" "$snap"; then
+        fail "routine: next_run_at was captured — the snapshot goes stale on every fire"
+    else
+        pass "routine: runtime state is named in the exclusions but its value is not captured"
+    fi
+    assert_contains "$snap" 'next_run_at' "routine: the excluded field is still listed by name"
+
+    # ── Determinism. --check is worthless if two renders of one input differ.
+    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
+        --out "$dir/again.md" >/dev/null 2>&1
+    if cmp -s "$snap" "$dir/again.md"; then
+        pass "routine: two renders of one payload are byte-identical"
+    else
+        fail "routine: rendering is not deterministic"
+    fi
+
+    rc=0
+    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
+        --out "$snap" --check >/dev/null 2>&1 || rc=$?
+    [[ $rc -eq 0 ]] && pass "routine: --check passes against a current snapshot" \
+        || fail "routine: --check should pass against its own output; got $rc"
+
+    printf 'drift\n' >> "$snap"
+    rc=0
+    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
+        --out "$snap" --check >/dev/null 2>&1 || rc=$?
+    [[ $rc -eq 1 ]] && pass "routine: --check reports exit 1 on a stale snapshot" \
+        || fail "routine: --check should exit 1 on drift; got $rc"
+
+    # ── The wrapping fence must outgrow anything the prompt puts inside it.
+    write_fixture fence 'p = r["derived_state"]["prompt"] + "\n~~~~\ninner\n~~~~\n"; r["derived_state"]["prompt"] = p; r["job_config"]["ccr"]["events"][0]["data"]["message"]["content"] = p'
+    assert_cap fence 0 "wrote" "routine: a prompt containing ~~~~ still renders"
+    if grep -q '^~~~~~text$' "$dir/fence.md"; then
+        pass "routine: the fence lengthens past the longest run inside the prompt"
+    else
+        fail "routine: the fence did not grow — the prompt would close it early"
+    fi
+    if grep -q '^~~~text$' "$dir/good.md"; then
+        pass "routine: control — a prompt with no tildes still uses the short fence"
+    else
+        fail "routine: control failed — the short fence is not what a plain prompt gets"
+    fi
+
+    # ── --runtime: the half the snapshot excludes, answered rather than hidden.
+    # Every assertion below is clock-independent by construction: 2000 is stale
+    # under any clock this runs on, 2099 is not, and neither depends on today.
+    rc=0
+    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+              --input "$dir/good.json" --runtime 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]] && grep -q 'next run:' <<<"$out" && grep -q 'last fired:' <<<"$out"; then
+        pass "routine: --runtime prints the volatile fields the snapshot omits"
+    else
+        fail "routine: --runtime should print next run and last fired; got exit $rc"
+    fi
+    if grep -q 'NEXTRUNfixture0000' <<<"$out"; then
+        pass "routine: control — --runtime really does surface the excluded value"
+    else
+        fail "routine: control failed — --runtime printed no next_run_at at all"
+    fi
+    # --out is passed HERE deliberately. Without it this assertion is vacuous:
+    # a path the script was never given cannot appear whatever the code does.
+    # Naming it makes the check real — if --runtime ever fell through to the
+    # renderer, this file would exist.
+    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+        --input "$dir/good.json" --out "$dir/runtime-must-not-write.md" \
+        --runtime >/dev/null 2>&1
+    if [[ -e "$dir/runtime-must-not-write.md" ]]; then
+        fail "routine: --runtime wrote a snapshot even though it was told not to"
+    else
+        pass "routine: --runtime writes nothing, even when handed an --out path"
+    fi
+
+    write_fixture stale 'r["last_fired_at"] = "2000-01-01T00:00:00Z"'
+    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+              --input "$dir/stale.json" --runtime 2>&1)
+    grep -q 'VERDICT: STOPPED' <<<"$out" \
+        && pass "routine: a last fire past the two-week threshold reads STOPPED" \
+        || fail "routine: an ancient last_fired_at should read STOPPED; got: $(tail -1 <<<"$out")"
+
+    write_fixture future 'r["last_fired_at"] = "2099-01-01T00:00:00Z"'
+    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+              --input "$dir/future.json" --runtime 2>&1)
+    grep -q 'VERDICT: last fired in the future' <<<"$out" \
+        && pass "routine: a last fire in the future is called out, not read as healthy" \
+        || fail "routine: a future last_fired_at should be flagged; got: $(tail -1 <<<"$out")"
+
+    write_fixture neverfired 'del r["last_fired_at"]; del r["last_run"]'
+    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+              --input "$dir/neverfired.json" --runtime 2>&1)
+    grep -q 'VERDICT: never fired' <<<"$out" \
+        && pass "routine: a Routine that has never fired says so rather than looking healthy" \
+        || fail "routine: a never-fired routine should say so; got: $(tail -1 <<<"$out")"
+
+    rc=0
+    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
+        --input "$dir/good.json" >/dev/null 2>&1 || rc=$?
+    [[ $rc -eq 2 ]] && pass "routine: neither --out nor --runtime is an error, not a silent no-op" \
+        || fail "routine: omitting both --out and --runtime should fail; got $rc"
+}
+
 # ── Test 6: check-cron-coverage.js ────────────────────────────────────────
 #
 # The gate that says a repo running crons actually watches them. It is pinned
@@ -13351,6 +13591,7 @@ test_drift_report_sync_yml_unparseable
 test_drift_report_marker_not_through_a_pipe
 test_check_cron_coverage
 test_check_registry
+test_capture_routine
 # The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
 # the bares the sync and drift-report lanes share. Fixed order: the two runs
 # that must write nothing at all (a mistyped flag, a generator too old) while
