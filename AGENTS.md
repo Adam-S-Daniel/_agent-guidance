@@ -1,6 +1,6 @@
 <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
 <!-- Source: _agent-guidance -->
-<!-- Sections: python -->
+<!-- Sections: typescript -->
 
 # AGENTS.md
 
@@ -769,15 +769,14 @@ tree in both cases.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
 
-## Python
+## TypeScript
 
-- Use type hints on all function signatures.
-- Format with the project's configured formatter (black, ruff format, etc.) — do not mix styles.
-- Prefer `pathlib.Path` over `os.path` for filesystem operations.
-- Use context managers (`with`) for files, locks, and database connections.
-- Raise specific exceptions; never use bare `except:` or `except Exception`.
-- Use `logging` instead of `print()` for any output that is not user-facing CLI output.
-- Pin dependencies in `requirements.txt` or lock files; do not add unpinned deps.
+- Do not use `any`. Use `unknown` and narrow with type guards when the type is genuinely uncertain.
+- Prefer `interface` for object shapes that may be extended; use `type` for unions and intersections.
+- Enable and respect the project's `tsconfig.json` strict settings.
+- Use `as const` assertions instead of type casts where possible.
+- Co-locate types with the code that uses them; export types only when consumed externally.
+- Ensure generic functions have meaningful constraint bounds, not unbounded `<T>`.
 
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
