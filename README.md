@@ -336,6 +336,13 @@ spec, which lives in this repo so it can be reviewed and corrected by pull
 request:
 
 - [`docs/routines/guidance-centralization.md`](docs/routines/guidance-centralization.md)
+  — the spec: the procedure, the measured traps, the dated baseline.
+- [`docs/routines/guidance-centralization.routine.md`](docs/routines/guidance-centralization.routine.md)
+  — the Routine's own configuration, captured from the claude.ai Routines
+  API by [`scripts/capture-routine.py`](scripts/capture-routine.py) so that an
+  edit made on claude.ai arrives here as a diff rather than as a difference
+  against nothing. Configuration only: runtime state is deliberately excluded
+  and identifiers are redacted, both for reasons the script's header gives.
 
 It audits three things — that nothing multi-repo-applicable is stranded in one
 repo (and that centralized content is not still duplicated locally), that every
@@ -355,7 +362,7 @@ file extension.
 ```
 agents-md/              # managed AGENTS.md content (base + opt-in sections)
 scripts/                # build, sync, drift-report, lock bump, cron
-                        #   coverage, status
+                        #   coverage, status, routine capture
 docs/decisions/         # ADRs (start at the README there)
 docs/routines/          # specs for the scheduled Claude Routines that audit
                         #   what no workflow here can check
