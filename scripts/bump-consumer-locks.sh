@@ -667,8 +667,46 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 # on the merge, or a repo with "automatically delete head branches" enabled,
 # may have removed it microseconds earlier, and a WARN there would train a
 # reader to ignore the line that matters.
+#
+# BUT "already absent" IS ASKED, NEVER PATTERN-MATCHED. This used to classify
+# a failed DELETE by grepping its output for `not found|does not exist`,
+# unanchored and case-insensitive. That reads a 404 as a deleted branch, and a
+# 404 is not that: GitHub answers 404 rather than 403 when a credential is not
+# authorized to know a repo exists — it will not confirm the repo either way —
+# so a scope gap, a revoked installation and an expired token all arrive
+# carrying the same "Not Found" body an absent ref would (AGENTS.md, "A GitHub
+# 404 means 'not authorized', not 'not there'"). The branch was then reported
+# gone while it was still sitting there, this function returned 0, and the next
+# run refused to force-push it — which is precisely the silent stall the
+# paragraph above exists to prevent, reintroduced by the cleanup meant to end
+# it, and again with nothing going red.
+#
+# So the second question goes to the API, and the endpoint is chosen for the
+# SHAPE of its answer rather than for reading well: `git/matching-refs/heads/
+# <branch>` returns HTTP 200 with an EMPTY ARRAY when nothing matches, so
+# absence arrives as a SUCCESS response with no error to classify at all.
+# `git/ref/heads/<branch>` is the obvious-looking alternative and is the wrong
+# one — absence there is a 404, the same STATUS a caller gets for a repo it is
+# not authorised to know about, which puts the ambiguity straight back where it
+# was. The two bodies are not in fact identical (they differ in
+# `documentation_url`), and that is precisely why the distinction is not made
+# on them: telling the cases apart would mean parsing an undocumented field of
+# an error body, which is the pattern-match this whole function exists to
+# delete. A 200 needs no interpretation. Measured against the live API
+# 2026-08-29.
+#
+# Two details below look like tidying and are not:
+#
+#   * matching-refs is a PREFIX match — `heads/foo` also returns `heads/foo-2`
+#     — so the test is for OUR EXACT ref, not for an empty result.
+#   * only an answer we actually GOT may be read as already-gone. A non-zero
+#     exit means the question could not be asked, which is a WARN and a 1; it
+#     is never a licence to report success. Hence the exit code is captured on
+#     its own and the output blanked with it: `gh api --jq` prints the raw
+#     error JSON to STDOUT on an HTTP error with the filter unapplied, so
+#     `out=$(...) || true` would capture that body and go on to search it.
 delete_bump_branch() {
-    local repo_name="$1" branch="$2" delete_out
+    local repo_name="$1" branch="$2" delete_out refs_out refs_exit
     if [[ "$DRY_RUN" == "true" ]]; then
         log "[DRY RUN] Would delete $repo_name's $branch."
         return 0
@@ -677,11 +715,40 @@ delete_bump_branch() {
         log "$repo_name: deleted $branch."
         return 0
     fi
-    if grep -qiE 'not found|does not exist|reference does not exist' <<< "$delete_out"; then
+    refs_exit=0
+    refs_out=$(gh api --paginate "repos/$repo_name/git/matching-refs/heads/$branch" \
+        --jq '.[].ref' 2>/dev/null) || { refs_exit=$?; refs_out=""; }
+    # Pure bash, and NOT `grep -qxF … <<< "$refs_out"`. Two reasons, and the
+    # second is why the here-string alone was not enough:
+    #
+    #   * never `echo "$refs_out" | grep -q`: `grep -q` exits at the first
+    #     match and the writer then takes SIGPIPE, which `pipefail` turns into
+    #     a false negative on a payload past the pipe buffer (issue #81);
+    #   * `! grep` is TRUE for exit 1 (no match), exit 2 (a read or locale
+    #     error, or a NUL byte putting GNU grep into binary mode) and 127
+    #     (grep not on PATH) alike. Under a successful query those all read as
+    #     "the ref is absent" and return 0 over a branch that is still there —
+    #     the very conflation the exit code above is captured to avoid,
+    #     re-entering through the OTHER command in the same condition. A `[[ ]]`
+    #     pattern match runs no process, so it has no third answer to mistake.
+    #
+    # The wrapping newlines make it a whole-LINE test: a same-prefix sibling
+    # (`…/update-2`) must not read as our ref. Locked by a fixture, because
+    # dropping that leaves the suite green (measured 2026-08-29, 996/0).
+    if [[ $refs_exit -eq 0 ]] \
+       && [[ $'\n'"$refs_out"$'\n' != *$'\n'"refs/heads/$branch"$'\n'* ]]; then
         log "$repo_name: $branch was already gone."
         return 0
     fi
-    log "$repo_name: WARN could not delete $branch — $(head -1 <<< "$delete_out")"
+    # TWO different failures, and they may not print the same line. Quoting the
+    # DELETE's body in the second case is actively misleading: that body often
+    # says `Reference does not exist`, which is the conclusion this branch just
+    # refused to draw. Say which question could not be answered instead.
+    if [[ $refs_exit -ne 0 ]]; then
+        log "$repo_name: WARN could not delete $branch, and could not establish whether it survived — the follow-up matching-refs query failed too, so this is a credential or reachability problem, not evidence about the ref"
+        return 1
+    fi
+    log "$repo_name: WARN could not delete $branch — it is still on the repo; $(head -1 <<< "$delete_out")"
     return 1
 }
 

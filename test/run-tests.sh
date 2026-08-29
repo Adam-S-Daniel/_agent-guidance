@@ -2404,6 +2404,16 @@ case "$1" in
         if [[ "$1" == "-X" || "$1" == "--method" ]]; then
             api_method="$2"; shift 2
         fi
+        # Valueless flags may sit between the subcommand and the path --
+        # `--paginate` is the one in use. Skipped rather than assumed absent:
+        # real `gh` accepts them there, so a mock that treats the first token
+        # as the path silently routes the call to no handler at all and every
+        # caller reads the fallthrough as an answer. (Measured 2026-08-29:
+        # adding `--paginate` to one call site turned five assertions red with
+        # nothing naming the flag.)
+        while [[ "$1" == --* && "$1" != "--jq" ]]; do
+            shift
+        done
         api_path="$1"
         shift
         jq_filter=$(parse_jq_filter "$@")
@@ -2415,17 +2425,78 @@ case "$1" in
             repo_slug="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
             del_branch="${BASH_REMATCH[3]}"
             bare_path="${MOCK_BARE_DIR}/${repo_slug}"
+            # The failure that is NOT an absent ref, and the one no fixture
+            # could previously produce: an HTTP 404 raised while the branch is
+            # STILL THERE. GitHub answers 404 rather than 403 when a credential
+            # is not authorized to know a repo exists, so a scope gap, a
+            # revoked installation and an expired token all land here wearing
+            # the same "Not Found" body a deleted ref would — which is why
+            # delete_bump_branch may not classify this by reading the text.
+            # The ref is deliberately left in place: the whole assertion is
+            # that the branch survives while the caller is told it is gone.
+            # MOCK_DELETE_REF_HTTP_FAIL names repos (owner_repo) that get it.
+            if [[ " ${MOCK_DELETE_REF_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
+                echo '{"message":"Not Found","status":"404"}'
+                exit 1
+            fi
             if [[ -d "$bare_path" ]] \
                && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
                 git -C "$bare_path" update-ref -d "refs/heads/$del_branch"
                 exit 0
             fi
             # Real gh prints the error body to stdout and exits non-zero. The
-            # wording matters: delete_bump_branch treats "Reference does not
-            # exist" as success, so a mock that said something else would make
-            # the already-gone path untestable.
+            # wording no longer decides anything — delete_bump_branch settles
+            # already-gone by asking matching-refs below — but it stays the
+            # API's real 422 so the mock keeps describing GitHub rather than
+            # the script.
             echo '{"message":"Reference does not exist","status":"422"}'
             exit 1
+        fi
+
+        # GET repos/{owner}/{repo}/git/matching-refs/heads/{prefix} — what
+        # delete_bump_branch asks after a failed DELETE to settle whether the
+        # ref is actually gone. Computed from the bare repo, like the compare
+        # handler below, so a fixture's real refs decide the answer.
+        #
+        # The SHAPE is the reason the script asks this endpoint and not
+        # git/ref/heads/{branch}: a prefix matching nothing is HTTP 200 with an
+        # empty array, so absence is a success response rather than a 404
+        # indistinguishable from the scope 404 above. A missing bare repo is
+        # still the other handlers' 404 — that is the "cannot see this repo"
+        # case, and it must NOT read as "the branch is gone".
+        #
+        # Matching is a STRING prefix over the whole ref name, as GitHub's is:
+        # heads/foo also returns heads/foo-2. `git for-each-ref refs/heads/foo`
+        # would not — it globs by path component — so the filter is applied
+        # here rather than handed to git, and a mock that handed it to git
+        # would quietly make the script's exact-ref test look unnecessary.
+        if [[ "$api_method" == "GET" \
+              && "$api_path" =~ ^repos/([^/]+)/([^/]+)/git/matching-refs/heads/(.+)$ ]]; then
+            repo_slug="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+            ref_prefix="refs/heads/${BASH_REMATCH[3]}"
+            bare_path="${MOCK_BARE_DIR}/${repo_slug}"
+            # The credential is gone by the time the follow-up question is
+            # asked -- an installation revoked mid-run, an expired token, a
+            # repo that left the App's scope between the two calls. The ref is
+            # left in place, exactly as with the DELETE above: the assertion is
+            # that a branch which still exists is not reported as deleted just
+            # because the question about it could not be asked.
+            # MOCK_MATCHING_REFS_HTTP_FAIL names repos (owner_repo) that get it.
+            if [[ " ${MOCK_MATCHING_REFS_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
+                echo '{"message":"Not Found","status":"404"}'
+                exit 1
+            fi
+            if [[ ! -d "$bare_path" ]]; then
+                echo '{"message":"Not Found","status":"404"}'
+                exit 1
+            fi
+            json="[]"
+            while IFS= read -r one_ref; do
+                [[ -n "$one_ref" && "$one_ref" == "$ref_prefix"* ]] || continue
+                json=$(echo "$json" | jq --arg r "$one_ref" '. + [{"ref": $r}]')
+            done < <(git -C "$bare_path" for-each-ref --format='%(refname)' refs/heads/ 2>/dev/null)
+            if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
+            exit 0
         fi
 
         # repos/{owner}/{repo}/compare/{base}...{head} — answers
@@ -2853,6 +2924,20 @@ case "$1" in
                         rev-parse --verify -q "refs/heads/${head_ref}" 2>/dev/null || true)
                     if [[ -n "$tip" ]]; then
                         git -C "${MOCK_BARE_DIR}/${repo_slug}" update-ref refs/heads/main "$tip"
+                    fi
+                    # A repo with "automatically delete head branches" enabled,
+                    # which is a setting the bot does not control and cannot
+                    # see. The head ref is gone before delete_bump_branch ever
+                    # asks, so its DELETE fails on a ref that genuinely no
+                    # longer exists — the ONE case that may be reported as
+                    # already-gone, and the control that keeps the regression
+                    # test above from passing merely because nothing is ever
+                    # called gone. MOCK_MERGE_DELETES_BRANCH names repos
+                    # (owner_repo) whose merge reaps the branch this way.
+                    if [[ " ${MOCK_MERGE_DELETES_BRANCH:-} " == *" $repo_slug "* \
+                          && -n "$head_ref" ]]; then
+                        git -C "${MOCK_BARE_DIR}/${repo_slug}" \
+                            update-ref -d "refs/heads/${head_ref}" 2>/dev/null || true
                     fi
                     jq --argjson n "$pr_number" 'map(select(.number != $n))' "$pr_file" \
                         > "${pr_file}.tmp" && mv "${pr_file}.tmp" "$pr_file"
@@ -6587,6 +6672,9 @@ run_bump() {   # <output file> [script args...]
     MOCK_OPEN_PR_REPOS="${MOCK_OPEN_PR_REPOS:-}" \
     MOCK_PR_DIR="${BUMP_PR_DIR_FOR_RUN:-}" \
     MOCK_PR_MERGE_FAIL="${BUMP_MERGE_FAIL_FOR_RUN:-}" \
+    MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
+    MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
+    MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
     MOCK_AUTO_MERGE_FAILS="${BUMP_AUTO_MERGE_FAILS_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
@@ -10083,6 +10171,11 @@ sweep_main_sha() {   # <short repo name>
     git -C "$SWEEP_BARE/bumporg_$1" rev-parse --verify -q refs/heads/main 2>/dev/null || true
 }
 
+sweep_bump_branch_sha() {   # <short repo name> — its bump branch, or "" if none
+    git -C "$SWEEP_BARE/bumporg_$1" rev-parse --verify -q \
+        refs/heads/skills-lock-bump/update 2>/dev/null || true
+}
+
 setup_sweep_repos() {
     local branch="skills-lock-bump/update"
     local bot='"author":{"login":"agents-md-sync[bot]"}'
@@ -10465,6 +10558,186 @@ test_bump_sweep_view_failure_reports_why() {
     fi
     # One repo's unreadable PR is one repo's: the sweep goes on.
     assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" "view failure: other repos still merge"
+}
+
+# ── Test 8i5: a failed branch delete is not a deleted branch ──────────────
+#
+# delete_bump_branch exists to stop the NEXT run refusing to propose here, so
+# the case with teeth is the one where the delete did NOT happen and the
+# function reports that it did. It used to decide that by grepping the failed
+# DELETE's own output for `not found|does not exist`, unanchored — and GitHub
+# answers 404 rather than 403 when a credential is not authorized to know a
+# repo exists, so a scope gap, a revoked installation and an expired token all
+# arrive carrying exactly the "Not Found" an absent ref would. The branch
+# survives, the run calls it gone, and that repo is stuck for good with nothing
+# anywhere going red: the bumper exits 0 and the consumer's own verdict reads
+# OK while it serves a stale bundle. That is the four-day, five-repo stall this
+# cleanup was written to end, reintroduced by the cleanup itself.
+#
+# Three fixtures, because the failure assertion alone would also be green on a
+# function that never calls anything gone and never deletes anything:
+#
+#   * THE REGRESSION — a 404 on the DELETE with the ref still on the bare repo;
+#   * a ref that is GENUINELY absent, because the repo has "automatically
+#     delete head branches" on and reaped it during the merge — the one shape
+#     that may be reported as success;
+#   * an ordinary delete that works, which must still say "deleted" and must
+#     still leave nothing behind.
+test_bump_sweep_branch_cleanup() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a failed branch delete is not a deleted branch) ==="
+
+    setup_sweep_repos
+    local nochecks_tip log
+    nochecks_tip=$(sweep_bump_branch_sha repo-nochecks)
+    if [[ -n "$nochecks_tip" ]]; then
+        pass "branch cleanup: the fixture starts with a bump branch there is something to delete"
+    else
+        fail "branch cleanup: the fixture starts with a bump branch there is something to delete — found none"
+        return
+    fi
+
+    BUMP_DELETE_REF_FAIL_FOR_RUN="bumporg_repo-nochecks" \
+        run_sweep "$TEST_DIR/sweep-delete-404.txt"
+    unset BUMP_DELETE_REF_FAIL_FOR_RUN
+    log="$TEST_DIR/sweep-delete-404.txt"
+
+    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update" \
+        "branch cleanup: a DELETE that failed with a 404 is reported as a failure"
+    # Deliberately unqualified. repo-zz-ready's delete SUCCEEDS in this same
+    # run, so nothing legitimate prints this phrase anywhere in this log — and
+    # naming the repo would let the misread through under a reworded prefix.
+    assert_not_contains "$log" "was already gone" \
+        "branch cleanup: a 404 that could be a scope gap is not read as an already-deleted branch"
+    if [[ "$(sweep_bump_branch_sha repo-nochecks)" == "$nochecks_tip" ]]; then
+        pass "branch cleanup: the branch the delete failed on is still on the repo"
+    else
+        fail "branch cleanup: the branch the delete failed on is still on the repo — it is gone, so the assertion above proves nothing"
+    fi
+    # A failed cleanup does not unwind the merge that preceded it. That is why
+    # the call site spells this `|| true` instead of folding it into `gh pr
+    # merge --delete-branch`, where the deletion's exit code becomes the
+    # merge's.
+    assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" \
+        "branch cleanup: the merge still stands when the cleanup after it fails"
+    assert_contains "$log" "2 merged" "branch cleanup: and is still counted in the summary"
+
+    # ── CONTROL, from the same run: a delete that works.
+    assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
+        "branch cleanup (control): a delete that worked says deleted"
+    if [[ -z "$(sweep_bump_branch_sha repo-zz-ready)" ]]; then
+        pass "branch cleanup (control): and the branch really is gone afterwards"
+    else
+        fail "branch cleanup (control): and the branch really is gone afterwards — it is still on the bare repo"
+    fi
+
+    # ── CONTROL: genuinely absent. The repo reaped the head branch on merge,
+    # so the DELETE fails on a ref that truly no longer exists. This is the ONE
+    # failure that is success, and without it the run above would also pass
+    # against a function that had simply stopped believing anything.
+    setup_sweep_repos
+    BUMP_MERGE_REAPS_BRANCH_FOR_RUN="bumporg_repo-nochecks" \
+        run_sweep "$TEST_DIR/sweep-delete-gone.txt"
+    unset BUMP_MERGE_REAPS_BRANCH_FOR_RUN
+    log="$TEST_DIR/sweep-delete-gone.txt"
+
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone." \
+        "branch cleanup (control): a ref that is genuinely absent is success, not a WARN"
+    assert_not_contains "$log" "WARN could not delete" \
+        "branch cleanup (control): and nothing warns about a branch there was nothing left to delete"
+    if [[ -z "$(sweep_bump_branch_sha repo-nochecks)" ]]; then
+        pass "branch cleanup (control): the reaped branch really is absent"
+    else
+        fail "branch cleanup (control): the reaped branch really is absent — the mock left it in place"
+    fi
+
+    # ── THE SECOND DOOR. The DELETE fails AND the follow-up question fails
+    # too: the credential is gone by the time we ask. `gh api --jq` prints the
+    # error body to stdout with the filter unapplied, so the output is blanked
+    # with the exit code to keep that body from being searched — and blanking
+    # it makes the exact-ref test below find nothing, which is
+    # indistinguishable from a ref that is genuinely absent. Reading THAT as
+    # already-gone is the original defect wearing the follow-up query's
+    # clothes, so the exit code has to be read as well as captured.
+    #
+    # Nothing else in the suite reaches this: both fixtures above answer the
+    # follow-up successfully, so a `refs_exit` that is captured and never read
+    # is green in every one of them.
+    setup_sweep_repos
+    nochecks_tip=$(sweep_bump_branch_sha repo-nochecks)
+    BUMP_DELETE_REF_FAIL_FOR_RUN="bumporg_repo-nochecks" \
+    BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-nochecks" \
+        run_sweep "$TEST_DIR/sweep-delete-blind.txt"
+    unset BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN
+    log="$TEST_DIR/sweep-delete-blind.txt"
+
+    # Unqualified for the same reason as above: repo-zz-ready's delete succeeds
+    # in this run, so no legitimate line carries this phrase.
+    assert_not_contains "$log" "was already gone" \
+        "branch cleanup: a follow-up query that FAILED is not an answer that the branch is gone"
+    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update" \
+        "branch cleanup: a delete whose outcome could not be established warns"
+    # The two failures may not read the same. Quoting the DELETE's body here
+    # would print `Reference does not exist` from the branch that just declined
+    # to conclude exactly that.
+    assert_contains "$log" "could not establish whether it survived" \
+        "branch cleanup: the warning says which question went unanswered, not just that a delete failed"
+    # NOT `assert_not_contains "Reference does not exist"`, which is what this
+    # started as and what the real 422 body says. It is INERT here: the blind
+    # fixture's DELETE answers 404 `Not Found`, so that phrase is absent for a
+    # reason having nothing to do with the code, and the assertion passed with
+    # the branch under test deleted (measured). This one is wired — collapsing
+    # the two warnings makes the blind case claim the ref is still on the repo,
+    # which is exactly the conclusion it declined to draw.
+    assert_not_contains "$log" "it is still on the repo" \
+        "branch cleanup: and does not assert the ref survived, having just refused to conclude that"
+    if [[ "$(sweep_bump_branch_sha repo-nochecks)" == "$nochecks_tip" ]]; then
+        pass "branch cleanup: and the branch is still there to be warned about"
+    else
+        fail "branch cleanup: and the branch is still there to be warned about — it is gone, so the assertions above prove nothing"
+    fi
+    # The control that keeps the run above from passing on a function that has
+    # simply stopped answering: the OTHER repo in the same run still gets a
+    # clean delete, so the failure is scoped to the repo the mock blinded.
+    assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
+        "branch cleanup (control): a repo the credential can still see is deleted in that same run"
+
+    # ── THE PREFIX. matching-refs matches a STRING PREFIX over the whole ref
+    # name, as GitHub's does, so asking for `heads/skills-lock-bump/update`
+    # also returns `heads/skills-lock-bump/update-2`. A test for an EMPTY
+    # result therefore reads a live SIBLING as proof that OUR branch survived,
+    # and warns about a ref that is genuinely gone.
+    #
+    # This fixture exists because the exact-ref test was UNCOVERED. Measured
+    # 2026-08-29: substituting `[[ -z "$refs_out" ]]` for the exact-ref grep
+    # left the suite at 996 passed, 0 failed. That is not hypothetical — the
+    # substitution went in unnoticed once already, and every gate stayed green
+    # over it. The sibling planted below is the only thing that tells the two
+    # readings apart, so it is the reason the grep may not be "simplified".
+    setup_sweep_repos
+    git -C "$SWEEP_BARE/bumporg_repo-nochecks" update-ref \
+        refs/heads/skills-lock-bump/update-2 \
+        refs/heads/skills-lock-bump/update
+    if [[ -n "$(git -C "$SWEEP_BARE/bumporg_repo-nochecks" rev-parse --verify -q \
+                refs/heads/skills-lock-bump/update-2 2>/dev/null)" ]]; then
+        pass "branch cleanup: the same-prefix sibling really is on the fixture"
+    else
+        fail "branch cleanup: the same-prefix sibling really is on the fixture — it is absent, so the assertions below prove nothing"
+    fi
+
+    # The merge reaps OUR branch, exactly as in the genuinely-absent control
+    # above; the only difference is the sibling left standing beside it.
+    BUMP_MERGE_REAPS_BRANCH_FOR_RUN="bumporg_repo-nochecks" \
+        run_sweep "$TEST_DIR/sweep-delete-sibling.txt"
+    unset BUMP_MERGE_REAPS_BRANCH_FOR_RUN
+    log="$TEST_DIR/sweep-delete-sibling.txt"
+
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone." \
+        "branch cleanup: a same-prefix sibling is not our branch — the reaped ref still reads as gone"
+    assert_not_contains "$log" "WARN could not delete skills-lock-bump/update" \
+        "branch cleanup: and nothing warns about a branch that a sibling merely resembles"
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
 }
 
 # Everything above drives mock repos through the scripts. These five read the
@@ -12772,6 +13045,7 @@ test_bump_sweep_dry_run
 test_bump_sweep
 test_bump_sweep_head_match
 test_bump_sweep_view_failure_reports_why
+test_bump_sweep_branch_cleanup
 # The hook-pin lane, in a fixture dir of its own. Ordered: unchanged (nothing
 # to do) → dry run → the real bump → a second run with that PR open → the
 # refusals. Each step depends on the registry state the previous one left.
