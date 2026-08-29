@@ -3705,11 +3705,14 @@ test_drift_report_partial_read() {
     echo ""
     echo "=== Test: drift-report.sh (refuses to report on a partial read, #81) ==="
 
+    local rpt="$TEST_DIR/drift-partial-read.md"
+
     local control
     control=$(
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
@@ -3719,9 +3722,9 @@ test_drift_report_partial_read() {
     # an assertion that cannot fail, which is the exact defect this test exists
     # to catch. Rows start '| [`owner/repo`](...'; legend entries do not.
     local ctl_ok
-    ctl_ok=$(grep -cE '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$REPO_ROOT/drift-report.md" || true)
+    ctl_ok=$(grep -cE '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$rpt" || true)
     if [[ "$ctl_ok" -gt 0 ]] &&
-       ! grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$REPO_ROOT/drift-report.md"; then
+       ! grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$rpt"; then
         pass "partial read (control): untruncated run produces up-to-date rows and flags nothing"
     else
         fail "partial read (control): expected up-to-date rows and no fetch-failed row (got $ctl_ok up-to-date)"
@@ -3741,11 +3744,12 @@ test_drift_report_partial_read() {
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
 
-    if grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$REPO_ROOT/drift-report.md"; then
+    if grep -qE '^\| \[`[^`]+`\].*fetch-failed' "$rpt"; then
         pass "partial read: the row reports fetch-failed instead of a guessed status"
     else
         fail "partial read: expected a fetch-failed row, got none"
@@ -3764,11 +3768,11 @@ test_drift_report_partial_read() {
     # `\*\*up-to-date\*\*`, not `up-to-date`: the status cell is bolded and the
     # repo NAME is not -- and one fixture is called `repo-up-to-date-no-claude`,
     # so a bare substring match reads a status off the repo's name.
-    up_to_date=$(grep -cE '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$REPO_ROOT/drift-report.md" || true)
+    up_to_date=$(grep -cE '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$rpt" || true)
     if [[ "$up_to_date" -eq 0 ]]; then
         pass "partial read: no row claims up-to-date off a short read"
     else
-        fail "partial read: $up_to_date row(s) claimed up-to-date from a partial fetch -- the #81 cascade is back; rows: $(grep -E '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$REPO_ROOT/drift-report.md" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
+        fail "partial read: $up_to_date row(s) claimed up-to-date from a partial fetch -- the #81 cascade is back; rows: $(grep -E '^\| \[`[^`]+`\].*\*\*up-to-date\*\*' "$rpt" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
     fi
 
     if echo "$out" | grep -q '::error::.*refusing to report on a partial read'; then
@@ -3823,6 +3827,7 @@ drift_report_bootorg() {   # <output file> [space-separated paths to truncate]
     GITHUB_REPOSITORY_OWNER=bootorg \
     MOCK_BARE_DIR="$TEST_DIR/bare" \
     REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-perfile.md" \
     PATH="$TEST_DIR/bin:$PATH" \
     "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1 || true
 }
@@ -3831,7 +3836,7 @@ test_drift_report_partial_read_per_file() {
     echo ""
     echo "=== Test: drift-report.sh (a partial read of ONE file, per call site, #81) ==="
 
-    local rpt="$REPO_ROOT/drift-report.md"
+    local rpt="$TEST_DIR/drift-perfile.md"
 
     # ── CONTROL, and it carries more weight here than the usual one. Every
     # assertion below is "this cell stopped saying X", which a fetch that had
@@ -3930,26 +3935,29 @@ test_drift_report() {
     echo ""
     echo "=== Test: drift-report.sh ==="
 
+    local rpt="$TEST_DIR/drift-report-full.md"
+
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=testorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
 
     echo "$output" > "$TEST_DIR/drift-output.txt"
 
-    assert_contains "$REPO_ROOT/drift-report.md" "# AGENTS.md Drift Report" "drift report has title"
-    assert_contains "$REPO_ROOT/drift-report.md" "repo-with-sync" "drift report includes repo-with-sync"
-    assert_contains "$REPO_ROOT/drift-report.md" "repo-no-sync" "drift report includes repo-no-sync"
-    assert_contains "$REPO_ROOT/drift-report.md" "repo-with-existing" "drift report includes repo-with-existing"
-    assert_contains "$REPO_ROOT/drift-report.md" "Status legend" "drift report has legend"
-    assert_contains "$REPO_ROOT/drift-report.md" "Organization:" "drift report shows org"
-    assert_contains "$REPO_ROOT/drift-report.md" "7 repo(s) scanned" "drift report shows repo count"
-    assert_not_contains "$REPO_ROOT/drift-report.md" "_agent-guidance" "drift report excludes self"
-    assert_not_contains "$REPO_ROOT/drift-report.md" "repo-excluded" "drift report excludes repos.yml-excluded repo"
+    assert_contains "$rpt" "# AGENTS.md Drift Report" "drift report has title"
+    assert_contains "$rpt" "repo-with-sync" "drift report includes repo-with-sync"
+    assert_contains "$rpt" "repo-no-sync" "drift report includes repo-no-sync"
+    assert_contains "$rpt" "repo-with-existing" "drift report includes repo-with-existing"
+    assert_contains "$rpt" "Status legend" "drift report has legend"
+    assert_contains "$rpt" "Organization:" "drift report shows org"
+    assert_contains "$rpt" "7 repo(s) scanned" "drift report shows repo count"
+    assert_not_contains "$rpt" "_agent-guidance" "drift report excludes self"
+    assert_not_contains "$rpt" "repo-excluded" "drift report excludes repos.yml-excluded repo"
 
     # ── The Status column, which until 2026-08-28 nothing asserted ────────
     #
@@ -3963,32 +3971,32 @@ test_drift_report() {
     #
     # A fixture that IS in sync must therefore say so. This is the assertion
     # that can fail; the name checks above cannot.
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-up-to-date-no-claude" "**up-to-date**" \
+    assert_row_contains "$rpt" "repo-up-to-date-no-claude" "**up-to-date**" \
         "drift report: an in-sync repo reports up-to-date, not drift"
 
     # And an empty open-PR list must render as "none". `.[0].number` over `[]`
     # produces the literal string "null", which is non-empty — so every repo
     # showed `#null` in the Open PR column AND had its real status overwritten
     # by **pr-open**, hiding genuine drift behind a phantom pull request.
-    if ! grep -qF -- '#null' "$REPO_ROOT/drift-report.md"; then
+    if ! grep -qF -- '#null' "$rpt"; then
         pass "drift report: an empty PR list renders as none, not #null"
     else
-        fail "drift report: an empty PR list rendered as #null; rows: $(grep -F -- '#null' "$REPO_ROOT/drift-report.md" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
+        fail "drift report: an empty PR list rendered as #null; rows: $(grep -F -- '#null' "$rpt" | sed 's/](http[^)]*)//' | tr '\n' ' ')"
     fi
 
     # CLAUDE.md bridge column
-    assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge" "drift report has CLAUDE.md bridge column"
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-with-existing" "bridge-ok" "drift report: repo-with-existing is bridge-ok"
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-with-claude-md" "**no-import**" "drift report: repo-with-claude-md is no-import"
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-fix-claude" "**no-import**" "drift report: repo-fix-claude is no-import"
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-no-sync" "missing" "drift report: repo-no-sync bridge is missing"
-    assert_contains "$REPO_ROOT/drift-report.md" "CLAUDE.md bridge legend" "drift report has CLAUDE.md bridge legend"
+    assert_contains "$rpt" "CLAUDE.md bridge" "drift report has CLAUDE.md bridge column"
+    assert_row_contains "$rpt" "repo-with-existing" "bridge-ok" "drift report: repo-with-existing is bridge-ok"
+    assert_row_contains "$rpt" "repo-with-claude-md" "**no-import**" "drift report: repo-with-claude-md is no-import"
+    assert_row_contains "$rpt" "repo-fix-claude" "**no-import**" "drift report: repo-fix-claude is no-import"
+    assert_row_contains "$rpt" "repo-no-sync" "missing" "drift report: repo-no-sync bridge is missing"
+    assert_contains "$rpt" "CLAUDE.md bridge legend" "drift report has CLAUDE.md bridge legend"
 
     # Cron-coverage classification: the fixture repos.yml classifies every mock
     # repo, so the report must say NOTHING. Asserted here rather than only in
     # the flagging test because a check that fires on a fully-classified fleet
     # is noise nobody would read twice.
-    assert_not_contains "$REPO_ROOT/drift-report.md" "Unclassified for cron coverage" \
+    assert_not_contains "$rpt" "Unclassified for cron coverage" \
         "drift report: a fully classified fleet raises nothing"
 }
 
@@ -3999,17 +4007,18 @@ test_drift_report_bootstrap() {
     echo "=== Test: drift-report.sh (skills-bootstrap column) ==="
 
     # Observe the fully-delivered state produced by test_sync_bootstrap.
+    local rpt="$TEST_DIR/drift-bootstrap.md"
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=bootorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
     echo "$output" > "$TEST_DIR/drift-bootstrap-output.txt"
 
-    local rpt="$REPO_ROOT/drift-report.md"
     assert_contains "$rpt" "skills-bootstrap" "drift report has a skills-bootstrap column"
     assert_contains "$rpt" "skills-bootstrap legend" "drift report has a skills-bootstrap legend"
 
@@ -4167,17 +4176,18 @@ test_drift_report_cron_classification() {
         return
     fi
 
+    local rpt="$TEST_DIR/drift-cron.md"
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=bootorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos-uncron.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
     echo "$output" > "$TEST_DIR/drift-uncron-output.txt"
 
-    local rpt="$REPO_ROOT/drift-report.md"
     assert_contains "$rpt" "Unclassified for cron coverage (1)" \
         "drift report: an unclassified repo is counted"
     assert_contains "$rpt" "bootorg/repo-not-allowed" \
@@ -4206,17 +4216,19 @@ test_drift_report_bootstrap_unmanaged() {
     # in the fleet that would ever say so.
     sed '/- repo-adopted/d' "$TEST_DIR/repos.yml" > "$TEST_DIR/repos-dropped.yml"
 
+    local rpt="$TEST_DIR/drift-unmanaged.md"
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=bootorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos-dropped.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
     echo "$output" > "$TEST_DIR/drift-unmanaged-output.txt"
 
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-adopted" "**unmanaged**" "drift report: a hook left behind by a de-allowlisted repo is flagged unmanaged"
+    assert_row_contains "$rpt" "repo-adopted" "**unmanaged**" "drift report: a hook left behind by a de-allowlisted repo is flagged unmanaged"
 }
 
 # ── Test 4d: the registry itself is never `unmanaged` ─────────────────────
@@ -4229,18 +4241,20 @@ test_drift_report_bootstrap_registry() {
     # a naive "not allowlisted + has a hook" rule points `unmanaged`'s "remove
     # it by hand" advice straight at the source of truth. Scan it as a target
     # once and prove it does not.
+    local rpt="$TEST_DIR/drift-registry.md"
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=bootorg \
         MOCK_INCLUDE_REGISTRY=1 \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
     echo "$output" > "$TEST_DIR/drift-registry-output.txt"
 
-    if grep -F "bootorg/agentskills" "$REPO_ROOT/drift-report.md" | grep -qF "**unmanaged**"; then
+    if grep -F "bootorg/agentskills" "$rpt" | grep -qF "**unmanaged**"; then
         fail "drift report: the registry that authors the hook is not flagged unmanaged"
     else
         pass "drift report: the registry that authors the hook is not flagged unmanaged"
@@ -4262,19 +4276,23 @@ test_drift_report_probe_cleanup() {
     rm -rf "$probe_tmp"
     mkdir -p "$probe_tmp"
 
-    # Every drift test writes the report to the same fixed path, and the
-    # preceding one leaves the very same `repo-ignored | **blocked**` row there
-    # from its own bootorg fixtures. Delete it immediately before the run so the
-    # row the guard below reads can only have come from THIS invocation —
-    # otherwise the guard passes on a stale artifact even when the script under
-    # test never executes at all.
-    rm -f "$REPO_ROOT/drift-report.md"
+    # Every drift test used to write the report to the same fixed path, so the
+    # preceding one could leave the very same `repo-ignored | **blocked**` row
+    # there from its own bootorg fixtures, and the guard below could read that
+    # stale row and pass even when the script under test never ran at all --
+    # it used to require an `rm -f "$REPO_ROOT/drift-report.md"` right here,
+    # immediately before the run, so the row could only have come from THIS
+    # invocation. Named under $TEST_DIR via DRIFT_REPORT_OUTPUT below, this
+    # run's report cannot collide with any other test's, so there is nothing
+    # left to delete.
+    local rpt="$TEST_DIR/drift-cleanup.md"
 
     local output
     output=$(
         GITHUB_REPOSITORY_OWNER=bootorg \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         TMPDIR="$probe_tmp" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
@@ -4285,7 +4303,7 @@ test_drift_report_probe_cleanup() {
     # is ever created and the leak check below would pass without testing
     # anything. `repo-ignored` reaches `**blocked**` only THROUGH the probe, so
     # this assertion is what proves the run exercised the path.
-    assert_row_contains "$REPO_ROOT/drift-report.md" "repo-ignored" "**blocked**" \
+    assert_row_contains "$rpt" "repo-ignored" "**blocked**" \
         "drift report cleanup: the run actually exercised the ignore probe"
 
     local leftover
@@ -4549,24 +4567,26 @@ test_drift_report_multi_owner() {
     echo ""
     echo "=== Test: drift-report.sh (SYNC_OWNERS multi-owner) ==="
 
+    local rpt="$TEST_DIR/drift-multi-owner.md"
     local output
     output=$(
         SYNC_OWNERS="testorg testorg2" \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/drift-report.sh" 2>&1
     ) || true
 
     echo "$output" > "$TEST_DIR/drift-multi-output.txt"
 
-    assert_contains "$REPO_ROOT/drift-report.md" "## testorg" "multi-owner drift report has testorg heading"
-    assert_contains "$REPO_ROOT/drift-report.md" "## testorg2" "multi-owner drift report has testorg2 heading"
-    assert_contains "$REPO_ROOT/drift-report.md" "repo-owner2-only" "multi-owner drift report includes testorg2's repo"
-    assert_contains "$REPO_ROOT/drift-report.md" "repo-with-sync" "multi-owner drift report still includes testorg's repos"
+    assert_contains "$rpt" "## testorg" "multi-owner drift report has testorg heading"
+    assert_contains "$rpt" "## testorg2" "multi-owner drift report has testorg2 heading"
+    assert_contains "$rpt" "repo-owner2-only" "multi-owner drift report includes testorg2's repo"
+    assert_contains "$rpt" "repo-with-sync" "multi-owner drift report still includes testorg's repos"
 
     local count
-    count=$(grep -c "Status legend" "$REPO_ROOT/drift-report.md" || true)
+    count=$(grep -c "Status legend" "$rpt" || true)
     if [[ "$count" -eq 1 ]]; then
         pass "multi-owner drift report has Status legend exactly once"
     else
