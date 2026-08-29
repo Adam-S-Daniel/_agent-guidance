@@ -1128,6 +1128,30 @@ skills_bootstrap:
     - repo-ignored
     - repo-no-lock
     - repo-unparseable
+  # The complement, so that SILENCE is this key's pass condition here exactly
+  # as it is for cron_coverage below: every other repo the mock \`gh repo list\`
+  # can return is classified, and test_drift_report asserts nothing is flagged.
+  # The flagging path gets its own fixture in
+  # test_drift_report_skills_classification, which deletes one name from here.
+  # FLOW-sequence \`repo:\` values on their own lines, so the sed that derives
+  # that variant can anchor on one name without reaching into any other key.
+  out_of_scope:
+    - {repo: repo-with-sync, reason: test fixture}
+    - {repo: repo-no-sync, reason: test fixture}
+    - {repo: repo-with-existing, reason: test fixture}
+    - {repo: repo-existing-no-marker, reason: test fixture}
+    - {repo: repo-with-claude-md, reason: test fixture}
+    - {repo: repo-up-to-date-no-claude, reason: test fixture}
+    - {repo: repo-fix-claude, reason: test fixture}
+    - {repo: repo-owner2-only, reason: test fixture}
+    - {repo: repo-protected, reason: test fixture}
+    - {repo: repo-protected-fix, reason: test fixture}
+    - {repo: repo-stale, reason: test fixture}
+    - {repo: repo-foreign-branch, reason: test fixture}
+    - {repo: repo-not-allowed, reason: test fixture}
+    - {repo: agentskills, reason: test fixture}
+    - {repo: _agent-guidance, reason: test fixture}
+    - {repo: repo-excluded, reason: test fixture}
 # Every repo the mock \`gh repo list\` can return, across all six mock orgs that
 # hold any, so
 # the drift report's cron-coverage classification check finds nothing to flag.
@@ -4031,6 +4055,100 @@ test_drift_report_bootstrap() {
 # ACCOUNT holds, so it is the only thing that can notice a repo missing from
 # the list itself. Without this test the list could rot exactly as silently as
 # the crons it exists to cover.
+
+# The skills half of the same contract, and the reason the offline gate
+# (scripts/check-registry.js) is not enough on its own: that one can only
+# assert the two keys do not CONTRADICT each other. Whether they together still
+# COVER the account is a discovery question, and discovery happens here.
+test_drift_report_skills_classification() {
+    echo ""
+    echo "=== Test: drift-report.sh (skills-bootstrap classification) ==="
+
+    # Drop one repo from the complement — the state a newly created repo is in,
+    # and the state this whole mechanism exists to make visible. Anchored on
+    # the flow-mapping spelling so the edit cannot reach cron_coverage, which
+    # names the same repo.
+    sed '/{repo: repo-with-sync, reason: test fixture}/d' "$TEST_DIR/repos.yml" \
+        > "$TEST_DIR/repos-unskilled.yml"
+
+    # A no-op sed would make every assertion below pass against an unmodified
+    # file, which is the shape of a test that proves nothing.
+    if diff -q "$TEST_DIR/repos.yml" "$TEST_DIR/repos-unskilled.yml" >/dev/null; then
+        fail "drift report: the unclassified-skills fixture did not change repos.yml"
+        return
+    fi
+
+    local rpt="$TEST_DIR/drift-unskilled.md"
+    local side="$TEST_DIR/drift-unskilled-skills-unclassified.txt"
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos-unskilled.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-unskilled-output.txt"
+
+    assert_contains "$rpt" "Unclassified for skills-bootstrap (1)" \
+        "drift skills: an unclassified repo is counted"
+    assert_contains "$rpt" "testorg/repo-with-sync" \
+        "drift skills: the unclassified repo is named"
+    assert_contains "$rpt" "skills_bootstrap.out_of_scope" \
+        "drift skills: the finding says which keys resolve it"
+    assert_contains "$TEST_DIR/drift-unskilled-output.txt" "1 repo(s) unclassified for skills-bootstrap" \
+        "drift skills: the run log surfaces the count too"
+
+    # A repo classified under EITHER key must not be swept in with it — one
+    # control per key, because a predicate that had stopped reading one of them
+    # would still satisfy the other.
+    if grep -q '^> - `testorg/repo-no-sync`' "$rpt"; then
+        fail "drift skills: an out_of_scope repo was reported unclassified"
+    else
+        pass "drift skills (control): an out_of_scope repo is not flagged"
+    fi
+    if grep -q '^> - `testorg/repo-adopted`' "$rpt"; then
+        fail "drift skills: an allowlisted repo was reported unclassified"
+    else
+        pass "drift skills (control): an allowlisted repo is not flagged"
+    fi
+
+    # THE SIDECAR, which is what a workflow reads. A report a human has to open
+    # is not a notification, and a scheduled run notifies nobody.
+    if [[ -f "$side" ]] && grep -qxF -- "testorg/repo-with-sync" "$side"; then
+        pass "drift skills: the sidecar names the repo for a reader that is not a person"
+    else
+        fail "drift skills: the sidecar names the repo for a reader that is not a person — $(cat "$side" 2>/dev/null | tr '\n' ' ')"
+    fi
+
+    # ── CONTROL: the same run against the UNMODIFIED registry writes the
+    # sidecar and leaves it EMPTY. Without this, a script that never wrote the
+    # file at all would pass every assertion above, and "absent" would come to
+    # mean "nothing found" — the exact conflation the file is written
+    # unconditionally to prevent.
+    local crpt="$TEST_DIR/drift-skilled.md"
+    local cside="$TEST_DIR/drift-skilled-skills-unclassified.txt"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$crpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    if [[ -f "$cside" ]]; then
+        pass "drift skills (control): the sidecar is written even with nothing to report"
+    else
+        fail "drift skills (control): the sidecar is written even with nothing to report — it is absent, so absence cannot mean 'clean'"
+    fi
+    if [[ -f "$cside" && ! -s "$cside" ]]; then
+        pass "drift skills (control): and it is empty when every repo is classified"
+    else
+        fail "drift skills (control): and it is empty when every repo is classified — got: $(cat "$cside" 2>/dev/null | tr '\n' ' ')"
+    fi
+    assert_not_contains "$crpt" "Unclassified for skills-bootstrap" \
+        "drift skills (control): a fully classified fleet says nothing at all"
+}
 
 test_drift_report_cron_classification() {
     echo ""
@@ -13187,6 +13305,7 @@ test_drift_report_bootstrap
 # truncating one file at a time.
 test_drift_report_partial_read_per_file
 test_drift_report_cron_classification
+test_drift_report_skills_classification
 test_drift_report_marker_is_whole_line
 test_drift_report_partial_read
 test_drift_report_bootstrap_unmanaged
