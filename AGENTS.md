@@ -1,6 +1,6 @@
 <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
 <!-- Source: _agent-guidance -->
-<!-- Sections: python docker -->
+<!-- Sections: none -->
 
 # AGENTS.md
 
@@ -769,27 +769,40 @@ tree in both cases.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
 
-## Python
-
-- Use type hints on all function signatures.
-- Format with the project's configured formatter (black, ruff format, etc.) — do not mix styles.
-- Prefer `pathlib.Path` over `os.path` for filesystem operations.
-- Use context managers (`with`) for files, locks, and database connections.
-- Raise specific exceptions; never use bare `except:` or `except Exception`.
-- Use `logging` instead of `print()` for any output that is not user-facing CLI output.
-- Pin dependencies in `requirements.txt` or lock files; do not add unpinned deps.
-
-## Docker
-
-- Use multi-stage builds to keep final images small.
-- Pin base image tags to a specific digest or version; never use `latest` in production Dockerfiles.
-- Run the application as a non-root user (`USER` directive).
-- Combine related `RUN` commands to reduce layers; order layers from least to most frequently changing.
-- Do not copy secrets or credentials into the image — use build-time secrets or runtime mounts.
-- Include a `.dockerignore` that excludes `.git`, `node_modules`, build artifacts, and secrets.
-- Use `HEALTHCHECK` instructions for services that run as long-lived processes.
-
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
 
-<!-- Add your repo-specific agent guidance below this line -->
+**`AGENTS.md` in this repo is a generated artifact.** Everything above the marker
+is `scripts/build-agents-md.sh` output — edit `agents-md/base.md` (or a file under
+`agents-md/sections/`), never this file's managed half. CI regenerates and diffs
+it, so a base.md edit without a regenerated `AGENTS.md` fails the build.
+
+Why it is committed here at all, when `sync.sh` writes it everywhere else: the
+sync excludes its own repo (`SYNC_SELF_REPO`), so for as long as this repo has
+existed it was the one repo in the fleet whose agents never read the fleet's
+guidance. Committing the rendered output fixes that and buys a second thing —
+a PR that changes `base.md` shows the exact text ~20 repos are about to receive,
+in the same diff, instead of deferring it to an async run after merge.
+
+Regenerate with:
+
+```bash
+printf '%s\n%s\n' "$(./scripts/build-agents-md.sh)" \
+  "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new \
+  && mv AGENTS.md.new AGENTS.md
+```
+
+The recipe above is line-anchored, but between commit `c86465f` and this fix
+some tooling split the file on the first OCCURRENCE of the marker substring
+instead — and the managed block's own BEGIN header quotes the marker verbatim
+(`DO NOT EDIT ABOVE "## Repo-specific additions"`), so that split anchored on
+the header line rather than the real heading and treated the entire prior
+managed block as repo-specific content to preserve. Every regen after that
+prepended a fresh managed block on top of the old one, so the file carried two
+managed blocks — including two contradictory copies of the skills-ecosystem
+rule — for four commits (through `7b87581`). Because the recipe's own anchor
+kept matching the same corrupted line, the doubled file was a fixed point of
+regeneration, so the staleness check above stayed green throughout; only a
+check that counts markers and asserts their order can tell a doubled file from
+a well-formed one, which is what `scripts/check-agents-md.sh` does, and CI now
+runs it ahead of the staleness check for exactly this reason.
