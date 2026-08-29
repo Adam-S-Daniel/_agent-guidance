@@ -13744,18 +13744,43 @@ test_fleet_memory_hook() {
     [[ $rc -eq 0 ]] && pass "fleet-memory: empty payload still exits 0" || fail "fleet-memory: empty payload exit $rc"
     assert_contains "$d/out_empty" "DEGRADED" "fleet-memory: empty payload announces DEGRADED"
 
-    # An unwritable destination. Skipped as root, which can write anywhere —
-    # and skipping LOUDLY, because a silently-skipped permission test is
-    # exactly the kind of coverage people believe they have and do not.
+    # A destination that genuinely cannot be written. Skipped as root, which
+    # can write anywhere — and skipping LOUDLY, because a silently-skipped
+    # permission test is exactly the kind of coverage people believe they have
+    # and do not.
+    #
+    # TWO scenarios, because the OBVIOUS one does not establish what it looks
+    # like it establishes. `chmod 500` on the DIRECTORY plus an existing
+    # `CLAUDE.md` inside it does NOT make that file unwritable: directory write
+    # permission governs creating and unlinking entries, not writing THROUGH an
+    # existing one, so `cp` succeeds and the hook correctly reports `installed`.
+    # That version of this test failed in CI while passing (by skipping) as
+    # root — the assertion was about a condition the setup never created.
     if [[ "$(id -u)" -ne 0 ]]; then
-        mkdir -p "$d/ro"; : > "$d/ro/CLAUDE.md"; chmod 500 "$d/ro"
+        # (1) The destination DIRECTORY cannot be created at all. Unambiguous:
+        #     no reliance on cp semantics or on what the file already holds.
+        mkdir -p "$d/parent"; chmod 500 "$d/parent"
+        out="$(CLAUDE_CONFIG_DIR="$d/parent/nested" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_nodir"
+        chmod 700 "$d/parent"
+        [[ $rc -eq 0 ]] && pass "fleet-memory: uncreatable config dir still exits 0" || fail "fleet-memory: uncreatable config dir exit $rc"
+        assert_contains "$d/out_nodir" "DEGRADED" "fleet-memory: uncreatable config dir announces DEGRADED"
+
+        # (2) The write itself fails: a read-only FILE whose content DIFFERS
+        #     from what would be written. The differing content is load-bearing
+        #     — identical content short-circuits on `cmp` and reports `current`
+        #     without ever attempting the write, so the failure path would not
+        #     be reached and the assertion would be vacuous.
+        mkdir -p "$d/ro"
+        printf 'STALE CONTENT THAT MUST BE REPLACED\n' > "$d/ro/CLAUDE.md"
+        chmod 400 "$d/ro/CLAUDE.md"; chmod 500 "$d/ro"
         out="$(CLAUDE_CONFIG_DIR="$d/ro" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
         printf '%s' "$out" > "$d/out_ro"
-        chmod 700 "$d/ro"
-        [[ $rc -eq 0 ]] && pass "fleet-memory: unwritable dest still exits 0" || fail "fleet-memory: unwritable dest exit $rc"
-        assert_contains "$d/out_ro" "DEGRADED" "fleet-memory: unwritable dest announces DEGRADED"
+        chmod 700 "$d/ro"; chmod 600 "$d/ro/CLAUDE.md"
+        [[ $rc -eq 0 ]] && pass "fleet-memory: unwritable dest file still exits 0" || fail "fleet-memory: unwritable dest file exit $rc"
+        assert_contains "$d/out_ro" "DEGRADED" "fleet-memory: unwritable dest file announces DEGRADED"
     else
-        echo "  SKIP: fleet-memory unwritable-dest case (running as root)"
+        echo "  SKIP: fleet-memory unwritable-dest cases (running as root; root bypasses both)"
     fi
 
     # 10. The verdict names WHICH guidance landed, so two machines disagreeing
