@@ -129,6 +129,17 @@ jobs:
       - name: Cron-coverage self-check
         run: node scripts/check-cron-coverage.js
 
+      # The sibling gate, over the OTHER two-key scope block. It asserts that
+      # `skills_bootstrap.repos` and `skills_bootstrap.out_of_scope` stay a
+      # partition -- disjoint, well-formed, every exclusion reasoned -- and
+      # REFUSES (exit 2) rather than certifying when the complement key is
+      # missing or empty, because a gate that can find nothing prints the same
+      # clean line as a gate that found nothing. Offline by design: whether
+      # the two keys together still cover the account is a discovery question
+      # and belongs to the nightly drift report, so the two never contend.
+      - name: Skills-bootstrap scope is a partition
+        run: node scripts/check-registry.js
+
       # Structure BEFORE staleness: the staleness diff below only proves
       # AGENTS.md is a FIXED POINT of the regen recipe, and a doubled managed
       # block is a fixed point too — the corruption at c86465f regenerated to

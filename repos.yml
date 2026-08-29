@@ -142,50 +142,93 @@ skills_bootstrap:
     - scratch-claude-002
     # lock: committed — PR #9 merged 2026-08-19.
     - wsl-automation
-    #
-    # DELIBERATELY NOT LISTED — each for a reason, none by default:
-    #   agentskills — AUTHORS the hook and self-hosts it. Syncing it back is a
-    #     source-of-truth clobber, and the drift report exempts it from
-    #     `unmanaged` for the same reason.
-    #   _agent-guidance — adopted, but it must never appear here. Both sync.sh
-    #     and drift-report.sh drop $SELF_REPO before the per-repo loop, so an
-    #     entry could not deliver anything or even be reported on; all it would
-    #     do is tell a reader the sync maintains this repo's hook, which it
-    #     cannot. This repo SELF-HOSTS instead, exactly as agentskills does,
-    #     and the only thing keeping its copy honest is test/run-tests.sh —
-    #     which asserts all three parts, because any one of them alone is a
-    #     dead adoption: the hook's sha256 equals the pin above, this repo's
-    #     `.claude/settings.json` still REGISTERS it, and `skills.lock` is
-    #     still present and readable by it.
-    #     WHAT THIS ABSENCE DOES NOT MEAN: it says nothing about lock
-    #     BUMPING. The corollary "_agent-guidance is not in the allowlist,
-    #     so the nightly bumper does not re-pin its lock" is FALSE, and a
-    #     fresh reader re-derives it from this entry every time, so it is
-    #     written down here. This list governs HOOK DELIVERY only.
-    #     `scripts/bump-consumer-locks.sh` never reads it — it discovers
-    #     repos with `gh repo list` and filters on `.exclude` alone — and it
-    #     deliberately KEEPS the self repo exactly where sync.sh and
-    #     drift-report.sh drop it, under a comment saying so. This repo's own
-    #     `skills.lock` is therefore squarely in the bumper's scope, and it
-    #     sat stuck for the same reason every other consumer's did: the
-    #     anti-churn gate asked only whether the bundle had MOVED, which is
-    #     blind to a lock whose stored digests are the wrong SHAPE.
-    #   skills-evals — runs the skill-propagation probes; installing the bundle
-    #     into its sessions contaminates the instrument.
-    #   scratch-claude-001 — the live E1 skill-delivery experiment. Its own
-    #     .claude/settings.json SessionStart hook runs `claude plugin
-    #     marketplace add` + `claude plugin install adam@agentskills`, and
-    #     E1-HOOK-RESULT.md / E1-CLOUD-RESULT.md at the repo root are its
-    #     readings. A second installing hook confounds exactly what it
-    #     measures — same class as skills-evals, not the same class as its name.
-    #   4A, jc, rss-inator, scratch-jules-001, squarespacetemp — dormant: no
-    #     human commit since 2026-03 (since 2024-10 for `jc`, which does carry
-    #     a page and a deploy workflow from then); everything after that is the
-    #     AGENTS.md sync bot. Nobody opens a session there, so the bundle would
-    #     cost always-on context in sessions that never happen.
-    #   forks and archived repos — never reached by discovery at all
-    #     (`gh repo list --source --no-archived`), so they are not a choice
-    #     this key can express. See the header of `exclude:` above.
+
+  # ── THE COMPLEMENT: every repo the sync REACHES and does not deliver to,
+  # with the reason it does not. `repos:` above is one half of a decision and
+  # this is the other, and until this key existed only the first half was
+  # machine-readable — the reasons lived in a 43-line comment, which is
+  # unreadable to every tool and unfalsifiable by every gate. A name in both
+  # halves, an exclusion nobody justified, or a repo simply absent all looked
+  # alike: like a settled decision. `scripts/check-registry.js` now asserts
+  # the two keys stay a partition, and `drift-report.sh` flags whatever
+  # discovery finds in neither. Read docs/decisions/0011-*.md first.
+  #
+  # THE DENOMINATOR IS NOT `cron_coverage`'s below, and the numbers actively
+  # invite that mistake: measured 2026-08-29, both keys hold exactly NINE
+  # out_of_scope entries while sharing only FIVE members. This one counts over
+  # what the SYNC visits — `gh repo list --source --no-archived` across
+  # SYNC_OWNERS, 19 repos. So the account's two forks and the third-owner
+  # `superoutrigger` are absent here on purpose: discovery never reaches them,
+  # so their exclusion is not a choice this key can express, whereas a cron
+  # could exist in any of them. `scratch-claude-002` runs the other way — out
+  # of scope for cron, deliberately allowlisted above for skills. Do NOT
+  # "reconcile" the two lists; ADR 0003 ruled against collapsing the scope
+  # keys, and this is the coupling that ruling was protecting.
+  out_of_scope:
+    - repo: agentskills
+      reason: >-
+        Authors the hook and self-hosts it. Delivering it back would clobber
+        the source of truth, and drift-report.sh exempts it from `unmanaged`
+        for the same reason.
+
+    # WHAT THIS ABSENCE DOES NOT MEAN, written down because a fresh reader
+    # re-derives the wrong corollary from it every time: it says nothing about
+    # lock BUMPING. "_agent-guidance is not in the allowlist, so the nightly
+    # bumper does not re-pin its lock" is FALSE. This block governs HOOK
+    # DELIVERY only. `scripts/bump-consumer-locks.sh` never reads it — it
+    # discovers repos with `gh repo list` and filters on `.exclude` alone, and
+    # it deliberately KEEPS the self repo exactly where sync.sh and
+    # drift-report.sh drop it. This repo's own `skills.lock` is squarely in
+    # the bumper's scope, and it sat stuck for the same reason every other
+    # consumer's did.
+    # What keeps this repo's self-hosted copy honest is test/run-tests.sh,
+    # which asserts all three parts — any one alone is a dead adoption: the
+    # hook's sha256 equals the pin above, `.claude/settings.json` still
+    # REGISTERS it, and `skills.lock` is present and readable by it.
+    - repo: _agent-guidance
+      reason: >-
+        Self-hosts, and could not be listed above even if it should be: both
+        sync.sh and drift-report.sh drop $SELF_REPO before the per-repo loop,
+        so an entry could not deliver anything or even be reported on.
+
+    - repo: skills-evals
+      reason: >-
+        Runs the skill-propagation probes. Installing the bundle into its
+        sessions contaminates the instrument it exists to be.
+
+    - repo: scratch-claude-001
+      reason: >-
+        The live E1 skill-delivery experiment. Its own .claude/settings.json
+        SessionStart hook already installs the marketplace bundle, and
+        E1-HOOK-RESULT.md / E1-CLOUD-RESULT.md are its readings; a second
+        installing hook confounds exactly what it measures. Same class as
+        skills-evals, not the scratch class its name suggests.
+
+    # Dormant: no human commit since 2026-03 — everything after that is the
+    # AGENTS.md sync bot. Nobody opens a session there, so the bundle would
+    # cost always-on context in sessions that never happen. Adoption is a
+    # per-repo decision precisely so this stays a choice and not a default.
+    - repo: 4A
+      reason: >-
+        Dormant since 2026-03; no session happens there to spend the context.
+    - repo: jc
+      reason: >-
+        Dormant since 2024-10, though it does carry a page and a deploy
+        workflow from then; no session happens there to spend the context.
+    - repo: rss-inator
+      reason: >-
+        Dormant since 2026-03; no session happens there to spend the context.
+    - repo: scratch-jules-001
+      reason: >-
+        Dormant since 2026-03; no session happens there to spend the context.
+    - repo: squarespacetemp
+      reason: >-
+        Dormant since 2026-03; no session happens there to spend the context.
+
+  # Forks and archived repos are NOT listed above: discovery never reaches
+  # them (`gh repo list --source --no-archived`), so their absence from
+  # delivery is not a choice this key can express. See the header of
+  # `exclude:` above.
 
 
 # ── cron-coverage scope ────────────────────────────────────────────────────
