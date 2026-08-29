@@ -1,6 +1,6 @@
 <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
 <!-- Source: _agent-guidance -->
-<!-- Sections: python docker -->
+<!-- Sections: python -->
 
 # AGENTS.md
 
@@ -779,17 +779,12 @@ tree in both cases.
 - Use `logging` instead of `print()` for any output that is not user-facing CLI output.
 - Pin dependencies in `requirements.txt` or lock files; do not add unpinned deps.
 
-## Docker
-
-- Use multi-stage builds to keep final images small.
-- Pin base image tags to a specific digest or version; never use `latest` in production Dockerfiles.
-- Run the application as a non-root user (`USER` directive).
-- Combine related `RUN` commands to reduce layers; order layers from least to most frequently changing.
-- Do not copy secrets or credentials into the image — use build-time secrets or runtime mounts.
-- Include a `.dockerignore` that excludes `.git`, `node_modules`, build artifacts, and secrets.
-- Use `HEALTHCHECK` instructions for services that run as long-lived processes.
-
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
 
-<!-- Add your repo-specific agent guidance below this line -->
+# Our Custom Agent Guide
+
+Follow these repo-specific rules when working in this codebase.
+
+- Always run linting before commits
+- Use conventional commit messages
