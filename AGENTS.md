@@ -1,6 +1,6 @@
 <!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
 <!-- Source: _agent-guidance -->
-<!-- Sections: python -->
+<!-- Sections: rust -->
 
 # AGENTS.md
 
@@ -769,15 +769,14 @@ tree in both cases.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
 
-## Python
+## Rust
 
-- Use type hints on all function signatures.
-- Format with the project's configured formatter (black, ruff format, etc.) — do not mix styles.
-- Prefer `pathlib.Path` over `os.path` for filesystem operations.
-- Use context managers (`with`) for files, locks, and database connections.
-- Raise specific exceptions; never use bare `except:` or `except Exception`.
-- Use `logging` instead of `print()` for any output that is not user-facing CLI output.
-- Pin dependencies in `requirements.txt` or lock files; do not add unpinned deps.
+- Do not use `unsafe` without a `// SAFETY:` comment explaining the invariant being upheld.
+- Prefer returning `Result<T, E>` over panicking; use `?` for propagation.
+- Derive `Clone`, `Debug`, and other standard traits only when they are meaningful for the type.
+- Run `cargo clippy -- -D warnings` and `cargo test` before considering a change complete.
+- Prefer borrowing (`&T`) over cloning unless ownership transfer is required.
+- Keep `unwrap()` and `expect()` out of library code; they are acceptable only in tests and short-lived scripts.
 
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
