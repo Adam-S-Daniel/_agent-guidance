@@ -6130,6 +6130,216 @@ test_sync_bootstrap_pr_body() {
     rm -f "$TEST_DIR/bare/bootorg_repo-adopted/hooks/pre-receive"
 }
 
+# ── Test 6b: check-registry.js ────────────────────────────────────────────
+#
+# The sibling of test 6, over the OTHER two-key scope block. Same shape and
+# same reason: every negative case below is paired with a positive one, because
+# a gate that always refused would satisfy each negative assertion on its own
+# and prove nothing.
+#
+# The case that carries the most weight is the vacuous-pass guard. With a
+# populated allowlist and no complement key, every finding this script can make
+# is a RELATION between the two keys or a defect in an out-of-scope RECORD --
+# so with no second key there is nothing to contradict and nothing to be
+# malformed, and the check prints a clean line forever. That is not a passing
+# gate, it is an unwired one, and from the outside they are identical.
+test_check_registry() {
+    echo ""
+    echo "=== Test: check-registry.js (the allowlist must classify, not just list) ==="
+
+    local script="$REPO_ROOT/scripts/check-registry.js"
+    local dir="$TEST_DIR/registry"
+    mkdir -p "$dir"
+
+    # Same non-silent-skip rule as the cron gate: a check that quietly does not
+    # run is the failure this suite exists to catch.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "registry: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    # <name> <expected-exit> <needle> <label> -- fixture body on stdin.
+    assert_reg() {
+        local name="$1" want="$2" needle="$3" label="$4" out rc=0
+        cat > "$dir/$name.yml"
+        out=$(node "$script" --repos-yml "$dir/$name.yml" 2>&1) || rc=$?
+        if [[ "$rc" == "$want" ]] && grep -qF -- "$needle" <<<"$out"; then
+            pass "$label"
+        else
+            fail "$label — expected exit $want containing '$needle'; got exit $rc: $(head -2 <<<"$out" | tr '\n' ' ')"
+        fi
+    }
+
+    # ── The positive. Everything below is only meaningful against this.
+    assert_reg valid 0 "all well-formed, all reasoned" \
+        "registry: a partition of two well-formed keys passes" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+    - beta
+  out_of_scope:
+    - repo: gamma
+      reason: dormant since 2026-03
+YML
+
+    # ── REFUSALS (exit 2): the question could not be asked.
+    assert_reg noblock 2 "has no skills_bootstrap: block" \
+        "registry: a file with no skills_bootstrap block is a refusal, not a pass" <<'YML'
+exclude: []
+YML
+
+    assert_reg nocomplement 2 "refusing to certify it" \
+        "registry: an allowlist with no complement key REFUSES rather than reporting clean" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+YML
+
+    assert_reg emptycomplement 2 "refusing to certify it" \
+        "registry: an empty complement key is the same refusal as a missing one" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+  out_of_scope: []
+YML
+
+    assert_reg bothempty 2 "names no repos under either key" \
+        "registry: two empty keys is zero things examined, not a clean bill" <<'YML'
+skills_bootstrap:
+  repos: []
+  out_of_scope: []
+YML
+
+    assert_reg notalist 2 "is not a list" \
+        "registry: a key written against a different schema is a refusal, not a finding" <<'YML'
+skills_bootstrap:
+  repos: alpha
+  out_of_scope:
+    - repo: gamma
+      reason: dormant
+YML
+
+    printf 'skills_bootstrap:\n  repos:\n   - [unclosed\n' > "$dir/unparseable.yml"
+    local out rc=0
+    out=$(node "$script" --repos-yml "$dir/unparseable.yml" 2>&1) || rc=$?
+    if [[ "$rc" == 2 ]] && grep -qF -- "cannot read the registry" <<<"$out"; then
+        pass "registry: unparseable YAML is a refusal with a sentence, not a stack trace"
+    else
+        fail "registry: unparseable YAML is a refusal with a sentence, not a stack trace — got exit $rc: $(head -2 <<<"$out" | tr '\n' ' ')"
+    fi
+    if ! grep -qF -- "at Object.<anonymous>" <<<"$out"; then
+        pass "registry: and the refusal is not a stack trace dressed as a finding"
+    else
+        fail "registry: and the refusal is not a stack trace dressed as a finding"
+    fi
+
+    # ── FINDINGS (exit 1): read fine, breaks a rule.
+    assert_reg bothkeys 1 "listed under BOTH" \
+        "registry: a name under both keys is a contradiction, not a default" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+  out_of_scope:
+    - repo: alpha
+      reason: dormant
+YML
+
+    assert_reg dupdeliver 1 "listed more than once under skills_bootstrap.repos" \
+        "registry: a duplicate in the allowlist is a finding" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+    - alpha
+  out_of_scope:
+    - repo: gamma
+      reason: dormant
+YML
+
+    assert_reg dupexclude 1 "listed more than once under skills_bootstrap.out_of_scope" \
+        "registry: two reasons for one absence is a finding — nothing says which holds" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+  out_of_scope:
+    - repo: gamma
+      reason: dormant
+    - repo: gamma
+      reason: contaminates the instrument
+YML
+
+    assert_reg noreason 1 "has no reason:" \
+        "registry: an exclusion with no reason records a decision nobody can review" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+  out_of_scope:
+    - repo: gamma
+      reason: "   "
+YML
+
+    assert_reg barestring 1 "not a mapping with repo: and reason:" \
+        "registry: a bare string cannot carry a reason, which is the whole point of the key" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+  out_of_scope:
+    - gamma
+YML
+
+    # BOTH separators, not just the POSIX one. These names are joined onto a
+    # checkout root by the tools that consume them, so a name carrying a
+    # separator addresses a different directory instead of failing.
+    assert_reg slash 1 "contains a path separator" \
+        "registry: an owner/repo in the allowlist is rejected — these are SHORT names" <<'YML'
+skills_bootstrap:
+  repos:
+    - Adam-S-Daniel/alpha
+  out_of_scope:
+    - repo: gamma
+      reason: dormant
+YML
+
+    assert_reg backslash 1 "contains a path separator" \
+        "registry: and a backslash is rejected too, not only the POSIX one" <<'YML'
+skills_bootstrap:
+  repos:
+    - alpha
+  out_of_scope:
+    - repo: "sub\\gamma"
+      reason: dormant
+YML
+
+    # ── The one that is about THIS repo rather than about the script, and the
+    # reason the gate is in CI at all.
+    rc=0
+    out=$(node "$script" 2>&1) || rc=$?
+    if [[ "$rc" == 0 ]]; then
+        pass "registry: this repo's own repos.yml declares a usable partition"
+    else
+        fail "registry: this repo's own repos.yml declares a usable partition — exit $rc: $(head -3 <<<"$out" | tr '\n' ' ')"
+    fi
+
+    # ── And that CI actually runs it. A gate nothing invokes is a file.
+    # PARSED, never grepped: a line scan matches its needle in a comment just
+    # as happily, and this whole file is comments.
+    local wired
+    wired=$(node -e '
+      const YAML = require("yaml"), fs = require("fs");
+      const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const runs = [];
+      for (const job of Object.values(d.jobs || {}))
+        for (const step of job.steps || []) if (step.run) runs.push(step.run);
+      process.stdout.write(runs.some(r => /check-registry\.js/.test(r)) ? "yes" : "no");
+    ' "$REPO_ROOT/.github/workflows/ci.yml" 2>/dev/null)
+    if [[ "$wired" == "yes" ]]; then
+        pass "registry: ci.yml actually runs the gate"
+    else
+        fail "registry: ci.yml actually runs the gate — no run: step invokes check-registry.js"
+    fi
+
+    unset -f assert_reg
+}
+
 # ── Test 6: check-cron-coverage.js ────────────────────────────────────────
 #
 # The gate that says a repo running crons actually watches them. It is pinned
@@ -13001,6 +13211,7 @@ test_drift_report_contents_unreadable
 test_drift_report_sync_yml_unparseable
 test_drift_report_marker_not_through_a_pipe
 test_check_cron_coverage
+test_check_registry
 # The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
 # the bares the sync and drift-report lanes share. Fixed order: the two runs
 # that must write nothing at all (a mistyped flag, a generator too old) while
