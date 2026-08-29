@@ -13757,6 +13757,35 @@ test_fleet_memory_hook() {
     [[ "$only_size" -eq "$(wc -c < "$dest")" ]] && pass "fleet-memory: block-only file is stable" \
         || fail "fleet-memory: block-only file grows"
 
+    # A realistic pre-existing personal file — the laptop case. On a durable
+    # machine ~/.claude/CLAUDE.md is the DEVELOPER'S, and this hook is a guest
+    # in it: their content must survive, and must stay ABOVE the appended
+    # block so the file still opens with what they wrote.
+    rm -f "$dest"
+    printf '# My personal global instructions\n\nPrefer pnpm over npm on this machine.\n' > "$dest"
+    run_hook >/dev/null
+    assert_contains "$dest" "Prefer pnpm over npm" "fleet-memory: personal user memory preserved"
+    if [[ "$(head -1 "$dest")" == "# My personal global instructions" ]]; then
+        pass "fleet-memory: personal content stays at the top of the file"
+    else
+        fail "fleet-memory: personal content is no longer first — got '$(head -1 "$dest")'"
+    fi
+    run_hook >/dev/null
+    if [[ "$(grep -c 'Prefer pnpm over npm' "$dest")" -eq 1 ]]; then
+        pass "fleet-memory: personal content not duplicated on re-run"
+    else
+        fail "fleet-memory: personal content duplicated on re-run"
+    fi
+
+    # A destination that is not a regular file must be refused outright. The
+    # hook replaces this path, so anything it cannot safely replace stops it.
+    rm -f "$dest"; mkdir -p "$dest"
+    out="$(run_hook)"; rc=$?
+    printf '%s' "$out" > "$d/out_dir"
+    rmdir "$dest" 2>/dev/null || rm -rf "$dest"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: irregular dest still exits 0" || fail "fleet-memory: irregular dest exit $rc"
+    assert_contains "$d/out_dir" "not a regular file" "fleet-memory: irregular dest refused by name"
+
     # 7-9. Every failure path: exit 0, and a DEGRADED line that a human reading
     #      the session start can actually see.
     out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$d/nope.md" bash "$hook" 2>&1)"; rc=$?
@@ -13806,6 +13835,21 @@ test_fleet_memory_hook() {
         chmod 700 "$d/ro"; chmod 600 "$d/ro/CLAUDE.md"
         [[ $rc -eq 0 ]] && pass "fleet-memory: unwritable dest file still exits 0" || fail "fleet-memory: unwritable dest file exit $rc"
         assert_contains "$d/out_ro" "DEGRADED" "fleet-memory: unwritable dest file announces DEGRADED"
+
+        # (3) WRITABLE but NOT READABLE — the data-loss shape. An earlier draft
+        #     fell back to an empty strip result here, appended the block to
+        #     that emptiness and copied it over the top: a personal CLAUDE.md
+        #     destroyed, with `installed` printed. The content surviving is the
+        #     assertion that matters; the DEGRADED line is how anyone finds out.
+        mkdir -p "$d/nr"
+        printf 'PERSONAL CONTENT THAT MUST SURVIVE\n' > "$d/nr/CLAUDE.md"
+        chmod 200 "$d/nr/CLAUDE.md"
+        out="$(CLAUDE_CONFIG_DIR="$d/nr" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_nr"
+        chmod 600 "$d/nr/CLAUDE.md"
+        [[ $rc -eq 0 ]] && pass "fleet-memory: unreadable dest still exits 0" || fail "fleet-memory: unreadable dest exit $rc"
+        assert_contains "$d/out_nr" "DEGRADED" "fleet-memory: unreadable dest announces DEGRADED"
+        assert_contains "$d/nr/CLAUDE.md" "PERSONAL CONTENT THAT MUST SURVIVE" "fleet-memory: unreadable dest is NOT overwritten"
     else
         echo "  SKIP: fleet-memory unwritable-dest cases (running as root; root bypasses both)"
     fi

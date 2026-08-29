@@ -80,13 +80,30 @@ tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
 trap 'rm -f "$tmp" "$tmp.strip"' EXIT
 
 # Strip any previous managed block, keeping everything else verbatim.
-if [ -f "$DEST" ]; then
-    BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" awk '
+#
+# NEVER OVERWRITE A FILE WHOSE CURRENT CONTENTS COULD NOT BE READ. This file
+# usually belongs to somebody: on a durable machine ~/.claude/CLAUDE.md is the
+# developer's own global memory, and this hook is a guest in it. An earlier
+# draft fell back to an EMPTY strip result when the read failed, then appended
+# the block to that emptiness and copied the result over the top — so a file
+# that was writable but not readable (mode 0200, a mount quirk, an ACL) was
+# silently REPLACED by the fleet block alone, and the verdict still said
+# `installed`. Measured: a personal CLAUDE.md destroyed, with a success line.
+#
+# So every unreadable-or-unparseable shape degrades instead. Losing the
+# delivery is recoverable; losing somebody's notes is not.
+if [ -e "$DEST" ]; then
+    [ -f "$DEST" ] || degraded "$DEST exists but is not a regular file — refusing to replace it"
+    [ -r "$DEST" ] || degraded "$DEST exists but is not readable — refusing to overwrite content I cannot preserve"
+
+    if ! BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" awk '
         BEGIN { b = ENVIRON["BEGIN_MARK"]; e = ENVIRON["END_MARK"]; skip = 0 }
         index($0, b) == 1 { skip = 1; next }
         index($0, e) == 1 { skip = 0; next }
         !skip { print }
-    ' "$DEST" > "$tmp.strip" 2>/dev/null || : > "$tmp.strip"
+    ' "$DEST" > "$tmp.strip" 2>/dev/null; then
+        degraded "could not read or parse $DEST — refusing to overwrite content I cannot preserve"
+    fi
 
     # Drop trailing blank lines so repeated runs cannot grow the file, and so a
     # file whose ONLY content was the managed block collapses to empty rather
