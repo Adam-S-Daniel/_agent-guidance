@@ -36,6 +36,16 @@ REGISTER_SCRIPT="$SCRIPT_DIR/register-bootstrap-hook.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
+# fleet-memory: the hook that installs the managed guidance into USER memory
+# (~/.claude/CLAUDE.md) once per session, so N attached repos no longer mean N
+# identical copies. Unlike skills-bootstrap this is NOT allowlisted and NOT
+# gated on anything the repo declares: every synced repo gets it, because every
+# synced repo's AGENTS.md is simultaneously being reduced to the stub that
+# depends on it. Those two are one decision — see FLEET_MODE below.
+FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
+FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
+FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 MARKER="## Repo-specific additions"
 BRANCH_NAME="agents-md-sync/update"
 # The committer identity every commit this sync makes is written under (set on
@@ -749,11 +759,12 @@ for repo_name in "${REPOS[@]}"; do
 
     log "Sections: ${sections[*]:-none}"
 
-    # ── Build managed content ──────────────────────────────────────────
-
-    managed_content=$("$BUILD_SCRIPT" "${sections[@]}")
-
     # ── Clone & prepare ────────────────────────────────────────────────
+    #
+    # The managed content is NOT built yet. What gets built depends on whether
+    # this repo can actually receive the fleet-memory hook, and that is a fact
+    # about the CLONE (its .gitignore, its settings.json) — see the
+    # fleet-memory classification below.
 
     repo_dir="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')"
     if ! gh repo clone "$repo_name" "$repo_dir" -- --depth 1; then
@@ -774,6 +785,66 @@ for repo_name in "${REPOS[@]}"; do
     if [[ -n "${GH_TOKEN:-}" ]]; then
         git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"
     fi
+
+    # ── fleet-memory: classify, then choose this repo's AGENTS.md mode ──
+    #
+    # ONE decision, not two. The stub in AGENTS.md is only safe for a repo that
+    # will actually get the hook: the stub's entire content is "the guidance
+    # lives in user memory, check the verdict". Ship that to a repo the hook can
+    # never reach and you have quietly deleted its guidance and left a note
+    # pointing at something that will never arrive. So any repo we cannot
+    # deliver to keeps the FULL guidance inlined, exactly as before.
+    #
+    # Two things can block delivery, and both are deliberate refusals rather
+    # than failures: `.claude/` gitignored (two fleet repos do this on purpose),
+    # and a settings.json we cannot parse (same posture as an existing
+    # CLAUDE.md — a config we cannot read is one we must not rewrite).
+
+    fleet_deliver=true
+    fleet_reason=""
+    fleet_hook_state="missing"     # missing | current | drifted
+    fleet_payload_state="missing"  # missing | current | drifted
+    fleet_reg_state="missing"      # registered | no-entry | unparseable | missing
+
+    if [[ ! -r "$FLEET_HOOK_SOURCE" || ! -s "$FLEET_PAYLOAD_SOURCE" ]]; then
+        fleet_deliver=false
+        fleet_reason="hook or payload missing in _agent-guidance — cannot deliver"
+    elif git check-ignore -q "$FLEET_HOOK_REL_PATH" 2>/dev/null \
+         || git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
+        fleet_deliver=false
+        fleet_reason=".claude/ is gitignored in this repo — keeping the full guidance inline instead"
+    else
+        fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
+                          "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+        if [[ "$fleet_reg_state" == "unparseable" ]]; then
+            fleet_deliver=false
+            fleet_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it, keeping the full guidance inline"
+        else
+            if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
+                cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
+                    && fleet_hook_state="current" || fleet_hook_state="drifted"
+            fi
+            if [[ -f "$FLEET_PAYLOAD_REL_PATH" ]]; then
+                cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
+                    && fleet_payload_state="current" || fleet_payload_state="drifted"
+            fi
+        fi
+    fi
+
+    if $fleet_deliver; then FLEET_MODE=stub; else FLEET_MODE=full; fi
+    [[ -n "$fleet_reason" ]] && log "fleet-memory: $fleet_reason."
+    log "fleet-memory: mode=$FLEET_MODE hook=$fleet_hook_state payload=$fleet_payload_state settings=$fleet_reg_state"
+
+    fleet_up_to_date=true
+    if $fleet_deliver && { [[ "$fleet_hook_state" != "current" ]] \
+                        || [[ "$fleet_payload_state" != "current" ]] \
+                        || [[ "$fleet_reg_state" != "registered" ]]; }; then
+        fleet_up_to_date=false
+    fi
+
+    # ── Build managed content ──────────────────────────────────────────
+
+    managed_content=$(AGENTS_MD_MODE="$FLEET_MODE" "$BUILD_SCRIPT" "${sections[@]}")
 
     # ── Preserve repo-specific content ─────────────────────────────────
 
@@ -928,7 +999,7 @@ for repo_name in "${REPOS[@]}"; do
         log "skills-bootstrap: $bootstrap_reason."
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -971,6 +1042,26 @@ for repo_name in "${REPOS[@]}"; do
         fi
         if $bootstrap_deliver; then
             log "[DRY RUN] Would NOT touch $LOCK_REL_PATH (present; the sync never writes it)"
+        fi
+
+        # fleet-memory, reported the same way and for the same reason: on most
+        # repos this run's ONLY change is the hook plus the AGENTS.md shrink,
+        # and a preview that showed the shrink without the delivery would be
+        # previewing a repo losing its guidance.
+        if ! $fleet_up_to_date; then
+            case "$fleet_hook_state" in
+                missing) log "[DRY RUN] Would add $FLEET_HOOK_REL_PATH" ;;
+                drifted) log "[DRY RUN] Would overwrite drifted $FLEET_HOOK_REL_PATH" ;;
+            esac
+            case "$fleet_payload_state" in
+                missing) log "[DRY RUN] Would add $FLEET_PAYLOAD_REL_PATH (the guidance itself, $(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes, outside any memory-file path)" ;;
+                drifted) log "[DRY RUN] Would refresh drifted $FLEET_PAYLOAD_REL_PATH" ;;
+            esac
+            [[ "$fleet_reg_state" != "registered" ]] && \
+                log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+        fi
+        if [[ "$FLEET_MODE" == "full" ]]; then
+            log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
         fi
 
         ((SKIP_COUNT++)) || true
@@ -1066,10 +1157,61 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── fleet-memory: write ────────────────────────────────────────────
+    #
+    # Hook and payload are plain copies from _agent-guidance; the payload IS
+    # agents-md/base.md, shipped to `.claude/hooks/` rather than a memory-file
+    # path precisely so it costs zero always-on context in the repo carrying it
+    # (only CLAUDE.md and AGENTS.md are auto-loaded).
+
+    fleet_hook_written=false
+    fleet_payload_written=false
+    fleet_registered_now=false
+
+    if $fleet_deliver; then
+        if [[ "$fleet_hook_state" != "current" ]]; then
+            mkdir -p "$(dirname "$FLEET_HOOK_REL_PATH")"
+            cp "$FLEET_HOOK_SOURCE" "$FLEET_HOOK_REL_PATH"
+            chmod 0755 "$FLEET_HOOK_REL_PATH"
+            fleet_hook_written=true
+            log "fleet-memory: hook ${fleet_hook_state} — written."
+        fi
+
+        if [[ "$fleet_payload_state" != "current" ]]; then
+            mkdir -p "$(dirname "$FLEET_PAYLOAD_REL_PATH")"
+            cp "$FLEET_PAYLOAD_SOURCE" "$FLEET_PAYLOAD_REL_PATH"
+            fleet_payload_written=true
+            log "fleet-memory: payload ${fleet_payload_state} — written ($(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes)."
+        fi
+
+        if [[ "$fleet_reg_state" != "registered" ]]; then
+            mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+            # Same registrar as skills-bootstrap, re-pointed via its documented
+            # env seam. A second registrar would be a second place for the
+            # append-never-overwrite proof to rot.
+            if fleet_register_result=$(
+                    BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh"' \
+                    BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
+                    BOOTSTRAP_HOOK_TIMEOUT="30" \
+                    "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
+                [[ "$fleet_register_result" == "registered" ]] && fleet_registered_now=true
+                log "fleet-memory: settings.json — $fleet_register_result."
+            else
+                log "WARN: could not register fleet-memory in $SETTINGS_REL_PATH ($fleet_register_result) — leaving it untouched."
+            fi
+        fi
+    fi
+
     add_paths=(AGENTS.md)
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
+    $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
+    $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
+    # Both hooks can register in the same file in one run; add it once.
+    if $fleet_registered_now && ! $bootstrap_registered_now; then
+        add_paths+=("$SETTINGS_REL_PATH")
+    fi
     git add "${add_paths[@]}"
 
     # Whatever else changed, skills.lock is never among it. Cheap, absolute,

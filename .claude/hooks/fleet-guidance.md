@@ -854,7 +854,3 @@ tree in both cases.
   `generate_skills_lock.py --check` then fails with `cannot resolve ref`.
   Settings are enforced as code: `repo-settings`' `fleet.yml` for the fleet,
   `cms-platform`'s `repo-settings.yml` for the three above.
-
-## Cloud probe canary
-
-The fleet cloud canary is CRIMSON-BADGER-4242.

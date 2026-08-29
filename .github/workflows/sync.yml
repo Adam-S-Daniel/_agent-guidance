@@ -27,6 +27,11 @@ on:
       - "scripts/bridge-status.sh"
       - "scripts/bootstrap-status.sh"
       - "scripts/register-bootstrap-hook.sh"
+      # COPIED verbatim into every synced repo, and the payload it installs is
+      # agents-md/base.md (covered by `agents-md/**` above). Editing this hook
+      # changes what lands in ~20 repos' .claude/hooks/, so without this entry
+      # a fix to it would sit here firing no run to deliver itself.
+      - ".claude/hooks/fleet-memory.sh"
       # This file. `SYNC_OWNERS` below decides WHICH ~20 repos the run touches,
       # and the dispatch inputs decide whether it writes at all — an owner
       # added or removed here is as much a policy change as an allowlist edit,
