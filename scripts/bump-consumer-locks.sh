@@ -156,12 +156,15 @@ done
 
 # ── yq preflight ───────────────────────────────────────────────────────────
 #
-# THE INCIDENT, and it is one missing guard wearing two costumes. Every
-# repos.yml read in this repo was spelled `yq ... 2>/dev/null || true`, which
-# collapses three different answers into one: the key is legitimately absent,
-# yq could not parse the file, and yq is not installed at all. Only the first
-# is normal; `|| true` turned the other two into an EMPTY LIST, exit 0, and
-# not one line in the log. An empty exclusion list is not an inert one —
+# THE INCIDENT, and it is one missing guard wearing two costumes. The
+# repos.yml reads that decide which repos a run touches — `exclude`,
+# `default_sections`, `cron_coverage` and the `skills_bootstrap` block — were
+# spelled `yq ... 2>/dev/null || true` (`|| echo ""` for the scalars) in
+# sync.sh, drift-report.sh and bump-consumer-locks.sh, which collapses three
+# different answers into one: the key is legitimately absent, yq could not
+# parse the file, and yq is not installed at all. Only the first is normal;
+# `|| true` turned the other two into an EMPTY LIST, exit 0, and not one line
+# in the log. An empty exclusion list is not an inert one —
 # sync.sh's filter then matches nothing, and the run clones a repo repos.yml
 # excludes and pushes the managed AGENTS.md straight to its default branch,
 # which is the contamination that exclusion exists to prevent. Measured with
@@ -222,20 +225,30 @@ fail() { echo "  ERROR: $*"; }
 # nothing and exits 0 — a normal empty result, which each caller's `[[ -n ]]`
 # guard already handles), a repos.yml yq cannot parse, and a yq that fell
 # over. Only a NON-ZERO EXIT is a failure, and a failure now stops the run,
-# because the lists read through here decide which repos this script writes
-# to: a silently empty one is not a smaller run, it is a run against the
-# wrong set.
+# because what is read through here decides what a run does to other people's
+# repositories — which repos the fleet walkers write to, and which hook every
+# session in them then runs: a silently empty answer is not a smaller run, it
+# is a run against the wrong set.
 #
 # Command substitution, never `< <(...)`. Process substitution discards the
 # exit status of the command inside it, so simply dropping `|| true` from one
 # of those reads would have changed the visible behaviour not at all — the
-# same trap named beside the `gh repo list` capture further down. The `exit 2`
-# below leaves only the substitution's subshell on its own; what stops the run
-# is `set -e` seeing the assignment that captured it come back non-zero, so
-# every caller must assign the result rather than pipe it.
+# same trap named beside the `gh repo list` capture in the scripts that walk
+# the fleet. The `exit 2` below leaves only the substitution's subshell on its
+# own; what stops the run is `set -e` seeing the assignment that captured it
+# come back non-zero, so every caller must assign the result rather than pipe
+# it — including through a `${VAR:-$(read_repos_yml ...)}` default, which was
+# measured to abort the run rather than silently substitute an empty string.
 #
-# Duplicated in sync.sh, drift-report.sh and bump-consumer-locks.sh for the
-# reason given above the yq preflight, and it must move with them.
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them. bump-hook-pin.sh was the last to get it, and was the one
+# script the sentence above the preflight never described: its four
+# skills_bootstrap reads were spelled BARE — no redirection, no `|| true` — so
+# a yq that errors killed the run with yq's own one-line message and nothing
+# naming repos.yml or the key it was reading. A different failure from the
+# silent empty list, and still one the four disagreed about until this copy
+# landed.
 read_repos_yml() {
     local expr="$1" out
     if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
@@ -1916,13 +1929,53 @@ with open(sys.argv[1], encoding="utf-8") as handle:
         # commit in its subject and in its "since" clause. Both halves are
         # claims in lib/bump-pr-claims.sh now, so neither branch can forget
         # the other axis.
-        git commit -m "$COMMIT_SUBJECT
+        #
+        # A refused commit is a per-repo FAILURE that names the reason, and
+        # there is deliberately no "nothing to commit" branch beside it. The
+        # guard above has already read `git diff --cached --name-only` and
+        # refused the repo unless it holds exactly $LOCK_REL_PATH, so by the
+        # time control reaches here something staged is PROVEN. An empty diff
+        # is unreachable, and a branch written for it can therefore only ever
+        # catch a real error and file it as benign.
+        #
+        # Which is what this line used to do. It was spelled `git commit ...
+        # || { log "Nothing to commit."; ((SKIP_COUNT++)); continue; }` — the
+        # shape sync.sh carried until the fleet's own tooling made one error
+        # the common one: cms-platform's dev-hooks-sync installs a global
+        # core.hooksPath whose secrets-scan pre-commit guard FAILS CLOSED when
+        # gitleaks is absent from PATH. That is correct for a security gate
+        # and fatal here, because it refuses EVERY per-repo commit. Measured
+        # against this script with such a hook installed: five consumers that
+        # needed a re-pin each printed "Nothing to commit.", the run printed
+        # "=== Lock bump complete: 0 merged, 0 proposed, 11 skipped, 0
+        # failed ===" — the "0 failed" shape the comment above the contents
+        # read calls exactly what a healthy night prints — and exited 0 having
+        # written nothing to any of them. Nothing went red and
+        # scheduled-run-health saw a success, so the whole fleet sat on a
+        # frozen bundle behind a green run.
+        #
+        # Combined output, not `>/dev/null`: git writes a refusal (and a
+        # hook's own message) to stderr, and the first line of it is the only
+        # thing that tells a reader whether this was a hook, a ruleset or a
+        # missing identity. Capturing stdout also keeps the success path as
+        # quiet as `>/dev/null` made it.
+        #
+        # `${commit_why:-no output}` because a refusal can be SILENT and an
+        # empty reason renders as a sentence ending in a dash, which reads as
+        # a reason that was read and was blank rather than one that was never
+        # printed. Measured: a `pre-commit` that is just `exit 1` makes git
+        # exit 1 having written nothing at all to either stream. Same idiom as
+        # `${out:-no output}` in read_repos_yml and `${yq_found:-no output}`
+        # in the preflight, for the same reason. sync.sh's copy of this shape
+        # does not carry the fallback yet.
+        if ! commit_out=$(git commit -m "$COMMIT_SUBJECT
 
-$COMMIT_BODY" >/dev/null || {
-            log "Nothing to commit."
-            ((SKIP_COUNT++)) || true
+$COMMIT_BODY" 2>&1); then
+            commit_why=$(head -1 <<< "$commit_out")
+            fail "$repo_name: commit refused — ${commit_why:-no output}"
+            ((FAIL_COUNT++)) || true
             cd "$REPO_ROOT"; continue
-        }
+        fi
 
         # Pushed, never with --force.
         push_ok=true

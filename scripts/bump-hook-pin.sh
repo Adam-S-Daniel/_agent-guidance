@@ -101,12 +101,15 @@ $DRY_RUN && log "DRY RUN — deciding and reporting, writing and pushing nothing
 
 # ── yq preflight ───────────────────────────────────────────────────────────
 #
-# THE INCIDENT, and it is one missing guard wearing two costumes. Every
-# repos.yml read in this repo was spelled `yq ... 2>/dev/null || true`, which
-# collapses three different answers into one: the key is legitimately absent,
-# yq could not parse the file, and yq is not installed at all. Only the first
-# is normal; `|| true` turned the other two into an EMPTY LIST, exit 0, and
-# not one line in the log. An empty exclusion list is not an inert one —
+# THE INCIDENT, and it is one missing guard wearing two costumes. The
+# repos.yml reads that decide which repos a run touches — `exclude`,
+# `default_sections`, `cron_coverage` and the `skills_bootstrap` block — were
+# spelled `yq ... 2>/dev/null || true` (`|| echo ""` for the scalars) in
+# sync.sh, drift-report.sh and bump-consumer-locks.sh, which collapses three
+# different answers into one: the key is legitimately absent, yq could not
+# parse the file, and yq is not installed at all. Only the first is normal;
+# `|| true` turned the other two into an EMPTY LIST, exit 0, and not one line
+# in the log. An empty exclusion list is not an inert one —
 # sync.sh's filter then matches nothing, and the run clones a repo repos.yml
 # excludes and pushes the managed AGENTS.md straight to its default branch,
 # which is the contamination that exclusion exists to prevent. Measured with
@@ -155,6 +158,46 @@ if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
     exit 2
 fi
 
+# read_repos_yml <yq expression> — the one way this script reads repos.yml.
+#
+# It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
+# spelling collapsed into one: a key that is legitimately absent (yq prints
+# nothing and exits 0 — a normal empty result, which each caller's `[[ -n ]]`
+# guard already handles), a repos.yml yq cannot parse, and a yq that fell
+# over. Only a NON-ZERO EXIT is a failure, and a failure now stops the run,
+# because what is read through here decides what a run does to other people's
+# repositories — which repos the fleet walkers write to, and which hook every
+# session in them then runs: a silently empty answer is not a smaller run, it
+# is a run against the wrong set.
+#
+# Command substitution, never `< <(...)`. Process substitution discards the
+# exit status of the command inside it, so simply dropping `|| true` from one
+# of those reads would have changed the visible behaviour not at all — the
+# same trap named beside the `gh repo list` capture in the scripts that walk
+# the fleet. The `exit 2` below leaves only the substitution's subshell on its
+# own; what stops the run is `set -e` seeing the assignment that captured it
+# come back non-zero, so every caller must assign the result rather than pipe
+# it — including through a `${VAR:-$(read_repos_yml ...)}` default, which was
+# measured to abort the run rather than silently substitute an empty string.
+#
+# Duplicated in sync.sh, drift-report.sh, bump-consumer-locks.sh and
+# bump-hook-pin.sh for the reason given above the yq preflight, and it must
+# move with them. bump-hook-pin.sh was the last to get it, and was the one
+# script the sentence above the preflight never described: its four
+# skills_bootstrap reads were spelled BARE — no redirection, no `|| true` — so
+# a yq that errors killed the run with yq's own one-line message and nothing
+# naming repos.yml or the key it was reading. A different failure from the
+# silent empty list, and still one the four disagreed about until this copy
+# landed.
+read_repos_yml() {
+    local expr="$1" out
+    if ! out=$(yq -r "$expr" "$REPOS_YML" 2>&1); then
+        echo "::error::repos.yml: yq failed reading '$expr' — ${out:-no output}" >&2
+        exit 2
+    fi
+    printf '%s\n' "$out"
+}
+
 # ── Read the current pin ───────────────────────────────────────────────────
 #
 # Read with a real parser, never a line scan — the house rule, and repos.yml is
@@ -168,10 +211,10 @@ if [[ ! -f "$REPOS_YML" ]]; then
     exit 1
 fi
 
-PIN_REGISTRY="${BUMP_REGISTRY:-$(yq -r '.skills_bootstrap.registry // ""' "$REPOS_YML")}"
-PIN_PATH=$(yq -r '.skills_bootstrap.path // ""' "$REPOS_YML")
-PIN_REF=$(yq -r '.skills_bootstrap.ref // ""' "$REPOS_YML")
-PIN_SHA256=$(yq -r '.skills_bootstrap.sha256 // ""' "$REPOS_YML")
+PIN_REGISTRY="${BUMP_REGISTRY:-$(read_repos_yml '.skills_bootstrap.registry // ""')}"
+PIN_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
+PIN_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
+PIN_SHA256=$(read_repos_yml '.skills_bootstrap.sha256 // ""')
 
 # Every one of the four is load-bearing, and a missing one means repos.yml is
 # not in the shape this script knows how to edit. Refuse rather than guess a

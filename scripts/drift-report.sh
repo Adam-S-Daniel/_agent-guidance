@@ -12,7 +12,7 @@ set -euo pipefail
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
 #
-# Output: drift-report.md in the repository root.
+# Output: drift-report.md in the repository root, or $DRIFT_REPORT_OUTPUT.
 #
 # Requirements: gh (GitHub CLI, authenticated), yq, python3
 #
@@ -23,6 +23,10 @@ set -euo pipefail
 #                               fallback (e.g. "Adam-S-Daniel jodidaniel")
 #   GITHUB_REPOSITORY_OWNER — org/user to scan (auto-set in GitHub Actions)
 #   SYNC_SELF_REPO          — this repo's name, excluded from report (default: _agent-guidance)
+#   DRIFT_REPORT_OUTPUT     — where to write the report (default:
+#                               <repo root>/drift-report.md). Exists so a test
+#                               can name its own path instead of racing every
+#                               other run for one global file; CI leaves it unset
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -32,7 +36,14 @@ BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
-OUTPUT_FILE="$REPO_ROOT/drift-report.md"
+# Every other input this script takes is parameterized — REPOS_YML just below,
+# SYNC_OWNERS, GITHUB_REPOSITORY_OWNER, SYNC_SELF_REPO, and the PATH the mocks
+# ride in on — and the one OUTPUT was not, so two runs pointed at different
+# fixtures still wrote the same file and a reader of it got whichever finished
+# last. That is a determinism hole in the suite rather than a production
+# concern: nothing in CI sets this, so the default keeps the published path
+# exactly where drift-report.yml expects to find it.
+OUTPUT_FILE="${DRIFT_REPORT_OUTPUT:-$REPO_ROOT/drift-report.md}"
 MARKER="## Repo-specific additions"
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
 BRANCH_NAME="agents-md-sync/update"
@@ -115,9 +126,12 @@ strip_volatile() {
 # Fetch a file's contents from a repo's default branch.
 #
 #   stdout : the file's bytes, or empty when the file is genuinely absent
-#   exit 0 : the bytes are COMPLETE — verified against the API's own byte count
-#   exit 2 : the response could not be turned into the whole file. The caller
-#            must not draw a conclusion from stdout; there is nothing usable.
+#   exit 0 : the bytes are COMPLETE — verified against the API's own byte count —
+#            or the file is ESTABLISHED absent: a 404 on the path from a repo
+#            this credential can otherwise read
+#   exit 2 : the request could not be turned into either of those answers. The
+#            caller must not draw a conclusion from stdout; there is nothing
+#            usable.
 #
 # The verification is the point, and it is why this asks for the JSON instead of
 # piping `--jq .content` straight into base64. The JSON carries `size`, and
@@ -131,21 +145,68 @@ strip_volatile() {
 # identical: both are just a string without the marker in it. Every column the
 # row then produced was wrong, and the report published them with no hint.
 #
-# Note what is NOT claimed here: the mechanism was never reproduced. Fetching the
-# same file over the same endpoint with curl returns a complete body, and the
-# `jq -r .content | base64 -d` half handles a 95 KB payload correctly in
-# isolation, so the fault lies somewhere this repo cannot exercise without a
-# `gh` binary and an installation token. That is precisely why the fix is a
-# check rather than a repair: it does not need to know the cause to refuse to
-# publish the consequence.
+# Note what is NOT claimed here: no short read was ever reproduced through this
+# function. Fetching the same file over the same endpoint with curl returns a
+# complete body, and the `jq -r .content | base64 -d` half handles a 95 KB
+# payload correctly in isolation. #81's reported symptom has since been traced
+# to something else entirely — the `echo "$current_agents" | grep -q` further
+# down, whose writer took SIGPIPE on any AGENTS.md past the pipe buffer; see the
+# marker check for the measurements. This byte-count guard stays anyway, as a
+# guard rather than as that bug's fix: it does not need to know a cause to
+# refuse to publish a consequence.
 #
-# On HTTP errors gh api prints the raw error JSON body to stdout (the --jq
-# filter is not applied) — discard output on failure, don't decode it.
+# A FAILED REQUEST IS NOT AN ABSENT FILE, and for a long time this function said
+# it was. `gh api ... || return 0` returns "the file is not there" for a 401, a
+# 403, a 429, a 5xx, a DNS failure, a TLS failure — every transport and auth
+# fault there is — so every caller's `rc != 0` branch was blind to the whole
+# class, and the cascade the ledger below exists to stop fired anyway: a
+# credential that lost Contents permission mid-run publishes `missing`,
+# `no-lock`, **no-entry** and **blocked** as confident verdicts about files it
+# never saw. Two surfaces are read to tell the cases apart, because neither is
+# universal: real gh writes `gh: <message> (HTTP <code>)` to stderr, and on an
+# HTTP error it also prints the API's raw error body to stdout with the --jq
+# filter unapplied, which carries `.status`. A 404 is then still not enough on
+# its own — GitHub answers 404 rather than 403 when a credential is not
+# authorized to know a repo exists — so the repo itself is probed, and only a
+# 404 on the path from a repo this credential CAN read is reported as an
+# absence. Anything else, including a request whose status could not be
+# determined at all, is exit 2: "could not ask" must never render as "the answer
+# is none". Discard stdout on failure either way; never decode it.
 fetch_file_content() {
     local repo="$1" path="$2"
-    local json size tmp actual
+    local json size tmp actual err err_text why rc=0 http_status http_re
 
-    json=$(gh api "repos/$repo/contents/$path" 2>/dev/null) || return 0
+    err=$(mktemp) || return 2
+    json=$(gh api "repos/$repo/contents/$path" 2>"$err") || rc=$?
+    # First line only, and from the FILE rather than through a pipe: gh's own
+    # diagnostic is what is wanted here, not whatever body followed it, and the
+    # house rule forbids echoing an API response into a public log.
+    err_text=$(head -1 "$err" 2>/dev/null || true)
+    rm -f "$err"
+
+    if [[ "$rc" -ne 0 ]]; then
+        http_re='\(HTTP ([0-9]{3})\)'
+        http_status=""
+        if [[ "$err_text" =~ $http_re ]]; then
+            http_status="${BASH_REMATCH[1]}"
+        else
+            http_status=$(jq -r '.status // empty' <<<"$json" 2>/dev/null) || http_status=""
+        fi
+
+        # `>/dev/null 2>&1` on the probe on purpose: its BODY is of no interest,
+        # only whether the repo answers this credential at all. A probe that
+        # itself fails leaves the `&&` false, which is the fail-closed side.
+        if [[ "$http_status" == "404" ]] && gh api "repos/$repo" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        # Named rather than interpolated inline, so the log distinguishes "gh
+        # told us why" from "gh exited $rc and said nothing we could parse" —
+        # which is itself a different fault to chase.
+        why="${err_text:-${http_status:+HTTP $http_status}}"
+        echo "::error::$repo/$path: the contents read failed (${why:-gh exit $rc, no diagnostic}) and this run could not establish that the file is merely absent — refusing to report it as one (issue #81)" >&2
+        return 2
+    fi
 
     # A directory listing is a JSON array and legitimately has no .size — that
     # is an absence, not a failure. But an OBJECT without .size is a failure:
@@ -207,22 +268,40 @@ read_repos_yml() {
     printf '%s\n' "$out"
 }
 
+# ── repos.yml must EXIST ───────────────────────────────────────────────────
+#
+# Absence is not an empty config, and `if [[ -f "$REPOS_YML" ]]` said it was.
+# This is the yq-preflight incident again in its last remaining costume: that
+# guard taught this script to keep three answers apart once yq is running, and
+# then the file simply not being there walked straight past all of it, leaving
+# every list empty with no error and no log line. Measured against a nonexistent
+# REPOS_YML: this script printed "Found 8 repo(s)", announced
+# "Checking testorg/repo-excluded ...", and published two rows naming a repo
+# repos.yml excludes — the same contamination the exclusion list exists to
+# prevent, reached by deleting the list rather than by breaking the reader.
+#
+# `exit 2` rather than a warning, and rather than bump-hook-pin.sh's `exit 1`:
+# the same refusal code the yq preflight and read_repos_yml already use here, so
+# every "this script cannot trust repos.yml" exit from this file is one number.
+if [[ ! -f "$REPOS_YML" ]]; then
+    echo "::error::no repos.yml at $REPOS_YML — this script's exclusion list, default sections, cron classification and skills-bootstrap allowlist all come from it, and an absent file is not an empty one." >&2
+    exit 2
+fi
+
 # ── Load central repos.yml (exclusions + default sections) ─────────────────
 
 EXCLUDED_REPOS=()
 DEFAULT_SECTIONS=()
 
-if [[ -f "$REPOS_YML" ]]; then
-    excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
-    while IFS= read -r r; do
-        [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
-    done <<< "$excluded_raw"
+excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
+while IFS= read -r r; do
+    [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
+done <<< "$excluded_raw"
 
-    sections_raw=$(read_repos_yml '.default_sections // [] | .[]')
-    while IFS= read -r s; do
-        [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
-    done <<< "$sections_raw"
-fi
+sections_raw=$(read_repos_yml '.default_sections // [] | .[]')
+while IFS= read -r s; do
+    [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
+done <<< "$sections_raw"
 
 # ── cron-coverage classification (the fleet list's only drift alarm) ───────
 #
@@ -236,13 +315,11 @@ fi
 # docs/decisions/0003-cron-coverage-is-fleet-listed.md.
 CRON_CLASSIFIED=()
 
-if [[ -f "$REPOS_YML" ]]; then
-    cron_classified_raw=$(read_repos_yml \
-        '((.cron_coverage.fleet // []) + (.cron_coverage.out_of_scope // [])) | .[]')
-    while IFS= read -r r; do
-        [[ -n "$r" ]] && CRON_CLASSIFIED+=("$r")
-    done <<< "$cron_classified_raw"
-fi
+cron_classified_raw=$(read_repos_yml \
+    '((.cron_coverage.fleet // []) + (.cron_coverage.out_of_scope // [])) | .[]')
+while IFS= read -r r; do
+    [[ -n "$r" ]] && CRON_CLASSIFIED+=("$r")
+done <<< "$cron_classified_raw"
 
 cron_classified() {
     local short="${1##*/}" entry
@@ -259,15 +336,13 @@ BOOTSTRAP_REGISTRY=""
 BOOTSTRAP_PATH=""
 BOOTSTRAP_REF=""
 
-if [[ -f "$REPOS_YML" ]]; then
-    BOOTSTRAP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
-    BOOTSTRAP_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
-    BOOTSTRAP_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
-    bootstrap_repos_raw=$(read_repos_yml '.skills_bootstrap.repos // [] | .[]')
-    while IFS= read -r r; do
-        [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
-    done <<< "$bootstrap_repos_raw"
-fi
+BOOTSTRAP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
+BOOTSTRAP_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
+BOOTSTRAP_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
+bootstrap_repos_raw=$(read_repos_yml '.skills_bootstrap.repos // [] | .[]')
+while IFS= read -r r; do
+    [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
+done <<< "$bootstrap_repos_raw"
 
 bootstrap_allowlisted() {
     local short="${1##*/}" entry
@@ -544,11 +619,15 @@ for repo_name in "${REPOS[@]}"; do
     sections_display="—"
     notes=""
 
-    # Every path this row could not read IN FULL. `fetch_file_content` returns 2
-    # only for a verified short read and 0 for a legitimate 404, so a name landing
-    # in here always means "the bytes never arrived", never "the file is not
-    # there" — the distinction #81 turned on. One entry is enough to withhold the
-    # whole row; see the block just before the row is written.
+    # Every path this row could not READ, or could not UNDERSTAND. A name lands
+    # here on a verified short read, on a request that failed for any reason this
+    # run could not resolve to "the file is simply not there" (a 401, a 403, a
+    # rate limit, a 5xx, a DNS or TLS fault, a 404 on a repo the credential
+    # cannot see at all), and on bytes that arrived whole but would not parse.
+    # What it never means is "the file is not there" — `fetch_file_content`
+    # returns 0 for that, and only after establishing it against the repo — which
+    # is the distinction #81 turned on. One entry is enough to withhold the whole
+    # row; see the block just before the row is written.
     fetch_failed_paths=()
 
     # ── Resolve sections from repo's .agents-sync.yml ──────────────────
@@ -568,10 +647,36 @@ for repo_name in "${REPOS[@]}"; do
         fetch_failed_paths+=(".agents-sync.yml")
         sections_display="?"
     elif [[ -n "$remote_yaml" ]]; then
-        while IFS= read -r s; do
-            [[ -n "$s" ]] && sections+=("$s")
-        done < <(echo "$remote_yaml" | yq -r '.sections // [] | .[]' 2>/dev/null || true)
-        sections_display="${sections[*]:-none}"
+        # The bytes arrived; that is not the same as the bytes being usable, and
+        # the guard above only covered the first half. `yq ... 2>/dev/null ||
+        # true` inside a process substitution discarded BOTH halves of the
+        # answer — the status the substitution swallows by design (the trap named
+        # above read_repos_yml), and the one `|| true` throws away on top — so a
+        # `.agents-sync.yml` that arrived whole and does NOT parse collapsed to an
+        # empty section list. `expected` was then built from zero sections,
+        # diffed against an AGENTS.md that is in fact correct, and the row
+        # published **drift-detected**: word for word the wrong answer the fetch
+        # guard above it exists to prevent, reached through the other door.
+        #
+        # Command substitution, so the status is the yq run's own, and stderr is
+        # folded into it so the log can say what yq objected to rather than just
+        # that it objected. A parse failure joins the same ledger as a failed
+        # read, because to this row they are the same fact: no section list, so
+        # nothing honest to compare against. `sections_rc` carries it forward to
+        # the comparison below for the same reason.
+        parse_rc=0
+        remote_sections_raw=$(yq -r '.sections // [] | .[]' <<<"$remote_yaml" 2>&1) || parse_rc=$?
+        if [[ "$parse_rc" -ne 0 ]]; then
+            echo "::error::$repo_name/.agents-sync.yml: yq could not parse it — $(head -1 <<< "$remote_sections_raw")" >&2
+            fetch_failed_paths+=(".agents-sync.yml")
+            sections_rc=$parse_rc
+            sections_display="?"
+        else
+            while IFS= read -r s; do
+                [[ -n "$s" ]] && sections+=("$s")
+            done <<< "$remote_sections_raw"
+            sections_display="${sections[*]:-none}"
+        fi
     else
         sections=("${DEFAULT_SECTIONS[@]}")
         sections_display="${sections[*]:-none}"
@@ -601,7 +706,38 @@ for repo_name in "${REPOS[@]}"; do
         # — so `grep -qF` calls the marker present in a file that merely
         # mentions it, and this file mentions it three times before the real
         # heading ever arrives.
-        if echo "$current_agents" | grep -qxF "$MARKER"; then
+        #
+        # A HERE-STRING, never `echo "$current_agents" | grep -q`, and that is
+        # issue #81's actual root cause rather than a style preference. `grep -q`
+        # exits at the FIRST match; when the payload is bigger than the kernel's
+        # 64 KiB pipe buffer the `echo` on the writing end still has bytes to
+        # push, takes SIGPIPE, and dies 141 — and `set -o pipefail` promotes that
+        # 141 to the PIPELINE's status even though grep itself exited 0. Sitting
+        # in an `if`, the 141 does not end the run; it merely routes to the else,
+        # so a marker that IS present publishes as `Has marker: no`, the file is
+        # then diffed whole-file against the expected managed block, and the repo
+        # goes out as **drift-detected**.
+        #
+        # It is a RACE, not a threshold, which is why #81's own single-shot probe
+        # looked like it disproved this: the writer only loses when grep gets
+        # there first, so one green test clears nothing. Measured against a file
+        # shaped like `cms-platform/AGENTS.md` (95 kB, marker 42% of the way in),
+        # wrong answers per 20 trials were 48 kB: 0, 56 kB: 0, 64 kB: 0, 72 kB: 4,
+        # 95 kB: 20 — and 0 out of 20 at every one of those sizes, plus 0 out of
+        # 20 at 1 MB, once it is a here-string. The live confirmation is the
+        # 2026-08-28 19:20 UTC dashboard run, which reported 17 of 18 repos
+        # up-to-date and `cms-platform` — the fleet's largest AGENTS.md — as the
+        # single drift-detected row, `Has marker: no`, while
+        # `git show origin/main:AGENTS.md | grep -c '^## Repo-specific additions$'`
+        # on that same repo answers 1.
+        #
+        # A here-string has no writer to signal: bash materialises the whole
+        # thing — a temp file, or a pre-filled pipe when it is small enough to
+        # fit — before grep is started, so there is no process left holding the
+        # write end to be killed. `scripts/sync.sh` greps the FILE directly and
+        # was never exposed to any of this, which is why the fleet kept syncing
+        # correctly the whole time this dashboard said it had drifted.
+        if grep -qxF -- "$MARKER" <<<"$current_agents"; then
             has_marker="yes"
         else
             has_marker="no"
@@ -829,20 +965,25 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Withhold the row when any part of it could not be read ─────────
     #
-    # One partial read is enough to make the whole row untrustworthy, so Status
+    # One unusable read is enough to make the whole row untrustworthy, so Status
     # says so rather than publishing a verdict assembled from bytes that never
-    # all arrived. Until now that promise was kept at exactly ONE of this loop's
-    # call sites: a short read of anything but AGENTS.md still published a
-    # confident cell — `missing`, `no-lock`, **no-entry**, **blocked** — which is
-    # #81's entire failure mode wearing a different file's name, and it made the
-    # legend's "every other column is withheld rather than guessed" false.
+    # all arrived, never arrived at all, or arrived and made no sense. Until now
+    # that promise was kept at exactly ONE of this loop's call sites: a short read
+    # of anything but AGENTS.md still published a confident cell — `missing`,
+    # `no-lock`, **no-entry**, **blocked** — which is #81's entire failure mode
+    # wearing a different file's name, and it made the legend's "every other
+    # column is withheld rather than guessed" false. The Notes line stays
+    # deliberately vague about WHICH fault it was, because naming one in the
+    # published dashboard would mean choosing between a short read, a 403 and a
+    # parse error on evidence the row does not carry; the `::error::` lines in the
+    # run log carry that, per file, without guessing.
     #
     # Placed after the open-PR check on purpose: **pr-open** is a verdict too, and
     # a row nobody could read must not be overwritten by one.
     if [[ ${#fetch_failed_paths[@]} -gt 0 ]]; then
         status="**fetch-failed**"
         failed_list=$(printf '`%s`, ' "${fetch_failed_paths[@]}")
-        notes="${notes:+$notes; }could not read ${failed_list%, } in full — the columns those files feed are withheld (\`?\`) rather than guessed"
+        notes="${notes:+$notes; }could not read or parse ${failed_list%, } — the columns those files feed are withheld (\`?\`) rather than guessed; see the run log for which fault it was"
     fi
 
     # ── Write row ──────────────────────────────────────────────────────
@@ -882,7 +1023,7 @@ done
     echo "| **pr-open** | A sync PR is already open for this repo |"
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
-    echo "| **fetch-failed** | A file this row is built from could not be read in full — the decoded byte count disagreed with the API's own \`size\`. **Notes** names the file; every column it feeds is withheld as \`?\` rather than guessed; see issue #81 |"
+    echo "| **fetch-failed** | A file this row is built from could not be read, or could not be understood — the request failed for a reason this run could not resolve to a plain absence (a 401, a 403, a rate limit, a 5xx, a network fault, or a 404 on a repo the credential cannot see at all), or the decoded byte count disagreed with the API's own \`size\`, or the bytes arrived whole and would not parse. **Notes** names the file; every column it feeds is withheld as \`?\` rather than guessed; see issue #81 |"
     echo ""
     echo "**CLAUDE.md bridge legend**"
     echo ""
@@ -891,7 +1032,7 @@ done
     echo "| bridge-ok | CLAUDE.md imports \`@AGENTS.md\` (line-start, outside code fences) |"
     echo "| **no-import** | CLAUDE.md exists but never imports \`@AGENTS.md\` — Claude Code will not see the managed guidance |"
     echo "| missing | No CLAUDE.md yet — sync adds the bridge in its next PR |"
-    echo "| ? | \`CLAUDE.md\` could not be read in full — withheld, not guessed (the row reads **fetch-failed**) |"
+    echo "| ? | \`CLAUDE.md\` could not be read — withheld, not guessed (the row reads **fetch-failed**) |"
     echo ""
     echo "**skills-bootstrap legend**"
     echo ""
@@ -912,7 +1053,7 @@ done
     echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"
     echo "| unverified | Could not fetch the pinned hook this run — the drift comparison was skipped |"
     echo "| — | Not allowlisted and no hook present |"
-    echo "| ? | A file this column is decided from (the hook, \`skills.lock\`, \`.claude/settings.json\`, or the repo's ignore rules) could not be read in full — withheld, not guessed (the row reads **fetch-failed**) |"
+    echo "| ? | A file this column is decided from (the hook, \`skills.lock\`, \`.claude/settings.json\`, or the repo's ignore rules) could not be read — withheld, not guessed (the row reads **fetch-failed**) |"
     echo ""
     echo "**Cron-coverage classification**"
     echo ""

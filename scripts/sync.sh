@@ -166,10 +166,6 @@ FAIL_COUNT=0
 OK_COUNT=0
 SKIP_COUNT=0
 
-read_sections_from_yaml() {
-    yq -r '.sections // [] | .[]' 2>/dev/null || true
-}
-
 # read_repos_yml <yq expression> — the one way this script reads repos.yml.
 #
 # It exists to keep apart three answers the old `yq ... 2>/dev/null || true`
@@ -201,21 +197,38 @@ read_repos_yml() {
 }
 
 # ── Load central repos.yml (exclusions + default sections) ─────────────────
+#
+# A repos.yml this script cannot FIND is a refusal, not an empty config — the
+# same guard bump-hook-pin.sh carries, and for the reason the yq preflight
+# above spells out at length. `read_repos_yml` was given teeth so that a
+# repos.yml yq could not parse would stop the run; absence walked straight past
+# it, because `if [[ -f "$REPOS_YML" ]]` simply skipped both reads and left
+# EXCLUDED_REPOS empty with nothing in the log. That is the identical outcome,
+# and the identical blast radius: the exclusion filter then matches nothing and
+# the run clones a repo repos.yml excludes and pushes the managed AGENTS.md
+# straight to its default branch. Measured against the suite's own fixtures —
+# pointed at the real file, a dry run prints "testorg/repo-excluded — excluded
+# by repos.yml" and "Found 1 repo(s)"; pointed one character off, the same run
+# prints "Found 2 repo(s)", opens "=== testorg/repo-excluded ===", clones it,
+# and exits 0 with nothing to tell it apart from a healthy run. A renamed file,
+# a mis-set REPOS_YML and a checkout that never landed all arrive here.
+if [[ ! -f "$REPOS_YML" ]]; then
+    echo "::error::no repos.yml at $REPOS_YML — refusing to run, because the exclusions and default sections that decide which repos this sync writes to are read from it." >&2
+    exit 2
+fi
 
 EXCLUDED_REPOS=()
 DEFAULT_SECTIONS=()
 
-if [[ -f "$REPOS_YML" ]]; then
-    excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
-    while IFS= read -r r; do
-        [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
-    done <<< "$excluded_raw"
+excluded_raw=$(read_repos_yml '.exclude // [] | .[]')
+while IFS= read -r r; do
+    [[ -n "$r" ]] && EXCLUDED_REPOS+=("$r")
+done <<< "$excluded_raw"
 
-    sections_raw=$(read_repos_yml '.default_sections // [] | .[]')
-    while IFS= read -r s; do
-        [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
-    done <<< "$sections_raw"
-fi
+default_sections_raw=$(read_repos_yml '.default_sections // [] | .[]')
+while IFS= read -r s; do
+    [[ -n "$s" ]] && DEFAULT_SECTIONS+=("$s")
+done <<< "$default_sections_raw"
 
 # ── skills-bootstrap hook delivery config ──────────────────────────────────
 # Opt-in, allowlisted, and double-keyed: a repo gets the hook only if it is
@@ -229,17 +242,20 @@ BOOTSTRAP_PATH=""
 BOOTSTRAP_REF=""
 BOOTSTRAP_SHA256=""
 
-if [[ -f "$REPOS_YML" ]]; then
-    BOOTSTRAP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
-    BOOTSTRAP_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
-    BOOTSTRAP_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
-    BOOTSTRAP_SHA256=$(read_repos_yml '.skills_bootstrap.sha256 // ""')
+# No existence check here: the guard above already refused a missing repos.yml,
+# so by this point the file is known to be present and readable. An absent
+# skills_bootstrap BLOCK is still perfectly normal, and stays the "feature off"
+# case below — that is a key legitimately missing from a file we did read, not
+# a file we never found.
+BOOTSTRAP_REGISTRY=$(read_repos_yml '.skills_bootstrap.registry // ""')
+BOOTSTRAP_PATH=$(read_repos_yml '.skills_bootstrap.path // ""')
+BOOTSTRAP_REF=$(read_repos_yml '.skills_bootstrap.ref // ""')
+BOOTSTRAP_SHA256=$(read_repos_yml '.skills_bootstrap.sha256 // ""')
 
-    bootstrap_repos_raw=$(read_repos_yml '.skills_bootstrap.repos // [] | .[]')
-    while IFS= read -r r; do
-        [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
-    done <<< "$bootstrap_repos_raw"
-fi
+bootstrap_repos_raw=$(read_repos_yml '.skills_bootstrap.repos // [] | .[]')
+while IFS= read -r r; do
+    [[ -n "$r" ]] && BOOTSTRAP_REPOS+=("$r")
+done <<< "$bootstrap_repos_raw"
 
 # Enabled only when the pin is fully specified. A half-filled block (a ref
 # with no digest, say) must not silently deliver unverified bytes.
@@ -407,19 +423,90 @@ for repo_name in "${REPOS[@]}"; do
 
     sections=()
 
-    # On HTTP errors (e.g. 404 when the file is absent) gh api prints the raw
-    # error JSON body to stdout — the --jq filter is not applied — so `|| true`
-    # alone would leave garbage in remote_yaml, break the base64 decode, and
-    # silently defeat the default_sections fallback. Discard output on failure.
+    # This one call carries two hazards, and the shape it used to have got the
+    # second of them wrong in a way that WRITES.
+    #
+    # The stdout half, which the old comment had right: on an HTTP error gh api
+    # prints the raw error JSON body to stdout — the --jq filter is not applied
+    # — so `|| true` alone would leave that body in remote_yaml and break the
+    # base64 decode.
+    #
+    # The status half, which `2>/dev/null` + `remote_yaml=""` quietly threw
+    # away: the exit status is the ONLY thing separating "this repo ships no
+    # .agents-sync.yml" from "the credential could not read it". Discard it and
+    # every 401, 403, 429, 5xx, DNS or TLS failure is reported as a fact the run
+    # never established, and the run then REBUILDS that repo's AGENTS.md from
+    # DEFAULT_SECTIONS, sees the content change, and commits and pushes it —
+    # sync.sh is the one script of the four that writes. Measured with a stubbed
+    # gh: with .agents-sync.yml readable (sections: python, docker) the run logs
+    # "Sections: python docker"; with the same call answering "gh: API rate
+    # limit exceeded (HTTP 403)" it logs "Sections: none", counts no failure and
+    # exits 0 — indistinguishable from a repo that genuinely has none. The
+    # managed build for [python docker] is 43,955 bytes against 42,796 for [],
+    # so 1,159 bytes of guidance this repo opted INTO would be stripped and
+    # pushed. The same disambiguation bump-consumer-locks.sh makes over
+    # skills.lock, for the same reason.
     if ! remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
-        --jq '.content' 2>/dev/null); then
+        --jq '.content' 2>&1); then
+        # remote_yaml holds diagnostics now and never a file: gh has written the
+        # error body to stdout and its own status line to stderr, and this
+        # capture has both. `head -1` would therefore quote the body and never
+        # name the status, so prefer gh's own `gh: ` line where there is one.
+        api_err=$(grep -m1 '^gh: ' <<< "$remote_yaml" || head -1 <<< "$remote_yaml")
+
+        # A 404 on the PATH is the only outcome that MAY mean "absent", and even
+        # it means that only once the REPO itself answers: GitHub replies 404
+        # rather than 403 when a credential is not authorized to know a thing
+        # exists, so an unprobed 404 is as much a scope gap as a missing file
+        # (AGENTS.md, "A GitHub 404 means 'not authorized', not 'not there'").
+        # Both surfaces of the status are matched because only one of them may
+        # reach us: gh's own line carries "(HTTP 404)" on stderr, while the
+        # API's error body carries "status":"404" on stdout.
+        if [[ "$remote_yaml" != *"(HTTP 404)"* \
+              && ! "$remote_yaml" =~ \"status\":[[:space:]]*\"404\" ]]; then
+            fail "$repo_name: could not read .agents-sync.yml — ${api_err:-no diagnostic output from gh}"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        # The probe that tells the two 404s apart. It asks about the REPO, not
+        # the file: a repo that answers has told us the credential can see it
+        # and the file really is not there, whereas a repo that 404s too has
+        # told us nothing about the file at all.
+        if ! repo_probe=$(gh api "repos/$repo_name" --silent 2>&1); then
+            probe_err=$(grep -m1 '^gh: ' <<< "$repo_probe" || head -1 <<< "$repo_probe")
+            fail "$repo_name: .agents-sync.yml answered 404 and so did the repo itself — a scope gap, not a missing file — ${probe_err:-no diagnostic output from gh}"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
+        # Genuinely absent, established rather than assumed: the repo answered
+        # and the file did not. This is the commonest outcome in the fleet, and
+        # the one the default_sections fallback below exists for.
         remote_yaml=""
     fi
 
     if [[ -n "$remote_yaml" ]]; then
+        # Captured, never `< <(...)`: process substitution discards the exit
+        # status of the command inside it, which is what let a file that ARRIVED
+        # COMPLETE but did not PARSE reach the fallback as an empty section list
+        # — the same wrong answer the 403 above produced, reached a different
+        # way, and pushed just the same. A malformed .agents-sync.yml is a
+        # repo-authored file and a normal thing to encounter, not a defensive
+        # edge case. Measured with a stubbed gh serving unparseable YAML: the
+        # run logged "Sections: none" and exited 0. `set -o pipefail` is what
+        # makes one capture answer for both stages, so a base64 body that is not
+        # a file is refused here too rather than decoding to nothing.
+        if ! repo_sections_raw=$( { base64 -d <<< "$remote_yaml" \
+                | yq -r '.sections // [] | .[]'; } 2>&1 ); then
+            fail "$repo_name: could not read the sections from .agents-sync.yml — ${repo_sections_raw:-no diagnostic output}"
+            ((FAIL_COUNT++)) || true
+            continue
+        fi
+
         while IFS= read -r s; do
             [[ -n "$s" ]] && sections+=("$s")
-        done < <(echo "$remote_yaml" | base64 -d | read_sections_from_yaml)
+        done <<< "$repo_sections_raw"
 
         # Optional per-repo opt-in: let the sync REWRITE an existing
         # CLAUDE.md that doesn't import @AGENTS.md (see the "CLAUDE.md
@@ -887,12 +974,52 @@ Managed content updated by the central _agent-guidance repository.${bootstrap_no
         git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1 \
             || ls_remote_status=$?
         if [[ $ls_remote_status -eq 0 ]]; then
-            # The --depth 1 clone still answers this: a plain `git fetch` of the
-            # branch brings its commits down to the clone's existing shallow
-            # boundary, and the range walk terminates at the graft rather than
-            # erroring (measured on git 2.43). No refspec is given, so the
-            # fetch writes FETCH_HEAD and cannot collide with the local branch
-            # of the same name that was just checked out.
+            # The range below needs a real merge base, which a --depth 1 clone
+            # cannot supply, so the clone is DEEPENED before it is asked.
+            #
+            # The graft is the trap, and the reading that looks reassuring gets
+            # it backwards: in the shallow clone `origin/$default_branch` has NO
+            # PARENTS, and that truncates the side of the range that is
+            # EXCLUDED, not the side that is included. The exclusion therefore
+            # collapses to one commit and `origin/<default>..FETCH_HEAD`
+            # degenerates into "the branch's whole history". Any stale
+            # agents-md-sync/update whose base is an ANCESTOR of — rather than
+            # equal to — the current default tip then yields the repo's OWN
+            # mainline commits, whose committers are humans; the guard below
+            # reads them as foreign, refuses, and counts the repo FAILED, so it
+            # never receives another update. That is exactly the case the
+            # force-push exists for, which the paragraph above says in as many
+            # words. Measured on git 2.43, one repo and two branches: forked
+            # from the current tip the range is 1 commit and is allowed; forked
+            # from `main~2` it is the bot's commit plus `human commit 1` and is
+            # refused on human@example.com. Nothing else differs between the two
+            # runs. It is invisible to the suite because its fixtures clone by
+            # local path, where git hardlinks and ignores --depth entirely.
+            #
+            # `--unshallow` is fatal on a repository that is already complete
+            # ("--unshallow on a complete repository does not make sense", exit
+            # 128), so it is asked for only when the clone really is shallow —
+            # and whether it is, is read rather than assumed. A clone that
+            # cannot answer either question has not established the range, and
+            # an unestablished range REFUSES: never a force-push over commits
+            # nobody looked at, and never a refusal blamed on a committer this
+            # run never actually read.
+            deepen_ok=true
+            if ! clone_is_shallow=$(git rev-parse --is-shallow-repository 2>/dev/null); then
+                deepen_ok=false
+            elif [[ "$clone_is_shallow" == "true" ]] \
+                 && ! git fetch --unshallow origin >/dev/null 2>&1; then
+                deepen_ok=false
+            fi
+            if ! $deepen_ok; then
+                fail "$repo_name: could not deepen the shallow clone, so the range that says whose commits $BRANCH_NAME carries could not be established — refusing to force-push."
+                ((FAIL_COUNT++)) || true
+                cd "$REPO_ROOT"; continue
+            fi
+
+            # No refspec is given, so this fetch writes FETCH_HEAD and cannot
+            # collide with the local branch of the same name that was just
+            # checked out.
             if ! git fetch origin "$BRANCH_NAME" >/dev/null 2>&1 \
                || ! branch_commit_emails=$(git log --format='%ce' \
                     "origin/$default_branch..FETCH_HEAD" 2>/dev/null); then

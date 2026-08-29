@@ -226,23 +226,45 @@ not say which is which. Establish it before you reach for one:
 - **`mcp__github__*` — session-provisioned.** It does NOT appear in
   `ListConnectors`; the remote environment supplies it and the session's own
   system prompt points at it. It is the **only** one with GitHub Actions tools
-  (`actions_list`, `actions_get`, `actions_run_trigger`), CI introspection
-  (`get_check_run`, `get_job_logs`), auto-merge control, and review-thread
-  resolution. Its reach is the session's attached repositories; `add_repo`
-  widens it mid-session.
-- **`mcp__b26ebb34-…__*` — the claude.ai org connector `github-mcp`.** It lists
+  (`actions_list`, `actions_get`, `actions_run_trigger`), workflow-run and
+  job-log introspection (`get_check_run`, `get_job_logs`), auto-merge control,
+  and review-thread resolution. Read that as the ACTIONS side specifically, not
+  as "all CI reads" — the next bullet is where a pull request's own check runs
+  live. Its reach is the session's attached repositories; `add_repo` widens it
+  mid-session.
+- **`mcp__github-mcp__*` — the claude.ai org connector `github-mcp`.** It lists
   in `ListConnectors` as `connected: true`. Its tool set is a **strict subset**
   of the above: same reads, same PR and issue writes, same `merge_pull_request`,
   `push_files` and `delete_file` — and no Actions, no job logs, no auto-merge,
   no review threads. Its reach comes from a GitHub App installation allowlist
-  that is INDEPENDENT of the session's attached repos.
+  that is INDEPENDENT of the session's attached repos. **Probe for it by
+  connector NAME, never by that prefix from memory.** This file named it
+  `mcp__b26ebb34-…__*` until 2026-08-28, when a live session measured it as
+  `mcp__github-mcp__*`; a run that searches its tools for the remembered
+  literal matches nothing, concludes "no connector present", and stands down
+  with a fully working one sitting right there. The prefix has moved once
+  already — assume it can move again, and probe both forms by name.
 
 Three consequences, and the first is why this section sits where it does:
 
-- **Everything that verifies CI is `mcp__github__`-only.** Dispatching a run,
-  reading a rollup, pulling a failed job's log — the org connector can do none
-  of it. A session holding only `github-mcp` cannot follow the rule below at
-  all: it can merge a pull request but it cannot check one.
+- **The CI boundary runs through the middle of the org connector, not around
+  it.** It CAN check a pull request: `pull_request_read` accepts
+  `method: "get_check_runs"` (the head commit's check runs, with their
+  conclusions) and `method: "get_status"` (the combined commit status).
+  Measured 2026-08-28 against `_agent-guidance` #83 — four check runs came
+  back, `success` and `skipped`. What it genuinely lacks is the **Actions**
+  side: no `actions_list` / `actions_get` / `actions_run_trigger`, no
+  `get_check_run`, no `get_job_logs` — so it cannot dispatch a workflow, read
+  a workflow RUN, or pull a failed job's log — and with no
+  `enable_pr_auto_merge` a merge under it is synchronous (check, then merge,
+  in the same run) rather than armed and walked away from. Read BOTH methods,
+  for the reason `"The watch finished" is not "CI passed"` gives below: #83
+  answered `get_status` with `pending` over zero statuses at the same moment
+  every check run on it was green, so either method read alone misreports.
+  This bullet used to say the org connector "can merge a pull request but it
+  cannot check one" — wrong, and wrong in the expensive direction, because it
+  tells an org-connector-only session that it must not merge and so disables
+  a capability the operator deliberately granted it.
 - **Fewer tools is not less dangerous.** Both connectors merge, push and
   delete. The subset one is the connector whose reach you cannot infer from the
   session's repo list, so a write through it can land somewhere the session was
