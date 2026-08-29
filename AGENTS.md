@@ -782,9 +782,4 @@ tree in both cases.
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
 
-# Our Custom Agent Guide
-
-Follow these repo-specific rules when working in this codebase.
-
-- Always run linting before commits
-- Use conventional commit messages
+<!-- Add your repo-specific agent guidance below this line -->
