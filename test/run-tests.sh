@@ -23,6 +23,12 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # bit local runs; unsetting both here makes the run deterministic everywhere.
 unset GH_TOKEN GITHUB_TOKEN
 
+# Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
+# means rather than the directory several artifacts share.
+HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
+FLEET_HOOK_REL_PATH_T=".claude/hooks/fleet-memory.sh"
+FLEET_PAYLOAD_REL_PATH_T=".claude/hooks/fleet-guidance.md"
+
 # Ensure git identity is configured (CI runners may not have this set globally).
 if ! git config --global user.name &>/dev/null; then
     git config --global user.name "test-runner"
@@ -3000,7 +3006,18 @@ test_build_script() {
     if [ -z "$base_heading" ]; then
         fail "agents-md/base.md has no '## ' heading to use as a base-content sentinel"
     fi
-    assert_contains "$TEST_DIR/build-output.md" "$base_heading" "includes base content"
+    # The default mode ships the STUB, not base.md. base.md now reaches a
+    # session once, through user memory, instead of once per attached repo —
+    # so its headings being ABSENT here is the change working, and their
+    # presence would mean a repo had silently gone back to carrying its own
+    # ~52 kB copy.
+    stub_heading=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/stub.md")
+    if [ -z "$stub_heading" ]; then
+        fail "agents-md/stub.md has no '## ' heading to use as a stub sentinel"
+    fi
+    assert_contains "$TEST_DIR/build-output.md" "$stub_heading" "includes stub content"
+    assert_not_contains "$TEST_DIR/build-output.md" "$base_heading" "stub mode does not inline base content"
+    assert_contains "$TEST_DIR/build-output.md" "Mode: stub" "reports stub mode"
     assert_contains "$TEST_DIR/build-output.md" "## Python" "includes python section"
     assert_contains "$TEST_DIR/build-output.md" "## Docker" "includes docker section"
     assert_not_contains "$TEST_DIR/build-output.md" "## Go" "does not include unrequested section"
@@ -3009,7 +3026,24 @@ test_build_script() {
     output=$("$REPO_ROOT/scripts/build-agents-md.sh")
     echo "$output" > "$TEST_DIR/build-no-sections.md"
     assert_contains "$TEST_DIR/build-no-sections.md" "Sections: none" "reports none when no sections"
-    assert_contains "$TEST_DIR/build-no-sections.md" "$base_heading" "still includes base"
+    assert_contains "$TEST_DIR/build-no-sections.md" "$stub_heading" "still includes the stub"
+
+    # full mode — the fail-safe for a repo the fleet-memory hook cannot reach
+    # (.claude/ gitignored, or an unparseable settings.json). Such a repo must
+    # keep the WHOLE guidance inline; a stub there would point at a delivery
+    # that is never going to happen.
+    output=$(AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh")
+    echo "$output" > "$TEST_DIR/build-full.md"
+    assert_contains "$TEST_DIR/build-full.md" "$base_heading" "full mode inlines base content"
+    assert_contains "$TEST_DIR/build-full.md" "Mode: full" "full mode reports itself"
+
+    # An unrecognised mode must stop, not silently pick one. Captured without a
+    # pipe so the exit code is the script's own.
+    if AGENTS_MD_MODE=bogus "$REPO_ROOT/scripts/build-agents-md.sh" >/dev/null 2>&1; then
+        fail "build: an unknown AGENTS_MD_MODE is rejected"
+    else
+        pass "build: an unknown AGENTS_MD_MODE is rejected"
+    fi
 
     # Test with unknown section
     output=$("$REPO_ROOT/scripts/build-agents-md.sh" python bogus)
@@ -6018,10 +6052,20 @@ test_sync_bootstrap() {
         fail "repo-no-lock: could not clone"
         return
     }
-    if [[ -e "$nolock/.claude" ]]; then
-        fail "repo-no-lock: nothing under .claude/ was created"
+    # `.claude/` DOES exist here now — fleet-memory is delivered to every
+    # synced repo, unconditionally, because every synced repo's AGENTS.md is
+    # simultaneously reduced to the stub that depends on it. What must still be
+    # withheld is the BOOTSTRAP hook specifically, so the assertion names that
+    # file instead of the directory it happens to share.
+    if [[ -e "$nolock/$HOOK_REL_PATH_T" ]]; then
+        fail "repo-no-lock: skills-bootstrap withheld"
     else
-        pass "repo-no-lock: nothing under .claude/ was created"
+        pass "repo-no-lock: skills-bootstrap withheld"
+    fi
+    if [[ -f "$nolock/$FLEET_HOOK_REL_PATH_T" && -s "$nolock/$FLEET_PAYLOAD_REL_PATH_T" ]]; then
+        pass "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
+    else
+        fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
     fi
     if [[ -e "$nolock/skills.lock" ]]; then
         fail "repo-no-lock: the sync did NOT create a skills.lock"
@@ -6035,10 +6079,15 @@ test_sync_bootstrap() {
         fail "repo-not-allowed: could not clone"
         return
     }
-    if [[ -e "$notallowed/.claude" ]]; then
-        fail "repo-not-allowed: a lock alone does NOT trigger delivery"
+    if [[ -e "$notallowed/$HOOK_REL_PATH_T" ]]; then
+        fail "repo-not-allowed: a lock alone does NOT trigger bootstrap delivery"
     else
-        pass "repo-not-allowed: a lock alone does NOT trigger delivery"
+        pass "repo-not-allowed: a lock alone does NOT trigger bootstrap delivery"
+    fi
+    if [[ -f "$notallowed/$FLEET_HOOK_REL_PATH_T" ]]; then
+        pass "repo-not-allowed: fleet-memory delivered regardless of the allowlist"
+    else
+        fail "repo-not-allowed: fleet-memory delivered regardless of the allowlist"
     fi
 
     # ── repo-ignored: warned above; nothing may have landed.
@@ -6053,6 +6102,29 @@ test_sync_bootstrap() {
         pass "repo-ignored: no hook committed into a repo that gitignores .claude/"
     fi
 
+    # THE FAIL-SAFE, asserted end-to-end rather than trusted. A repo that
+    # gitignores .claude/ can never receive fleet-memory, so it must keep the
+    # FULL guidance inlined. Shipping it the stub instead would delete its
+    # guidance and leave a note pointing at a delivery that cannot happen —
+    # and it would do so silently, since the stub is a perfectly well-formed
+    # AGENTS.md. Sentinels are derived, not hardcoded, so reorganising either
+    # file is a rename here and not a failure.
+    local full_sentinel stub_sentinel
+    full_sentinel=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/base.md")
+    stub_sentinel=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/stub.md")
+    if [[ -z "$full_sentinel" || -z "$stub_sentinel" ]]; then
+        fail "repo-ignored: could not derive full/stub sentinels — the assertions below would be vacuous"
+    else
+        if [[ -f "$ignored/.claude/hooks/fleet-memory.sh" ]]; then
+            fail "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        else
+            pass "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        fi
+        assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
+        assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
+        assert_contains "$ignored/AGENTS.md" "Mode: full" "repo-ignored: AGENTS.md records full mode"
+    fi
+
     # ── repo-unparseable: refuse to edit, deliver nothing, leave it alone.
     assert_contains "$TEST_DIR/sync-bootstrap.txt" "is not parseable JSON — refusing to edit it" "repo-unparseable: refusal is logged"
     local unparse="$TEST_DIR/verify-bootstrap-unparseable"
@@ -6060,6 +6132,10 @@ test_sync_bootstrap() {
         fail "repo-unparseable: could not clone"
         return
     }
+    # Same fail-safe on the other undeliverable shape: a settings.json we will
+    # not rewrite means the hook can never be registered there.
+    assert_contains "$unparse/AGENTS.md" "$full_sentinel" "repo-unparseable: keeps the FULL guidance inline (undeliverable repo)"
+    assert_contains "$unparse/AGENTS.md" "Mode: full" "repo-unparseable: AGENTS.md records full mode"
     if cmp -s "$unparse/.claude/settings.json" "$TEST_DIR/repo-unparseable.settings.orig"; then
         pass "repo-unparseable: settings.json byte-identical (never rewritten)"
     else
@@ -6098,10 +6174,13 @@ test_sync_bootstrap_idempotent() {
     }
     local groups
     groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks']['SessionStart']))")
-    if [[ "$groups" -eq 2 ]]; then
-        pass "re-run: still exactly 2 SessionStart groups (registration not duplicated)"
+    # Three groups: the repo's own, skills-bootstrap, and fleet-memory. The
+    # point of the assertion is unchanged — a second run must not append a
+    # duplicate of either hook — only the expected count moved.
+    if [[ "$groups" -eq 3 ]]; then
+        pass "re-run: still exactly 3 SessionStart groups (registration not duplicated)"
     else
-        fail "re-run: still exactly 2 SessionStart groups — got $groups"
+        fail "re-run: still exactly 3 SessionStart groups — got $groups"
     fi
     if cmp -s "$adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
         pass "re-run: skills.lock STILL byte-identical"
@@ -11407,9 +11486,16 @@ test_sync_workflow_trigger() {
     # check below, which is the thing that can actually explain it.
     local helpers_file="$TEST_DIR/sync-yml-helpers.txt"
     local roots_file="$TEST_DIR/sync-yml-roots.txt"
-    grep -oE '\$SCRIPT_DIR/[A-Za-z0-9][A-Za-z0-9._-]*' "$REPO_ROOT/scripts/sync.sh" \
+    grep -oE '\$SCRIPT_DIR/[A-Za-z0-9][A-Za-z0-9._/-]*' "$REPO_ROOT/scripts/sync.sh" \
         | sed 's#\$SCRIPT_DIR/#scripts/#' > "$helpers_file" || true
-    grep -oE '\$REPO_ROOT/[A-Za-z0-9][A-Za-z0-9._-]*' "$REPO_ROOT/scripts/sync.sh" \
+    # `[A-Za-z0-9.]` to open, and `/` inside the class: sync.sh resolves
+    # `$REPO_ROOT/.claude/hooks/fleet-memory.sh` and
+    # `$REPO_ROOT/agents-md/base.md`, and the older pattern could see neither —
+    # it stopped at the first slash and refused a leading dot outright, so a
+    # reference into a subdirectory derived as a truncated stem or as nothing
+    # at all. A path this cannot see is a file whose edit fires no sync, which
+    # is the exact failure the test exists to catch.
+    grep -oE '\$REPO_ROOT/[A-Za-z0-9.][A-Za-z0-9._/-]*' "$REPO_ROOT/scripts/sync.sh" \
         | sed 's#\$REPO_ROOT/##' > "$roots_file" || true
 
     # A derivation that quietly matched nothing would satisfy every assertion
@@ -11442,12 +11528,71 @@ test_sync_workflow_trigger() {
     local want
     while IFS= read -r want; do
         [[ -n "$want" ]] || continue
+        # An exact entry, or a `<dir>/**` entry that covers it. Exactness
+        # still matters within a segment — "repos.yml" is a substring of a
+        # dozen plausible paths — so the glob arm walks whole path segments
+        # rather than doing a prefix match on the raw string.
+        covered=false
         if grep -qxF -- "$want" "$paths_file"; then
-            pass "sync trigger: on.push.paths names $want"
+            covered=true
         else
-            fail "sync trigger: on.push.paths does not name $want — editing it would change what the sync does to the fleet with no run to apply the change"
+            prefix="$want"
+            while [[ "$prefix" == */* ]]; do
+                prefix="${prefix%/*}"
+                if grep -qxF -- "$prefix/**" "$paths_file"; then covered=true; break; fi
+            done
+        fi
+        if $covered; then
+            pass "sync trigger: on.push.paths covers $want"
+        else
+            fail "sync trigger: on.push.paths does not cover $want — editing it would change what the sync does to the fleet with no run to apply the change"
         fi
     done < "$want_file"
+}
+
+# ── The self-hosted fleet-memory payload matches agents-md/base.md ────────
+#
+# This repo is excluded from the sync (SYNC_SELF_REPO), so nothing overwrites
+# a drifted copy here and no drift report mentions it — the same blind spot
+# test 7b covers for the bootstrap hook. It matters more here than it looks:
+# this repo's own AGENTS.md is now the STUB, so this payload is the only copy
+# of the guidance its own sessions will ever load. If it drifts from base.md,
+# every session in _agent-guidance is quietly reading something the fleet is
+# not.
+test_self_hosted_fleet_payload() {
+    echo ""
+    echo "=== Test: the self-hosted fleet-memory payload matches base.md ==="
+
+    local payload="$REPO_ROOT/.claude/hooks/fleet-guidance.md"
+    local source="$REPO_ROOT/agents-md/base.md"
+
+    if [[ ! -s "$payload" ]]; then
+        fail "self-hosted payload: $payload is missing or empty — this repo's own sessions would open DEGRADED"
+        return
+    fi
+    if cmp -s "$payload" "$source"; then
+        pass "self-hosted payload: byte-identical to agents-md/base.md"
+    else
+        fail "self-hosted payload: differs from agents-md/base.md — re-copy it (nothing syncs this repo)"
+    fi
+
+    # The stub must not have quietly become the payload, or the repo would
+    # deliver a pointer to itself and nothing else.
+    if grep -qF "Fleet guidance is delivered once per session" "$payload"; then
+        fail "self-hosted payload: looks like the stub, not the full guidance"
+    else
+        pass "self-hosted payload: is the full guidance, not the stub"
+    fi
+
+    # And this repo must actually RUN it — a payload nothing invokes is inert.
+    local reg
+    reg=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
+          "$REPO_ROOT/scripts/bootstrap-status.sh" "$REPO_ROOT/.claude/settings.json")
+    if [[ "$reg" == "registered" ]]; then
+        pass "self-hosted payload: fleet-memory.sh is registered in this repo's settings.json"
+    else
+        fail "self-hosted payload: fleet-memory.sh is $reg in this repo's settings.json — the hook would never run here"
+    fi
 }
 
 # ── Test 7b: the self-hosted hook matches the pin in repos.yml ────────────
@@ -13519,6 +13664,256 @@ GHSTUB
         "sweep (control): an empty listing did not become one nameless PR"
 }
 
+
+# ── fleet-memory.sh ────────────────────────────────────────────────────────
+#
+# The hook that replaced the per-repo managed block with a single user-memory
+# copy. What these guard is not "does it write a file" but the three ways a
+# delivery like this goes wrong quietly:
+#
+#   * it CLOBBERS a developer's own ~/.claude/CLAUDE.md (their file, not ours);
+#   * it GROWS the file a little on every session until someone notices;
+#   * it FAILS SILENTLY, leaving a session with no fleet guidance and nothing
+#     on screen to say so — the one outcome the stub-plus-verdict design exists
+#     to prevent.
+#
+# Every failure path is asserted to exit 0 AND to print a DEGRADED line: a hook
+# that breaks the session is worse than one that degrades, and a degradation
+# nobody can see is worse than either.
+test_fleet_memory_hook() {
+    echo ""
+    echo "TEST: fleet-memory.sh (user-memory delivery)"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem"
+    mkdir -p "$d/cfg"
+    local payload="$d/payload.md"
+    printf '# Fleet guidance\n\nThe canary is TEAL-HERON-31.\n' > "$payload"
+
+    # CLAUDE_CONFIG_DIR is the hook's own seam for this; overriding HOME would
+    # also move git's config and make the failure modes ambiguous.
+    run_hook() { CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1; }
+
+    local dest="$d/cfg/CLAUDE.md"
+    local out
+
+    # 1. Fresh install.
+    rm -f "$dest"
+    out="$(run_hook)"; local rc=$?
+    printf '%s' "$out" > "$d/out1"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: fresh run exits 0" || fail "fleet-memory: fresh run exit $rc"
+    assert_contains "$d/out1" "fleet-guidance: installed" "fleet-memory: fresh run reports installed"
+    assert_contains "$dest" "TEAL-HERON-31" "fleet-memory: payload reaches user memory"
+
+    # The file must not OPEN with a blank line: the first draft did exactly
+    # that whenever the destination existed but stripped to nothing, and a
+    # cosmetic wart at the top of the user's global memory is the kind of thing
+    # that gets "fixed" by deleting the whole file.
+    if [[ -s "$dest" ]] && [[ -n "$(head -1 "$dest")" ]]; then
+        pass "fleet-memory: no leading blank line"
+    else
+        fail "fleet-memory: file starts with a blank line"
+    fi
+
+    # 2. Idempotence — byte-identical, and SAYS so rather than rewriting.
+    local before_sum; before_sum="$(sha256sum "$dest" | cut -d' ' -f1)"
+    out="$(run_hook)"; printf '%s' "$out" > "$d/out2"
+    assert_contains "$d/out2" "fleet-guidance: current" "fleet-memory: second run reports current"
+    local after_sum; after_sum="$(sha256sum "$dest" | cut -d' ' -f1)"
+    [[ "$before_sum" == "$after_sum" ]] && pass "fleet-memory: idempotent (bytes unchanged)" \
+        || fail "fleet-memory: second run changed the file"
+
+    # 3. A developer's own content survives, and survives REPEATEDLY.
+    printf 'MY OWN NOTE — must survive.\n' > "$dest"
+    run_hook >/dev/null
+    assert_contains "$dest" "MY OWN NOTE" "fleet-memory: foreign content preserved"
+    assert_contains "$dest" "TEAL-HERON-31" "fleet-memory: block added alongside foreign content"
+
+    # 4. No unbounded growth, and no duplicate blocks. Five runs, because the
+    #    growth bug this guards added ONE line per run — a single re-run would
+    #    have looked clean.
+    local size_a; size_a="$(wc -c < "$dest")"
+    local i; for i in 1 2 3 4 5; do run_hook >/dev/null; done
+    local size_b; size_b="$(wc -c < "$dest")"
+    [[ "$size_a" -eq "$size_b" ]] && pass "fleet-memory: file does not grow across runs" \
+        || fail "fleet-memory: file grew ${size_a} -> ${size_b} over five runs"
+    local nbegin nend
+    nbegin="$(grep -c 'BEGIN FLEET GUIDANCE' "$dest" || true)"
+    nend="$(grep -c 'END FLEET GUIDANCE' "$dest" || true)"
+    [[ "$nbegin" -eq 1 && "$nend" -eq 1 ]] && pass "fleet-memory: exactly one managed block" \
+        || fail "fleet-memory: found $nbegin BEGIN / $nend END markers"
+
+    # 5. A changed payload REPLACES the old block rather than stacking on it.
+    printf '# Fleet guidance\n\nThe canary is AMBER-LYNX-92.\n' > "$payload"
+    run_hook >/dev/null
+    assert_contains "$dest" "AMBER-LYNX-92" "fleet-memory: new payload installed"
+    assert_not_contains "$dest" "TEAL-HERON-31" "fleet-memory: superseded payload removed"
+    assert_contains "$dest" "MY OWN NOTE" "fleet-memory: foreign content still preserved after replace"
+
+    # 6. A file whose ONLY content was the block collapses cleanly.
+    rm -f "$dest"; run_hook >/dev/null; run_hook >/dev/null
+    local only_size; only_size="$(wc -c < "$dest")"
+    run_hook >/dev/null
+    [[ "$only_size" -eq "$(wc -c < "$dest")" ]] && pass "fleet-memory: block-only file is stable" \
+        || fail "fleet-memory: block-only file grows"
+
+    # A realistic pre-existing personal file — the laptop case. On a durable
+    # machine ~/.claude/CLAUDE.md is the DEVELOPER'S, and this hook is a guest
+    # in it: their content must survive, and must stay ABOVE the appended
+    # block so the file still opens with what they wrote.
+    rm -f "$dest"
+    printf '# My personal global instructions\n\nPrefer pnpm over npm on this machine.\n' > "$dest"
+    run_hook >/dev/null
+    assert_contains "$dest" "Prefer pnpm over npm" "fleet-memory: personal user memory preserved"
+    if [[ "$(head -1 "$dest")" == "# My personal global instructions" ]]; then
+        pass "fleet-memory: personal content stays at the top of the file"
+    else
+        fail "fleet-memory: personal content is no longer first — got '$(head -1 "$dest")'"
+    fi
+    run_hook >/dev/null
+    if [[ "$(grep -c 'Prefer pnpm over npm' "$dest")" -eq 1 ]]; then
+        pass "fleet-memory: personal content not duplicated on re-run"
+    else
+        fail "fleet-memory: personal content duplicated on re-run"
+    fi
+
+    # A destination that is not a regular file must be refused outright. The
+    # hook replaces this path, so anything it cannot safely replace stops it.
+    rm -f "$dest"; mkdir -p "$dest"
+    out="$(run_hook)"; rc=$?
+    printf '%s' "$out" > "$d/out_dir"
+    rmdir "$dest" 2>/dev/null || rm -rf "$dest"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: irregular dest still exits 0" || fail "fleet-memory: irregular dest exit $rc"
+    assert_contains "$d/out_dir" "not a regular file" "fleet-memory: irregular dest refused by name"
+
+    # 7-9. Every failure path: exit 0, and a DEGRADED line that a human reading
+    #      the session start can actually see.
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$d/nope.md" bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_missing"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: missing payload still exits 0" || fail "fleet-memory: missing payload exit $rc"
+    assert_contains "$d/out_missing" "DEGRADED" "fleet-memory: missing payload announces DEGRADED"
+    assert_contains "$d/out_missing" "stub" "fleet-memory: DEGRADED line points at the repo stub"
+
+    : > "$d/empty.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$d/empty.md" bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_empty"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: empty payload still exits 0" || fail "fleet-memory: empty payload exit $rc"
+    assert_contains "$d/out_empty" "DEGRADED" "fleet-memory: empty payload announces DEGRADED"
+
+    # A destination that genuinely cannot be written. Skipped as root, which
+    # can write anywhere — and skipping LOUDLY, because a silently-skipped
+    # permission test is exactly the kind of coverage people believe they have
+    # and do not.
+    #
+    # TWO scenarios, because the OBVIOUS one does not establish what it looks
+    # like it establishes. `chmod 500` on the DIRECTORY plus an existing
+    # `CLAUDE.md` inside it does NOT make that file unwritable: directory write
+    # permission governs creating and unlinking entries, not writing THROUGH an
+    # existing one, so `cp` succeeds and the hook correctly reports `installed`.
+    # That version of this test failed in CI while passing (by skipping) as
+    # root — the assertion was about a condition the setup never created.
+    if [[ "$(id -u)" -ne 0 ]]; then
+        # (1) The destination DIRECTORY cannot be created at all. Unambiguous:
+        #     no reliance on cp semantics or on what the file already holds.
+        mkdir -p "$d/parent"; chmod 500 "$d/parent"
+        out="$(CLAUDE_CONFIG_DIR="$d/parent/nested" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_nodir"
+        chmod 700 "$d/parent"
+        [[ $rc -eq 0 ]] && pass "fleet-memory: uncreatable config dir still exits 0" || fail "fleet-memory: uncreatable config dir exit $rc"
+        assert_contains "$d/out_nodir" "DEGRADED" "fleet-memory: uncreatable config dir announces DEGRADED"
+
+        # (2) The write itself fails: a read-only FILE whose content DIFFERS
+        #     from what would be written. The differing content is load-bearing
+        #     — identical content short-circuits on `cmp` and reports `current`
+        #     without ever attempting the write, so the failure path would not
+        #     be reached and the assertion would be vacuous.
+        mkdir -p "$d/ro"
+        printf 'STALE CONTENT THAT MUST BE REPLACED\n' > "$d/ro/CLAUDE.md"
+        chmod 400 "$d/ro/CLAUDE.md"; chmod 500 "$d/ro"
+        out="$(CLAUDE_CONFIG_DIR="$d/ro" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_ro"
+        chmod 700 "$d/ro"; chmod 600 "$d/ro/CLAUDE.md"
+        [[ $rc -eq 0 ]] && pass "fleet-memory: unwritable dest file still exits 0" || fail "fleet-memory: unwritable dest file exit $rc"
+        assert_contains "$d/out_ro" "DEGRADED" "fleet-memory: unwritable dest file announces DEGRADED"
+
+        # (3) WRITABLE but NOT READABLE — the data-loss shape. An earlier draft
+        #     fell back to an empty strip result here, appended the block to
+        #     that emptiness and copied it over the top: a personal CLAUDE.md
+        #     destroyed, with `installed` printed. The content surviving is the
+        #     assertion that matters; the DEGRADED line is how anyone finds out.
+        mkdir -p "$d/nr"
+        printf 'PERSONAL CONTENT THAT MUST SURVIVE\n' > "$d/nr/CLAUDE.md"
+        chmod 200 "$d/nr/CLAUDE.md"
+        out="$(CLAUDE_CONFIG_DIR="$d/nr" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_nr"
+        chmod 600 "$d/nr/CLAUDE.md"
+        [[ $rc -eq 0 ]] && pass "fleet-memory: unreadable dest still exits 0" || fail "fleet-memory: unreadable dest exit $rc"
+        assert_contains "$d/out_nr" "DEGRADED" "fleet-memory: unreadable dest announces DEGRADED"
+        assert_contains "$d/nr/CLAUDE.md" "PERSONAL CONTENT THAT MUST SURVIVE" "fleet-memory: unreadable dest is NOT overwritten"
+    else
+        echo "  SKIP: fleet-memory unwritable-dest cases (running as root; root bypasses both)"
+    fi
+
+    # FLEET_GUIDANCE_SKIP — the machine owner's opt-out. What makes it real is
+    # that it REMOVES a block an earlier session installed, not just that it
+    # declines to write one: user memory is global on a durable machine, so a
+    # skip that left the block in place would still load the guidance into
+    # every unrelated project. An opt-out that does not opt you out is worse
+    # than none, because it looks like it worked.
+    rm -f "$dest"
+    printf '# My personal global instructions\n\nPrefer pnpm on this machine.\n' > "$dest"
+    run_hook >/dev/null                      # install first, so there is something to remove
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_skip"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: skip exits 0" || fail "fleet-memory: skip exit $rc"
+    assert_contains "$d/out_skip" "skipped" "fleet-memory: skip announces itself"
+    assert_not_contains "$dest" "BEGIN FLEET GUIDANCE" "fleet-memory: skip REMOVES an installed block"
+    assert_contains "$dest" "Prefer pnpm on this machine" "fleet-memory: skip preserves the developer's own content"
+
+    # Idempotent, and says so differently when there was nothing to remove.
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"
+    printf '%s' "$out" > "$d/out_skip2"
+    assert_contains "$d/out_skip2" "no managed block present" "fleet-memory: repeat skip reports nothing to remove"
+    assert_contains "$dest" "Prefer pnpm on this machine" "fleet-memory: repeat skip still preserves own content"
+
+    # A flag whose DISABLED spelling enables it is the trap this guards. Each
+    # of these must install normally, not skip.
+    local off
+    for off in 0 false no off; do
+        rm -f "$dest"
+        out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP="$off" bash "$hook" 2>&1)"
+        printf '%s' "$out" > "$d/out_off"
+        assert_not_contains "$d/out_off" "skipped" "fleet-memory: FLEET_GUIDANCE_SKIP=$off does NOT skip"
+    done
+
+    # Skipping with no user memory file at all must not create one.
+    rm -f "$dest"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"
+    printf '%s' "$out" > "$d/out_skip3"
+    assert_contains "$d/out_skip3" "skipped" "fleet-memory: skip with no file announces itself"
+    if [[ -e "$dest" ]]; then
+        fail "fleet-memory: skip does not create a user memory file"
+    else
+        pass "fleet-memory: skip does not create a user memory file"
+    fi
+
+    # A skip must not need the payload — the whole point is not delivering it.
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$d/nope.md" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_skip_nopayload"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: skip without a payload exits 0" || fail "fleet-memory: skip without a payload exit $rc"
+    assert_contains "$d/out_skip_nopayload" "skipped" "fleet-memory: skip wins over a missing payload"
+    assert_not_contains "$d/out_skip_nopayload" "DEGRADED" "fleet-memory: a deliberate skip is not reported as DEGRADED"
+
+    # 10. The verdict names WHICH guidance landed, so two machines disagreeing
+    #     is a comparable observation rather than a hunch.
+    rm -f "$dest"
+    printf '# Fleet guidance\n\nThe canary is AMBER-LYNX-92.\n' > "$payload"
+    out="$(run_hook)"; printf '%s' "$out" > "$d/out_v"
+    if grep -qE 'v[0-9a-f]{8}' "$d/out_v"; then pass "fleet-memory: verdict carries a version id"
+    else fail "fleet-memory: verdict has no version id"; fi
+    assert_contains "$dest" "fleet-guidance-version:" "fleet-memory: installed block records its version"
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -13657,6 +14052,7 @@ test_hook_pin_workflow_wiring
 # reports on _agent-guidance, so these are the only checks they get.
 test_sync_workflow_trigger
 test_self_hosted_hook_pin
+test_self_hosted_fleet_payload
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
 test_bump_script_self_consistency
@@ -13668,6 +14064,7 @@ test_check_agents_md
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
+test_fleet_memory_hook
 
 echo ""
 echo "========================================="
