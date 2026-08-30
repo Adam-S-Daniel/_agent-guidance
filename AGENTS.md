@@ -28,6 +28,12 @@ line:
   only what is below. Read `agents-md/base.md` in the `_agent-guidance`
   checkout (or on GitHub) before non-trivial work, and say in your reply that
   you were running degraded.
+- `fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set)` — also not in context,
+  but by the machine owner's deliberate choice, not a fault. User memory is
+  GLOBAL on a durable machine, so the guidance would otherwise load in every
+  unrelated project on that box; `FLEET_GUIDANCE_SKIP` opts out and removes any
+  block an earlier session installed. Read `agents-md/base.md` the same way you
+  would when degraded — just don't report it as a problem or try to "fix" it.
 
 No verdict at all means the hook never ran — treat that as DEGRADED.
 

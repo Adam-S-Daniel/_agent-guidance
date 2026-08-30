@@ -56,17 +56,88 @@ END_MARK='<!-- END FLEET GUIDANCE -->'
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || HOOK_DIR=""
 PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"
 
+DEST_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+DEST="$DEST_DIR/CLAUDE.md"
+
 degraded() {
     echo "fleet-guidance: DEGRADED — $1. Repo stub only; read the fleet guidance in _agent-guidance/agents-md/base.md before non-trivial work."
     exit 0
 }
 
+# Write $1 with the managed block stripped out and everything else verbatim.
+#
+# NEVER OVERWRITE A FILE WHOSE CURRENT CONTENTS COULD NOT BE READ. On a durable
+# machine ~/.claude/CLAUDE.md is the developer's own global memory and this hook
+# is a guest in it. An earlier draft fell back to an EMPTY strip result when the
+# read failed, then appended the block to that emptiness and copied it over the
+# top — so a file that was writable but not readable (mode 0200, a mount quirk,
+# an ACL) was silently REPLACED by the fleet block alone, and the verdict still
+# said `installed`. Measured: a personal CLAUDE.md destroyed, with a success
+# line. Every unreadable-or-unparseable shape degrades instead.
+strip_managed_block() {
+    local out="$1"
+    if [ ! -e "$DEST" ]; then : > "$out"; return 0; fi
+    [ -f "$DEST" ] || degraded "$DEST exists but is not a regular file — refusing to replace it"
+    [ -r "$DEST" ] || degraded "$DEST exists but is not readable — refusing to overwrite content I cannot preserve"
+
+    if ! BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" awk '
+        BEGIN { b = ENVIRON["BEGIN_MARK"]; e = ENVIRON["END_MARK"]; skip = 0 }
+        index($0, b) == 1 { skip = 1; next }
+        index($0, e) == 1 { skip = 0; next }
+        !skip { print }
+    ' "$DEST" > "$out.raw" 2>/dev/null; then
+        degraded "could not read or parse $DEST — refusing to overwrite content I cannot preserve"
+    fi
+
+    # Drop trailing blank lines so repeated runs cannot grow the file, and so a
+    # file whose ONLY content was the block collapses to empty rather than
+    # accumulating a blank line per run.
+    local kept; kept="$(cat "$out.raw" 2>/dev/null)"
+    if [ -n "$kept" ]; then printf '%s\n' "$kept" > "$out"; else : > "$out"; fi
+    rm -f "$out.raw"
+}
+
+# ── Opt-out ────────────────────────────────────────────────────────────────
+#
+# FLEET_GUIDANCE_SKIP exists because user memory is GLOBAL on a durable
+# machine. ~/.claude/CLAUDE.md is read in EVERY session on that box, so once a
+# fleet repo has been opened once, the guidance rides along into unrelated
+# projects too. That is a fair trade for some machines and not others, and it
+# is the developer's call, not this hook's.
+#
+# It REMOVES an already-installed block rather than merely declining to write
+# one. Skipping the write alone would leave a block installed by an earlier
+# session sitting in the file and still loading — an opt-out that does not opt
+# you out, which is worse than none because it looks like it worked.
+#
+# `0`, `false`, `no` and `off` are honoured as OFF. Treating any non-empty
+# value as ON would make `FLEET_GUIDANCE_SKIP=0` mean "skip", and a flag whose
+# disabled spelling enables it is a trap worth two lines of code to avoid.
+case "${FLEET_GUIDANCE_SKIP:-}" in
+    ""|0|false|FALSE|no|NO|off|OFF) ;;
+    *)
+        if [ -e "$DEST" ]; then
+            tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
+            trap 'rm -f "$tmp" "$tmp.raw"' EXIT
+            strip_managed_block "$tmp"
+            if cmp -s "$tmp" "$DEST" 2>/dev/null; then
+                echo "fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set) — no managed block present"
+            elif cp "$tmp" "$DEST" 2>/dev/null; then
+                echo "fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set) — removed the managed block from ~/.claude/CLAUDE.md; your own content is untouched"
+            else
+                degraded "FLEET_GUIDANCE_SKIP is set but $DEST could not be rewritten to remove the managed block"
+            fi
+        else
+            echo "fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set)"
+        fi
+        exit 0
+        ;;
+esac
+
 [ -n "$HOOK_DIR" ] || degraded "cannot resolve hook directory"
 [ -r "$PAYLOAD" ]  || degraded "no readable payload at $PAYLOAD"
 [ -s "$PAYLOAD" ]  || degraded "payload at $PAYLOAD is empty"
 
-DEST_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-DEST="$DEST_DIR/CLAUDE.md"
 mkdir -p "$DEST_DIR" 2>/dev/null || degraded "cannot create $DEST_DIR"
 
 # Short content id, so the verdict names WHICH guidance landed. Any of these
@@ -77,47 +148,10 @@ version="${version:0:8}"
 [ -n "$version" ] || version="unknown"
 
 tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
-trap 'rm -f "$tmp" "$tmp.strip"' EXIT
+trap 'rm -f "$tmp" "$tmp.raw"' EXIT
 
-# Strip any previous managed block, keeping everything else verbatim.
-#
-# NEVER OVERWRITE A FILE WHOSE CURRENT CONTENTS COULD NOT BE READ. This file
-# usually belongs to somebody: on a durable machine ~/.claude/CLAUDE.md is the
-# developer's own global memory, and this hook is a guest in it. An earlier
-# draft fell back to an EMPTY strip result when the read failed, then appended
-# the block to that emptiness and copied the result over the top — so a file
-# that was writable but not readable (mode 0200, a mount quirk, an ACL) was
-# silently REPLACED by the fleet block alone, and the verdict still said
-# `installed`. Measured: a personal CLAUDE.md destroyed, with a success line.
-#
-# So every unreadable-or-unparseable shape degrades instead. Losing the
-# delivery is recoverable; losing somebody's notes is not.
-if [ -e "$DEST" ]; then
-    [ -f "$DEST" ] || degraded "$DEST exists but is not a regular file — refusing to replace it"
-    [ -r "$DEST" ] || degraded "$DEST exists but is not readable — refusing to overwrite content I cannot preserve"
-
-    if ! BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" awk '
-        BEGIN { b = ENVIRON["BEGIN_MARK"]; e = ENVIRON["END_MARK"]; skip = 0 }
-        index($0, b) == 1 { skip = 1; next }
-        index($0, e) == 1 { skip = 0; next }
-        !skip { print }
-    ' "$DEST" > "$tmp.strip" 2>/dev/null; then
-        degraded "could not read or parse $DEST — refusing to overwrite content I cannot preserve"
-    fi
-
-    # Drop trailing blank lines so repeated runs cannot grow the file, and so a
-    # file whose ONLY content was the managed block collapses to empty rather
-    # than accumulating a blank line per run. `$(cat)` strips trailing newlines
-    # already; the guard is what stops an empty result becoming a blank line.
-    stripped="$(cat "$tmp.strip" 2>/dev/null)"
-    if [ -n "$stripped" ]; then
-        printf '%s\n\n' "$stripped" > "$tmp"
-    else
-        : > "$tmp"
-    fi
-else
-    : > "$tmp"
-fi
+strip_managed_block "$tmp"
+[ -s "$tmp" ] && printf '\n' >> "$tmp"
 
 {
     printf '%s\n' "$BEGIN_MARK"

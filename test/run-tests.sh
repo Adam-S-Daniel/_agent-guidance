@@ -13854,6 +13854,56 @@ test_fleet_memory_hook() {
         echo "  SKIP: fleet-memory unwritable-dest cases (running as root; root bypasses both)"
     fi
 
+    # FLEET_GUIDANCE_SKIP — the machine owner's opt-out. What makes it real is
+    # that it REMOVES a block an earlier session installed, not just that it
+    # declines to write one: user memory is global on a durable machine, so a
+    # skip that left the block in place would still load the guidance into
+    # every unrelated project. An opt-out that does not opt you out is worse
+    # than none, because it looks like it worked.
+    rm -f "$dest"
+    printf '# My personal global instructions\n\nPrefer pnpm on this machine.\n' > "$dest"
+    run_hook >/dev/null                      # install first, so there is something to remove
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_skip"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: skip exits 0" || fail "fleet-memory: skip exit $rc"
+    assert_contains "$d/out_skip" "skipped" "fleet-memory: skip announces itself"
+    assert_not_contains "$dest" "BEGIN FLEET GUIDANCE" "fleet-memory: skip REMOVES an installed block"
+    assert_contains "$dest" "Prefer pnpm on this machine" "fleet-memory: skip preserves the developer's own content"
+
+    # Idempotent, and says so differently when there was nothing to remove.
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"
+    printf '%s' "$out" > "$d/out_skip2"
+    assert_contains "$d/out_skip2" "no managed block present" "fleet-memory: repeat skip reports nothing to remove"
+    assert_contains "$dest" "Prefer pnpm on this machine" "fleet-memory: repeat skip still preserves own content"
+
+    # A flag whose DISABLED spelling enables it is the trap this guards. Each
+    # of these must install normally, not skip.
+    local off
+    for off in 0 false no off; do
+        rm -f "$dest"
+        out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP="$off" bash "$hook" 2>&1)"
+        printf '%s' "$out" > "$d/out_off"
+        assert_not_contains "$d/out_off" "skipped" "fleet-memory: FLEET_GUIDANCE_SKIP=$off does NOT skip"
+    done
+
+    # Skipping with no user memory file at all must not create one.
+    rm -f "$dest"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"
+    printf '%s' "$out" > "$d/out_skip3"
+    assert_contains "$d/out_skip3" "skipped" "fleet-memory: skip with no file announces itself"
+    if [[ -e "$dest" ]]; then
+        fail "fleet-memory: skip does not create a user memory file"
+    else
+        pass "fleet-memory: skip does not create a user memory file"
+    fi
+
+    # A skip must not need the payload — the whole point is not delivering it.
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$d/nope.md" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_skip_nopayload"
+    [[ $rc -eq 0 ]] && pass "fleet-memory: skip without a payload exits 0" || fail "fleet-memory: skip without a payload exit $rc"
+    assert_contains "$d/out_skip_nopayload" "skipped" "fleet-memory: skip wins over a missing payload"
+    assert_not_contains "$d/out_skip_nopayload" "DEGRADED" "fleet-memory: a deliberate skip is not reported as DEGRADED"
+
     # 10. The verdict names WHICH guidance landed, so two machines disagreeing
     #     is a comparable observation rather than a hunch.
     rm -f "$dest"
