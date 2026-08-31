@@ -1328,8 +1328,9 @@ leaves the second.
 
 The check is manual and takes one command: `/routines` in Claude Code, or
 `list_triggers` on the claude-code-remote MCP server, and read `last_run` and
-`next_run_at` for **Guidance centralization audit**. A `last_run` more
-than two weeks old means it has stopped, whatever `enabled` says.
+`next_run_at` for **Guidance centralization audit**. A `last_run` older than
+the Routine's own firing interval plus two days — three days, at the current
+daily cadence — means it has stopped, whatever `enabled` says.
 
 `scripts/capture-routine.py --id <trigger> --runtime` applies exactly that rule
 to a `list_triggers` response and prints the verdict, so the judgement is not
