@@ -47,25 +47,25 @@ itself, which is the coverage question the spec's §0.5 is about.
 
 | Repository | Outcome branch |
 |------------|----------------|
-| [`Adam-S-Daniel/_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | `claude/stoic-hawking` |
-| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | `claude/brave-lamport` |
-| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | `claude/modest-mendel` |
-| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | `claude/sleepy-mccarthy` |
-| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | `claude/focused-dijkstra` |
-| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | `claude/brave-rubin` |
-| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | `claude/relaxed-carson` |
-| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | `claude/relaxed-sagan` |
-| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | `claude/gracious-knuth` |
-| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | `claude/sharp-galileo` |
-| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | `claude/cool-bell` |
-| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | `claude/dreamy-einstein` |
-| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | `claude/epic-lamport` |
-| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | `claude/nifty-mendel` |
-| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | `claude/bold-babbage` |
-| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | `claude/exciting-fermi` |
-| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | `claude/awesome-newton` |
-| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | `claude/blissful-keller` |
-| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | `claude/wizardly-mccarthy` |
+| [`Adam-S-Daniel/_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | `claude/gifted-dirac` |
+| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | `claude/nifty-bell` |
+| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | `claude/upbeat-pasteur` |
+| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | `claude/vigilant-heisenberg` |
+| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | `claude/intelligent-curie` |
+| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | `claude/loving-meitner` |
+| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | `claude/awesome-davinci` |
+| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | `claude/cool-pascal` |
+| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | `claude/magical-euler` |
+| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | `claude/cool-babbage` |
+| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | `claude/adoring-shannon` |
+| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | `claude/quirky-pasteur` |
+| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | `claude/eloquent-cori` |
+| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | `claude/optimistic-darwin` |
+| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | `claude/loving-bardeen` |
+| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | `claude/awesome-faraday` |
+| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | `claude/vibrant-dirac` |
+| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | `claude/gallant-edison` |
+| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | `claude/jolly-darwin` |
 
 ## Pre-approved tools
 
@@ -109,7 +109,7 @@ as complete.
 
 ## Stored prompt
 
-20111 bytes, `sha256:1220b90f6aba0226c90c21c93f3d06725084d0af24185cdc190f45343fb3bb5a`.
+20106 bytes, `sha256:64ac9030af76d1811c130cb98480de46b1fba54bc2cb39d37c364e165115e79c`.
 
 This is what a fired session actually receives. The spec is the authority
 on the procedure; where the two disagree, `guidance-centralization.md`
@@ -118,7 +118,7 @@ Comparing this block against that section is the check that disagreement
 is still the *known* one and not a fresh edit.
 
 ~~~text
-Weekly guidance-centralization audit across the `Adam-S-Daniel` and `jodidaniel` GitHub accounts. This is a fresh session with no prior context.
+Scheduled guidance-centralization audit across the `Adam-S-Daniel` and `jodidaniel` GitHub accounts. This is a fresh session with no prior context.
 
 ## Read the spec first — it is the procedure, this prompt is only the bootstrap
 
@@ -169,9 +169,9 @@ Five things the spec details and a run gets wrong without them:
 - **`fork` is ABSENT on a non-fork, not `false`.** `r.fork === false` matched 0 of 22 on 2026-08-28 and empties the set permanently, reporting a clean pass forever; `!r.fork` matched 20 of 22. Give the filter a control: it must exclude exactly `OctopusDeploy-Api` and `SonosAmpJuicePi` by name. Retaining 0, or retaining everything, is BLOCKED — not empty.
 - **Compare on lowercased `owner/name`.** `repos.yml` holds bare short names, `list_repos` returns `full_name`, and this Routine's `sources` hold URLs. A bare-name match would classify a new `jodidaniel/agentskills` as the already-known `Adam-S-Daniel/agentskills` and drop it from every set.
 
-Read this Routine's own allowlist from the Routine — `mcp__Claude_Code_Remote__list_triggers`, trigger `trig_01DWMCij13xmsBk65UrHaZEF`, `job_config.ccr.session_context.sources[].git_repository.url`. **Never infer it from what cloned to disk**, because `add_repo` widens the disk during the same run and the inference is circular. Take the disk cross-check snapshot *before* any `add_repo`, and discover the layout rather than assuming a path — `$CLAUDE_PROJECT_DIR` is unset on hosted surfaces.
+Read this Routine's own allowlist from the Routine — `mcp__Claude_Code_Remote__list_triggers`, trigger `trig_01UHsSHnsThKxGAvbcmQGuC5`, `job_config.ccr.session_context.sources[].git_repository.url`. **Never infer it from what cloned to disk**, because `add_repo` widens the disk during the same run and the inference is circular. Take the disk cross-check snapshot *before* any `add_repo`, and discover the layout rather than assuming a path — `$CLAUDE_PROJECT_DIR` is unset on hosted surfaces.
 
-**Anti-nag, and the de-escalation that makes it hold.** All three sets empty gets the one-line answer plus the footer receipt, nothing else. A repo already classified and merely unattached gets one line, no re-argument. **Before opening ANY `repos.yml` pull request — an addition or a removal — check for your own prior one** (`list_pull_requests` with `state: "all"`, then `get_files`; prefer it over `search_pull_requests`, which is the family this whole check exists to distrust). The silencing condition for both is a merge you are not permitted to make, so without that check you open a duplicate every Sunday. A PR already open demotes the finding to one footer line naming it. A removal PR the operator **closed unmerged** is a durable "no, keep those entries" and silences those names permanently.
+**Anti-nag, and the de-escalation that makes it hold.** All three sets empty gets the one-line answer plus the footer receipt, nothing else. A repo already classified and merely unattached gets one line, no re-argument. **Before opening ANY `repos.yml` pull request — an addition or a removal — check for your own prior one** (`list_pull_requests` with `state: "all"`, then `get_files`; prefer it over `search_pull_requests`, which is the family this whole check exists to distrust). The silencing condition for both is a merge you are not permitted to make, so without that check you open a duplicate on every fire. A PR already open demotes the finding to one footer line naming it. A removal PR the operator **closed unmerged** is a durable "no, keep those entries" and silences those names permanently.
 
 Whatever the state, the coverage block's first line answers the operator's question unconditionally: `new/unclassified repos: none`, or the repo and its action.
 
@@ -236,7 +236,7 @@ The spec's baseline names two promotion candidates the first survey surfaced (th
 - **Verify the commit, not the push.** `git log --oneline -1` plus a clean `git status --short` — a refused pre-commit hook does not stop the push, and the branch it leaves looks real. No fired session has yet been observed writing anything by either path (`git push`, or the connector's `push_files`); whichever you use, **quote the verbatim result** so this stops being unmeasured.
 - **Anything you hand back as the operator's move gets its URL in the same sentence** — a PR to merge, a red run, a file to edit.
 
-**The one surface with no verifiable link** is this Routine's own attached-repository list. It is edited where Routines are managed on claude.ai; a deep link to it could not be established from inside a session, and `list_triggers` returns no URL field. So name it as **"Guidance centralization audit (weekly)", trigger `trig_01DWMCij13xmsBk65UrHaZEF`**, and say the link could not be verified. Do not invent one — an honest gap beats a confident wrong link.
+**The one surface with no verifiable link** is this Routine's own attached-repository list. It is edited where Routines are managed on claude.ai; a deep link to it could not be established from inside a session, and `list_triggers` returns no URL field. So name it as **"Guidance centralization audit", trigger `trig_01UHsSHnsThKxGAvbcmQGuC5`**, and say the link could not be verified. Do not invent one — an honest gap beats a confident wrong link.
 
 ## Report
 
