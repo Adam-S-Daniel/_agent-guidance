@@ -1,6 +1,6 @@
 # Routine: guidance centralization audit
 
-**Fires:** weekly, Sunday 07:00 UTC, in a fresh session.
+**Fires:** daily, 08:00 UTC, in a fresh session.
 **Owner of the schedule:** a Claude Routine in Adam's account, not a workflow in
 this repo. See "Why a Routine" below before proposing to move it.
 
@@ -301,7 +301,7 @@ fail for a real reason.
 
 **When a known name is missing, do not stop.** This is where the obvious design
 fails: a rule that says "a failed control means report BLOCKED" emits an
-identical BLOCKED line every Sunday for as long as one registry name is stale,
+identical BLOCKED line on every fire for as long as one registry name is stale,
 and the week a genuinely new repo appears the check is still BLOCKED and never
 names it. Failing closed into silence is worse than the gap it guards. So
 **resolve each missing name individually before concluding anything**, on a
@@ -484,8 +484,8 @@ when the stale name leaves `repos.yml` — or when the operator closes its remov
 PR unmerged, which is the durable way to record "no, keep those entries"; Step 6
 and Step 7 are how a run recognises both. That matters more than it looks. The
 alternative — remembering which repos were present last run — needs somewhere to
-live, and a fresh-session-per-fire Routine has nowhere: it would be a weekly
-commit, or agent memory, which base.md forbids as the only copy. Worse, a stored
+live, and a fresh-session-per-fire Routine has nowhere: it would be a
+per-fire commit, or agent memory, which base.md forbids as the only copy. Worse, a stored
 list *loses* notifications rather than repeating them. The drift report failed
 silently for eighteen consecutive nights (runs 155–172); a "seen last run" store
 that advanced across an outage like that would mark a repo created during it as
@@ -495,8 +495,8 @@ writes the decision down.
 
 ### Step 4 — read the allowlist from the Routine, not from the session
 
-`mcp__Claude_Code_Remote__list_triggers`, find `trig_01DWMCij13xmsBk65UrHaZEF`
-("Guidance centralization audit (weekly)"), and read
+`mcp__Claude_Code_Remote__list_triggers`, find `trig_01UHsSHnsThKxGAvbcmQGuC5`
+("Guidance centralization audit"), and read
 `job_config.ccr.session_context.sources[].git_repository.url`. That is the
 stored list the operator edits, and it is the only thing set (b) may be computed
 against.
@@ -568,7 +568,7 @@ or path failed, and the surface to act on.
 section becoming the wallpaper it was designed to avoid.** Set (c) in particular
 cannot silence itself: its action is a `repos.yml` pull request, and §3 forbids
 this Routine merging `repos.yml`, so without this rule the same names take the
-lead paragraph every Sunday forever with an action the operator has already
+lead paragraph on every fire forever with an action the operator has already
 seen. So:
 
 - **First run that names a member of set (a) or set (c):** full treatment — it
@@ -578,7 +578,7 @@ seen. So:
   footer line for the whole set, naming the PR — *"3 registry names resolve on
   no path I hold (`<name>`, `<name>`, `<name>`); `<PR url>` proposes removing
   them and is waiting on you."* It does not lead, and the four-path evidence
-  goes in the PR body once, not in the weekly report.
+  goes in the PR body once, not in the recurring report.
 - **The pull request merges:** the name leaves `repos.yml` and the set empties
   itself. Nothing further is emitted. (This is the path PR #84 took on
   2026-08-28.)
@@ -623,7 +623,7 @@ because a later run will meet the same shape under different names.
 
 The receipt proves the check ran, which is what stops silence from being
 ambiguous, without spending the operator's attention on a state that has not
-changed. A weekly line that never changes stops being read, and it stops being
+changed. A recurring line that never changes stops being read, and it stops being
 read on the same line where the real one will eventually arrive.
 
 ### Step 7 — propose, do not decide, and never propose twice
@@ -640,7 +640,7 @@ failing cron. It is a claim that nobody is promising to watch one.").
 removal — check for your own prior one.** Both sets have the identical
 recurrence mechanism: their silencing condition is a merge this Routine is
 forbidden to perform, so without this check the run re-detects the same repo and
-opens a fresh duplicate every Sunday, each one dragging this repo's required CI
+opens a fresh duplicate on every fire, each one dragging this repo's required CI
 lanes behind it.
 
 Search by **file and branch, not by set**: `list_pull_requests` with
@@ -723,7 +723,7 @@ attachment list: it is edited where Routines are managed on claude.ai, and no
 deep link to it could be established from inside a session — `list_triggers`
 returns the trigger id, name, schedule, notifications and full `job_config`, and
 no URL field anywhere. So name the Routine by its display name **and** its
-trigger id (`trig_01DWMCij13xmsBk65UrHaZEF`) and say the link could not be
+trigger id (`trig_01UHsSHnsThKxGAvbcmQGuC5`) and say the link could not be
 verified. An honest gap beats a confident wrong link; do not invent one.
 
 ### Where this stood on 2026-08-28
@@ -935,8 +935,8 @@ disagreement exists.
 So a run that finds the stored prompt contradicting this file has found the
 expected state, not a defect: **this file is newer and wins**, say in the report
 that the disagreement is still there, and hand the fix back as the operator's
-move — the Routine is "Guidance centralization audit (weekly)", trigger
-`trig_01DWMCij13xmsBk65UrHaZEF`, edited where Routines are managed on claude.ai,
+move — the Routine is "Guidance centralization audit", trigger
+`trig_01UHsSHnsThKxGAvbcmQGuC5`, edited where Routines are managed on claude.ai,
 and no deep link to it could be established from inside a session. Until the
 stored prompt is updated, treat the merge grant as the operator's instruction
 recorded above, and say so in the report on any run that exercises it.
@@ -1286,7 +1286,7 @@ only when none of the three could be computed.
 Then, only if non-empty: what was promoted and where; what was merged, with its
 URL; what was left alone and why; anything BLOCKED, with what you checked it
 with; and any question for the operator. If nothing changed, say so in one line
-and stop — a weekly "no change" that stays one line is what keeps the report
+and stop — a recurring "no change" that stays one line is what keeps the report
 readable when it is not.
 
 **Never hand back a blocked item without a URL.** "Waiting on approval",
@@ -1328,8 +1328,9 @@ leaves the second.
 
 The check is manual and takes one command: `/routines` in Claude Code, or
 `list_triggers` on the claude-code-remote MCP server, and read `last_run` and
-`next_run_at` for **Guidance centralization audit (weekly)**. A `last_run` more
-than two weeks old means it has stopped, whatever `enabled` says.
+`next_run_at` for **Guidance centralization audit**. A `last_run` older than
+the Routine's own firing interval plus two days — three days, at the current
+daily cadence — means it has stopped, whatever `enabled` says.
 
 `scripts/capture-routine.py --id <trigger> --runtime` applies exactly that rule
 to a `list_triggers` response and prints the verdict, so the judgement is not

@@ -52,8 +52,8 @@ EXHAUSTIVE BY REFUSAL
 THE VOLATILE HALF
     `--runtime` prints what the snapshot deliberately leaves out — enabled,
     next run, last fired, last run status, ended/suspension reason — and a
-    verdict against the spec's two-week rule. It writes nothing, because those
-    fields change on every fire and committing them would make the snapshot
+    verdict against the spec's cadence-plus-grace staleness rule. It writes
+    nothing, because those fields change on every fire and committing them would make the snapshot
     stale the moment the Routine runs. This is the spec's manual "is it still
     firing" check, in one command.
 
@@ -434,7 +434,53 @@ def render(record, present):
     return "\n".join(out) + "\n"
 
 
-RUNTIME_STALE_DAYS = 14
+RUNTIME_GRACE_DAYS = 2
+
+
+def cadence_days(record):
+    """The Routine's own firing interval, in days, from its schedule shape.
+
+    The staleness threshold is this plus RUNTIME_GRACE_DAYS, so the verdict
+    tracks the schedule instead of a constant calibrated for one cadence: the
+    original rule hardcoded 14 days against a weekly cron, and the 2026-08-31
+    recreation fires daily — a fixed fortnight would let it sit dead through
+    eleven missed fires before saying so.
+
+    Shape-classified, not evaluated: a real cron engine is a dependency this
+    script does not need to answer "roughly how often". Every branch rounds UP
+    to the worst-case gap between fires, so the verdict can flag late but never
+    cry STOPPED early. A shape outside the classification is a Refusal, not a
+    guess — the same contract FIELD_POLICY holds for record fields.
+
+    Returns (days, description) for a recurring schedule, or None when nothing
+    recurs (one-shot or poke-only) and so nothing can be late.
+    """
+    cron = record.get("cron_expression")
+    if not cron:
+        return None
+    fields = cron.split()
+    if len(fields) != 5:
+        raise Refusal("cron_expression %r does not have 5 fields" % cron)
+    _minute, _hour, dom, mon, dow = fields
+    if mon != "*":
+        raise Refusal(
+            "cron_expression %r restricts the month — the gap between fires "
+            "can be most of a year, and bounding that by shape alone would be "
+            "a guess" % cron)
+    if dom == "*" and dow == "*":
+        # Fires at least once a day whatever the minute/hour fields say, so a
+        # sub-daily cadence only makes this bound MORE conservative.
+        return 1, "daily or finer"
+    if dom == "*":
+        # Weekday-driven: a single day fires every 7, and any list or range
+        # fires at least weekly too, so 7 bounds the worst-case gap either way.
+        return 7, "weekly (day-of-week %s)" % dow
+    if dow == "*":
+        # Month-day-driven: the worst-case gap is a long month.
+        return 31, "monthly (day-of-month %s)" % dom
+    # Both restricted: cron ORs the two day fields, so fires come at least as
+    # often as the weekday half alone would deliver them.
+    return 7, "day-of-week OR day-of-month (%s / %s)" % (dow, dom)
 
 
 def runtime_report(record):
@@ -442,7 +488,8 @@ def runtime_report(record):
 
     `docs/routines/guidance-centralization.md` records that nothing watches this
     Routine and that the check is manual: read `last_run` and `next_run_at`, and
-    treat a last run older than two weeks as stopped whatever `enabled` says.
+    treat a last run older than the Routine's own firing interval plus
+    RUNTIME_GRACE_DAYS as stopped whatever `enabled` says.
     The snapshot deliberately excludes those fields, so this mode is where they
     are answered — one command instead of reading a raw API response.
     """
@@ -475,12 +522,26 @@ def runtime_report(record):
                 lines.append("  VERDICT: last fired in the future by %d day(s) — "
                              "the record or this machine's clock is wrong, and "
                              "neither makes it safe to call this firing" % -age)
-            elif age > RUNTIME_STALE_DAYS:
-                lines.append("  VERDICT: STOPPED — last fired %d days ago, past the "
-                             "%d-day threshold. `enabled` says nothing here."
-                             % (age, RUNTIME_STALE_DAYS))
             else:
-                lines.append("  VERDICT: firing — last fired %d day(s) ago" % age)
+                cadence = cadence_days(record)
+                if cadence is None:
+                    lines.append("  VERDICT: no recurring schedule — a one-shot "
+                                 "or poke-only Routine has no cadence to be "
+                                 "stale against")
+                else:
+                    interval, desc = cadence
+                    threshold = interval + RUNTIME_GRACE_DAYS
+                    if age > threshold:
+                        lines.append(
+                            "  VERDICT: STOPPED — last fired %d days ago, past "
+                            "the %d-day threshold (%s cadence + %d-day grace). "
+                            "`enabled` says nothing here."
+                            % (age, threshold, desc, RUNTIME_GRACE_DAYS))
+                    else:
+                        lines.append(
+                            "  VERDICT: firing — last fired %d day(s) ago "
+                            "(threshold %d days: %s cadence + %d-day grace)"
+                            % (age, threshold, desc, RUNTIME_GRACE_DAYS))
     return "\n".join(lines)
 
 
