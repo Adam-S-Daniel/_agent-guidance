@@ -1,4 +1,4 @@
-# Routine snapshot: Guidance centralization audit (weekly)
+# Routine snapshot: Guidance centralization audit
 
 > **Generated — do not edit by hand.** Regenerate with
 > `scripts/capture-routine.py`; see that file's header for where the
@@ -20,15 +20,15 @@ request rather than as an untracked edit to a trigger nobody can diff.
 
 | Property | Value |
 |----------|-------|
-| Trigger id | `trig_01DWMCij13xmsBk65UrHaZEF` |
-| Name | Guidance centralization audit (weekly) |
+| Trigger id | `trig_01UHsSHnsThKxGAvbcmQGuC5` |
+| Name | Guidance centralization audit |
 | Enabled | yes |
-| Schedule (cron, UTC) | `0 7 * * 0` |
+| Schedule (cron, UTC) | `0 8 * * *` |
 | One-shot fire time | — |
 | Schedule kind | recurring |
-| Created | 2026-08-28T15:49:59.596540Z |
-| Created kind | `ROUTINE_CREATED_KIND_ROUTINE` |
-| Created via | `meta_mcp` |
+| Created | 2026-08-31T18:58:30.909810Z |
+| Created kind | — |
+| Created via | `http_api` |
 | Session binding | fresh session per fire |
 | Model override | — (account default) |
 | Folders state | `FOLDERS_STATE_NONE` |
@@ -47,52 +47,40 @@ itself, which is the coverage question the spec's §0.5 is about.
 
 | Repository | Outcome branch |
 |------------|----------------|
-| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | `claude/tender-albattani` |
-| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | `claude/upbeat-goodall` |
-| [`Adam-S-Daniel/_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | `claude/elegant-bell` |
-| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | `claude/keen-noether` |
-| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | `claude/admiring-allen` |
-| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | `claude/charming-hypatia` |
-| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | `claude/blissful-gauss` |
-| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | `claude/nifty-clarke` |
-| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | `claude/upbeat-fermi` |
-| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | `claude/trusting-ramanujan` |
-| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | `claude/optimistic-pasteur` |
-| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | `claude/beautiful-ptolemy` |
-| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | `claude/vigilant-noether` |
-| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | `claude/exciting-bohr` |
-| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | `claude/confident-hamilton` |
-| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | `claude/happy-newton` |
-| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | `claude/inspiring-newton` |
-| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | `claude/trusting-gates` |
-| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | `claude/admiring-cerf` |
+| [`Adam-S-Daniel/_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | `claude/stoic-hawking` |
+| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | `claude/brave-lamport` |
+| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | `claude/modest-mendel` |
+| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | `claude/sleepy-mccarthy` |
+| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | `claude/focused-dijkstra` |
+| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | `claude/brave-rubin` |
+| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | `claude/relaxed-carson` |
+| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | `claude/relaxed-sagan` |
+| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | `claude/gracious-knuth` |
+| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | `claude/sharp-galileo` |
+| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | `claude/cool-bell` |
+| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | `claude/dreamy-einstein` |
+| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | `claude/epic-lamport` |
+| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | `claude/nifty-mendel` |
+| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | `claude/bold-babbage` |
+| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | `claude/exciting-fermi` |
+| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | `claude/awesome-newton` |
+| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | `claude/blissful-keller` |
+| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | `claude/wizardly-mccarthy` |
 
 ## Pre-approved tools
 
-20 entries. `preset:default` expands host-side, so this list is what the
+8 entries. `preset:default` expands host-side, so this list is what the
 Routine *adds to* that preset, not the whole tool surface a fired session
 holds.
 
-- `preset:default`
-- `Task`
 - `Bash`
+- `Read`
+- `Write`
+- `Edit`
 - `Glob`
 - `Grep`
-- `Read`
-- `Edit`
-- `MultiEdit`
-- `Write`
-- `NotebookEdit`
 - `WebFetch`
-- `TodoWrite`
 - `WebSearch`
-- `BashOutput`
-- `KillBash`
-- `Skill`
-- `Tmux`
-- `Monitor`
-- `SendUserFile`
-- `REPL`
 
 ## MCP connectors
 
@@ -115,11 +103,6 @@ as complete.
 | `job_config.ccr.events[*].data.parent_tool_use_id` | always null for a routine's seed message (excluded) |
 | `job_config.ccr.events[*].data.session_id` | session identifier (value withheld) |
 | `job_config.ccr.events[*].data.uuid` | message identifier (value withheld) |
-| `last_fired_at` | runtime state: changes on every fire (excluded) |
-| `last_run.finished_at` | runtime state: changes on every fire (excluded) |
-| `last_run.fired_at` | runtime state: changes on every fire (excluded) |
-| `last_run.session_id` | session identifier (value withheld) |
-| `last_run.status` | runtime state: changes on every fire (excluded) |
 | `mcp_connections[*].connector_uuid` | connector identifier (value withheld) |
 | `next_run_at` | runtime state: recomputed after every fire (excluded) |
 | `updated_at` | runtime state: server-side touch, not only operator edits (excluded) |
