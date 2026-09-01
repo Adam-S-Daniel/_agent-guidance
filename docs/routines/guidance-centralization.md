@@ -1082,6 +1082,16 @@ A run that reports "push refused: `<exact stderr>`", or "`push_files` returned
 leaves the next one to re-derive it, which is how this paragraph has survived
 three fires already.
 
+**Settled, partially, 2026-09-01.** The ordinary `git push` path works. A fired
+run branched `_agent-guidance` off `origin/main`, committed, and pushed with
+`git push -u origin <branch>`; `git ls-remote origin <branch>` afterward
+returned the exact same sha as local `HEAD`. `mcp__github__create_pull_request`
+then opened a PR against that pushed branch without incident
+(Adam-S-Daniel/_agent-guidance#107). **Still unexercised:** the connector's own
+`create_branch` + `push_files` / `create_or_update_file` path — this run's PR
+body came from a git-pushed branch, not from the connector's content-write
+API, so that half of the question remains open for a later fire to close.
+
 ## 3. Making changes
 
 - **One logical change per pull request**, each with a commit message that
@@ -1443,6 +1453,56 @@ Step 6. A run that reports three unreadable registry names is computing against
 a checkout cut before 20:04:04Z rather than against `main`. A run that reports a
 four-repo gap is reading this file's prose instead of computing the sets at
 all.
+
+### Measured 2026-09-01, from an actual fired run
+
+Step 0's "not settled" now has an answer for one fired session, and it is worth
+recording precisely because the answer is narrower than "absent" or "present" —
+it splits by tool family in a way the earlier drafts did not anticipate.
+
+- **`mcp__Claude_Code_Remote__list_repos`, `list_triggers` and `add_repo` were
+  all three ABSENT** — not merely unlisted in `session_context.allowed_tools`,
+  but genuinely unreachable: neither a direct call nor a ToolSearch for the
+  `Claude_Code_Remote` family surfaced them. §0.5 Step 4's "read the allowlist
+  from the Routine" and the `list_repos`-based enumeration in Step 1 were both
+  unusable this run for that reason, not because either failed — there was
+  nothing to call.
+- **The `gh` CLI is also absent from this session's environment**, per its own
+  system prompt ("You do NOT have access to the `gh` CLI... Instead, use the
+  GitHub MCP server tools"). That removes Step 0's fallback 1
+  (`gh repo list ... --json ...`) as well, which the earlier drafts of this
+  section assumed would be there as a floor. So this run's enumeration attempt
+  had **no working path at all** — not `list_repos`, not `gh repo list`, and
+  `search_repositories` is disqualified by §0.5's own rule. Set (a) was
+  reported `NOT COMPUTABLE (no enumeration tool available)`, a harder failure
+  than fallback 2's "vacuous subset" case this section already documents.
+- **Both GitHub MCP connectors answered, and answered differently — worth
+  contrasting directly.** `mcp__github__get_me` and `mcp__github-mcp__get_me`
+  both returned the same account. But `mcp__github-mcp__get_file_contents` on
+  `Adam-S-Daniel/jc` and `Adam-S-Daniel/4A` (both private) returned 404, while
+  `mcp__github__get_file_contents` on the same two paths returned real listings
+  — a live, present-tense confirmation of the exact asymmetry base.md already
+  documents (the org connector's reach is independent of, and narrower than,
+  the session's own attached-repo scope). `mcp__github__actions_list` and
+  `actions_get` were also present and schema-loadable, which the spec's
+  dated baseline had not measured for this session shape.
+- **Set (b)'s substitute, in the absence of `list_triggers`.** With no way to
+  read the Routine's stored `sources`, this run used the session's own
+  GitHub-integration "Repository Scope" declaration (a harness-provided list,
+  distinct from anything cloned to disk, so it does not carry Step 4's
+  circularity hazard) as the best available stand-in: 19 repos, which mapped
+  1:1 onto `repos.yml`'s 22-name union minus the three structural exclusions
+  (both forks, `superoutrigger`) — 0 unattached, consistent with the
+  2026-08-28 baseline. This is a deviation from the spec's mechanism, not an
+  equivalent measurement of it, and later runs should keep probing for
+  `list_triggers` directly rather than treating this substitution as settled.
+- **Set (c) computed cleanly** via the individual-probe path (`git ls-remote`
+  per name, per owner, `GIT_TERMINAL_PROMPT=0`): all 22 names in `repos.yml`'s
+  union resolved under the owner recorded in Step 2's mapping. 0 unreadable.
+- Issue #81 is closed (fixed by #82, merged 2026-08-28) and PR #85 is merged —
+  confirmed directly against `main`, so both the drift-report marker bug and
+  base.md's stale connector-prefix text this section has flagged twice before
+  are resolved and should stop being cited as open.
 
 ### Guidance content
 
