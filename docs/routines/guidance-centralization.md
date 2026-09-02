@@ -1504,6 +1504,52 @@ it splits by tool family in a way the earlier drafts did not anticipate.
   base.md's stale connector-prefix text this section has flagged twice before
   are resolved and should stop being cited as open.
 
+### Measured 2026-09-02, second fired run
+
+Tool availability repeated the 2026-09-01 shape exactly: `mcp__Claude_Code_Remote__list_repos`,
+`list_triggers` and `add_repo` were all three absent (ToolSearch for the
+`Claude_Code_Remote` family returned nothing), and the `gh` CLI was absent too
+(per this session's own system prompt). Set (a) was again `NOT COMPUTABLE (no
+enumeration tool available)`. Both GitHub MCP connectors answered this time —
+`mcp__github__` (session-provisioned, full Actions tools present) and
+`mcp__github-mcp__` (the org connector) both returned `get_me` successfully —
+a fuller capability profile than the 2026-09-01 run's org-connector-only
+shape, though still without `list_repos`/`list_triggers`/`add_repo`.
+
+Set (b) used the same substitute as 2026-09-01 — the session's own GitHub
+"Repository Scope" declaration, 19 repos — which mapped 1:1 onto `repos.yml`'s
+19-name non-structural union (22 total minus both forks and
+`superoutrigger`). 0 unattached, by the same substitute-not-equivalent caveat
+recorded above.
+
+Set (c) computed cleanly via individual `git ls-remote` probes
+(`GIT_TERMINAL_PROMPT=0`) for all 22 `repos.yml` names under the two
+`SYNC_OWNERS`, plus `superoutrigger/superoutrigger` directly: all 22 resolved
+under the owner recorded in the existing Step 2 mapping, no fallback probe
+needed. 0 unreadable. The "mandatory second source" (`gh repo list ...
+--json`) was unavailable — no `gh` CLI — so this is single-source
+verification only, not the dual-source cross-check §0.5 Step 2 calls for.
+
+**The connector write path is no longer "still unexercised."** §2.5's open
+question — whether `create_branch` + `push_files` / `create_or_update_file`
+works, as distinct from the ordinary `git push` path settled 2026-09-01 — is
+now answered, on `Adam-S-Daniel/cms-platform` rather than on this repo:
+`mcp__github__create_branch` then `mcp__github__create_or_update_file`
+against a §2A "redundant copy" finding (cms-platform's AGENTS.md restated a
+rule base.md now carries) produced a real commit and a mergeable PR
+(cms-platform#395). One caution earned the hard way: the tool's `content`
+parameter takes the literal file text as a string, and a first attempt in
+this run passed a 24-byte placeholder instead of the prepared 68 KB file —
+the call succeeds either way, so nothing about its return value flags a
+content mistake. A subagent re-read the local file, pushed the real content,
+and verified the pushed bytes by size and an md5 match against the source
+before trusting it. Treat any `create_or_update_file` call over content too
+large to sanity-check inline as one to verify by re-fetching what actually
+landed, not by the call's own success.
+
+Per §3, this Routine did not merge cms-platform#395 — it falls outside the
+narrow "confined to this file" allowance and is left for a human.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
