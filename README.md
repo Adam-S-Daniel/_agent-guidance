@@ -111,6 +111,16 @@ Mechanics:
   `drifted` / `missing` / `no-lock` / `unmanaged`) and prints each lock's pins
   in Notes — the only thing in the fleet that surfaces a stale lock, since a
   stale one installs cleanly and reports `OK` in-session.
+- The drift report also reads the registry in **both directions**, since it is
+  the only thing here that discovers what the account actually holds: a repo it
+  found that neither `skills_bootstrap` key classifies, and a name those keys
+  claim that no owner returned. Each is a section of the report plus its own
+  sidecar — `drift-report-skills-unclassified.txt` and
+  `drift-report-skills-orphans.txt` — which `drift-report.yml` turns into a
+  `ci`-labelled issue, because a 06:00 cron notifies nobody. The second never
+  concludes "deleted" (a private repo answers 404 exactly like a removed one)
+  and is **withheld** rather than written empty on a run where any owner's
+  listing failed, so a partial enumeration can neither raise it nor close it.
 
 Full reasoning, including the repos deliberately left off the allowlist and
 what this leaves unsolved:
