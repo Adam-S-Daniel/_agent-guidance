@@ -4193,6 +4193,299 @@ test_drift_report_skills_classification() {
         "drift skills (control): a fully classified fleet says nothing at all"
 }
 
+# ── write_orphan_registry <path> <yes|no orphans> [extra classified name]...
+#
+# A repos.yml whose skills_bootstrap registry classifies exactly what mock
+# discovery returns for `testorg`. With `yes` it also claims two names nothing
+# returns — one under `repos:`, one under `out_of_scope:` — so a predicate that
+# had stopped reading either half is visible. Extra arguments are classified
+# too, which is how the multi-owner test adds testorg2's only repo.
+#
+# `cron_coverage.fleet` deliberately carries a name discovery never returns.
+# That key legitimately lists repos discovery cannot reach — the account's two
+# forks and the third-owner `superoutrigger` — so a check that swept it in
+# would fire on the real fleet every night.
+#
+# Written out rather than sed-derived from $TEST_DIR/repos.yml: what this needs
+# is a registry describing a DIFFERENT owner's fleet, which is a rewrite of
+# both keys rather than an edit to one line.
+write_orphan_registry() {
+    local path="$1" orphans="$2"; shift 2
+    local n
+    local discovered=(repo-with-sync repo-no-sync repo-with-existing
+                      repo-existing-no-marker repo-with-claude-md
+                      repo-up-to-date-no-claude repo-fix-claude repo-excluded
+                      _agent-guidance "$@")
+    {
+        cat <<YAML
+exclude:
+  - repo-excluded
+default_sections: []
+skills_bootstrap:
+  registry: bootorg/agentskills
+  path: .claude/hooks/skills-bootstrap.sh
+  ref: 3333333333333333333333333333333333333333
+  sha256: $BOOTSTRAP_HOOK_SHA
+  repos:
+YAML
+        if [[ "$orphans" == yes ]]; then echo "    - repo-allowlisted-gone"; fi
+        echo "  out_of_scope:"
+        if [[ "$orphans" == yes ]]; then echo "    - {repo: repo-vanished, reason: test fixture}"; fi
+        for n in "${discovered[@]}"; do
+            echo "    - {repo: $n, reason: test fixture}"
+        done
+        echo "cron_coverage:"
+        echo "  fleet: [placeholder-never-discovered,"
+        for n in "${discovered[@]}"; do
+            echo "          $n,"
+        done
+        echo "          repo-owner2-only]"
+        echo "  out_of_scope: []"
+    } > "$path"
+}
+
+# ── Test 4b2: registry names discovery did not return (the orphan direction)
+#
+# #94 flags a DISCOVERED repo the registry classifies under neither key. This
+# is the reverse: a name repos.yml still CLAIMS that discovery no longer
+# returns. Three civic-* repos were deleted from GitHub and sat in this fleet's
+# configuration for weeks; nothing enumerated in that direction, so nothing
+# said so, and a propagation verifier seeded from that configuration counted
+# them as live consumers and reported them as missing text they could not
+# possibly have had. `scripts/check-registry.js` cannot catch it: it is offline
+# by design, and this needs the network.
+#
+# The union is taken from the RAW discovery output — before $SELF_REPO is
+# dropped and before the `exclude:` filter runs — which is what the
+# `_agent-guidance` and `repo-excluded` controls below measure. Both are
+# registry names the per-repo loop never visits, and both are really there.
+test_drift_report_registry_orphan() {
+    echo ""
+    echo "=== Test: drift-report.sh (registry names discovery did not return) ==="
+
+    write_orphan_registry "$TEST_DIR/repos-orphan.yml" yes
+
+    local rpt="$TEST_DIR/drift-orphan.md"
+    local side="$TEST_DIR/drift-orphan-skills-orphans.txt"
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=testorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos-orphan.yml" \
+        DRIFT_REPORT_OUTPUT="$rpt" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/drift-report.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/drift-orphan-output.txt"
+
+    assert_contains "$rpt" "Registry names discovery did not return (2)" \
+        "drift orphan: both halves of the registry are read — the count says two"
+    # Scoped to the FINDING LINE, not the document: an unscoped needle here
+    # would also be satisfied by a table row or a legend entry naming it.
+    assert_contains "$rpt" '> - `repo-vanished`' \
+        "drift orphan: an out_of_scope name nothing returned is named"
+    assert_contains "$rpt" '> - `repo-allowlisted-gone`' \
+        "drift orphan: an allowlisted name nothing returned is named"
+    assert_contains "$TEST_DIR/drift-orphan-output.txt" \
+        "2 registry name(s) discovery did not return" \
+        "drift orphan: the run log surfaces the count too"
+
+    # THE FINDING IS "A NAME TO LOOK AT", NEVER "DELETED". A private repo this
+    # run's credential cannot see is indistinguishable from a removed one — the
+    # 404-means-not-authorised ambiguity — so the innocent reading has to travel
+    # in the line itself, where whoever reads the nudge will see it.
+    local orphan_lines
+    orphan_lines=$(grep -F -e 'repo-vanished' -e 'repo-allowlisted-gone' "$rpt" || true)
+    if grep -qF -- "private, renamed, transferred, or unreadable" <<<"$orphan_lines"; then
+        pass "drift orphan: the finding states the innocent explanation in the line itself"
+    else
+        fail "drift orphan: the finding states the innocent explanation in the line itself — got: $orphan_lines"
+    fi
+    if grep -qi -- "delet" <<<"$orphan_lines"; then
+        fail "drift orphan: the finding concluded 'deleted', which this run cannot establish"
+    else
+        pass "drift orphan: the finding never concludes 'deleted'"
+    fi
+
+    # THE SIDECAR, which is what the workflow reads. Its own file, not the
+    # unclassified one: the two findings resolve differently and close
+    # independently.
+    if [[ -f "$side" ]] && grep -qxF -- "repo-vanished" "$side" \
+       && grep -qxF -- "repo-allowlisted-gone" "$side"; then
+        pass "drift orphan: the sidecar names both, for a reader that is not a person"
+    else
+        fail "drift orphan: the sidecar names both — got: $(cat "$side" 2>/dev/null | tr '\n' ' ')"
+    fi
+
+    # CONTROLS, one per way a registry name can be present in the account and
+    # still absent from the FILTERED list the per-repo loop walks. Taking the
+    # union from that list instead of from raw discovery reports both of these
+    # as orphans, and both are sitting right there in the mock owner.
+    if grep -qxF -- "_agent-guidance" "$side"; then
+        fail "drift orphan: the self repo was reported as an orphan — the union was taken after \$SELF_REPO was dropped"
+    else
+        pass "drift orphan (control): the self repo, discovered but never looped over, is not an orphan"
+    fi
+    if grep -qxF -- "repo-excluded" "$side"; then
+        fail "drift orphan: a repos.yml-excluded repo was reported as an orphan — the union was taken after the exclude filter"
+    else
+        pass "drift orphan (control): an excluded repo, discovered but never looped over, is not an orphan"
+    fi
+    if grep -qxF -- "repo-with-sync" "$side"; then
+        fail "drift orphan: an ordinary discovered repo was reported as an orphan"
+    else
+        pass "drift orphan (control): an ordinary discovered repo is not an orphan"
+    fi
+    if grep -qxF -- "placeholder-never-discovered" "$side"; then
+        fail "drift orphan: a cron_coverage name was swept in — that key lists forks and a third owner discovery can never reach"
+    else
+        pass "drift orphan (control): a name only cron_coverage claims is not an orphan"
+    fi
+
+    # ── CONTROL: a registry every name of which was discovered writes the
+    # sidecar and leaves it EMPTY, so "absent" cannot come to mean "clean".
+    write_orphan_registry "$TEST_DIR/repos-orphan-clean.yml" no
+
+    local crpt="$TEST_DIR/drift-orphan-clean.md"
+    local cside="$TEST_DIR/drift-orphan-clean-skills-orphans.txt"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-orphan-clean.yml" \
+    DRIFT_REPORT_OUTPUT="$crpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    if [[ -f "$cside" && ! -s "$cside" ]]; then
+        pass "drift orphan (control): the sidecar is written and empty when the registry claims nothing extra"
+    else
+        fail "drift orphan (control): the sidecar is written and empty when the registry claims nothing extra — $([[ -f "$cside" ]] && echo "got: $(cat "$cside" | tr '\n' ' ')" || echo "it is absent")"
+    fi
+    assert_not_contains "$crpt" "Registry names discovery did not return" \
+        "drift orphan (control): a registry with no orphans says nothing at all"
+}
+
+# ── Test 4b3: the union spans the owners, and is not rebuilt per owner ─────
+#
+# `drift-report.sh` loops per SYNC_OWNERS entry and `repo_list_raw` is
+# per-owner, so the obvious placement — inside that loop — reads every repo
+# belonging to the OTHER owner as an orphan. Measured against these fixtures
+# before the fix: a single-org run reported 5 spurious orphans.
+#
+# Both directions are asserted, because only the pair is a measurement. The
+# single-owner run is the positive control: `repo-owner2-only` really was not
+# discovered there, so it IS a finding, and the two-owner run's silence about
+# it is therefore the union working rather than the check being asleep.
+test_drift_report_registry_orphan_multi_owner() {
+    echo ""
+    echo "=== Test: drift-report.sh (the orphan union spans owners) ==="
+
+    write_orphan_registry "$TEST_DIR/repos-orphan-multi.yml" yes repo-owner2-only
+
+    local one_side="$TEST_DIR/drift-orphan-one-owner-skills-orphans.txt"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-orphan-multi.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-orphan-one-owner.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    if grep -qxF -- "repo-owner2-only" "$one_side" 2>/dev/null; then
+        pass "drift orphan (control): scanning only testorg, testorg2's repo IS a finding"
+    else
+        fail "drift orphan (control): scanning only testorg, testorg2's repo IS a finding — so the two-owner assertion below would prove nothing"
+    fi
+
+    local both_side="$TEST_DIR/drift-orphan-both-owners-skills-orphans.txt"
+    local both_rpt="$TEST_DIR/drift-orphan-both-owners.md"
+    SYNC_OWNERS="testorg testorg2" \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-orphan-multi.yml" \
+    DRIFT_REPORT_OUTPUT="$both_rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    if grep -qxF -- "repo-owner2-only" "$both_side" 2>/dev/null; then
+        fail "drift orphan: a repo held by the SECOND owner was reported as an orphan — the union is being rebuilt per owner"
+    else
+        pass "drift orphan: a repo held by the second owner is not an orphan once both owners are scanned"
+    fi
+
+    # And the alarm is still armed in the same run: a name neither owner holds
+    # is still reported, so the silence above is about that name only.
+    if grep -qxF -- "repo-vanished" "$both_side" 2>/dev/null; then
+        pass "drift orphan: a name neither owner returned is still reported in the same run"
+    else
+        fail "drift orphan: a name neither owner returned is still reported in the same run — got: $(cat "$both_side" 2>/dev/null | tr '\n' ' ')"
+    fi
+    assert_contains "$both_rpt" "Registry names discovery did not return (2)" \
+        "drift orphan: the two-owner run counts only what neither owner returned"
+}
+
+# ── Test 4b4: a partial enumeration concludes nothing ──────────────────────
+#
+# The expensive form of the 404-means-not-authorised ambiguity. An owner whose
+# listing failed contributes NO names to the union, so every repo it holds
+# looks orphaned — an alarm that would name an entire owner's fleet as
+# suspect on the one night its App installation was missing.
+#
+# So the check does not run at all when any owner went unread, and its sidecar
+# is WITHHELD rather than written empty: an empty sidecar is this script saying
+# it looked and found nothing, which the nudge step reads as "close the issue".
+# Absent is the only spelling of "concluded nothing" the workflow already
+# handles correctly.
+test_drift_report_registry_orphan_owner_failure() {
+    echo ""
+    echo "=== Test: drift-report.sh (a failed owner listing concludes no orphans) ==="
+
+    write_orphan_registry "$TEST_DIR/repos-orphan-fail.yml" yes
+
+    # CONTROL FIRST, on the same fixture: without the failing owner these names
+    # are reported. Otherwise a check that never fires at all passes this test.
+    local ok_side="$TEST_DIR/drift-orphan-fail-control-skills-orphans.txt"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-orphan-fail.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-orphan-fail-control.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    if [[ -s "$ok_side" ]]; then
+        pass "drift orphan (control): the same fixture DOES report orphans when every owner was read"
+    else
+        fail "drift orphan (control): the same fixture DOES report orphans when every owner was read — so the assertions below would prove nothing"
+    fi
+
+    local rpt="$TEST_DIR/drift-orphan-fail.md"
+    local side="$TEST_DIR/drift-orphan-fail-skills-orphans.txt"
+    local out="$TEST_DIR/drift-orphan-fail-output.txt"
+    local exit_code=0
+
+    SYNC_OWNERS="failorg testorg" \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-orphan-fail.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out" 2>&1 || exit_code=$?
+
+    assert_not_contains "$rpt" "Registry names discovery did not return" \
+        "drift orphan: an owner nobody could list means no orphan finding is published"
+    if [[ -f "$side" ]]; then
+        fail "drift orphan: the sidecar was written on a partial enumeration — an empty one reads as 'looked, found nothing' and closes the nudge"
+    else
+        pass "drift orphan: the sidecar is withheld on a partial enumeration, so nothing is concluded"
+    fi
+    assert_contains "$out" "registry-orphan check skipped" \
+        "drift orphan: the run log says why the check did not run"
+
+    # Unchanged from the owner-failure test this borrows its fixture shape
+    # from: the report still publishes, so failing here would suppress it.
+    if [[ $exit_code -eq 0 ]]; then
+        pass "drift orphan: exits 0 so the report still publishes"
+    else
+        fail "drift orphan: exits 0 so the report still publishes — got $exit_code"
+    fi
+}
+
 test_drift_report_cron_classification() {
     echo ""
     echo "=== Test: drift-report.sh (cron-coverage classification) ==="
@@ -13961,6 +14254,9 @@ test_drift_report_bootstrap
 test_drift_report_partial_read_per_file
 test_drift_report_cron_classification
 test_drift_report_skills_classification
+test_drift_report_registry_orphan
+test_drift_report_registry_orphan_multi_owner
+test_drift_report_registry_orphan_owner_failure
 test_drift_report_marker_is_whole_line
 test_drift_report_partial_read
 test_drift_report_bootstrap_unmanaged

@@ -424,3 +424,7 @@ drift-report.md
 # Its machine-readable companion, written by the same run and published
 # to the same results branch. Generated here, so never committed from here.
 drift-report-skills-unclassified.txt
+# The other direction's companion, same run, same results branch — a name the
+# registry claims that discovery did not return. Withheld rather than written
+# when an owner's listing failed, so it is not always present after a run.
+drift-report-skills-orphans.txt

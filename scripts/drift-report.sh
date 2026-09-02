@@ -48,6 +48,11 @@ OUTPUT_FILE="${DRIFT_REPORT_OUTPUT:-$REPO_ROOT/drift-report.md}"
 # rather than a person. Derived from OUTPUT_FILE so the two always travel
 # together, including when a caller redirects the report to its own path.
 SKILLS_SIDECAR="${OUTPUT_FILE%.md}-skills-unclassified.txt"
+# The OTHER direction, in its OWN file rather than a second section of that
+# one: the two findings resolve differently — one is answered by classifying a
+# repo, the other by looking a name up — and each has to be able to close while
+# the other stands.
+SKILLS_ORPHAN_SIDECAR="${OUTPUT_FILE%.md}-skills-orphans.txt"
 MARKER="## Repo-specific additions"
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
 BRANCH_NAME="agents-md-sync/update"
@@ -661,6 +666,11 @@ bootstrap_blocked() {
 # and appended to per owner: doing it inside the loop would leave only the last
 # owner's names, which is a wrong answer that looks like a right one.
 : > "$SKILLS_SIDECAR"
+# Same contract, one exception written at the block that fills it: on a run
+# where an owner could not be listed this file is REMOVED rather than left
+# empty, because an empty one is this script saying it looked and found
+# nothing, and the nudge step reads that as "close the issue".
+: > "$SKILLS_ORPHAN_SIDECAR"
 
 # Base GH_TOKEN captured before the per-owner loop, so each iteration can
 # restore it when the owner has no per-owner token of its own (owner A's
@@ -671,6 +681,18 @@ BASE_GH_TOKEN="${GH_TOKEN:-}"
 # published table (below) and counted here, because "this owner has no drift" and
 # "this owner was never looked at" must not render as the same silence.
 OWNER_FAILURES=()
+
+# Every short repo name discovery returned, ACROSS the owners — accumulated
+# here rather than inside the loop because the question it answers ("does the
+# registry claim a name nothing returns?") is asked once, of the whole account.
+# Asked per owner it answers itself wrong and confidently: with SYNC_OWNERS
+# ordered "Adam-S-Daniel jodidaniel", every repo of the owner not currently
+# being scanned reads as missing — issue #95 measured a single-org pass
+# reporting 5 spurious names against the test fixtures.
+# `test_drift_report_registry_orphan_multi_owner` holds it, in both directions:
+# scanning testorg alone, testorg2's only repo IS a finding; scanning both, it
+# is not, while a name neither owner holds still is.
+DISCOVERED_SHORT_NAMES=()
 
 # ── Scan each owner ──────────────────────────────────────────────────────
 
@@ -780,6 +802,12 @@ CRON_UNCLASSIFIED=()
 SKILLS_UNCLASSIFIED=()
 while IFS= read -r r; do
     [[ -n "$r" ]] || continue
+    # RAW, deliberately, and the orphan pass after the loop is why it matters a
+    # second time: $SELF_REPO and every `exclude:`d repo are dropped just below,
+    # and both are names the registry legitimately carries. Take the union from
+    # the filtered list and each one is reported as a name that no longer
+    # exists, in an account where it is sitting in plain sight.
+    DISCOVERED_SHORT_NAMES+=("${r##*/}")
     cron_classified "$r" || CRON_UNCLASSIFIED+=("$r")
 done < <(echo "$repo_list_raw" | sort)
 
@@ -1284,6 +1312,58 @@ if [[ ${#SKILLS_UNCLASSIFIED[@]} -gt 0 ]]; then
 fi
 
 done
+
+# ── Registry names discovery did not return (the orphan direction) ─────────
+#
+# The mirror of the SKILLS_UNCLASSIFIED block inside the loop, and the half
+# that was missing: that one flags a repo the registry does not classify, this
+# one flags a name the registry claims and discovery no longer returns. Three
+# `civic-*` repos were deleted from GitHub and sat in this fleet's
+# configuration for weeks — nothing enumerated in this direction, so nothing
+# said so, and a propagation verifier seeded from that configuration counted
+# them as live consumers and reported them as missing text they could not
+# possibly have had. `scripts/check-registry.js` cannot close it: it is offline
+# by design, and this is a discovery question.
+#
+# OUTSIDE the owner loop for the reason DISCOVERED_SHORT_NAMES gives, and
+# SILENT when any owner went unread. An owner whose listing failed contributes
+# no names at all, so every repo it holds would read as gone — the
+# 404-means-not-authorised ambiguity in its most expensive form, an alarm
+# naming an entire owner's fleet on the one night its App install was missing.
+# The sidecar is WITHHELD rather than written empty on that path: empty means
+# "looked, found nothing", which the nudge step reads as permission to close.
+if [[ ${#OWNER_FAILURES[@]} -gt 0 ]]; then
+    rm -f "$SKILLS_ORPHAN_SIDECAR"
+    echo "  ${#OWNER_FAILURES[@]} owner(s) unread — registry-orphan check skipped and its sidecar withheld; nothing is concluded from a partial enumeration"
+else
+    SKILLS_ORPHANS=()
+    for entry in ${SKILLS_CLASSIFIED[@]+"${SKILLS_CLASSIFIED[@]}"}; do
+        found=no
+        for short in ${DISCOVERED_SHORT_NAMES[@]+"${DISCOVERED_SHORT_NAMES[@]}"}; do
+            if [[ "$short" == "$entry" ]]; then
+                found=yes
+                break
+            fi
+        done
+        [[ "$found" == no ]] && SKILLS_ORPHANS+=("$entry")
+    done
+
+    # Only `skills_bootstrap`'s two keys. `cron_coverage` is NOT read here: it
+    # counts over a wider denominator that deliberately names repos discovery
+    # can never reach — the account's two forks and the third-owner
+    # `superoutrigger` — so sweeping it in would fire every night forever.
+    if [[ ${#SKILLS_ORPHANS[@]} -gt 0 ]]; then
+        {
+            echo ""
+            echo "> **Registry names discovery did not return (${#SKILLS_ORPHANS[@]}):**"
+            for entry in "${SKILLS_ORPHANS[@]}"; do
+                echo "> - \`$entry\` — classified under \`skills_bootstrap\` in \`repos.yml\`, but no owner scanned this run returned it. A name to look at, not a verdict: it may be private, renamed, transferred, or unreadable by this run's credential. Confirm before removing the entry"
+            done
+        } >> "$OUTPUT_FILE"
+        printf '%s\n' "${SKILLS_ORPHANS[@]}" >> "$SKILLS_ORPHAN_SIDECAR"
+        echo "  ${#SKILLS_ORPHANS[@]} registry name(s) discovery did not return"
+    fi
+fi
 
 # ── Footer ─────────────────────────────────────────────────────────────────
 

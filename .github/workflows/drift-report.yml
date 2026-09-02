@@ -108,6 +108,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f drift-report.md drift-report-skills-unclassified.txt
+          # The orphan sidecar is WITHHELD, not written empty, on a run where
+          # an owner's listing failed (see drift-report.sh's orphan block), so
+          # it is added only when it is there: `git add` on a missing path
+          # fails, and this step must never be what stops the report
+          # publishing. The branch is force-pushed fresh from a `main`
+          # checkout each night, so a withheld file simply is not on it — there
+          # is no stale copy to un-stage.
+          if [ -f drift-report-skills-orphans.txt ]; then
+            git add -f drift-report-skills-orphans.txt
+          fi
           if git diff --cached --quiet; then
             echo "No changes to report — leaving the drift-report-latest branch as is."
             exit 0
@@ -183,4 +193,66 @@ jobs:
             echo "updated #$existing"
           else
             gh issue create --title "$ISSUE_TITLE" --label ci --body-file /tmp/nudge-body.md
+          fi
+
+      # THE OTHER DIRECTION, and its own issue rather than a second section of
+      # the one above: the two resolve differently -- that one is answered by
+      # classifying a repo, this one by finding out what happened to a name --
+      # and each has to be able to close while the other stands.
+      #
+      # ABSENT means something different here, and the difference is the whole
+      # safety property. drift-report.sh WITHHOLDS this sidecar on any run
+      # where an owner's listing failed, because that run's discovery union is
+      # short by a whole owner and every repo that owner holds would read as
+      # gone. An empty file would close the issue below on the strength of an
+      # enumeration that never happened; an absent one concludes nothing.
+      - name: Nudge on registry names discovery did not return
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIDECAR: drift-report-skills-orphans.txt
+          ISSUE_TITLE: "Registry names discovery did not return"
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "$SIDECAR" ]]; then
+            echo "::warning::$SIDECAR was not written — this run did not establish a complete enumeration (an owner went unread), so nothing is concluded here"
+            exit 0
+          fi
+
+          existing=$(gh issue list --state open --label ci \
+            --search "$ISSUE_TITLE in:title" --json number,title \
+            --jq "[.[] | select(.title == env.ISSUE_TITLE)] | .[0].number // empty")
+
+          if [[ ! -s "$SIDECAR" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --comment \
+                "Every name \`repos.yml\` classifies under \`skills_bootstrap\` was returned by discovery on the latest run that read every owner. Closed by the nightly drift report."
+              echo "closed #$existing — every registry name was discovered"
+            else
+              echo "no unreturned registry names, and no open nudge to close"
+            fi
+            exit 0
+          fi
+
+          # Body from a FILE, never an argument, for the reason the step above
+          # gives: a name is untrusted input as far as this script is concerned.
+          {
+            echo "\`drift-report.sh\` read every owner this run and did NOT see these names, which \`repos.yml\` classifies under \`skills_bootstrap\`:"
+            echo
+            sed 's/^/- `/; s/$/`/' "$SIDECAR"
+            echo
+            echo "**Each is a name to look at, not a verdict.** A repo this run's credential cannot see answers 404 exactly like one that is gone, so any of these may be private, renamed, transferred, or simply unreadable by the App installation that ran tonight."
+            echo
+            echo "For each: establish what actually happened to it, then correct or remove its entry under \`skills_bootstrap.repos\` / \`skills_bootstrap.out_of_scope\` — or leave the entry and record why the name is unreachable from here."
+            echo
+            echo "Why this check exists: three \`civic-*\` repos were deleted from GitHub and sat in this fleet's configuration for weeks. Nothing enumerated in this direction, so nothing said so, and a propagation verifier seeded from that configuration counted them as live consumers. \`scripts/check-registry.js\` cannot catch it — it is offline by design, and this needs the network."
+            echo
+            echo "Background: [ADR 0011](../blob/main/docs/decisions/0011-skills-bootstrap-scope-is-exhaustive.md)."
+          } > /tmp/orphan-nudge-body.md
+
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --body-file /tmp/orphan-nudge-body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label ci --body-file /tmp/orphan-nudge-body.md
           fi
