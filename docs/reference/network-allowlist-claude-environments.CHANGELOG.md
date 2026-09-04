@@ -437,3 +437,36 @@ makes a future reconciliation's line-count sanity check trustworthy.
 
 The `.txt` and the environment are identical as sets, 35 lines each, verified
 with `diff` over sorted unique lists in both directions.
+
+---
+
+## 2026-09-04 (fourth entry) — two facts about the same additions, no change
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change to the `.txt`:** **none.** The 35-line list above is confirmed
+identical to the environment as a set, re-diffed from a second session on the
+same date (`comm` over sorted lines, both directions, empty).
+
+Recorded from the session working
+[#114](https://github.com/Adam-S-Daniel/_agent-guidance/issues/114), which is
+what the three documentation hosts were added for. It measured the same
+additions independently and found two things the entries above do not say:
+
+- **`learn.chatgpt.com` is where the OpenAI docs actually live.** Both
+  `developers.openai.com/codex/guides/agents-md` and
+  `developers.openai.com/codex/skills` answer `308` to
+  `learn.chatgpt.com/docs/...`. So the `developers.openai.com` pair alone opens
+  a door onto a redirect the proxy then refuses; the bare `learn.chatgpt.com`
+  line is the one that makes the OpenAI documentation readable, and it is not
+  guessable from the URL a reader starts with. That is its justification,
+  beside "same category as `developers.openai.com`".
+- **A live edit reaches `curl` but not necessarily the `WebFetch` tool.** In
+  that session, `curl` measured all three apexes reachable within minutes of
+  the edit (`200` / `200` / `308`), while `WebFetch` kept returning
+  `EGRESS_BLOCKED` for the same hosts for the rest of the session. The tool
+  holds its own allow decision and did not pick the change up. So the header
+  mechanic — an edit lands in a running session — is true of the proxy and not
+  of every client behind it; when a fetch tool still refuses a host that
+  `curl` reaches, the list is right and the tool is stale. Probe with `curl`
+  before concluding otherwise, and expect a fresh session for the tool.
