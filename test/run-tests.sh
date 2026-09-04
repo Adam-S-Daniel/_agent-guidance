@@ -12792,17 +12792,60 @@ some text
     fi
 
     # 10. --format json must emit ONLY parseable JSON on stdout. RED before
-    #     this fix: the "fixture paths not verified" note (item 4 below makes
+    #     this fix: the "fixture paths not verified" note (item 13 below makes
     #     it unconditional, so it always fires here) and the trailing
     #     "N gap · N skipped · N covered" summary shared stdout with the JSON
     #     payload, so `node ... --format json | jq .` failed with "Extra
     #     data" — captured here by parsing STDOUT ALONE (stderr discarded).
     local json_stdout_rc=0
     node "$script" --repo-root "$root/clean" --format json >"$TEST_DIR/json_stdout.txt" 2>/dev/null || json_stdout_rc=$?
-    if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TEST_DIR/json_stdout.txt" >/dev/null 2>&1; then
+    if [[ "$json_stdout_rc" == 0 ]] \
+        && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TEST_DIR/json_stdout.txt" >/dev/null 2>&1; then
         pass "guidance coverage: --format json emits only parseable JSON on stdout (notes/summary go to stderr)"
     else
-        fail "guidance coverage: --format json emits only parseable JSON on stdout — stdout was: $(tr '\n' ' ' <"$TEST_DIR/json_stdout.txt")"
+        fail "guidance coverage: --format json emits only parseable JSON on stdout — exit $json_stdout_rc, stdout was: $(tr '\n' ' ' <"$TEST_DIR/json_stdout.txt")"
+    fi
+
+    # 10b. --format json's payload must survive being piped through ANOTHER
+    #      process, not just redirected to a file. RED before this fix:
+    #      `console.log(JSON.stringify(...))` followed by `process.exit(0)`
+    #      races Node's async pipe write — on a pipe (never a regular file,
+    #      which writes synchronously) a write larger than the kernel's
+    #      64 KiB pipe buffer is queued and `process.exit()` abandons it
+    #      mid-flight. Measured: a 3000-row manifest piped through `cat`
+    #      truncates at exactly 65536 bytes and fails to parse; the same
+    #      payload written to a file (test 10 above) is unaffected, which is
+    #      why that test alone cannot catch this. The real guidance tree is
+    #      only ~7 KB today (latent), so this fixture generates enough rows
+    #      to force the truncation deterministically.
+    guidance_fixture_big() {
+        local dir="$root/big_json"
+        rm -rf "$dir"
+        mkdir -p "$dir/agents-md/sections"
+        local base="" manifest="" i
+        for ((i = 1; i <= 3000; i++)); do
+            base+="## Heading $i
+text $i
+
+"
+            manifest+="- id: heading-$i
+  heading: Heading $i
+  file: agents-md/base.md
+  status: gap
+  bytes: 0
+
+"
+        done
+        printf '%s' "$base" > "$dir/agents-md/base.md"
+        printf '%s' "$manifest" > "$dir/agents-md/eval-coverage.yml"
+    }
+    guidance_fixture_big
+    unset -f guidance_fixture_big
+    node "$script" --repo-root "$root/big_json" --format json 2>/dev/null | cat >"$TEST_DIR/big_json_stdout.txt"
+    if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TEST_DIR/big_json_stdout.txt" >/dev/null 2>&1; then
+        pass "guidance coverage: a large --format json payload survives being piped through another process"
+    else
+        fail "guidance coverage: a large --format json payload survives being piped through another process — got $(wc -c <"$TEST_DIR/big_json_stdout.txt") bytes, failed to parse"
     fi
 
     # 11. A null manifest row (a bare `-` list entry) must not crash the
@@ -12832,12 +12875,78 @@ text
     fi
     # Same fixture, --format json: the row-echo loop iterates the same
     # malformed list and must not crash on `.id` either.
-    local null_row_json_rc=0
+    local null_row_json_out null_row_json_rc=0
     null_row_json_out=$(node "$script" --repo-root "$root/null_row" --format json 2>&1) || null_row_json_rc=$?
     if [[ "$null_row_json_rc" == 1 ]] && ! grep -qF -- "TypeError" <<<"$null_row_json_out"; then
         pass "guidance coverage: a null manifest row does not crash --format json either"
     else
         fail "guidance coverage: a null manifest row does not crash --format json either — got exit $null_row_json_rc: $(echo "$null_row_json_out" | tr '\n' ' ')"
+    fi
+
+    # 11a. A TRUTHY non-object row (`- oops`, a bare YAML scalar string) is
+    #      falsy-proof but not type-proof: `!row` and `rows.filter(Boolean)`
+    #      both treat the string "oops" as an ordinary row, since a non-empty
+    #      string is truthy. RED before this fix: the --format json row-echo
+    #      loop let it through, and `row.id`/`row.heading`/`row.file`/
+    #      `row.status` on a string are all `undefined`, which
+    #      `JSON.stringify` DROPS from the object — so the malformed row
+    #      showed up in the output array as an entry with those keys
+    #      silently missing (id is the census join key) rather than being
+    #      excluded. Every emitted object still carries a hardcoded
+    #      `"subject": "guidance"`, well-formed or not, so counting that
+    #      string's occurrences counts the emitted entries directly.
+    guidance_fixture truthy_non_object_row \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 12
+
+- oops
+'
+    local truthy_json_out truthy_subject_count
+    truthy_json_out=$(node "$script" --repo-root "$root/truthy_non_object_row" --format json 2>/dev/null) || true
+    truthy_subject_count=$(grep -cF -- '"subject": "guidance"' <<<"$truthy_json_out") || true
+    if [[ "$truthy_subject_count" == 1 ]]; then
+        pass "guidance coverage: --format json excludes a truthy non-object row instead of emitting an entry with dropped keys"
+    else
+        fail "guidance coverage: --format json excludes a truthy non-object row instead of emitting an entry with dropped keys — got $truthy_subject_count entries: $(echo "$truthy_json_out" | tr '\n' ' ')"
+    fi
+
+    # 11b. --write-bytes must refresh bytes UNCONDITIONALLY (write-wins
+    #      precedence, as at 9dc9a99) even when another row's error (here: an
+    #      un-rowed heading) makes the overall run exit 1. RED before this
+    #      fix: gating the write on `errors.length === 0` silently declined
+    #      to write whenever ANY other error existed, which regressed
+    #      documented behavior (AGENTS.md and the manifest header both say
+    #      --write-bytes is the unconditional fix for byte drift) and, with
+    #      --check-bytes also passed, reported the drift and told the user to
+    #      run the very flag they had just run.
+    guidance_fixture write_bytes_despite_other_errors \
+'## Heading One
+text
+
+## Heading Two
+more text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 999999
+'
+    local wbde_out wbde_rc=0 wbde_manifest
+    wbde_out=$(node "$script" --repo-root "$root/write_bytes_despite_other_errors" --write-bytes 2>&1) || wbde_rc=$?
+    wbde_manifest=$(cat "$root/write_bytes_despite_other_errors/agents-md/eval-coverage.yml")
+    if [[ "$wbde_rc" == 1 ]] \
+        && grep -qF -- 'heading "Heading Two"' <<<"$wbde_out" \
+        && ! grep -qF -- 'bytes: 999999' <<<"$wbde_manifest"; then
+        pass "guidance coverage: --write-bytes refreshes bytes unconditionally even when another row's error makes the run exit 1"
+    else
+        fail "guidance coverage: --write-bytes refreshes bytes unconditionally even when another row's error makes the run exit 1 — got exit $wbde_rc, out: $(echo "$wbde_out" | tr '\n' ' '), manifest: $(echo "$wbde_manifest" | tr '\n' ' ')"
     fi
 
     # 12. --write-bytes on a non-mapping list item (`- oops`) must report the
@@ -12863,6 +12972,20 @@ text
         pass "guidance coverage: --write-bytes on a non-mapping list item is a diagnosed exit 1, not a crash"
     else
         fail "guidance coverage: --write-bytes on a non-mapping list item is a diagnosed exit 1, not a crash — got exit $wb_rc: $(echo "$wb_out" | tr '\n' ' ')"
+    fi
+    # 12b. The assertion above alone cannot tell whether writeBytes() actually
+    #      RAN — gating the whole call on `errors.length === 0` made it pass
+    #      by skipping writeBytes() entirely (the "oops" row's own missing-id
+    #      error was already enough to satisfy it), so heading-one's stale
+    #      bytes never got refreshed. Prove entry into writeBytes() directly:
+    #      re-run with --check-bytes and confirm heading-one is no longer
+    #      reported as stale.
+    local wb_recheck_out wb_recheck_rc=0
+    wb_recheck_out=$(node "$script" --repo-root "$root/malformed_write_bytes" --check-bytes 2>&1) || wb_recheck_rc=$?
+    if ! grep -qF -- 'row "heading-one" has bytes' <<<"$wb_recheck_out"; then
+        pass "guidance coverage: --write-bytes on a tree with a malformed row still refreshes the well-formed row's bytes (proves writeBytes() ran)"
+    else
+        fail "guidance coverage: --write-bytes on a tree with a malformed row still refreshes the well-formed row's bytes — got: $(echo "$wb_recheck_out" | tr '\n' ' ')"
     fi
 
     # 13. The "fixture paths not verified" note is a property of the RUN (was
@@ -12943,9 +13066,14 @@ section text
     # 15. arg() must reject a value that starts with "--" instead of
     #     silently consuming it as the flag's value. RED before this fix:
     #     `--skills-evals --check-bytes` silently used the literal path
-    #     "--check-bytes", so the "clean" fixture (whose heading-two row's
-    #     stored bytes are deliberately wrong) failed on an unrelated
-    #     bytes-mismatch instead of naming the real mistake.
+    #     "--check-bytes" — a string that resolves to a nonexistent
+    #     directory but is never checked against a fixture in the "clean"
+    #     fixture (it has no `covered` rows), and `flag("check-bytes")`
+    #     still found the literal "--check-bytes" token elsewhere in argv and
+    #     read it as set. Measured pre-fix behavior was neither a crash nor a
+    #     bytes-mismatch: it was a SILENT exit 0, printing the normal
+    #     "1 gap · 1 skipped · 0 covered" summary as if both flags had been
+    #     honored.
     local badarg_out badarg_rc=0
     badarg_out=$(node "$script" --repo-root "$root/clean" --skills-evals --check-bytes 2>&1) || badarg_rc=$?
     if [[ "$badarg_rc" == 2 ]] \
@@ -12954,6 +13082,58 @@ section text
         pass "guidance coverage: --skills-evals immediately followed by another flag is rejected, not silently used as a path"
     else
         fail "guidance coverage: --skills-evals immediately followed by another flag is rejected, not silently used as a path — got exit $badarg_rc: $(echo "$badarg_out" | tr '\n' ' ')"
+    fi
+
+    # 15b. arg() must also reject a MISSING value — the flag given as the
+    #      very last argument, with nothing after it — for both
+    #      --skills-evals and --repo-root. RED before this fix: `val`
+    #      is `undefined` there, which the old guard's
+    #      `val !== undefined && val.startsWith("--")` treated as "no value
+    #      given, fall back to the default" rather than an error, so
+    #      `--check-bytes --skills-evals` silently ran with fixture
+    #      verification off and `--repo-root` alone silently audited the
+    #      real repo tree instead of the test fixture.
+    local se_last_out se_last_rc=0
+    se_last_out=$(node "$script" --repo-root "$root/clean" --check-bytes --skills-evals 2>&1) || se_last_rc=$?
+    if [[ "$se_last_rc" == 2 ]] \
+        && grep -qF -- "--skills-evals" <<<"$se_last_out" \
+        && grep -qF -- "requires a value" <<<"$se_last_out"; then
+        pass "guidance coverage: --skills-evals as the last argument (no value) is rejected, not silently defaulted"
+    else
+        fail "guidance coverage: --skills-evals as the last argument (no value) is rejected, not silently defaulted — got exit $se_last_rc: $(echo "$se_last_out" | tr '\n' ' ')"
+    fi
+
+    local rr_last_out rr_last_rc=0
+    rr_last_out=$(node "$script" --repo-root 2>&1) || rr_last_rc=$?
+    if [[ "$rr_last_rc" == 2 ]] \
+        && grep -qF -- "--repo-root" <<<"$rr_last_out" \
+        && grep -qF -- "requires a value" <<<"$rr_last_out"; then
+        pass "guidance coverage: --repo-root as the last argument (no value) is rejected, not silently auditing the real repo"
+    else
+        fail "guidance coverage: --repo-root as the last argument (no value) is rejected, not silently auditing the real repo — got exit $rr_last_rc: $(echo "$rr_last_out" | tr '\n' ' ')"
+    fi
+
+    # 15c. arg() must also reject an EMPTY STRING value — `""` starts with
+    #      neither nothing nor "--", so it slipped through both the old
+    #      undefined check and the flag-like check.
+    local se_empty_out se_empty_rc=0
+    se_empty_out=$(node "$script" --repo-root "$root/clean" --skills-evals "" --check-bytes 2>&1) || se_empty_rc=$?
+    if [[ "$se_empty_rc" == 2 ]] \
+        && grep -qF -- "--skills-evals" <<<"$se_empty_out" \
+        && grep -qF -- "requires a value" <<<"$se_empty_out"; then
+        pass "guidance coverage: --skills-evals given an empty string is rejected, not silently used as a path"
+    else
+        fail "guidance coverage: --skills-evals given an empty string is rejected, not silently used as a path — got exit $se_empty_rc: $(echo "$se_empty_out" | tr '\n' ' ')"
+    fi
+
+    local rr_empty_out rr_empty_rc=0
+    rr_empty_out=$(node "$script" --repo-root "" 2>&1) || rr_empty_rc=$?
+    if [[ "$rr_empty_rc" == 2 ]] \
+        && grep -qF -- "--repo-root" <<<"$rr_empty_out" \
+        && grep -qF -- "requires a value" <<<"$rr_empty_out"; then
+        pass "guidance coverage: --repo-root given an empty string is rejected, not silently auditing the real repo"
+    else
+        fail "guidance coverage: --repo-root given an empty string is rejected, not silently auditing the real repo — got exit $rr_empty_rc: $(echo "$rr_empty_out" | tr '\n' ' ')"
     fi
 
     # 16. Heading text comes from the inline token's content, not a regex

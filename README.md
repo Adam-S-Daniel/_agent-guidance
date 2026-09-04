@@ -74,13 +74,14 @@ or `skipped` (names a `reason` and a `since` date).
 [`ci.yml`](.github/workflows/ci.yml)) is the graduation gate: it parses the
 real markdown with `markdown-it` (never a line scan — a fenced code block can
 contain a `## ` that is not a heading, and a line scanner cannot tell the
-difference) and fails when a
-heading has no row, a row's heading no longer exists anywhere (a stale row,
-reported with the nearest current heading as the likely rename target), a
-`covered` row's fixture is missing, a `skipped` row has no `reason`, or a
-row's generated `bytes` — the section's byte extent, regenerated with
-`--write-bytes` — has drifted from the real file. A section added with no row
-is red, naming the heading and the two ways to close it.
+difference) and fails when a heading has no row, a row's heading no longer
+exists anywhere (a stale row, reported with the nearest current heading as
+the likely rename target), two rows share an `id`, two headings share the
+same text, a `covered` row's fixture is missing, a `skipped` row has no
+`reason` or no `since` date, or a row's generated `bytes` — the section's
+byte extent, regenerated with `--write-bytes` — has drifted from the real
+file. A section added with no row is red, naming the heading and the two ways
+to close it.
 
 ## The skills-bootstrap hook
 

@@ -71,10 +71,15 @@ function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
   if (i === -1) return def;
   const val = process.argv[i + 1];
-  if (val !== undefined && val.startsWith("--")) {
-    throw new RunError(`--${name} requires a value, got flag-like "${val}" instead`);
+  if (val === undefined) {
+    throw new RunError(`--${name} requires a value, got nothing — it was the last argument`);
   }
-  return val !== undefined ? val : def;
+  if (val === "" || val.startsWith("--")) {
+    throw new RunError(
+      `--${name} requires a value, got ${val === "" ? "an empty string" : `flag-like "${val}"`} instead`,
+    );
+  }
+  return val;
 }
 
 // Thrown for anything that means "could not run at all" — exit 2, never 0 or
@@ -212,6 +217,13 @@ function nearestHeading(target, candidates) {
 
 // ── Validation ───────────────────────────────────────────────────────────
 
+// A manifest row must be a YAML mapping. `!row` only catches `null` (a bare
+// `-` list entry) — a bare `- oops` parses to a truthy, non-object string,
+// which is just as malformed but passes a falsy check.
+function isMalformedRow(row) {
+  return typeof row !== "object" || row === null;
+}
+
 function validate({ headings, rows, skillsEvals }) {
   const errors = [];
   const notes = [];
@@ -244,7 +256,13 @@ function validate({ headings, rows, skillsEvals }) {
   // id uniqueness across the manifest.
   const seenIds = new Map();
   for (const row of rows) {
-    if (!row || typeof row.id !== "string" || row.id.length === 0) {
+    // `!row` is falsy-only: a bare `-` (null) is caught, but a bare `- oops`
+    // (a truthy, non-object YAML scalar string) is not, and `row.id` on a
+    // string is `undefined` — which the length/type check below still
+    // catches, so this branch was never wrong, only fragile. Checked by
+    // type here so the two loops (and the --format json filter, which had
+    // the same gap) agree on what counts as malformed.
+    if (isMalformedRow(row) || typeof row.id !== "string" || row.id.length === 0) {
       errors.push(`manifest row is missing a non-empty 'id': ${JSON.stringify(row)}`);
       continue;
     }
@@ -257,10 +275,11 @@ function validate({ headings, rows, skillsEvals }) {
   // Every row: structural validity + does its heading still exist.
   const rowsById = new Map();
   for (const row of rows) {
-    // A null/malformed row (a bare `-` list entry, or any other non-object)
-    // was already reported by the id-uniqueness loop above — skip it here
-    // rather than crash on `row.heading` of a value with no properties.
-    if (!row) continue;
+    // A malformed row (a bare `-` list entry, or any other non-object, such
+    // as a bare `- oops`) was already reported by the id-uniqueness loop
+    // above — skip it here rather than crash on `row.heading` of a value
+    // with no properties.
+    if (isMalformedRow(row)) continue;
     if (typeof row.heading !== "string" || row.heading.length === 0) {
       errors.push(`row "${row.id}" is missing a non-empty 'heading'`);
       continue;
@@ -348,8 +367,18 @@ function checkBytes(rowsById) {
   return errors;
 }
 
-function writeBytes(doc, rowsById) {
+function writeBytes(doc, rowsById, errors) {
   for (const item of doc.contents.items) {
+    // A non-mapping list item (`- oops`, a bare `-`) has no `.get`/`.set` —
+    // report it here, at the point of the crash it used to cause, rather
+    // than skipping the write for the whole manifest because ONE row is
+    // malformed.
+    if (typeof item.get !== "function") {
+      errors.push(
+        `manifest row is not a YAML mapping, cannot write bytes to it: ${JSON.stringify(item.toJSON())}`,
+      );
+      continue;
+    }
     const id = item.get("id");
     const matched = rowsById.get(id);
     if (matched) {
@@ -382,12 +411,17 @@ function main() {
     skillsEvals: skillsEvals ? path.resolve(skillsEvals) : null,
   });
 
-  // A malformed row (a bare `-` list entry, or any other non-mapping list
-  // item) is already named in `errors` by validate() above — don't let
-  // --write-bytes crash on it (`item.get` only exists on a YAML mapping
-  // node), just fall through to the error report and exit 1 below.
-  if (writeBytesFlag && errors.length === 0) {
-    writeBytes(doc, rowsById);
+  // --write-bytes wins unconditionally, even when other errors exist (an
+  // un-rowed heading, a stale row) — AGENTS.md and the manifest header both
+  // document it as the unconditional fix for byte drift, and gating it on
+  // `errors.length === 0` meant it silently declined to write whenever any
+  // OTHER error was present, with `--write-bytes --check-bytes` reporting
+  // the drift and telling the user to run the flag they had just run.
+  // writeBytes() itself reports (rather than crashes on) a non-mapping list
+  // item, so a malformed row can't block the well-formed rows from being
+  // refreshed.
+  if (writeBytesFlag) {
+    writeBytes(doc, rowsById, errors);
     fs.writeFileSync(manifestPath, doc.toString());
   } else if (checkBytesFlag) {
     errors.push(...checkBytes(rowsById));
@@ -407,10 +441,12 @@ function main() {
     // "section" — so this is a direct machine-readable echo of
     // eval-coverage.yml, plus a `subject` tag for skills-evals' coverage
     // census (#64), which merges rows from several subjects (skills,
-    // guidance, ...) and needs that tag to tell them apart. A malformed
-    // (null) row is already named in `errors` by validate() — skip it here
-    // rather than crash on its `.id`.
-    const out = rows.filter(Boolean).map((row) => ({
+    // guidance, ...) and needs that tag to tell them apart. A malformed row
+    // (null, or any other non-object such as a bare `- oops`) is already
+    // named in `errors` by validate() — exclude it here rather than emit an
+    // entry with `id`/`heading`/`file`/`status` silently dropped by
+    // `JSON.stringify` (id is the census join key).
+    const out = rows.filter((row) => !isMalformedRow(row)).map((row) => ({
       subject: "guidance",
       id: row.id,
       heading: row.heading,
@@ -424,20 +460,28 @@ function main() {
     console.log(JSON.stringify(out, null, 2));
   }
 
+  // `process.exitCode` + `return`, never `process.exit()`, from here down: a
+  // process piped into another command (`| cat`, command substitution, CI
+  // log capture) gets a non-blocking stdout, and a write past the kernel's
+  // pipe buffer (64 KiB on Linux) is queued rather than synchronous —
+  // `process.exit()` tears the process down mid-write and truncates it.
+  // `--format json`'s console.log above can be arbitrarily large. Setting
+  // `exitCode` and returning lets the event loop drain pending writes before
+  // the process exits on its own.
   if (errors.length > 0) {
     for (const e of errors) console.error(`check-guidance-coverage: ${e}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const summaryLine = `${counts.gap} gap · ${counts.skipped} skipped · ${counts.covered} covered`;
-  (format === "json" ? console.error : console.log)(summaryLine);
+  notePrinter(summaryLine);
 
   if (failOnGap && counts.gap > 0) {
     console.error(`check-guidance-coverage: --fail-on-gap set and ${counts.gap} row(s) are gap`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
-
-  process.exit(0);
 }
 
 try {
