@@ -83,6 +83,21 @@ byte extent, regenerated with `--write-bytes` — has drifted from the real
 file. A section added with no row is red, naming the heading and the two ways
 to close it.
 
+### Touch gate
+
+[`docs/guidance-impact.md`](docs/guidance-impact.md) is the audit trail for
+every change to a `##` section's own content — creations, edits, renames,
+removals, and rejected proposals — modeled on agentskills'
+[`docs/skill-impact.md`](https://github.com/Adam-S-Daniel/agentskills/blob/main/docs/skill-impact.md).
+[`scripts/check-guidance-touch.js`](scripts/check-guidance-touch.js) (CI: the
+"Guidance touch gate" step in [`ci.yml`](.github/workflows/ci.yml),
+`pull_request` runs only) enforces it: for every manifest `id` whose section
+body differs between a PR's base and head shas, this diff's addition to
+`docs/guidance-impact.md` must carry an entry for that id whose `Eval:` line
+is a real result, `exempt (skipped row)`, or `none — no fixture yet` (legal
+only while the row is `gap`). A pure rename needs no entry; a removed section
+needs one typed `remove`.
+
 ## The skills-bootstrap hook
 
 The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a

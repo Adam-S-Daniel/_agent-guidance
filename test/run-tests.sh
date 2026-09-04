@@ -13173,6 +13173,376 @@ more text
     unset -f assert_guidance
 }
 
+# ── Test: check-guidance-touch.js (_agent-guidance#120) ────────────────────
+
+test_check_guidance_touch() {
+    echo ""
+    echo "=== Test: check-guidance-touch.js (docs/guidance-impact.md touch gate) ==="
+
+    local script="$REPO_ROOT/scripts/check-guidance-touch.js"
+
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" || ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "guidance touch: node_modules/yaml or node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local root="$TEST_DIR/guidance-touch"
+    rm -rf "$root"
+    mkdir -p "$root"
+
+    # A minimal but REAL docs/guidance-impact.md — same boilerplate shape as
+    # the real file, fenced example included, so the fenced "- Eval:" line in
+    # "## Entry format" is on hand to prove it is never mistaken for a real
+    # entry (only a dated "## YYYY-MM-DD — <id> — <type>" heading is).
+    local impact_stub='# guidance-impact.md — test fixture
+
+## Entry format
+
+```
+## YYYY-MM-DD — <section-id> — <create|edit|rename|remove|rejected>
+- Eval: the result
+```
+'
+
+    # touch_repo_init <name> <base.md> <eval-coverage.yml> — a fresh git repo
+    # at $root/<name> with one commit: the given base.md and manifest, plus
+    # the impact stub above with no dated entries yet. Echoes the base sha.
+    touch_repo_init() {
+        local dir="$root/$1"
+        rm -rf "$dir"
+        mkdir -p "$dir/agents-md/sections" "$dir/docs"
+        git -C "$dir" init -q >/dev/null
+        printf '%s' "$2" > "$dir/agents-md/base.md"
+        printf '%s' "$3" > "$dir/agents-md/eval-coverage.yml"
+        printf '%s' "$impact_stub" > "$dir/docs/guidance-impact.md"
+        git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
+        git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m base
+        git -C "$dir" rev-parse HEAD
+    }
+
+    # touch_commit <dir> <label> <base.md> <eval-coverage.yml> [impact-append]
+    # — overwrites base.md and the manifest, optionally appends to
+    # guidance-impact.md (append-only, matching the real file's own rule),
+    # commits, and echoes the new sha.
+    touch_commit() {
+        local dir="$1" label="$2"
+        printf '%s' "$3" > "$dir/agents-md/base.md"
+        printf '%s' "$4" > "$dir/agents-md/eval-coverage.yml"
+        if [[ -n "${5:-}" ]]; then
+            printf '%s' "$5" >> "$dir/docs/guidance-impact.md"
+        fi
+        git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
+        git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m "$label"
+        git -C "$dir" rev-parse HEAD
+    }
+
+    # write_event <base sha> <head sha> <out file>
+    write_event() {
+        printf '{"pull_request": {"base": {"sha": "%s"}, "head": {"sha": "%s"}}}' "$1" "$2" > "$3"
+    }
+
+    # assert_touch <event json> <repo dir> <expected exit> <expected substring> <label>
+    assert_touch() {
+        local event="$1" repo="$2" want_exit="$3" want_substr="$4" label="$5"
+        local out rc=0
+        out=$(GITHUB_EVENT_PATH="$event" node "$script" --repo-root "$repo" 2>&1) || rc=$?
+        if [[ "$rc" == "$want_exit" ]] && grep -qF -- "$want_substr" <<<"$out"; then
+            pass "$label"
+        else
+            fail "$label — expected exit $want_exit containing '$want_substr'; got exit $rc: $(echo "$out" | tr '\n' ' ')"
+        fi
+    }
+
+    local base_manifest='- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+'
+    local base_body='## Heading One
+original body
+
+## Heading Two
+untouched body
+'
+
+    # 1. An edited extent with no entry at all — the gate's main job.
+    local dir1="$root/no_entry" base1 head1 event1
+    base1=$(touch_repo_init no_entry "$base_body" "$base_manifest")
+    head1=$(touch_commit "$dir1" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest")
+    event1="$TEST_DIR/touch-event-1.json"
+    write_event "$base1" "$head1" "$event1"
+    assert_touch "$event1" "$dir1" 1 'section "heading-one" changed but has no new entry' \
+        "guidance touch: an edited extent with no entry fails, naming the id"
+
+    # 2. An entry whose Eval: line is "none" while the manifest row is
+    #    "gap" — legal, per the entry format's own rule.
+    local dir2="$root/none_gap" base2 head2 event2
+    base2=$(touch_repo_init none_gap "$base_body" "$base_manifest")
+    head2=$(touch_commit "$dir2" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: none — no fixture yet
+')
+    event2="$TEST_DIR/touch-event-2.json"
+    write_event "$base2" "$head2" "$event2"
+    assert_touch "$event2" "$dir2" 0 'all have a sufficient' \
+        "guidance touch: an entry with Eval: none passes while the row is gap"
+
+    # 3. The same "none" entry, but the row is "covered" — illegal; "none" is
+    #    legal only while gap.
+    local covered_manifest='- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: covered
+  fixture: evals/guidance/heading-one/
+  bytes: 1
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+'
+    local dir3="$root/none_covered" base3 head3 event3
+    base3=$(touch_repo_init none_covered "$base_body" "$covered_manifest")
+    head3=$(touch_commit "$dir3" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$covered_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: none — no fixture yet
+')
+    event3="$TEST_DIR/touch-event-3.json"
+    write_event "$base3" "$head3" "$event3"
+    assert_touch "$event3" "$dir3" 1 'is insufficient' \
+        "guidance touch: an entry with Eval: none fails while the row is covered"
+
+    # 4. An entry with a real result — always sufficient, whatever the row's
+    #    status.
+    local dir4="$root/result" base4 head4 event4
+    base4=$(touch_repo_init result "$base_body" "$covered_manifest")
+    head4=$(touch_commit "$dir4" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$covered_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+')
+    event4="$TEST_DIR/touch-event-4.json"
+    write_event "$base4" "$head4" "$event4"
+    assert_touch "$event4" "$dir4" 0 'all have a sufficient' \
+        "guidance touch: an entry with a real result passes regardless of row status"
+
+    # 5. The heading is reworded and the manifest row is updated in the same
+    #    commit; the BODY is unchanged. No entry required — a rename alone is
+    #    not a touch.
+    local dir5="$root/rename_only" base5 head5 event5
+    base5=$(touch_repo_init rename_only "$base_body" "$base_manifest")
+    head5=$(touch_commit "$dir5" rename '## Heading One Renamed
+original body
+
+## Heading Two
+untouched body
+' '- id: heading-one
+  heading: Heading One Renamed
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+')
+    event5="$TEST_DIR/touch-event-5.json"
+    write_event "$base5" "$head5" "$event5"
+    assert_touch "$event5" "$dir5" 0 'nothing to require' \
+        "guidance touch: a rename with the row updated and the body unchanged needs no entry"
+
+    # 6. Same rename, but the BODY changed too — an entry is required, and
+    #    ABSENT until one is added (the "until" half of the issue's case).
+    local dir6="$root/rename_and_body" base6 head6 head6b event6 event6b
+    base6=$(touch_repo_init rename_and_body "$base_body" "$base_manifest")
+    head6=$(touch_commit "$dir6" rename-and-edit '## Heading One Renamed
+DIFFERENT body
+
+## Heading Two
+untouched body
+' '- id: heading-one
+  heading: Heading One Renamed
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+')
+    event6="$TEST_DIR/touch-event-6.json"
+    write_event "$base6" "$head6" "$event6"
+    assert_touch "$event6" "$dir6" 1 'section "heading-one" changed but has no new entry' \
+        "guidance touch: a rename with a body change still requires an entry"
+
+    head6b=$(touch_commit "$dir6" add-entry '## Heading One Renamed
+DIFFERENT body
+
+## Heading Two
+untouched body
+' '- id: heading-one
+  heading: Heading One Renamed
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+' '
+---
+
+## 2026-09-04 — heading-one — rename
+- Eval: none — no fixture yet
+')
+    event6b="$TEST_DIR/touch-event-6b.json"
+    write_event "$base6" "$head6b" "$event6b"
+    assert_touch "$event6b" "$dir6" 0 'all have a sufficient' \
+        "guidance touch: adding the entry clears the failure for the same rename+body change"
+
+    # 7. A section removed entirely, in three steps: no entry at all (fails,
+    #    the plain "no new entry" message), an entry of the WRONG type
+    #    (fails too, but with the more specific "not typed remove" message —
+    #    proving the entry must be typed "remove", not merely present), then
+    #    a "remove"-typed entry (passes).
+    local dir7="$root/removed" base7 head7 head7b head7c event7 event7b event7c
+    base7=$(touch_repo_init removed "$base_body" "$base_manifest")
+    local removed_manifest='- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+'
+    head7=$(touch_commit "$dir7" remove-section '## Heading One
+original body
+' "$removed_manifest")
+    event7="$TEST_DIR/touch-event-7.json"
+    write_event "$base7" "$head7" "$event7"
+    assert_touch "$event7" "$dir7" 1 'section "heading-two" changed but has no new entry' \
+        "guidance touch: a removed section with no entry at all fails"
+
+    head7b=$(touch_commit "$dir7" add-wrong-type-entry '## Heading One
+original body
+' "$removed_manifest" '
+---
+
+## 2026-09-04 — heading-two — edit
+- Eval: exempt (skipped row)
+')
+    event7b="$TEST_DIR/touch-event-7b.json"
+    write_event "$base7" "$head7b" "$event7b"
+    assert_touch "$event7b" "$dir7" 1 'none of its new docs/guidance-impact.md entries is typed "remove"' \
+        "guidance touch: a removed section with a wrongly-typed entry still fails"
+
+    head7c=$(touch_commit "$dir7" add-remove-entry '## Heading One
+original body
+' "$removed_manifest" '
+---
+
+## 2026-09-04 — heading-two — remove
+- Eval: exempt (skipped row)
+')
+    event7c="$TEST_DIR/touch-event-7c.json"
+    write_event "$base7" "$head7c" "$event7c"
+    assert_touch "$event7c" "$dir7" 0 'all have a sufficient' \
+        "guidance touch: a removed section with a remove entry passes"
+
+    # 8. A diff that touches neither base.md/sections content nor the
+    #    manifest — an unrelated file changed. No entry required, and
+    #    docs/guidance-impact.md is not even consulted.
+    local dir8="$root/untouched" base8 head8 event8
+    base8=$(touch_repo_init untouched "$base_body" "$base_manifest")
+    printf 'unrelated\n' > "$dir8/README.md"
+    git -C "$dir8" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir8" -c user.name=test -c user.email=test@localhost commit -q -m unrelated
+    head8=$(git -C "$dir8" rev-parse HEAD)
+    event8="$TEST_DIR/touch-event-8.json"
+    write_event "$base8" "$head8" "$event8"
+    assert_touch "$event8" "$dir8" 0 'nothing to require' \
+        "guidance touch: a diff touching no section passes without consulting the impact file"
+
+    # 9. docs/guidance-impact.md itself is missing at head, AND a section was
+    #    touched — "could not run at all", exit 2, distinct from case 1's
+    #    exit 1 (there the file exists; here it does not).
+    local dir9="$root/no_impact_file" base9 head9 event9
+    base9=$(touch_repo_init no_impact_file "$base_body" "$base_manifest")
+    printf '%s' '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' > "$dir9/agents-md/base.md"
+    rm -f "$dir9/docs/guidance-impact.md"
+    git -C "$dir9" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir9" -c user.name=test -c user.email=test@localhost commit -q -m drop-impact-file
+    head9=$(git -C "$dir9" rev-parse HEAD)
+    event9="$TEST_DIR/touch-event-9.json"
+    write_event "$base9" "$head9" "$event9"
+    assert_touch "$event9" "$dir9" 2 'docs/guidance-impact.md does not exist at' \
+        "guidance touch: docs/guidance-impact.md missing at head is refused, not a pass or an ordinary fail"
+
+    # 10. No $GITHUB_EVENT_PATH at all — refused, not a silent pass.
+    local dir10="$root/no_event" base10 head10
+    base10=$(touch_repo_init no_event "$base_body" "$base_manifest")
+    head10=$(touch_commit "$dir10" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest")
+    local no_event_out no_event_rc=0
+    no_event_out=$(env -u GITHUB_EVENT_PATH node "$script" --repo-root "$dir10" 2>&1) || no_event_rc=$?
+    if [[ "$no_event_rc" == 2 ]] && grep -qF -- "GITHUB_EVENT_PATH is not set" <<<"$no_event_out"; then
+        pass "guidance touch: no \$GITHUB_EVENT_PATH is refused, not a silent pass"
+    else
+        fail "guidance touch: no \$GITHUB_EVENT_PATH is refused, not a silent pass — got exit $no_event_rc: $(echo "$no_event_out" | tr '\n' ' ')"
+    fi
+
+    unset -f touch_repo_init
+    unset -f touch_commit
+    unset -f write_event
+    unset -f assert_touch
+}
+
 # ── Test 7g: ci.yml's trigger set, and the absence that makes it safe ─────
 #
 # THE CLAIM THIS PINS. ci.yml carries a `workflow_dispatch` trigger and a long
@@ -15000,6 +15370,7 @@ test_ci_workflow_shape
 test_yq_install_pinned
 test_check_agents_md
 test_check_guidance_coverage
+test_check_guidance_touch
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure

@@ -114,3 +114,12 @@ without updating the matching row's `heading` text (reported as a stale row,
 with the nearest current heading offered as the likely rename target) or if a
 row's `bytes` has drifted from the section's real size (fix with
 `node scripts/check-guidance-coverage.js --write-bytes`).
+
+**A PR that changes a `##` section's own extent — its body text, not just a
+rename — needs an entry in [`docs/guidance-impact.md`](docs/guidance-impact.md)
+in the same PR.** CI's "Guidance touch gate" step (`scripts/check-guidance-touch.js`)
+fails otherwise, naming the section's `id` and the entry format. A pure
+rename (the heading text changes, updated in `agents-md/eval-coverage.yml`,
+body untouched) needs no entry; a body edit does, and a removed section
+needs one typed `remove`. See that file's own header for the entry format
+and what counts as a sufficient `Eval:` line.
