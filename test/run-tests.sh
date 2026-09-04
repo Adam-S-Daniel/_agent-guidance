@@ -12134,6 +12134,27 @@ for (const spec of Object.values((doc && doc.jobs) || {})) {
 ' "$REPO_ROOT" "$1" "$2"
 }
 
+# workflow_step_names <file> <job> — every step's `name:` in <job>, in
+# document order, one per line (an unnamed step emits "-"). Structural (the
+# yaml package's own array), so order reflects the real steps array — never a
+# text scan of the file, which a comment merely mentioning a step name could
+# fool.
+workflow_step_names() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const job = (doc && doc.jobs && doc.jobs[process.argv[3]]) || {};
+for (const step of job.steps || []) {
+  console.log(step.name || "-");
+}
+' "$REPO_ROOT" "$1" "$2"
+}
+
 # workflow_shape <file> — a fact per line about a workflow's TRIGGERS, its
 # JOBS, and every place a `concurrency:` key appears:
 #
@@ -13795,6 +13816,52 @@ test_ci_workflow_shape() {
         pass "ci workflow: no concurrency group, at workflow or job level"
     else
         fail "ci workflow: it now has a concurrency group ($found) — with workflow_dispatch on the same file, two events on one head sha can leave a cancelled run behind. Read the comment above the trigger, and AGENTS.md on required checks, before keeping both"
+    fi
+
+    # S3: nothing pinned the Guidance touch gate's own wiring — deleting the
+    # whole step, or its `if:`, or reordering it ahead of the manifest
+    # coverage step it depends on running first, left the suite green.
+
+    local touch_facts="$TEST_DIR/ci-workflow-touch-facts.txt"
+    local touch_err="$TEST_DIR/ci-workflow-touch-facts.err"
+    if workflow_step_by_run "$wf" "check-guidance-touch.js" > "$touch_facts" 2> "$touch_err"; then
+        if grep -qxF "found" "$touch_facts" \
+                && grep -qxF "if github.event_name == 'pull_request'" "$touch_facts"; then
+            pass "ci workflow: the Guidance touch gate step runs scripts/check-guidance-touch.js only on pull_request"
+        else
+            fail "ci workflow: the Guidance touch gate step should run node scripts/check-guidance-touch.js gated on if: github.event_name == 'pull_request' — got: $(tr '\n' ' ' < "$touch_facts")"
+        fi
+    else
+        fail "ci workflow: no step runs node scripts/check-guidance-touch.js at all"
+    fi
+
+    local step_names="$TEST_DIR/ci-workflow-step-names.txt"
+    local step_names_err="$TEST_DIR/ci-workflow-step-names.err"
+    if ! workflow_step_names "$wf" "test" > "$step_names" 2> "$step_names_err"; then
+        fail "ci workflow: could not read the test job's step names — $(head -1 "$step_names_err")"
+    else
+        local touch_line manifest_line
+        touch_line=$(grep -nxF "Guidance touch gate" "$step_names" | head -1 | cut -d: -f1)
+        manifest_line=$(grep -nxF "Section manifest covers every guidance heading" "$step_names" | head -1 | cut -d: -f1)
+        if [[ -n "$touch_line" && -n "$manifest_line" && "$touch_line" -gt "$manifest_line" ]]; then
+            pass "ci workflow: the Guidance touch gate step exists and runs after the manifest coverage step"
+        else
+            fail "ci workflow: expected a 'Guidance touch gate' step after 'Section manifest covers every guidance heading' — got touch at line ${touch_line:-missing}, manifest at line ${manifest_line:-missing}"
+        fi
+    fi
+
+    local steps_facts="$TEST_DIR/ci-workflow-steps.txt"
+    local steps_err="$TEST_DIR/ci-workflow-steps.err"
+    if ! workflow_steps "$wf" > "$steps_facts" 2> "$steps_err"; then
+        fail "ci workflow: could not parse its steps — $(head -1 "$steps_err")"
+    else
+        local first_checkout_depth
+        first_checkout_depth=$(awk '$1 ~ /^actions\/checkout@/ { print $3; exit }' "$steps_facts")
+        if [[ "$first_checkout_depth" == "0" ]]; then
+            pass "ci workflow: the test job's first checkout is fetch-depth: 0 (the touch gate's merge-base needs it)"
+        else
+            fail "ci workflow: the test job's first checkout should be fetch-depth: 0 — got '${first_checkout_depth:-none}'"
+        fi
     fi
 }
 
