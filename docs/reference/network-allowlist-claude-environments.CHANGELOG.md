@@ -137,3 +137,82 @@ they are needed only where CI runs, and belong in
 If the package-manager checkbox is ever **unchecked**, both of the above stop
 being redundant and must be added here explicitly. That is the single change
 that would invalidate this entry.
+
+---
+
+## 2026-09-04 — four documentation hosts, for the #114 primary-doc check
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change:** four domains ADDED by the operator, in the environment dialog,
+during the session working https://github.com/Adam-S-Daniel/_agent-guidance/issues/114.
+Nothing removed, nothing rewritten.
+
+```
++ developers.openai.com
++ learn.chatgpt.com
++ *.agentskills.io
++ agentskills.io
+```
+
+### Why
+
+Issue #114 asks a session to verify the base.md-vs-skill decision for
+host-bound procedures against the primary docs, and names the three sources:
+OpenAI's Codex `AGENTS.md` and skills guides, `agents.md`, and the Agent
+Skills specification. The session that drafted the issue had all three
+blocked, so its OpenAI-side facts came from search summaries and
+`openai/codex` issues. The first session to work it hit the same wall — and
+one more: `developers.openai.com/codex/...` answers **308** to
+`learn.chatgpt.com/docs/...`, so the OpenAI docs need BOTH hosts, and the
+redirect target is the one nobody would have guessed to list.
+
+### How these were established
+
+Probed from inside the session that was running when the operator applied the
+change, with `curl -s -o /dev/null -w '%{http_code}' https://<host>/`. A `000`
+is the egress proxy refusing to connect; any HTTP status means the host was
+reached.
+
+| Probe | Before | After | What it establishes |
+|---|---|---|---|
+| `developers.openai.com` | `000` blocked | `200` reached | Apex now in force. |
+| `learn.chatgpt.com` | `000` blocked | `200` reached | The 308 target is reachable, so the OpenAI guides render end to end. |
+| `agentskills.io` | `000` blocked | `308` reached | Apex in force (it redirects `/` to the spec site's landing page). |
+| `www.agentskills.io` | `000` blocked | `000` blocked | The `*.agentskills.io` wildcard was NOT observed matching a subdomain in this session. See below. |
+
+Two things about the "after" column:
+
+- **The change reached `curl` in the running session without a restart**, so
+  the list is applied live by the proxy, not baked in at container start.
+- **The `WebFetch` tool still reported `EGRESS_BLOCKED` for all three hosts
+  after `curl` could reach them.** That tool carries its own allow decision and
+  did not pick the change up mid-session. So "the domain is allowed" and "the
+  fetch tool can use it" are two different facts; when one of these hosts is
+  needed from `WebFetch`, expect to need a fresh session, and probe with `curl`
+  before concluding the list is wrong.
+- `www.agentskills.io` staying `000` is either the wildcard line not yet in
+  force or the name not resolving; it was not needed (the spec and client list
+  live on the apex), so it is recorded and not chased.
+
+### Per-domain justification
+
+- **`developers.openai.com`** — the entry point for OpenAI's Codex docs:
+  `/codex/guides/agents-md` (AGENTS.md discovery order, `AGENTS.override.md`,
+  the `project_doc_max_bytes` limit) and `/codex/skills`. Reference material an
+  agent reads; same category as the `learn.microsoft.com` pair.
+- **`learn.chatgpt.com`** — where the two paths above actually resolve (308).
+  Without it the apex is a dead door. Listed as a bare host, not a wildcard:
+  only `learn.` was observed and nothing else on `chatgpt.com` is wanted.
+- **`agentskills.io`** + **`*.agentskills.io`** — the Agent Skills
+  specification (`/specification`) and the client showcase (`/clients`), which
+  `agentskills`' `scripts/skills_registries.yml` names as the source of truth
+  for the SKILL.md frontmatter contract. Apex + wildcard in the same shape as
+  the other documentation pairs in this list.
+
+### Deliberately NOT applied
+
+- **`github.com/agentskills/agentskills`** was already reachable (it is under
+  the existing `github.com` entry) and served the spec's source in the
+  meantime. It stays the fallback; the apex is what the issue and the
+  registry's own comments cite.

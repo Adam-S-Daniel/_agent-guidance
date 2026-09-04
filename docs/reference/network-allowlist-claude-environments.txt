@@ -1,5 +1,7 @@
 *.adamdaniel.ai
 adamdaniel.ai
+*.agentskills.io
+agentskills.io
 cdn.playwright.dev
 *.claude.ai
 claude.ai
@@ -7,6 +9,7 @@ claude.ai
 claude.com
 *.decapcms.org
 decapcms.org
+developers.openai.com
 *.docs.microsoft.com
 docs.microsoft.com
 *.download.prss.microsoft.com
@@ -20,6 +23,7 @@ githubassets.com
 githubstatus.com
 *.jodidaniel.com
 jodidaniel.com
+learn.chatgpt.com
 *.learn.microsoft.com
 learn.microsoft.com
 *.playwright.azureedge.net
