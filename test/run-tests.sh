@@ -12531,6 +12531,247 @@ EOF
         "check-agents-md: the out-of-order failure names it as an ordering problem"
 }
 
+# ── Test: check-guidance-coverage.js (section manifest graduation gate) ──
+#
+# agents-md/eval-coverage.yml is the join between a `##` heading in the
+# guidance source (which gets reworded on its own schedule) and an eval
+# fixture in skills-evals (named by a stable id). This pins both directions
+# of that join against small fixture trees under $TEST_DIR, entirely apart
+# from the real agents-md/ tree, so a fixture never has to be reconciled
+# against this repo's own manifest as it grows.
+test_check_guidance_coverage() {
+    echo ""
+    echo "=== Test: check-guidance-coverage.js (section manifest graduation gate) ==="
+
+    local script="$REPO_ROOT/scripts/check-guidance-coverage.js"
+
+    # Same "no silent skip" posture as test_check_cron_coverage: a gate that
+    # quietly does not run is exactly what this suite exists to catch. CI
+    # installs both deps with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" || ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "guidance coverage: node_modules/yaml or node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local root="$TEST_DIR/guidance"
+    rm -rf "$root"
+
+    # Writes a minimal guidance tree: $1 = fixture name, $2 = base.md body,
+    # $3 = eval-coverage.yml body.
+    guidance_fixture() {
+        local dir="$root/$1"
+        rm -rf "$dir"
+        mkdir -p "$dir/agents-md/sections"
+        printf '%s' "$2" > "$dir/agents-md/base.md"
+        printf '%s' "$3" > "$dir/agents-md/eval-coverage.yml"
+    }
+
+    # <fixture> <expected-exit> <expected-substring> <label> [extra script args...]
+    assert_guidance() {
+        local fixture="$1" want_exit="$2" want_substr="$3" label="$4"
+        shift 4
+        local out rc=0
+        out=$(node "$script" --repo-root "$root/$fixture" "$@" 2>&1) || rc=$?
+        if [[ "$rc" == "$want_exit" ]] && grep -qF -- "$want_substr" <<<"$out"; then
+            pass "$label"
+        else
+            fail "$label — expected exit $want_exit containing '$want_substr'; got exit $rc: $(echo "$out" | tr '\n' ' ')"
+        fi
+    }
+
+    # 1. A heading with no manifest row at all — the graduation gate's main
+    #    job. Also plants a `## ` INSIDE A FENCED BLOCK between the two real
+    #    headings, which a line-scanner would miscount as a third heading; a
+    #    real parser must not be fooled by it (case 5 from the issue) — if it
+    #    were, this fixture would report TWO missing rows instead of one.
+    guidance_fixture no_row \
+'## Heading One
+text
+
+```
+## fake heading inside a fence
+```
+
+## Heading Two
+more text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 12
+'
+    assert_guidance no_row 1 'heading "Heading Two"' \
+        "guidance coverage: a heading with no row fails, naming it"
+    # The load-bearing negative half: a line-scanner would ALSO report the
+    # fenced "## fake heading inside a fence" as missing a row, which still
+    # exits 1 and still mentions "Heading Two" — so those two assertions
+    # alone cannot tell a real parser from a naive one. This can: it fails if
+    # the fenced text is ever reported as a heading of its own. Proven to
+    # have teeth by mutation: swapping the real markdown-it token walk for a
+    # `/^##\s+/` line-regex (the naive scanner base.md's own fenced blocks
+    # would defeat) makes exactly this assertion fail, while every other
+    # assertion in this test still passes.
+    out_no_row=$(node "$script" --repo-root "$root/no_row" 2>&1)
+    if grep -qF -- 'fake heading inside a fence' <<<"$out_no_row"; then
+        fail "guidance coverage: the fenced-block '## ' is not mistaken for a heading"
+    else
+        pass "guidance coverage: the fenced-block '## ' is not mistaken for a heading"
+    fi
+
+    # 2. A stale row: the manifest's heading text no longer exists anywhere
+    #    in the source (it was reworded and the row was not updated). Must
+    #    name the row AND offer the nearest current heading as the likely
+    #    rename target.
+    guidance_fixture stale \
+'## Heading One Renamed
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 12
+'
+    assert_guidance stale 1 'is stale' \
+        "guidance coverage: a stale row (reworded heading) fails"
+    assert_guidance stale 1 'nearest current heading is "Heading One Renamed"' \
+        "guidance coverage: a stale row's failure names the nearest current heading as the rename hint"
+
+    # 3. A `covered` row naming a fixture that does not exist under
+    #    --skills-evals. Also proves the flag is genuinely OPTIONAL: with it
+    #    omitted, the same manifest must not fail on the fixture's existence
+    #    (only a "not verified" note), so this checks both directions.
+    guidance_fixture covered_missing_fixture \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: covered
+  fixture: evals/guidance/heading-one/
+  bytes: 12
+'
+    mkdir -p "$TEST_DIR/skills-evals-empty"
+    assert_guidance covered_missing_fixture 1 \
+        'does not exist under --skills-evals' \
+        "guidance coverage: a covered row whose fixture is missing under --skills-evals fails" \
+        --skills-evals "$TEST_DIR/skills-evals-empty"
+    assert_guidance covered_missing_fixture 0 'fixture paths not verified' \
+        "guidance coverage: without --skills-evals, a covered row is not checked for fixture existence, only noted"
+
+    # 4. A `skipped` row with no `reason`.
+    guidance_fixture skipped_no_reason \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: skipped
+  since: "2026-01-01"
+  bytes: 12
+'
+    assert_guidance skipped_no_reason 1 "is status: skipped but has no 'reason'" \
+        "guidance coverage: a skipped row with no reason fails"
+
+    # 4b. A `skipped` row with a `reason` but no `since` — the sibling
+    #     requirement, checked independently so one field's presence cannot
+    #     mask the other's absence.
+    guidance_fixture skipped_no_since \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: skipped
+  reason: deliberately not covered, for this test fixture
+  bytes: 12
+'
+    assert_guidance skipped_no_since 1 "is status: skipped but has no 'since'" \
+        "guidance coverage: a skipped row with no since date fails"
+
+    # 6. Zero headings anywhere — refused (exit 2), never a silent pass. Per
+    #    the fleet's own convention, a gate that finds nothing must not read
+    #    the same as a gate that found nothing wrong.
+    guidance_fixture zero_headings \
+'no headings in this file at all
+' \
+'[]
+'
+    assert_guidance zero_headings 2 "found zero '##' headings" \
+        "guidance coverage: zero headings anywhere is refused, not a pass"
+
+    # 7. A clean, well-formed tree: exit 0, gap/skipped/covered counts
+    #    printed. Two rows (one gap, one skipped) so the count line proves it
+    #    is not hardcoding "0 skipped".
+    guidance_fixture clean \
+'## Heading One
+text
+
+## Heading Two
+more text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 21
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: skipped
+  reason: deliberately not covered, for this test fixture
+  since: "2026-01-01"
+  bytes: 25
+'
+    assert_guidance clean 0 '1 gap · 1 skipped · 0 covered' \
+        "guidance coverage: a clean tree passes and prints the gap/skipped/covered counts"
+
+    # 8. --write-bytes then --check-bytes round-trips. Seed a row with a
+    #    deliberately WRONG byte count, prove --check-bytes catches it, then
+    #    prove --write-bytes fixes it and --check-bytes then passes.
+    guidance_fixture bytes_roundtrip \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 999999
+'
+    assert_guidance bytes_roundtrip 1 'run with --write-bytes to refresh it' \
+        "guidance coverage: --check-bytes catches a stale byte count" \
+        --check-bytes
+    node "$script" --repo-root "$root/bytes_roundtrip" --write-bytes >/dev/null 2>&1
+    assert_guidance bytes_roundtrip 0 '1 gap · 0 skipped · 0 covered' \
+        "guidance coverage: --write-bytes then --check-bytes round-trips clean" \
+        --check-bytes
+
+    # 9. --format json carries id, status and bytes for every row.
+    local json_out
+    json_out=$(node "$script" --repo-root "$root/clean" --format json 2>&1)
+    if grep -qF -- '"id": "heading-one"' <<<"$json_out" \
+        && grep -qF -- '"id": "heading-two"' <<<"$json_out" \
+        && grep -qF -- '"status": "gap"' <<<"$json_out" \
+        && grep -qF -- '"status": "skipped"' <<<"$json_out" \
+        && grep -qF -- '"bytes": 21' <<<"$json_out"; then
+        pass "guidance coverage: --format json carries id/status/bytes for every row"
+    else
+        fail "guidance coverage: --format json carries id/status/bytes for every row — got: $(echo "$json_out" | tr '\n' ' ')"
+    fi
+
+    # --fail-on-gap: a clean tree with a gap row exits 0 by default and 1
+    # under --fail-on-gap.
+    assert_guidance clean 1 "1 row(s) are gap" \
+        "guidance coverage: --fail-on-gap turns a gap count into a failure" \
+        --fail-on-gap
+}
+
 # ── Test 7g: ci.yml's trigger set, and the absence that makes it safe ─────
 #
 # THE CLAIM THIS PINS. ci.yml carries a `workflow_dispatch` trigger and a long
@@ -14357,6 +14598,7 @@ test_bump_workflow
 test_ci_workflow_shape
 test_yq_install_pinned
 test_check_agents_md
+test_check_guidance_coverage
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure

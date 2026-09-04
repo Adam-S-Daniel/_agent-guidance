@@ -102,3 +102,15 @@ regeneration, so the staleness check above stayed green throughout; only a
 check that counts markers and asserts their order can tell a doubled file from
 a well-formed one, which is what `scripts/check-agents-md.sh` does, and CI now
 runs it ahead of the staleness check for exactly this reason.
+
+**A new `##` heading in `agents-md/base.md` (or a new file under
+`agents-md/sections/`) needs a row in `agents-md/eval-coverage.yml` in the
+same PR.** Add it before the section lands, not after — CI's "Section manifest
+covers every guidance heading" step (`scripts/check-guidance-coverage.js`)
+fails otherwise, naming the heading and the two ways to close it: a `covered`
+row pointing at a skills-evals fixture, or a `skipped` row giving a `reason`
+and a `since` date. The same step also fails if a heading gets reworded
+without updating the matching row's `heading` text (reported as a stale row,
+with the nearest current heading offered as the likely rename target) or if a
+row's `bytes` has drifted from the section's real size (fix with
+`node scripts/check-guidance-coverage.js --write-bytes`).
