@@ -1,0 +1,205 @@
+# Section manifest for the fleet guidance — one row per `##` heading in
+# agents-md/base.md and one per file under agents-md/sections/ (each of those
+# is a single `##`). `### ` subsections are never rows of their own; their
+# parent heading's fixture is expected to cover them too.
+#
+# This file is the join between two things that otherwise have no shared key:
+# a heading in base.md, which gets reworded on its own schedule (#116 did it
+# the week this file was added), and an eval fixture in skills-evals, which is
+# named by path. `id` is that shared key — kebab-case, assigned once, and
+# NEVER renamed when the heading text changes. `heading` is the volatile half:
+# the exact current heading text (no leading "## "), checked byte-for-byte by
+# scripts/check-guidance-coverage.js against the real file on every CI run. A
+# heading edit that forgets to update the matching row's `heading` here is
+# reported as a stale row, not a missing one, with the nearest current heading
+# offered as the likely rename target.
+#
+# status:
+#   gap      — tracked, no fixture yet.
+#   covered  — `fixture` (a path under skills-evals, e.g.
+#              evals/guidance/<id>/) names the eval that exercises it.
+#   skipped  — deliberately not covered; `reason` and `since` are required.
+#
+# `bytes` is generated — the section's byte extent from its heading through
+# the line before the next `##` heading (or end of file). Regenerate with
+# `node scripts/check-guidance-coverage.js --write-bytes`; CI runs
+# `--check-bytes` so a stale value fails the build. It is the per-session
+# context cost the eval harness's ablation arm and the retirement gate weigh,
+# and this repo is the one that knows each section's extent.
+#
+# Do not put these ids into base.md itself — an HTML comment there would be
+# delivered into every session by the fleet-memory hook and cost tokens
+# forever. This manifest is the only place they live.
+
+- id: working-in-these-repos
+  heading: Working in these repos
+  file: agents-md/base.md
+  status: gap
+  bytes: 1366
+
+- id: anything-you-name-gets-its-link
+  heading: Anything you name gets its link
+  file: agents-md/base.md
+  status: gap
+  bytes: 2681
+
+- id: finding-your-unknowns
+  heading: Finding your unknowns
+  file: agents-md/base.md
+  status: gap
+  bytes: 1520
+
+- id: workstation-layout
+  heading: Workstation layout
+  file: agents-md/base.md
+  status: skipped
+  reason: >-
+    A machine reference being rewritten for the new laptop under
+    _agent-guidance#117; no behavior to measure until it settles. See
+    skills-evals#96.
+  since: "2026-09-04"
+  bytes: 653
+
+- id: sessions-get-cut-off
+  heading: Sessions get cut off
+  file: agents-md/base.md
+  status: gap
+  bytes: 1152
+
+- id: security
+  heading: Security
+  file: agents-md/base.md
+  status: gap
+  bytes: 493
+
+- id: data-exposure-in-ci
+  heading: Data exposure in CI and public repos
+  file: agents-md/base.md
+  status: gap
+  bytes: 2247
+
+- id: network-allowlists
+  heading: Network allowlists live in `_agent-guidance/docs/reference/`
+  file: agents-md/base.md
+  status: gap
+  bytes: 1223
+
+- id: automation-vs-branch-protection
+  heading: Automation vs branch protection
+  file: agents-md/base.md
+  status: gap
+  bytes: 2483
+
+- id: two-github-connectors
+  heading: Two GitHub connectors, and which one you are holding
+  file: agents-md/base.md
+  status: gap
+  bytes: 4055
+
+- id: github-404-means-not-authorized
+  heading: A GitHub 404 means "not authorized", not "not there"
+  file: agents-md/base.md
+  status: gap
+  bytes: 1787
+
+- id: fleet-spans-two-owners
+  heading: The fleet spans TWO owners, and a scoped search will not say so
+  file: agents-md/base.md
+  status: gap
+  bytes: 2987
+
+- id: watch-finished-is-not-ci-passed
+  heading: '"The watch finished" is not "CI passed"'
+  file: agents-md/base.md
+  status: gap
+  bytes: 3988
+
+- id: git-push-does-not-mean-commit-exists
+  heading: A successful `git push` does not mean your commit exists
+  file: agents-md/base.md
+  status: gap
+  bytes: 3026
+
+- id: dependency-updates
+  heading: Dependency updates
+  file: agents-md/base.md
+  status: gap
+  bytes: 1086
+
+- id: name-becomes-scanner-data
+  heading: A name you choose becomes data a scanner reads
+  file: agents-md/base.md
+  status: gap
+  bytes: 3292
+
+- id: pinning-github-actions
+  heading: Pinning GitHub Actions
+  file: agents-md/base.md
+  status: gap
+  bytes: 3963
+
+- id: subagent-delegation
+  heading: Subagent delegation (model routing)
+  file: agents-md/base.md
+  status: gap
+  bytes: 7761
+
+- id: skills-ecosystem
+  heading: Skills ecosystem
+  file: agents-md/base.md
+  status: gap
+  bytes: 2612
+
+- id: two-setup-gaps
+  heading: Two setup gaps you may close, and must not nag about
+  file: agents-md/base.md
+  status: gap
+  bytes: 5615
+
+- id: git-practices
+  heading: Git practices
+  file: agents-md/base.md
+  status: gap
+  bytes: 1393
+
+- id: section-docker
+  heading: Docker
+  file: agents-md/sections/docker.md
+  status: gap
+  bytes: 604
+
+- id: section-dotnet
+  heading: .NET / C#
+  file: agents-md/sections/dotnet.md
+  status: gap
+  bytes: 662
+
+- id: section-go
+  heading: Go
+  file: agents-md/sections/go.md
+  status: gap
+  bytes: 553
+
+- id: section-javascript
+  heading: JavaScript
+  file: agents-md/sections/javascript.md
+  status: gap
+  bytes: 495
+
+- id: section-python
+  heading: Python
+  file: agents-md/sections/python.md
+  status: gap
+  bytes: 544
+
+- id: section-rust
+  heading: Rust
+  file: agents-md/sections/rust.md
+  status: gap
+  bytes: 555
+
+- id: section-typescript
+  heading: TypeScript
+  file: agents-md/sections/typescript.md
+  status: gap
+  bytes: 526

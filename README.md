@@ -59,6 +59,30 @@ The skills that used to live here (`debug-github-workflows`,
   additions" section. Reasoning:
   [`docs/decisions/0002`](docs/decisions/0002-unconditional-rules-live-in-the-guidance-not-a-skill.md).
 
+### Section manifest
+
+[`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml) is one row per
+`##` heading in `agents-md/base.md` and per file under `agents-md/sections/`
+(each of those is a single `##`). A heading has no identity but its own
+wording, and wording changes — so each row carries a stable `id` alongside
+the current `heading` text, and `id` never moves when a heading gets
+reworded. Every row is `gap` (tracked, no eval yet), `covered` (names a
+[skills-evals](https://github.com/Adam-S-Daniel/skills-evals) fixture path),
+or `skipped` (names a `reason` and a `since` date).
+[`scripts/check-guidance-coverage.js`](scripts/check-guidance-coverage.js)
+(CI: the "Section manifest covers every guidance heading" step in
+[`ci.yml`](.github/workflows/ci.yml)) is the graduation gate: it parses the
+real markdown with `markdown-it` (never a line scan — a fenced code block can
+contain a `## ` that is not a heading, and a line scanner cannot tell the
+difference) and fails when a heading has no row, a row's heading no longer
+exists anywhere (a stale row, reported with the nearest current heading as
+the likely rename target), two rows share an `id`, two headings share the
+same text, a `covered` row's fixture is missing, a `skipped` row has no
+`reason` or no `since` date, or a row's generated `bytes` — the section's
+byte extent, regenerated with `--write-bytes` — has drifted from the real
+file. A section added with no row is red, naming the heading and the two ways
+to close it.
+
 ## The skills-bootstrap hook
 
 The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a

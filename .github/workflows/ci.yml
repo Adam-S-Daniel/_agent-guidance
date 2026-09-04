@@ -152,6 +152,27 @@ jobs:
       - name: AGENTS.md structure is sound
         run: ./scripts/check-agents-md.sh AGENTS.md
 
+      # The graduation gate (_agent-guidance#119): every `##` heading in
+      # agents-md/base.md and agents-md/sections/*.md must have exactly one
+      # row in agents-md/eval-coverage.yml, and a `covered` row's fixture must
+      # actually exist. That last check needs skills-evals on disk, read-only
+      # — no credential, no write, just enough to prove a claimed fixture path
+      # is real rather than a `covered` row nobody backed up. Same pinned
+      # `actions/checkout` SHA this file already uses elsewhere.
+      #
+      # No `ref:` — this tracks skills-evals' default branch. That means once
+      # any row here is `covered`, a fixture rename on that branch reds THIS
+      # repo's CI on the next run, with no change on this side at all.
+      - name: Check out skills-evals (read-only, for fixture existence)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: Adam-S-Daniel/skills-evals
+          path: skills-evals
+          persist-credentials: false
+
+      - name: Section manifest covers every guidance heading
+        run: node scripts/check-guidance-coverage.js --skills-evals skills-evals --check-bytes
+
       # This repo is excluded from its own sync (SYNC_SELF_REPO), so nothing
       # ever wrote an AGENTS.md here — it was the one repo in the fleet whose
       # agents could not read the fleet's guidance while editing it. The fix is

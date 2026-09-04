@@ -2,11 +2,13 @@
   "name": "agent-guidance",
   "version": "0.0.0",
   "private": true,
-  "description": "Dev-only dep for scripts/check-cron-coverage.js — see its header.",
+  "description": "Dev-only deps for scripts/check-cron-coverage.js and scripts/check-guidance-coverage.js — see their headers.",
   "scripts": {
-    "check-cron-coverage": "node scripts/check-cron-coverage.js"
+    "check-cron-coverage": "node scripts/check-cron-coverage.js",
+    "check-guidance-coverage": "node scripts/check-guidance-coverage.js"
   },
   "devDependencies": {
+    "markdown-it": "15.0.1",
     "yaml": "2.9.0"
   }
 }
