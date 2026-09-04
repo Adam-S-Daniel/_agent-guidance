@@ -111,6 +111,21 @@ Repo locations are host-specific — match the convention of the machine you're 
   (for example `D:\repos\adam-s-daniel\wsl-automation`). Clone new repos there, and
   assume existing repos live there rather than under the user profile
   (`C:\Users\<user>\...`).
+- **On `ZENDA`, PowerShell invoked from WSL is never elevated.** An agent
+  working in WSL drives Windows through `powershell.exe` / `pwsh.exe`, and that
+  process inherits a filtered, non-elevated token — there is no way to raise a
+  UAC prompt from the WSL side, in any repo, not just one that happens to
+  script Windows automation. The failure is asymmetric, which is what makes it
+  easy to misread: **reads succeed** (`Get-ScheduledTask`, `Get-Service`,
+  registry reads) so the surface looks fully available, while **writes that
+  need elevation fail with "Access is denied"** (`Register-ScheduledTask` /
+  `Set-ScheduledTask` on a `RunLevel=HighestAvailable` task, service changes,
+  an LSA rights grant such as "Log on as a batch job"). Don't chase it with a
+  flag, a retry, or a downgraded principal — investigate and compose the
+  command from WSL, then hand the user the exact line to paste into an
+  **elevated Windows** prompt, and say plainly that it needs elevation. Export
+  any object you are about to rewrite first (e.g. `Export-ScheduledTask` to
+  XML) so there is something to restore.
 
 ## Sessions get cut off
 
