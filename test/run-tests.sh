@@ -12612,7 +12612,8 @@ more text
     # `/^##\s+/` line-regex (the naive scanner base.md's own fenced blocks
     # would defeat) makes exactly this assertion fail, while every other
     # assertion in this test still passes.
-    out_no_row=$(node "$script" --repo-root "$root/no_row" 2>&1)
+    local out_no_row
+    out_no_row=$(node "$script" --repo-root "$root/no_row" 2>&1) || true
     if grep -qF -- 'fake heading inside a fence' <<<"$out_no_row"; then
         fail "guidance coverage: the fenced-block '## ' is not mistaken for a heading"
     else
@@ -12747,14 +12748,14 @@ text
     assert_guidance bytes_roundtrip 1 'run with --write-bytes to refresh it' \
         "guidance coverage: --check-bytes catches a stale byte count" \
         --check-bytes
-    node "$script" --repo-root "$root/bytes_roundtrip" --write-bytes >/dev/null 2>&1
+    node "$script" --repo-root "$root/bytes_roundtrip" --write-bytes >/dev/null 2>&1 || true
     assert_guidance bytes_roundtrip 0 '1 gap · 0 skipped · 0 covered' \
         "guidance coverage: --write-bytes then --check-bytes round-trips clean" \
         --check-bytes
 
     # 9. --format json carries id, status and bytes for every row.
     local json_out
-    json_out=$(node "$script" --repo-root "$root/clean" --format json 2>&1)
+    json_out=$(node "$script" --repo-root "$root/clean" --format json 2>&1) || true
     if grep -qF -- '"id": "heading-one"' <<<"$json_out" \
         && grep -qF -- '"id": "heading-two"' <<<"$json_out" \
         && grep -qF -- '"status": "gap"' <<<"$json_out" \
