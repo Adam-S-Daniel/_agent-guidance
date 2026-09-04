@@ -144,6 +144,20 @@ fail `npm ci`, `bundle install` and `apt-get` on the first job.
 That asymmetry is the reason a plain union of the two files would be wrong in
 both directions, and it is why neither file is derivable from the other.
 
+**Measured, not assumed, on this date.** The claim that the checkbox covers
+`*.githubusercontent.com` and `*.amazonaws.com` had been asserted in prose
+since 2026-08-28 and never probed, which mattered because it is the whole
+reason both are absent from the Claude list. Probed from a session running
+under `My Whitelist`: `objects.` / `release-assets.` / `raw.githubusercontent.com`
+and `sts.` / `s3.` / `s3.us-east-1.` / `<id>.execute-api.us-east-1.amazonaws.com`
+all reached; `example.org`, `www.wikipedia.org` and `nytimes.com` returned
+`000` as controls. Full table in the Claude sidecar's 2026-09-04 entry, along
+with a new finding that applies here too: the checkbox covers the SUBDOMAINS
+and not the apex — bare `githubusercontent.com` and `amazonaws.com` are both
+blocked. Nothing in CI fetches either apex, so this list needs no change for
+it; it is recorded so a future reader does not read `*.amazonaws.com` as
+including its own apex.
+
 ### Standing caveat, restated
 
 Per the 2026-08-28 entry: if the package-manager checkbox on `My Whitelist` is

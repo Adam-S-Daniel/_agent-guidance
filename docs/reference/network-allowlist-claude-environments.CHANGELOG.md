@@ -197,6 +197,67 @@ here.** Applying them is a one-time paste into the environment at
 this file is a superset of what is in force, and the next snapshot diff should
 show these three again rather than treating them as strays to delete.
 
+### Two long-asserted Trusted-list claims, now measured
+
+Probed from a session running under this environment on 2026-09-04, same
+method as the 2026-08-28 entry: `curl -s -o /dev/null -m 15 -w '%{http_code}'
+https://<host>`. `000` is the egress proxy refusing to connect; any HTTP status
+means the host was reached.
+
+The 2026-08-28 entry rejected `*.githubusercontent.com` and `*.amazonaws.com`
+from this list on the grounds that the package-manager checkbox already covers
+them. That reasoning was never probed — the five probes in that entry are all
+about `decapcms.org`, `unpkg.com` and the Playwright hosts. It was inference,
+of exactly the kind that entry exists to replace, and it is load-bearing:
+it is the entire reason two domains are absent here.
+
+Both claims hold.
+
+| Probe | Result | |
+|---|---|---|
+| `objects.githubusercontent.com` | `404` reached | release-binary redirect target |
+| `release-assets.githubusercontent.com` | `404` reached | ditto |
+| `raw.githubusercontent.com` | `301` reached | |
+| `sts.amazonaws.com` | `302` reached | OIDC role assumption |
+| `s3.amazonaws.com` | `307` reached | |
+| `s3.us-east-1.amazonaws.com` | `307` reached | |
+| `zkrofo300b.execute-api.us-east-1.amazonaws.com` | `404` reached | the jodidaniel.com Decap OAuth proxy |
+| `registry.npmjs.org`, `rubygems.org`, `pypi.org`, `archive.ubuntu.com` | `200` reached | checkbox confirmed on |
+
+**Controls, because a probe that cannot fail proves nothing.** `example.org`,
+`www.wikipedia.org` and `nytimes.com` all returned `000` — in neither list and
+not plausibly a package manager. `github.com` (`400`), `claude.ai` (`403`),
+`agents.md` (`200`) and `developers.openai.com` (`200`) all returned a status,
+confirming the two pairs added above are live in the environment and that a
+reached host is distinguishable from a blocked one.
+
+### New: Trusted covers the SUBDOMAINS, not the apex
+
+```
+githubusercontent.com   000 blocked
+amazonaws.com           000 blocked
+```
+
+The same wildcard/apex trap this file's header names, now shown to apply to the
+checkbox's list as well as to a hand-written line. It costs nothing today —
+nothing in this fleet fetches either apex, and both are parked domains — but it
+means "Trusted covers `*.amazonaws.com`" is literally true and must not be read
+as "Trusted covers `amazonaws.com`". If a build step ever does reach an apex
+under this checkbox, expect a `000` and add the apex explicitly.
+
+### The three retained lines are still not in force — re-measured
+
+```
+unpkg.com                 000 blocked
+decapcms.org              000 blocked
+playwright.azureedge.net  000 blocked
+```
+
+Identical to 2026-08-28, a week later: the corrections recorded here were never
+pasted into the environment dialog. Their wildcard siblings still answer
+(`www.decapcms.org` `301`, `cdn.playwright.dev` `400`), which is what makes the
+apex blocks a listing gap rather than a network fault.
+
 ### Deliberately NOT applied elsewhere
 
 Neither new pair was added to `network-allowlist-github-runners.txt`. That
