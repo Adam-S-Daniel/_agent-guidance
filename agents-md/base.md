@@ -110,7 +110,8 @@ Repo locations are host-specific — match the convention of the machine you're 
 - **`ZENDA`** (Windows): local clones live under `D:\repos\<github-owner-or-org>\<repo>`
   (for example `D:\repos\adam-s-daniel\wsl-automation`). Clone new repos there, and
   assume existing repos live there rather than under the user profile
-  (`C:\Users\<user>\...`).
+  (`C:\Users\<user>\...`). PowerShell run from WSL there is never elevated —
+  the `windows-elevation-from-wsl` skill (`adam-local`) has the procedure.
 
 ## Sessions get cut off
 
