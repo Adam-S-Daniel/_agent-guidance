@@ -4,7 +4,6 @@ adamdaniel.ai
 agents.md
 *.agentskills.io
 agentskills.io
-cdn.playwright.dev
 *.claude.ai
 claude.ai
 *.claude.com
@@ -31,4 +30,6 @@ learn.chatgpt.com
 learn.microsoft.com
 *.playwright.azureedge.net
 playwright.azureedge.net
+*.playwright.dev
+playwright.dev
 unpkg.com

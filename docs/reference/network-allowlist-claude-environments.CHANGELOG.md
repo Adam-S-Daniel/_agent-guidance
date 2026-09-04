@@ -376,3 +376,64 @@ behaviour change, and this file is a set so it absorbs it silently. Worth
 tidying in the dialog only to keep a future snapshot diff honest: a list with
 duplicates makes a line-count comparison disagree with a set comparison, and
 every reconciliation in this file is done as a set.
+
+---
+
+## 2026-09-04 (third entry) — the Playwright docs gap closed, and the first REMOVAL
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change:** one pair ADDED, one line REMOVED, one duplicate tidied.
+
+```
++ *.playwright.dev
++ playwright.dev
+- cdn.playwright.dev
+```
+
+### Why the pair was added
+
+A wildcard audit of the whole list found exactly two lines with no `*.` twin:
+`cdn.playwright.dev` and `unpkg.com`. Neither merited one — but the audit
+surfaced an adjacent gap. `playwright.dev` and `www.playwright.dev` both
+resolved and were both **blocked** (`000`), so the list carried the Playwright
+CDN and not the Playwright **documentation** — the one Playwright surface an
+agent actually reads while writing or debugging a spec. Same category as
+`docs.microsoft.com` and `decapcms.org`. Now `200` and `301` respectively.
+
+### Why the removal is safe — measured, not reasoned
+
+`*.playwright.dev` subsumes `cdn.playwright.dev`, so the explicit line became
+redundant and was dropped. **This is the first line ever removed from this
+file**, so it was verified end to end rather than argued from the wildcard
+rule:
+
+| Probe | Result |
+|---|---|
+| `cdn.playwright.dev` | `400` reached — identical to when it was listed explicitly |
+| the real browser download | `307` → `playwright.download.prss.microsoft.com` → `200`, `Content-Length: 182166967` |
+| a ranged request for the same object | `206`, 1024 bytes actually transferred |
+
+The last row is the one that matters. A reachable host and a completed download
+are different claims, and only the second is what CI and the `@admin-*` lanes
+depend on; bytes moved, so the chain is whole. The redirect target remains
+covered by `*.download.prss.microsoft.com`, unchanged.
+
+**The standing caveat this creates.** `cdn.playwright.dev` is now reachable
+only by virtue of a broader line. Anyone who later narrows `*.playwright.dev`
+— or removes it as "just documentation" — silently breaks Playwright browser
+downloads in every session under this environment, and the failure appears as a
+browser-install timeout rather than as a network denial. If that narrowing is
+ever proposed, restore the explicit `cdn.playwright.dev` line in the same edit.
+
+### The duplicate is gone
+
+The previous entry flagged `developers.openai.com` as appearing twice in the
+environment dialog. The snapshot behind this entry carries 35 lines, all
+unique, so it has been tidied. Line count and set size now agree, which is what
+makes a future reconciliation's line-count sanity check trustworthy.
+
+### Parity
+
+The `.txt` and the environment are identical as sets, 35 lines each, verified
+with `diff` over sorted unique lists in both directions.
