@@ -69,7 +69,12 @@ function flag(name) {
 
 function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
-  return i !== -1 && process.argv[i + 1] !== undefined ? process.argv[i + 1] : def;
+  if (i === -1) return def;
+  const val = process.argv[i + 1];
+  if (val !== undefined && val.startsWith("--")) {
+    throw new RunError(`--${name} requires a value, got flag-like "${val}" instead`);
+  }
+  return val !== undefined ? val : def;
 }
 
 // Thrown for anything that means "could not run at all" — exit 2, never 0 or
@@ -98,11 +103,17 @@ function extractHeadings(src, file) {
 
   const tokens = md.parse(src, {});
   const raw = [];
-  for (const t of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
     if (t.type === "heading_open" && t.tag === "h2") {
       const startLine = t.map[0];
-      const text = lines[startLine].replace(/^##\s+/, "");
-      raw.push({ text, startLine });
+      // The inline token immediately after heading_open carries the parsed
+      // text (closing `##` stripped, leading indentation stripped) — a
+      // regex over the raw source line gets both wrong: `## Closed Form ##`
+      // keeps its trailing hashes, and a leading-whitespace ATX heading
+      // (CommonMark allows up to 3 spaces) does not match `^##\s+` at all.
+      const inline = tokens[i + 1];
+      raw.push({ text: inline.content, startLine });
     }
   }
 
@@ -205,6 +216,14 @@ function validate({ headings, rows, skillsEvals }) {
   const errors = [];
   const notes = [];
 
+  // A property of the RUN, not of any one row: whether fixture paths were
+  // verifiable at all. Printed once here, up front, rather than inside the
+  // per-row `covered` branch below — nested there, it never fired on a tree
+  // with zero covered rows and fired once per covered row otherwise.
+  if (!skillsEvals) {
+    notes.push("fixture paths not verified (no --skills-evals given)");
+  }
+
   // Source-side sanity: two sections sharing heading text would make the
   // join ambiguous. Not something the fleet's own docs do today, but a
   // silent Map overwrite would misreport a real defect as a clean run, so
@@ -236,9 +255,12 @@ function validate({ headings, rows, skillsEvals }) {
   }
 
   // Every row: structural validity + does its heading still exist.
-  const matchedHeadingTexts = new Set();
   const rowsById = new Map();
   for (const row of rows) {
+    // A null/malformed row (a bare `-` list entry, or any other non-object)
+    // was already reported by the id-uniqueness loop above — skip it here
+    // rather than crash on `row.heading` of a value with no properties.
+    if (!row) continue;
     if (typeof row.heading !== "string" || row.heading.length === 0) {
       errors.push(`row "${row.id}" is missing a non-empty 'heading'`);
       continue;
@@ -260,8 +282,6 @@ function validate({ headings, rows, skillsEvals }) {
             `row "${row.id}" names fixture "${row.fixture}", which does not exist under --skills-evals ${skillsEvals}`,
           );
         }
-      } else {
-        notes.push("fixture paths not verified (no --skills-evals given)");
       }
     }
 
@@ -289,13 +309,12 @@ function validate({ headings, rows, skillsEvals }) {
         `row "${row.id}" declares file "${row.file}" but heading "${row.heading}" was found in "${heading.file}"`,
       );
     }
-    matchedHeadingTexts.add(row.heading);
     rowsById.set(row.id, { row, heading });
   }
 
   // Every discovered heading: exactly one row.
   for (const h of headings) {
-    const matches = rows.filter((row) => row.heading === h.heading);
+    const matches = rows.filter((row) => row && row.heading === h.heading);
     if (matches.length === 0) {
       errors.push(
         `heading "${h.heading}" in ${h.file} has no row in eval-coverage.yml — add a covered row naming a fixture, or a skipped row naming a reason`,
@@ -311,7 +330,7 @@ function validate({ headings, rows, skillsEvals }) {
 
   const counts = { gap: 0, covered: 0, skipped: 0 };
   for (const row of rows) {
-    if (counts[row.status] !== undefined) counts[row.status] += 1;
+    if (row && counts[row.status] !== undefined) counts[row.status] += 1;
   }
 
   return { errors, notes, counts, rowsById };
@@ -363,15 +382,24 @@ function main() {
     skillsEvals: skillsEvals ? path.resolve(skillsEvals) : null,
   });
 
-  if (writeBytesFlag) {
+  // A malformed row (a bare `-` list entry, or any other non-mapping list
+  // item) is already named in `errors` by validate() above — don't let
+  // --write-bytes crash on it (`item.get` only exists on a YAML mapping
+  // node), just fall through to the error report and exit 1 below.
+  if (writeBytesFlag && errors.length === 0) {
     writeBytes(doc, rowsById);
     fs.writeFileSync(manifestPath, doc.toString());
   } else if (checkBytesFlag) {
     errors.push(...checkBytes(rowsById));
   }
 
+  // In JSON mode stdout must carry ONLY the JSON payload — a note or the
+  // summary line sharing the stream breaks `| jq .` and any other consumer
+  // that expects one parseable document. Both still go to stderr, where a
+  // human running this locally will still see them.
+  const notePrinter = format === "json" ? console.error : console.log;
   for (const note of notes) {
-    console.log(`note: ${note}`);
+    notePrinter(`note: ${note}`);
   }
 
   if (format === "json") {
@@ -379,8 +407,10 @@ function main() {
     // "section" — so this is a direct machine-readable echo of
     // eval-coverage.yml, plus a `subject` tag for skills-evals' coverage
     // census (#64), which merges rows from several subjects (skills,
-    // guidance, ...) and needs that tag to tell them apart.
-    const out = rows.map((row) => ({
+    // guidance, ...) and needs that tag to tell them apart. A malformed
+    // (null) row is already named in `errors` by validate() — skip it here
+    // rather than crash on its `.id`.
+    const out = rows.filter(Boolean).map((row) => ({
       subject: "guidance",
       id: row.id,
       heading: row.heading,
@@ -399,7 +429,8 @@ function main() {
     process.exit(1);
   }
 
-  console.log(`${counts.gap} gap · ${counts.skipped} skipped · ${counts.covered} covered`);
+  const summaryLine = `${counts.gap} gap · ${counts.skipped} skipped · ${counts.covered} covered`;
+  (format === "json" ? console.error : console.log)(summaryLine);
 
   if (failOnGap && counts.gap > 0) {
     console.error(`check-guidance-coverage: --fail-on-gap set and ${counts.gap} row(s) are gap`);

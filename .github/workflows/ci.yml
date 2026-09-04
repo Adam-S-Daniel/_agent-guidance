@@ -159,6 +159,10 @@ jobs:
       # — no credential, no write, just enough to prove a claimed fixture path
       # is real rather than a `covered` row nobody backed up. Same pinned
       # `actions/checkout` SHA this file already uses elsewhere.
+      #
+      # No `ref:` — this tracks skills-evals' default branch. That means once
+      # any row here is `covered`, a fixture rename on that branch reds THIS
+      # repo's CI on the next run, with no change on this side at all.
       - name: Check out skills-evals (read-only, for fixture existence)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
