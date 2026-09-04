@@ -318,3 +318,61 @@ and the `githubusercontent.com` / `amazonaws.com` apexes stayed blocked.
 Neither new pair was added to `network-allowlist-github-runners.txt`. That
 file's own changelog already rejects the whole reference-documentation category
 ("Nothing in CI reads documentation"), and these two sit squarely in it.
+
+---
+
+## 2026-09-04 (second entry) — three additions, and one duplicate line to tidy
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change:** three domains ADDED, appended to the environment by the operator and
+mirrored here. Nothing removed, nothing rewritten.
+
+```
++ *.agentskills.io
++ agentskills.io
++ learn.chatgpt.com
+```
+
+### Measured, from a session running under this environment
+
+Per the header mechanic added earlier today, an environment edit lands in a
+running session, so these were probed immediately rather than deferred:
+
+| Probe | Result |
+|---|---|
+| `agentskills.io` | `308` → `/home` (relative, same host) → `200` |
+| `learn.chatgpt.com` | `200` |
+| `example.org` (control) | `000` |
+
+Neither redirects off its own host, so neither needs a companion entry — the
+trap that made `cdn.playwright.dev` worth checking does not apply here.
+
+### Per-domain justification
+
+- **`agentskills.io` / `*.agentskills.io`** — added by the operator. Note this
+  is a **third-party domain**, unrelated to this account's own skills registry:
+  that one is the GitHub repository `Adam-S-Daniel/agentskills`, reached over
+  `github.com`, and it has no web domain. The name collision is worth stating
+  once so a future reader does not assume this line is what delivers the fleet's
+  skill bundles — it is not, and removing it would not affect skill delivery.
+- **`learn.chatgpt.com`** — reference documentation, the same category as
+  `developers.openai.com` beside it.
+
+The `*.agentskills.io` wildcard covers nothing reachable today: neither
+`www.agentskills.io` nor `docs.agentskills.io` has a DNS record. It is recorded
+as harmless future-proofing, and as the apex+wildcard pairing this file prefers.
+
+`learn.chatgpt.com` is deliberately recorded WITHOUT a wildcard. It is itself a
+subdomain of `chatgpt.com` (which stays blocked, measured `000`, and which
+nothing here needs); a `*.learn.chatgpt.com` line would match nothing.
+
+### `developers.openai.com` was appended a second time
+
+The operator's append list also carried `developers.openai.com`, which this
+file and the environment both already had from the first 2026-09-04 entry. It
+is a **duplicate line in the environment dialog**, not a new domain — no
+behaviour change, and this file is a set so it absorbs it silently. Worth
+tidying in the dialog only to keep a future snapshot diff honest: a list with
+duplicates makes a line-count comparison disagree with a set comparison, and
+every reconciliation in this file is done as a set.
