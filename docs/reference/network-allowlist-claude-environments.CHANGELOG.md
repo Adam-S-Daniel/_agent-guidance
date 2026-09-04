@@ -28,7 +28,7 @@ Also note anything **deliberately excluded** and why. An absent domain and a
 rejected domain look identical in the `.txt`, and only this file can tell them
 apart.
 
-### Two mechanics worth restating, because they shape every entry
+### Three mechanics worth restating, because they shape every entry
 
 - **Wildcards do not cover the apex.** `*.example.com` matches subdomains of
   `example.com`; it does not match `example.com` itself. That is why most
@@ -39,6 +39,13 @@ apart.
   `*.amazonaws.com`, `*.githubusercontent.com`, and more). A line that looks
   missing here may be covered there. Record the checkbox state whenever it
   changes, because the same `.txt` behaves very differently under each setting.
+- **An edit to the environment takes effect in a session already running.**
+  Measured 2026-09-04: three domains went from `000` to reachable in a session
+  half an hour old, with no restart, no new container, no reconnect. So a
+  blocked domain can be fixed without losing the session that hit it — and, the
+  direction that matters for this file, a probe result is evidence only about
+  the moment it was taken. Re-probe rather than cite a measurement from earlier
+  in the same session.
 
 ---
 
@@ -245,7 +252,10 @@ means "Trusted covers `*.amazonaws.com`" is literally true and must not be read
 as "Trusted covers `amazonaws.com`". If a build step ever does reach an apex
 under this checkbox, expect a `000` and add the apex explicitly.
 
-### The three retained lines are still not in force — re-measured
+### The three retained lines: blocked at 14:1x, APPLIED and reachable by 14:4x
+
+They were re-measured blocked earlier in the same session, identical to
+2026-08-28:
 
 ```
 unpkg.com                 000 blocked
@@ -253,10 +263,55 @@ decapcms.org              000 blocked
 playwright.azureedge.net  000 blocked
 ```
 
-Identical to 2026-08-28, a week later: the corrections recorded here were never
-pasted into the environment dialog. Their wildcard siblings still answer
-(`www.decapcms.org` `301`, `cdn.playwright.dev` `400`), which is what makes the
-apex blocks a listing gap rather than a network fault.
+The operator then added them in the environment dialog, and all three now
+answer:
+
+```
+unpkg.com                 200 reached
+decapcms.org              200 reached
+playwright.azureedge.net  307 reached
+```
+
+So the correction recorded on 2026-08-28 is finally in force, and this file is
+no longer a superset of the environment. The two lists agree.
+
+### An allowlist edit takes effect in a session ALREADY RUNNING
+
+This is the reusable finding, and it was not written down anywhere. The probes
+above were run from a session that had been running for half an hour before the
+edit, with no restart, no new container and no reconnect. The proxy picked the
+change up live.
+
+That is worth knowing in both directions. A missing domain can be fixed without
+losing the session you hit it in — no need to re-run an hour of work in a fresh
+container. And a session's reach is **not** fixed at start, so a probe result is
+only evidence about the moment it was taken; an allowlist measurement more than
+a few minutes old should be re-taken rather than cited.
+
+### The wildcard/apex mechanic was re-verified at the same time, independently
+
+`decapcms.org` going green needed ruling out as a change to the header's
+central rule, since that rule's original proof pair was `decapcms.org` /
+`www.decapcms.org` — the very domain being edited. So it was re-tested on
+domains whose wildcard is listed and whose apex has never been, in this file or
+in the environment:
+
+| Probe | Result | |
+|---|---|---|
+| `download.prss.microsoft.com` | `000` blocked | apex, never listed |
+| `test.download.prss.microsoft.com` | `404` reached | a subdomain of it |
+| `frame.claudeusercontent.com` | `000` blocked | apex, never listed |
+| `frame.staging.claudeusercontent.com` | `000` blocked | apex, never listed |
+
+The rule holds: `*.example.com` still does not match `example.com`. So
+`decapcms.org` is reachable because it was added explicitly, not because its
+wildcard started covering it — which also means the three `*.`-only lines above
+are genuine gaps if anything ever fetches those apexes. Nothing does today.
+
+**Controls for this round**, since the question was whether the list had simply
+opened up: `example.org`, `example.net`, `nytimes.com`, `www.wikipedia.org`,
+`stackoverflow.com`, `news.ycombinator.com` and `reddit.com` all returned `000`,
+and the `githubusercontent.com` / `amazonaws.com` apexes stayed blocked.
 
 ### Deliberately NOT applied elsewhere
 
