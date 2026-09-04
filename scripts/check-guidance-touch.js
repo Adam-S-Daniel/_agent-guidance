@@ -317,9 +317,14 @@ function toDatedEntries(rawEntries) {
   return out;
 }
 
-// addedEntries — head's dated entries minus base's, by exact heading text.
-// docs/guidance-impact.md is append-only (never edited in place), so a
-// dated heading present at head and absent at base was added by this diff.
+// addedEntries — head's dated entries minus base's, by a per-heading-text
+// COUNT difference. docs/guidance-impact.md is append-only (never edited in
+// place), so any head occurrence of a heading text beyond how many identical
+// occurrences already existed at base was added by this diff. A plain Set of
+// base headings cannot express this: a second same-day entry with the exact
+// same heading text as one already at base (a legitimate addition — the same
+// section, edited again the same day) has text already "seen", so a Set-based
+// filter drops BOTH occurrences instead of just the one that already existed.
 function addedEntries(repoRoot, baseSha, headSha) {
   const headSrc = gitShow(repoRoot, headSha, "docs/guidance-impact.md");
   if (headSrc === null) {
@@ -329,15 +334,36 @@ function addedEntries(repoRoot, baseSha, headSha) {
 
   const headEntries = toDatedEntries(parseImpactEntries(headSrc));
   const baseEntries = baseSrc === null ? [] : toDatedEntries(parseImpactEntries(baseSrc));
-  const baseHeadings = new Set(baseEntries.map((e) => e.heading));
-  return headEntries.filter((e) => !baseHeadings.has(e.heading));
+
+  const baseCounts = new Map();
+  for (const e of baseEntries) baseCounts.set(e.heading, (baseCounts.get(e.heading) || 0) + 1);
+
+  const consumed = new Map();
+  const added = [];
+  for (const e of headEntries) {
+    const used = consumed.get(e.heading) || 0;
+    consumed.set(e.heading, used + 1);
+    if (used < (baseCounts.get(e.heading) || 0)) continue; // matches an occurrence already at base
+    added.push(e);
+  }
+  return added;
 }
 
 // ── The join: which ids did this diff touch, and how ────────────────────
 
+// headingKey — a heading's identity for lookup purposes is its FILE plus its
+// text, never text alone: two different files can share a heading (e.g.
+// "## Security" in both base.md and sections/python.md), and a map keyed by
+// text alone collapses them, so a lookup for one id's row can silently
+// resolve to the OTHER file's heading object — comparing the wrong file's
+// (possibly unchanged) body and missing a real edit entirely.
+function headingKey(file, heading) {
+  return `${file}|${heading}`;
+}
+
 function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance }) {
-  const headHeadingByText = new Map(headGuidance.headings.map((h) => [h.heading, h]));
-  const baseHeadingByText = new Map(baseGuidance.headings.map((h) => [h.heading, h]));
+  const headHeadingByKey = new Map(headGuidance.headings.map((h) => [headingKey(h.file, h.heading), h]));
+  const baseHeadingByKey = new Map(baseGuidance.headings.map((h) => [headingKey(h.file, h.heading), h]));
 
   const allIds = new Set([...headManifest.keys(), ...baseManifest.keys()]);
   const touched = [];
@@ -350,7 +376,7 @@ function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance
       // A brand-new id. Its heading must actually exist at head to count as
       // a real, checkable creation — a row with no matching heading at all
       // is check-guidance-coverage.js's failure, not this one's.
-      if (headHeadingByText.has(headRow.heading)) {
+      if (headHeadingByKey.has(headingKey(headRow.file, headRow.heading))) {
         touched.push({ id, kind: "create", row: headRow });
       }
       continue;
@@ -366,8 +392,8 @@ function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance
 
     // Present at both: compare the section's BODY text (never the heading
     // line — see sectionBody's own comment) between the two commits.
-    const headHeading = headHeadingByText.get(headRow.heading);
-    const baseHeading = baseHeadingByText.get(baseRow.heading);
+    const headHeading = headHeadingByKey.get(headingKey(headRow.file, headRow.heading));
+    const baseHeading = baseHeadingByKey.get(headingKey(baseRow.file, baseRow.heading));
     if (!headHeading || !baseHeading) continue; // a stale row — #119's job
 
     const headBody = sectionBody(headGuidance.sources, headHeading);

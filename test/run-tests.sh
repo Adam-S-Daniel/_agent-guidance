@@ -13204,9 +13204,11 @@ test_check_guidance_touch() {
 ```
 '
 
-    # touch_repo_init <name> <base.md> <eval-coverage.yml> — a fresh git repo
-    # at $root/<name> with one commit: the given base.md and manifest, plus
-    # the impact stub above with no dated entries yet. Echoes the base sha.
+    # touch_repo_init <name> <base.md> <eval-coverage.yml> [impact-entry] — a
+    # fresh git repo at $root/<name> with one commit: the given base.md and
+    # manifest, plus the impact stub above with the optional entry already in
+    # it (for fixtures that need a PRE-EXISTING dated entry at base) or none
+    # at all. Echoes the base sha.
     touch_repo_init() {
         local dir="$root/$1"
         rm -rf "$dir"
@@ -13214,22 +13216,28 @@ test_check_guidance_touch() {
         git -C "$dir" init -q >/dev/null
         printf '%s' "$2" > "$dir/agents-md/base.md"
         printf '%s' "$3" > "$dir/agents-md/eval-coverage.yml"
-        printf '%s' "$impact_stub" > "$dir/docs/guidance-impact.md"
+        printf '%s%s' "$impact_stub" "${4:-}" > "$dir/docs/guidance-impact.md"
         git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
         git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m base
         git -C "$dir" rev-parse HEAD
     }
 
-    # touch_commit <dir> <label> <base.md> <eval-coverage.yml> [impact-append]
-    # — overwrites base.md and the manifest, optionally appends to
-    # guidance-impact.md (append-only, matching the real file's own rule),
-    # commits, and echoes the new sha.
+    # touch_commit <dir> <label> <base.md> <eval-coverage.yml> [impact-entry]
+    # — overwrites base.md and the manifest, optionally adds a new entry to
+    # guidance-impact.md, commits, and echoes the new sha. The new entry is
+    # inserted right after the fixed boilerplate — ahead of any entry a prior
+    # commit already added — matching the real file's own "newest first"
+    # ordering (see its header) rather than piling entries up at the bottom.
     touch_commit() {
         local dir="$1" label="$2"
         printf '%s' "$3" > "$dir/agents-md/base.md"
         printf '%s' "$4" > "$dir/agents-md/eval-coverage.yml"
         if [[ -n "${5:-}" ]]; then
-            printf '%s' "$5" >> "$dir/docs/guidance-impact.md"
+            local current rest
+            current=$(cat "$dir/docs/guidance-impact.md"; printf x)
+            current="${current%x}"
+            rest="${current#"$impact_stub"}"
+            printf '%s%s%s' "$impact_stub" "$5" "$rest" > "$dir/docs/guidance-impact.md"
         fi
         git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
         git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m "$label"
@@ -13616,6 +13624,104 @@ untouched body
     write_event "0000000000000000000000000000000000000000" "$pr_sha_with_entry" "$event12"
     assert_touch "$event12" "$dir11" 2 'git merge-base' \
         "guidance touch: an unresolvable base sha fails merge-base with a named exit-2 error"
+
+    # 13. S1: base already has "## 2026-09-04 — heading-one — edit". The PR
+    #     edits heading-one AGAIN and adds a second, legitimately new entry
+    #     with the EXACT SAME heading text. A Set of base headings would drop
+    #     BOTH occurrences (the text is already "seen"), reporting no new
+    #     entry at all; comparing per-heading COUNTS (head has 2, base has 1)
+    #     finds the one genuinely added.
+    local dup_first_entry='
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exempt (skipped row)
+'
+    local dir13="$root/dup_heading" base13 head13 event13
+    base13=$(touch_repo_init dup_heading "$base_body" "$base_manifest" "$dup_first_entry")
+    head13=$(touch_commit "$dir13" edit-again '## Heading One
+CHANGED body again
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+')
+    event13="$TEST_DIR/touch-event-13.json"
+    write_event "$base13" "$head13" "$event13"
+    assert_touch "$event13" "$dir13" 0 'all have a sufficient' \
+        "guidance touch: a second same-day entry with the same heading text as one already at base still counts as added"
+
+    # 14. S4b (the mirror of #13): base already has the SAME entry, but the
+    #     PR does NOT add a new one — it only edits the section again. A
+    #     buggy addedEntries that returned every head entry regardless of
+    #     base (rather than a true set/count difference) would let this
+    #     stale, already-existing entry stand in for a new one and pass.
+    local dir14="$root/stale_entry_reused" base14 head14 event14
+    base14=$(touch_repo_init stale_entry_reused "$base_body" "$base_manifest" "$dup_first_entry")
+    head14=$(touch_commit "$dir14" edit-no-new-entry '## Heading One
+CHANGED body, no new entry
+
+## Heading Two
+untouched body
+' "$base_manifest")
+    event14="$TEST_DIR/touch-event-14.json"
+    write_event "$base14" "$head14" "$event14"
+    assert_touch "$event14" "$dir14" 1 'section "heading-one" changed but has no new entry' \
+        "guidance touch: a pre-existing base entry is not reused as if it were new"
+
+    # 15. S2: two sections sharing the exact same heading TEXT across two
+    #     different files (base.md's "## Security" and
+    #     sections/python.md's "## Security") must not collide. Only
+    #     base.md's Security section is edited; sections/python.md's is
+    #     untouched and no entry is added. Keying the heading maps by text
+    #     alone would resolve BOTH ids to whichever file's heading object was
+    #     inserted into the map last, comparing the WRONG file's (unchanged)
+    #     body and missing the real edit entirely (a false green).
+    local dir15="$root/same_heading_diff_file"
+    rm -rf "$dir15"
+    mkdir -p "$dir15/agents-md/sections" "$dir15/docs"
+    git -C "$dir15" init -q >/dev/null
+    local security_manifest='- id: security-base
+  heading: Security
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: security-python
+  heading: Security
+  file: agents-md/sections/python.md
+  status: gap
+  bytes: 1
+'
+    printf '%s' '## Security
+original security base body
+' > "$dir15/agents-md/base.md"
+    printf '%s' '## Security
+original security python body
+' > "$dir15/agents-md/sections/python.md"
+    printf '%s' "$security_manifest" > "$dir15/agents-md/eval-coverage.yml"
+    printf '%s' "$impact_stub" > "$dir15/docs/guidance-impact.md"
+    git -C "$dir15" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir15" -c user.name=test -c user.email=test@localhost commit -q -m base
+    local base15
+    base15=$(git -C "$dir15" rev-parse HEAD)
+
+    printf '%s' '## Security
+CHANGED security base body
+' > "$dir15/agents-md/base.md"
+    git -C "$dir15" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir15" -c user.name=test -c user.email=test@localhost commit -q -m edit-base-security
+    local head15
+    head15=$(git -C "$dir15" rev-parse HEAD)
+
+    local event15="$TEST_DIR/touch-event-15.json"
+    write_event "$base15" "$head15" "$event15"
+    assert_touch "$event15" "$dir15" 1 'section "security-base" changed but has no new entry' \
+        "guidance touch: two ids sharing one heading text across two files are kept apart by file"
 
     unset -f touch_repo_init
     unset -f touch_commit
