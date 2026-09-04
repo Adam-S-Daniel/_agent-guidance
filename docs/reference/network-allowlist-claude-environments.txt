@@ -1,5 +1,7 @@
 *.adamdaniel.ai
 adamdaniel.ai
+*.agents.md
+agents.md
 cdn.playwright.dev
 *.claude.ai
 claude.ai
@@ -7,6 +9,8 @@ claude.ai
 claude.com
 *.decapcms.org
 decapcms.org
+*.developers.openai.com
+developers.openai.com
 *.docs.microsoft.com
 docs.microsoft.com
 *.download.prss.microsoft.com

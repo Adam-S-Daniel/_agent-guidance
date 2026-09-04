@@ -137,3 +137,68 @@ they are needed only where CI runs, and belong in
 If the package-manager checkbox is ever **unchecked**, both of the above stop
 being redundant and must be added here explicitly. That is the single change
 that would invalidate this entry.
+
+---
+
+## 2026-09-04 — union with the live environment; two additions, three absences noted
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change:** two domain pairs ADDED, from a snapshot of the live environment
+dialog pasted by the operator on this date. Nothing removed, nothing rewritten.
+
+```
++ *.agents.md
++ agents.md
++ *.developers.openai.com
++ developers.openai.com
+```
+
+### Per-domain justification
+
+Both pairs are **reference material an agent reads**, the same category as the
+`docs.microsoft.com` / `learn.microsoft.com` / `decapcms.org` pairs already
+here. Neither is covered by Trusted, and neither is reached by any build step —
+so neither belongs in the runner list.
+
+- **`agents.md` / `*.agents.md`** — the `AGENTS.md` convention's own site. Every
+  repo in this fleet carries an `AGENTS.md` generated from `agents-md/base.md`
+  in this repo, so a session working on that machinery has direct reason to read
+  the upstream spec.
+- **`developers.openai.com` / `*.developers.openai.com`** — OpenAI's developer
+  documentation, read as reference when reasoning about another provider's API.
+  Added by the operator; no build step in this fleet calls it.
+
+Both are recorded in apex + wildcard form, which is the correct shape per this
+file's header — the apex line is what actually gets fetched, and the wildcard
+does not cover it.
+
+### Three domains in this file are NOT in the live environment
+
+The snapshot was diffed against this file in both directions. Three lines are
+here and absent from `My Whitelist`:
+
+```
+decapcms.org
+playwright.azureedge.net
+unpkg.com
+```
+
+Those are **exactly** the three additions of the 2026-08-28 entry above. Each
+was established by probe, not inference, and each has a justification recorded
+there that still holds — `unpkg.com` in particular is what the `/admin` shells
+load the Decap bundle from, whose absence is the "Decap never mounts, only the
+PENDING banner" failure already written up in `adamdaniel.ai/AGENTS.md`.
+
+So this is not drift in the file; it is the file recording a correction that
+was never applied to the environment dialog. **They are deliberately retained
+here.** Applying them is a one-time paste into the environment at
+[claude.ai/code](https://claude.ai/code) and is the operator's call; until then
+this file is a superset of what is in force, and the next snapshot diff should
+show these three again rather than treating them as strays to delete.
+
+### Deliberately NOT applied elsewhere
+
+Neither new pair was added to `network-allowlist-github-runners.txt`. That
+file's own changelog already rejects the whole reference-documentation category
+("Nothing in CI reads documentation"), and these two sit squarely in it.

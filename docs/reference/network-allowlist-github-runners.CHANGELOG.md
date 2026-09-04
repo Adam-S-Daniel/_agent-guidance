@@ -101,3 +101,52 @@ observed-traffic audit.
   any build step fetches — the Decap bundle comes from `unpkg.com` (above). It
   belongs in the Claude environment list, where it now appears in apex +
   wildcard form, and correctly does not belong here. CI reads no documentation.
+
+---
+
+## 2026-09-04 — diffed against a live `My Whitelist` snapshot; exclusions re-affirmed, no change
+
+**Enforcement surface:** none (proposed) — unchanged.
+**Change to the `.txt`:** **none.** This entry exists because the diff was done
+deliberately, and an absent domain and a rejected domain look identical in the
+`.txt`.
+
+The operator pasted the live domain list from the `My Whitelist` Claude
+environment on this date and asked for both allowlists to be reconciled against
+it. `network-allowlist-claude-environments.txt` took two new pairs from it
+(`agents.md`, `developers.openai.com` — see its sidecar). This file took
+nothing, and that is the decision, not an oversight.
+
+Twenty-one of the snapshot's twenty-eight lines are absent here. Every one of
+them falls under a category the 2026-08-28 entry above already rejected:
+
+| Snapshot lines absent here | Category | Already rejected as |
+|---|---|---|
+| `*.claude.ai`, `claude.ai`, `*.claude.com`, `claude.com`, `*.frame.claudeusercontent.com`, `*.frame.staging.claudeusercontent.com` | session infrastructure for an interactive agent | "Nothing in CI … talks to Claude." |
+| `*.docs.microsoft.com`, `docs.microsoft.com`, `*.learn.microsoft.com`, `learn.microsoft.com`, `*.decapcms.org`, `*.agents.md`, `agents.md`, `*.developers.openai.com`, `developers.openai.com` | reference documentation an agent reads | "CI reads no documentation." |
+| `*.githubassets.com`, `githubassets.com` | static assets for the github.com **web UI** | "A runner never loads them." |
+| `*.githubstatus.com`, `githubstatus.com` | status page an agent reads when triaging | same reference category |
+
+The two new pairs (`agents.md`, `developers.openai.com`) are new instances of
+the documentation category, not a new case — so the existing exclusion covers
+them without needing to be widened.
+
+### The three lines here that are absent from the snapshot are also correct
+
+`*.amazonaws.com`, `*.githubusercontent.com` and the package-manager block
+(`registry.npmjs.org`, the three `rubygems.org` hosts, the three Ubuntu archive
+hosts, `ppa.launchpad.net`) are absent from `My Whitelist` because that
+environment has **"Also include default list of common package managers"**
+checked, which supplies them invisibly. They are not optional here: this list
+has no such checkbox behind it, so a runner allowlist that omitted them would
+fail `npm ci`, `bundle install` and `apt-get` on the first job.
+
+That asymmetry is the reason a plain union of the two files would be wrong in
+both directions, and it is why neither file is derivable from the other.
+
+### Standing caveat, restated
+
+Per the 2026-08-28 entry: if the package-manager checkbox on `My Whitelist` is
+ever **unchecked**, `*.githubusercontent.com` and `*.amazonaws.com` stop being
+redundant *there* and must be added to the Claude list explicitly. Nothing about
+this file changes in that case.
