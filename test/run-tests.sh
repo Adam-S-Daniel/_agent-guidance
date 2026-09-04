@@ -13537,6 +13537,86 @@ untouched body
         fail "guidance touch: no \$GITHUB_EVENT_PATH is refused, not a silent pass — got exit $no_event_rc: $(echo "$no_event_out" | tr '\n' ' ')"
     fi
 
+    # 11. THE BLOCKER (B1): a two-dot diff straight against base.sha reads
+    #     whatever main has advanced to by event time, not the PR's fork
+    #     point. main advances past the fork point with its OWN edit to
+    #     heading-two and its OWN entry; the PR branch, forked BEFORE that,
+    #     edits heading-one instead, with its own entry. Diffing base.sha
+    #     (main's tip) straight against head.sha makes heading-two look
+    #     touched by this PR too — it was not, and the PR's entry does not
+    #     cover it. Fixed by diffing from `git merge-base base.sha head.sha`.
+    local dir11="$root/divergent"
+    rm -rf "$dir11"
+    mkdir -p "$dir11/agents-md/sections" "$dir11/docs"
+    git -C "$dir11" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir11/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir11/agents-md/eval-coverage.yml"
+    printf '%s' "$impact_stub" > "$dir11/docs/guidance-impact.md"
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m fork-point
+    git -C "$dir11" branch -q pr-branch
+
+    # main advances: edits heading-two, with its own entry.
+    printf '%s' '## Heading One
+original body
+
+## Heading Two
+CHANGED body by main
+' > "$dir11/agents-md/base.md"
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m main-edit
+    printf '\n---\n\n## 2026-09-04 — heading-two — edit\n- Eval: exempt (skipped row)\n' \
+        >> "$dir11/docs/guidance-impact.md"
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m main-entry
+    local main_sha
+    main_sha=$(git -C "$dir11" rev-parse HEAD)
+
+    # the PR branch, forked BEFORE main's edit: edits heading-one instead.
+    # Heading Two stays at exactly $base_body's original text — untouched by
+    # this branch — so the only correct diff base is the fork point, not
+    # main's tip where heading-two already reads differently.
+    git -C "$dir11" checkout -q pr-branch
+    printf '%s' '## Heading One
+CHANGED body by pr
+
+## Heading Two
+untouched body
+' > "$dir11/agents-md/base.md"
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m pr-edit
+    local pr_sha_no_entry
+    pr_sha_no_entry=$(git -C "$dir11" rev-parse HEAD)
+    printf '\n---\n\n## 2026-09-04 — heading-one — edit\n- Eval: exempt (skipped row)\n' \
+        >> "$dir11/docs/guidance-impact.md"
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m pr-entry
+    local pr_sha_with_entry
+    pr_sha_with_entry=$(git -C "$dir11" rev-parse HEAD)
+
+    local event11="$TEST_DIR/touch-event-11.json"
+    write_event "$main_sha" "$pr_sha_with_entry" "$event11"
+    assert_touch "$event11" "$dir11" 0 'all have a sufficient' \
+        "guidance touch: base.sha diffed from the merge-base, not main's advanced tip — a sibling edit on main needs no entry from this PR"
+
+    local event11b="$TEST_DIR/touch-event-11b.json"
+    write_event "$main_sha" "$pr_sha_no_entry" "$event11b"
+    local out11b rc11b=0
+    out11b=$(GITHUB_EVENT_PATH="$event11b" node "$script" --repo-root "$dir11" 2>&1) || rc11b=$?
+    if [[ "$rc11b" == 1 ]] && grep -qF -- 'section "heading-one" changed but has no new entry' <<<"$out11b" \
+            && ! grep -qF -- 'heading-two' <<<"$out11b"; then
+        pass "guidance touch: the same divergent history without the PR's own entry fails naming only heading-one, not main's heading-two"
+    else
+        fail "guidance touch: expected exit 1 naming only heading-one, not heading-two — got exit $rc11b: $(echo "$out11b" | tr '\n' ' ')"
+    fi
+
+    # 12. A merge-base that cannot be resolved (an unfetched sha) is a named
+    #     exit-2 error, not a raw spawn failure.
+    local event12="$TEST_DIR/touch-event-12.json"
+    write_event "0000000000000000000000000000000000000000" "$pr_sha_with_entry" "$event12"
+    assert_touch "$event12" "$dir11" 2 'git merge-base' \
+        "guidance touch: an unresolvable base sha fails merge-base with a named exit-2 error"
+
     unset -f touch_repo_init
     unset -f touch_commit
     unset -f write_event

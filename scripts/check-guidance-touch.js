@@ -30,6 +30,18 @@
  * (pull_request.base.sha / pull_request.head.sha), read inside this script —
  * never `${{ github.event.pull_request.* }}` interpolated into a workflow
  * `run:` block, which echoes the rendered value into the log.
+ *
+ * base.sha ITSELF IS NOT WHAT THIS DIFFS FROM. GitHub sets it to the base
+ * branch's TIP at event time, not the commit the PR actually forked from —
+ * once the base branch advances with its own guidance edit, a two-dot diff
+ * against base.sha makes that sibling edit look like part of THIS PR, and
+ * this PR gets told to write an entry for a change its author never made.
+ * The fix is `git merge-base base.sha head.sha` (needs the checkout's
+ * `fetch-depth: 0` in ci.yml — see that step's own comment) and everything
+ * below diffs from THAT commit, never from base.sha directly. A merge-base
+ * that cannot be resolved (a sha ci.yml's checkout never fetched) is a named
+ * exit-2 error, not a raw `git` spawn failure.
+ *
  * agents-md/base.md, agents-md/sections/*.md AND agents-md/eval-coverage.yml
  * are all read at both shas via `git show <sha>:<path>` (not the checked-out
  * working tree) — the working tree holds only one commit at a time, and a
@@ -43,14 +55,30 @@
  * inside the fenced code block under "## Entry format" is a `fence` token,
  * not a list item, so it is never mistaken for a real entry).
  *
+ * WHICH ENTRY TYPES SATISFY WHICH TOUCH. A `create` touch needs a `create`
+ * entry; an `edit` touch needs an `edit` OR a `rename` entry (a heading
+ * reworded alongside a body change is still an edit of the section); a
+ * `remove` touch needs a `remove` entry. A `rejected` entry never satisfies
+ * any of the three — it records a proposal that did NOT land this way, so it
+ * must not stand in for the entry the actually-landed change requires.
+ *
+ * THE ISSUE'S "unparseable impact file" CASE (exit 2) is implemented here as
+ * "docs/guidance-impact.md missing at head" (exit 2): markdown-it has no
+ * unparseable state — it renders any byte stream to SOME token stream — so
+ * there is no parse failure to distinguish from a missing file.
+ *
  * Exit codes:
  *   0 — every touched id has a sufficient new entry (including: nothing was
  *       touched at all).
  *   1 — a touched id has no new entry, an insufficient one (an Eval: none
- *       line while its manifest row is not `gap`), or a removed id's entry
- *       is not typed `remove`. Errors name the id and the entry format.
+ *       line while its manifest row is not `gap`, or an `exempt (skipped
+ *       row)` line while it is not `skipped`), one typed to a kind that does
+ *       not satisfy the touch (a `rejected` entry against an edit), or a
+ *       removed id's entry is not typed `remove`. Errors name the id and the
+ *       entry format.
  *   2 — could not run at all: no $GITHUB_EVENT_PATH, an unreadable or
- *       unparseable event file, or docs/guidance-impact.md missing at head.
+ *       unparseable event file, an unresolvable merge-base, a malformed
+ *       --repo-root, or docs/guidance-impact.md missing at head.
  *
  * Usage:
  *   GITHUB_EVENT_PATH=/path/to/event.json node scripts/check-guidance-touch.js
@@ -66,10 +94,6 @@ const { extractHeadings } = require("./lib/markdown-sections");
 const md = new MarkdownIt();
 
 const ENTRY_TYPES = ["create", "edit", "rename", "remove", "rejected"];
-
-function flag(name) {
-  return process.argv.includes(`--${name}`);
-}
 
 function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
@@ -117,6 +141,26 @@ function readEvent() {
     );
   }
   return { baseSha, headSha };
+}
+
+// gitMergeBase — the commit `base.sha` and `head.sha` actually forked from,
+// per B1's header note above. Never a plain string return on failure: an
+// unresolvable sha (one ci.yml's `fetch-depth: 0` checkout never fetched) is
+// a RunError naming the git command, not a raw ENOENT/"fatal:" spawn crash.
+function gitMergeBase(repoRoot, baseSha, headSha) {
+  try {
+    return execFileSync("git", ["merge-base", baseSha, headSha], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (e) {
+    const stderr = (e.stderr || "").toString().trim();
+    throw new RunError(
+      `git merge-base ${baseSha} ${headSha} failed: ${stderr || e.message} — the checkout may be missing one ` +
+        `of these commits (needs fetch-depth: 0)`,
+    );
+  }
 }
 
 // ── git show, at a given ref ────────────────────────────────────────────
@@ -387,14 +431,18 @@ function checkEntries(touched, addedByHead) {
 
 function main() {
   const repoRoot = path.resolve(arg("repo-root", path.join(__dirname, "..")));
+  if (!fs.existsSync(repoRoot) || !fs.statSync(repoRoot).isDirectory()) {
+    throw new RunError(`--repo-root ${repoRoot} does not exist or is not a directory`);
+  }
 
   const { baseSha, headSha } = readEvent();
+  const mergeBaseSha = gitMergeBase(repoRoot, baseSha, headSha);
 
   const headManifest = loadManifestAt(repoRoot, headSha, { required: true });
-  const baseManifest = loadManifestAt(repoRoot, baseSha, { required: false });
+  const baseManifest = loadManifestAt(repoRoot, mergeBaseSha, { required: false });
 
   const headGuidance = collectHeadingsAt(repoRoot, headSha);
-  const baseGuidance = collectHeadingsAt(repoRoot, baseSha);
+  const baseGuidance = collectHeadingsAt(repoRoot, mergeBaseSha);
 
   const touched = computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance });
 
@@ -407,7 +455,7 @@ function main() {
   // entry — a diff that touches zero sections is not required to have a
   // valid impact file (though in practice it always will, since the file is
   // committed).
-  const added = addedEntries(repoRoot, baseSha, headSha);
+  const added = addedEntries(repoRoot, mergeBaseSha, headSha);
   const errors = checkEntries(touched, added);
 
   if (errors.length > 0) {

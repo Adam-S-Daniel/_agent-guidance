@@ -55,14 +55,18 @@ jobs:
       # fetch-depth: 0 (full history), not a targeted fetch of just the PR's
       # base sha: scripts/check-guidance-touch.js (the "Guidance touch gate"
       # step below) resolves BOTH the PR's base and head commits with
-      # `git show <sha>:<path>`, and a shallow (depth 1) checkout of a
-      # `pull_request` event's synthetic merge ref does not guarantee either
-      # parent is fetched as an independent commit object — only enough
-      # tree/blob data to represent the merge's own diff. A full fetch
-      # removes that doubt outright, and this repo carries no binary assets
-      # and a modest history, so the extra fetch cost is negligible next to a
-      # targeted fetch's added complexity (reading the base sha out of
-      # $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
+      # `git show <sha>:<path>`, and ALSO runs `git merge-base` between them
+      # (base.sha is the base branch's tip at event time, not the PR's fork
+      # point, so the touch gate diffs from the merge-base instead — see that
+      # script's own header). A shallow (depth 1) checkout of a `pull_request`
+      # event's synthetic merge ref fetches only that merge commit's own
+      # objects; at depth 1 its parents are grafted — absent from the object
+      # database entirely, not merely thin — so neither `git show` nor `git
+      # merge-base` could resolve base.sha or head.sha as real commits. A full
+      # fetch removes that doubt outright, and this repo carries no binary
+      # assets and a modest history, so the extra fetch cost is negligible
+      # next to a targeted fetch's added complexity (reading the base sha out
+      # of $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
       # saving.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
