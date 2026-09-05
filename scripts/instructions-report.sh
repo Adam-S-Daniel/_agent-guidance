@@ -36,11 +36,18 @@ CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SHOW_ALL=false
 FORMAT=text
 
+# `shift 2` with one argument left FAILS and shifts NOTHING, so a value-taking
+# flag given last spins this loop forever -- a report that hangs a terminal
+# instead of printing a usage error. Every such flag checks for its value.
+need_value() {
+    [[ $# -ge 2 ]] || { echo "instructions-report: $1 needs a value" >&2; exit 1; }
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --config-dir) CONFIG_DIR="${2:-}"; shift 2 ;;
+        --config-dir) need_value "$@"; CONFIG_DIR="$2"; shift 2 ;;
         --all)        SHOW_ALL=true; shift ;;
-        --format)     FORMAT="${2:-}"; shift 2 ;;
+        --format)     need_value "$@"; FORMAT="$2"; shift 2 ;;
         -h|--help)    sed -n '4,32p' "$0"; exit 0 ;;
         *) echo "instructions-report: unknown argument '$1'" >&2; exit 1 ;;
     esac

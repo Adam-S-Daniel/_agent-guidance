@@ -17793,6 +17793,38 @@ for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
         fail "instructions-loaded: the log is not one JSON object per line — $(cat "$d/logparse.err")"
     fi
 
+    # ── Three shapes found by reading the diff, not by a failing test ─────
+
+    # (1) A MISMATCH MUST NOT BE OVERWRITTEN BY A HEALTHY VERDICT within one
+    #     session. A multi-repo session loads many AGENTS.md files; if the
+    #     last one to load simply won, a repo reading BEHIND would be erased
+    #     by the next repo reading current, and the receipt would report the
+    #     machine as clean. The mismatch is the whole point of the file.
+    rm -f "$receipt"
+    printf '# Fleet guidance\n\nA DIFFERENT canary: SLATE-PLOVER-03.\n' > "$repo/.claude/hooks/fleet-guidance.md"
+    instr_run "$d/out_mix1" "$(instr_event Project session_start "$repo/AGENTS.md" cafe0001)"
+    assert_contains "$receipt" "agents=BEHIND" "instructions-loaded: the mismatch is recorded first"
+    cp "$payload" "$repo/.claude/hooks/fleet-guidance.md"
+    instr_run "$d/out_mix2" "$(instr_event Project session_start "$repo/AGENTS.md" cafe0001)"
+    assert_contains "$receipt" "agents=BEHIND" \
+        "instructions-loaded: a later healthy load does not erase this session's mismatch"
+
+    # A NEW session starts clean, or a machine would carry one bad load
+    # forever and the line would stop meaning anything.
+    instr_run "$d/out_mix3" "$(instr_event Project session_start "$repo/AGENTS.md" cafe0002)"
+    assert_contains "$receipt" "agents=current" \
+        "instructions-loaded: a new session's healthy verdict does replace it"
+
+    # (2) NO HOME AND NO CLAUDE_CONFIG_DIR. `${CLAUDE_CONFIG_DIR:-$HOME/...}`
+    #     under `set -u` is a non-zero exit on a hook whose entire contract is
+    #     that it always exits 0.
+    if env -u HOME -u CLAUDE_CONFIG_DIR bash "$INSTR_HOOK" < /dev/null > "$d/out_nohome" 2>&1
+    then INSTR_RC=0; else INSTR_RC=$?; fi
+    [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: no HOME and no config dir still exits 0" \
+        || fail "instructions-loaded: no HOME and no config dir exited $INSTR_RC"
+    assert_not_contains "$d/out_nohome" "unbound variable" \
+        "instructions-loaded: an unset HOME is not a shell error in the session's face"
+
     # Observe-only: no decision field, ever. A hook that learned to block
     # would be a hook that can stop a session from starting.
     assert_not_contains "$INSTR_HOOK" '"decision"' \
@@ -17902,7 +17934,21 @@ assert doc["unparseable"] == 1, doc["unparseable"]
     else
         fail "instructions-report: json report — $(tail -1 "$d/json.err")"
     fi
+    # A flag whose value is missing must not loop forever. `shift 2` with one
+    # argument left FAILS and shifts NOTHING, so the `while [[ $# -gt 0 ]]`
+    # around it spins — a report that hangs a terminal instead of printing a
+    # usage error.
+    if timeout 20 "$script" --config-dir > "$d/out_noval" 2>&1; then
+        REPORT_RC=0
+    else
+        REPORT_RC=$?
+    fi
+    [[ $REPORT_RC -eq 1 ]] && pass "instructions-report: a flag with no value is a usage error, not a spin" \
+        || fail "instructions-report: --config-dir with no value exited $REPORT_RC (124 means it hung)"
+    assert_contains "$d/out_noval" "needs a value" \
+        "instructions-report: the usage error names what is missing"
 }
+
 
 # ── The registrar's event seam ────────────────────────────────────────────
 #

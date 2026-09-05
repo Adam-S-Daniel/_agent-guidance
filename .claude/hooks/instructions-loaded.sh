@@ -74,7 +74,11 @@
 # broke". Nothing is ever written outside $CLAUDE_CONFIG_DIR.
 set -uo pipefail
 
-STATE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# `${HOME:-}` and not `$HOME`: under `set -u` an unset HOME is a non-zero exit
+# from a hook whose whole contract is that it never has one. With neither set
+# this resolves to "/.claude", which is not a directory, and the guard below
+# turns that into a silent exit 0.
+STATE_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
 LOG="$STATE_DIR/instructions-log.jsonl"
 RECEIPT="$STATE_DIR/instructions-receipt.state"
 STATE="$STATE_DIR/fleet-guidance.state"
@@ -324,6 +328,11 @@ def agents_verdict(data, state, path):
         repo_version, want_version)
 
 
+def healthy(value):
+    """A verdict that reports nothing wrong."""
+    return value.startswith("loaded") or value.startswith("current")
+
+
 def write_receipt(updates):
     """The channel that actually carries.
 
@@ -342,6 +351,19 @@ def write_receipt(updates):
                     existing[key.strip()] = value.rstrip("\n")
     except Exception:
         existing = {}
+    # A MISMATCH IS NEVER OVERWRITTEN BY A HEALTHY VERDICT WITHIN ONE SESSION.
+    # A multi-repo session loads many AGENTS.md files; if the last one simply
+    # won, a repo reading BEHIND would be erased by the next repo reading
+    # current and the receipt would report the machine clean. A NEW session
+    # replaces freely -- otherwise one bad load would follow a machine forever
+    # and the line would stop meaning anything.
+    same_session = existing.get("session", "") == updates.get("session", "")
+    for key in ("fleet", "agents"):
+        if key not in updates:
+            continue
+        previous = existing.get(key, "")
+        if same_session and previous and not healthy(previous) and healthy(updates[key]):
+            del updates[key]
     existing.update(updates)
     order = ["ts", "session", "fleet", "agents"]
     keys = [k for k in order if k in existing] + sorted(k for k in existing if k not in order)
