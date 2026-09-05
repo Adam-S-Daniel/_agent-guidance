@@ -14516,8 +14516,20 @@ untouched body
 
     local event41="$TEST_DIR/touch-event-41.json"
     write_event "$base41" "$head41" "$event41"
-    assert_touch "$event41" "$dir41" 1 'fewer dated entr' \
-        "guidance touch: S3 a PR that touches no guidance section cannot silently wipe the entry history"
+    local out41 rc41=0
+    out41=$(GITHUB_EVENT_PATH="$event41" node "$script" --repo-root "$dir41" 2>&1) || rc41=$?
+    # N2: the message must not claim the gate enforces ORDER. It stopped
+    # doing so at S4 (multiset membership, so a merge may legitimately
+    # re-sort the file), and a message still saying entries are "never
+    # removed or reordered" sends the reader looking for a re-ordering rule
+    # that no longer exists — and, worse, invites someone to add one back.
+    if [[ "$rc41" == 1 ]] && grep -qF -- 'fewer dated entr' <<<"$out41" \
+            && grep -qF -- 'never removed or changed in place' <<<"$out41" \
+            && ! grep -qF -- 'reordered' <<<"$out41"; then
+        pass "guidance touch: S3 a PR that touches no guidance section cannot silently wipe the entry history"
+    else
+        fail "guidance touch: S3/N2 expected exit 1 naming 'fewer dated entr' and 'never removed or changed in place', never 'reordered' — got exit $rc41: $(echo "$out41" | tr '\n' ' ')"
+    fi
 
     # 42. S4: appendOnlyViolation used to require every base entry to survive
     #     as an exact trailing SUFFIX of head's entries — a purely positional
@@ -15145,6 +15157,53 @@ untouched body
     write_event "$base48b" "$head48b" "$event48b"
     assert_touch "$event48b" "$dir48b" 0 'nothing to require' \
         "guidance touch: S1 adding a --- separator between two entries changes neither entry's identity"
+
+    # 49. S2/N7: the file's own header block, read as prose. Three claims in
+    #     it had drifted from the code it describes — it named a
+    #     `checkAppendOnly` that does not exist (the function is
+    #     `appendOnlyViolation`), described the "trailing suffix" comparison
+    #     S4 replaced with multiset membership, and said the check catches a
+    #     reworded `Eval:` line where S3 widened it to the entry's full body.
+    #     A header that describes a different program than the one below it
+    #     is worse than no header: it is read and believed. Pinned the same
+    #     way the other self-consistency tests in this suite pin a claim —
+    #     `grep -F` for the tokens, and the wrap-proof prose assertions for
+    #     the sentences.
+    local touch_header="$TEST_DIR/touch-header-block.txt"
+    sed -n '2,/^ \*\//p' "$script" | sed -e 's|^ \* \{0,1\}||' -e 's|^ \*/$||' > "$touch_header"
+    if [[ -s "$touch_header" ]] && grep -qF -- "APPEND-ONLY IS ENFORCED TWO WAYS" "$touch_header"; then
+        pass "guidance touch: S2 the header block is extractable, so the assertions below are not vacuous"
+    else
+        fail "guidance touch: S2 could not extract the header block from $script — every assertion below would be vacuous"
+    fi
+    assert_contains "$touch_header" "appendOnlyViolation" \
+        "guidance touch: S2 the header names appendOnlyViolation, the function that actually exists"
+    assert_not_contains "$touch_header" "checkAppendOnly" \
+        "guidance touch: S2 the header no longer names a checkAppendOnly that was never in this file"
+    assert_not_contains "$touch_header" "trailing suffix" \
+        "guidance touch: S2 the header no longer describes the trailing-suffix compare S4 replaced"
+    assert_prose_contains "$touch_header" "not just its Eval: line" \
+        "guidance touch: S2 the header says the append-only compare covers the entry's full body, as S3 made it"
+    assert_prose_contains "$touch_header" "by multiset membership rather than at any fixed position" \
+        "guidance touch: S2 the header says the compare is positionless, as S4 made it"
+
+    # N7/N2: the two things this gate deliberately does NOT check. Both are
+    # live questions a reader arrives with — "why did my out-of-order entry
+    # pass?" and "why did this obviously bogus date pass?" — and the answer
+    # to each is a decision, not an oversight, so the header has to say so.
+    assert_contains "$touch_header" "WHAT THIS GATE DOES NOT CHECK" \
+        "guidance touch: N7 the header carries an explicit list of what the gate does not check"
+    assert_prose_contains "$touch_header" "Ordering is a convention here, not a gate" \
+        "guidance touch: N2 the header records that entry order is unenforced by design"
+    assert_prose_contains "$touch_header" "A GARBAGE DATE ON AN ENTRY NO TOUCH NEEDED" \
+        "guidance touch: N7 the header records the garbage-dated entry with no touch as a known, accepted gap"
+
+    # N2: and the doc the header defers to has to agree. "newest first" reads
+    # as a rule the gate enforces unless the doc says otherwise — it is a
+    # reader's convention, and S4 deliberately stopped checking position.
+    assert_prose_contains "$REPO_ROOT/docs/guidance-impact.md" \
+        "a convention for readers, not a rule the gate checks" \
+        "guidance touch: N2 docs/guidance-impact.md says newest-first is a convention, not something the gate checks"
 
     unset -f touch_repo_init
     unset -f touch_commit

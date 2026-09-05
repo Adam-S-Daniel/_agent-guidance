@@ -101,24 +101,44 @@
  * 2 — the check DID run and DID find something to require.
  *
  * S1 — APPEND-ONLY IS ENFORCED TWO WAYS, independently, because each catches
- * a different failure the other cannot: (1) checkAppendOnly asserts
- * STRUCTURALLY that every dated entry already present at the merge-base
- * still appears, byte-for-byte, as a trailing suffix of head's dated
- * entries (the file's own convention prepends new entries ahead of old
- * ones) — this is what actually catches someone rewording an OLD entry's
- * Eval: line in place instead of appending a new one, regardless of what
- * date they leave on it; a pure date check could never catch this on its
- * own, since a reworded entry can carry any date, including a perfectly
- * plausible recent one. (2) dateIssue separately rejects a NEW entry whose
- * own date is not real (`2026-13-45`), predates docs/guidance-impact.md's
- * own documented inception (`2026-09-04`; a bare cutoff, not a comparison
- * against the merge-base commit's real timestamp — the latter would flag
- * this repo's own long-standing test fixtures, which fix their entry dates
- * rather than the wall clock the suite runs under), or is in the future
- * relative to the head commit's own date (`2099-01-01`). Both are needed:
- * (1) alone would wave through a garbage date on an honestly-appended new
- * entry, and (2) alone would wave through an in-place rewording that keeps
- * a plausible date.
+ * a different failure the other cannot: (1) appendOnlyViolation asserts
+ * STRUCTURALLY that every dated entry already present at the merge-base is
+ * still there at head, byte-for-byte and in FULL — the heading plus the
+ * whole Motivation/Change/Eval/Outcome body (S3), not just its Eval: line —
+ * somewhere among head's dated entries, by multiset membership rather than
+ * at any fixed position (S4: a legitimate merge re-sorts this file, and the
+ * round-2 version, which demanded the base entries survive as an exact
+ * trailing block at the end, rejected that while happily accepting the same
+ * entries in an order nothing documents). That is what actually catches
+ * someone rewording an OLD entry in place instead of appending a new one —
+ * anywhere in that entry, and regardless of what date they leave on it; a
+ * pure date check could never catch it, since a reworded entry can carry
+ * any date, including a perfectly plausible recent one. (2) dateIssue
+ * separately rejects a NEW entry whose own date is not real
+ * (`2026-13-45`), predates docs/guidance-impact.md's own documented
+ * inception (`2026-09-04`; a bare cutoff, not a comparison against the
+ * merge-base commit's real timestamp — the latter would flag this repo's
+ * own long-standing test fixtures, which fix their entry dates rather than
+ * the wall clock the suite runs under), or is in the future relative to the
+ * head commit's own date (`2099-01-01`). Both are needed: (1) alone would
+ * wave through a garbage date on an honestly-appended new entry, and (2)
+ * alone would wave through an in-place rewording that keeps a plausible
+ * date.
+ *
+ * WHAT THIS GATE DOES NOT CHECK, in both cases deliberately:
+ *   - THE ORDER OF ENTRIES. docs/guidance-impact.md's own convention is
+ *     newest first, and nothing here enforces it: S4 replaced the positional
+ *     append-only compare with multiset membership precisely because a
+ *     correct merge re-sorts the file. Ordering is a convention here, not a
+ *     gate, and the doc says so too.
+ *   - A GARBAGE DATE ON AN ENTRY NO TOUCH NEEDED. dateIssue runs only over
+ *     the entries a TOUCHED id's requirement is being satisfied by, so a
+ *     "## 2099-01-01 — <id> — edit" added in a diff that touches no section
+ *     at all is exit 0. Nothing is being waved through by it: the entry
+ *     satisfies no requirement, the append-only invariant still holds over
+ *     it, and the id it names was not changed by this diff. Enforcing dates
+ *     on entries nobody asked for would mean validating the whole file on
+ *     every PR, which is a different check from this one.
  *
  * Exit codes:
  *   0 — every touched id has a sufficient new entry (including: nothing was
@@ -128,7 +148,7 @@
  *       line while it is not `skipped`, or a date that fails dateIssue), one
  *       typed to a kind that does not satisfy the touch (a `rejected` entry
  *       against an edit), a removed id's entry not typed `remove`, an
- *       append-only violation (checkAppendOnly), or docs/guidance-impact.md
+ *       append-only violation (appendOnlyViolation), or docs/guidance-impact.md
  *       missing at head while something was touched (see B1 above). Errors
  *       name the id and the entry format.
  *   2 — could not run at all: no $GITHUB_EVENT_PATH, an unreadable or
@@ -632,6 +652,20 @@ function addedEntries(headEntries, baseEntries) {
 // a byte-for-byte copy of something already in docs/guidance-impact.md is
 // never a genuine new measurement, whichever of the two identical
 // occurrences the count-based diff happened to point at.
+//
+// N1 — THE RULE IS BYTE-FOR-BYTE IDENTITY, and it is worth being explicit
+// about how narrow that is: entryIdentity is heading + full body with no
+// normalisation at all, so a one-character edit anywhere in a pasted copy —
+// a bumped date in the heading included — makes it a different identity and
+// it counts as added. This filter therefore catches the literal copy-paste
+// and nothing subtler. The obvious strengthening, a DATE FLOOR (reject any
+// entry dated at or before the newest entry already at the merge-base), was
+// considered and rejected: entries are dated for when the measurement
+// happened, not for when the PR lands, so a legitimately older-dated entry
+// is a real thing to write — and this suite's own fixtures rely on it,
+// pinning "2026-09-04" as a literal string while sitting beside newer ones.
+// dateIssue's fixed inception cutoff is the date check that survives that;
+// anything relative to the file's newest entry does not.
 function dedupedAdded(added, baseEntries) {
   const baseIdentities = new Set(baseEntries.map(entryIdentity));
   return added.filter((e) => !baseIdentities.has(entryIdentity(e)));
@@ -673,7 +707,7 @@ function appendOnlyViolation(headEntries, baseEntries) {
     const lost = baseEntries.length - headEntries.length;
     return (
       `docs/guidance-impact.md has ${lost} fewer dated entr${lost === 1 ? "y" : "ies"} at head than at the ` +
-      `merge-base — entries are append-only, never removed or reordered`
+      `merge-base — entries are append-only, never removed or changed in place`
     );
   }
   const headCounts = new Map();

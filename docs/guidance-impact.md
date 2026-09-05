@@ -12,9 +12,11 @@ place of `<bundle>/<skill>` — guidance sections have no bundle to sit in.
 
 What this file is NOT for: harness, hook, CI, lock or docs changes that don't
 touch a `##` section's own extent. Entries append in the same PR as the
-change, newest first. `scripts/check-guidance-touch.js` (CI: the "Guidance
-touch gate" step in `ci.yml`) enforces that a PR touching a section's extent
-adds an entry for it here.
+change, newest first — a convention for readers, not a rule the gate checks:
+`scripts/check-guidance-touch.js` (CI: the "Guidance touch gate" step in
+`ci.yml`) compares entries by membership, never by position, so a merge that
+re-sorts them is not a violation. What it does enforce is that a PR touching
+a section's extent adds an entry for it here.
 
 **This repo is public and scanned. Nothing sensitive in an entry, ever** — a
 sensitive rejection is recorded by PR link alone.
