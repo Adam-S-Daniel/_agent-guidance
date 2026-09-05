@@ -95,6 +95,14 @@ const md = new MarkdownIt();
 
 const ENTRY_TYPES = ["create", "edit", "rename", "remove", "rejected"];
 
+// SATISFYING_TYPES — which entry TYPES satisfy which TOUCH kind (see this
+// file's header). "remove" is handled on its own branch in checkEntries,
+// since it also carries its own Eval: rule; this map only covers create/edit.
+const SATISFYING_TYPES = {
+  create: ["create"],
+  edit: ["edit", "rename"],
+};
+
 function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
   if (i === -1) return def;
@@ -136,8 +144,11 @@ function readEvent() {
   const baseSha = event && event.pull_request && event.pull_request.base && event.pull_request.base.sha;
   const headSha = event && event.pull_request && event.pull_request.head && event.pull_request.head.sha;
   if (typeof baseSha !== "string" || !baseSha || typeof headSha !== "string" || !headSha) {
+    // The file IS there and DID parse — e.g. a `push` event — so this is not
+    // "no event file" (that phrase is reserved for the three cases above,
+    // where there truly is nothing usable to read).
     throw new RunError(
-      `no event file: ${eventPath} has no pull_request.base.sha / pull_request.head.sha — this check only runs on pull_request`,
+      `not a pull_request event: ${eventPath} has no pull_request.base.sha / pull_request.head.sha — this check only runs on pull_request`,
     );
   }
   return { baseSha, headSha };
@@ -255,7 +266,12 @@ function loadManifestAt(repoRoot, sha, { required }) {
     }
     return new Map();
   }
-  if (!Array.isArray(rows)) return new Map();
+  if (!Array.isArray(rows)) {
+    if (required) {
+      throw new RunError(`agents-md/eval-coverage.yml at ${sha} does not parse to a list`);
+    }
+    return new Map();
+  }
   const byId = new Map();
   for (const row of rows) {
     if (row && typeof row === "object" && typeof row.id === "string" && row.id) {
@@ -302,7 +318,10 @@ function parseImpactEntries(src) {
 
 // toDatedEntries — filter parseImpactEntries()'s raw headings down to real
 // dated entries ("YYYY-MM-DD — <section-id> — <type>"), dropping boilerplate
-// like "## Entry format" that is a real h2 but not an entry.
+// like "## Entry format" that is a real h2 but not an entry. `type` is kept
+// as-is even when it is not one of ENTRY_TYPES — checkEntries names an
+// unrecognized type in its own error; dropping it here instead would make it
+// indistinguishable from "no entry at all", losing the specific defect.
 function toDatedEntries(rawEntries) {
   const out = [];
   for (const e of rawEntries) {
@@ -311,20 +330,31 @@ function toDatedEntries(rawEntries) {
     if (parts.length !== 3) continue;
     const [date, id, type] = parts;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    if (!ENTRY_TYPES.includes(type)) continue;
     out.push({ date, id, type, evalLine: e.evalLine, heading: e.heading });
   }
   return out;
 }
 
-// addedEntries — head's dated entries minus base's, by a per-heading-text
-// COUNT difference. docs/guidance-impact.md is append-only (never edited in
-// place), so any head occurrence of a heading text beyond how many identical
-// occurrences already existed at base was added by this diff. A plain Set of
-// base headings cannot express this: a second same-day entry with the exact
-// same heading text as one already at base (a legitimate addition — the same
-// section, edited again the same day) has text already "seen", so a Set-based
-// filter drops BOTH occurrences instead of just the one that already existed.
+// addedEntries — head's dated entries minus base's, by a per-entry COUNT
+// difference. docs/guidance-impact.md is append-only (never edited in
+// place), so any head occurrence beyond how many identical occurrences
+// already existed at base was added by this diff. A plain Set of base
+// headings cannot express this: a second same-day entry with the exact same
+// heading text as one already at base (a legitimate addition — the same
+// section, edited again the same day) has text already "seen", so a
+// Set-based filter drops BOTH occurrences instead of just the one that
+// already existed.
+//
+// The count is taken over heading text PLUS the Eval: line, not heading text
+// alone: two entries can share a heading (a section edited twice the same
+// day) while carrying genuinely different Eval content, and heading-text-only
+// counting cannot tell WHICH occurrence is the new one — a plain array
+// traversal picks one by position, which flips depending on where the new
+// entry lands in the file (this repo's own convention inserts newest first,
+// i.e. ahead of the existing one). Keying on the full (heading, evalLine)
+// pair removes the ambiguity: it still counts by heading alone whenever the
+// Eval content is identical (where the choice truly does not matter), and
+// disambiguates correctly whenever it differs.
 function addedEntries(repoRoot, baseSha, headSha) {
   const headSrc = gitShow(repoRoot, headSha, "docs/guidance-impact.md");
   if (headSrc === null) {
@@ -335,15 +365,18 @@ function addedEntries(repoRoot, baseSha, headSha) {
   const headEntries = toDatedEntries(parseImpactEntries(headSrc));
   const baseEntries = baseSrc === null ? [] : toDatedEntries(parseImpactEntries(baseSrc));
 
+  const entryKey = (e) => `${e.heading}${e.evalLine || ""}`;
+
   const baseCounts = new Map();
-  for (const e of baseEntries) baseCounts.set(e.heading, (baseCounts.get(e.heading) || 0) + 1);
+  for (const e of baseEntries) baseCounts.set(entryKey(e), (baseCounts.get(entryKey(e)) || 0) + 1);
 
   const consumed = new Map();
   const added = [];
   for (const e of headEntries) {
-    const used = consumed.get(e.heading) || 0;
-    consumed.set(e.heading, used + 1);
-    if (used < (baseCounts.get(e.heading) || 0)) continue; // matches an occurrence already at base
+    const key = entryKey(e);
+    const used = consumed.get(key) || 0;
+    consumed.set(key, used + 1);
+    if (used < (baseCounts.get(key) || 0)) continue; // matches an occurrence already at base
     added.push(e);
   }
   return added;
@@ -408,6 +441,31 @@ function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance
 
 // ── Validation: does every touched id have a sufficient new entry? ──────
 
+// classifyEval — which of the three documented forms (docs/guidance-impact.md's
+// own "## Entry format" section) an Eval: line is, structural on the line's
+// own text, never a bag of known-bad placeholder words:
+//   "none"    — /^Eval:\s*none\b/i; legal only while the row is "gap".
+//   "exempt"  — literally "Eval: exempt (skipped row)"; legal only while the
+//               row is "skipped".
+//   "result"  — anything else carrying a digit. A real measurement always
+//               cites one (an exit code, a section score, a sample size);
+//               a bare placeholder like "Eval: TBD" does not.
+//   "missing" — no Eval: bullet at all.
+//   "unrecognized" — none of the above; never sufficient.
+function classifyEval(evalLine) {
+  if (!evalLine) return "missing";
+  if (/^Eval:\s*none\b/i.test(evalLine)) return "none";
+  if (/^Eval:\s*exempt\s*\(skipped row\)\s*$/i.test(evalLine)) return "exempt";
+  if (/\d/.test(evalLine)) return "result";
+  return "unrecognized";
+}
+
+function evalLegalForStatus(cls, rowStatus) {
+  if (cls === "none") return rowStatus === "gap";
+  if (cls === "exempt") return rowStatus === "skipped";
+  return cls === "result";
+}
+
 function checkEntries(touched, addedByHead) {
   const byId = new Map();
   for (const e of addedByHead) {
@@ -417,8 +475,8 @@ function checkEntries(touched, addedByHead) {
 
   const errors = [];
   for (const t of touched) {
-    const entries = byId.get(t.id) || [];
-    if (entries.length === 0) {
+    const rawEntries = byId.get(t.id) || [];
+    if (rawEntries.length === 0) {
       errors.push(
         `section "${t.id}" changed but has no new entry in docs/guidance-impact.md — add ` +
           `"## YYYY-MM-DD — ${t.id} — ${t.kind === "remove" ? "remove" : t.kind === "create" ? "create" : "edit"}" ` +
@@ -427,26 +485,66 @@ function checkEntries(touched, addedByHead) {
       continue;
     }
 
+    const badType = rawEntries.find((e) => !ENTRY_TYPES.includes(e.type));
+    if (badType) {
+      errors.push(
+        `section "${t.id}" has a new entry in docs/guidance-impact.md with an unrecognized type "${badType.type}" ` +
+          `— must be one of: ${ENTRY_TYPES.join(", ")}`,
+      );
+      continue;
+    }
+
     if (t.kind === "remove") {
-      if (!entries.some((e) => e.type === "remove")) {
+      const removeEntries = rawEntries.filter((e) => e.type === "remove");
+      if (removeEntries.length === 0) {
         errors.push(
           `section "${t.id}" was removed but none of its new docs/guidance-impact.md entries is typed "remove"`,
+        );
+        continue;
+      }
+      if (!removeEntries.some((e) => e.evalLine)) {
+        errors.push(
+          `section "${t.id}" was removed with a "remove"-typed entry, but it has no "- Eval:" bullet at all — ` +
+            `"none — no fixture yet" or "exempt (skipped row)" are both fine here`,
+        );
+        continue;
+      }
+      if (!removeEntries.some((e) => classifyEval(e.evalLine) !== "unrecognized")) {
+        errors.push(
+          `section "${t.id}" was removed, but its "remove"-typed entry's Eval: line is insufficient — use a ` +
+            `real result, "none — no fixture yet", or "exempt (skipped row)"`,
         );
       }
       continue;
     }
 
+    // create/edit: only entries typed to actually satisfy THIS kind count —
+    // a "rejected" entry records a proposal that did not land, so it must
+    // not, by itself, satisfy the requirement (see SATISFYING_TYPES above).
+    const entries = rawEntries.filter((e) => SATISFYING_TYPES[t.kind].includes(e.type));
+    if (entries.length === 0) {
+      errors.push(
+        `section "${t.id}" changed but its only new entry is typed "${rawEntries[0].type}", which does not ` +
+          `satisfy a ${t.kind} — use "${t.kind}"${t.kind === "edit" ? ' or "rename"' : ""}`,
+      );
+      continue;
+    }
+
+    if (!entries.some((e) => e.evalLine)) {
+      errors.push(
+        `section "${t.id}" has a new entry in docs/guidance-impact.md with no "- Eval:" bullet at all — add one ` +
+          `(a real result, "none — no fixture yet" while the row is "gap", or "exempt (skipped row)")`,
+      );
+      continue;
+    }
+
     const rowStatus = t.row.status;
-    const sufficient = entries.some((e) => {
-      if (!e.evalLine) return false;
-      const isNone = /^Eval:\s*none\b/i.test(e.evalLine);
-      return !isNone || rowStatus === "gap";
-    });
+    const sufficient = entries.some((e) => evalLegalForStatus(classifyEval(e.evalLine), rowStatus));
     if (!sufficient) {
       errors.push(
-        `section "${t.id}" has a new entry in docs/guidance-impact.md, but its Eval: line is insufficient ` +
-          `— "none — no fixture yet" is only legal while the manifest row is "gap" (row "${t.id}" is "${rowStatus}"); ` +
-          `add a real result or "exempt (skipped row)"`,
+        `section "${t.id}" has a new entry in docs/guidance-impact.md, but its Eval: line is insufficient — ` +
+          `"none — no fixture yet" is only legal while the manifest row is "gap", "exempt (skipped row)" only ` +
+          `while it is "skipped" (row "${t.id}" is "${rowStatus}"); add a real result`,
       );
     }
   }

@@ -13594,7 +13594,7 @@ CHANGED body by main
 ' > "$dir11/agents-md/base.md"
     git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
     git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m main-edit
-    printf '\n---\n\n## 2026-09-04 — heading-two — edit\n- Eval: exempt (skipped row)\n' \
+    printf '\n---\n\n## 2026-09-04 — heading-two — edit\n- Eval: none — no fixture yet\n' \
         >> "$dir11/docs/guidance-impact.md"
     git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
     git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m main-entry
@@ -13616,7 +13616,7 @@ untouched body
     git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m pr-edit
     local pr_sha_no_entry
     pr_sha_no_entry=$(git -C "$dir11" rev-parse HEAD)
-    printf '\n---\n\n## 2026-09-04 — heading-one — edit\n- Eval: exempt (skipped row)\n' \
+    printf '\n---\n\n## 2026-09-04 — heading-one — edit\n- Eval: none — no fixture yet\n' \
         >> "$dir11/docs/guidance-impact.md"
     git -C "$dir11" -c user.name=test -c user.email=test@localhost add -A
     git -C "$dir11" -c user.name=test -c user.email=test@localhost commit -q -m pr-entry
@@ -13743,6 +13743,284 @@ CHANGED security base body
     write_event "$base15" "$head15" "$event15"
     assert_touch "$event15" "$dir15" 1 'section "security-base" changed but has no new entry' \
         "guidance touch: two ids sharing one heading text across two files are kept apart by file"
+
+    # 16. S4a: the fenced example in a REAL docs/guidance-impact.md illustrates
+    #     the entry format with the placeholder date "YYYY-MM-DD", which the
+    #     date regex rejects on its own — so that fixture never actually
+    #     exercised fence-skipping. Here the fence holds a REAL dated entry
+    #     for the touched id; only the markdown-it token-type check (a
+    #     `fence` token is never an `inline` heading/list-item pair) can tell
+    #     it apart from a genuine entry.
+    local dir16="$root/fenced_real_entry" base16 head16 event16
+    base16=$(touch_repo_init fenced_real_entry "$base_body" "$base_manifest")
+    head16=$(touch_commit "$dir16" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+Example (illustrative only, inside a fence — not a real entry):
+
+```
+## 2026-09-04 — heading-one — edit
+- Eval: exempt (skipped row)
+```
+')
+    event16="$TEST_DIR/touch-event-16.json"
+    write_event "$base16" "$head16" "$event16"
+    assert_touch "$event16" "$dir16" 1 'section "heading-one" changed but has no new entry' \
+        "guidance touch: a REAL dated entry inside a fenced code block is never mistaken for a real entry"
+
+    # 17. S4c(a): an entry typed to something that is not one of ENTRY_TYPES
+    #     is named specifically, not silently dropped into a generic "no new
+    #     entry" message.
+    local dir17="$root/bogus_type" base17 head17 event17
+    base17=$(touch_repo_init bogus_type "$base_body" "$base_manifest")
+    head17=$(touch_commit "$dir17" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — bogus
+- Eval: exempt (skipped row)
+')
+    event17="$TEST_DIR/touch-event-17.json"
+    write_event "$base17" "$head17" "$event17"
+    assert_touch "$event17" "$dir17" 1 'unrecognized type "bogus"' \
+        "guidance touch: an entry typed to an unrecognized value is named, not silently dropped"
+
+    # 18. S4c(b): a manifest row whose heading text resolves at NEITHER base
+    #     nor head (stale — check-guidance-coverage.js's job, per this
+    #     script's own comment) is silently skipped, even though the file's
+    #     real content did change.
+    local stale_manifest='- id: stale-id
+  heading: No Such Heading
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+'
+    local dir18="$root/stale_row" base18 head18 event18
+    base18=$(touch_repo_init stale_row '## Heading One
+original
+' "$stale_manifest")
+    head18=$(touch_commit "$dir18" edit '## Heading One
+changed
+' "$stale_manifest")
+    event18="$TEST_DIR/touch-event-18.json"
+    write_event "$base18" "$head18" "$event18"
+    assert_touch "$event18" "$dir18" 0 'nothing to require' \
+        "guidance touch: a stale manifest row (heading resolves nowhere) is silently skipped, not reported"
+
+    # 19. S4c(c): a brand-new manifest row (present at head, absent at base)
+    #     whose heading does not actually exist in the file at head is not
+    #     treated as a checkable "create" — that defect belongs to
+    #     check-guidance-coverage.js, not this script.
+    local dir19="$root/phantom_create"
+    rm -rf "$dir19"
+    mkdir -p "$dir19/agents-md/sections" "$dir19/docs"
+    git -C "$dir19" init -q >/dev/null
+    printf '%s' '## Heading One
+original
+' > "$dir19/agents-md/base.md"
+    printf '[]\n' > "$dir19/agents-md/eval-coverage.yml"
+    printf '%s' "$impact_stub" > "$dir19/docs/guidance-impact.md"
+    git -C "$dir19" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir19" -c user.name=test -c user.email=test@localhost commit -q -m base
+    local base19
+    base19=$(git -C "$dir19" rev-parse HEAD)
+    printf '%s' '- id: phantom-id
+  heading: Phantom Heading
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+' > "$dir19/agents-md/eval-coverage.yml"
+    git -C "$dir19" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir19" -c user.name=test -c user.email=test@localhost commit -q -m add-phantom-row
+    local head19
+    head19=$(git -C "$dir19" rev-parse HEAD)
+    local event19="$TEST_DIR/touch-event-19.json"
+    write_event "$base19" "$head19" "$event19"
+    assert_touch "$event19" "$dir19" 0 'nothing to require' \
+        "guidance touch: a new manifest row whose heading does not exist at head is not a checkable create"
+
+    # 20. S4c(d): a push event's file (no pull_request key) is refused — but
+    #     with a message that does NOT claim "no event file", since the file
+    #     is right there and parses fine; it is simply the wrong event shape.
+    local event20="$TEST_DIR/touch-event-20.json"
+    printf '{"ref": "refs/heads/main", "before": "%s", "after": "%s", "commits": []}' \
+        "0000000000000000000000000000000000000000" "1111111111111111111111111111111111111111" \
+        > "$event20"
+    local out20 rc20=0
+    out20=$(GITHUB_EVENT_PATH="$event20" node "$script" --repo-root "$dir1" 2>&1) || rc20=$?
+    if [[ "$rc20" == 2 ]] && grep -qF -- "not a pull_request event" <<<"$out20" \
+            && ! grep -qF -- "no event file" <<<"$out20"; then
+        pass "guidance touch: a push event's file is refused without claiming 'no event file'"
+    else
+        fail "guidance touch: a push event's file should be refused (exit 2) naming 'not a pull_request event', never 'no event file' — got exit $rc20: $(echo "$out20" | tr '\n' ' ')"
+    fi
+
+    # 21. S5: an entry with NO "- Eval:" bullet at all must not fall into the
+    #     none/gap insufficiency message — that message is self-refuting when
+    #     there is no Eval: line to judge against "none" in the first place.
+    local dir21="$root/no_eval_bullet" base21 head21 event21
+    base21=$(touch_repo_init no_eval_bullet "$base_body" "$base_manifest")
+    head21=$(touch_commit "$dir21" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Motivation: no Eval bullet at all
+')
+    event21="$TEST_DIR/touch-event-21.json"
+    write_event "$base21" "$head21" "$event21"
+    assert_touch "$event21" "$dir21" 1 'no "- Eval:" bullet at all' \
+        "guidance touch: an entry with no Eval: bullet at all gets its own message, not the none/gap one"
+
+    # 22. N2: only "remove" was type-checked. A "rejected" entry records a
+    #     proposal that did NOT land this way, so it must not, by itself,
+    #     satisfy an edit touch.
+    local dir22="$root/rejected_type" base22 head22 event22
+    base22=$(touch_repo_init rejected_type "$base_body" "$base_manifest")
+    head22=$(touch_commit "$dir22" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — rejected
+- Eval: exempt (skipped row)
+')
+    event22="$TEST_DIR/touch-event-22.json"
+    write_event "$base22" "$head22" "$event22"
+    assert_touch "$event22" "$dir22" 1 'does not satisfy' \
+        "guidance touch: a rejected-typed entry does not satisfy an edit touch"
+
+    # 23. N3: "exempt (skipped row)" is legal only while the manifest row is
+    #     actually "skipped" — not accepted unconditionally on any row — and
+    #     an Eval: line that is none of the three documented forms (a bare
+    #     placeholder like "TBD") is insufficient, whatever the row status.
+    local dir23="$root/exempt_not_skipped" base23 head23 event23
+    base23=$(touch_repo_init exempt_not_skipped "$base_body" "$base_manifest")
+    head23=$(touch_commit "$dir23" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exempt (skipped row)
+')
+    event23="$TEST_DIR/touch-event-23.json"
+    write_event "$base23" "$head23" "$event23"
+    assert_touch "$event23" "$dir23" 1 'is insufficient' \
+        "guidance touch: exempt (skipped row) fails on a row that is not skipped (row is gap)"
+
+    local dir23b="$root/eval_tbd" base23b head23b event23b
+    base23b=$(touch_repo_init eval_tbd "$base_body" "$base_manifest")
+    head23b=$(touch_commit "$dir23b" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: TBD
+')
+    event23b="$TEST_DIR/touch-event-23b.json"
+    write_event "$base23b" "$head23b" "$event23b"
+    assert_touch "$event23b" "$dir23b" 1 'is insufficient' \
+        "guidance touch: an Eval: line that is none of the three documented forms is insufficient"
+
+    local skipped_manifest='- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: skipped
+  reason: fixture is not worth building
+  since: 2026-09-04
+  bytes: 1
+
+- id: heading-two
+  heading: Heading Two
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+'
+    local dir23c="$root/exempt_skipped" base23c head23c event23c
+    base23c=$(touch_repo_init exempt_skipped "$base_body" "$skipped_manifest")
+    head23c=$(touch_commit "$dir23c" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$skipped_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exempt (skipped row)
+')
+    event23c="$TEST_DIR/touch-event-23c.json"
+    write_event "$base23c" "$head23c" "$event23c"
+    assert_touch "$event23c" "$dir23c" 0 'all have a sufficient' \
+        "guidance touch: exempt (skipped row) passes on a row that really is skipped"
+
+    # 24. N8/N3: a "remove"-typed entry with NO Eval: bullet at all still
+    #     needs one — "remove" used to bypass Eval validation entirely.
+    local dir24="$root/remove_no_eval" base24
+    base24=$(touch_repo_init remove_no_eval "$base_body" "$base_manifest")
+    local head24
+    head24=$(touch_commit "$dir24" remove-section '## Heading One
+original body
+' "$removed_manifest" '
+---
+
+## 2026-09-04 — heading-two — remove
+- Motivation: no Eval bullet at all
+')
+    local event24="$TEST_DIR/touch-event-24.json"
+    write_event "$base24" "$head24" "$event24"
+    assert_touch "$event24" "$dir24" 1 'no "- Eval:" bullet at all' \
+        "guidance touch: a remove-typed entry with no Eval: bullet at all is still insufficient"
+
+    # 25. N4: a head manifest that parses to a non-list (a YAML mapping,
+    #     valid YAML but the wrong shape) is a named exit-2 error, per this
+    #     function's own comment about what is fatal at head — not silently
+    #     treated as an empty manifest.
+    local dir25="$root/non_list_manifest" base25
+    base25=$(touch_repo_init non_list_manifest "$base_body" "$base_manifest")
+    local head25
+    head25=$(touch_commit "$dir25" break-manifest "$base_body" 'not_a_list: true
+')
+    local event25="$TEST_DIR/touch-event-25.json"
+    write_event "$base25" "$head25" "$event25"
+    assert_touch "$event25" "$dir25" 2 'does not parse to a list' \
+        "guidance touch: a head manifest that parses to a non-list is a named exit-2 error"
+
+    # 26. N5: --repo-root at a directory that does not exist names the
+    #     directory, not a raw `spawnSync git ENOENT` crash.
+    local missing_dir="$root/does-not-exist"
+    rm -rf "$missing_dir"
+    local out26 rc26=0
+    out26=$(GITHUB_EVENT_PATH="$event1" node "$script" --repo-root "$missing_dir" 2>&1) || rc26=$?
+    if [[ "$rc26" == 2 ]] && grep -qF -- "$missing_dir" <<<"$out26" && ! grep -qiF -- "ENOENT" <<<"$out26"; then
+        pass "guidance touch: --repo-root at a missing directory names the directory, not ENOENT"
+    else
+        fail "guidance touch: --repo-root at a missing directory should name it without ENOENT — got exit $rc26: $(echo "$out26" | tr '\n' ' ')"
+    fi
 
     unset -f touch_repo_init
     unset -f touch_commit
