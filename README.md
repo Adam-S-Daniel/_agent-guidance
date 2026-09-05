@@ -95,8 +95,9 @@ removals, and rejected proposals — modeled on agentskills'
 body differs between the merge-base of a PR's base and head shas and the
 PR's head itself, this diff's addition to
 `docs/guidance-impact.md` must carry an entry for that id whose `Eval:` line
-is a real result, `exempt (skipped row)`, or `none — no fixture yet` (legal
-only while the row is `gap`). A pure rename needs no entry; a removed section
+is a real result, `exempt (skipped row)` (legal only while the row is
+`skipped`), or `none — no fixture yet` (legal only while the row is `gap`). A
+pure rename needs no entry; a removed section
 needs one typed `remove`.
 
 ## The skills-bootstrap hook

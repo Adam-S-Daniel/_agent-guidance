@@ -80,10 +80,22 @@
  * merge-base) via loadManifestWithFallback — an id is stable across the
  * manifest's own history, so a heading that still resolves at head under a
  * tip row's exact text can be trusted to carry that row's id even though
- * head itself has no manifest file at all; a row that resolves nowhere is
- * dropped rather than guessed at. Only when the base tip ALSO has no usable
- * manifest is this still exit 2, with a message naming "merge or rebase
- * onto the base branch" rather than "create the file". docs/guidance-impact.md
+ * head itself has no manifest file at all. Exact text is tried FIRST; a row
+ * with no exact match in its own file falls back to the nearest heading
+ * THERE (the same Levenshtein hint check-guidance-coverage.js offers for a
+ * stale row — see its nearestHeading — used here to resolve identity rather
+ * than just to suggest one, and never claiming a heading another row already
+ * matched exactly). This second step exists because a rename on this same
+ * branch, on top of the pre-manifest fork, resolves at the merge-base (old
+ * text still real there) but not at head (only the new text is) — and that
+ * asymmetry alone used to manufacture a false `remove`: the id vanished from
+ * headManifest while surviving in baseManifest, and computeTouched reads "a
+ * row at base, none at head" as a retirement, regardless of what actually
+ * happened to the heading at head. A row with no heading left at all in its
+ * file — no exact match and nothing to approximate against — is still
+ * dropped, as before. Only when the base tip ALSO has no usable manifest is
+ * this still exit 2, with a message naming "merge or rebase onto the base
+ * branch" rather than "create the file". docs/guidance-impact.md
  * absent at head gets the parallel treatment in main() itself: if nothing
  * was touched, absence is moot (exit 0, unchanged); if something was, it is
  * exit 1 (fixable by merging/rebasing and then adding an entry), never exit
@@ -342,6 +354,44 @@ function parseManifestRows(raw, sha) {
   return byId;
 }
 
+// ── Levenshtein, for B1's approximate fallback resolution ──────────────
+//
+// Duplicated from check-guidance-coverage.js's own levenshtein/nearestHeading
+// rather than imported: that file uses its copy only to build a HUMAN HINT
+// on an already-reported error (a stale row's likely rename target), never to
+// decide anything — sharing a module would couple this file's actual pass/
+// fail behavior to a helper the coverage script never intended as load-
+// bearing. See loadManifestWithFallback below for how this file uses it.
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+function nearestHeading(target, candidates) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const c of candidates) {
+    const d = levenshtein(target, c);
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  return { heading: best, distance: bestDist };
+}
+
 // loadManifestWithFallback — id -> row, at <sha>, with a fallback for B1. A PR whose HEAD (or merge-base) predates
 // agents-md/eval-coverage.yml entirely (it forked before #119 added the
 // file — this repo's own pre-#119 history is exactly such a case) used to
@@ -394,40 +444,97 @@ function loadManifestWithFallback(repoRoot, sha, baseTipSha, guidance, { require
     return new Map();
   }
 
+  // Exact text first — unchanged from before B1's follow-up fix. A tip row
+  // reserves the heading it exactly claims, so a later approximate match
+  // (below) can never steal it out from under another id.
   const byId = new Map();
+  const claimed = new Set();
+  const unresolved = [];
   for (const [id, row] of tipById) {
-    if (guidance.headings.some((h) => h.file === row.file && h.heading === row.heading)) {
+    const exact = guidance.headings.find((h) => h.file === row.file && h.heading === row.heading);
+    if (exact) {
       byId.set(id, row);
+      claimed.add(headingKey(exact.file, exact.heading));
+    } else {
+      unresolved.push([id, row]);
     }
+  }
+  // Approximate fallback — B1's own follow-up fix (see this file's header):
+  // a tip row whose heading text has no exact match at `sha` (typically
+  // because THIS branch renamed it, on top of a fork that predates the
+  // manifest entirely) resolves to the nearest heading remaining in its own
+  // file, the same Levenshtein hint check-guidance-coverage.js's
+  // nearestHeading offers for a stale row, reused here to resolve identity
+  // instead of only suggesting it. The row's own `heading` field is rewritten
+  // to that real heading's text, since every downstream lookup
+  // (computeTouched's headingKey) expects `row.heading` to be the CURRENT
+  // text at `sha`. A file with no heading left to approximate against drops
+  // the row, exactly as the exact-only version did.
+  for (const [id, row] of unresolved) {
+    const candidates = guidance.headings.filter(
+      (h) => h.file === row.file && !claimed.has(headingKey(h.file, h.heading)),
+    );
+    if (candidates.length === 0) continue;
+    const nearest = nearestHeading(
+      row.heading,
+      candidates.map((h) => h.heading),
+    );
+    if (nearest.heading === null) continue;
+    const match = candidates.find((h) => h.heading === nearest.heading);
+    byId.set(id, { ...row, heading: match.heading });
+    claimed.add(headingKey(match.file, match.heading));
   }
   return byId;
 }
 
 // ── docs/guidance-impact.md ─────────────────────────────────────────────
 
-// parseImpactEntries — every `##` heading in the file plus the text of its
-// first `- Eval: ...` bullet, in document order. Structural: headings come
-// from markdown-it's token stream (never a line scan — the fenced example
-// under "## Entry format" contains a literal "- Eval:" line that a line
-// scanner would mistake for a real entry; a `fence` token is not a
-// `list_item`/`inline` pair, so the real walk never sees it), and the Eval
-// bullet comes from matching an inline token's own content, not a regex over
-// the file.
+// parseImpactEntries — every `##` heading in the file, each carrying its own
+// FULL BODY text (through the line before the next `##` heading, or EOF, per
+// scripts/lib/markdown-sections.js's extractHeadings — reused here directly
+// for the heading/line boundaries — MINUS a trailing `---` separator between
+// entries, see BODY BOUNDARY below) plus the text of its first `- Eval: ...`
+// bullet, in document order. Structural throughout: headings and their line
+// ranges come from extractHeadings' own markdown-it walk (a fenced example
+// under "## Entry format" is a `fence` token, never mistaken for a heading),
+// and the Eval bullet comes from a second, parallel pass over the SAME parse
+// matching a list item's own inline token content — never a regex over the
+// file. S3: the body is what appendOnlyViolation now compares (Motivation,
+// Change and Outcome included, not just the Eval line), so an old entry
+// reworded anywhere in its body — not only its Eval line — is caught.
+//
+// BODY BOUNDARY. extractHeadings' endLine runs through the line before the
+// NEXT heading, which for every entry but the last also swallows the blank
+// lines and `---` thematic break this file's own convention places between
+// entries. Left in, that means the exact same entry text gets a DIFFERENT
+// computed body depending on whether something happens to follow it before
+// the next heading (measured: pasting an existing entry ahead of itself, so
+// one copy sits at EOF and the other does not, gave the two byte-for-byte
+// copies of the SAME entry two different identities — the copy nearer EOF
+// carried no trailing separator, the other did — which broke S2's own
+// duplicate-detection on the exact fixture it exists to catch). A trailing
+// `hr` (thematic break) token — markdown-it's structural read of a lone
+// `---`/`***`/`___` line, never a text scan — truncates the body at ITS OWN
+// start line, so an entry's identity no longer depends on what, if anything,
+// separates it from its neighbor.
 function parseImpactEntries(src) {
+  const lines = src.split("\n");
+  const headings = extractHeadings(src, "docs/guidance-impact.md");
+
   const tokens = md.parse(src, {});
-  const entries = [];
+  const hrLines = tokens.filter((t) => t.type === "hr").map((t) => t.map[0]);
+  const evalByIndex = [];
   let current = null;
   let expectHeadingText = false;
   for (const t of tokens) {
     if (t.type === "heading_open" && t.tag === "h2") {
-      current = { heading: null, evalLine: null };
-      entries.push(current);
+      current = { evalLine: null };
+      evalByIndex.push(current);
       expectHeadingText = true;
       continue;
     }
     if (t.type !== "inline") continue;
     if (expectHeadingText) {
-      if (current) current.heading = t.content;
       expectHeadingText = false;
       continue;
     }
@@ -435,7 +542,19 @@ function parseImpactEntries(src) {
       current.evalLine = t.content.trim();
     }
   }
-  return entries;
+
+  // Both walks see the identical set of h2 headings, in the identical
+  // document order — extractHeadings' `heading_open`/tag=="h2" filter is the
+  // one used here too — so index-aligning them is safe.
+  return headings.map((h, i) => {
+    const firstHr = hrLines.filter((line) => line > h.startLine && line < h.endLine).sort((a, b) => a - b)[0];
+    const bodyEndLine = firstHr === undefined ? h.endLine : firstHr;
+    return {
+      heading: h.heading,
+      evalLine: (evalByIndex[i] && evalByIndex[i].evalLine) || null,
+      body: lines.slice(h.startLine + 1, bodyEndLine).join("\n"),
+    };
+  });
 }
 
 // toDatedEntries — filter parseImpactEntries()'s raw headings down to real
@@ -452,51 +571,52 @@ function toDatedEntries(rawEntries) {
     if (parts.length !== 3) continue;
     const [date, id, type] = parts;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    out.push({ date, id, type, evalLine: e.evalLine, heading: e.heading });
+    out.push({ date, id, type, evalLine: e.evalLine, heading: e.heading, body: e.body });
   }
   return out;
+}
+
+// entryIdentity — an entry's full identity for both addedEntries' counting
+// and appendOnlyViolation's membership check: heading text plus its FULL
+// BODY (S3), not just its Eval: line — two entries can share a heading (a
+// section edited twice the same day) while genuinely differing anywhere in
+// Motivation/Change/Eval/Outcome, and a body-only comparison would miss a
+// reword that leaves the Eval line untouched.
+function entryIdentity(e) {
+  return `${e.heading} ${e.body}`;
 }
 
 // addedEntries — head's dated entries minus base's, by a per-entry COUNT
 // difference. docs/guidance-impact.md is append-only (never edited in
 // place), so any head occurrence beyond how many identical occurrences
 // already existed at base was added by this diff. A plain Set of base
-// headings cannot express this: a second same-day entry with the exact same
-// heading text as one already at base (a legitimate addition — the same
+// identities cannot express this: a second same-day entry with the exact
+// same heading text as one already at base (a legitimate addition — the same
 // section, edited again the same day) has text already "seen", so a
 // Set-based filter drops BOTH occurrences instead of just the one that
 // already existed.
 //
-// The count is taken over heading text PLUS the Eval: line, not heading text
-// alone: two entries can share a heading (a section edited twice the same
-// day) while carrying genuinely different Eval content, and heading-text-only
-// counting cannot tell WHICH occurrence is the new one — a plain array
-// traversal picks one by position, which flips depending on where the new
-// entry lands in the file (this repo's own convention inserts newest first,
-// i.e. ahead of the existing one). Keying on the full (heading, evalLine)
-// pair removes the ambiguity: it still counts by heading alone whenever the
-// Eval content is identical (where the choice truly does not matter), and
-// disambiguates correctly whenever it differs.
-// loadDatedEntries — the file's dated entries at `sha`, or `[]` at a sha
-// where it does not exist (only ever legal for a BASE-side sha — main()
-// guards docs/guidance-impact.md's absence at head itself; see B1 in this
-// file's header). Shared by addedEntries and appendOnlyViolation so each
-// sha is read and parsed exactly once.
-function loadDatedEntries(repoRoot, sha) {
-  const src = gitShow(repoRoot, sha, "docs/guidance-impact.md");
-  return src === null ? [] : toDatedEntries(parseImpactEntries(src));
-}
-
+// The count is taken over the full entryIdentity, not heading text alone:
+// two entries can share a heading while carrying genuinely different
+// bodies, and heading-text-only counting cannot tell WHICH occurrence is the
+// new one — a plain array traversal picks one by position, which flips
+// depending on where the new entry lands in the file (this repo's own
+// convention inserts newest first, i.e. ahead of the existing one). Keying
+// on the full identity removes the ambiguity: it still counts by heading
+// alone whenever the body is identical (where the choice truly does not
+// matter), and disambiguates correctly whenever it differs.
+//
+// S2: this alone is not sufficient — see dedupedAdded below, which this
+// function's own result must always be passed through before being trusted
+// as "genuinely new."
 function addedEntries(headEntries, baseEntries) {
-  const entryKey = (e) => `${e.heading}${e.evalLine || ""}`;
-
   const baseCounts = new Map();
-  for (const e of baseEntries) baseCounts.set(entryKey(e), (baseCounts.get(entryKey(e)) || 0) + 1);
+  for (const e of baseEntries) baseCounts.set(entryIdentity(e), (baseCounts.get(entryIdentity(e)) || 0) + 1);
 
   const consumed = new Map();
   const added = [];
   for (const e of headEntries) {
-    const key = entryKey(e);
+    const key = entryIdentity(e);
     const used = consumed.get(key) || 0;
     consumed.set(key, used + 1);
     if (used < (baseCounts.get(key) || 0)) continue; // matches an occurrence already at base
@@ -505,18 +625,52 @@ function addedEntries(headEntries, baseEntries) {
   return added;
 }
 
-// appendOnlyViolation — S1. docs/guidance-impact.md's own rules say entries
-// are append-only: "a wrong entry gets a correcting entry, not an edit."
-// addedEntries() alone cannot enforce that — it only counts occurrences, so
-// rewording an OLD entry's Eval: line in place (heading text unchanged) just
-// makes the old occurrence's count drop to zero and the reworded text look
-// like a brand-new addition, satisfying the touch as if a real new entry had
-// been appended. This checks the file's actual STRUCTURE instead: the
-// file's convention is newest-first (new entries prepended ahead of old
-// ones), so every entry already present at the merge-base must still
-// appear, unchanged, as a trailing SUFFIX of head's dated entries. Returns
-// an error string, or null when the invariant holds (including: base had no
-// dated entries to protect in the first place).
+// dedupedAdded — S2. addedEntries()'s count difference still labels ONE
+// occurrence "added" when head has a byte-for-byte duplicate of a base entry
+// beside a genuine, unrelated touch (copy-pasting an EXISTING entry rather
+// than writing a new one for the section actually edited in this diff) — the
+// counting is correct arithmetic, but the specific occurrence it hands back
+// as "added" can be exactly that duplicate, which documents nothing new.
+// Filtered here by full entryIdentity against EVERY base entry (not just the
+// one occurrence addedEntries happened to match against) — an entry that is
+// a byte-for-byte copy of something already in docs/guidance-impact.md is
+// never a genuine new measurement, whichever of the two identical
+// occurrences the count-based diff happened to point at.
+function dedupedAdded(added, baseEntries) {
+  const baseIdentities = new Set(baseEntries.map(entryIdentity));
+  return added.filter((e) => !baseIdentities.has(entryIdentity(e)));
+}
+
+// appendOnlyViolation — S1 (and S4's fix to it). docs/guidance-impact.md's
+// own rules say entries are append-only: "a wrong entry gets a correcting
+// entry, not an edit." addedEntries() alone cannot enforce that — it only
+// counts occurrences, so rewording an OLD entry's body in place (heading
+// text unchanged) just makes the old occurrence's count drop to zero and the
+// reworded text look like a brand-new addition, satisfying the touch as if a
+// real new entry had been appended. This checks the file's actual STRUCTURE
+// instead: every entry already present at the merge-base must still appear,
+// byte-for-byte (heading + FULL BODY, S3 — not just its Eval line),
+// SOMEWHERE in head's dated entries.
+//
+// S4: "somewhere," not "at a fixed trailing position." The round-2 version
+// required base's entries to survive as an exact trailing SUFFIX of head's —
+// which a legitimate merge can break without anything having been edited: a
+// PR appends its own entry ahead of an untouched base entry, main
+// independently lands a NEWER-dated entry ahead of that same base entry, and
+// merging main in correctly re-sorts the file newest-first, landing main's
+// entry ABOVE the PR's own (not in the suffix position the old check
+// demanded) while the untouched base entry is still there, unchanged. A
+// purely positional check rejected that as "changed in place" while happily
+// accepting the SAME three entries in the wrong, undocumented order. Set
+// (multiset) membership catches a real in-place edit exactly as well — the
+// reworded entry's new identity is simply absent from head's counts, full
+// stop — without caring where in the file anything landed. Enforcing the
+// newest-first ordering itself, if wanted, belongs in a separate, clearly
+// named check — this function's job is only "was anything lost or altered,"
+// not "is everything in the right order."
+//
+// Returns an error string, or null when the invariant holds (including: base
+// had no dated entries to protect in the first place).
 function appendOnlyViolation(headEntries, baseEntries) {
   if (baseEntries.length === 0) return null;
   if (headEntries.length < baseEntries.length) {
@@ -526,16 +680,18 @@ function appendOnlyViolation(headEntries, baseEntries) {
       `merge-base — entries are append-only, never removed or reordered`
     );
   }
-  const tail = headEntries.slice(headEntries.length - baseEntries.length);
-  for (let i = 0; i < baseEntries.length; i++) {
-    const b = baseEntries[i];
-    const h = tail[i];
-    if (h.heading !== b.heading || h.evalLine !== b.evalLine) {
+  const headCounts = new Map();
+  for (const e of headEntries) headCounts.set(entryIdentity(e), (headCounts.get(entryIdentity(e)) || 0) + 1);
+  for (const b of baseEntries) {
+    const key = entryIdentity(b);
+    const remaining = headCounts.get(key) || 0;
+    if (remaining <= 0) {
       return (
         `docs/guidance-impact.md's existing entry "${b.heading}" was changed in place — entries are ` +
         `append-only; a correction gets a NEW dated entry, never an edit to an old one`
       );
     }
+    headCounts.set(key, remaining - 1); // consume one occurrence — a base entry appearing twice needs two at head
   }
   return null;
 }
@@ -642,6 +798,11 @@ function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance
 
 // ── Validation: does every touched id have a sufficient new entry? ──────
 
+// RESULT_SHAPES_HINT — the three accepted forms, quoted verbatim for error
+// messages (N7): a reader told an Eval: line is "insufficient" should not
+// have to go find "## Entry format" to learn what would satisfy it.
+const RESULT_SHAPES_HINT = '"exit 0" (or "exit code 0"), a score fraction like "7.0/8", or a sample size like "n=3"';
+
 // RESULT_PATTERN — what a real measured result must SHOW, per
 // docs/guidance-impact.md's "## Entry format": an exit code, a score
 // fraction, or a sample size. Deliberately narrower than "contains a digit"
@@ -651,7 +812,21 @@ function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance
 // placeholder words either; this is a positive, structural pattern for what
 // a real citation looks like, matching the three example forms the format
 // section documents.
-const RESULT_PATTERN = /\bexit\s+\d+\b|\b\d+(?:\.\d+)?\s*\/\s*\d+\b|\bn\s*=\s*\d+\b/i;
+//
+// N7: two boundary fixes on top of the shapes themselves.
+//   - The exit-code alternative also accepts the word "code" between "exit"
+//     and the number ("exit code 0"), a phrasing check-guidance-touch's own
+//     Eval: writers actually use and the original alternative rejected.
+//   - The fraction alternative excludes a `YYYY/MM/DD` (or `YYYY-MM-DD`)
+//     date: a lookbehind rejects starting the match right after a 4-digit
+//     run followed by "-" or "/" (so "09" in "2026/09/05" is never read as a
+//     numerator), and a lookahead rejects a match immediately followed by
+//     "-" or "/" then a digit (so "2026/09" is never read as a fraction when
+//     a third "/05" segment follows) — together excluding every 2-digit
+//     window of a 3-segment date without touching a genuine fraction like
+//     "7.0/8", which has no such neighbor on either side.
+const RESULT_PATTERN =
+  /\bexit(?:\s+code)?\s+\d+\b|(?<!\d{4}[-/])\b\d+(?:\.\d+)?\s*\/\s*\d+\b(?![-/]\d)|\bn\s*=\s*\d+\b/i;
 
 // classifyEval — which of the three documented forms (docs/guidance-impact.md's
 // own "## Entry format" section) an Eval: line is, structural on the line's
@@ -727,7 +902,7 @@ function checkEntries(touched, addedByHead, headCommitDate) {
       if (removeEvalOk.length === 0) {
         errors.push(
           `section "${t.id}" was removed, but its "remove"-typed entry's Eval: line is insufficient — use a ` +
-            `real result, "none — no fixture yet", or "exempt (skipped row)"`,
+            `real result (${RESULT_SHAPES_HINT}), "none — no fixture yet", or "exempt (skipped row)"`,
         );
         continue;
       }
@@ -761,7 +936,8 @@ function checkEntries(touched, addedByHead, headCommitDate) {
     if (!entries.some((e) => e.evalLine)) {
       errors.push(
         `section "${t.id}" has a new entry in docs/guidance-impact.md with no "- Eval:" bullet at all — add one ` +
-          `(a real result, "none — no fixture yet" while the row is "gap", or "exempt (skipped row)")`,
+          `(a real result — ${RESULT_SHAPES_HINT} — "none — no fixture yet" while the row is "gap", or "exempt ` +
+          `(skipped row)")`,
       );
       continue;
     }
@@ -772,7 +948,7 @@ function checkEntries(touched, addedByHead, headCommitDate) {
       errors.push(
         `section "${t.id}" has a new entry in docs/guidance-impact.md, but its Eval: line is insufficient — ` +
           `"none — no fixture yet" is only legal while the manifest row is "gap", "exempt (skipped row)" only ` +
-          `while it is "skipped" (row "${t.id}" is "${rowStatus}"); add a real result`,
+          `while it is "skipped" (row "${t.id}" is "${rowStatus}"); add a real result — ${RESULT_SHAPES_HINT}`,
       );
       continue;
     }
@@ -812,7 +988,29 @@ function main() {
 
   const touched = computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance });
 
+  // S3: docs/guidance-impact.md's raw content at both shas, fetched ONCE and
+  // reused below — needed even when nothing in agents-md changed, because
+  // the impact file's own history can still be vandalized on its own (see
+  // the touched.length === 0 branch immediately below).
+  const headImpactRaw = gitShow(repoRoot, headSha, "docs/guidance-impact.md");
+  const baseImpactRaw = gitShow(repoRoot, mergeBaseSha, "docs/guidance-impact.md");
+  const headEntries = headImpactRaw === null ? [] : toDatedEntries(parseImpactEntries(headImpactRaw));
+  const baseEntries = baseImpactRaw === null ? [] : toDatedEntries(parseImpactEntries(baseImpactRaw));
+
   if (touched.length === 0) {
+    // S3: nothing in agents-md changed, but a PR can still gut the impact
+    // file's own entry history — append-only holds regardless of whether any
+    // guidance section moved. Skipped only when the file's raw content is
+    // IDENTICAL at both shas (this also covers B1's fork-before-impact-file
+    // case, where it is absent at both — there is nothing to lose there).
+    if (headImpactRaw !== baseImpactRaw) {
+      const appendOnlyError = appendOnlyViolation(headEntries, baseEntries);
+      if (appendOnlyError) {
+        console.error(`check-guidance-touch: ${appendOnlyError}`);
+        process.exitCode = 1;
+        return;
+      }
+    }
     console.log("check-guidance-touch: no guidance section changed between base and head — nothing to require");
     return;
   }
@@ -823,7 +1021,7 @@ function main() {
   // exit 1 (fixable by merging/rebasing and then adding an entry), never
   // exit 2 ("could not run at all" — the check DID run and DID find
   // something to require).
-  if (gitShow(repoRoot, headSha, "docs/guidance-impact.md") === null) {
+  if (headImpactRaw === null) {
     for (const t of touched) {
       console.error(
         `check-guidance-touch: section "${t.id}" changed, but docs/guidance-impact.md does not exist yet at ` +
@@ -834,11 +1032,9 @@ function main() {
     return;
   }
 
-  const headEntries = loadDatedEntries(repoRoot, headSha);
-  const baseEntries = loadDatedEntries(repoRoot, mergeBaseSha);
   const headCommitDate = gitCommitDate(repoRoot, headSha);
 
-  const added = addedEntries(headEntries, baseEntries);
+  const added = dedupedAdded(addedEntries(headEntries, baseEntries), baseEntries);
   const errors = checkEntries(touched, added, headCommitDate);
 
   const appendOnlyError = appendOnlyViolation(headEntries, baseEntries);
