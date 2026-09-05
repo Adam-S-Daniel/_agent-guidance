@@ -15205,6 +15205,20 @@ untouched body
         "a convention for readers, not a rule the gate checks" \
         "guidance touch: N2 docs/guidance-impact.md says newest-first is a convention, not something the gate checks"
 
+    # N4: README's own statement of the two conditional Eval: forms had
+    # nothing holding it to the code. classifyEval/evalLegalForStatus are
+    # tested directly (tests #2, #3, #23, #25 above), but the README sentence
+    # a reader actually reaches for was free to drift away from them — and a
+    # gate's documented rule drifting is how someone writes an entry that CI
+    # then rejects for a reason the docs said was fine. Wrap-proof, because
+    # the sentence spans a line break in the file.
+    assert_prose_contains "$REPO_ROOT/README.md" \
+        "\`exempt (skipped row)\` (legal only while the row is \`skipped\`)" \
+        "guidance touch: N4 README pins exempt (skipped row) to a skipped row"
+    assert_prose_contains "$REPO_ROOT/README.md" \
+        "\`none — no fixture yet\` (legal only while the row is \`gap\`)" \
+        "guidance touch: N4 README pins none — no fixture yet to a gap row"
+
     # 50. N3: RESULT_PATTERN's fraction alternative guarded against a
     #     3-segment slash date with a lookbehind and a lookahead, which is a
     #     rule about a number's NEIGHBORS and so reads three other date
