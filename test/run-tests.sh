@@ -17251,6 +17251,411 @@ test_fleet_memory_hook() {
     assert_contains "$dest" "fleet-guidance-version:" "fleet-memory: installed block records its version"
 }
 
+# ── The InstructionsLoaded receipt ─────────────────────────────────────────
+#
+# MEASURED FIRST, on the CLI this container ships (2.1.261), against a stub
+# API endpoint and never a real credential. A `User` load and a `Project`
+# load both arrive as:
+#
+#   {"cwd":…,"file_path":…,"hook_event_name":"InstructionsLoaded",
+#    "load_reason":"session_start","memory_type":"User"|"Project",
+#    "session_id":…,"transcript_path":…}
+#
+# and the hook's PLAIN STDOUT reaches nothing — not the CLI's stdout, not its
+# stderr, not the transcript, not any file under the config dir or HOME. That
+# is why every verdict below is asserted on the RECEIPT FILE as well as on
+# stdout: the receipt is the channel that actually carries, and stdout is kept
+# only so a future CLI that surfaces it is not a change here.
+
+# One event, built by a real JSON serializer rather than printf — a hostile
+# `file_path` (a newline, a quote) has to be a LEGAL event, or the hostile
+# cases below would be testing a broken fixture instead of the hook.
+instr_event() {   # <memory_type> <load_reason> <file_path> [session_id]
+    python3 -c '
+import json, sys
+print(json.dumps({
+    "session_id": sys.argv[4],
+    "transcript_path": "/dev/null",
+    "cwd": "/nonexistent-cwd",
+    "hook_event_name": "InstructionsLoaded",
+    "file_path": sys.argv[3],
+    "memory_type": sys.argv[1],
+    "load_reason": sys.argv[2],
+}))' "$1" "$2" "$3" "${4:-11111111-2222-3333-4444-555555555555}"
+}
+
+# Run the hook the way the CLI does — event on stdin — capturing stdout and
+# stderr to a file and the exit code in INSTR_RC.
+#
+# `out="$(cmd)"; rc=$?` is what the rest of this suite uses, and it does NOT
+# work here: under `set -e` a non-zero command substitution aborts the whole
+# run before `rc=$?` is ever read, so a hook that is missing or crashes ends
+# the suite three lines above the assertion that was supposed to report it.
+# The point of this block is to watch those assertions go red.
+INSTR_ENV=()
+instr_run() {   # <outfile> <event json>   [env via INSTR_ENV]
+    if printf '%s\n' "$2" \
+        | env "${INSTR_ENV[@]}" CLAUDE_CONFIG_DIR="$INSTR_CFG" bash "$INSTR_HOOK" > "$1" 2>&1
+    then INSTR_RC=0; else INSTR_RC=$?; fi
+}
+
+# The managed user-memory block exactly as fleet-memory.sh assembles it.
+# Built by hand here, not by running that hook, so a regression in one of the
+# two is never hidden by the fixture coming from the other.
+instr_install_block() {   # <cfg dir> <payload file> <version>
+    {
+        printf '%s\n' '<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->'
+        printf '<!-- fleet-guidance-version: %s -->\n' "$3"
+        cat "$2"
+        printf '%s\n' '<!-- END FLEET GUIDANCE -->'
+    } > "$1/CLAUDE.md"
+}
+
+instr_write_state() {   # <cfg dir> <version> <bytes> <sha256>
+    {
+        printf 'version=%s\n' "$2"
+        printf 'bytes=%s\n' "$3"
+        printf 'sha256=%s\n' "$4"
+        printf 'verdict=installed\n'
+        printf 'ts=2026-09-05T00:00:00Z\n'
+    } > "$1/fleet-guidance.state"
+}
+
+instr_sha() { sha256sum "$1" | cut -d' ' -f1; }
+
+test_instructions_loaded_hook() {
+    echo ""
+    echo "TEST: instructions-loaded.sh (the load-time receipt)"
+
+    INSTR_HOOK="$REPO_ROOT/.claude/hooks/instructions-loaded.sh"
+    local d="$TEST_DIR/instrload"
+    rm -rf "$d"; mkdir -p "$d/cfg" "$d/repo/.claude/hooks" "$d/outside"
+    INSTR_CFG="$d/cfg"
+    INSTR_ENV=()
+    local payload="$d/payload.md"
+    printf '# Fleet guidance\n\nThe canary is CORAL-EGRET-52.\n' > "$payload"
+    local pbytes psha
+    pbytes="$(wc -c < "$payload" | tr -d ' ')"
+    psha="$(instr_sha "$payload")"
+    local pver="${psha:0:8}"
+
+    local receipt="$d/cfg/instructions-receipt.state"
+    local logf="$d/cfg/instructions-log.jsonl"
+
+    # ── (a) User: the block in context is the block that was installed ─────
+    instr_install_block "$d/cfg" "$payload" "$pver"
+    instr_write_state "$d/cfg" "$pver" "$pbytes" "$psha"
+    rm -f "$receipt" "$logf"
+    instr_run "$d/out_loaded" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: a matching User load exits 0" \
+        || fail "instructions-loaded: a matching User load exit $INSTR_RC"
+    assert_contains "$d/out_loaded" "fleet-guidance: loaded (v${pver}, ${pbytes} bytes)" \
+        "instructions-loaded: a matching block reports loaded, with version and bytes"
+    assert_contains "$receipt" "fleet=loaded (v${pver}, ${pbytes} bytes)" \
+        "instructions-loaded: the receipt file carries the verdict stdout cannot"
+
+    # ── (a) User: the installed version moved on, the loaded block did not ─
+    instr_write_state "$d/cfg" "bbbb2222" "$pbytes" "$psha"
+    rm -f "$receipt"
+    instr_run "$d/out_stale" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    assert_contains "$d/out_stale" "fleet-guidance: LOAD MISMATCH" \
+        "instructions-loaded: a stale version is a LOAD MISMATCH"
+    assert_contains "$d/out_stale" "stale version" \
+        "instructions-loaded: the stale-version mismatch says which reason it is"
+    assert_contains "$d/out_stale" "v${pver}" \
+        "instructions-loaded: the stale-version line names the version actually loaded"
+    assert_contains "$d/out_stale" "vbbbb2222" \
+        "instructions-loaded: the stale-version line names the version that was installed"
+    assert_contains "$receipt" "fleet=LOAD MISMATCH" \
+        "instructions-loaded: a mismatch reaches the receipt file"
+
+    # ── (a) User: the 2026-09-05 incident — a block truncated mid-session ──
+    #
+    # 56,099 bytes cut to 154 while the session ran, and nothing said so until
+    # the next SessionStart. A head-truncation keeps the version line intact,
+    # so the byte count is the only thing that can catch this shape.
+    instr_write_state "$d/cfg" "$pver" "$pbytes" "$psha"
+    head -c 154 "$d/cfg/CLAUDE.md" > "$d/cut" && mv "$d/cut" "$d/cfg/CLAUDE.md"
+    rm -f "$receipt"
+    instr_run "$d/out_trunc" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: a truncated block still exits 0" \
+        || fail "instructions-loaded: a truncated block exit $INSTR_RC"
+    assert_contains "$d/out_trunc" "fleet-guidance: LOAD MISMATCH" \
+        "instructions-loaded: a truncated block is a LOAD MISMATCH"
+    assert_contains "$d/out_trunc" "truncated" \
+        "instructions-loaded: the truncated mismatch says so by name"
+
+    # ── (a) User: no managed block in the file at all ──────────────────────
+    printf '# Someone else global memory\n\nNothing of ours here.\n' > "$d/cfg/CLAUDE.md"
+    rm -f "$receipt"
+    instr_run "$d/out_absent" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    assert_contains "$d/out_absent" "fleet-guidance: LOAD MISMATCH" \
+        "instructions-loaded: an absent block is a LOAD MISMATCH"
+    assert_contains "$d/out_absent" "block absent" \
+        "instructions-loaded: the absent-block mismatch says so by name"
+
+    # Nothing installed by us at all — a machine that never ran the
+    # SessionStart hook, or one that opted out. No state file means no claim
+    # to make, and a hook that invented one would be worse than silent.
+    rm -f "$d/cfg/fleet-guidance.state" "$receipt" "$logf"
+    instr_install_block "$d/cfg" "$payload" "$pver"
+    instr_run "$d/out_nostate" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    assert_not_contains "$d/out_nostate" "fleet-guidance:" \
+        "instructions-loaded: no state file means no fleet verdict at all"
+    if [[ -s "$logf" ]]; then
+        pass "instructions-loaded: the log line is written even with no state file"
+    else
+        fail "instructions-loaded: no log line written without a state file"
+    fi
+    instr_write_state "$d/cfg" "$pver" "$pbytes" "$psha"
+
+    # ── (b) Project: the repo's AGENTS.md against what is in context ───────
+    local repo="$d/repo"
+    instr_agents_md() {   # <file>
+        {
+            printf '%s\n' '<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->'
+            printf '%s\n' '<!-- Source: _agent-guidance -->'
+            printf '%s\n' '<!-- Mode: stub -->'
+            printf '\n# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**\n\n'
+            printf '%s\n' '<!-- END MANAGED SECTION -->'
+            printf '\n## Repo-specific additions\n\nLocal notes.\n'
+        } > "$1"
+    }
+    instr_agents_md "$repo/AGENTS.md"
+    cp "$payload" "$repo/.claude/hooks/fleet-guidance.md"
+    rm -f "$receipt"
+    instr_run "$d/out_agents_ok" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_ok" "agents-md: current (v${pver})" \
+        "instructions-loaded: a repo shipping the guidance in context reads current"
+    assert_contains "$receipt" "agents=current (v${pver})" \
+        "instructions-loaded: the agents-md verdict reaches the receipt too"
+
+    # The repo's synced copy is not the guidance this session loaded. There is
+    # no ordering between two content ids, so the line says WHICH is which
+    # rather than claiming one is older than the other.
+    printf '# Fleet guidance\n\nA DIFFERENT canary: SLATE-PLOVER-03.\n' > "$repo/.claude/hooks/fleet-guidance.md"
+    local repo_v
+    repo_v="$(instr_sha "$repo/.claude/hooks/fleet-guidance.md")"; repo_v="${repo_v:0:8}"
+    rm -f "$receipt"
+    instr_run "$d/out_agents_behind" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_behind" "agents-md: BEHIND" \
+        "instructions-loaded: a repo shipping other guidance reads BEHIND"
+    assert_contains "$d/out_agents_behind" "v$repo_v" \
+        "instructions-loaded: the BEHIND line names the version the repo ships"
+    assert_contains "$d/out_agents_behind" "v${pver}" \
+        "instructions-loaded: the BEHIND line names the version the session loaded"
+    assert_not_contains "$d/out_agents_behind" " < v" \
+        "instructions-loaded: BEHIND claims no ordering it cannot establish"
+    cp "$payload" "$repo/.claude/hooks/fleet-guidance.md"
+
+    # The doubled managed block (c86465f) — the one shape of "edited above the
+    # marker" a file can be caught in without holding the template it was
+    # generated from.
+    instr_agents_md "$d/one.md"
+    cat "$d/one.md" "$d/one.md" > "$repo/AGENTS.md"
+    rm -f "$receipt"
+    instr_run "$d/out_agents_edited" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_edited" "agents-md: EDITED ABOVE THE MARKER" \
+        "instructions-loaded: a doubled managed block reads EDITED ABOVE THE MARKER"
+    assert_not_contains "$d/out_agents_edited" "agents-md: current" \
+        "instructions-loaded: a doubled block is never also reported current"
+
+    # The marker line above the END of the managed block — content moved
+    # across it, which is exactly what the sync's parse cannot survive.
+    {
+        printf '%s\n' '<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->'
+        printf '\n## Repo-specific additions\n\nHand-moved.\n\n'
+        printf '%s\n' '<!-- END MANAGED SECTION -->'
+    } > "$repo/AGENTS.md"
+    instr_run "$d/out_agents_order" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_order" "agents-md: EDITED ABOVE THE MARKER" \
+        "instructions-loaded: markers out of order read EDITED ABOVE THE MARKER"
+
+    # A project memory file that is not a managed AGENTS.md at all — logged,
+    # never judged. Most Project loads in the fleet are exactly this.
+    printf '# A plain project CLAUDE.md\n\nNothing managed here.\n' > "$repo/CLAUDE.md"
+    rm -f "$receipt" "$logf"
+    instr_run "$d/out_plain" "$(instr_event Project session_start "$repo/CLAUDE.md")"
+    assert_not_contains "$d/out_plain" "agents-md:" \
+        "instructions-loaded: an unmanaged project file gets no agents-md verdict"
+    if [[ "$(wc -l < "$logf")" -eq 1 ]]; then
+        pass "instructions-loaded: an unmanaged project file still gets its log line"
+    else
+        fail "instructions-loaded: expected exactly one log line, got $(wc -l < "$logf")"
+    fi
+    instr_agents_md "$repo/AGENTS.md"
+
+    # ── (c) The log line ───────────────────────────────────────────────────
+    #
+    # One JSON object per line, the six keys skills-evals#139 reads plus a
+    # session key so scripts/instructions-report.sh can group by session. The
+    # PATH IS NEVER ABSOLUTE: this file feeds a report that gets pasted into
+    # PRs, and an absolute path carries a home directory into a public log.
+    rm -f "$logf" "$receipt"
+    instr_run "$d/out_logline" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    local line; line="$(tail -1 "$logf")"
+    local want_bytes want_sha
+    want_bytes="$(wc -c < "$repo/AGENTS.md" | tr -d ' ')"
+    want_sha="$(instr_sha "$repo/AGENTS.md")"
+    if python3 -c '
+import json, sys
+d = json.loads(sys.argv[1])
+missing = [k for k in ("ts", "load_reason", "memory_type", "file_path", "bytes", "sha256", "session") if k not in d]
+sys.exit("missing keys: %s" % missing if missing else 0)
+' "$line" 2>"$d/logline.err"; then
+        pass "instructions-loaded: the log line carries every key the report and skills-evals#139 read"
+    else
+        fail "instructions-loaded: log line — $(cat "$d/logline.err")"
+    fi
+    if python3 -c '
+import json, sys
+d = json.loads(sys.argv[1])
+if str(d["file_path"]).startswith("/"):
+    sys.exit("file_path is absolute: %s" % d["file_path"])
+if int(d["bytes"]) != int(sys.argv[2]):
+    sys.exit("bytes %s != %s" % (d["bytes"], sys.argv[2]))
+if d["sha256"] != sys.argv[3]:
+    sys.exit("sha256 mismatch")
+' "$line" "$want_bytes" "$want_sha" 2>"$d/logline2.err"; then
+        pass "instructions-loaded: the log line is relative, and its bytes and sha256 are the file's"
+    else
+        fail "instructions-loaded: log line — $(cat "$d/logline2.err")"
+    fi
+
+    # Rotation at 1 MB, so an unattended machine cannot fill a disk with
+    # receipts. Bounded at two files: the live log and one predecessor.
+    rm -f "$logf" "$logf.1"
+    head -c 1100000 /dev/zero | tr '\0' 'x' > "$logf"
+    instr_run "$d/out_rotate" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    if [[ -f "$logf.1" ]]; then
+        pass "instructions-loaded: the log rotates once it passes the bound"
+    else
+        fail "instructions-loaded: the log did not rotate at 1 MB"
+    fi
+    if [[ "$(wc -c < "$logf")" -lt 100000 ]]; then
+        pass "instructions-loaded: the live log restarts small after rotating"
+    else
+        fail "instructions-loaded: the live log is still $(wc -c < "$logf") bytes after rotating"
+    fi
+
+    # ── FLEET_GUIDANCE_SKIP removes everything, here too ───────────────────
+    rm -f "$logf" "$logf.1"
+    instr_run "$d/out_pre_skip" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    INSTR_ENV=(FLEET_GUIDANCE_SKIP=1)
+    instr_run "$d/out_skip" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    INSTR_ENV=()
+    [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: skip exits 0" \
+        || fail "instructions-loaded: skip exit $INSTR_RC"
+    if [[ -s "$d/out_skip" ]]; then
+        fail "instructions-loaded: skip printed something — '$(head -1 "$d/out_skip")'"
+    else
+        pass "instructions-loaded: skip prints nothing at all"
+    fi
+    if [[ -e "$logf" || -e "$receipt" ]]; then
+        fail "instructions-loaded: skip left its own log or receipt behind"
+    else
+        pass "instructions-loaded: skip removes the log and the receipt it had written"
+    fi
+
+    # A flag whose disabled spelling enables it is the trap fleet-memory
+    # already guards; the two hooks must agree on which spellings mean off.
+    local off
+    for off in 0 false no off; do
+        rm -f "$logf"
+        INSTR_ENV=(FLEET_GUIDANCE_SKIP="$off")
+        instr_run "$d/out_off" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+        INSTR_ENV=()
+        if [[ -s "$logf" ]]; then
+            pass "instructions-loaded: FLEET_GUIDANCE_SKIP=$off does NOT skip"
+        else
+            fail "instructions-loaded: FLEET_GUIDANCE_SKIP=$off skipped, and must not"
+        fi
+    done
+
+    # ── Hostile and malformed events ──────────────────────────────────────
+    #
+    # This hook runs on EVERY memory load in every session, so its failure
+    # mode has to be "nothing happened", never "the session broke". Exit 0 on
+    # all of them, no interpreter traceback, and nothing written outside
+    # $CLAUDE_CONFIG_DIR — fingerprinted on both sides rather than asserted.
+    instr_tree_print() {   # <dir> — one line per file: path, size, sha
+        find "$1" -type f 2>/dev/null | sort | while read -r f; do
+            printf '%s %s %s\n' "$f" "$(wc -c < "$f" | tr -d ' ')" "$(instr_sha "$f")"
+        done
+    }
+    instr_tree_print "$repo" > "$d/tree_before"
+    instr_tree_print "$d/outside" >> "$d/tree_before"
+
+    local nl_path bad hostile_rc=0
+    nl_path="$(printf '%s/AGENTS\nWITH-A-NEWLINE.md' "$repo")"
+    rm -f "$logf" "$receipt" "$d/out_hostile"
+    for bad in \
+        '{"hook_event_name":"InstructionsLoaded","memory_type":"User","load_reason":"session_start"}' \
+        '{"hook_event_name":"InstructionsLoaded"}' \
+        'not json at all' \
+        '' \
+        '[]' \
+        "$(instr_event User session_start "$d/does-not-exist.md")" \
+        "$(instr_event Project session_start "$repo")" \
+        "$(instr_event Project session_start "$nl_path")" \
+        "$(instr_event Project '../../etc/passwd' "$repo/AGENTS.md")"
+    do
+        instr_run "$d/out_one_hostile" "$bad"
+        [[ $INSTR_RC -eq 0 ]] || hostile_rc=$INSTR_RC
+        cat "$d/out_one_hostile" >> "$d/out_hostile"
+    done
+    [[ $hostile_rc -eq 0 ]] && pass "instructions-loaded: every hostile event exits 0" \
+        || fail "instructions-loaded: a hostile event exited $hostile_rc"
+    assert_not_contains "$d/out_hostile" "Traceback" \
+        "instructions-loaded: no interpreter traceback reaches the session"
+    assert_not_contains "$d/out_hostile" "command not found" \
+        "instructions-loaded: no shell error reaches the session"
+
+    # A 10 MB stdin, the shape that turns a per-load hook into a memory
+    # problem. It must be refused, not parsed.
+    if { head -c 10000000 /dev/zero | tr '\0' 'x'; } \
+        | CLAUDE_CONFIG_DIR="$d/cfg" bash "$INSTR_HOOK" > "$d/out_big" 2>&1
+    then INSTR_RC=0; else INSTR_RC=$?; fi
+    [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: a 10 MB stdin still exits 0" \
+        || fail "instructions-loaded: a 10 MB stdin exited $INSTR_RC"
+    assert_not_contains "$d/out_big" "Traceback" \
+        "instructions-loaded: a 10 MB stdin produces no traceback"
+
+    instr_tree_print "$repo" > "$d/tree_after"
+    instr_tree_print "$d/outside" >> "$d/tree_after"
+    if diff -q "$d/tree_before" "$d/tree_after" >/dev/null; then
+        pass "instructions-loaded: nothing outside the config dir was written"
+    else
+        fail "instructions-loaded: it wrote outside the config dir — $(diff "$d/tree_before" "$d/tree_after" | head -3 | tr '\n' ' ')"
+    fi
+
+    # Every line the hook ever wrote must still be one JSON object per line: a
+    # hostile path is data to escape, never a second line.
+    if [[ -s "$logf" ]] && python3 -c '
+import json, sys
+for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
+    line = line.strip()
+    if not line:
+        continue
+    obj = json.loads(line)
+    if not isinstance(obj, dict):
+        sys.exit("line %d is not an object" % n)
+' "$logf" 2>"$d/logparse.err"; then
+        pass "instructions-loaded: the log survives a hostile path as one object per line"
+    else
+        fail "instructions-loaded: the log is not one JSON object per line — $(cat "$d/logparse.err")"
+    fi
+
+    # Observe-only: no decision field, ever. A hook that learned to block
+    # would be a hook that can stop a session from starting.
+    assert_not_contains "$INSTR_HOOK" '"decision"' \
+        "instructions-loaded: the hook emits no decision field"
+    assert_not_contains "$INSTR_HOOK" '"continue"' \
+        "instructions-loaded: the hook emits no continue field"
+    assert_not_contains "$INSTR_HOOK" '"systemMessage"' \
+        "instructions-loaded: the hook emits no systemMessage field"
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -17407,6 +17812,7 @@ test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
 test_fleet_memory_hook
+test_instructions_loaded_hook
 
 echo ""
 echo "========================================="
