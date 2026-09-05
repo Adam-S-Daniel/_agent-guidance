@@ -14615,18 +14615,23 @@ PR changed body
     assert_touch "$event42" "$dir42" 0 'all have a sufficient' \
         "guidance touch: S4 a legitimate merge that re-sorts a newer base entry ahead of the PR's own is not a false append-only violation"
 
-    # 43. B1 (round 3): the fallback resolved a tip row by EXACT heading text
-    #     at each sha independently, so a rename plus body edit on a branch
-    #     that forked before the manifest existed resolved at the merge-base
-    #     (old text still real there) but not at head (only the new text is)
-    #     — the id vanished from headManifest while surviving in
-    #     baseManifest, and computeTouched read that asymmetry as a
-    #     retirement, requiring a "remove" entry for a section that was
-    #     actually renamed and edited. Both fork commits lack
-    #     agents-md/eval-coverage.yml entirely; only main (the base tip) has
-    #     it, plus docs/guidance-impact.md, which the head branch ALSO picks
-    #     up on its own (so this exercises checkEntries, not B1's separate
-    #     "impact file missing at head" branch — see tests #27-29 for that).
+    # 43. B1 (round 4): the fallback's APPROXIMATE (nearest-heading) pass is
+    #     gone — deleted, not tuned. A tip row that the EXACT pass cannot
+    #     resolve at a sha where the manifest is absent is now exit 2 naming
+    #     the row, the sha and the merge remedy, because every guess the
+    #     approximate pass made was wrong in a way that wrote something false
+    #     into the audit trail (a manufactured "remove", a wholesale rewrite
+    #     waved through, crossed rename assignments). Tests #43a-#49b below
+    #     are the four fixtures that measured those, plus this one.
+    #
+    #     Here: a rename PLUS a body edit on a branch that forked before the
+    #     manifest existed. Both fork commits lack agents-md/eval-coverage.yml
+    #     entirely; only main (the base tip) has it, plus
+    #     docs/guidance-impact.md, which the head branch ALSO picks up on its
+    #     own. Round 3 answered this with an approximate match and an "edit"
+    #     demand; round 4 answers it with exit 2 — the row cannot be resolved
+    #     at head by heading text, and merging the base branch (which brings
+    #     the manifest with it) is the cheap, correct, unambiguous fix.
     local dir43="$root/fallback_rename_and_edit"
     rm -rf "$dir43"
     mkdir -p "$dir43/agents-md/sections"
@@ -14667,13 +14672,21 @@ untouched body
     write_event "$main43" "$head43_no_entry" "$event43a"
     local out43a rc43a=0
     out43a=$(GITHUB_EVENT_PATH="$event43a" node "$script" --repo-root "$dir43" 2>&1) || rc43a=$?
-    if [[ "$rc43a" == 1 ]] && grep -qF -- '"## YYYY-MM-DD — heading-one — edit"' <<<"$out43a" \
+    if [[ "$rc43a" == 2 ]] \
+            && grep -qF -- 'section "heading-one" could not be matched by heading there' <<<"$out43a" \
+            && grep -qF -- "$head43_no_entry" <<<"$out43a" \
+            && grep -qF -- 'merge or rebase onto the base branch to pick up the manifest' <<<"$out43a" \
             && ! grep -qF -- 'remove' <<<"$out43a"; then
-        pass "guidance touch: B1 a rename plus body edit on a pre-manifest fork is required as an edit, never mis-reported as a remove"
+        pass "guidance touch: B1 a rename plus body edit on a pre-manifest fork is exit 2 naming the row, the sha and the merge remedy — never a guessed match"
     else
-        fail "guidance touch: B1 expected exit 1 naming an edit entry, never 'remove' — got exit $rc43a: $(echo "$out43a" | tr '\n' ' ')"
+        fail "guidance touch: B1 expected exit 2 naming the row id, the head sha and the merge remedy, with no 'remove' — got exit $rc43a: $(echo "$out43a" | tr '\n' ' ')"
     fi
 
+    # 43b. The SAME fork with a correct "edit" entry already written: still
+    #      exit 2. The row is unresolvable at head whatever the impact file
+    #      says, so the entry cannot rescue it — the remedy is the merge, and
+    #      an entry written against a guessed identity is exactly what the
+    #      approximate pass used to accept.
     printf '%s%s' "$impact_stub" '
 ---
 
@@ -14687,9 +14700,229 @@ untouched body
 
     local event43b="$TEST_DIR/touch-event-43b.json"
     write_event "$main43" "$head43_with_entry" "$event43b"
-    assert_touch "$event43b" "$dir43" 0 'all have a sufficient' \
-        "guidance touch: B1 a correct edit entry clears the requirement for the same rename-plus-edit-on-a-pre-manifest-fork"
+    assert_touch "$event43b" "$dir43" 2 'could not be matched by heading there' \
+        "guidance touch: B1 an entry written for the guessed id does not rescue an unresolvable row — still exit 2"
 
+    # A three-row manifest for the fallback fixtures below, which need more
+    # than one heading in play to show a greedy nearest-heading pass stealing
+    # or crossing assignments.
+    local abg_manifest='- id: alpha
+  heading: Alpha
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: beta
+  heading: Beta
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: gamma
+  heading: Gamma
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+'
+
+    # touch_pre_manifest_fork <dir> <fork base.md> <tip manifest> <head base.md>
+    # — the shape every fixture below shares, and the one the deleted
+    # approximate pass existed to serve: a branch that forked BEFORE
+    # agents-md/eval-coverage.yml existed. The fork commit carries only
+    # base.md; main then adds the manifest and docs/guidance-impact.md; the
+    # head branch edits base.md and picks up the impact file (so the run
+    # reaches manifest resolution rather than B1's separate "impact file
+    # missing at head" branch). Echoes "<main sha> <head sha>".
+    touch_pre_manifest_fork() {
+        local dir="$1"
+        rm -rf "$dir"
+        mkdir -p "$dir/agents-md/sections"
+        git -C "$dir" init -q >/dev/null
+        printf '%s' "$2" > "$dir/agents-md/base.md"
+        git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
+        git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m fork-before-manifest
+        git -C "$dir" branch -q head-branch
+
+        mkdir -p "$dir/docs"
+        printf '%s' "$3" > "$dir/agents-md/eval-coverage.yml"
+        printf '%s' "$impact_stub" > "$dir/docs/guidance-impact.md"
+        git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
+        git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m main-adds-manifest-and-impact
+        local main_sha
+        main_sha=$(git -C "$dir" rev-parse HEAD)
+
+        git -C "$dir" checkout -q head-branch
+        printf '%s' "$4" > "$dir/agents-md/base.md"
+        mkdir -p "$dir/docs"
+        printf '%s' "$impact_stub" > "$dir/docs/guidance-impact.md"
+        git -C "$dir" -c user.name=test -c user.email=test@localhost add -A
+        git -C "$dir" -c user.name=test -c user.email=test@localhost commit -q -m head-edits-base-md
+        printf '%s %s' "$main_sha" "$(git -C "$dir" rev-parse HEAD)"
+    }
+
+    # 47. B1 fixture 1 — a genuine removal beside a rename. Beta is deleted
+    #     outright; Gamma is renamed to Gamma2 AND edited. The approximate
+    #     pass, walking rows in manifest order, handed Beta's row the only
+    #     unclaimed heading left (Gamma2) and then had nothing for Gamma's —
+    #     so the gate demanded `beta — edit` and `gamma — remove`: a
+    #     RETIREMENT written into the audit trail for a section that was
+    #     renamed, not retired. Neither row can be resolved by heading text
+    #     at head, so both are named and the run is exit 2.
+    local dir47 main47 head47 event47
+    dir47="$root/fallback_remove_beside_rename"
+    read -r main47 head47 <<<"$(touch_pre_manifest_fork "$dir47" '## Alpha
+alpha body
+
+## Beta
+beta body
+
+## Gamma
+gamma body
+' "$abg_manifest" '## Alpha
+alpha body
+
+## Gamma2
+gamma body CHANGED
+')"
+    event47="$TEST_DIR/touch-event-47.json"
+    write_event "$main47" "$head47" "$event47"
+    local out47 rc47=0
+    out47=$(GITHUB_EVENT_PATH="$event47" node "$script" --repo-root "$dir47" 2>&1) || rc47=$?
+    if [[ "$rc47" == 2 ]] && grep -qF -- '"gamma"' <<<"$out47" && grep -qF -- '"beta"' <<<"$out47" \
+            && grep -qF -- 'could not be matched by heading there' <<<"$out47" \
+            && ! grep -qF -- 'remove' <<<"$out47"; then
+        pass "guidance touch: B1 fixture 1 a real removal beside a rename is exit 2 naming both rows, never a manufactured 'remove' remedy"
+    else
+        fail "guidance touch: B1 fixture 1 expected exit 2 naming \"beta\" and \"gamma\" with no 'remove' — got exit $rc47: $(echo "$out47" | tr '\n' ' ')"
+    fi
+
+    # 48. B1 fixture 2 — a section SPLIT: "## Security" becomes "## Secrets"
+    #     (carrying the old body verbatim) plus "## Security and secrets"
+    #     (all-new text). The approximate pass resolved `security` to
+    #     "Secrets" on edit distance, compared the old body against itself,
+    #     found no difference, and exited 0 "nothing to require" — a
+    #     wholesale rewrite through the gate with no entry at all. The exact
+    #     pass cannot resolve it, so it is exit 2.
+    local dir48 main48 head48 event48
+    dir48="$root/fallback_section_split"
+    read -r main48 head48 <<<"$(touch_pre_manifest_fork "$dir48" '## Security
+the original security body
+' '- id: security
+  heading: Security
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+' '## Secrets
+the original security body
+
+## Security and secrets
+all new text about secrets, sharing nothing with the old section
+')"
+    event48="$TEST_DIR/touch-event-48.json"
+    write_event "$main48" "$head48" "$event48"
+    assert_touch "$event48" "$dir48" 2 'section "security" could not be matched by heading there' \
+        "guidance touch: B1 fixture 2 a section split is exit 2, never exit 0 'nothing to require' on a wholesale rewrite"
+
+    # 49a. B1 fixture 3a — a PURE rename (body byte-identical across it) whose
+    #      new heading is FARTHER, by edit distance, than an unrelated heading
+    #      that no row claims. "Beta" became "Beta and its friends", but
+    #      "Gamma" (16 characters closer) sat unclaimed, so the approximate
+    #      pass gave `beta` Gamma's body and reported an edit of a section
+    #      nobody touched. A rename needs no entry at all; the false demand
+    #      was pure noise. Exit 2 now.
+    local dir49a main49a head49a event49a
+    dir49a="$root/fallback_rename_nearer_stranger"
+    read -r main49a head49a <<<"$(touch_pre_manifest_fork "$dir49a" '## Beta
+beta body
+
+## Gamma
+gamma body
+' '- id: beta
+  heading: Beta
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+' '## Beta and its friends
+beta body
+
+## Gamma
+gamma body
+')"
+    event49a="$TEST_DIR/touch-event-49a.json"
+    write_event "$main49a" "$head49a" "$event49a"
+    local out49a rc49a=0
+    out49a=$(GITHUB_EVENT_PATH="$event49a" node "$script" --repo-root "$dir49a" 2>&1) || rc49a=$?
+    if [[ "$rc49a" == 2 ]] && grep -qF -- 'section "beta" could not be matched by heading there' <<<"$out49a" \
+            && ! grep -qF -- 'has no new entry' <<<"$out49a"; then
+        pass "guidance touch: B1 fixture 3a a pure rename with a nearer unclaimed heading is exit 2, never a false edit demand"
+    else
+        fail "guidance touch: B1 fixture 3a expected exit 2 naming \"beta\", with no entry demand — got exit $rc49a: $(echo "$out49a" | tr '\n' ' ')"
+    fi
+
+    # 49b. B1 fixture 3b — TWO pure renames, each body byte-identical across
+    #      its own rename, that the greedy pass CROSSED: walking rows in
+    #      manifest order it gave `beta` the nearest remaining heading
+    #      ("Gam") and `gamma` what was left ("Beta and its friends"), so
+    #      each row was compared against the OTHER section's body and both
+    #      came back as edits. Two false reds, from two renames that need no
+    #      entry at all. Exit 2 now, naming both rows.
+    local dir49b main49b head49b event49b
+    dir49b="$root/fallback_crossed_renames"
+    read -r main49b head49b <<<"$(touch_pre_manifest_fork "$dir49b" '## Beta
+beta body
+
+## Gamma
+gamma body
+' '- id: beta
+  heading: Beta
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+
+- id: gamma
+  heading: Gamma
+  file: agents-md/base.md
+  status: gap
+  bytes: 1
+' '## Beta and its friends
+beta body
+
+## Gam
+gamma body
+')"
+    event49b="$TEST_DIR/touch-event-49b.json"
+    write_event "$main49b" "$head49b" "$event49b"
+    local out49b rc49b=0
+    out49b=$(GITHUB_EVENT_PATH="$event49b" node "$script" --repo-root "$dir49b" 2>&1) || rc49b=$?
+    if [[ "$rc49b" == 2 ]] && grep -qF -- '"beta"' <<<"$out49b" && grep -qF -- '"gamma"' <<<"$out49b" \
+            && grep -qF -- 'could not be matched by heading there' <<<"$out49b" \
+            && ! grep -qF -- 'has no new entry' <<<"$out49b"; then
+        pass "guidance touch: B1 fixture 3b two pure renames are exit 2 naming both rows, never crossed into two false edit demands"
+    else
+        fail "guidance touch: B1 fixture 3b expected exit 2 naming \"beta\" and \"gamma\", with no entry demand — got exit $rc49b: $(echo "$out49b" | tr '\n' ' ')"
+    fi
+
+    # 50. B1: the case the EXACT pass is kept for, and the reason deleting
+    #     the approximate one costs nothing real — a body edit under an
+    #     UNCHANGED heading, on the same pre-manifest fork. The row still
+    #     resolves by exact text at head, so the gate still runs and still
+    #     demands its "edit" entry. This is the common shape of a
+    #     pre-manifest-fork PR; every shape the approximate pass added on top
+    #     of it is one of #43a-#49b.
+    local dir50 main50 head50 event50
+    dir50="$root/fallback_exact_still_resolves"
+    read -r main50 head50 <<<"$(touch_pre_manifest_fork "$dir50" "$base_body" "$base_manifest" '## Heading One
+CHANGED body by pr
+
+## Heading Two
+untouched body
+')"
+    event50="$TEST_DIR/touch-event-50.json"
+    write_event "$main50" "$head50" "$event50"
+    assert_touch "$event50" "$dir50" 1 '"## YYYY-MM-DD — heading-one — edit"' \
+        "guidance touch: B1 a body edit under an unchanged heading on a pre-manifest fork still resolves exactly and still requires its edit entry"
+
+    unset -f touch_pre_manifest_fork
     # 44. N6: agents-md/eval-coverage.yml missing at BOTH head and the base
     #     branch's tip (the fallback's own "no usable manifest anywhere"
     #     exit) is a named exit 2, not confused with a mergeable "create the

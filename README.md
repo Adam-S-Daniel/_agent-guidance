@@ -98,7 +98,13 @@ PR's head itself, this diff's addition to
 is a real result, `exempt (skipped row)` (legal only while the row is
 `skipped`), or `none — no fixture yet` (legal only while the row is `gap`). A
 pure rename needs no entry; a removed section
-needs one typed `remove`.
+needs one typed `remove`. On a branch that forked before
+`agents-md/eval-coverage.yml` existed, the gate falls back to the base branch
+tip's manifest and resolves each of its rows by **exact** heading text at the
+PR's own commits, so a body edit under an unchanged heading is still caught.
+It never approximates: a row the exact match cannot resolve is exit 2 naming
+that row and the remedy — merge or rebase onto the base branch, after which
+the manifest exists at both shas and no fallback runs at all.
 
 ## The skills-bootstrap hook
 

@@ -80,22 +80,21 @@
  * merge-base) via loadManifestWithFallback — an id is stable across the
  * manifest's own history, so a heading that still resolves at head under a
  * tip row's exact text can be trusted to carry that row's id even though
- * head itself has no manifest file at all. Exact text is tried FIRST; a row
- * with no exact match in its own file falls back to the nearest heading
- * THERE (the same Levenshtein hint check-guidance-coverage.js offers for a
- * stale row — see its nearestHeading — used here to resolve identity rather
- * than just to suggest one, and never claiming a heading another row already
- * matched exactly). This second step exists because a rename on this same
- * branch, on top of the pre-manifest fork, resolves at the merge-base (old
- * text still real there) but not at head (only the new text is) — and that
- * asymmetry alone used to manufacture a false `remove`: the id vanished from
- * headManifest while surviving in baseManifest, and computeTouched reads "a
- * row at base, none at head" as a retirement, regardless of what actually
- * happened to the heading at head. A row with no heading left at all in its
- * file — no exact match and nothing to approximate against — is still
- * dropped, as before. Only when the base tip ALSO has no usable manifest is
- * this still exit 2, with a message naming "merge or rebase onto the base
- * branch" rather than "create the file". docs/guidance-impact.md
+ * head itself has no manifest file at all. EXACT TEXT ONLY: a tip row whose
+ * heading has no exact match at `sha` is a named exit 2 — the message gives
+ * the row id, the sha, and the same "merge or rebase onto the base branch"
+ * remedy — never an approximate match. Round 3's nearest-heading pass, added
+ * so that a rename on a pre-manifest fork would resolve at head too,
+ * manufactured a false `remove` on a removal beside a rename, waved a
+ * wholesale section rewrite through at exit 0, and crossed two pure renames
+ * into two false `edit` demands, so round 4 deleted it rather than tuning it
+ * (each measurement is recorded on loadManifestWithFallback itself). The
+ * window this fallback serves is closing on its own — branches forked before
+ * #121 landed the manifest — and merging the base branch resolves every case
+ * the exact pass cannot, by making the manifest exist at both shas. Only
+ * when the base tip ALSO has no usable manifest is this the OTHER exit 2,
+ * naming "merge or rebase onto the base branch" rather than "create the
+ * file". docs/guidance-impact.md
  * absent at head gets the parallel treatment in main() itself: if nothing
  * was touched, absence is moot (exit 0, unchanged); if something was, it is
  * exit 1 (fixable by merging/rebasing and then adding an entry), never exit
@@ -135,7 +134,9 @@
  *   2 — could not run at all: no $GITHUB_EVENT_PATH, an unreadable or
  *       unparseable event file, an unresolvable merge-base, a malformed
  *       --repo-root, or agents-md/eval-coverage.yml missing at both head and
- *       the base branch's tip (see B1 above).
+ *       the base branch's tip, or a base-tip row that the exact fallback
+ *       cannot match to any heading at a sha where the manifest is absent
+ *       (see B1 above).
  *
  * Usage:
  *   GITHUB_EVENT_PATH=/path/to/event.json node scripts/check-guidance-touch.js
@@ -354,65 +355,62 @@ function parseManifestRows(raw, sha) {
   return byId;
 }
 
-// ── Levenshtein, for B1's approximate fallback resolution ──────────────
-//
-// Duplicated from check-guidance-coverage.js's own levenshtein/nearestHeading
-// rather than imported: that file uses its copy only to build a HUMAN HINT
-// on an already-reported error (a stale row's likely rename target), never to
-// decide anything — sharing a module would couple this file's actual pass/
-// fail behavior to a helper the coverage script never intended as load-
-// bearing. See loadManifestWithFallback below for how this file uses it.
-function levenshtein(a, b) {
-  const m = a.length;
-  const n = b.length;
-  const dp = new Array(n + 1);
-  for (let j = 0; j <= n; j++) dp[j] = j;
-  for (let i = 1; i <= m; i++) {
-    let prev = dp[0];
-    dp[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const tmp = dp[j];
-      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
-      prev = tmp;
-    }
-  }
-  return dp[n];
-}
-
-function nearestHeading(target, candidates) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const c of candidates) {
-    const d = levenshtein(target, c);
-    if (d < bestDist) {
-      bestDist = d;
-      best = c;
-    }
-  }
-  return { heading: best, distance: bestDist };
-}
-
-// loadManifestWithFallback — id -> row, at <sha>, with a fallback for B1. A PR whose HEAD (or merge-base) predates
-// agents-md/eval-coverage.yml entirely (it forked before #119 added the
-// file — this repo's own pre-#119 history is exactly such a case) used to
-// make `sha`'s absence unconditionally fatal, even though the file lives on
-// the base branch and `pull_request.base.sha` (`baseTipSha` here — the base
-// branch's CURRENT tip, NOT the merge-base) already has it.
+// loadManifestWithFallback — id -> row, at <sha>, with a fallback for B1. A
+// PR whose HEAD (or merge-base) predates agents-md/eval-coverage.yml entirely
+// (it forked before #119 added the file — this repo's own pre-#119 history is
+// exactly such a case) used to make `sha`'s absence unconditionally fatal,
+// even though the file lives on the base branch and `pull_request.base.sha`
+// (`baseTipSha` here — the base branch's CURRENT tip, NOT the merge-base)
+// already has it.
 //
 // When the manifest exists at `sha`, this is loadManifestAt(sha, {required})
 // verbatim — the fallback below never runs. When it does not exist at `sha`,
-// fall back to `baseTipSha`'s copy: an `id` is stable across the manifest's
-// own history (this file's top header), so a row whose heading text still
-// resolves, by exact text AND file, in `guidance` (the headings actually
-// read at `sha`) can be trusted to carry that row's id even though `sha`
-// itself carries no manifest file at all. A row whose heading does not
-// resolve at `sha` is dropped rather than guessed at — indistinguishable,
-// from here, from a section that simply does not exist yet at `sha`.
+// fall back to `baseTipSha`'s copy and resolve each of its rows by EXACT
+// heading text AND file against the headings actually read at `sha`: an `id`
+// is stable across the manifest's own history (this file's top header), so a
+// row whose heading still exists verbatim at `sha` can be trusted to carry
+// that row's id even though `sha` itself has no manifest file at all.
+//
+// EXACT ONLY, DELIBERATELY. Round 3 added an approximate second pass — a
+// nearest-heading (Levenshtein) match, copied from
+// check-guidance-coverage.js's stale-row HINT — so that a rename on top of a
+// pre-manifest fork would resolve at head too. It was deleted in round 4,
+// after three reviews, because every guess it made was wrong in a way that
+// wrote something FALSE into the audit trail, and the measurements are worth
+// keeping here:
+//   - a genuine removal beside a rename (Beta deleted, Gamma renamed) handed
+//     Beta's row the only unclaimed heading left and then had nothing for
+//     Gamma's, so the gate demanded `gamma — remove`: a RETIREMENT recorded
+//     for a section that was renamed;
+//   - a section SPLIT ("## Security" -> "## Secrets" carrying the old body,
+//     plus an all-new "## Security and secrets") resolved `security` to
+//     "Secrets", compared the old body against itself and exited 0 "nothing
+//     to require" — a wholesale rewrite through the gate with no entry;
+//   - a pure rename whose new heading was farther, by edit distance, than an
+//     unrelated unclaimed heading, and two pure renames the greedy walk
+//     CROSSED, each produced a false `edit` demand for a section nobody
+//     touched.
+// The pass was also order-dependent (rows are walked in manifest order) and
+// uncapped (no distance ceiling), so none of that was tunable in the small.
+// What it bought was a window that is closing on its own — branches forked
+// before #121 landed the manifest on 2026-09-04 — and the remedy for every
+// case it could not resolve is cheap, correct and unambiguous: merge the base
+// branch, after which the manifest exists at both shas and no fallback runs
+// at all. So a tip row the exact pass cannot resolve is a named exit 2, not a
+// guess.
+//
+// CONSEQUENCE, and the point of the whole change: no fallback resolution can
+// produce a `remove` remedy any more. A row that resolved at the merge-base
+// and does not resolve at head is exit 2, never a retirement inferred from
+// the asymmetry. Genuine removals — where the manifest is present at BOTH
+// shas and the row is really gone from it — keep computeTouched's own
+// `remove` path, untouched.
 //
 // `required` here means "is `sha` missing the manifest with NO usable
 // fallback a fatal error" — mirrored from loadManifestAt's own `required`,
-// but the unresolvable case is head-only in practice (main() never treats a
-// merge-base with no history and no fallback as fatal).
+// and it governs only that case: an unresolvable row is exit 2 at either sha,
+// because a wrong identity at the merge-base manufactures a false `create`
+// exactly as one at head manufactured a false `remove`.
 function loadManifestWithFallback(repoRoot, sha, baseTipSha, guidance, { required }) {
   const raw = gitShow(repoRoot, sha, "agents-md/eval-coverage.yml");
   if (raw !== null) {
@@ -444,45 +442,24 @@ function loadManifestWithFallback(repoRoot, sha, baseTipSha, guidance, { require
     return new Map();
   }
 
-  // Exact text first — unchanged from before B1's follow-up fix. A tip row
-  // reserves the heading it exactly claims, so a later approximate match
-  // (below) can never steal it out from under another id.
   const byId = new Map();
-  const claimed = new Set();
   const unresolved = [];
   for (const [id, row] of tipById) {
     const exact = guidance.headings.find((h) => h.file === row.file && h.heading === row.heading);
-    if (exact) {
-      byId.set(id, row);
-      claimed.add(headingKey(exact.file, exact.heading));
-    } else {
-      unresolved.push([id, row]);
-    }
+    if (exact) byId.set(id, row);
+    else unresolved.push(id);
   }
-  // Approximate fallback — B1's own follow-up fix (see this file's header):
-  // a tip row whose heading text has no exact match at `sha` (typically
-  // because THIS branch renamed it, on top of a fork that predates the
-  // manifest entirely) resolves to the nearest heading remaining in its own
-  // file, the same Levenshtein hint check-guidance-coverage.js's
-  // nearestHeading offers for a stale row, reused here to resolve identity
-  // instead of only suggesting it. The row's own `heading` field is rewritten
-  // to that real heading's text, since every downstream lookup
-  // (computeTouched's headingKey) expects `row.heading` to be the CURRENT
-  // text at `sha`. A file with no heading left to approximate against drops
-  // the row, exactly as the exact-only version did.
-  for (const [id, row] of unresolved) {
-    const candidates = guidance.headings.filter(
-      (h) => h.file === row.file && !claimed.has(headingKey(h.file, h.heading)),
+  if (unresolved.length > 0) {
+    // Named, and naming EVERY unresolvable row rather than the first: which
+    // one a reader is shown would otherwise depend on manifest row order,
+    // and a fixture with two of them (a removal beside a rename) needs both
+    // to see what actually happened. The remedy is the same sentence the
+    // no-manifest-anywhere case above uses, deliberately.
+    throw new RunError(
+      `agents-md/eval-coverage.yml is absent at ${sha} and ${unresolved.length === 1 ? "section" : "sections"} ` +
+        `${unresolved.map((id) => `"${id}"`).join(", ")} could not be matched by heading there — merge or rebase ` +
+        `onto the base branch to pick up the manifest, then re-run`,
     );
-    if (candidates.length === 0) continue;
-    const nearest = nearestHeading(
-      row.heading,
-      candidates.map((h) => h.heading),
-    );
-    if (nearest.heading === null) continue;
-    const match = candidates.find((h) => h.heading === nearest.heading);
-    byId.set(id, { ...row, heading: match.heading });
-    claimed.add(headingKey(match.file, match.heading));
   }
   return byId;
 }
