@@ -94,11 +94,11 @@
  * the exact pass cannot, by making the manifest exist at both shas. Only
  * when the base tip ALSO has no usable manifest is this the OTHER exit 2,
  * naming "merge or rebase onto the base branch" rather than "create the
- * file". docs/guidance-impact.md
- * absent at head gets the parallel treatment in main() itself: if nothing
- * was touched, absence is moot (exit 0, unchanged); if something was, it is
- * exit 1 (fixable by merging/rebasing and then adding an entry), never exit
- * 2 — the check DID run and DID find something to require.
+ * file". docs/guidance-impact.md absent at head gets the parallel treatment
+ * in main() itself: if nothing was touched, absence is moot (exit 0,
+ * unchanged); if something was, it is exit 1 (fixable by merging/rebasing and
+ * then adding an entry), never exit 2 — the check DID run and DID find
+ * something to require.
  *
  * S1 — APPEND-ONLY IS ENFORCED TWO WAYS, independently, because each catches
  * a different failure the other cannot: (1) appendOnlyViolation asserts
@@ -148,9 +148,9 @@
  *       line while it is not `skipped`, or a date that fails dateIssue), one
  *       typed to a kind that does not satisfy the touch (a `rejected` entry
  *       against an edit), a removed id's entry not typed `remove`, an
- *       append-only violation (appendOnlyViolation), or docs/guidance-impact.md
- *       missing at head while something was touched (see B1 above). Errors
- *       name the id and the entry format.
+ *       append-only violation (appendOnlyViolation), or
+ *       docs/guidance-impact.md missing at head while something was touched
+ *       (see B1 above). Errors name the id and the entry format.
  *   2 — could not run at all: no $GITHUB_EVENT_PATH, an unreadable or
  *       unparseable event file, an unresolvable merge-base, a malformed
  *       --repo-root, or agents-md/eval-coverage.yml missing at both head and
