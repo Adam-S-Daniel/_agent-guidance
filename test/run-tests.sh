@@ -12073,10 +12073,20 @@ if not isinstance(lock.get("skills"), dict) or not lock["skills"]:
     fi
 }
 
-# workflow_steps <file> — one line per job step: "<uses> <repository> <fetch-depth>",
-# with "-" for a field the step does not set. The same real parser yaml_field
-# uses, for the same reason: `uses:` inside a comment, or under a key the file
-# no longer reads, is bytes a grep matches and a parser does not.
+# workflow_steps <file> [job] — one line per job step: "<uses> <repository>
+# <fetch-depth>", with "-" for a field the step does not set. The same real
+# parser yaml_field uses, for the same reason: `uses:` inside a comment, or
+# under a key the file no longer reads, is bytes a grep matches and a parser
+# does not.
+#
+# [job] is OPTIONAL and scopes the output to one job's own steps (plus that
+# job's own `uses:`, if it has one) — omit it to walk every job, as the
+# multi-job callers that predate this parameter still do. S2: a caller
+# asserting something about ONE job (ci.yml's `test` job's first checkout,
+# say) MUST pass it — a multi-job file otherwise concatenates every job's
+# steps in `jobs:` object-key order, and an `awk '... {print; exit}'` over
+# that silently reads whichever job the YAML parser happens to visit first,
+# not necessarily the one the assertion is actually about.
 workflow_steps() {
     if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
         echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
@@ -12086,7 +12096,9 @@ workflow_steps() {
 const fs = require("node:fs");
 const YAML = require(process.argv[1] + "/node_modules/yaml");
 const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
-for (const spec of Object.values((doc && doc.jobs) || {})) {
+const onlyJob = process.argv[3];
+const jobs = onlyJob ? { [onlyJob]: (doc && doc.jobs && doc.jobs[onlyJob]) || null } : ((doc && doc.jobs) || {});
+for (const spec of Object.values(jobs)) {
   // A job-level `uses:` is a reusable-workflow call, pinned by the same rule.
   if (spec && typeof spec.uses === "string") console.log([spec.uses, "-", "-"].join(" "));
   for (const step of (spec && spec.steps) || []) {
@@ -12095,7 +12107,7 @@ for (const spec of Object.values((doc && doc.jobs) || {})) {
                  w["fetch-depth"] === undefined ? "-" : String(w["fetch-depth"])].join(" "));
   }
 }
-' "$REPO_ROOT" "$1"
+' "$REPO_ROOT" "$1" "${2:-}"
 }
 
 # workflow_step_by_run <file> <needle> — facts about the FIRST job step whose
@@ -13529,9 +13541,13 @@ original body
     assert_touch "$event8" "$dir8" 0 'nothing to require' \
         "guidance touch: a diff touching no section passes without consulting the impact file"
 
-    # 9. docs/guidance-impact.md itself is missing at head, AND a section was
-    #    touched — "could not run at all", exit 2, distinct from case 1's
-    #    exit 1 (there the file exists; here it does not).
+    # 9. B1: docs/guidance-impact.md itself is missing at head, AND a section
+    #    was touched. Exit 1 (fixable: merge/rebase onto the base branch,
+    #    then add an entry), never exit 2 — the check DID run and DID find
+    #    something to require. This used to be a hard exit 2 naming "must be
+    #    created", which is the wrong remedy whenever the file already lives
+    #    on the base branch (see this fixture's siblings below, which fork
+    #    BEFORE the file existed at all).
     local dir9="$root/no_impact_file" base9 head9 event9
     base9=$(touch_repo_init no_impact_file "$base_body" "$base_manifest")
     printf '%s' '## Heading One
@@ -13546,8 +13562,8 @@ untouched body
     head9=$(git -C "$dir9" rev-parse HEAD)
     event9="$TEST_DIR/touch-event-9.json"
     write_event "$base9" "$head9" "$event9"
-    assert_touch "$event9" "$dir9" 2 'docs/guidance-impact.md does not exist at' \
-        "guidance touch: docs/guidance-impact.md missing at head is refused, not a pass or an ordinary fail"
+    assert_touch "$event9" "$dir9" 1 'does not exist yet at head' \
+        "guidance touch: B1 docs/guidance-impact.md missing at head with a real touch is exit 1 (fixable), never exit 2"
 
     # 10. No $GITHUB_EVENT_PATH at all — refused, not a silent pass.
     local dir10="$root/no_event" base10 head10
@@ -14022,6 +14038,296 @@ original body
         fail "guidance touch: --repo-root at a missing directory should name it without ENOENT — got exit $rc26: $(echo "$out26" | tr '\n' ' ')"
     fi
 
+    # 27. B1: a PR forked BEFORE docs/guidance-impact.md existed at all — the
+    #     fork point has agents-md/eval-coverage.yml but no docs/ directory
+    #     whatsoever. main advances and adds the impact file; this branch's
+    #     head never picks it up. An UNTOUCHED section here must stay exit 0
+    #     — the file's absence is moot when nothing needed an entry anyway.
+    local dir27="$root/fork_before_impact_file"
+    rm -rf "$dir27"
+    mkdir -p "$dir27/agents-md/sections"
+    git -C "$dir27" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir27/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir27/agents-md/eval-coverage.yml"
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost commit -q -m fork-before-impact-file
+    git -C "$dir27" branch -q head-untouched
+    git -C "$dir27" branch -q head-touched
+
+    # main adds the impact file after the fork.
+    mkdir -p "$dir27/docs"
+    printf '%s' "$impact_stub" > "$dir27/docs/guidance-impact.md"
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost commit -q -m main-adds-impact-file
+    local main27
+    main27=$(git -C "$dir27" rev-parse HEAD)
+
+    # head-untouched: an unrelated file changes; no guidance section touched.
+    git -C "$dir27" checkout -q head-untouched
+    printf 'unrelated\n' > "$dir27/README.md"
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost commit -q -m unrelated-change
+    local head27_untouched
+    head27_untouched=$(git -C "$dir27" rev-parse HEAD)
+    local event27a="$TEST_DIR/touch-event-27a.json"
+    write_event "$main27" "$head27_untouched" "$event27a"
+    assert_touch "$event27a" "$dir27" 0 'nothing to require' \
+        "guidance touch: B1 a fork-before-impact-file branch with an untouched section stays exit 0"
+
+    # 28. Same fork, but head-touched actually edits Heading One's body — the
+    #     impact file's absence now matters, and must be exit 1 (fixable by
+    #     merging/rebasing), never exit 2.
+    git -C "$dir27" checkout -q head-touched
+    printf '%s' '## Heading One
+CHANGED body by pr
+
+## Heading Two
+untouched body
+' > "$dir27/agents-md/base.md"
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir27" -c user.name=test -c user.email=test@localhost commit -q -m pr-edit
+    local head27_touched
+    head27_touched=$(git -C "$dir27" rev-parse HEAD)
+    local event27b="$TEST_DIR/touch-event-27b.json"
+    write_event "$main27" "$head27_touched" "$event27b"
+    assert_touch "$event27b" "$dir27" 1 'merge or rebase onto it' \
+        "guidance touch: B1 a fork-before-impact-file branch with a touched section is exit 1 naming the merge remedy"
+
+    # 29. B1: the manifest ITSELF (agents-md/eval-coverage.yml) is absent at
+    #     head — a PR whose branch predates the manifest entirely (this
+    #     repo's own pre-#119 history is exactly this case). head is
+    #     unchanged from the fork point; main later adds both the manifest
+    #     and the impact file. The fallback must resolve head's headings
+    #     against main's tip manifest and find NOTHING touched — not explode
+    #     every pre-existing section into a spurious "create".
+    local dir29="$root/pre_manifest_fallback"
+    rm -rf "$dir29"
+    mkdir -p "$dir29/agents-md/sections"
+    git -C "$dir29" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir29/agents-md/base.md"
+    git -C "$dir29" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir29" -c user.name=test -c user.email=test@localhost commit -q -m pre-manifest
+    local fork29
+    fork29=$(git -C "$dir29" rev-parse HEAD)
+
+    mkdir -p "$dir29/docs"
+    printf '%s' "$base_manifest" > "$dir29/agents-md/eval-coverage.yml"
+    printf '%s' "$impact_stub" > "$dir29/docs/guidance-impact.md"
+    git -C "$dir29" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir29" -c user.name=test -c user.email=test@localhost commit -q -m main-adds-manifest-and-impact-file
+    local main29
+    main29=$(git -C "$dir29" rev-parse HEAD)
+
+    local event29="$TEST_DIR/touch-event-29.json"
+    write_event "$main29" "$fork29" "$event29"
+    assert_touch "$event29" "$dir29" 0 'nothing to require' \
+        "guidance touch: B1 a manifest missing at head falls back to the base branch tip's copy without treating every untouched pre-existing section as a create"
+
+    # 30. S1: base already has "## 2026-09-04 — heading-one — edit" with a
+    #     real result. head edits Heading One's body AGAIN but, instead of
+    #     APPENDING a new dated entry, rewrites the SAME entry's Eval: line
+    #     in place, keeping its heading (and therefore its date) unchanged.
+    #     Both eval lines are independently well-formed "result" lines, so
+    #     only append-only structural enforcement — not eval-format checking
+    #     — can catch this.
+    local dir30="$root/reworded_old_entry"
+    rm -rf "$dir30"
+    mkdir -p "$dir30/agents-md/sections" "$dir30/docs"
+    git -C "$dir30" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir30/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir30/agents-md/eval-coverage.yml"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+' > "$dir30/docs/guidance-impact.md"
+    git -C "$dir30" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir30" -c user.name=test -c user.email=test@localhost commit -q -m base
+    local base30
+    base30=$(git -C "$dir30" rev-parse HEAD)
+
+    printf '%s' '## Heading One
+CHANGED body again
+
+## Heading Two
+untouched body
+' > "$dir30/agents-md/base.md"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exit 0, section 8.0/8 vs none 4.3/8, n=5, model, updated report link
+' > "$dir30/docs/guidance-impact.md"
+    git -C "$dir30" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir30" -c user.name=test -c user.email=test@localhost commit -q -m reword-old-entry-in-place
+    local head30
+    head30=$(git -C "$dir30" rev-parse HEAD)
+
+    local event30="$TEST_DIR/touch-event-30.json"
+    write_event "$base30" "$head30" "$event30"
+    assert_touch "$event30" "$dir30" 1 'append-only' \
+        "guidance touch: S1 rewording an old entry's Eval line in place is rejected, not silently accepted as a new addition"
+
+    # 31. S1: same starting point as #30, but this time a GENUINE new entry
+    #     is appended (a fresh date, ahead of the untouched old one) — must
+    #     pass.
+    local dir31="$root/honest_new_entry_after_old"
+    rm -rf "$dir31"
+    mkdir -p "$dir31/agents-md/sections" "$dir31/docs"
+    git -C "$dir31" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir31/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir31/agents-md/eval-coverage.yml"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+' > "$dir31/docs/guidance-impact.md"
+    git -C "$dir31" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir31" -c user.name=test -c user.email=test@localhost commit -q -m base
+    local base31
+    base31=$(git -C "$dir31" rev-parse HEAD)
+
+    printf '%s' '## Heading One
+CHANGED body again
+
+## Heading Two
+untouched body
+' > "$dir31/agents-md/base.md"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-05 — heading-one — edit
+- Eval: exit 0, section 8.0/8 vs none 4.3/8, n=5, model, updated report link
+
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+' > "$dir31/docs/guidance-impact.md"
+    git -C "$dir31" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir31" -c user.name=test -c user.email=test@localhost commit -q -m append-new-entry
+    local head31
+    head31=$(git -C "$dir31" rev-parse HEAD)
+
+    local event31="$TEST_DIR/touch-event-31.json"
+    write_event "$base31" "$head31" "$event31"
+    assert_touch "$event31" "$dir31" 0 'all have a sufficient' \
+        "guidance touch: S1 an honest new entry appended ahead of an untouched old one passes"
+
+    # 32. S1: a brand-new entry dated before docs/guidance-impact.md's own
+    #     documented inception (2026-09-04) is rejected — nothing recorded
+    #     here can genuinely predate the file itself.
+    local dir32="$root/bad_date_too_old" base32 head32 event32
+    base32=$(touch_repo_init bad_date_too_old "$base_body" "$base_manifest")
+    head32=$(touch_commit "$dir32" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 1999-01-01 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+')
+    event32="$TEST_DIR/touch-event-32.json"
+    write_event "$base32" "$head32" "$event32"
+    assert_touch "$event32" "$dir32" 1 'predates docs/guidance-impact.md itself' \
+        "guidance touch: S1 an entry dated before the impact file's own inception is rejected"
+
+    # 33. S1: a brand-new entry dated in the future relative to the head
+    #     commit's own date is rejected.
+    local dir33="$root/bad_date_future" base33 head33 event33
+    base33=$(touch_repo_init bad_date_future "$base_body" "$base_manifest")
+    head33=$(touch_commit "$dir33" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2099-01-01 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+')
+    event33="$TEST_DIR/touch-event-33.json"
+    write_event "$base33" "$head33" "$event33"
+    assert_touch "$event33" "$dir33" 1 'is in the future relative to' \
+        "guidance touch: S1 an entry dated in the future relative to the head commit is rejected"
+
+    # 34. S1: a brand-new entry with an impossible calendar date (month 13,
+    #     day 45) is rejected — it matches toDatedEntries' own format regex
+    #     but is not a real date.
+    local dir34="$root/bad_date_impossible" base34 head34 event34
+    base34=$(touch_repo_init bad_date_impossible "$base_body" "$base_manifest")
+    head34=$(touch_commit "$dir34" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-13-45 — heading-one — edit
+- Eval: exit 0, section 7.0/8 vs none 4.3/8, n=3, model, report link
+')
+    event34="$TEST_DIR/touch-event-34.json"
+    write_event "$base34" "$head34" "$event34"
+    assert_touch "$event34" "$dir34" 1 'is not a real calendar date' \
+        "guidance touch: S1 an entry with an impossible calendar date is rejected"
+
+    # 35. S4 (round 2): the remove branch's second check used to accept a
+    #     "remove" entry with NO Eval: bullet at all whenever a SIBLING
+    #     "remove" entry had one, because classifyEval(null) is "missing",
+    #     not "unrecognized" — and only "unrecognized" was excluded. Two
+    #     remove entries here: one "Eval: TBD" (present, but unrecognized —
+    #     satisfies the FIRST "has some Eval: bullet" check) and one with NO
+    #     bullet at all. Neither is sufficient on its own, so together they
+    #     must not add up to sufficient either.
+    local dir35="$root/remove_missing_eval_with_sibling" base35 head35 event35
+    base35=$(touch_repo_init remove_missing_eval_with_sibling "$base_body" "$base_manifest")
+    head35=$(touch_commit "$dir35" remove-section '## Heading One
+original body
+' "$removed_manifest" '
+---
+
+## 2026-09-04 — heading-two — remove
+- Eval: TBD
+
+## 2026-09-04 — heading-two — remove
+- Motivation: no Eval bullet at all
+')
+    event35="$TEST_DIR/touch-event-35.json"
+    write_event "$base35" "$head35" "$event35"
+    assert_touch "$event35" "$dir35" 1 'is insufficient' \
+        "guidance touch: S4 a remove entry with no Eval bullet is not rescued by a sibling remove entry's unrecognized Eval line"
+
+    # 36. N1: TWO new entries, both typed to something that does not satisfy
+    #     an "edit" touch (create AND rejected) — the message must list every
+    #     type present, not just the first, and use "an edit", not "a edit".
+    local dir36="$root/multiple_wrong_types" base36 head36 event36
+    base36=$(touch_repo_init multiple_wrong_types "$base_body" "$base_manifest")
+    head36=$(touch_commit "$dir36" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — create
+- Eval: exempt (skipped row)
+
+## 2026-09-04 — heading-one — rejected
+- Eval: exempt (skipped row)
+')
+    event36="$TEST_DIR/touch-event-36.json"
+    write_event "$base36" "$head36" "$event36"
+    assert_touch "$event36" "$dir36" 1 'an edit' \
+        "guidance touch: N1 multiple wrongly-typed entries are all listed in the message, with correct grammar (an edit, not a edit)"
+
     unset -f touch_repo_init
     unset -f touch_commit
     unset -f write_event
@@ -14118,9 +14424,18 @@ test_ci_workflow_shape() {
     if ! workflow_step_names "$wf" "test" > "$step_names" 2> "$step_names_err"; then
         fail "ci workflow: could not read the test job's step names — $(head -1 "$step_names_err")"
     else
+        # S3: under this script's own `set -euo pipefail`, a bare
+        # `var=$(grep ... | head -1 | cut ...)` aborts the WHOLE suite the
+        # moment grep finds no match (pipefail propagates grep's exit 1, and
+        # an unguarded assignment's own exit status IS that pipeline's) —
+        # exactly the case this assertion exists to catch (the step deleted
+        # outright). `|| touch_line=""` keeps the failure local: a FAIL line
+        # here, not a suite that dies mid-run with no "Results:" line at all
+        # (the regression 9dc9a99 originally fixed, recurring in this one
+        # spot).
         local touch_line manifest_line
-        touch_line=$(grep -nxF -- "Guidance touch gate" "$step_names" | head -1 | cut -d: -f1)
-        manifest_line=$(grep -nxF -- "Section manifest covers every guidance heading" "$step_names" | head -1 | cut -d: -f1)
+        touch_line=$(grep -nxF -- "Guidance touch gate" "$step_names" | head -1 | cut -d: -f1) || touch_line=""
+        manifest_line=$(grep -nxF -- "Section manifest covers every guidance heading" "$step_names" | head -1 | cut -d: -f1) || manifest_line=""
         if [[ -n "$touch_line" && -n "$manifest_line" && "$touch_line" -gt "$manifest_line" ]]; then
             pass "ci workflow: the Guidance touch gate step exists and runs after the manifest coverage step"
         else
@@ -14128,9 +14443,57 @@ test_ci_workflow_shape() {
         fi
     fi
 
+    # S3 regression: on a scratch mutation of the REAL ci.yml with the
+    # "Guidance touch gate" step deleted outright, confirm the guarded
+    # assignment above reaches a normal FAIL-shaped verdict rather than
+    # aborting the whole run under `set -euo pipefail` (the regression
+    # 9dc9a99 originally fixed, recurring in this one spot: an unguarded
+    # `var=$(grep ... | head -1 | cut ...)` dies the instant grep finds no
+    # match, taking this suite down with it before it ever prints
+    # "Results:").
+    local no_touch_step_wf="$TEST_DIR/ci-no-touch-step.yml"
+    if ! node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parseDocument(fs.readFileSync(process.argv[2], "utf8"));
+const steps = doc.getIn(["jobs", "test", "steps"]);
+const idx = steps.items.findIndex((s) => s.get && s.get("name") === "Guidance touch gate");
+if (idx === -1) {
+  console.error("no Guidance touch gate step found to delete");
+  process.exit(1);
+}
+steps.items.splice(idx, 1);
+fs.writeFileSync(process.argv[3], doc.toString());
+' "$REPO_ROOT" "$wf" "$no_touch_step_wf" 2>"$TEST_DIR/ci-no-touch-step.err"; then
+        fail "ci workflow: S3 fixture setup could not delete the Guidance touch gate step — $(head -1 "$TEST_DIR/ci-no-touch-step.err")"
+    else
+        local no_touch_step_names="$TEST_DIR/ci-no-touch-step-names.txt"
+        workflow_step_names "$no_touch_step_wf" "test" > "$no_touch_step_names" 2>/dev/null
+        local s3_out s3_rc=0
+        s3_out=$(bash -c '
+            set -euo pipefail
+            touch_line=$(grep -nxF -- "Guidance touch gate" "$1" | head -1 | cut -d: -f1) || touch_line=""
+            manifest_line=$(grep -nxF -- "Section manifest covers every guidance heading" "$1" | head -1 | cut -d: -f1) || manifest_line=""
+            if [[ -n "$touch_line" && -n "$manifest_line" && "$touch_line" -gt "$manifest_line" ]]; then
+                echo "PASS"
+            else
+                echo "FAIL: touch=${touch_line:-missing} manifest=${manifest_line:-missing}"
+            fi
+        ' _ "$no_touch_step_names" 2>&1) || s3_rc=$?
+        if [[ "$s3_rc" == 0 ]] && grep -qF -- "FAIL: touch=missing" <<<"$s3_out"; then
+            pass "ci workflow: S3 deleting the Guidance touch gate step reaches a graceful FAIL instead of aborting the script"
+        else
+            fail "ci workflow: S3 expected a graceful FAIL after deleting the step (exit 0, 'FAIL: touch=missing') — got exit $s3_rc: $(echo "$s3_out" | tr '\n' ' ')"
+        fi
+    fi
+
+    # S2: scoped to the "test" job specifically — an unscoped workflow_steps
+    # concatenates every job's steps in `jobs:` object-key order, so a `prep`
+    # job ahead of `test` with its OWN fetch-depth: 0 checkout would let a
+    # default-depth `test` checkout pass this assertion by sitting behind it.
     local steps_facts="$TEST_DIR/ci-workflow-steps.txt"
     local steps_err="$TEST_DIR/ci-workflow-steps.err"
-    if ! workflow_steps "$wf" > "$steps_facts" 2> "$steps_err"; then
+    if ! workflow_steps "$wf" test > "$steps_facts" 2> "$steps_err"; then
         fail "ci workflow: could not parse its steps — $(head -1 "$steps_err")"
     else
         local first_checkout_depth
@@ -14139,6 +14502,43 @@ test_ci_workflow_shape() {
             pass "ci workflow: the test job's first checkout is fetch-depth: 0 (the touch gate's merge-base needs it)"
         else
             fail "ci workflow: the test job's first checkout should be fetch-depth: 0 — got '${first_checkout_depth:-none}'"
+        fi
+    fi
+
+    # S2 regression, on a constructed fixture rather than the real ci.yml: a
+    # `prep` job ahead of `test` in file order has its OWN fetch-depth: 0
+    # checkout, while `test`'s own checkout is default depth. An UNSCOPED
+    # workflow_steps call concatenates both jobs' steps and the awk above
+    # would report prep's fetch-depth: 0 as if it were the test job's own —
+    # a false pass on a `test` job that does NOT actually have the full
+    # history the touch gate's merge-base needs. Scoped to "test", it must
+    # report the test job's own (default-depth, i.e. "-") checkout instead.
+    local two_job_wf="$TEST_DIR/two-job-workflow.yml"
+    cat > "$two_job_wf" <<'YAML'
+on: push
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+YAML
+    local two_job_facts="$TEST_DIR/two-job-workflow-steps.txt"
+    local two_job_err="$TEST_DIR/two-job-workflow-steps.err"
+    if ! workflow_steps "$two_job_wf" test > "$two_job_facts" 2> "$two_job_err"; then
+        fail "ci workflow: S2 two-job fixture failed to parse — $(head -1 "$two_job_err")"
+    else
+        local two_job_depth
+        two_job_depth=$(awk '$1 ~ /^actions\/checkout@/ { print $3; exit }' "$two_job_facts")
+        if [[ "$two_job_depth" != "0" ]]; then
+            pass "ci workflow: S2 workflow_steps scoped to a job does not leak an earlier job's fetch-depth: 0 checkout"
+        else
+            fail "ci workflow: S2 workflow_steps test should report the test job's own default-depth checkout, not prep's fetch-depth: 0 — got '$two_job_depth'"
         fi
     fi
 }

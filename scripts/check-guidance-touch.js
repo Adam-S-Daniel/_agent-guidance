@@ -63,22 +63,67 @@
  * must not stand in for the entry the actually-landed change requires.
  *
  * THE ISSUE'S "unparseable impact file" CASE (exit 2) is implemented here as
- * "docs/guidance-impact.md missing at head" (exit 2): markdown-it has no
- * unparseable state — it renders any byte stream to SOME token stream — so
- * there is no parse failure to distinguish from a missing file.
+ * a manifest missing at BOTH head and the base branch's tip (exit 2, see B1
+ * below): markdown-it has no unparseable state — it renders any byte stream
+ * to SOME token stream — so there is no parse failure to distinguish from a
+ * missing file.
+ *
+ * B1 — docs/guidance-impact.md (or agents-md/eval-coverage.yml itself)
+ * ABSENT AT HEAD is not the same failure as "the author never wrote an
+ * entry": a PR forked before either file existed (this repo's own pre-#119
+ * history is exactly such a case) has neither on its own branch even though
+ * the base branch — which is what will actually receive the merge — already
+ * carries both. Treating that as exit 2 ("could not run at all") names the
+ * wrong remedy ("must be created") for a file that already exists, just not
+ * on this branch yet. So: a manifest missing at head falls back to
+ * `pull_request.base.sha` (the base branch's CURRENT tip, distinct from the
+ * merge-base) via loadManifestWithFallback — an id is stable across the
+ * manifest's own history, so a heading that still resolves at head under a
+ * tip row's exact text can be trusted to carry that row's id even though
+ * head itself has no manifest file at all; a row that resolves nowhere is
+ * dropped rather than guessed at. Only when the base tip ALSO has no usable
+ * manifest is this still exit 2, with a message naming "merge or rebase
+ * onto the base branch" rather than "create the file". docs/guidance-impact.md
+ * absent at head gets the parallel treatment in main() itself: if nothing
+ * was touched, absence is moot (exit 0, unchanged); if something was, it is
+ * exit 1 (fixable by merging/rebasing and then adding an entry), never exit
+ * 2 — the check DID run and DID find something to require.
+ *
+ * S1 — APPEND-ONLY IS ENFORCED TWO WAYS, independently, because each catches
+ * a different failure the other cannot: (1) checkAppendOnly asserts
+ * STRUCTURALLY that every dated entry already present at the merge-base
+ * still appears, byte-for-byte, as a trailing suffix of head's dated
+ * entries (the file's own convention prepends new entries ahead of old
+ * ones) — this is what actually catches someone rewording an OLD entry's
+ * Eval: line in place instead of appending a new one, regardless of what
+ * date they leave on it; a pure date check could never catch this on its
+ * own, since a reworded entry can carry any date, including a perfectly
+ * plausible recent one. (2) dateIssue separately rejects a NEW entry whose
+ * own date is not real (`2026-13-45`), predates docs/guidance-impact.md's
+ * own documented inception (`2026-09-04`; a bare cutoff, not a comparison
+ * against the merge-base commit's real timestamp — the latter would flag
+ * this repo's own long-standing test fixtures, which fix their entry dates
+ * rather than the wall clock the suite runs under), or is in the future
+ * relative to the head commit's own date (`2099-01-01`). Both are needed:
+ * (1) alone would wave through a garbage date on an honestly-appended new
+ * entry, and (2) alone would wave through an in-place rewording that keeps
+ * a plausible date.
  *
  * Exit codes:
  *   0 — every touched id has a sufficient new entry (including: nothing was
  *       touched at all).
  *   1 — a touched id has no new entry, an insufficient one (an Eval: none
- *       line while its manifest row is not `gap`, or an `exempt (skipped
- *       row)` line while it is not `skipped`), one typed to a kind that does
- *       not satisfy the touch (a `rejected` entry against an edit), or a
- *       removed id's entry is not typed `remove`. Errors name the id and the
- *       entry format.
+ *       line while its manifest row is not `gap`, an `exempt (skipped row)`
+ *       line while it is not `skipped`, or a date that fails dateIssue), one
+ *       typed to a kind that does not satisfy the touch (a `rejected` entry
+ *       against an edit), a removed id's entry not typed `remove`, an
+ *       append-only violation (checkAppendOnly), or docs/guidance-impact.md
+ *       missing at head while something was touched (see B1 above). Errors
+ *       name the id and the entry format.
  *   2 — could not run at all: no $GITHUB_EVENT_PATH, an unreadable or
  *       unparseable event file, an unresolvable merge-base, a malformed
- *       --repo-root, or docs/guidance-impact.md missing at head.
+ *       --repo-root, or agents-md/eval-coverage.yml missing at both head and
+ *       the base branch's tip (see B1 above).
  *
  * Usage:
  *   GITHUB_EVENT_PATH=/path/to/event.json node scripts/check-guidance-touch.js
@@ -151,6 +196,18 @@ function readEvent() {
       `not a pull_request event: ${eventPath} has no pull_request.base.sha / pull_request.head.sha — this check only runs on pull_request`,
     );
   }
+  // A sha that is anything but 40 hex characters gets handed straight to
+  // `git` argv elsewhere in this file (merge-base, show) — a value like
+  // "--help" is read as a FLAG, not a ref, and git's own usage text ends up
+  // inside this script's exit-2 message instead of a message this script
+  // actually wrote. Rejected here, once, before either sha reaches git.
+  const SHA_RE = /^[0-9a-f]{40}$/;
+  if (!SHA_RE.test(baseSha) || !SHA_RE.test(headSha)) {
+    throw new RunError(
+      `${eventPath} has a pull_request.base.sha/head.sha that is not a 40-character hex commit sha ` +
+        `(got base "${baseSha}", head "${headSha}")`,
+    );
+  }
   return { baseSha, headSha };
 }
 
@@ -193,6 +250,22 @@ function gitShow(repoRoot, sha, relPath) {
       return null;
     }
     throw new RunError(`git show ${sha}:${relPath} failed: ${stderr.trim() || e.message}`);
+  }
+}
+
+// gitCommitDate — <sha>'s author date as YYYY-MM-DD, for S1's date-sanity
+// checks (see dateIssue below). String-comparable against an entry's own
+// "YYYY-MM-DD" heading date without ever parsing it into a Date object.
+function gitCommitDate(repoRoot, sha) {
+  try {
+    return execFileSync("git", ["show", "-s", "--format=%ad", "--date=format:%Y-%m-%d", sha], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (e) {
+    const stderr = (e.stderr || "").toString().trim();
+    throw new RunError(`git show -s --format=%ad ${sha} failed: ${stderr || e.message}`);
   }
 }
 
@@ -245,37 +318,86 @@ function sectionBody(sources, heading) {
 
 // ── The section manifest (agents-md/eval-coverage.yml) at a ref ────────
 
-// loadManifestAt — id -> row, at <sha>. A manifest missing at HEAD is fatal
-// (RunError, exit 2: a fundamental input is absent). A manifest missing at
-// BASE is not — older history may predate the manifest entirely — and
-// resolves to an empty map rather than an error.
-function loadManifestAt(repoRoot, sha, { required }) {
-  const raw = gitShow(repoRoot, sha, "agents-md/eval-coverage.yml");
-  if (raw === null) {
-    if (required) {
-      throw new RunError(`agents-md/eval-coverage.yml does not exist at ${sha}`);
-    }
-    return new Map();
-  }
+// parseManifestRows — raw YAML text (already read from git) -> id -> row.
+// Throws (always — the caller decides whether that is fatal) on invalid YAML
+// or a non-list top level; a row with no usable string `id` is silently
+// dropped (check-guidance-coverage.js already reports that as a malformed
+// row — this file only needs the ones it can look up by id).
+function parseManifestRows(raw, sha) {
   let rows;
   try {
     rows = YAML.parse(raw);
   } catch (e) {
-    if (required) {
-      throw new RunError(`agents-md/eval-coverage.yml at ${sha} is not valid YAML: ${e.message}`);
-    }
-    return new Map();
+    throw new RunError(`agents-md/eval-coverage.yml at ${sha} is not valid YAML: ${e.message}`);
   }
   if (!Array.isArray(rows)) {
-    if (required) {
-      throw new RunError(`agents-md/eval-coverage.yml at ${sha} does not parse to a list`);
-    }
-    return new Map();
+    throw new RunError(`agents-md/eval-coverage.yml at ${sha} does not parse to a list`);
   }
   const byId = new Map();
   for (const row of rows) {
     if (row && typeof row === "object" && typeof row.id === "string" && row.id) {
       byId.set(row.id, row);
+    }
+  }
+  return byId;
+}
+
+// loadManifestWithFallback — id -> row, at <sha>, with a fallback for B1. A PR whose HEAD (or merge-base) predates
+// agents-md/eval-coverage.yml entirely (it forked before #119 added the
+// file — this repo's own pre-#119 history is exactly such a case) used to
+// make `sha`'s absence unconditionally fatal, even though the file lives on
+// the base branch and `pull_request.base.sha` (`baseTipSha` here — the base
+// branch's CURRENT tip, NOT the merge-base) already has it.
+//
+// When the manifest exists at `sha`, this is loadManifestAt(sha, {required})
+// verbatim — the fallback below never runs. When it does not exist at `sha`,
+// fall back to `baseTipSha`'s copy: an `id` is stable across the manifest's
+// own history (this file's top header), so a row whose heading text still
+// resolves, by exact text AND file, in `guidance` (the headings actually
+// read at `sha`) can be trusted to carry that row's id even though `sha`
+// itself carries no manifest file at all. A row whose heading does not
+// resolve at `sha` is dropped rather than guessed at — indistinguishable,
+// from here, from a section that simply does not exist yet at `sha`.
+//
+// `required` here means "is `sha` missing the manifest with NO usable
+// fallback a fatal error" — mirrored from loadManifestAt's own `required`,
+// but the unresolvable case is head-only in practice (main() never treats a
+// merge-base with no history and no fallback as fatal).
+function loadManifestWithFallback(repoRoot, sha, baseTipSha, guidance, { required }) {
+  const raw = gitShow(repoRoot, sha, "agents-md/eval-coverage.yml");
+  if (raw !== null) {
+    try {
+      return parseManifestRows(raw, sha);
+    } catch (e) {
+      if (required) throw e;
+      return new Map();
+    }
+  }
+
+  let tipById = new Map();
+  const tipRaw = gitShow(repoRoot, baseTipSha, "agents-md/eval-coverage.yml");
+  if (tipRaw !== null) {
+    try {
+      tipById = parseManifestRows(tipRaw, baseTipSha);
+    } catch (e) {
+      tipById = new Map();
+    }
+  }
+
+  if (tipById.size === 0) {
+    if (required) {
+      throw new RunError(
+        `agents-md/eval-coverage.yml does not exist at ${sha} or at the base branch tip (${baseTipSha}) — merge ` +
+          `or rebase onto the base branch to pick it up`,
+      );
+    }
+    return new Map();
+  }
+
+  const byId = new Map();
+  for (const [id, row] of tipById) {
+    if (guidance.headings.some((h) => h.file === row.file && h.heading === row.heading)) {
+      byId.set(id, row);
     }
   }
   return byId;
@@ -355,16 +477,17 @@ function toDatedEntries(rawEntries) {
 // pair removes the ambiguity: it still counts by heading alone whenever the
 // Eval content is identical (where the choice truly does not matter), and
 // disambiguates correctly whenever it differs.
-function addedEntries(repoRoot, baseSha, headSha) {
-  const headSrc = gitShow(repoRoot, headSha, "docs/guidance-impact.md");
-  if (headSrc === null) {
-    throw new RunError(`docs/guidance-impact.md does not exist at ${headSha} — it must be created before this check can run`);
-  }
-  const baseSrc = gitShow(repoRoot, baseSha, "docs/guidance-impact.md");
+// loadDatedEntries — the file's dated entries at `sha`, or `[]` at a sha
+// where it does not exist (only ever legal for a BASE-side sha — main()
+// guards docs/guidance-impact.md's absence at head itself; see B1 in this
+// file's header). Shared by addedEntries and appendOnlyViolation so each
+// sha is read and parsed exactly once.
+function loadDatedEntries(repoRoot, sha) {
+  const src = gitShow(repoRoot, sha, "docs/guidance-impact.md");
+  return src === null ? [] : toDatedEntries(parseImpactEntries(src));
+}
 
-  const headEntries = toDatedEntries(parseImpactEntries(headSrc));
-  const baseEntries = baseSrc === null ? [] : toDatedEntries(parseImpactEntries(baseSrc));
-
+function addedEntries(headEntries, baseEntries) {
   const entryKey = (e) => `${e.heading}${e.evalLine || ""}`;
 
   const baseCounts = new Map();
@@ -380,6 +503,84 @@ function addedEntries(repoRoot, baseSha, headSha) {
     added.push(e);
   }
   return added;
+}
+
+// appendOnlyViolation — S1. docs/guidance-impact.md's own rules say entries
+// are append-only: "a wrong entry gets a correcting entry, not an edit."
+// addedEntries() alone cannot enforce that — it only counts occurrences, so
+// rewording an OLD entry's Eval: line in place (heading text unchanged) just
+// makes the old occurrence's count drop to zero and the reworded text look
+// like a brand-new addition, satisfying the touch as if a real new entry had
+// been appended. This checks the file's actual STRUCTURE instead: the
+// file's convention is newest-first (new entries prepended ahead of old
+// ones), so every entry already present at the merge-base must still
+// appear, unchanged, as a trailing SUFFIX of head's dated entries. Returns
+// an error string, or null when the invariant holds (including: base had no
+// dated entries to protect in the first place).
+function appendOnlyViolation(headEntries, baseEntries) {
+  if (baseEntries.length === 0) return null;
+  if (headEntries.length < baseEntries.length) {
+    const lost = baseEntries.length - headEntries.length;
+    return (
+      `docs/guidance-impact.md has ${lost} fewer dated entr${lost === 1 ? "y" : "ies"} at head than at the ` +
+      `merge-base — entries are append-only, never removed or reordered`
+    );
+  }
+  const tail = headEntries.slice(headEntries.length - baseEntries.length);
+  for (let i = 0; i < baseEntries.length; i++) {
+    const b = baseEntries[i];
+    const h = tail[i];
+    if (h.heading !== b.heading || h.evalLine !== b.evalLine) {
+      return (
+        `docs/guidance-impact.md's existing entry "${b.heading}" was changed in place — entries are ` +
+        `append-only; a correction gets a NEW dated entry, never an edit to an old one`
+      );
+    }
+  }
+  return null;
+}
+
+// IMPACT_FILE_INCEPTION_DATE — docs/guidance-impact.md's own header: "Entries
+// before 2026-09-04 predate this file and live only in git history — no
+// backfill is planned." A dated entry earlier than this is provably wrong —
+// nothing in this file can be from before the file itself existed. A FIXED
+// cutoff, deliberately never the merge-base commit's own real timestamp:
+// this repo's test fixtures pin their entry dates as literal strings rather
+// than the wall clock the suite happens to run under, and a merge-base-
+// relative floor would flag every one of them the day after its hardcoded
+// date.
+const IMPACT_FILE_INCEPTION_DATE = "2026-09-04";
+
+// isRealCalendarDate — "2026-13-45" matches toDatedEntries' own
+// `/^\d{4}-\d{2}-\d{2}$/` shape check but is not a real date. Round-tripped
+// through Date.UTC rather than reimplementing a days-per-month table, so
+// leap years are handled by the platform, not by this file.
+function isRealCalendarDate(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day;
+}
+
+// dateIssue — why `dateStr` (an entry's own "YYYY-MM-DD") cannot be trusted
+// as a genuine new measurement, or null when it is fine. Plain string
+// comparison against `headCommitDate` and IMPACT_FILE_INCEPTION_DATE is
+// valid here specifically because both sides are "YYYY-MM-DD" — lexical
+// order matches chronological order for that one shape.
+function dateIssue(dateStr, headCommitDate) {
+  if (!isRealCalendarDate(dateStr)) {
+    return "is not a real calendar date";
+  }
+  if (dateStr < IMPACT_FILE_INCEPTION_DATE) {
+    return `predates docs/guidance-impact.md itself (entries before ${IMPACT_FILE_INCEPTION_DATE} are not recorded here)`;
+  }
+  if (dateStr > headCommitDate) {
+    return `is in the future relative to this PR's head commit (${headCommitDate})`;
+  }
+  return null;
 }
 
 // ── The join: which ids did this diff touch, and how ────────────────────
@@ -441,22 +642,31 @@ function computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance
 
 // ── Validation: does every touched id have a sufficient new entry? ──────
 
+// RESULT_PATTERN — what a real measured result must SHOW, per
+// docs/guidance-impact.md's "## Entry format": an exit code, a score
+// fraction, or a sample size. Deliberately narrower than "contains a digit"
+// (the prior rule): "Eval: TBD (PR #122)" and "Eval: exempt (skipped row)
+// since 2026-09-04" both carry a digit while citing no measurement at all —
+// the PR number and the date are not results. Never a bag of known-bad
+// placeholder words either; this is a positive, structural pattern for what
+// a real citation looks like, matching the three example forms the format
+// section documents.
+const RESULT_PATTERN = /\bexit\s+\d+\b|\b\d+(?:\.\d+)?\s*\/\s*\d+\b|\bn\s*=\s*\d+\b/i;
+
 // classifyEval — which of the three documented forms (docs/guidance-impact.md's
 // own "## Entry format" section) an Eval: line is, structural on the line's
 // own text, never a bag of known-bad placeholder words:
 //   "none"    — /^Eval:\s*none\b/i; legal only while the row is "gap".
 //   "exempt"  — literally "Eval: exempt (skipped row)"; legal only while the
 //               row is "skipped".
-//   "result"  — anything else carrying a digit. A real measurement always
-//               cites one (an exit code, a section score, a sample size);
-//               a bare placeholder like "Eval: TBD" does not.
+//   "result"  — matches RESULT_PATTERN above.
 //   "missing" — no Eval: bullet at all.
 //   "unrecognized" — none of the above; never sufficient.
 function classifyEval(evalLine) {
   if (!evalLine) return "missing";
   if (/^Eval:\s*none\b/i.test(evalLine)) return "none";
   if (/^Eval:\s*exempt\s*\(skipped row\)\s*$/i.test(evalLine)) return "exempt";
-  if (/\d/.test(evalLine)) return "result";
+  if (RESULT_PATTERN.test(evalLine)) return "result";
   return "unrecognized";
 }
 
@@ -466,7 +676,7 @@ function evalLegalForStatus(cls, rowStatus) {
   return cls === "result";
 }
 
-function checkEntries(touched, addedByHead) {
+function checkEntries(touched, addedByHead, headCommitDate) {
   const byId = new Map();
   for (const e of addedByHead) {
     if (!byId.has(e.id)) byId.set(e.id, []);
@@ -509,10 +719,25 @@ function checkEntries(touched, addedByHead) {
         );
         continue;
       }
-      if (!removeEntries.some((e) => classifyEval(e.evalLine) !== "unrecognized")) {
+      // `classifyEval(null)` is "missing", not "unrecognized" — checked here
+      // too (not just the no-bullet-at-all branch above) so a sibling
+      // "remove" entry with a real Eval: bullet cannot make a DIFFERENT
+      // "remove" entry with NO bullet at all look sufficient by association.
+      const removeEvalOk = removeEntries.filter((e) => e.evalLine && classifyEval(e.evalLine) !== "unrecognized");
+      if (removeEvalOk.length === 0) {
         errors.push(
           `section "${t.id}" was removed, but its "remove"-typed entry's Eval: line is insufficient — use a ` +
             `real result, "none — no fixture yet", or "exempt (skipped row)"`,
+        );
+        continue;
+      }
+      // S1: an entry format-legal Eval: line still needs a real, in-range
+      // date (dateIssue) — see this file's header. Reported separately from
+      // the eval-format message above since it is a different defect.
+      if (!removeEvalOk.some((e) => !dateIssue(e.date, headCommitDate))) {
+        errors.push(
+          `section "${t.id}" was removed, but its "remove"-typed entry's date "${removeEvalOk[0].date}" ` +
+            `${dateIssue(removeEvalOk[0].date, headCommitDate)}`,
         );
       }
       continue;
@@ -523,9 +748,12 @@ function checkEntries(touched, addedByHead) {
     // not, by itself, satisfy the requirement (see SATISFYING_TYPES above).
     const entries = rawEntries.filter((e) => SATISFYING_TYPES[t.kind].includes(e.type));
     if (entries.length === 0) {
+      const typesPresent = [...new Set(rawEntries.map((e) => e.type))];
+      const kindArticle = /^[aeiou]/i.test(t.kind) ? "an" : "a";
       errors.push(
-        `section "${t.id}" changed but its only new entry is typed "${rawEntries[0].type}", which does not ` +
-          `satisfy a ${t.kind} — use "${t.kind}"${t.kind === "edit" ? ' or "rename"' : ""}`,
+        `section "${t.id}" changed but its new entr${rawEntries.length > 1 ? "ies are" : "y is"} typed ` +
+          `${typesPresent.map((ty) => `"${ty}"`).join(", ")}, which does not satisfy ${kindArticle} ${t.kind} — ` +
+          `use "${t.kind}"${t.kind === "edit" ? ' or "rename"' : ""}`,
       );
       continue;
     }
@@ -539,12 +767,23 @@ function checkEntries(touched, addedByHead) {
     }
 
     const rowStatus = t.row.status;
-    const sufficient = entries.some((e) => evalLegalForStatus(classifyEval(e.evalLine), rowStatus));
-    if (!sufficient) {
+    const evalOk = entries.filter((e) => evalLegalForStatus(classifyEval(e.evalLine), rowStatus));
+    if (evalOk.length === 0) {
       errors.push(
         `section "${t.id}" has a new entry in docs/guidance-impact.md, but its Eval: line is insufficient — ` +
           `"none — no fixture yet" is only legal while the manifest row is "gap", "exempt (skipped row)" only ` +
           `while it is "skipped" (row "${t.id}" is "${rowStatus}"); add a real result`,
+      );
+      continue;
+    }
+    // S1: an entry whose Eval: line is otherwise legal can still fail on its
+    // own date (dateIssue) — reported as its own defect, distinct from the
+    // eval-format message above.
+    if (!evalOk.some((e) => !dateIssue(e.date, headCommitDate))) {
+      errors.push(
+        `section "${t.id}" has a new entry in docs/guidance-impact.md, but its date "${evalOk[0].date}" ` +
+          `${dateIssue(evalOk[0].date, headCommitDate)} — append-only entries must be dated for real, on or ` +
+          `after this PR, never a reworded old entry`,
       );
     }
   }
@@ -562,11 +801,14 @@ function main() {
   const { baseSha, headSha } = readEvent();
   const mergeBaseSha = gitMergeBase(repoRoot, baseSha, headSha);
 
-  const headManifest = loadManifestAt(repoRoot, headSha, { required: true });
-  const baseManifest = loadManifestAt(repoRoot, mergeBaseSha, { required: false });
-
+  // headGuidance/baseGuidance come first: loadManifestWithFallback's B1
+  // fallback needs headGuidance/baseGuidance to resolve a base-tip row's
+  // heading text against what actually exists at that sha.
   const headGuidance = collectHeadingsAt(repoRoot, headSha);
   const baseGuidance = collectHeadingsAt(repoRoot, mergeBaseSha);
+
+  const headManifest = loadManifestWithFallback(repoRoot, headSha, baseSha, headGuidance, { required: true });
+  const baseManifest = loadManifestWithFallback(repoRoot, mergeBaseSha, baseSha, baseGuidance, { required: false });
 
   const touched = computeTouched({ headManifest, baseManifest, headGuidance, baseGuidance });
 
@@ -575,12 +817,32 @@ function main() {
     return;
   }
 
-  // Only read/parse docs/guidance-impact.md once something actually needs an
-  // entry — a diff that touches zero sections is not required to have a
-  // valid impact file (though in practice it always will, since the file is
-  // committed).
-  const added = addedEntries(repoRoot, mergeBaseSha, headSha);
-  const errors = checkEntries(touched, added);
+  // B1: docs/guidance-impact.md itself can be missing at head — a PR forked
+  // before the file existed (see this file's header). That is "not yet
+  // mergeable with the base branch", not "the author never wrote an entry":
+  // exit 1 (fixable by merging/rebasing and then adding an entry), never
+  // exit 2 ("could not run at all" — the check DID run and DID find
+  // something to require).
+  if (gitShow(repoRoot, headSha, "docs/guidance-impact.md") === null) {
+    for (const t of touched) {
+      console.error(
+        `check-guidance-touch: section "${t.id}" changed, but docs/guidance-impact.md does not exist yet at ` +
+          `head (${headSha}) — it lives on the base branch; merge or rebase onto it, then add an entry for "${t.id}"`,
+      );
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const headEntries = loadDatedEntries(repoRoot, headSha);
+  const baseEntries = loadDatedEntries(repoRoot, mergeBaseSha);
+  const headCommitDate = gitCommitDate(repoRoot, headSha);
+
+  const added = addedEntries(headEntries, baseEntries);
+  const errors = checkEntries(touched, added, headCommitDate);
+
+  const appendOnlyError = appendOnlyViolation(headEntries, baseEntries);
+  if (appendOnlyError) errors.push(appendOnlyError);
 
   if (errors.length > 0) {
     for (const e of errors) console.error(`check-guidance-touch: ${e}`);

@@ -17,6 +17,18 @@
  * a heading that still exists. A new section with no row, or a renamed
  * heading whose row was not updated, is red — that is the graduation gate.
  *
+ * THE TWO FALSE GREENS THIS CATCHES FIRST, by design: (1) a heading reworded
+ * AND its body edited in the same commit, with the manifest row's `heading`
+ * left stale (still the OLD text) — reported here as a stale row (nearest
+ * current heading offered as the likely rename target) rather than silently
+ * read as "no row for this heading, and some unrelated row is simply
+ * unmatched"; (2) two manifest rows sharing one `id` — an id lookup that used
+ * a plain array `.find()`/Map insert would silently let the SECOND row shadow
+ * the first (or vice versa) with no error at all, so the duplicate-id check
+ * below is explicit and separate from the per-row heading-resolution checks,
+ * catching the collision before anything downstream (check-guidance-touch.js,
+ * which joins by `id`) can resolve either row to the wrong heading.
+ *
  * REAL MARKDOWN PARSE (markdown-it), never a regex or line scanner. base.md
  * contains fenced code blocks, and a `## ` inside one is not a heading — a
  * line scanner cannot tell the difference; a real parser's token stream
