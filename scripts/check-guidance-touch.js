@@ -256,9 +256,18 @@ function gitMergeBase(repoRoot, baseSha, headSha) {
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
   } catch (e) {
+    // NEVER e.message here (N5). execFileSync's own message is "Command
+    // failed: git merge-base <a> <b>", so falling back to it repeats the
+    // command this line has already named and adds nothing:
+    // "git merge-base A B failed: Command failed: git merge-base A B". The
+    // case that reaches it is real and silent — two VALID shas with no
+    // common ancestor exit 1 with an empty stderr and an empty stdout — so
+    // the fallback is a short fixed phrase, and git's own stderr is still
+    // quoted verbatim whenever there is any.
     const stderr = (e.stderr || "").toString().trim();
+    const why = stderr || "git printed no error (the two commits may share no common ancestor)";
     throw new RunError(
-      `git merge-base ${baseSha} ${headSha} failed: ${stderr || e.message} — the checkout may be missing one ` +
+      `git merge-base ${baseSha} ${headSha} failed: ${why} — the checkout may be missing one ` +
         `of these commits (needs fetch-depth: 0)`,
     );
   }

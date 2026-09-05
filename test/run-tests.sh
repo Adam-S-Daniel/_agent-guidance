@@ -15260,6 +15260,49 @@ untouched body
 
     unset -f assert_eval_line
 
+    # 51. N5: gitMergeBase's catch fell back to `e.message` when git wrote
+    #     nothing to stderr, and execFileSync's own message is "Command
+    #     failed: git merge-base <a> <b>" — so the reported error repeated
+    #     the command this script had already named and said nothing else:
+    #     "git merge-base A B failed: Command failed: git merge-base A B".
+    #     The case that produces it is real and silent: two VALID shas with
+    #     no common ancestor (an orphan branch) exit 1 with an empty stderr
+    #     and an empty stdout. A short fixed phrase now covers that, and
+    #     git's own stderr is still quoted whenever there is any.
+    local dir51="$root/orphan_no_common_ancestor"
+    rm -rf "$dir51"
+    mkdir -p "$dir51/agents-md/sections" "$dir51/docs"
+    git -C "$dir51" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir51/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir51/agents-md/eval-coverage.yml"
+    printf '%s' "$impact_stub" > "$dir51/docs/guidance-impact.md"
+    git -C "$dir51" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir51" -c user.name=test -c user.email=test@localhost commit -q -m first-root
+    local base51
+    base51=$(git -C "$dir51" rev-parse HEAD)
+
+    git -C "$dir51" checkout -q --orphan second-root
+    git -C "$dir51" rm -rq --cached .
+    printf '%s' "$base_body" > "$dir51/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir51/agents-md/eval-coverage.yml"
+    printf '%s' "$impact_stub" > "$dir51/docs/guidance-impact.md"
+    git -C "$dir51" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir51" -c user.name=test -c user.email=test@localhost commit -q -m second-root
+    local head51
+    head51=$(git -C "$dir51" rev-parse HEAD)
+
+    local event51="$TEST_DIR/touch-event-51.json"
+    write_event "$base51" "$head51" "$event51"
+    local out51 rc51=0
+    out51=$(GITHUB_EVENT_PATH="$event51" node "$script" --repo-root "$dir51" 2>&1) || rc51=$?
+    if [[ "$rc51" == 2 ]] && grep -qF -- "git merge-base $base51 $head51 failed:" <<<"$out51" \
+            && grep -qF -- "git printed no error" <<<"$out51" \
+            && ! grep -qF -- "Command failed" <<<"$out51"; then
+        pass "guidance touch: N5 two valid shas with no common ancestor name the failure once, never doubled by execFileSync's own message"
+    else
+        fail "guidance touch: N5 expected exit 2 naming the command once plus a fixed phrase, with no 'Command failed' — got exit $rc51: $(echo "$out51" | tr '\n' ' ')"
+    fi
+
     unset -f touch_repo_init
     unset -f touch_commit
     unset -f write_event
