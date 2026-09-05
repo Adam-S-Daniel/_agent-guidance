@@ -17786,6 +17786,107 @@ for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
         "instructions-loaded: the hook emits no systemMessage field"
 }
 
+# The measurement that replaces a figure quoted by hand. "19 copies = 332.3k
+# tokens" was measured once, on 2026-08-29, and has been repeated in prose
+# ever since with nothing re-measuring it. This report totals the receipts the
+# load-time hook actually wrote, per session.
+test_instructions_report() {
+    echo ""
+    echo "TEST: instructions-report.sh (per-session instruction bytes)"
+
+    local script="$REPO_ROOT/scripts/instructions-report.sh"
+    local d="$TEST_DIR/instrreport"
+    rm -rf "$d"; mkdir -p "$d/cfg"
+    local logf="$d/cfg/instructions-log.jsonl"
+    local out rc
+
+    report() {   # <outfile> [args...]
+        local target="$1"; shift
+        if "$script" --config-dir "$d/cfg" "$@" > "$target" 2>&1; then
+            REPORT_RC=0
+        else
+            REPORT_RC=$?
+        fi
+    }
+
+    # Nothing to report is not the same as nothing wrong — the convention
+    # check-guidance-coverage.js already follows in this repo.
+    rm -f "$logf"
+    report "$d/out_empty"
+    [[ $REPORT_RC -eq 2 ]] && pass "instructions-report: an absent log exits 2, not 0" \
+        || fail "instructions-report: an absent log exited $REPORT_RC, expected 2"
+    assert_contains "$d/out_empty" "no receipts" \
+        "instructions-report: an absent log says so in words"
+
+    # Two sessions, one of them split across the rotated file, plus a line
+    # nothing can parse.
+    {
+        printf '{"ts":"2026-09-05T10:00:00Z","session":"aaaa0001","load_reason":"session_start","memory_type":"User","file_path":"~/.claude/CLAUDE.md","bytes":55954,"sha256":"x"}\n'
+        printf '{"ts":"2026-09-05T10:00:01Z","session":"aaaa0001","load_reason":"session_start","memory_type":"Project","file_path":"repo-a/AGENTS.md","bytes":7000,"sha256":"x"}\n'
+    } > "$d/cfg/instructions-log.jsonl.1"
+    {
+        printf '{"ts":"2026-09-05T10:00:02Z","session":"aaaa0001","load_reason":"nested_traversal","memory_type":"Project","file_path":"repo-a/sub/CLAUDE.md","bytes":1000,"sha256":"x"}\n'
+        printf 'this line is not JSON at all\n'
+        printf '{"ts":"2026-09-05T12:00:00Z","session":"bbbb0002","load_reason":"session_start","memory_type":"User","file_path":"~/.claude/CLAUDE.md","bytes":55954,"sha256":"x"}\n'
+        printf '{"ts":"2026-09-05T12:00:01Z","session":"bbbb0002","load_reason":"compact","memory_type":"Project","file_path":"repo-b/AGENTS.md","bytes":2046,"sha256":"x"}\n'
+    } > "$logf"
+
+    # The default is the LATEST session: a report that opened with a machine's
+    # whole history would be a report nobody reads to the end.
+    report "$d/out_latest"
+    [[ $REPORT_RC -eq 0 ]] && pass "instructions-report: a populated log exits 0" \
+        || fail "instructions-report: exited $REPORT_RC on a populated log"
+    assert_contains "$d/out_latest" "bbbb0002" "instructions-report: the latest session is the default"
+    assert_not_contains "$d/out_latest" "aaaa0001" "instructions-report: earlier sessions are not in the default report"
+    assert_contains "$d/out_latest" "58000" "instructions-report: the latest session's total bytes"
+    assert_contains "$d/out_latest" "compact" "instructions-report: load reasons are named, this one included"
+
+    # --all reaches both, and the rotated file is part of the history rather
+    # than a file the report silently ignores.
+    report "$d/out_all" --all
+    assert_contains "$d/out_all" "aaaa0001" "instructions-report: --all includes earlier sessions"
+    assert_contains "$d/out_all" "bbbb0002" "instructions-report: --all still includes the latest"
+    assert_contains "$d/out_all" "63954" "instructions-report: the rotated file's bytes are counted"
+    assert_contains "$d/out_all" "1 unparseable" "instructions-report: unparseable lines are counted, not fatal"
+
+    # An absolute path in this output is the failure this whole lane guards:
+    # the report gets pasted into pull requests on a public repo.
+    # Anchored on the CHARACTER BEFORE the slash, not on a space: the one
+    # absolute path this report could print is the log's own, and it prints
+    # inside parentheses. A needle requiring a leading space passes over
+    # "(/tmp/…)" and reads clean on exactly the output it exists to catch.
+    local abs_needle='(^|[^A-Za-z0-9._~-])/[A-Za-z0-9._-]+/'
+
+    report "$d/out_json" --all --format json
+    local surface
+    for surface in "$d/out_all" "$d/out_json"; do
+        if grep -qE -- "$abs_needle" "$surface"; then
+            fail "instructions-report: an absolute path reached $surface — $(grep -oE -- "$abs_needle" "$surface" | head -1)"
+        else
+            pass "instructions-report: no absolute path in $(basename "$surface")"
+        fi
+    done
+
+    if python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+sessions = {s["session"]: s for s in doc["sessions"]}
+assert set(sessions) == {"aaaa0001", "bbbb0002"}, sessions.keys()
+a = sessions["aaaa0001"]
+assert a["bytes"] == 63954, a["bytes"]
+assert a["files"] == 3, a["files"]
+assert a["by_memory_type"]["User"] == 55954, a["by_memory_type"]
+assert a["by_memory_type"]["Project"] == 8000, a["by_memory_type"]
+assert a["by_load_reason"]["session_start"] == 2, a["by_load_reason"]
+assert a["by_load_reason"]["nested_traversal"] == 1, a["by_load_reason"]
+assert doc["unparseable"] == 1, doc["unparseable"]
+' "$d/out_json" 2>"$d/json.err"; then
+        pass "instructions-report: --format json carries the same totals, broken out"
+    else
+        fail "instructions-report: json report — $(tail -1 "$d/json.err")"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -17944,6 +18045,7 @@ test_dependabot_sweep_list_failure
 test_fleet_memory_hook
 test_fleet_memory_state_file
 test_instructions_loaded_hook
+test_instructions_report
 
 echo ""
 echo "========================================="
