@@ -15205,6 +15205,61 @@ untouched body
         "a convention for readers, not a rule the gate checks" \
         "guidance touch: N2 docs/guidance-impact.md says newest-first is a convention, not something the gate checks"
 
+    # 50. N3: RESULT_PATTERN's fraction alternative guarded against a
+    #     3-segment slash date with a lookbehind and a lookahead, which is a
+    #     rule about a number's NEIGHBORS and so reads three other date
+    #     shapes as measurements: "2026/09" (two segments — nothing on either
+    #     side to trip the guards), "09/05/2026" (US order — the "05/2026"
+    #     window is preceded by only two digits, so the 4-digit lookbehind
+    #     never fires), and "2026/09/05/06" (the "05/06" window, same reason).
+    #     None of the three cites a result. The date shapes are now removed
+    #     from the line before the result pattern is applied at all, which is
+    #     a rule about the DATE rather than about a fraction's neighbors.
+    #
+    #     Six cases, run through one helper: the three shapes above must be
+    #     insufficient, and the three result forms the entry format documents
+    #     must still be accepted. ("exit code 0", the fourth accepted form,
+    #     is test #46 above.)
+    assert_eval_line() {
+        local name="$1" eval_text="$2" want_exit="$3" want_substr="$4" label="$5"
+        local dir="$root/$name" base head event
+        base=$(touch_repo_init "$name" "$base_body" "$base_manifest")
+        head=$(touch_commit "$dir" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" "
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: $eval_text
+")
+        event="$TEST_DIR/touch-event-$name.json"
+        write_event "$base" "$head" "$event"
+        assert_touch "$event" "$dir" "$want_exit" "$want_substr" "$label"
+    }
+
+    assert_eval_line n3_two_segment_date 'TBD as of 2026/09' 1 'is insufficient' \
+        "guidance touch: N3 a two-segment year-led date ('2026/09') is not mistaken for a score fraction"
+    assert_eval_line n3_us_order_date 'TBD as of 09/05/2026' 1 'is insufficient' \
+        "guidance touch: N3 a US-order date ('09/05/2026') is not mistaken for a score fraction"
+    assert_eval_line n3_four_segment_date 'ratio 2026/09/05/06' 1 'is insufficient' \
+        "guidance touch: N3 a four-segment date-shaped string ('2026/09/05/06') is not mistaken for a score fraction"
+    assert_eval_line n3_exit_code 'exit 0, evals/guidance/foo/' 0 'all have a sufficient' \
+        "guidance touch: N3 a bare exit code ('exit 0') is still a real result"
+    assert_eval_line n3_fraction 'section 7.0/8 vs none 4.3/8, evals/guidance/foo/' 0 'all have a sufficient' \
+        "guidance touch: N3 a score fraction ('7.0/8') is still a real result"
+    assert_eval_line n3_sample_size 'n=3, evals/guidance/foo/' 0 'all have a sufficient' \
+        "guidance touch: N3 a sample size ('n=3') is still a real result"
+
+    # A date sitting BESIDE a real result is the case the strip must not
+    # break: "exit 0 (2026-09-05)" loses only the date.
+    assert_eval_line n3_result_with_a_date 'exit 0 (2026-09-05), evals/guidance/foo/' 0 'all have a sufficient' \
+        "guidance touch: N3 stripping the date leaves a real result beside it intact"
+
+    unset -f assert_eval_line
+
     unset -f touch_repo_init
     unset -f touch_commit
     unset -f write_event

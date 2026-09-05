@@ -843,35 +843,43 @@ const RESULT_SHAPES_HINT = '"exit 0" (or "exit code 0"), a score fraction like "
 // a real citation looks like, matching the three example forms the format
 // section documents.
 //
-// N7: two boundary fixes on top of the shapes themselves.
+// N7/N3: two boundary fixes on top of the shapes themselves.
 //   - The exit-code alternative also accepts the word "code" between "exit"
 //     and the number ("exit code 0"), a phrasing check-guidance-touch's own
 //     Eval: writers actually use and the original alternative rejected.
-//   - The fraction alternative excludes a `YYYY/MM/DD` (or `YYYY-MM-DD`)
-//     date: a lookbehind rejects starting the match right after a 4-digit
-//     run followed by "-" or "/" (so "09" in "2026/09/05" is never read as a
-//     numerator), and a lookahead rejects a match immediately followed by
-//     "-" or "/" then a digit (so "2026/09" is never read as a fraction when
-//     a third "/05" segment follows) — together excluding every 2-digit
-//     window of a 3-segment date without touching a genuine fraction like
-//     "7.0/8", which has no such neighbor on either side.
-const RESULT_PATTERN =
-  /\bexit(?:\s+code)?\s+\d+\b|(?<!\d{4}[-/])\b\d+(?:\.\d+)?\s*\/\s*\d+\b(?![-/]\d)|\bn\s*=\s*\d+\b/i;
+//   - A DATE IS NOT A FRACTION, and that is a fact about the date, not about
+//     a number's neighbors. N7 first tried to express it as a lookbehind and
+//     a lookahead on the fraction alternative — reject a match starting right
+//     after `\d{4}[-/]`, or immediately followed by `[-/]\d` — which excludes
+//     the middle of a 3-segment `YYYY/MM/DD` and nothing else. Measured, it
+//     still read three date shapes as results: "2026/09" (two segments, so
+//     neither guard has anything to fire on), "09/05/2026" (US order — the
+//     "05/2026" window is preceded by two digits, not four), and
+//     "2026/09/05/06" (the "05/06" window, for the same reason). So the date
+//     shapes are stripped from the line FIRST, by DATE_LIKE below, and the
+//     result pattern is applied to what is left; "exit 0 (2026-09-05)" keeps
+//     its result and loses only the date.
+const RESULT_PATTERN = /\bexit(?:\s+code)?\s+\d+\b|\b\d+(?:\.\d+)?\s*\/\s*\d+\b|\bn\s*=\s*\d+\b/i;
 
-// classifyEval — which of the three documented forms (docs/guidance-impact.md's
-// own "## Entry format" section) an Eval: line is, structural on the line's
-// own text, never a bag of known-bad placeholder words:
-//   "none"    — /^Eval:\s*none\b/i; legal only while the row is "gap".
-//   "exempt"  — literally "Eval: exempt (skipped row)"; legal only while the
-//               row is "skipped".
-//   "result"  — matches RESULT_PATTERN above.
-//   "missing" — no Eval: bullet at all.
-//   "unrecognized" — none of the above; never sufficient.
+// DATE_LIKE — the two date shapes that would otherwise read as a score
+// fraction, removed from an Eval: line before RESULT_PATTERN sees it: a
+// 4-digit-year-led date with two or three segments (`2026-09`, `2026/09/05`),
+// and a US-order `\d{1,2}/\d{1,2}/\d{4}` (`09/05/2026`). A regex is the right
+// tool here and only here — this is a LEXICAL question about one token's own
+// characters, not a structural one about the document (which is what
+// markdown-it and the `yaml` package are for elsewhere in this file). A
+// 4-segment run like "2026/09/05/06" loses its first three segments to the
+// first alternative, and the "/06" left behind has no numerator, so it
+// cannot match the fraction alternative either.
+const DATE_LIKE = /\b\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b/g;
+
 function classifyEval(evalLine) {
   if (!evalLine) return "missing";
   if (/^Eval:\s*none\b/i.test(evalLine)) return "none";
   if (/^Eval:\s*exempt\s*\(skipped row\)\s*$/i.test(evalLine)) return "exempt";
-  if (RESULT_PATTERN.test(evalLine)) return "result";
+  // The date strip is applied only here — "none" and the exact "exempt
+  // (skipped row)" form above are matched against the line as written.
+  if (RESULT_PATTERN.test(evalLine.replace(DATE_LIKE, " "))) return "result";
   return "unrecognized";
 }
 
