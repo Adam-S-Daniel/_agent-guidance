@@ -12388,9 +12388,36 @@ test_bump_workflow() {
     local steps_file="$TEST_DIR/bump-workflow-steps.txt"
     local err_file="$TEST_DIR/bump-workflow.err"
 
-    if ! workflow_steps "$wf" > "$steps_file" 2> "$err_file"; then
+    # N6: scoped to the `bump` job, the way test_ci_workflow_shape's own S2
+    # fix scoped its call and S5 scoped workflow_step_by_run. An UNSCOPED
+    # call concatenates every job's steps in `jobs:` object-key order, so the
+    # two assertions below — "every uses: is pinned" and "the registry
+    # checkout is fetch-depth: 0" — would read whichever job the YAML parser
+    # visited first. Today that is a distinction without a difference (this
+    # file has exactly one job, asserted immediately below so it stays that
+    # way knowingly), which is precisely why an unscoped call survives here:
+    # nothing makes it wrong until the day someone adds a second job, and on
+    # that day the failure is a FALSE GREEN — a decoy `prep` job with its own
+    # fetch-depth: 0 registry checkout lets a shallow `bump` checkout pass.
+    if ! workflow_steps "$wf" bump > "$steps_file" 2> "$err_file"; then
         fail "bump workflow: could not parse $wf — $(head -1 "$err_file")"
         return
+    fi
+
+    # The other half of that guard: if a second job ever appears here, this
+    # is what says so, rather than the assertions above quietly changing
+    # scope. workflow_shape emits one "job <name>" line per key under `jobs:`.
+    local bump_shape="$TEST_DIR/bump-workflow-shape.txt"
+    if workflow_shape "$wf" > "$bump_shape" 2>/dev/null; then
+        local bump_jobs
+        bump_jobs=$(awk '$1 == "job" { print $2 }' "$bump_shape" | tr '\n' ' ')
+        if [[ "$bump_jobs" == "bump " ]]; then
+            pass "bump workflow: it declares exactly one job, 'bump' — the scope the assertions below read"
+        else
+            fail "bump workflow: expected exactly one job named 'bump' (the assertions below are scoped to it) — got '${bump_jobs:-none}'"
+        fi
+    else
+        fail "bump workflow: could not read its job set"
     fi
     if [[ -s "$steps_file" ]]; then
         pass "bump workflow: parses, and declares at least one step"
@@ -12442,6 +12469,51 @@ test_bump_workflow() {
         fail "bump workflow: it now has a pull_request trigger, so its concurrency group can cancel a run that publishes a status context — read the AGENTS.md rule about required checks before keeping both"
     else
         pass "bump workflow: no pull_request trigger, so no status context a cancelled run could poison"
+    fi
+
+    # N6 regression, on a constructed fixture rather than the real file,
+    # since the real file has only the one job: a `prep` job ahead of `bump`
+    # carries BOTH decoys — a tag-pinned `uses:` and a fetch-depth: 0
+    # checkout of the registry — while `bump`'s own step is pinned and its
+    # registry checkout is default depth. Scoped to `bump`, neither decoy may
+    # reach either assertion: the pin scan must see only bump's step, and the
+    # registry depth must read bump's own "-" rather than prep's "0".
+    local decoy_wf="$TEST_DIR/two-job-bump-workflow.yml"
+    cat > "$decoy_wf" <<'YAML'
+on: schedule
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Adam-S-Daniel/agentskills
+          fetch-depth: 0
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: Adam-S-Daniel/agentskills
+YAML
+    local decoy_steps="$TEST_DIR/two-job-bump-steps.txt"
+    if ! workflow_steps "$decoy_wf" bump > "$decoy_steps" 2>/dev/null; then
+        fail "bump workflow: N6 two-job fixture failed to parse"
+    else
+        local decoy_uses decoy_unpinned=""
+        while read -r decoy_uses _ _; do
+            [[ "$decoy_uses" == "-" ]] && continue
+            if [[ ! "$decoy_uses" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+                decoy_unpinned="${decoy_unpinned:+$decoy_unpinned, }$decoy_uses"
+            fi
+        done < "$decoy_steps"
+        local decoy_depth
+        decoy_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$decoy_steps")
+        if [[ -z "$decoy_unpinned" && "$decoy_depth" != "0" ]]; then
+            pass "bump workflow: N6 the pin and fetch-depth assertions scoped to 'bump' do not read an earlier job's steps"
+        else
+            fail "bump workflow: N6 scoped to 'bump' the fixture should report no unpinned uses and bump's own default-depth checkout — got unpinned='${decoy_unpinned:-none}' depth='${decoy_depth:-none}'"
+        fi
     fi
 }
 
