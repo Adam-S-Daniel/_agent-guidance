@@ -37,6 +37,19 @@ line:
 
 No verdict at all means the hook never ran — treat that as DEGRADED.
 
+**And that verdict is about the FILE, not about your context.** A separate
+`InstructionsLoaded` hook records what each session actually loaded; because
+its own output reaches nothing, the NEXT session start prints what it found:
+
+- `fleet-guidance: previous session loaded (v<id>, <n> bytes)` — the block in
+  context last session was the block that was installed.
+- `fleet-guidance: previous session LOAD MISMATCH — <reason>` — it was not:
+  truncated after the session started, a stale version, or absent. Check this
+  session's own verdict before trusting the guidance you are holding.
+- `agents-md: previous session BEHIND …` / `EDITED ABOVE THE MARKER …` — a
+  repo AGENTS.md out of step with the guidance in context. A healthy one says
+  nothing.
+
 ## The floor: rules that hold even when the guidance did not load
 
 These are the ones with teeth. They are restated here, deliberately, because a

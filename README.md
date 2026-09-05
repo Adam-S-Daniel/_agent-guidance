@@ -49,6 +49,9 @@ The skills that used to live here (`debug-github-workflows`,
   `default_sections` applied to repos with no `.agents-sync.yml` of their own,
   and for the `skills_bootstrap` allowlist + pin (see
   [The skills-bootstrap hook](#the-skills-bootstrap-hook)).
+- `scripts/instructions-report.sh` totals what a session actually loaded, from
+  the receipts the `InstructionsLoaded` hook writes — see
+  [The load-time receipt](#the-load-time-receipt).
 - **This repo's own `AGENTS.md` is a committed artifact**, not a synced one:
   `sync.sh` excludes its own repo (`SYNC_SELF_REPO`), which left the repo where
   the guidance is written as the one repo whose agents never read it. It is
@@ -175,6 +178,42 @@ what this leaves unsolved:
 then [`0004`](docs/decisions/0004-skills-bootstrap-adopted-where-sessions-happen.md)
 for the widening to ten repos and why this one self-hosts instead of being
 allowlisted.
+
+## The load-time receipt
+
+`.claude/hooks/fleet-memory.sh` installs the guidance into user memory once
+per session and prints a verdict. That verdict is about **the file**, not
+about the session's context, and the gap between the two has cost real
+incidents — a `CLAUDE_CONFIG_DIR` the CLI reads no memory from, and a block
+truncated after the session started (2026-09-05: 56,099 bytes to 154, silent
+until the next session start).
+
+`.claude/hooks/instructions-loaded.sh` closes it. The sync delivers it on the
+same decision as `fleet-memory.sh` — a repo that gets the stub gets both —
+registered under the CLI's `InstructionsLoaded` event with a `*` matcher.
+On each memory-file load it compares what is in context against
+`fleet-guidance.state` (written by the SessionStart hook) and appends a JSON
+line to `$CLAUDE_CONFIG_DIR/instructions-log.jsonl`, rotated at 1 MB.
+
+Two things about it are load-bearing and were **measured**, on CLI 2.1.261,
+against a local stub API endpoint and never a real credential:
+
+- a `User` and a `Project` load each arrive as
+  `{cwd, file_path, hook_event_name, load_reason, memory_type, session_id,
+  transcript_path}`; `globs`, `trigger_file_path` and `parent_file_path` are
+  optional and absent on a `session_start` load;
+- **the hook's stdout reaches nothing** — not the CLI's stdout, not its
+  stderr, not the transcript. So the verdict is written to
+  `instructions-receipt.state` and printed by the NEXT session's SessionStart
+  hook (`fleet-guidance: previous session …`), which is what keeps a mismatch
+  silent for one session and no longer.
+
+`scripts/instructions-report.sh` totals the log per session — bytes per
+`memory_type`, files per `load_reason` — the measurement that replaces the
+332.3k figure quoted by hand since 2026-08-29. It never prints an absolute
+path, so its output is safe to paste into a PR on this public repo.
+`FLEET_GUIDANCE_SKIP` removes the log, the receipt and the state file along
+with the managed block.
 
 ## The CLAUDE.md bridge
 
@@ -430,8 +469,9 @@ repos.yml               # exclusions, default sections, skills-bootstrap pin,
                         #   cron-coverage fleet + out-of-scope
 AGENTS.md               # GENERATED from agents-md/ — this repo's own copy
 CLAUDE.md               # the bridge that makes AGENTS.md load here too
-.claude/                # self-hosted skills-bootstrap hook + its registration:
-                        #   the sync skips this repo, so nothing delivers here
+.claude/                # self-hosted hooks + their registration: the sync
+                        #   skips this repo, so nothing delivers here —
+                        #   skills-bootstrap, fleet-memory, instructions-loaded
 skills.lock             # which bundles THIS repo installs (never written by
                         #   the sync — see repos.yml's skills_bootstrap block)
 test/run-tests.sh

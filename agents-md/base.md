@@ -757,6 +757,23 @@ ref for review, not the setting, to catch.
   standalone-vs-worktree test, the reach paths a remote removal does not close,
   and why no in-code guard can substitute.
 
+## "fleet-guidance: current" is not "the guidance is in context"
+
+The SessionStart verdict reports what the hook did to `~/.claude/CLAUDE.md`,
+not what the session loaded — the same gap as "the watch finished" against
+"CI passed", and three things live in it: a `CLAUDE_CONFIG_DIR` the CLI reads
+no memory from, a block truncated AFTER the session started (2026-09-05:
+56,099 bytes to 154, silent until the next SessionStart), and a repo
+`AGENTS.md` behind the guidance in context or edited above its marker. The
+`InstructionsLoaded` hook beside the SessionStart one writes a receipt at load
+time — its own stdout reaches nothing, measured on CLI 2.1.261 — so the NEXT
+session opens with `fleet-guidance: previous session loaded (v<id>, <n>
+bytes)` or `previous session LOAD MISMATCH — <reason>`. Read that line the way
+you read the verdict itself, and run
+`_agent-guidance/scripts/instructions-report.sh` for the per-session totals
+(bytes per memory type, files per load reason) that replace the 332.3k figure
+quoted by hand since 2026-08-29.
+
 ## Skills ecosystem
 
 - The canonical skills registry is `github.com/Adam-S-Daniel/agentskills`,
