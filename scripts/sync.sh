@@ -46,6 +46,13 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# The load-time receipt, delivered on the SAME decision as fleet-memory and
+# never on one of its own. fleet-memory can only report what it did to the
+# file; this reports what the session LOADED, which is the question the
+# 2026-09-05 mid-session truncation went unanswered for. A repo that gets the
+# stub gets both, or it gets a verdict nothing can check.
+INSTR_HOOK_REL_PATH=".claude/hooks/instructions-loaded.sh"
+INSTR_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/instructions-loaded.sh"
 MARKER="## Repo-specific additions"
 BRANCH_NAME="agents-md-sync/update"
 # The committer identity every commit this sync makes is written under (set on
@@ -805,6 +812,8 @@ for repo_name in "${REPOS[@]}"; do
     fleet_hook_state="missing"     # missing | current | drifted
     fleet_payload_state="missing"  # missing | current | drifted
     fleet_reg_state="missing"      # registered | no-entry | unparseable | missing
+    instr_hook_state="missing"     # missing | current | drifted
+    instr_reg_state="missing"      # registered | no-entry | unparseable | missing
 
     if [[ ! -r "$FLEET_HOOK_SOURCE" || ! -s "$FLEET_PAYLOAD_SOURCE" ]]; then
         fleet_deliver=false
@@ -828,17 +837,30 @@ for repo_name in "${REPOS[@]}"; do
                 cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
                     && fleet_payload_state="current" || fleet_payload_state="drifted"
             fi
+            if [[ -f "$INSTR_HOOK_REL_PATH" ]]; then
+                cmp -s "$INSTR_HOOK_REL_PATH" "$INSTR_HOOK_SOURCE" \
+                    && instr_hook_state="current" || instr_hook_state="drifted"
+            fi
+            # A DIFFERENT event, so a different classification: a hook named
+            # under SessionStart is not registered for InstructionsLoaded, and
+            # reading it as such would leave a delivered hook nothing runs.
+            instr_reg_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+                              BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+                              "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
         fi
     fi
 
     if $fleet_deliver; then FLEET_MODE=stub; else FLEET_MODE=full; fi
     [[ -n "$fleet_reason" ]] && log "fleet-memory: $fleet_reason."
     log "fleet-memory: mode=$FLEET_MODE hook=$fleet_hook_state payload=$fleet_payload_state settings=$fleet_reg_state"
+    $fleet_deliver && log "instructions-loaded: hook=$instr_hook_state settings=$instr_reg_state"
 
     fleet_up_to_date=true
     if $fleet_deliver && { [[ "$fleet_hook_state" != "current" ]] \
                         || [[ "$fleet_payload_state" != "current" ]] \
-                        || [[ "$fleet_reg_state" != "registered" ]]; }; then
+                        || [[ "$fleet_reg_state" != "registered" ]] \
+                        || [[ "$instr_hook_state" != "current" ]] \
+                        || [[ "$instr_reg_state" != "registered" ]]; }; then
         fleet_up_to_date=false
     fi
 
@@ -1059,6 +1081,12 @@ for repo_name in "${REPOS[@]}"; do
             esac
             [[ "$fleet_reg_state" != "registered" ]] && \
                 log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+            case "$instr_hook_state" in
+                missing) log "[DRY RUN] Would add $INSTR_HOOK_REL_PATH" ;;
+                drifted) log "[DRY RUN] Would overwrite drifted $INSTR_HOOK_REL_PATH" ;;
+            esac
+            [[ "$instr_reg_state" != "registered" ]] && \
+                log "[DRY RUN] Would append an InstructionsLoaded entry for instructions-loaded.sh to $SETTINGS_REL_PATH (existing entries preserved)"
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
@@ -1167,6 +1195,8 @@ for repo_name in "${REPOS[@]}"; do
     fleet_hook_written=false
     fleet_payload_written=false
     fleet_registered_now=false
+    instr_hook_written=false
+    instr_registered_now=false
 
     if $fleet_deliver; then
         if [[ "$fleet_hook_state" != "current" ]]; then
@@ -1200,6 +1230,35 @@ for repo_name in "${REPOS[@]}"; do
                 log "WARN: could not register fleet-memory in $SETTINGS_REL_PATH ($fleet_register_result) — leaving it untouched."
             fi
         fi
+        # The load-time receipt, written on the same decision. Registered
+        # under InstructionsLoaded rather than SessionStart, with a `*`
+        # matcher because the CLI matches this event on `load_reason` and a
+        # block truncated mid-session is only observable on the reload after.
+        # The timeout is deliberately short: a receipt hook that needs longer
+        # than ten seconds has stopped being observe-only.
+        if [[ "$instr_hook_state" != "current" ]]; then
+            mkdir -p "$(dirname "$INSTR_HOOK_REL_PATH")"
+            cp "$INSTR_HOOK_SOURCE" "$INSTR_HOOK_REL_PATH"
+            chmod 0755 "$INSTR_HOOK_REL_PATH"
+            instr_hook_written=true
+            log "instructions-loaded: hook ${instr_hook_state} — written."
+        fi
+
+        if [[ "$instr_reg_state" != "registered" ]]; then
+            mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+            if instr_register_result=$(
+                    BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+                    BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/instructions-loaded.sh"' \
+                    BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+                    BOOTSTRAP_HOOK_MATCHER='*' \
+                    BOOTSTRAP_HOOK_TIMEOUT="10" \
+                    "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
+                [[ "$instr_register_result" == "registered" ]] && instr_registered_now=true
+                log "instructions-loaded: settings.json — $instr_register_result."
+            else
+                log "WARN: could not register instructions-loaded in $SETTINGS_REL_PATH ($instr_register_result) — leaving it untouched."
+            fi
+        fi
     fi
 
     add_paths=(AGENTS.md)
@@ -1208,8 +1267,11 @@ for repo_name in "${REPOS[@]}"; do
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
     $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
-    # Both hooks can register in the same file in one run; add it once.
-    if $fleet_registered_now && ! $bootstrap_registered_now; then
+    $instr_hook_written && add_paths+=("$INSTR_HOOK_REL_PATH")
+    # Any of the three hooks can register in the same file in one run; add it
+    # once. `git add` twice is harmless, but the array is also what the commit
+    # message enumerates, and a path listed twice there reads as a bug.
+    if { $fleet_registered_now || $instr_registered_now; } && ! $bootstrap_registered_now; then
         add_paths+=("$SETTINGS_REL_PATH")
     fi
     git add "${add_paths[@]}"

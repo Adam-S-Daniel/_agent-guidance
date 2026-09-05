@@ -28,6 +28,7 @@ unset GH_TOKEN GITHUB_TOKEN
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
 FLEET_HOOK_REL_PATH_T=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH_T=".claude/hooks/fleet-guidance.md"
+INSTR_HOOK_REL_PATH_T=".claude/hooks/instructions-loaded.sh"
 
 # Ensure git identity is configured (CI runners may not have this set globally).
 if ! git config --global user.name &>/dev/null; then
@@ -6360,6 +6361,17 @@ test_sync_bootstrap() {
     else
         fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
     fi
+    # The load-time receipt rides with fleet-memory, on the same decision and
+    # for the same reason: it is the only thing that can say whether the block
+    # fleet-memory installed is the block the session actually loaded.
+    if [[ -f "$nolock/$INSTR_HOOK_REL_PATH_T" ]]; then
+        pass "repo-no-lock: the InstructionsLoaded hook rides with fleet-memory"
+    else
+        fail "repo-no-lock: the InstructionsLoaded hook was not delivered"
+    fi
+    local instr_state
+    instr_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh"                   "$REPO_ROOT/scripts/bootstrap-status.sh" "$nolock/.claude/settings.json")
+    [[ "$instr_state" == "registered" ]]         && pass "repo-no-lock: the InstructionsLoaded hook is registered, not just delivered"         || fail "repo-no-lock: the delivered hook reads '$instr_state' — a hook nothing runs"
     if [[ -e "$nolock/skills.lock" ]]; then
         fail "repo-no-lock: the sync did NOT create a skills.lock"
     else
@@ -6412,6 +6424,11 @@ test_sync_bootstrap() {
             fail "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
         else
             pass "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        fi
+        if [[ -f "$ignored/$INSTR_HOOK_REL_PATH_T" ]]; then
+            fail "repo-ignored: the InstructionsLoaded hook withheld too"
+        else
+            pass "repo-ignored: the InstructionsLoaded hook withheld too"
         fi
         assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
         assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
@@ -17887,6 +17904,119 @@ assert doc["unparseable"] == 1, doc["unparseable"]
     fi
 }
 
+# ── The registrar's event seam ────────────────────────────────────────────
+#
+# register-bootstrap-hook.sh and bootstrap-status.sh were written for
+# SessionStart and hard-coded it. The InstructionsLoaded hook needs the same
+# append-never-overwrite proof and the same semantic "is it registered?"
+# classifier, and a SECOND registrar would be a second place for that proof to
+# rot. So both grew one env seam, and this asserts the seam actually isolates
+# the two events rather than merely accepting the variable.
+test_hook_event_seam() {
+    echo ""
+    echo "=== Test: the registrar and the classifier honour BOOTSTRAP_HOOK_EVENT ==="
+
+    local reg="$REPO_ROOT/scripts/register-bootstrap-hook.sh"
+    local status="$REPO_ROOT/scripts/bootstrap-status.sh"
+    local d="$TEST_DIR/eventseam"
+    rm -rf "$d"; mkdir -p "$d"
+    local f="$d/settings.json"
+    local result
+
+    # Start from a settings.json that already registers a SessionStart hook,
+    # because "does not disturb what is there" is the whole contract.
+    result=$("$reg" "$f")
+    [[ "$result" == "registered" ]] && pass "event seam: the default event still registers SessionStart" \
+        || fail "event seam: default registration said '$result'"
+
+    result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+             BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+             BOOTSTRAP_HOOK_MATCHER='*' \
+             BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/instructions-loaded.sh"' \
+             "$reg" "$f")
+    [[ "$result" == "registered" ]] && pass "event seam: a second event registers alongside the first" \
+        || fail "event seam: InstructionsLoaded registration said '$result'"
+
+    if python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+hooks = doc["hooks"]
+assert len(hooks["SessionStart"]) == 1, hooks["SessionStart"]
+assert len(hooks["InstructionsLoaded"]) == 1, hooks["InstructionsLoaded"]
+entry = hooks["InstructionsLoaded"][0]
+assert entry["matcher"] == "*", entry["matcher"]
+assert "instructions-loaded.sh" in entry["hooks"][0]["command"], entry
+assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"], hooks
+' "$f" 2>"$d/shape.err"; then
+        pass "event seam: each hook lands under its own event, neither disturbing the other"
+    else
+        fail "event seam: settings shape — $(tail -1 "$d/shape.err")"
+    fi
+
+    # The classifier has to be event-aware in BOTH directions, or the sync
+    # would keep re-registering a hook that is already there (or, worse, read
+    # a hook registered under the wrong event as live).
+    result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" "$status" "$f")
+    [[ "$result" == "registered" ]] && pass "event seam: the classifier finds it under its own event" \
+        || fail "event seam: classifier read '$result' for InstructionsLoaded"
+
+    result=$(BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" "$status" "$f")
+    [[ "$result" == "no-entry" ]] && pass "event seam: the same hook is NOT registered under SessionStart" \
+        || fail "event seam: classifier read '$result' — the event is not isolating anything"
+
+    result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="skills-bootstrap.sh" "$status" "$f")
+    [[ "$result" == "no-entry" ]] && pass "event seam: a SessionStart hook is not read as an InstructionsLoaded one" \
+        || fail "event seam: classifier read '$result' for the wrong event"
+
+    # Idempotence is per event: a second run must not append a duplicate.
+    result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+             BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+             BOOTSTRAP_HOOK_MATCHER='*' \
+             BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/instructions-loaded.sh"' \
+             "$reg" "$f")
+    [[ "$result" == "already-registered" ]] && pass "event seam: re-registering the same event is a no-op" \
+        || fail "event seam: re-registration said '$result'"
+}
+
+# ── This repo's own registration for the load-time hook ───────────────────
+#
+# _agent-guidance is excluded from its own sync (SYNC_SELF_REPO), so nothing
+# else would ever notice that the hook it ships is not wired up here.
+test_self_hosted_instructions_registration() {
+    echo ""
+    echo "=== Test: this repo registers the InstructionsLoaded hook it ships ==="
+
+    local hook="$REPO_ROOT/.claude/hooks/instructions-loaded.sh"
+    local settings="$REPO_ROOT/.claude/settings.json"
+
+    if [[ -x "$hook" ]]; then
+        pass "self-hosted receipt: the hook is present and executable"
+    else
+        fail "self-hosted receipt: $hook is missing or not executable"
+        return
+    fi
+
+    local state
+    state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+            "$REPO_ROOT/scripts/bootstrap-status.sh" "$settings")
+    [[ "$state" == "registered" ]] && pass "self-hosted receipt: .claude/settings.json registers it" \
+        || fail "self-hosted receipt: bootstrap-status.sh reads '$state' — the hook would never run in this repo"
+
+    # Every load reason, not just session_start: a block truncated mid-session
+    # is only observable on the reload that follows, and the CLI matches this
+    # event on `load_reason`.
+    if python3 -c '
+import json, sys
+groups = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["InstructionsLoaded"]
+matchers = [g.get("matcher") for g in groups]
+assert "*" in matchers, matchers
+' "$settings" 2>/dev/null; then
+        pass "self-hosted receipt: registered for every load reason"
+    else
+        fail "self-hosted receipt: no '*' matcher — some load reasons would fire nothing"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "========================================="
@@ -18031,6 +18161,8 @@ test_self_hosted_hook_pin
 test_self_hosted_fleet_payload
 test_bootstrap_allowlist_disjoint
 test_self_hosted_registration
+test_self_hosted_instructions_registration
+test_hook_event_seam
 test_bump_script_self_consistency
 test_adr_0009_self_consistency
 test_bump_workflow

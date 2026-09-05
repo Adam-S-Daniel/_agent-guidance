@@ -29,22 +29,31 @@ set -euo pipefail
 # hand-rolled parser that mis-reads it either double-registers the hook or
 # silently declares a dead one healthy.
 #
+# The EVENT is a seam, not a constant. BOOTSTRAP_HOOK_EVENT (default
+# `SessionStart`) says which `hooks.<event>` array to look in, so the same
+# classifier answers for the InstructionsLoaded hook the fleet also delivers.
+# It isolates in both directions on purpose: a hook registered under
+# SessionStart must NOT read as registered for InstructionsLoaded, or the sync
+# would leave a hook nothing ever runs while reporting it live.
+#
 # Usage: bootstrap-status.sh <path>   — classify a file
 #        bootstrap-status.sh -        — classify stdin
 #
 # Prints exactly one of:
-#   registered    — a SessionStart hook command references skills-bootstrap.sh
+#   registered    — a hook command under that event references the basename
 #   no-entry      — valid JSON, but no such command (hook would never run)
 #   unparseable   — content present but not valid JSON (sync must not rewrite it)
 #   missing       — file absent or empty (or empty stdin)
 
 HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
 
 classify() {
     python3 -c '
 import json, sys
 
 needle = sys.argv[1]
+event = sys.argv[2]
 raw = sys.stdin.read()
 
 if not raw.strip():
@@ -65,7 +74,7 @@ if not isinstance(doc, dict):
     sys.exit(0)
 
 groups = doc.get("hooks", {})
-groups = groups.get("SessionStart", []) if isinstance(groups, dict) else []
+groups = groups.get(event, []) if isinstance(groups, dict) else []
 if not isinstance(groups, list):
     groups = []
 
@@ -81,7 +90,7 @@ for group in groups:
             sys.exit(0)
 
 print("no-entry")
-' "$HOOK_BASENAME"
+' "$HOOK_BASENAME" "$HOOK_EVENT"
 }
 
 # ── Dispatch on argument ─────────────────────────────────────────────────────

@@ -37,6 +37,12 @@ set -euo pipefail
 # `.claude/settings.local.json` is never read or written — it is a developer's
 # personal, gitignored file.
 #
+# The EVENT is a seam, not a constant. BOOTSTRAP_HOOK_EVENT (default
+# `SessionStart`) says which `hooks.<event>` array to append to, so the
+# InstructionsLoaded hook the fleet also delivers gets this same
+# append-never-overwrite proof rather than a second registrar written beside
+# it — a second one would be a second place for that proof to rot.
+#
 # Usage: register-bootstrap-hook.sh <path-to-settings.json>
 #
 # Prints exactly one of:
@@ -58,6 +64,7 @@ HOOK_COMMAND="${BOOTSTRAP_HOOK_COMMAND:-bash \"\$CLAUDE_PROJECT_DIR/.claude/hook
 HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume}"
 HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT:-90}"
 HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
 
 result=$(python3 -c '
 import copy, json, os, sys
@@ -67,6 +74,7 @@ command  = sys.argv[2]
 matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 needle   = sys.argv[5]
+event    = sys.argv[6]
 
 group = {
     "matcher": matcher,
@@ -95,7 +103,7 @@ else:
 # already names the hook in a SessionStart command is left completely alone —
 # including a hand-written entry whose quoting or timeout differs from ours.
 hooks = doc.get("hooks")
-existing = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
+existing = hooks.get(event, []) if isinstance(hooks, dict) else []
 if isinstance(existing, list):
     for g in existing:
         if not isinstance(g, dict):
@@ -113,13 +121,13 @@ if isinstance(existing, list):
 if hooks is not None and not isinstance(hooks, dict):
     print("refused-unparseable")
     sys.exit(3)
-if isinstance(hooks, dict) and "SessionStart" in hooks \
-        and not isinstance(hooks["SessionStart"], list):
+if isinstance(hooks, dict) and event in hooks \
+        and not isinstance(hooks[event], list):
     print("refused-unparseable")
     sys.exit(3)
 
 want = copy.deepcopy(doc)
-want.setdefault("hooks", {}).setdefault("SessionStart", []).append(group)
+want.setdefault("hooks", {}).setdefault(event, []).append(group)
 
 candidate = json.dumps(want, indent=2) + "\n"
 
@@ -133,7 +141,7 @@ if json.loads(candidate) != want:
 with open(target, "w", encoding="utf-8") as fh:
     fh.write(candidate)
 print("registered")
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME") || {
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$HOOK_EVENT") || {
     status=$?
     [[ -n "$result" ]] && echo "$result"
     exit "$status"
