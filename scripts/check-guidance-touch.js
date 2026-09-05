@@ -494,12 +494,26 @@ function loadManifestWithFallback(repoRoot, sha, baseTipSha, guidance, { require
 // `---`/`***`/`___` line, never a text scan — truncates the body at ITS OWN
 // start line, so an entry's identity no longer depends on what, if anything,
 // separates it from its neighbor.
+//
+// TRAILING, AND ONLY TRAILING (S1, round 4). The first version of this took
+// the FIRST hr in the entry's range, which is a different rule wherever an
+// entry contains a thematic break of its own: everything below that break —
+// an `- Outcome:` line, say — fell outside the computed body and so outside
+// appendOnlyViolation's compare entirely, and rewriting it in place came
+// back exit 0. So the LAST hr in the range is taken instead, and it
+// truncates only when every line after it, up to the next heading, is blank
+// — i.e. only when it really is the separator this convention places
+// BETWEEN entries. An hr with content under it is part of the entry, and
+// truncates nothing.
 function parseImpactEntries(src) {
   const lines = src.split("\n");
   const headings = extractHeadings(src, "docs/guidance-impact.md");
 
   const tokens = md.parse(src, {});
-  const hrLines = tokens.filter((t) => t.type === "hr").map((t) => t.map[0]);
+  // [startLine, endLine) of every thematic break, from markdown-it's own
+  // token map — the end is what "is everything after it blank" is measured
+  // from, so a future multi-line hr token needs no change here.
+  const hrRanges = tokens.filter((t) => t.type === "hr").map((t) => [t.map[0], t.map[1]]);
   const evalByIndex = [];
   let current = null;
   let expectHeadingText = false;
@@ -524,8 +538,13 @@ function parseImpactEntries(src) {
   // document order — extractHeadings' `heading_open`/tag=="h2" filter is the
   // one used here too — so index-aligning them is safe.
   return headings.map((h, i) => {
-    const firstHr = hrLines.filter((line) => line > h.startLine && line < h.endLine).sort((a, b) => a - b)[0];
-    const bodyEndLine = firstHr === undefined ? h.endLine : firstHr;
+    const inRange = hrRanges
+      .filter(([from]) => from > h.startLine && from < h.endLine)
+      .sort((a, b) => a[0] - b[0]);
+    const lastHr = inRange.length > 0 ? inRange[inRange.length - 1] : undefined;
+    const isSeparator =
+      lastHr !== undefined && lines.slice(lastHr[1], h.endLine).every((line) => line.trim() === "");
+    const bodyEndLine = isSeparator ? lastHr[0] : h.endLine;
     return {
       heading: h.heading,
       evalLine: (evalByIndex[i] && evalByIndex[i].evalLine) || null,

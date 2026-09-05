@@ -14621,7 +14621,7 @@ PR changed body
     #     the row, the sha and the merge remedy, because every guess the
     #     approximate pass made was wrong in a way that wrote something false
     #     into the audit trail (a manufactured "remove", a wholesale rewrite
-    #     waved through, crossed rename assignments). Tests #43a-#49b below
+    #     waved through, crossed rename assignments). Tests #43a-#43g below
     #     are the four fixtures that measured those, plus this one.
     #
     #     Here: a rename PLUS a body edit on a branch that forked before the
@@ -14760,7 +14760,7 @@ untouched body
         printf '%s %s' "$main_sha" "$(git -C "$dir" rev-parse HEAD)"
     }
 
-    # 47. B1 fixture 1 — a genuine removal beside a rename. Beta is deleted
+    # 43c. B1 fixture 1 — a genuine removal beside a rename. Beta is deleted
     #     outright; Gamma is renamed to Gamma2 AND edited. The approximate
     #     pass, walking rows in manifest order, handed Beta's row the only
     #     unclaimed heading left (Gamma2) and then had nothing for Gamma's —
@@ -14768,9 +14768,9 @@ untouched body
     #     RETIREMENT written into the audit trail for a section that was
     #     renamed, not retired. Neither row can be resolved by heading text
     #     at head, so both are named and the run is exit 2.
-    local dir47 main47 head47 event47
-    dir47="$root/fallback_remove_beside_rename"
-    read -r main47 head47 <<<"$(touch_pre_manifest_fork "$dir47" '## Alpha
+    local dir43c main43c head43c event43c
+    dir43c="$root/fallback_remove_beside_rename"
+    read -r main43c head43c <<<"$(touch_pre_manifest_fork "$dir43c" '## Alpha
 alpha body
 
 ## Beta
@@ -14784,28 +14784,28 @@ alpha body
 ## Gamma2
 gamma body CHANGED
 ')"
-    event47="$TEST_DIR/touch-event-47.json"
-    write_event "$main47" "$head47" "$event47"
-    local out47 rc47=0
-    out47=$(GITHUB_EVENT_PATH="$event47" node "$script" --repo-root "$dir47" 2>&1) || rc47=$?
-    if [[ "$rc47" == 2 ]] && grep -qF -- '"gamma"' <<<"$out47" && grep -qF -- '"beta"' <<<"$out47" \
-            && grep -qF -- 'could not be matched by heading there' <<<"$out47" \
-            && ! grep -qF -- 'remove' <<<"$out47"; then
+    event43c="$TEST_DIR/touch-event-43c.json"
+    write_event "$main43c" "$head43c" "$event43c"
+    local out43c rc43c=0
+    out43c=$(GITHUB_EVENT_PATH="$event43c" node "$script" --repo-root "$dir43c" 2>&1) || rc43c=$?
+    if [[ "$rc43c" == 2 ]] && grep -qF -- '"gamma"' <<<"$out43c" && grep -qF -- '"beta"' <<<"$out43c" \
+            && grep -qF -- 'could not be matched by heading there' <<<"$out43c" \
+            && ! grep -qF -- 'remove' <<<"$out43c"; then
         pass "guidance touch: B1 fixture 1 a real removal beside a rename is exit 2 naming both rows, never a manufactured 'remove' remedy"
     else
-        fail "guidance touch: B1 fixture 1 expected exit 2 naming \"beta\" and \"gamma\" with no 'remove' — got exit $rc47: $(echo "$out47" | tr '\n' ' ')"
+        fail "guidance touch: B1 fixture 1 expected exit 2 naming \"beta\" and \"gamma\" with no 'remove' — got exit $rc43c: $(echo "$out43c" | tr '\n' ' ')"
     fi
 
-    # 48. B1 fixture 2 — a section SPLIT: "## Security" becomes "## Secrets"
+    # 43d. B1 fixture 2 — a section SPLIT: "## Security" becomes "## Secrets"
     #     (carrying the old body verbatim) plus "## Security and secrets"
     #     (all-new text). The approximate pass resolved `security` to
     #     "Secrets" on edit distance, compared the old body against itself,
     #     found no difference, and exited 0 "nothing to require" — a
     #     wholesale rewrite through the gate with no entry at all. The exact
     #     pass cannot resolve it, so it is exit 2.
-    local dir48 main48 head48 event48
-    dir48="$root/fallback_section_split"
-    read -r main48 head48 <<<"$(touch_pre_manifest_fork "$dir48" '## Security
+    local dir43d main43d head43d event43d
+    dir43d="$root/fallback_section_split"
+    read -r main43d head43d <<<"$(touch_pre_manifest_fork "$dir43d" '## Security
 the original security body
 ' '- id: security
   heading: Security
@@ -14818,21 +14818,21 @@ the original security body
 ## Security and secrets
 all new text about secrets, sharing nothing with the old section
 ')"
-    event48="$TEST_DIR/touch-event-48.json"
-    write_event "$main48" "$head48" "$event48"
-    assert_touch "$event48" "$dir48" 2 'section "security" could not be matched by heading there' \
+    event43d="$TEST_DIR/touch-event-43d.json"
+    write_event "$main43d" "$head43d" "$event43d"
+    assert_touch "$event43d" "$dir43d" 2 'section "security" could not be matched by heading there' \
         "guidance touch: B1 fixture 2 a section split is exit 2, never exit 0 'nothing to require' on a wholesale rewrite"
 
-    # 49a. B1 fixture 3a — a PURE rename (body byte-identical across it) whose
+    # 43e. B1 fixture 3a — a PURE rename (body byte-identical across it) whose
     #      new heading is FARTHER, by edit distance, than an unrelated heading
     #      that no row claims. "Beta" became "Beta and its friends", but
     #      "Gamma" (16 characters closer) sat unclaimed, so the approximate
     #      pass gave `beta` Gamma's body and reported an edit of a section
     #      nobody touched. A rename needs no entry at all; the false demand
     #      was pure noise. Exit 2 now.
-    local dir49a main49a head49a event49a
-    dir49a="$root/fallback_rename_nearer_stranger"
-    read -r main49a head49a <<<"$(touch_pre_manifest_fork "$dir49a" '## Beta
+    local dir43e main43e head43e event43e
+    dir43e="$root/fallback_rename_nearer_stranger"
+    read -r main43e head43e <<<"$(touch_pre_manifest_fork "$dir43e" '## Beta
 beta body
 
 ## Gamma
@@ -14848,27 +14848,27 @@ beta body
 ## Gamma
 gamma body
 ')"
-    event49a="$TEST_DIR/touch-event-49a.json"
-    write_event "$main49a" "$head49a" "$event49a"
-    local out49a rc49a=0
-    out49a=$(GITHUB_EVENT_PATH="$event49a" node "$script" --repo-root "$dir49a" 2>&1) || rc49a=$?
-    if [[ "$rc49a" == 2 ]] && grep -qF -- 'section "beta" could not be matched by heading there' <<<"$out49a" \
-            && ! grep -qF -- 'has no new entry' <<<"$out49a"; then
+    event43e="$TEST_DIR/touch-event-43e.json"
+    write_event "$main43e" "$head43e" "$event43e"
+    local out43e rc43e=0
+    out43e=$(GITHUB_EVENT_PATH="$event43e" node "$script" --repo-root "$dir43e" 2>&1) || rc43e=$?
+    if [[ "$rc43e" == 2 ]] && grep -qF -- 'section "beta" could not be matched by heading there' <<<"$out43e" \
+            && ! grep -qF -- 'has no new entry' <<<"$out43e"; then
         pass "guidance touch: B1 fixture 3a a pure rename with a nearer unclaimed heading is exit 2, never a false edit demand"
     else
-        fail "guidance touch: B1 fixture 3a expected exit 2 naming \"beta\", with no entry demand — got exit $rc49a: $(echo "$out49a" | tr '\n' ' ')"
+        fail "guidance touch: B1 fixture 3a expected exit 2 naming \"beta\", with no entry demand — got exit $rc43e: $(echo "$out43e" | tr '\n' ' ')"
     fi
 
-    # 49b. B1 fixture 3b — TWO pure renames, each body byte-identical across
+    # 43f. B1 fixture 3b — TWO pure renames, each body byte-identical across
     #      its own rename, that the greedy pass CROSSED: walking rows in
     #      manifest order it gave `beta` the nearest remaining heading
     #      ("Gam") and `gamma` what was left ("Beta and its friends"), so
     #      each row was compared against the OTHER section's body and both
     #      came back as edits. Two false reds, from two renames that need no
     #      entry at all. Exit 2 now, naming both rows.
-    local dir49b main49b head49b event49b
-    dir49b="$root/fallback_crossed_renames"
-    read -r main49b head49b <<<"$(touch_pre_manifest_fork "$dir49b" '## Beta
+    local dir43f main43f head43f event43f
+    dir43f="$root/fallback_crossed_renames"
+    read -r main43f head43f <<<"$(touch_pre_manifest_fork "$dir43f" '## Beta
 beta body
 
 ## Gamma
@@ -14890,36 +14890,36 @@ beta body
 ## Gam
 gamma body
 ')"
-    event49b="$TEST_DIR/touch-event-49b.json"
-    write_event "$main49b" "$head49b" "$event49b"
-    local out49b rc49b=0
-    out49b=$(GITHUB_EVENT_PATH="$event49b" node "$script" --repo-root "$dir49b" 2>&1) || rc49b=$?
-    if [[ "$rc49b" == 2 ]] && grep -qF -- '"beta"' <<<"$out49b" && grep -qF -- '"gamma"' <<<"$out49b" \
-            && grep -qF -- 'could not be matched by heading there' <<<"$out49b" \
-            && ! grep -qF -- 'has no new entry' <<<"$out49b"; then
+    event43f="$TEST_DIR/touch-event-43f.json"
+    write_event "$main43f" "$head43f" "$event43f"
+    local out43f rc43f=0
+    out43f=$(GITHUB_EVENT_PATH="$event43f" node "$script" --repo-root "$dir43f" 2>&1) || rc43f=$?
+    if [[ "$rc43f" == 2 ]] && grep -qF -- '"beta"' <<<"$out43f" && grep -qF -- '"gamma"' <<<"$out43f" \
+            && grep -qF -- 'could not be matched by heading there' <<<"$out43f" \
+            && ! grep -qF -- 'has no new entry' <<<"$out43f"; then
         pass "guidance touch: B1 fixture 3b two pure renames are exit 2 naming both rows, never crossed into two false edit demands"
     else
-        fail "guidance touch: B1 fixture 3b expected exit 2 naming \"beta\" and \"gamma\", with no entry demand — got exit $rc49b: $(echo "$out49b" | tr '\n' ' ')"
+        fail "guidance touch: B1 fixture 3b expected exit 2 naming \"beta\" and \"gamma\", with no entry demand — got exit $rc43f: $(echo "$out43f" | tr '\n' ' ')"
     fi
 
-    # 50. B1: the case the EXACT pass is kept for, and the reason deleting
+    # 43g. B1: the case the EXACT pass is kept for, and the reason deleting
     #     the approximate one costs nothing real — a body edit under an
     #     UNCHANGED heading, on the same pre-manifest fork. The row still
     #     resolves by exact text at head, so the gate still runs and still
     #     demands its "edit" entry. This is the common shape of a
     #     pre-manifest-fork PR; every shape the approximate pass added on top
-    #     of it is one of #43a-#49b.
-    local dir50 main50 head50 event50
-    dir50="$root/fallback_exact_still_resolves"
-    read -r main50 head50 <<<"$(touch_pre_manifest_fork "$dir50" "$base_body" "$base_manifest" '## Heading One
+    #     of it is one of #43a-#43f.
+    local dir43g main43g head43g event43g
+    dir43g="$root/fallback_exact_still_resolves"
+    read -r main43g head43g <<<"$(touch_pre_manifest_fork "$dir43g" "$base_body" "$base_manifest" '## Heading One
 CHANGED body by pr
 
 ## Heading Two
 untouched body
 ')"
-    event50="$TEST_DIR/touch-event-50.json"
-    write_event "$main50" "$head50" "$event50"
-    assert_touch "$event50" "$dir50" 1 '"## YYYY-MM-DD — heading-one — edit"' \
+    event43g="$TEST_DIR/touch-event-43g.json"
+    write_event "$main43g" "$head43g" "$event43g"
+    assert_touch "$event43g" "$dir43g" 1 '"## YYYY-MM-DD — heading-one — edit"' \
         "guidance touch: B1 a body edit under an unchanged heading on a pre-manifest fork still resolves exactly and still requires its edit entry"
 
     unset -f touch_pre_manifest_fork
@@ -14992,6 +14992,159 @@ untouched body
     write_event "$base46" "$head46" "$event46"
     assert_touch "$event46" "$dir46" 0 'all have a sufficient' \
         "guidance touch: N7 'exit code 0' is recognized as a real result, not rejected for lacking a bare 'exit N'"
+
+    # 47. S1: parseImpactEntries truncated an entry's body at the FIRST `---`
+    #     in its range, while its own comment described a TRAILING one. An
+    #     entry with a thematic break INSIDE it therefore had everything
+    #     after that break exempted from the append-only compare: heading-two's
+    #     "- Outcome:" line, written below an intra-entry `---`, is rewritten
+    #     in place here beside a real, correctly-documented touch of
+    #     heading-one — and the run came back exit 0. Truncation now happens
+    #     only at an hr that is the LAST non-blank content before the next
+    #     heading (a separator between entries), so an intra-entry break
+    #     truncates nothing.
+    local dir47="$root/intra_entry_thematic_break"
+    rm -rf "$dir47"
+    mkdir -p "$dir47/agents-md/sections" "$dir47/docs"
+    git -C "$dir47" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir47/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir47/agents-md/eval-coverage.yml"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-04 — heading-two — edit
+- Motivation: the original motivation
+- Change: the original change
+- Eval: exit 0, n=3
+
+---
+
+- Outcome: merged 2026-09-04
+' > "$dir47/docs/guidance-impact.md"
+    git -C "$dir47" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir47" -c user.name=test -c user.email=test@localhost commit -q -m base
+    local base47
+    base47=$(git -C "$dir47" rev-parse HEAD)
+
+    printf '%s' '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' > "$dir47/agents-md/base.md"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-05 — heading-one — edit
+- Motivation: the real touch
+- Change: the real change
+- Eval: exit 0, n=5
+- Outcome: merged 2026-09-05
+
+## 2026-09-04 — heading-two — edit
+- Motivation: the original motivation
+- Change: the original change
+- Eval: exit 0, n=3
+
+---
+
+- Outcome: REWRITTEN below the thematic break
+' > "$dir47/docs/guidance-impact.md"
+    git -C "$dir47" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir47" -c user.name=test -c user.email=test@localhost commit -q -m real-touch-plus-reword-below-an-hr
+    local head47
+    head47=$(git -C "$dir47" rev-parse HEAD)
+
+    local event47="$TEST_DIR/touch-event-47.json"
+    write_event "$base47" "$head47" "$event47"
+    assert_touch "$event47" "$dir47" 1 'was changed in place' \
+        "guidance touch: S1 a reword below an intra-entry thematic break is still an append-only violation"
+
+    # 48a. S1, the other direction — the property the hr truncation exists to
+    #      hold, which the fix must not break: an entry's identity must not
+    #      depend on whether a `---` separates it from its neighbor. Nothing
+    #      in agents-md changes here; the only edit is REMOVING the separator
+    #      between two existing entries. Both entries must still be found
+    #      byte-for-byte at head, so the run is exit 0.
+    local dir48a="$root/separator_removed" base48a head48a event48a
+    rm -rf "$dir48a"
+    mkdir -p "$dir48a/agents-md/sections" "$dir48a/docs"
+    git -C "$dir48a" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir48a/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir48a/agents-md/eval-coverage.yml"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-05 — heading-one — edit
+- Eval: exit 0, n=5
+
+---
+
+## 2026-09-04 — heading-two — edit
+- Eval: exit 0, n=3
+' > "$dir48a/docs/guidance-impact.md"
+    git -C "$dir48a" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir48a" -c user.name=test -c user.email=test@localhost commit -q -m base
+    base48a=$(git -C "$dir48a" rev-parse HEAD)
+
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-05 — heading-one — edit
+- Eval: exit 0, n=5
+
+## 2026-09-04 — heading-two — edit
+- Eval: exit 0, n=3
+' > "$dir48a/docs/guidance-impact.md"
+    git -C "$dir48a" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir48a" -c user.name=test -c user.email=test@localhost commit -q -m drop-the-separator
+    head48a=$(git -C "$dir48a" rev-parse HEAD)
+
+    event48a="$TEST_DIR/touch-event-48a.json"
+    write_event "$base48a" "$head48a" "$event48a"
+    assert_touch "$event48a" "$dir48a" 0 'nothing to require' \
+        "guidance touch: S1 removing a --- separator between two entries changes neither entry's identity"
+
+    # 48b. The same normalisation in the other direction: ADDING a separator
+    #      between two entries that had none.
+    local dir48b="$root/separator_added" base48b head48b event48b
+    rm -rf "$dir48b"
+    mkdir -p "$dir48b/agents-md/sections" "$dir48b/docs"
+    git -C "$dir48b" init -q >/dev/null
+    printf '%s' "$base_body" > "$dir48b/agents-md/base.md"
+    printf '%s' "$base_manifest" > "$dir48b/agents-md/eval-coverage.yml"
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-05 — heading-one — edit
+- Eval: exit 0, n=5
+
+## 2026-09-04 — heading-two — edit
+- Eval: exit 0, n=3
+' > "$dir48b/docs/guidance-impact.md"
+    git -C "$dir48b" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir48b" -c user.name=test -c user.email=test@localhost commit -q -m base
+    base48b=$(git -C "$dir48b" rev-parse HEAD)
+
+    printf '%s%s' "$impact_stub" '
+---
+
+## 2026-09-05 — heading-one — edit
+- Eval: exit 0, n=5
+
+---
+
+## 2026-09-04 — heading-two — edit
+- Eval: exit 0, n=3
+' > "$dir48b/docs/guidance-impact.md"
+    git -C "$dir48b" -c user.name=test -c user.email=test@localhost add -A
+    git -C "$dir48b" -c user.name=test -c user.email=test@localhost commit -q -m add-a-separator
+    head48b=$(git -C "$dir48b" rev-parse HEAD)
+
+    event48b="$TEST_DIR/touch-event-48b.json"
+    write_event "$base48b" "$head48b" "$event48b"
+    assert_touch "$event48b" "$dir48b" 0 'nothing to require' \
+        "guidance touch: S1 adding a --- separator between two entries changes neither entry's identity"
 
     unset -f touch_repo_init
     unset -f touch_commit
