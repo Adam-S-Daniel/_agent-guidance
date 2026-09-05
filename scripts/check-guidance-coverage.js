@@ -17,6 +17,18 @@
  * a heading that still exists. A new section with no row, or a renamed
  * heading whose row was not updated, is red — that is the graduation gate.
  *
+ * THE TWO FALSE GREENS THIS CATCHES FIRST, by design: (1) a heading reworded
+ * AND its body edited in the same commit, with the manifest row's `heading`
+ * left stale (still the OLD text) — reported here as a stale row (nearest
+ * current heading offered as the likely rename target) rather than silently
+ * read as "no row for this heading, and some unrelated row is simply
+ * unmatched"; (2) two manifest rows sharing one `id` — an id lookup that used
+ * a plain array `.find()`/Map insert would silently let the SECOND row shadow
+ * the first (or vice versa) with no error at all, so the duplicate-id check
+ * below is explicit and separate from the per-row heading-resolution checks,
+ * catching the collision before anything downstream (check-guidance-touch.js,
+ * which joins by `id`) can resolve either row to the wrong heading.
+ *
  * REAL MARKDOWN PARSE (markdown-it), never a regex or line scanner. base.md
  * contains fenced code blocks, and a `## ` inside one is not a heading — a
  * line scanner cannot tell the difference; a real parser's token stream
@@ -59,9 +71,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const YAML = require("yaml");
-const MarkdownIt = require("markdown-it");
-
-const md = new MarkdownIt();
+const { extractHeadings } = require("./lib/markdown-sections");
 
 function flag(name) {
   return process.argv.includes(`--${name}`);
@@ -87,50 +97,12 @@ function arg(name, def) {
 class RunError extends Error {}
 
 // ── Markdown extraction ─────────────────────────────────────────────────
-
-// Level-2 headings only: acorn-for-markdown-it, tag "h2". A `###` subsection
-// is folded into its parent's byte extent, not extracted as its own heading
-// — matching the manifest's own rule that `###` is never a row.
-function extractHeadings(src, file) {
-  const lines = src.split("\n");
-  const totalBytes = Buffer.byteLength(src, "utf8");
-  // Byte offset of the START of each real line, in UTF-8. `lines` always has
-  // exactly one MORE element than the file has newlines — a file ending in
-  // "\n" (every file here does) splits to a trailing "" phantom entry that is
-  // not a real line and must not be charged a newline of its own, or the last
-  // heading in every file overcounts by exactly one byte (measured: it did,
-  // until this loop stopped one short of `lines.length`).
-  const lineStart = [0];
-  for (let i = 0; i < lines.length - 1; i++) {
-    lineStart.push(lineStart[lineStart.length - 1] + Buffer.byteLength(lines[i], "utf8") + 1);
-  }
-  const offsetAt = (lineIdx) => (lineIdx < lines.length ? lineStart[lineIdx] : totalBytes);
-
-  const tokens = md.parse(src, {});
-  const raw = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t.type === "heading_open" && t.tag === "h2") {
-      const startLine = t.map[0];
-      // The inline token immediately after heading_open carries the parsed
-      // text (closing `##` stripped, leading indentation stripped) — a
-      // regex over the raw source line gets both wrong: `## Closed Form ##`
-      // keeps its trailing hashes, and a leading-whitespace ATX heading
-      // (CommonMark allows up to 3 spaces) does not match `^##\s+` at all.
-      const inline = tokens[i + 1];
-      raw.push({ text: inline.content, startLine });
-    }
-  }
-
-  return raw.map((h, i) => {
-    const endLine = i + 1 < raw.length ? raw[i + 1].startLine : lines.length;
-    return {
-      heading: h.text,
-      file,
-      bytes: offsetAt(endLine) - offsetAt(h.startLine),
-    };
-  });
-}
+//
+// The `##` heading parse itself (markdown-it, never a regex or line
+// scanner) lives in scripts/lib/markdown-sections.js — shared with
+// scripts/check-guidance-touch.js (_agent-guidance#120), which additionally
+// needs the startLine/endLine range that function returns alongside each
+// heading to compare a section's body text across two commits.
 
 function collectHeadings(repoRoot) {
   const baseFile = path.join(repoRoot, "agents-md", "base.md");

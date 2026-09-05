@@ -52,7 +52,25 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 (full history), not a targeted fetch of just the PR's
+      # base sha: scripts/check-guidance-touch.js (the "Guidance touch gate"
+      # step below) resolves BOTH the PR's base and head commits with
+      # `git show <sha>:<path>`, and ALSO runs `git merge-base` between them
+      # (base.sha is the base branch's tip at event time, not the PR's fork
+      # point, so the touch gate diffs from the merge-base instead — see that
+      # script's own header). A shallow (depth 1) checkout of a `pull_request`
+      # event's synthetic merge ref fetches only that merge commit's own
+      # objects; at depth 1 its parents are grafted — absent from the object
+      # database entirely, not merely thin — so neither `git show` nor `git
+      # merge-base` could resolve base.sha or head.sha as real commits. A full
+      # fetch removes that doubt outright, and this repo carries no binary
+      # assets and a modest history, so the extra fetch cost is negligible
+      # next to a targeted fetch's added complexity (reading the base sha out
+      # of $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
+      # saving.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
 
       # A `run:` block is the blind spot in the fleet's SHA-pinning rule: that
       # rule governs `uses:`, and this step downloads a third-party binary,
@@ -172,6 +190,18 @@ jobs:
 
       - name: Section manifest covers every guidance heading
         run: node scripts/check-guidance-coverage.js --skills-evals skills-evals --check-bytes
+
+      # The touch gate (_agent-guidance#120), after the graduation gate above
+      # so a heading with no row at all is reported once, by that step, not
+      # twice. `pull_request`-only: the check diffs base vs head, and a push
+      # or workflow_dispatch run has no base to diff against. No `if:`
+      # condition reads `${{ github.event.pull_request.* }}` — the script
+      # itself reads pull_request.base.sha / pull_request.head.sha out of
+      # $GITHUB_EVENT_PATH, so nothing PR-shaped is ever interpolated into a
+      # `run:` block, where it would be echoed into the log.
+      - name: Guidance touch gate
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-guidance-touch.js
 
       # This repo is excluded from its own sync (SYNC_SELF_REPO), so nothing
       # ever wrote an AGENTS.md here — it was the one repo in the fleet whose
