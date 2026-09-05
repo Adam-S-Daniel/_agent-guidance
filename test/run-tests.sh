@@ -14103,8 +14103,8 @@ test_ci_workflow_shape() {
     local touch_facts="$TEST_DIR/ci-workflow-touch-facts.txt"
     local touch_err="$TEST_DIR/ci-workflow-touch-facts.err"
     if workflow_step_by_run "$wf" "check-guidance-touch.js" > "$touch_facts" 2> "$touch_err"; then
-        if grep -qxF "found" "$touch_facts" \
-                && grep -qxF "if github.event_name == 'pull_request'" "$touch_facts"; then
+        if grep -qxF -- "found" "$touch_facts" \
+                && grep -qxF -- "if github.event_name == 'pull_request'" "$touch_facts"; then
             pass "ci workflow: the Guidance touch gate step runs scripts/check-guidance-touch.js only on pull_request"
         else
             fail "ci workflow: the Guidance touch gate step should run node scripts/check-guidance-touch.js gated on if: github.event_name == 'pull_request' — got: $(tr '\n' ' ' < "$touch_facts")"
@@ -14119,8 +14119,8 @@ test_ci_workflow_shape() {
         fail "ci workflow: could not read the test job's step names — $(head -1 "$step_names_err")"
     else
         local touch_line manifest_line
-        touch_line=$(grep -nxF "Guidance touch gate" "$step_names" | head -1 | cut -d: -f1)
-        manifest_line=$(grep -nxF "Section manifest covers every guidance heading" "$step_names" | head -1 | cut -d: -f1)
+        touch_line=$(grep -nxF -- "Guidance touch gate" "$step_names" | head -1 | cut -d: -f1)
+        manifest_line=$(grep -nxF -- "Section manifest covers every guidance heading" "$step_names" | head -1 | cut -d: -f1)
         if [[ -n "$touch_line" && -n "$manifest_line" && "$touch_line" -gt "$manifest_line" ]]; then
             pass "ci workflow: the Guidance touch gate step exists and runs after the manifest coverage step"
         else
