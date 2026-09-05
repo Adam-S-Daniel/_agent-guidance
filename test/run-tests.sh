@@ -14345,6 +14345,47 @@ untouched body
         fail "guidance touch: N5 expected exit 2 naming '40-character hex' with no git usage text — got exit $rc37: $(echo "$out37" | tr '\n' ' ')"
     fi
 
+    # 38. N6: classifyEval used to accept ANY Eval: line containing a digit
+    #     as a real "result" — "Eval: TBD (PR #122)" (the PR number) and
+    #     "Eval: exempt (skipped row) since 2026-09-04" (the date) both carry
+    #     a digit while citing no actual measurement. RESULT_PATTERN now
+    #     requires an exit code, a score fraction, or a sample size.
+    local dir38="$root/digit_but_not_a_result" base38 head38 event38
+    base38=$(touch_repo_init digit_but_not_a_result "$base_body" "$base_manifest")
+    head38=$(touch_commit "$dir38" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: TBD (PR #122)
+')
+    event38="$TEST_DIR/touch-event-38.json"
+    write_event "$base38" "$head38" "$event38"
+    assert_touch "$event38" "$dir38" 1 'is insufficient' \
+        "guidance touch: N6 a PR-number placeholder like 'TBD (PR #122)' is not mistaken for a real result just because it contains a digit"
+
+    local dir38b="$root/exempt_with_trailing_date" base38b head38b event38b
+    base38b=$(touch_repo_init exempt_with_trailing_date "$base_body" "$base_manifest")
+    head38b=$(touch_commit "$dir38b" edit '## Heading One
+CHANGED body
+
+## Heading Two
+untouched body
+' "$base_manifest" '
+---
+
+## 2026-09-04 — heading-one — edit
+- Eval: exempt (skipped row) since 2026-09-04
+')
+    event38b="$TEST_DIR/touch-event-38b.json"
+    write_event "$base38b" "$head38b" "$event38b"
+    assert_touch "$event38b" "$dir38b" 1 'is insufficient' \
+        "guidance touch: N6 'exempt (skipped row) since <date>' is not the exact exempt form and its trailing date is not mistaken for a real result either"
+
     unset -f touch_repo_init
     unset -f touch_commit
     unset -f write_event
