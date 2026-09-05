@@ -14328,6 +14328,23 @@ untouched body
     assert_touch "$event36" "$dir36" 1 'an edit' \
         "guidance touch: N1 multiple wrongly-typed entries are all listed in the message, with correct grammar (an edit, not a edit)"
 
+    # 37. N5: an event whose base.sha is a git-flag-shaped string ("--help")
+    #     used to be handed straight to `git merge-base` as if it were a ref
+    #     — git reads it as a FLAG, not a sha, and its own usage text ended
+    #     up inside this script's exit-2 message. Rejected up front now,
+    #     before either sha ever reaches a git argv.
+    local event37="$TEST_DIR/touch-event-37.json"
+    printf '{"pull_request": {"base": {"sha": "--help"}, "head": {"sha": "%s"}}}' \
+        "1111111111111111111111111111111111111111" > "$event37"
+    local out37 rc37=0
+    out37=$(GITHUB_EVENT_PATH="$event37" node "$script" --repo-root "$dir36" 2>&1) || rc37=$?
+    if [[ "$rc37" == 2 ]] && grep -qiF -- "40-character hex" <<<"$out37" \
+            && ! grep -qiF -- "usage: git" <<<"$out37" && ! grep -qiF -- "unknown option" <<<"$out37"; then
+        pass "guidance touch: N5 a git-flag-shaped sha is refused before it ever reaches git, not leaked as a usage dump"
+    else
+        fail "guidance touch: N5 expected exit 2 naming '40-character hex' with no git usage text — got exit $rc37: $(echo "$out37" | tr '\n' ' ')"
+    fi
+
     unset -f touch_repo_init
     unset -f touch_commit
     unset -f write_event
