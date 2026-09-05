@@ -17251,6 +17251,136 @@ test_fleet_memory_hook() {
     assert_contains "$dest" "fleet-guidance-version:" "fleet-memory: installed block records its version"
 }
 
+
+# The state file is the ONLY change to fleet-memory.sh's own behaviour, plus
+# the one line it prints from the previous session's receipt. Its existing
+# test above is left byte-for-byte alone, deliberately: a hook that delivers
+# the fleet's guidance is the wrong place to be rewriting assertions, and a
+# separate block makes "unchanged" checkable by reading the diff.
+test_fleet_memory_state_file() {
+    echo ""
+    echo "TEST: fleet-memory.sh (the state file the load-time receipt reads)"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local instr="$REPO_ROOT/.claude/hooks/instructions-loaded.sh"
+    local d="$TEST_DIR/fleetstate"
+    rm -rf "$d"; mkdir -p "$d/cfg"
+    local payload="$d/payload.md"
+    printf '# Fleet guidance\n\nThe canary is UMBER-SHRIKE-77.\n' > "$payload"
+
+    local state="$d/cfg/fleet-guidance.state"
+    local receipt="$d/cfg/instructions-receipt.state"
+    local logf="$d/cfg/instructions-log.jsonl"
+    local dest="$d/cfg/CLAUDE.md"
+    run_fm() { CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1; }
+    state_field() { grep -m1 -- "^$1=" "$state" 2>/dev/null | cut -d= -f2-; }
+
+    rm -f "$dest" "$state"
+    run_fm > "$d/out_install"
+    if [[ -f "$state" ]]; then
+        pass "fleet-memory state: an install writes the state file"
+    else
+        fail "fleet-memory state: no state file after an install"
+        return
+    fi
+
+    # Every field the receipt hook compares against. A state file that
+    # recorded the version but not the length could not catch the shape this
+    # whole lane exists for: a block truncated after the session started.
+    local want_bytes want_sha
+    want_bytes="$(wc -c < "$payload" | tr -d ' ')"
+    want_sha="$(sha256sum "$payload" | cut -d' ' -f1)"
+    [[ "$(state_field bytes)" == "$want_bytes" ]] && pass "fleet-memory state: records the payload's byte count" \
+        || fail "fleet-memory state: bytes=$(state_field bytes), payload is $want_bytes"
+    [[ "$(state_field sha256)" == "$want_sha" ]] && pass "fleet-memory state: records the payload's sha256" \
+        || fail "fleet-memory state: sha256 does not match the payload"
+    [[ "$(state_field verdict)" == "installed" ]] && pass "fleet-memory state: records the verdict it printed" \
+        || fail "fleet-memory state: verdict=$(state_field verdict), expected installed"
+
+    # The recorded version must be the one written INTO the block, or the
+    # receipt hook compares two ids that were never meant to agree.
+    local in_block
+    in_block="$(grep -m1 -- 'fleet-guidance-version:' "$dest" | sed 's/.*version: *//; s/ *-->.*//')"
+    [[ -n "$in_block" && "$(state_field version)" == "$in_block" ]] \
+        && pass "fleet-memory state: the recorded version is the one in the installed block" \
+        || fail "fleet-memory state: state says '$(state_field version)', the block says '$in_block'"
+
+    # A second, byte-identical run reports `current` and says so in the state.
+    run_fm > "$d/out_current"
+    assert_contains "$d/out_current" "fleet-guidance: current" "fleet-memory state: second run still reports current"
+    [[ "$(state_field verdict)" == "current" ]] && pass "fleet-memory state: a current run records current" \
+        || fail "fleet-memory state: verdict=$(state_field verdict) after a no-op run"
+
+    # THE END-TO-END CHECK. Everything above and in the receipt block is
+    # written against fixtures; this is the one assertion that both hooks
+    # agree about the SAME bytes. A fabricated version in a fixture is exactly
+    # the kind of thing two green blocks can hide between them.
+    rm -f "$receipt" "$logf"
+    printf '%s\n' "$(instr_event User session_start "$dest")" \
+        | CLAUDE_CONFIG_DIR="$d/cfg" bash "$instr" > "$d/out_e2e" 2>&1
+    assert_contains "$d/out_e2e" "fleet-guidance: loaded" \
+        "fleet-memory state: the receipt hook reads a real install as loaded"
+    assert_contains "$d/out_e2e" "$want_bytes bytes" \
+        "fleet-memory state: end to end, the byte count is the payload's own"
+
+    # A DEGRADED run must not disturb the record. The block that is still in
+    # the file is still the block the session loaded, and overwriting the
+    # state with a failure would make the receipt report a mismatch caused by
+    # nothing but the payload being unreadable for one run.
+    local before_state; before_state="$(cat "$state")"
+    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$d/nope.md" bash "$hook" > "$d/out_degraded" 2>&1
+    assert_contains "$d/out_degraded" "DEGRADED" "fleet-memory state: a missing payload still announces DEGRADED"
+    [[ "$(cat "$state")" == "$before_state" ]] && pass "fleet-memory state: a DEGRADED run leaves the record alone" \
+        || fail "fleet-memory state: a DEGRADED run rewrote the state file"
+
+    # ── The previous session's receipt, printed beside this session's ─────
+    #
+    # Measured on CLI 2.1.261: the InstructionsLoaded hook's stdout reaches
+    # nothing at all. This line is the whole delivery mechanism for it, which
+    # is why a mismatch has to survive one session and no more.
+    printf 'ts=2026-09-05T00:00:00Z\nsession=deadbeef\nfleet=LOAD MISMATCH \xe2\x80\x94 truncated (154 of 56099 bytes)\n' > "$receipt"
+    run_fm > "$d/out_prev_bad"
+    assert_contains "$d/out_prev_bad" "fleet-guidance: previous session LOAD MISMATCH" \
+        "fleet-memory state: a previous session's mismatch is printed this session"
+    assert_contains "$d/out_prev_bad" "154 of 56099 bytes" \
+        "fleet-memory state: the previous session's reason travels with it"
+    assert_contains "$d/out_prev_bad" "fleet-guidance: current" \
+        "fleet-memory state: the hook's own verdict is still printed beside it"
+
+    printf 'ts=2026-09-05T00:00:00Z\nfleet=loaded (vabcd1234, 55954 bytes)\nagents=current (vabcd1234)\n' > "$receipt"
+    run_fm > "$d/out_prev_ok"
+    assert_contains "$d/out_prev_ok" "fleet-guidance: previous session loaded (vabcd1234, 55954 bytes)" \
+        "fleet-memory state: a healthy previous session is reported too"
+    assert_not_contains "$d/out_prev_ok" "agents-md:" \
+        "fleet-memory state: a current agents-md from last session stays quiet"
+
+    printf 'ts=2026-09-05T00:00:00Z\nagents=EDITED ABOVE THE MARKER \xe2\x80\x94 found 2\n' > "$receipt"
+    run_fm > "$d/out_prev_agents"
+    assert_contains "$d/out_prev_agents" "agents-md: previous session EDITED ABOVE THE MARKER" \
+        "fleet-memory state: an agents-md mismatch from last session is surfaced"
+
+    # No receipt at all — the ordinary first session on a machine. Nothing to
+    # report, and nothing invented.
+    rm -f "$receipt"
+    run_fm > "$d/out_no_prev"
+    assert_not_contains "$d/out_no_prev" "previous session" \
+        "fleet-memory state: no receipt means no previous-session line"
+
+    # ── FLEET_GUIDANCE_SKIP removes EVERYTHING ────────────────────────────
+    printf 'ts=x\nfleet=loaded (v1, 1 bytes)\n' > "$receipt"
+    printf '{"ts":"x"}\n' > "$logf"
+    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 \
+        bash "$hook" > "$d/out_skip" 2>&1
+    assert_contains "$d/out_skip" "skipped" "fleet-memory state: skip still announces itself"
+    if [[ -e "$state" || -e "$receipt" || -e "$logf" ]]; then
+        fail "fleet-memory state: skip left the state, receipt or log behind"
+    else
+        pass "fleet-memory state: skip removes the state file, the receipt and the log"
+    fi
+    assert_not_contains "$dest" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory state: skip still removes the managed block itself"
+}
+
 # ── The InstructionsLoaded receipt ─────────────────────────────────────────
 #
 # MEASURED FIRST, on the CLI this container ships (2.1.261), against a stub
@@ -17812,6 +17942,7 @@ test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
 test_fleet_memory_hook
+test_fleet_memory_state_file
 test_instructions_loaded_hook
 
 echo ""

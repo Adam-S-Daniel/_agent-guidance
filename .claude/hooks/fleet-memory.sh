@@ -59,6 +59,55 @@ PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"
 DEST_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 DEST="$DEST_DIR/CLAUDE.md"
 
+# THE STATE FILE, and why this hook writes one at all.
+#
+# This hook can only report what it did TO THE FILE. What the session actually
+# LOADED is a different question, and the InstructionsLoaded hook beside this
+# one is the only thing that can answer it — but only if it has something to
+# compare against. That is this file: the version, the byte count and the
+# digest of the payload this run installed.
+#
+# The receipt written back the other way (instructions-receipt.state) is the
+# return path. Measured on CLI 2.1.261: an InstructionsLoaded hook's stdout
+# reaches nothing — not the CLI's stdout, not its stderr, not the transcript —
+# so the load-time verdict has no way to the session on its own. Printing the
+# PREVIOUS session's receipt here is that way, and it is why a mismatch is
+# never silent for more than one session.
+STATE_FILE="$DEST_DIR/fleet-guidance.state"
+RECEIPT_FILE="$DEST_DIR/instructions-receipt.state"
+LOG_FILE="$DEST_DIR/instructions-log.jsonl"
+
+# Print what the last session's load-time hook recorded, beside this run's own
+# verdict. A healthy agents-md stays quiet — it is the mismatch that has to
+# travel, and a line printed every session on every machine stops being read.
+report_previous_session() {
+    [ -r "$RECEIPT_FILE" ] || return 0
+    local fleet agents
+    fleet="$(grep -m1 -- '^fleet=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
+    agents="$(grep -m1 -- '^agents=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
+    [ -n "$fleet" ] && echo "fleet-guidance: previous session $fleet"
+    case "$agents" in
+        ""|current*) ;;
+        *) echo "agents-md: previous session $agents" ;;
+    esac
+    return 0
+}
+
+# Record what this run installed. Best-effort by construction: a state file
+# that cannot be written costs the next session its load-time verdict and
+# nothing else, so it must never turn a working delivery into a DEGRADED one.
+write_state() {   # <verdict> <version> <bytes> <sha256>
+    {
+        printf 'version=%s\n' "$2"
+        printf 'bytes=%s\n' "$3"
+        printf 'sha256=%s\n' "$4"
+        printf 'verdict=%s\n' "$1"
+        printf 'ts=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+    } > "$STATE_FILE.tmp" 2>/dev/null && mv "$STATE_FILE.tmp" "$STATE_FILE" 2>/dev/null
+    rm -f "$STATE_FILE.tmp" 2>/dev/null
+    return 0
+}
+
 degraded() {
     echo "fleet-guidance: DEGRADED — $1. Repo stub only; read the fleet guidance in _agent-guidance/agents-md/base.md before non-trivial work."
     exit 0
@@ -116,6 +165,10 @@ strip_managed_block() {
 case "${FLEET_GUIDANCE_SKIP:-}" in
     ""|0|false|FALSE|no|NO|off|OFF) ;;
     *)
+        # Everything, not just the block: a state file and a log left behind
+        # by an earlier session are still this hook's artifacts sitting in
+        # someone's config dir after they opted out.
+        rm -f "$STATE_FILE" "$RECEIPT_FILE" "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null
         if [ -e "$DEST" ]; then
             tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
             trap 'rm -f "$tmp" "$tmp.raw"' EXIT
@@ -134,6 +187,10 @@ case "${FLEET_GUIDANCE_SKIP:-}" in
         ;;
 esac
 
+# Before anything that can degrade, so a load-time mismatch recorded last
+# session is still reported by a run that cannot deliver this time.
+report_previous_session
+
 [ -n "$HOOK_DIR" ] || degraded "cannot resolve hook directory"
 [ -r "$PAYLOAD" ]  || degraded "no readable payload at $PAYLOAD"
 [ -s "$PAYLOAD" ]  || degraded "payload at $PAYLOAD is empty"
@@ -142,9 +199,9 @@ mkdir -p "$DEST_DIR" 2>/dev/null || degraded "cannot create $DEST_DIR"
 
 # Short content id, so the verdict names WHICH guidance landed. Any of these
 # three digest tools may be absent; a missing one is cosmetic, never fatal.
-version="$( { sha256sum "$PAYLOAD" 2>/dev/null || shasum -a 256 "$PAYLOAD" 2>/dev/null || openssl dgst -sha256 "$PAYLOAD" 2>/dev/null; } \
+payload_sha="$( { sha256sum "$PAYLOAD" 2>/dev/null || shasum -a 256 "$PAYLOAD" 2>/dev/null || openssl dgst -sha256 "$PAYLOAD" 2>/dev/null; } \
             | tr ' ' '\n' | grep -oE '^[0-9a-f]{64}$' | head -1 )"
-version="${version:0:8}"
+version="${payload_sha:0:8}"
 [ -n "$version" ] || version="unknown"
 
 tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
@@ -163,11 +220,13 @@ strip_managed_block "$tmp"
 bytes="$(wc -c < "$PAYLOAD" 2>/dev/null | tr -d ' ')"
 
 if cmp -s "$tmp" "$DEST" 2>/dev/null; then
+    write_state current "$version" "$bytes" "$payload_sha"
     echo "fleet-guidance: current (v$version, ${bytes} bytes) — ~/.claude/CLAUDE.md"
     exit 0
 fi
 
 if cp "$tmp" "$DEST" 2>/dev/null; then
+    write_state installed "$version" "$bytes" "$payload_sha"
     echo "fleet-guidance: installed (v$version, ${bytes} bytes) -> ~/.claude/CLAUDE.md"
 else
     degraded "could not write $DEST"
