@@ -1550,6 +1550,58 @@ landed, not by the call's own success.
 Per §3, this Routine did not merge cms-platform#395 — it falls outside the
 narrow "confined to this file" allowance and is left for a human.
 
+### Measured 2026-09-06, third fired run
+
+Tool availability repeated the 2026-09-01/2026-09-02 shape exactly, for a
+third consecutive fire: `mcp__Claude_Code_Remote__list_repos`,
+`list_triggers` and `add_repo` were all three absent (no ToolSearch hit for
+the `Claude_Code_Remote` family), and the `gh` CLI was absent too (`which gh`
+exited 1, matching this session's own system-prompt statement that it has no
+`gh` access). Set (a) was again `NOT COMPUTABLE (no enumeration tool
+available)`.
+
+**Three identical measurements is enough to retire Step 0's "not settled"
+framing for this specific claim.** A fired session of this Routine's current
+configuration does not get `list_repos`/`list_triggers`/`add_repo`, and does
+not get `gh`. Step 0's probe is still worth attempting on every fire — a
+future edit to the Routine or the hosting environment could change this, and
+the probe is what would notice — but a fourth fire reporting the same
+absence is confirming a known shape, not surfacing a new gap, and should be
+recorded as a one-line repeat rather than re-argued from scratch.
+
+Both GitHub MCP connectors answered (`mcp__github__get_me` and
+`mcp__github-mcp__get_me` both resolved to the same account), matching the
+fuller 2026-09-02 profile rather than the narrower 2026-09-01 one.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos) as the substitute for `list_triggers`, which again mapped 1:1
+onto `repos.yml`'s 19-name non-structural union (22 total minus both forks
+and `superoutrigger`). 0 unattached — same substitute-not-equivalent caveat
+as the prior two runs.
+
+Set (c) computed cleanly via individual `git ls-remote` probes
+(`GIT_TERMINAL_PROMPT=0`) for all 22 `repos.yml` names: all 22 resolved under
+the owner recorded in the existing Step 2 mapping. Both forks resolved under
+`Adam-S-Daniel` on the first probe, so per Step 2's "exit 0 — resolves, go to
+the identity check" branch no `jodidaniel` probe was needed for them (a
+`jodidaniel` probe run anyway for completeness returned `could not read
+Username for 'https://github.com': terminal prompts disabled` for both,
+which is the third, BLOCKED-shaped outcome Step 2 describes — expected here
+since the resolve under the first owner already settled the question). 0
+unreadable. As in the prior two runs, `gh repo list ... --json` was
+unavailable, so this is single-source verification only, not the
+dual-source cross-check Step 2 calls for.
+
+`repos.yml` on `main` (commit `3d972b4`) still names exactly the same
+22-name union recorded in the 2026-08-28 baseline; nothing has changed there
+since. The two centralization candidates the 2026-08-28 baseline flagged —
+the `gh api ... --jq` HTTP-error-to-stdout gotcha and the general "AST
+always, never regex, for code-shape lints" rule — are both confirmed present
+in `base.md` on `main` as of this run (verified by a direct fetch, not from
+cached memory), and the redundant copy that used to sit in `agentskills`'
+repo-specific section is gone. Neither needs further action from a future
+run.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
