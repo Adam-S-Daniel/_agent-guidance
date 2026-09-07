@@ -480,20 +480,43 @@ def agents_verdict(data, state, path):
     managed-block format in ~20 repos -- and is recorded as a follow-up in
     docs/guidance-impact.md rather than smuggled in behind a verdict name.
 
-    THE FILENAME GATES ALL OF IT. Without that gate the structural checks ran
-    on every Project memory file that merely QUOTED a marker anywhere -- a
-    `.claude/rules/*.md` naming BEGIN MANAGED SECTION in prose, a rules file
-    or a nested CLAUDE.md carrying its own `## Repo-specific additions`
-    heading -- and each one produced a false EDITED verdict that travelled
-    into the receipt and was printed at the next session start. This repo's
-    own tree is clean, so nothing here would have shown it; the ~20 consumer
-    repos are where it would have fired. The name is checked rather than the
-    `<!-- Source: _agent-guidance -->` line the build script emits, because a
-    corruption that removed that line would then silently stop the checking --
-    a filename survives the damage the checks exist to find.
+    THE SYNCED PAYLOAD BESIDE IT GATES ALL OF IT, and the name alone does not.
+    Without any gate the structural checks ran on every Project memory file
+    that merely QUOTED a marker anywhere. Gating on the BASENAME closed the
+    three shapes that were reproduced and nothing wider: an ordinary monorepo
+    `packages/api/AGENTS.md` carrying its own `## Repo-specific additions`
+    heading, and a `.claude/rules/AGENTS.md` naming BEGIN MANAGED SECTION in
+    prose, were both still judged as the managed root file and both still
+    produced a false MANAGED BLOCK MALFORMED that travelled into the receipt
+    and was printed at the next session start. The CLI loads nested CLAUDE.md
+    files and `.claude/rules/*.md` as Project memory, and this fleet's own
+    convention is a CLAUDE.md bridge containing `@AGENTS.md`, so both shapes
+    are ordinary. This repo's own tree carries exactly one AGENTS.md, so
+    nothing here would have shown it; the ~20 consumer repos are where it
+    would have fired.
+
+    So the test is the one thing that distinguishes the synced file from every
+    other file of that name: `.claude/hooks/fleet-guidance.md` beside it. Every
+    repo where this hook is REGISTERED is a repo sync.sh delivered that payload
+    to -- the whole write block sits inside `if $fleet_deliver` -- so the root
+    AGENTS.md always has the sibling and a nested one never does. It is also
+    what the version comparison below already needed, so the lookup is moved
+    rather than added.
+
+    A SEPARATE FILE, not a `<!-- Source: _agent-guidance -->` line inside
+    AGENTS.md: a corruption that removed such a line would silently stop the
+    checking, and surviving the damage the checks exist to find is the whole
+    criterion. The basename test is kept ahead of it as the cheap half.
     """
     if os.path.basename(path) != "AGENTS.md":
         return None
+
+    payload = read_bytes(os.path.join(os.path.dirname(path), ".claude", "hooks",
+                                      "fleet-guidance.md"))
+    if payload is None:
+        return None      # not the synced AGENTS.md -- a nested one, a rules
+                         # file of that name, or a repo the sync keeps on the
+                         # inlined guidance
 
     lines = data.split(b"\n")
     begins = [i for i, l in enumerate(lines) if BEGIN_MANAGED in l]
@@ -521,11 +544,6 @@ def agents_verdict(data, state, path):
     if not want_version:
         return None
     want_version = version_token(want_version)
-
-    payload = read_bytes(os.path.join(os.path.dirname(path), ".claude", "hooks",
-                                      "fleet-guidance.md"))
-    if payload is None:
-        return None      # a repo the sync keeps on the inlined guidance
 
     repo_version = hashlib.sha256(payload).hexdigest()[:8]
     if repo_version == want_version:

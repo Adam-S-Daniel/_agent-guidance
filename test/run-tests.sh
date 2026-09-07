@@ -18207,6 +18207,57 @@ sys.exit("control byte %r carried forward into the receipt" % bad.group(0) if ba
         assert_not_contains "$receipt" "agents=" \
             "instructions-loaded: ${notours#$repo/} writes no agents verdict to the receipt"
     done
+
+    # …and THE FILENAME IS NOT ENOUGH, which is what a gate on `basename ==
+    # "AGENTS.md"` amounted to: it closed the three shapes above and nothing
+    # wider. An ordinary monorepo `packages/api/AGENTS.md` carrying its own
+    # `## Repo-specific additions` heading, and a `.claude/rules/AGENTS.md`
+    # naming the marker in prose, were both still judged as the managed root
+    # file and both still produced a false MANAGED BLOCK MALFORMED into the
+    # receipt and the next session start. The CLI loads nested CLAUDE.md files
+    # and `.claude/rules/*.md` as Project memory and this fleet's convention
+    # is a CLAUDE.md bridge importing @AGENTS.md, so both are ordinary shapes.
+    #
+    # What actually distinguishes the synced file is the payload sync.sh
+    # delivers BESIDE it: every repo where this hook is registered is one that
+    # got `.claude/hooks/fleet-guidance.md`.
+    mkdir -p "$repo/packages/api"
+    printf '# API package\n\n## Repo-specific additions\n\nLocal notes.\n' \
+        > "$repo/packages/api/AGENTS.md"
+    printf '# House rules\n\nWhen editing AGENTS.md keep the\nBEGIN MANAGED SECTION comment intact.\n' \
+        > "$repo/.claude/rules/AGENTS.md"
+    for notours in "$repo/packages/api/AGENTS.md" "$repo/.claude/rules/AGENTS.md"; do
+        rm -f "$receipt"
+        instr_run "$d/out_named_notours" "$(instr_event Project session_start "$notours")"
+        assert_not_contains "$d/out_named_notours" "agents-md:" \
+            "instructions-loaded: ${notours#$repo/} is not judged as the synced AGENTS.md"
+        # Written out rather than assert_not_contains, which passes silently
+        # on a receipt that was never created — and "never created" is the
+        # PASSING state here, so the vacuity would be permanent.
+        if [[ -e "$receipt" ]] && grep -qF -- "agents=" "$receipt"; then
+            fail "instructions-loaded: ${notours#$repo/} wrote an agents verdict into the receipt"
+        else
+            pass "instructions-loaded: ${notours#$repo/} writes no agents verdict to the receipt"
+        fi
+    done
+
+    # THE POSITIVE CONTROL, same repo, same run. A gate that silenced
+    # everything would satisfy every assertion above.
+    instr_agents_md "$repo/AGENTS.md"
+    rm -f "$receipt"
+    instr_run "$d/out_root_still" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_root_still" "agents-md: current (v${pver})" \
+        "instructions-loaded: the root AGENTS.md beside the synced payload is still judged"
+
+    # …and the checks themselves are unchanged: a malformed root AGENTS.md in
+    # that same repo is still caught.
+    printf '%s\n%s\n' '<!-- BEGIN MANAGED SECTION -->' '## Repo-specific additions' \
+        > "$repo/AGENTS.md"
+    rm -f "$receipt"
+    instr_run "$d/out_root_bad" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_root_bad" "agents-md: MANAGED BLOCK MALFORMED" \
+        "instructions-loaded: a malformed root AGENTS.md is still reported"
+    instr_agents_md "$repo/AGENTS.md"
     rm -f "$receipt" "$logf"
     instr_run "$d/out_plain" "$(instr_event Project session_start "$repo/CLAUDE.md")"
     assert_not_contains "$d/out_plain" "agents-md:" \
