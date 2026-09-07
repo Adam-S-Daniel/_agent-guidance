@@ -598,6 +598,17 @@ def write_receipt(updates):
         if (same_session or unread) and previous \
                 and not healthy(previous) and healthy(updates[key]):
             del updates[key]
+    # `unread` MEANS "a verdict is waiting to be announced", so it is set here
+    # -- after the loop above -- and only when one survived it. Setting it in
+    # the caller re-flagged a receipt whose every verdict had just been
+    # suppressed, which is the same-session reload the suppression exists for:
+    # a mismatch announced once, then re-announced at EVERY session start on a
+    # machine that is now healthy (measured 5 of 5). That is the failure the
+    # flag was added to remove, arriving through the flag itself, and it
+    # falsifies "announced exactly once" in the AGENTS.md this repo ships to
+    # ~20 others. A write that carries no verdict now touches only `session`.
+    if any(key in updates for key in ("fleet", "agents")):
+        updates["unread"] = "1"
     existing.update(updates)
     existing = {k: clean(v) for k, v in existing.items()}
     order = ["session", "unread", "fleet", "agents"]
@@ -689,7 +700,7 @@ except Exception:
 
 # ---- the verdicts -------------------------------------------------------
 state = read_state()
-updates = {"session": record["session"], "unread": "1"}
+updates = {"session": record["session"]}
 verdicts = {}
 
 if content is not None and memory_type == "User":

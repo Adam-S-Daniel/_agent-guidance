@@ -17675,6 +17675,71 @@ test_fleet_memory_state_file() {
     assert_contains "$receipt" "fleet=LOAD MISMATCH" \
         "fleet-memory state: marking it read preserves the verdict itself"
 
+    # ── ANNOUNCED EXACTLY ONCE, INCLUDING AFTER A SAME-SESSION RELOAD ─────
+    #
+    # The half the flag itself broke, and the reason "announced exactly once"
+    # is a sentence this repo ships into ~20 other AGENTS.md files rather than
+    # a claim it can make about itself. write_receipt correctly SUPPRESSES a
+    # healthy verdict that would overwrite a mismatch recorded by the same
+    # session — and then used to re-set `unread=1` for that suppressed write
+    # anyway. Every healthy reload in the session that recorded the mismatch
+    # therefore re-flagged it: measured, the SAME stale verdict announced at
+    # 5 of 5 consecutive session starts on a machine healthy throughout.
+    #
+    # Driven through both hooks rather than a planted receipt, because the
+    # thing under test is what one hook does to the other's file.
+    rm -f "$receipt" "$logf"
+    local sid="1111-2222-3333-4444"
+    head -c 154 "$dest" > "$d/cut" && mv "$d/cut" "$dest"
+    printf '%s\n' "$(instr_event User session_start "$dest" "$sid")" \
+        | CLAUDE_CONFIG_DIR="$d/cfg" bash "$instr" > "$d/out_once_mm" 2>&1
+    assert_contains "$receipt" "fleet=LOAD MISMATCH" \
+        "fleet-memory state: the same-session run starts from a real recorded mismatch"
+
+    # The session start announces it — and repairs the block, so everything
+    # after this point is a healthy machine.
+    run_fm > "$d/out_once_ann"
+    assert_contains "$d/out_once_ann" "previous session LOAD MISMATCH" \
+        "fleet-memory state: the mismatch is announced once"
+
+    # Three more memory loads in the SAME session, all healthy. Each one is
+    # suppressed (it must not erase a verdict) and each one must leave the
+    # receipt read.
+    local i
+    for i in 1 2 3; do
+        printf '%s\n' "$(instr_event User session_start "$dest" "$sid")" \
+            | CLAUDE_CONFIG_DIR="$d/cfg" bash "$instr" > "$d/out_once_h$i" 2>&1
+    done
+    assert_contains "$receipt" "unread=0" \
+        "fleet-memory state: a suppressed healthy reload does not re-flag the receipt as unread"
+
+    # Five more session starts. On the earlier version every one of them
+    # re-announced the same stale line.
+    local reann=0
+    for i in 1 2 3 4 5; do
+        run_fm > "$d/out_once_s$i"
+        grep -qF -- "previous session" "$d/out_once_s$i" && reann=$((reann + 1))
+        printf '%s\n' "$(instr_event User session_start "$dest" "$sid")" \
+            | CLAUDE_CONFIG_DIR="$d/cfg" bash "$instr" > /dev/null 2>&1
+    done
+    if [[ $reann -eq 0 ]]; then
+        pass "fleet-memory state: an announced verdict is never re-announced by the session that recorded it"
+    else
+        fail "fleet-memory state: the same stale verdict was announced again at $reann of 5 session starts"
+    fi
+
+    # And a genuinely NEW session's healthy load still replaces it, so the
+    # receipt converges rather than holding the stale line for ever.
+    printf '%s\n' "$(instr_event User session_start "$dest" "9999-8888")" \
+        | CLAUDE_CONFIG_DIR="$d/cfg" bash "$instr" > "$d/out_once_new" 2>&1
+    assert_contains "$receipt" "fleet=loaded" \
+        "fleet-memory state: a new session's healthy load does replace the announced mismatch"
+    run_fm > "$d/out_once_new2"
+    assert_contains "$d/out_once_new2" "previous session loaded" \
+        "fleet-memory state: and that healthy verdict is itself announced once"
+    rm -f "$receipt" "$logf"
+    run_fm > /dev/null
+
     # A REDIRECTION THAT FAILS IS STILL A MESSAGE IN THE SESSION'S FACE.
     # `{ ... } > "$FILE.tmp" 2>/dev/null` suppresses the commands INSIDE the
     # braces; the failure of the redirection itself is reported by the shell
@@ -17690,9 +17755,41 @@ test_fleet_memory_state_file() {
         "fleet-memory state: a blocked state or receipt tmp path reaches nobody"
     assert_contains "$d/out_blocked_tmp" "fleet-guidance:" \
         "fleet-memory state: the verdict is still printed when the tmp path is blocked"
+    # A DIRECTORY AT THE OLD FIXED TMP NAME IS NOT "NEVER CLEARED". With
+    # `$RECEIPT_FILE.read.tmp` hard-coded, this exact shape made `rm -f` fail,
+    # the redirection fail and `2>/dev/null` swallow both — the flag was never
+    # cleared and the same planted verdict was announced at 5 of 5 consecutive
+    # session starts, with nothing on stderr. mktemp cannot land on a name
+    # something else is already sitting on.
+    assert_contains "$receipt" "unread=0" \
+        "fleet-memory state: a directory at the old fixed tmp name still clears the flag"
+    run_fm > "$d/out_blocked_tmp2" 2>&1
+    assert_not_contains "$d/out_blocked_tmp2" "previous session" \
+        "fleet-memory state: a directory at the old fixed tmp name does not re-announce"
+    if [[ -z "$(find "$d/cfg" -maxdepth 1 -type f -name 'instructions-receipt.state.read.*' 2>/dev/null)" ]]; then
+        pass "fleet-memory state: clearing the flag leaves no tmp file behind"
+    else
+        fail "fleet-memory state: a receipt tmp file was left in the config dir"
+    fi
+
     rmdir "$state.tmp" "$receipt.read.tmp"
     rm -f "$receipt"
     run_fm > /dev/null
+    # THE MODE THE RECEIPT WAS WRITTEN WITH SURVIVES BEING READ. open_owned
+    # creates it 0600 on purpose; rewriting it through a plain redirection
+    # inherited the umask and relaxed it to 0644 at the next session start —
+    # one commit undoing what another had just established. mktemp's own 0600
+    # is what keeps it.
+    rm -f "$receipt"
+    printf 'unread=1\nfleet=loaded (v1, 1 bytes)\n' > "$receipt"
+    chmod 600 "$receipt"
+    ( umask 022; run_fm > "$d/out_mode" 2>&1 )
+    local rmode; rmode="$(stat -c '%a' "$receipt" 2>/dev/null)"
+    if [[ "$rmode" == "600" ]]; then
+        pass "fleet-memory state: reading the receipt keeps its 0600 mode"
+    else
+        fail "fleet-memory state: the receipt is $rmode after a session start, not 600"
+    fi
 
     # No receipt at all — the ordinary first session on a machine. Nothing to
     # report, and nothing invented.

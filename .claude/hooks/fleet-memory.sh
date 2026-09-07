@@ -106,17 +106,42 @@ report_previous_session() {
 
 # Clear the flag, preserving the verdict itself so `cat`ing the receipt still
 # says what happened. Best-effort like write_state: a receipt that cannot be
-# rewritten costs a repeated line, never the session. The tmp file is removed
-# before it is written so a symlink planted at that path is replaced rather
-# than followed, and the mv renames over the receipt without following one
-# planted there either.
+# rewritten costs a repeated line, never the session. The mv renames over the
+# receipt without following a link planted there.
+#
+# A FIXED TMP NAME WAS A SECOND, PERMANENT ROUTE TO "ANNOUNCED FOREVER". With
+# `$RECEIPT_FILE.read.tmp` hard-coded, a DIRECTORY planted at that path made
+# `rm -f` fail, the redirection fail, and `2>/dev/null` swallow both: the flag
+# was never cleared and the same verdict was announced at 5 of 5 consecutive
+# session starts, with nothing on stderr. mktemp cannot collide with anything
+# already there, and when it cannot create a file at all this says so out loud
+# rather than looping in silence -- the one thing a "never silent for more
+# than one session" contract cannot afford is a silent failure to clear.
+#
+# mktemp creates the file 0600, which is also what keeps the receipt at the
+# mode open_owned gave it. The older `sed > "$tmp"` inherited the umask and
+# quietly relaxed it to 0644 at the first session start after every write.
+#
+# THE WINDOW, recorded the way the hook records its own (write_receipt): the
+# caller greps `unread` out of the receipt, announces, and only then does this
+# re-read the file and rewrite it. A verdict written by a load-time hook
+# BETWEEN that grep and this sed is marked read without ever being announced.
+# It is microseconds wide and this hook runs before memory is assembled, so it
+# was not provoked; closing it means sed-ing the exact verdict that was
+# announced rather than whatever the file now holds, which trades a lost line
+# for a receipt this hook could rewrite from a stale read. Recorded rather
+# than closed, and named here so the sibling that has the same shape is not
+# the only one that documents it.
 mark_receipt_read() {
-    local tmp="$RECEIPT_FILE.read.tmp"
+    local tmp
+    if ! tmp="$(mktemp "$RECEIPT_FILE.read.XXXXXX" 2>/dev/null)"; then
+        echo "fleet-guidance: could not clear the previous session's receipt — the line above will repeat next session."
+        return 0
+    fi
     # Same wrapping as write_state, for the same reason: the failure of
     # `> "$tmp"` is the shell's message, not sed's, so an inner 2>/dev/null
     # would not cover it.
     {
-        rm -f "$tmp"
         if sed 's/^unread=1$/unread=0/' "$RECEIPT_FILE" > "$tmp"; then
             mv "$tmp" "$RECEIPT_FILE"
         fi
