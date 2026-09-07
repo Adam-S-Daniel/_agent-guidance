@@ -6379,6 +6379,46 @@ PY
         fi
     done
 
+    # R2-N6 — the two env values still accepted unvalidated. An empty MATCHER
+    # registered `"matcher": ""`, which is neither of the things a caller could
+    # have meant (every event, or a named one); TIMEOUT=0 registers a hook that
+    # can never finish, and a twenty-digit value is a typo, not a timeout. The
+    # accepted range is stated rather than left to the CLI's judgement.
+    local badenv2
+    for badenv2 in 'BOOTSTRAP_HOOK_MATCHER=' 'BOOTSTRAP_HOOK_TIMEOUT=0' \
+                   'BOOTSTRAP_HOOK_TIMEOUT=3601' \
+                   'BOOTSTRAP_HOOK_TIMEOUT=99999999999999999999'; do
+        printf '{}\n' > "$d/badenv2.json"
+        rc=0
+        result=$(env "$badenv2" "$r" "$d/badenv2.json" 2>"$d/badenv2.err") || rc=$?
+        if [[ "$rc" -eq 2 && "$result" == "refused-bad-env" ]]; then
+            pass "register: $badenv2 -> refused-bad-env, exit 2"
+        else
+            fail "register: $badenv2 -> rc=$rc out='$result'"
+        fi
+        if [[ "$(cat "$d/badenv2.json")" == '{}' ]]; then
+            pass "register: $badenv2 left the file untouched"
+        else
+            fail "register: $badenv2 wrote to the file it refused"
+        fi
+    done
+
+    # …and the ends of the stated range are ACCEPTED, so the bound is a range
+    # and not a narrowing that would refuse the fleet's own 10 and 30.
+    local goodenv
+    for goodenv in 1 10 30 90 3600; do
+        rm -f "$d/goodenv.json"
+        rc=0
+        result=$(env "BOOTSTRAP_HOOK_TIMEOUT=$goodenv" "$r" "$d/goodenv.json") || rc=$?
+        if [[ "$rc" -eq 0 && "$result" == "registered" ]]; then
+            pass "register: a $goodenv-second timeout is inside the accepted range"
+        else
+            fail "register: a $goodenv-second timeout was refused (rc=$rc '$result')"
+        fi
+    done
+    rm -f "$d/goodenv.json"
+
+
     # An UNSET variable still means "use the default" — the seam's whole point
     # is that sync.sh's fleet-memory call passes four of the five and gets the
     # documented behaviour for the rest.
@@ -18746,6 +18786,44 @@ for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
     drain_case "no python3" CLAUDE_CONFIG_DIR="$d/cfg" PATH="$d/nopy"
     drain_case "normal" CLAUDE_CONFIG_DIR="$d/cfg"
 
+    # F4 — THE FALLBACK BRANCH, which had no coverage at all. drain_stdin uses
+    # `cat` when it is on PATH and a bulk `read -r -N` loop when it is not, and
+    # the "no python3" row above symlinks `cat` INTO its PATH directory, so
+    # only the cat branch was ever exercised. A directory with neither is what
+    # reaches the loop — and the no-python3 guard is exactly the case where
+    # PATH is unusual, which is why the fallback exists.
+    mkdir -p "$d/nothing"
+    drain_case "no cat and no python3" CLAUDE_CONFIG_DIR="$d/cfg" PATH="$d/nothing"
+    drain_case "no cat and no config dir" CLAUDE_CONFIG_DIR="$d/not-a-directory" PATH="$d/nothing"
+
+    # R2-N8 — THE READ IS BOUNDED, not just the event. `sys.stdin.buffer.read()`
+    # keeps the whole of whatever is written before STDIN_CAP is consulted, so
+    # an unbounded writer cost unbounded memory in a hook that runs on every
+    # memory load. Measured through the child's own peak RSS
+    # (getrusage(RUSAGE_CHILDREN), which is what GNU time's %M reports and is
+    # available wherever python3 is): 48 MiB of stdin took the child to
+    # 63,216 KiB before, 15,200 KiB after. The threshold sits between the two
+    # with room on both sides rather than close to either.
+    local peak
+    peak="$(python3 - "$INSTR_HOOK" "$INSTR_CFG" "$d" <<'PY'
+import os, resource, subprocess, sys
+hook, cfg, home = sys.argv[1], sys.argv[2], sys.argv[3]
+env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg, HOME=home)
+proc = subprocess.Popen(["bash", hook], stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        env=env)
+proc.communicate(b"x" * (48 << 20))
+# KiB on Linux, and only the CHILD's -- the payload above is this process's
+# own memory and is not counted.
+print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+PY
+)"
+    if [[ "${peak:-0}" -gt 0 && "${peak:-0}" -lt 32768 ]]; then
+        pass "instructions-loaded: 48 MiB of stdin costs the hook bounded memory (${peak} KiB peak)"
+    else
+        fail "instructions-loaded: 48 MiB of stdin took the hook to ${peak:-unmeasured} KiB — the read is not bounded"
+    fi
+
     # ── It acts on InstructionsLoaded events, and on nothing else ─────────
     #
     # Registered only under InstructionsLoaded today, so this is unreachable
@@ -18934,8 +19012,21 @@ print(json.dumps({"hook_event_name": "FileChanged", "memory_type": "User",
     instr_run "$d/out_bigstate" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
     [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: an oversized state file still exits 0" \
         || fail "instructions-loaded: an oversized state file exited $INSTR_RC"
-    assert_not_contains "$d/out_bigstate" "fleet-guidance:" \
-        "instructions-loaded: a state file too large to be ours is not read at all"
+    # NOT READ, AND NOT SILENT. read_kv returns {} for an oversized state file
+    # exactly as it does for an absent one, and fleet_verdict reads {} as
+    # "nothing to compare against" — so one corrupt file in the config dir
+    # disabled the whole receipt lane for a session with no signal anywhere:
+    # no verdict, no receipt, no line in the report, and fleet-memory.sh still
+    # printing `current`. It self-heals at the next session start, which is
+    # what the design promises; the silence is what it does not.
+    assert_contains "$d/out_bigstate" "fleet-guidance: LOAD MISMATCH" \
+        "instructions-loaded: an oversized state file leaves a mark rather than nothing"
+    assert_contains "$d/out_bigstate" "over 65536 bytes" \
+        "instructions-loaded: the oversized-state verdict names the cap it hit"
+    assert_not_contains "$d/out_bigstate" "fleet-guidance: loaded" \
+        "instructions-loaded: an oversized state file never produces a healthy verdict"
+    assert_contains "$receipt" "fleet=LOAD MISMATCH" \
+        "instructions-loaded: the oversized-state verdict reaches the receipt, so the next session sees it"
     if [[ -s "$logf" ]]; then
         pass "instructions-loaded: an oversized state file still gets its log line"
     else
@@ -19468,6 +19559,35 @@ assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"],
     [[ "$result" == "no-entry" ]] \
         && pass "event seam: a null under another event leaves ours usable" \
         || fail "event seam: a null under another event classified ours '$result'"
+
+    # R2-N7 — A SYMLINKED settings.json IS A CONFIG WE DO NOT UNDERSTAND.
+    # `open(target, "w")` follows one, so the link was preserved and its TARGET
+    # rewritten: in a consumer repo `git add .claude/settings.json` would stage
+    # an unchanged symlink while the real edit landed outside the tree, and the
+    # sync would report a registration the repo does not carry. Both halves of
+    # the seam have to agree about it, or the sync delivers a hook the
+    # registrar then refuses to register — the shape this round already fixed
+    # once for a null under the event key.
+    mkdir -p "$d/linked"
+    printf '{"env": {"KEEP_ME": "yes"}}\n' > "$d/linked/real-settings.json"
+    local link_before; link_before="$(cat "$d/linked/real-settings.json")"
+    ln -sf "$d/linked/real-settings.json" "$d/linked/settings.json"
+    result=$("$status" "$d/linked/settings.json")
+    [[ "$result" == "unparseable" ]] \
+        && pass "symlinked settings.json: the classifier calls it unparseable" \
+        || fail "symlinked settings.json: the classifier said '$result'"
+    rc=0
+    result=$("$reg" "$d/linked/settings.json" 2>"$d/link.err") || rc=$?
+    if [[ "$rc" -eq 3 && "$result" == "refused-unparseable" ]]; then
+        pass "symlinked settings.json: the registrar refuses it, exit 3"
+    else
+        fail "symlinked settings.json: the registrar answered rc=$rc '$result'"
+    fi
+    if [[ -L "$d/linked/settings.json" && "$(cat "$d/linked/real-settings.json")" == "$link_before" ]]; then
+        pass "symlinked settings.json: the link and its target are both untouched"
+    else
+        fail "symlinked settings.json: the write went through the link"
+    fi
 
     # Idempotence is per event: a second run must not append a duplicate.
     result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \

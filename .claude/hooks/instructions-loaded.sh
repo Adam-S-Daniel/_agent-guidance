@@ -183,7 +183,17 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 # oversized event would leave the writer holding a closed pipe: it takes
 # SIGPIPE, exits 141, and a caller running under `pipefail` reads that as the
 # hook failing. Draining first costs one buffer and removes the whole class.
-raw = sys.stdin.buffer.read()
+#
+# BOUNDED, and then drained. A plain .read() keeps the whole of whatever is
+# written -- so an unbounded writer costs unbounded memory in a hook that runs
+# on every memory load, and the cap below was applied only after that cost had
+# been paid. Reading STDIN_CAP + 1 is enough to know the event is over the cap
+# (the +1 is what tells "exactly at the cap" from "past it"), and the loop
+# discards the rest in fixed-size chunks so the writer still reaches EOF and
+# still never takes SIGPIPE.
+raw = sys.stdin.buffer.read(STDIN_CAP + 1)
+while sys.stdin.buffer.read(1 << 16):
+    pass
 if len(raw) > STDIN_CAP:
     sys.exit(0)
 try:
@@ -336,6 +346,25 @@ def read_kv(path):
 def read_state():
     """fleet-memory.sh's record of what it installed: version, bytes, sha256."""
     return read_kv(STATE)
+
+
+def state_oversized():
+    """True when the state file is too big for read_kv to touch at all.
+
+    read_kv returns {} for an oversized state file exactly as it does for an
+    absent one, and fleet_verdict reads {} as "nothing to compare against" and
+    returns None -- so ONE corrupt file in the config dir silently disabled the
+    whole receipt lane for a session: no verdict, no receipt, no line in the
+    report, and fleet-memory.sh still printing `current`. The exposure is a
+    single session (write_state rewrites the file at the next session start),
+    which is what the design promises; the SILENCE is what it does not. This
+    is the one bit that tells the two cases apart, so the verdict can say
+    which one it is.
+    """
+    try:
+        return os.path.isfile(STATE) and os.path.getsize(STATE) > STATE_CAP
+    except Exception:
+        return False
 
 
 # Every human-facing string in this program is built through here or written
@@ -743,6 +772,9 @@ verdicts = {}
 
 if content is not None and memory_type == "User":
     suffix = fleet_verdict(content, state)
+    if suffix is None and state_oversized():
+        suffix = mismatch("fleet-guidance.state is over %d bytes, so nothing "
+                          "could be compared this session" % STATE_CAP)
     if suffix:
         verdicts["fleet"] = suffix
         emit("fleet-guidance: " + suffix)
