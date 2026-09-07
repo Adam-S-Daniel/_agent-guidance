@@ -809,6 +809,16 @@ for repo_name in "${REPOS[@]}"; do
 
     fleet_deliver=true
     fleet_reason=""
+    # WITHHELD SEPARATELY FROM THE FLEET-MEMORY PAIR. `fleet_deliver=false`
+    # selects FLEET_MODE=full for the WHOLE repo, and using it for a defect in
+    # `hooks.InstructionsLoaded` alone put 52 kB of inline guidance back into
+    # the AGENTS.md of a repo whose SessionStart hook was still registered and
+    # still writing the same 57 kB into ~/.claude/CLAUDE.md — the guidance
+    # loaded twice, silently, with `0 failed` and a log line reading
+    # `mode=full ... settings=registered`. Measured: 5,687 to 57,971 bytes.
+    # The refusal belongs to the pair it is about.
+    instr_deliver=true
+    instr_reason=""
     fleet_hook_state="missing"     # missing | current | drifted
     fleet_payload_state="missing"  # missing | current | drifted
     fleet_reg_state="missing"      # registered | no-entry | unparseable | missing
@@ -848,30 +858,43 @@ for repo_name in "${REPOS[@]}"; do
                               BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
                               "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
             # The same refusal the fleet_reg_state check above makes, for the
-            # array THIS hook needs. A settings.json whose SessionStart is
-            # fine but whose InstructionsLoaded is not a list would otherwise
-            # deliver the stub and the hook file, then have the registrar
-            # correctly refuse the entry: a delivered hook nothing runs, in a
-            # repo whose guidance has just been replaced by a note telling you
-            # to go and read it elsewhere. Deliver both halves or neither.
+            # array THIS hook needs — and scoped to THIS hook. A settings.json
+            # whose SessionStart is fine but whose InstructionsLoaded is not a
+            # list would otherwise get the hook file delivered and committed
+            # and then have the registrar correctly refuse the entry: a
+            # delivered hook nothing runs. Deliver both halves of THIS pair or
+            # neither; the fleet-memory pair beside it is untouched by a key
+            # that has nothing to do with it.
             if [[ "$instr_reg_state" == "unparseable" ]]; then
-                fleet_deliver=false
-                fleet_reason="$SETTINGS_REL_PATH has a hooks.InstructionsLoaded we cannot append to — refusing to edit it, keeping the full guidance inline"
+                instr_deliver=false
+                instr_reason="$SETTINGS_REL_PATH has a hooks.InstructionsLoaded we cannot parse or cannot append to — withholding the load-time receipt hook and its registration; the fleet-memory pair and AGENTS.md are unaffected"
             fi
         fi
     fi
 
+    # The whole write block sits inside `if $fleet_deliver`, so a repo the
+    # fleet half cannot reach is one the receipt half cannot reach either.
+    $fleet_deliver || instr_deliver=false
+
     if $fleet_deliver; then FLEET_MODE=stub; else FLEET_MODE=full; fi
     [[ -n "$fleet_reason" ]] && log "fleet-memory: $fleet_reason."
     log "fleet-memory: mode=$FLEET_MODE hook=$fleet_hook_state payload=$fleet_payload_state settings=$fleet_reg_state"
+    [[ -n "$instr_reason" ]] && log "WARN: $instr_reason."
     $fleet_deliver && log "instructions-loaded: hook=$instr_hook_state settings=$instr_reg_state"
 
+    # A withheld receipt hook must not keep the repo permanently out of date,
+    # or every run re-clones and re-checks a repo it has already decided not
+    # to write to.
+    instr_needs_work=false
+    if $instr_deliver && { [[ "$instr_hook_state" != "current" ]] \
+                        || [[ "$instr_reg_state" != "registered" ]]; }; then
+        instr_needs_work=true
+    fi
     fleet_up_to_date=true
     if $fleet_deliver && { [[ "$fleet_hook_state" != "current" ]] \
                         || [[ "$fleet_payload_state" != "current" ]] \
                         || [[ "$fleet_reg_state" != "registered" ]] \
-                        || [[ "$instr_hook_state" != "current" ]] \
-                        || [[ "$instr_reg_state" != "registered" ]]; }; then
+                        || $instr_needs_work; }; then
         fleet_up_to_date=false
     fi
 
@@ -1092,12 +1115,20 @@ for repo_name in "${REPOS[@]}"; do
             esac
             [[ "$fleet_reg_state" != "registered" ]] && \
                 log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved)"
-            case "$instr_hook_state" in
-                missing) log "[DRY RUN] Would add $INSTR_HOOK_REL_PATH" ;;
-                drifted) log "[DRY RUN] Would overwrite drifted $INSTR_HOOK_REL_PATH" ;;
-            esac
-            [[ "$instr_reg_state" != "registered" ]] && \
-                log "[DRY RUN] Would append an InstructionsLoaded entry for instructions-loaded.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+            # Gated, because a preview that promises what the real run will
+            # refuse is worse than no preview: on the shape below the dry run
+            # said it would append an InstructionsLoaded entry the registrar
+            # cannot append.
+            if $instr_deliver; then
+                case "$instr_hook_state" in
+                    missing) log "[DRY RUN] Would add $INSTR_HOOK_REL_PATH" ;;
+                    drifted) log "[DRY RUN] Would overwrite drifted $INSTR_HOOK_REL_PATH" ;;
+                esac
+                [[ "$instr_reg_state" != "registered" ]] && \
+                    log "[DRY RUN] Would append an InstructionsLoaded entry for instructions-loaded.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+            else
+                log "[DRY RUN] Would NOT touch $INSTR_HOOK_REL_PATH or its registration (the fleet-memory pair and AGENTS.md are delivered as usual)"
+            fi
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
@@ -1247,7 +1278,7 @@ for repo_name in "${REPOS[@]}"; do
         # block truncated mid-session is only observable on the reload after.
         # The timeout is deliberately short: a receipt hook that needs longer
         # than ten seconds has stopped being observe-only.
-        if [[ "$instr_hook_state" != "current" ]]; then
+        if $instr_deliver && [[ "$instr_hook_state" != "current" ]]; then
             mkdir -p "$(dirname "$INSTR_HOOK_REL_PATH")"
             cp "$INSTR_HOOK_SOURCE" "$INSTR_HOOK_REL_PATH"
             chmod 0755 "$INSTR_HOOK_REL_PATH"
@@ -1255,7 +1286,7 @@ for repo_name in "${REPOS[@]}"; do
             log "instructions-loaded: hook ${instr_hook_state} — written."
         fi
 
-        if [[ "$instr_reg_state" != "registered" ]]; then
+        if $instr_deliver && [[ "$instr_reg_state" != "registered" ]]; then
             mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
             if instr_register_result=$(
                     BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \

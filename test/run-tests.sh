@@ -6739,76 +6739,132 @@ PY
     esac
 }
 
-# DELIVER BOTH HALVES OR NEITHER. A settings.json that is valid JSON with a
-# SessionStart we can append to, but a `hooks.InstructionsLoaded` that is not
-# a list, used to get the hook file delivered and committed while its
-# registration was correctly refused — "a delivered hook nothing runs" — and
-# the repo AGENTS.md shrunk to the stub in the same commit: a repo stripped of
-# the very rules the stub tells you to go and read, with nothing registered to
-# bring them back, and `0 failed` on the tally forever. The classifier now
-# calls that shape unparseable, so the whole repo keeps the full guidance
-# inline instead, exactly as an unparseable settings.json already did.
+# WITHHOLD THE PAIR, NOT THE REPO. A settings.json that is valid JSON with a
+# SessionStart we can append to, but a `hooks.InstructionsLoaded` we cannot,
+# used to get the receipt hook delivered and committed while its registration
+# was correctly refused — "a delivered hook nothing runs". The classifier now
+# calls that shape unparseable, which fixed the delivery and broke something
+# else: `fleet_deliver=false` selects FLEET_MODE=full for the WHOLE repo, so a
+# consumer whose fleet-memory hook was already delivered and registered gained
+# 52 kB of inline guidance in AGENTS.md while that hook kept writing the same
+# 57 kB into ~/.claude/CLAUDE.md — the guidance loaded twice, silently, with
+# `0 failed` and a log line reading `mode=full ... settings=registered`.
+# Measured: AGENTS.md 5,687 to 57,971 bytes.
+#
+# So the refusal is scoped to the pair it is about: no receipt hook, no
+# registration, one WARN naming what was withheld — and AGENTS.md, the
+# fleet-memory hook and its registration all left exactly as they were.
+#
+# Both spellings of the shape, because they arrive by different routes: a
+# wrong TYPE under the key (what round 1 closed) and a NULL under the key
+# (which classified `no-entry` until the classifier was taught to agree with
+# the registrar).
 test_sync_instructions_unusable_array() {
     echo ""
-    echo "=== Test: sync.sh (an unusable hooks.InstructionsLoaded withholds delivery) ==="
+    echo "=== Test: sync.sh (an unusable hooks.InstructionsLoaded withholds only that pair) ==="
 
-    local w="$TEST_DIR/work/instr-unusable"
-    rm -rf "$w"
-    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
-    git -C "$w" config commit.gpgsign false
-    cp "$w/.claude/settings.json" "$TEST_DIR/instr-unusable-settings.orig"
-    rm -f "$w/$INSTR_HOOK_REL_PATH_T"
-    python3 - "$w/.claude/settings.json" <<'PY'
+    local shape label w v pushed_settings pushed_agents
+    cp "$TEST_DIR/work/bootorg-repo-no-lock/.claude/settings.json" \
+       "$TEST_DIR/instr-unusable-settings.orig" 2>/dev/null || true
+
+    for shape in '"nope"' 'null'; do
+        label="$(printf '%s' "$shape" | tr -d '"')"
+        w="$TEST_DIR/work/instr-unusable-$label"
+        rm -rf "$w"
+        git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+        git -C "$w" config commit.gpgsign false
+        # The FIRST iteration captures the pristine settings.json; later ones
+        # would capture the broken one this loop just pushed.
+        [[ "$label" == "nope" ]] && cp "$w/.claude/settings.json" "$TEST_DIR/instr-unusable-settings.orig"
+        rm -f "$w/$INSTR_HOOK_REL_PATH_T"
+        python3 - "$w/.claude/settings.json" "$shape" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
-doc.setdefault("hooks", {})["InstructionsLoaded"] = "nope"
+doc.setdefault("hooks", {})["InstructionsLoaded"] = json.loads(sys.argv[2])
 with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump(doc, fh, indent=2)
     fh.write("\n")
 PY
-    git -C "$w" add -A >/dev/null 2>&1
-    git -C "$w" commit -m "an InstructionsLoaded array we cannot append to" >/dev/null 2>&1
-    git -C "$w" push origin HEAD:main >/dev/null 2>&1
-    local pushed_settings; pushed_settings="$(cat "$w/.claude/settings.json")"
+        git -C "$w" add -A >/dev/null 2>&1
+        git -C "$w" commit -m "an InstructionsLoaded value we cannot append to ($label)" >/dev/null 2>&1
+        git -C "$w" push origin HEAD:main >/dev/null 2>&1
+        pushed_settings="$(cat "$w/.claude/settings.json")"
+        pushed_agents="$(cat "$w/AGENTS.md")"
 
-    local output
-    output=$(
-        GITHUB_REPOSITORY_OWNER=bootorg \
-        MOCK_BARE_DIR="$TEST_DIR/bare" \
-        REPOS_YML="$TEST_DIR/repos.yml" \
-        PATH="$TEST_DIR/bin:$PATH" \
-        "$REPO_ROOT/scripts/sync.sh" 2>&1
-    ) || true
-    echo "$output" > "$TEST_DIR/sync-instr-unusable.txt"
-    assert_contains "$TEST_DIR/sync-instr-unusable.txt" \
-        "hooks.InstructionsLoaded we cannot append to" \
-        "instr unusable: the sync says why it is keeping the guidance inline"
-    assert_contains "$TEST_DIR/sync-instr-unusable.txt" "mode=full" \
-        "instr unusable: the repo keeps the FULL guidance rather than the stub"
+        # The DRY RUN first, so parity is measured rather than assumed: on the
+        # null spelling the preview used to promise an entry the real run
+        # cannot append.
+        GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+            REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+            "$REPO_ROOT/scripts/sync.sh" --dry-run \
+            > "$TEST_DIR/sync-instr-unusable-$label-dry.txt" 2>&1 || true
+        assert_not_contains "$TEST_DIR/sync-instr-unusable-$label-dry.txt" \
+            "Would append an InstructionsLoaded entry" \
+            "instr unusable ($label): the dry run does not promise a registration the real run refuses"
+        assert_not_contains "$TEST_DIR/sync-instr-unusable-$label-dry.txt" \
+            "Would add $INSTR_HOOK_REL_PATH_T" \
+            "instr unusable ($label): the dry run does not promise a hook the real run withholds"
 
-    local v="$TEST_DIR/verify-instr-unusable"
-    rm -rf "$v"
-    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" 2>/dev/null || {
-        fail "instr unusable: could not clone"
-        return
-    }
-    if [[ -e "$v/$INSTR_HOOK_REL_PATH_T" ]]; then
-        fail "instr unusable: the hook was delivered into a repo it can never be registered in"
-    else
-        pass "instr unusable: no hook is delivered that nothing could run"
-    fi
-    if [[ "$(cat "$v/.claude/settings.json")" == "$pushed_settings" ]]; then
-        pass "instr unusable: settings.json is byte-identical to what was pushed"
-    else
-        fail "instr unusable: settings.json was rewritten"
-    fi
-    assert_contains "$v/AGENTS.md" "## Workstation layout" \
-        "instr unusable: AGENTS.md carries the full guidance, not the stub"
+        GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+            REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+            "$REPO_ROOT/scripts/sync.sh" \
+            > "$TEST_DIR/sync-instr-unusable-$label.txt" 2>&1 || true
+        # Scoped to THIS repo's own section of the run: two other bootorg
+        # fixtures (a gitignored .claude/ and a settings.json that is not JSON
+        # at all) report `mode=full` correctly, so a whole-log negative would
+        # be measuring them instead.
+        awk '/^=== bootorg\/repo-no-lock ===/{f=1;next} /^=== /{f=0} f' \
+            "$TEST_DIR/sync-instr-unusable-$label.txt" \
+            > "$TEST_DIR/sync-instr-unusable-$label.section"
+        if [[ ! -s "$TEST_DIR/sync-instr-unusable-$label.section" ]]; then
+            fail "instr unusable ($label): the run printed no section for bootorg/repo-no-lock, so these assertions have nothing to read"
+        fi
+        assert_contains "$TEST_DIR/sync-instr-unusable-$label.section" \
+            "withholding the load-time receipt hook and its registration" \
+            "instr unusable ($label): one WARN names what was withheld"
+        assert_contains "$TEST_DIR/sync-instr-unusable-$label.section" "mode=stub" \
+            "instr unusable ($label): the repo keeps the STUB — the fleet-memory pair is not withheld with it"
+        assert_not_contains "$TEST_DIR/sync-instr-unusable-$label.section" "mode=full" \
+            "instr unusable ($label): the repo is not dragged back to the inline guidance"
+
+        v="$TEST_DIR/verify-instr-unusable-$label"
+        rm -rf "$v"
+        git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" 2>/dev/null || {
+            fail "instr unusable ($label): could not clone"
+            return
+        }
+        if [[ -e "$v/$INSTR_HOOK_REL_PATH_T" ]]; then
+            fail "instr unusable ($label): the hook was delivered into a repo it can never be registered in"
+        else
+            pass "instr unusable ($label): no hook is delivered that nothing could run"
+        fi
+        if [[ "$(cat "$v/.claude/settings.json")" == "$pushed_settings" ]]; then
+            pass "instr unusable ($label): settings.json is byte-identical to what was pushed"
+        else
+            fail "instr unusable ($label): settings.json was rewritten"
+        fi
+        # THE REGRESSION THIS TEST EXISTS FOR. The full guidance here means
+        # the repo is loading it twice: once inline, once from the
+        # still-registered SessionStart hook.
+        assert_not_contains "$v/AGENTS.md" "## Workstation layout" \
+            "instr unusable ($label): AGENTS.md keeps the stub, not 52 kB of inline guidance"
+        if [[ "$(cat "$v/AGENTS.md")" == "$pushed_agents" ]]; then
+            pass "instr unusable ($label): AGENTS.md is byte-identical to what was pushed"
+        else
+            fail "instr unusable ($label): AGENTS.md changed ($(wc -c < "$v/AGENTS.md") bytes, was $(printf '%s' "$pushed_agents" | wc -c))"
+        fi
+        if [[ -f "$v/$FLEET_HOOK_REL_PATH_T" && -f "$v/$FLEET_PAYLOAD_REL_PATH_T" ]] \
+           && grep -qF -- "fleet-memory.sh" "$v/.claude/settings.json"; then
+            pass "instr unusable ($label): the fleet-memory hook, its payload and its registration are all still there"
+        else
+            fail "instr unusable ($label): the fleet-memory pair was withheld along with the receipt hook"
+        fi
+    done
 
     # Restore, and prove the repair path works from here too — which also
     # leaves the fixture as the tests after this one expect to find it.
-    # A FRESH CLONE, not $w: the sync run above pushed its own commit to main,
-    # so a push from $w's stale HEAD is rejected as non-fast-forward and the
+    # A FRESH CLONE, not $w: the runs above pushed their own commits to main,
+    # so a push from a stale HEAD is rejected as non-fast-forward and the
     # restore silently never lands.
     local w2="$TEST_DIR/work/instr-unusable-restore"
     rm -rf "$w2"
