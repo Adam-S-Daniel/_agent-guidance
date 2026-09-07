@@ -83,6 +83,27 @@ LOG="$STATE_DIR/instructions-log.jsonl"
 RECEIPT="$STATE_DIR/instructions-receipt.state"
 STATE="$STATE_DIR/fleet-guidance.state"
 
+# DRAIN STDIN BEFORE EVERY EARLY EXIT. `printf event | hook` under `pipefail`
+# -- how the CLI and this repo's own suite both invoke it -- turns an exit
+# before reading into a SIGPIPE for the WRITER: it dies on 141 and the caller
+# reads 141 as this hook failing. The python program below drains first and
+# says so in a comment; the three SHELL guards under this one used to exit
+# without reading a byte. Measured: 10/10 runs report 141 with a payload past
+# the 64 KiB pipe buffer, and about 1 in 200 with a small one -- a flake on
+# this repo's own `skip exits 0` assertion, with no cause visible in the diff.
+#
+# `cat` when it is on PATH, a bulk bash read when it is not (the no-python3
+# guard is exactly the case where PATH may be unusual). Either way this
+# returns 0: a hook whose whole contract is exit 0 must not fail at draining.
+drain_stdin() {
+    if command -v cat >/dev/null 2>&1; then
+        cat >/dev/null 2>&1
+    else
+        while read -r -N 65536 _ 2>/dev/null; do :; done
+    fi
+    return 0
+}
+
 # The same opt-out fleet-memory.sh honours, with the same spellings meaning
 # OFF — a flag whose disabled spelling enables it is a trap worth two lines to
 # avoid, and two hooks disagreeing about it would be worse. A skip REMOVES
@@ -90,13 +111,13 @@ STATE="$STATE_DIR/fleet-guidance.state"
 # leaving a log behind is an opt-out that did not opt you out.
 case "${FLEET_GUIDANCE_SKIP:-}" in
     ""|0|false|FALSE|no|NO|off|OFF) ;;
-    *) rm -f "$LOG" "$LOG.1" "$RECEIPT" 2>/dev/null; exit 0 ;;
+    *) rm -f "$LOG" "$LOG.1" "$RECEIPT" 2>/dev/null; drain_stdin; exit 0 ;;
 esac
 
 # A config dir that does not exist is not ours to create. Creating one here
 # would be this hook writing into a path no other part of the fleet uses.
-[ -d "$STATE_DIR" ] || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
+[ -d "$STATE_DIR" ] || { drain_stdin; exit 0; }
+command -v python3 >/dev/null 2>&1 || { drain_stdin; exit 0; }
 
 # The event is JSON, and a `file_path` may legally carry a quote, a backslash
 # or a newline. It is therefore parsed with a real JSON parser and re-emitted

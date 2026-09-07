@@ -18151,6 +18151,38 @@ for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
         fail "instructions-loaded: the log is not one JSON object per line — $(cat "$d/logparse.err")"
     fi
 
+    # ── EVERY early exit drains stdin ─────────────────────────────────────
+    #
+    # `printf big | hook` under `pipefail` — how this suite and the CLI both
+    # invoke it — turns an exit-before-reading into a SIGPIPE for the WRITER:
+    # it dies on 141 and the pipeline reports 141. The python program drains
+    # first and its comment says why; three SHELL guards above it exited
+    # without reading anything at all. Measured on the earlier hook: 10/10
+    # runs exit 141 with a payload past the 64 KiB pipe buffer, and ~1 in 200
+    # with a small one — which is a review run's flake on
+    # `instructions-loaded: skip exits 0`, with no cause in the diff.
+    local big="$d/big-event.json"
+    { head -c 10000000 /dev/zero | tr '\0' 'x'; } > "$big"
+    mkdir -p "$d/nopy"
+    ln -sf "$(command -v cat)" "$d/nopy/cat" 2>/dev/null
+    ln -sf "$(command -v rm)" "$d/nopy/rm" 2>/dev/null
+    drain_case() {   # <label> <env assignment...>
+        local label="$1"; shift
+        local rc=0
+        ( set -o pipefail
+          cat "$big" | env "$@" "$BASH" "$INSTR_HOOK" >/dev/null 2>&1 ) || rc=$?
+        [[ $rc -eq 0 ]] \
+            && pass "instructions-loaded: the $label exit drains stdin" \
+            || fail "instructions-loaded: the $label exit reported $rc under pipefail — the writer took SIGPIPE"
+    }
+    drain_case "FLEET_GUIDANCE_SKIP" CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_SKIP=1
+    drain_case "no config dir" CLAUDE_CONFIG_DIR="$d/not-a-directory"
+    drain_case "no python3" CLAUDE_CONFIG_DIR="$d/cfg" PATH="$d/nopy"
+    drain_case "normal" CLAUDE_CONFIG_DIR="$d/cfg"
+    rm -f "$big"
+    instr_install_block "$d/cfg" "$payload" "$pver"
+    instr_write_state "$d/cfg" "$pver" "$pbytes" "$psha"
+
     # ── A symlink inside the config dir is not a way OUT of it ────────────
     #
     # `open(LOG, "a")` FOLLOWS a symlink, so a link planted at the log — or at
