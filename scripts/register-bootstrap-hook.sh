@@ -49,8 +49,10 @@ set -euo pipefail
 #   already-registered  — no write; the hook was already named
 #   registered          — the file was created or appended to
 #   refused-unparseable — no write; the existing file is not a JSON object
+#   refused-bad-env     — no write; a BOOTSTRAP_HOOK_* value is unusable
 #
-# Exit: 0 on either written or already-registered, 2 on usage, 3 on refusal.
+# Exit: 0 on either written or already-registered, 2 on usage (including a bad
+# environment value), 3 on refusal.
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
@@ -60,11 +62,38 @@ fi
 
 # The command string and timeout are the delivery contract; keep them in step
 # with bootstrap-status.sh's basename key and with the live consumer shape.
-HOOK_COMMAND="${BOOTSTRAP_HOOK_COMMAND:-bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"}"
-HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume}"
-HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT:-90}"
-HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
-HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
+#
+# `${VAR-default}`, NOT `${VAR:-default}`. With the colon an EXPLICITLY EMPTY
+# value silently becomes the default, so `BOOTSTRAP_HOOK_EVENT=` registered
+# under SessionStart and `BOOTSTRAP_HOOK_TIMEOUT=` wrote 90 — a caller that
+# passed an empty variable by accident got a working registration in the wrong
+# place rather than an error. Unset still means "use the default"; set-but-
+# empty is now a refusal.
+HOOK_COMMAND="${BOOTSTRAP_HOOK_COMMAND-bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"}"
+HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER-startup|resume}"
+HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT-90}"
+HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME-skills-bootstrap.sh}"
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT-SessionStart}"
+
+# Validated HERE rather than in the python program, so a bad value is a named
+# one-line refusal instead of an interpreter traceback: `int(sys.argv[4])` on
+# `BOOTSTRAP_HOOK_TIMEOUT=abc` produced a raw ValueError and exit 1, which
+# sync.sh logs as `WARN: could not register ... ()` with an empty reason.
+#
+# An empty BASENAME is the one with teeth: `"" in str(command)` is TRUE for
+# every string, so the idempotence test would read "already-registered" for
+# any file at all and the hook would never be registered anywhere.
+bad_env() {
+    echo "refused-bad-env"
+    echo "register-bootstrap-hook.sh: $1" >&2
+    exit 2
+}
+[[ -n "$HOOK_EVENT" ]] || bad_env "BOOTSTRAP_HOOK_EVENT is set but empty; unset it to mean SessionStart"
+[[ -n "$HOOK_BASENAME" ]] || bad_env "BOOTSTRAP_HOOK_BASENAME is set but empty; an empty needle matches every command"
+[[ -n "$HOOK_COMMAND" ]] || bad_env "BOOTSTRAP_HOOK_COMMAND is set but empty; there would be nothing to run"
+# A whole number of seconds. No upper bound is imposed: what is too long for a
+# hook is the CLI's judgement, not this script's.
+[[ "$HOOK_TIMEOUT" =~ ^[0-9]+$ ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be a whole number of seconds, got '$HOOK_TIMEOUT'"
 
 result=$(python3 -c '
 import copy, json, os, sys

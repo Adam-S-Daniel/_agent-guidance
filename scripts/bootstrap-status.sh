@@ -49,8 +49,18 @@ set -euo pipefail
 #                   not read as one the sync can safely deliver to.
 #   missing       — file absent or empty (or empty stdin)
 
-HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
-HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
+# `${VAR-default}`, not `${VAR:-default}`: with the colon, a set-but-empty
+# value silently becomes the default. An empty BASENAME is the dangerous one —
+# `"" in str(command)` is TRUE for every string, so the classifier would
+# answer `registered` for any file at all, and the sync would skip every repo
+# whose hook never runs. Refused as a caller error rather than defaulted.
+HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME-skills-bootstrap.sh}"
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT-SessionStart}"
+
+if [[ -z "$HOOK_BASENAME" || -z "$HOOK_EVENT" ]]; then
+    echo "bootstrap-status.sh: BOOTSTRAP_HOOK_BASENAME and BOOTSTRAP_HOOK_EVENT must be non-empty; unset them for the defaults" >&2
+    exit 2
+fi
 
 classify() {
     python3 -c '

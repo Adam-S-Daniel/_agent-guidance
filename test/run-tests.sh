@@ -6225,6 +6225,21 @@ JSON
 
     result=$(cat "$d/registered.json" | "$s" -)
     [[ "$result" == "registered" ]] && pass "stdin mode: registered" || fail "stdin mode: registered (got '$result')"
+
+    # An empty BASENAME would make `"" in str(command)` true for every entry,
+    # so the classifier would answer `registered` for any file and the sync
+    # would skip every repo whose hook never runs. A caller error (exit 2),
+    # never one of the four classifications.
+    local badenv
+    for badenv in 'BOOTSTRAP_HOOK_BASENAME=' 'BOOTSTRAP_HOOK_EVENT='; do
+        rc=0
+        result=$(env "$badenv" "$s" "$d/registered.json" 2>/dev/null) || rc=$?
+        if [[ "$rc" -eq 2 && ! "$result" =~ (registered|no-entry|unparseable|missing) ]]; then
+            pass "$badenv -> exit 2 caller error (never a classification)"
+        else
+            fail "$badenv -> exit 2 caller error (got rc=$rc, stdout '$result')"
+        fi
+    done
 }
 
 # ── Test 5a: register-bootstrap-hook.sh (append + idempotence) ────────────
@@ -6332,6 +6347,43 @@ PY
             fail "register: $shape rewrote the file it refused"
         fi
     done
+
+    # THE ENV SEAM IS A PUBLIC INTERFACE, so a bad value is a named one-line
+    # refusal rather than a traceback or a silent default. `int(argv[4])` on
+    # `abc` used to raise ValueError and exit 1, which sync.sh logged as
+    # `WARN: could not register ... ()` with an empty reason; a set-but-empty
+    # EVENT or TIMEOUT used to register under SessionStart with a 90-second
+    # timeout, i.e. a working registration in the wrong place. An empty
+    # BASENAME is the one with teeth: `"" in str(command)` is true for every
+    # string, so idempotence would answer "already-registered" everywhere.
+    local badenv
+    for badenv in 'BOOTSTRAP_HOOK_TIMEOUT=abc' 'BOOTSTRAP_HOOK_TIMEOUT=' \
+                  'BOOTSTRAP_HOOK_TIMEOUT=-1' 'BOOTSTRAP_HOOK_EVENT=' \
+                  'BOOTSTRAP_HOOK_BASENAME=' 'BOOTSTRAP_HOOK_COMMAND='; do
+        printf '{}\n' > "$d/badenv.json"
+        rc=0
+        result=$(env "$badenv" "$r" "$d/badenv.json" 2>"$d/badenv.err") || rc=$?
+        if [[ "$rc" -eq 2 && "$result" == "refused-bad-env" ]]; then
+            pass "register: $badenv -> refused-bad-env, exit 2"
+        else
+            fail "register: $badenv -> rc=$rc out='$result'"
+        fi
+        assert_not_contains "$d/badenv.err" "Traceback" \
+            "register: $badenv produces no interpreter traceback"
+        if [[ "$(cat "$d/badenv.json")" == "{}" ]]; then
+            pass "register: $badenv wrote nothing"
+        else
+            fail "register: $badenv wrote to the file anyway"
+        fi
+    done
+
+    # An UNSET variable still means "use the default" — the seam's whole point
+    # is that sync.sh's fleet-memory call passes four of the five and gets the
+    # documented behaviour for the rest.
+    printf '{}\n' > "$d/defaults.json"
+    out=$("$r" "$d/defaults.json")
+    [[ "$out" == "registered" ]] && pass "register: unset variables still take the defaults" \
+        || fail "register: unset variables still take the defaults (got '$out')"
 
 }
 
