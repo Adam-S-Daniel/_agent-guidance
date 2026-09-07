@@ -307,7 +307,7 @@ def version_token(raw):
 
     Measured on the unsanitised version: a 100,000-character token in
     ~/.claude/CLAUDE.md produced a 100 kB receipt and a 100 kB line at the NEXT
-    session start, and a token carrying `\x1b[2J\x1b[1;31mSYSTEM: ...` reached
+    session start, and a token carrying `\\x1b[2J\\x1b[1;31mSYSTEM: ...` reached
     that line with its escapes intact -- the line the shipped stub tells every
     agent on ~20 repos to read. Not a privilege (whoever writes that file owns
     the guidance already), but a line that can be made to say anything, at any
