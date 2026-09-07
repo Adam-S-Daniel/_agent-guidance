@@ -18434,6 +18434,112 @@ print(json.dumps({"hook_event_name": "FileChanged", "memory_type": "User",
     fi
     rm -f "$receipt.tmp" "$escape" "$escape2"
 
+    # ── THE PATH IS NOT THE FILE: a hard link, and a FIFO ─────────────────
+    #
+    # O_NOFOLLOW refuses a symlink at the final component and says nothing
+    # about what the opened inode turns out to be. Two shapes walked through
+    # the symlink fix above:
+    #
+    #   * a HARD LINK is a second name for one inode, so the open succeeds and
+    #     the bytes land outside the config dir under the other name. At the
+    #     receipt's tmp path the O_TRUNC in its flags DESTROYS what was there.
+    #   * a FIFO blocks the open until a reader appears — past the 10-second
+    #     timeout the sync registers — and the python3 child is not reaped when
+    #     the CLI kills the wrapper: one blocked process per memory load.
+    #
+    # Four write sites, and the invariant is stated over all of them. Two are
+    # os.open (the log, the receipt tmp) and are fixed in open_owned; two are
+    # os.replace (the `.1` rotation target, the receipt itself) and are safe
+    # because a rename acts on the NAME. Pinned here either way, so a site that
+    # changes mechanism cannot quietly lose its cover.
+    instr_escape_case() {   # <label> <path to plant> <hard|sym> [big]
+        local label="$1" plant="$2" kind="$3"
+        local outside="$d/outside/escape-$label-$kind"
+        rm -f "$logf" "$logf.1" "$receipt" "$receipt.tmp" "$outside" "$plant"
+        printf 'PRE\n' > "$outside"
+        local before; before="$(md5sum "$outside" | cut -d' ' -f1)"
+        # A rotation only fires on a log at or past LOG_CAP, so the `.1` site
+        # is unreachable without one.
+        [[ "${4:-}" == "big" ]] && head -c 1100000 /dev/zero | tr '\0' 'x' > "$logf"
+        if [[ "$kind" == "hard" ]]; then ln "$outside" "$plant"; else ln -s "$outside" "$plant"; fi
+        instr_run "$d/out_escape_${label}_${kind}" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+        [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: a $kind link at the $label still exits 0" \
+            || fail "instructions-loaded: a $kind link at the $label exited $INSTR_RC"
+        local after; after="$(md5sum "$outside" | cut -d' ' -f1)"
+        if [[ "$before" == "$after" ]]; then
+            pass "instructions-loaded: a $kind link at the $label carries no write out of the config dir"
+        else
+            fail "instructions-loaded: the $kind link at the $label escaped — $outside is now $(wc -c < "$outside") bytes ($before -> $after)"
+        fi
+        rm -f "$plant" "$outside" "$logf" "$logf.1" "$receipt" "$receipt.tmp"
+    }
+
+    instr_escape_case log          "$logf"        hard
+    instr_escape_case log          "$logf"        sym
+    instr_escape_case "receipt tmp" "$receipt.tmp" hard
+    instr_escape_case "receipt tmp" "$receipt.tmp" sym
+    instr_escape_case receipt      "$receipt"     hard
+    instr_escape_case receipt      "$receipt"     sym
+    instr_escape_case "rotated log" "$logf.1"     hard big
+    instr_escape_case "rotated log" "$logf.1"     sym  big
+
+    # A FIFO at either os.open site. Bounded, so a regression is a timeout in
+    # one test rather than a suite that never returns — and the process table
+    # is read AFTER the wrapper exits, because the leak this pins is a child
+    # that outlives its parent's death.
+    instr_fifo_case() {   # <label> <path to plant>
+        local label="$1" plant="$2"
+        rm -f "$logf" "$logf.1" "$receipt" "$receipt.tmp" "$plant"
+        mkfifo "$plant"
+        local rc=0
+        # `--foreground`, and it is load-bearing. Plain `timeout` puts the
+        # command in a NEW PROCESS GROUP and signals the whole group, so it
+        # reaps the python3 grandchild too and the leak below cannot be seen
+        # (measured: 0 survivors with it, 1 without). The CLI kills the hook
+        # process it started, not a group; `--foreground` is what mirrors that.
+        printf '%s\n' "$(instr_event User session_start "$d/cfg/CLAUDE.md")" \
+            | timeout --foreground 5 env CLAUDE_CONFIG_DIR="$INSTR_CFG" bash "$INSTR_HOOK" \
+            > "$d/out_fifo_$label" 2>&1 || rc=$?
+        if [[ $rc -eq 0 ]]; then
+            pass "instructions-loaded: a FIFO at the $label returns, and exits 0"
+        else
+            fail "instructions-loaded: a FIFO at the $label exited $rc (124 = it blocked past the bound)"
+        fi
+        # Nothing was written through it: the FIFO is still an empty FIFO, or
+        # the failed write removed it. Either way no bytes reached a reader.
+        if [[ ! -e "$plant" ]] || [[ -p "$plant" ]]; then
+            pass "instructions-loaded: nothing is written through a FIFO at the $label"
+        else
+            fail "instructions-loaded: the FIFO at the $label was replaced by $(ls -ld "$plant")"
+        fi
+        # The wrapper has exited. A python3 still holding this config dir is
+        # the leak: one per memory load, reparented to init, until reboot.
+        # /proc and not `ps`: the hook's python3 carries the whole embedded
+        # program as argv[2] (~25 kB), and `ps` truncates the line long before
+        # the config-dir argument that identifies the process — the check read
+        # clean against a leak that was there. /proc/<pid>/cmdline is the
+        # untruncated list, and comparing whole NUL-separated fields with
+        # `grep -qxF` on a here-string (never a pipe, whose SIGPIPE race this
+        # repo has been bitten by) makes the match exact rather than a
+        # substring.
+        local survivors="" pd cl
+        for pd in /proc/[0-9]*; do
+            [[ "$(cat "$pd/comm" 2>/dev/null)" == "python3" ]] || continue
+            cl="$(tr '\0' '\n' < "$pd/cmdline" 2>/dev/null || true)"
+            grep -qxF -- "$INSTR_CFG" <<<"$cl" && survivors="$survivors ${pd#/proc/}"
+        done
+        if [[ -z "$survivors" ]]; then
+            pass "instructions-loaded: a FIFO at the $label leaves no blocked python3 child behind"
+        else
+            fail "instructions-loaded: a FIFO at the $label left blocked python3 child(ren):$survivors"
+            kill -9 $survivors 2>/dev/null || true
+        fi
+        rm -f "$plant" "$logf" "$logf.1" "$receipt" "$receipt.tmp"
+    }
+
+    instr_fifo_case log           "$logf"
+    instr_fifo_case "receipt tmp" "$receipt.tmp"
+
     # ── A state or receipt file too big to be ours is not read at all ─────
     #
     # fleet-memory.sh writes five short lines and this hook writes four, so

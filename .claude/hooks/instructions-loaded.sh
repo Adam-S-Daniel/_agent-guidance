@@ -83,7 +83,10 @@
 # OBSERVE-ONLY, ALWAYS. No decision field, no blocking, exit 0 on every event
 # — well-formed, malformed or hostile. This runs on EVERY memory load in every
 # session; its failure mode has to be "nothing happened", never "the session
-# broke". Nothing is ever written outside $CLAUDE_CONFIG_DIR.
+# broke". Nothing is ever written outside $CLAUDE_CONFIG_DIR: every write
+# goes through open_owned(), which refuses a symlink, a hard link and
+# anything that is not a regular file, and the two renames replace a name
+# rather than following one.
 set -uo pipefail
 
 # `${HOME:-}` and not `$HOME`: under `set -u` an unset HOME is a non-zero exit
@@ -145,6 +148,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 
@@ -220,21 +224,63 @@ def read_bytes(path, cap=FILE_CAP):
 
 
 def open_owned(path, flags):
-    """Open a path this hook owns, refusing to follow a symlink out of the dir.
+    """Open a file this hook owns: a regular file, with exactly one name.
 
-    `open(path, "a")` FOLLOWS a symlink. A link planted at the log -- or at the
-    receipt's tmp file -- would therefore make this hook append outside
-    $CLAUDE_CONFIG_DIR, and the header above states in absolute terms that it
-    never does. O_NOFOLLOW turns that into an OSError, which every caller here
-    already treats as "no receipt this time"; 0600 keeps a file we create
-    private rather than inheriting the umask.
+    THE PATH IS NOT THE FILE, and checking only the path is what the first fix
+    here got wrong. O_NOFOLLOW refuses a SYMLINK at the final component and
+    says nothing about what the opened inode turns out to be. Two shapes
+    walked straight through it:
 
-    Planting the link needs write access to ~/.claude, i.e. to the guidance and
-    to settings.json's hook commands, so this buys an attacker strictly less
-    than they already hold. It is fixed because the invariant is absolute, not
-    because the escape is a privilege.
+      * a HARD LINK -- a second name for the same inode, so the open succeeds
+        and the bytes land under both names. Measured: the JSON log line was
+        appended to a file outside $CLAUDE_CONFIG_DIR, and at the receipt's
+        tmp path the O_TRUNC in its flags DESTROYED that file's contents.
+      * a FIFO, which O_WRONLY blocks on until a reader appears -- past the
+        10-second timeout the sync registers, and the `python3 -c` child is
+        NOT reaped when the CLI kills the wrapper. Measured: one permanently
+        blocked process per memory load, reparented to init.
+
+    So the check is on the OPENED FILE, after the fact. S_ISREG rejects a
+    FIFO, a device and a directory; st_nlink == 1 rejects a hard link. Either
+    raises, and every caller here already treats an OSError as "no receipt
+    this time". O_NONBLOCK is what lets the fstat run at all in the FIFO case:
+    without it the open never returns. It has no effect on a regular file,
+    which is the only kind that gets past the check.
+
+    THE RENAME SITES NEED NONE OF THIS. os.replace acts on the NAME, so
+    rotating the log onto `.1` and moving the receipt tmp over the receipt
+    REPLACE a link planted there rather than writing through it -- measured
+    for a symlink and a hard link at both paths. That is why only these two
+    opens are wrapped, and why the tests still pin all four sites.
+
+    0600 keeps a file we create private rather than inheriting the umask.
+
+    Planting any of these needs write access to ~/.claude, i.e. to the
+    guidance and to settings.json's hook commands, so it buys an attacker
+    strictly less than they already hold. It is fixed because the invariant
+    the header states is absolute, not because the escape is a privilege.
     """
-    return os.open(path, flags | os.O_NOFOLLOW, 0o600)
+    # O_TRUNC IS APPLIED BY THE OPEN, before any check on the resulting fd
+    # could run -- so the receipt tmp's flags emptied the hard-linked file
+    # before fstat ever saw it (measured: the outside file went to 0 bytes
+    # with the checks below already in place). Strip it, and truncate only
+    # once the file has been vouched for.
+    truncate = bool(flags & os.O_TRUNC)
+    fd = os.open(path, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW | os.O_NONBLOCK,
+                 0o600)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("%s is not a regular file" % path)
+        if st.st_nlink != 1:
+            raise OSError("%s has %d names, so it is not ours alone"
+                          % (path, st.st_nlink))
+        if truncate:
+            os.ftruncate(fd, 0)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
 
 
 def relativize(path):
