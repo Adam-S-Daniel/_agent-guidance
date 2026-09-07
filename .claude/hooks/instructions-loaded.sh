@@ -132,6 +132,7 @@ MARKER = b"## Repo-specific additions"
 FILE_CAP = 4 << 20      # a memory file larger than this is not one of ours
 STDIN_CAP = 1 << 20     # an InstructionsLoaded event is a few hundred bytes
 LOG_CAP = 1 << 20       # rotate the log here, bounded at two files total
+STATE_CAP = 64 << 10    # a state or receipt file larger than this is not ours
 
 # Read stdin to EOF BEFORE deciding whether to parse it. Exiting early on an
 # oversized event would leave the writer holding a closed pipe: it takes
@@ -208,18 +209,36 @@ def relativize(path):
     return ".../" + "/".join(parts[-2:]) if parts else "..."
 
 
-def read_state():
-    """fleet-memory.sh's record of what it installed: version, bytes, sha256."""
+def read_kv(path):
+    """`key=value` lines from a small file this hook or its sibling wrote.
+
+    SIZE-CHECKED BEFORE IT IS READ. fleet-memory.sh writes five short lines
+    into fleet-guidance.state and this hook writes four into the receipt;
+    anything above STATE_CAP was written by neither, and reading it is the one
+    place a hook that runs on EVERY memory load can be made to spend real time
+    and real memory. Measured on the uncapped version: a 1 GB state file took
+    6-17 s and ~2 GB RSS against the 10-second timeout the sync registers, so
+    one corrupt file in the config dir killed the receipt on every load.
+    Refusing to read it degrades to silence, which is this hook's designed
+    failure mode; spending the whole timeout budget is not.
+    """
     out = {}
     try:
-        with open(STATE, encoding="utf-8") as fh:
-            for line in fh:
+        if not os.path.isfile(path) or os.path.getsize(path) > STATE_CAP:
+            return {}
+        with open(path, encoding="utf-8") as fh:
+            for line in fh.read(STATE_CAP).split("\n"):
                 if "=" in line:
                     key, _, value = line.partition("=")
                     out[key.strip()] = value.strip()
     except Exception:
         return {}
     return out
+
+
+def read_state():
+    """fleet-memory.sh's record of what it installed: version, bytes, sha256."""
+    return read_kv(STATE)
 
 
 # Every human-facing string in this program is built through here or written
@@ -360,15 +379,7 @@ def write_receipt(updates):
     replaced, so a Project event does not erase the User verdict from the same
     session, and replaced atomically so a half-written receipt is never read.
     """
-    existing = {}
-    try:
-        with open(RECEIPT, encoding="utf-8") as fh:
-            for line in fh:
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    existing[key.strip()] = value.rstrip("\n")
-    except Exception:
-        existing = {}
+    existing = read_kv(RECEIPT)
     # A MISMATCH IS NEVER OVERWRITTEN BY A HEALTHY VERDICT WITHIN ONE SESSION.
     # A multi-repo session loads many AGENTS.md files; if the last one simply
     # won, a repo reading BEHIND would be erased by the next repo reading
