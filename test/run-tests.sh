@@ -6564,6 +6564,65 @@ test_sync_bootstrap_drift() {
     fi
 }
 
+# THE UP-TO-DATE CHECK IS WHAT MAKES DELIVERY SELF-HEALING, and until this
+# test the receipt hook's two clauses in it were pinned nowhere. Deleting
+# `[[ "$instr_hook_state" != "current" ]] || [[ "$instr_reg_state" !=
+# "registered" ]]` from sync.sh's fleet_up_to_date left the whole suite green
+# while a repo whose hook had been deleted read "Up to date — skipping"
+# forever, with `hook=missing` printed one line above it. The three fleet_*
+# clauses beside them were already pinned; these two were not.
+test_sync_instructions_hook_repair() {
+    echo ""
+    echo "=== Test: sync.sh (a deleted receipt hook or registration is repaired) ==="
+
+    local w="$TEST_DIR/work/instr-repair"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    rm -f "$w/$INSTR_HOOK_REL_PATH_T"
+    python3 - "$w/.claude/settings.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+doc.get("hooks", {}).pop("InstructionsLoaded", None)
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\n")
+PY
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "delete the receipt hook and its registration" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-instr-repair.txt"
+    assert_contains "$TEST_DIR/sync-instr-repair.txt" \
+        "instructions-loaded: hook=missing settings=no-entry" \
+        "instr repair: the sync sees both halves of the receipt lane gone"
+
+    local v="$TEST_DIR/verify-instr-repair"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" 2>/dev/null || {
+        fail "instr repair: could not clone"
+        return
+    }
+    if cmp -s "$v/$INSTR_HOOK_REL_PATH_T" "$REPO_ROOT/$INSTR_HOOK_REL_PATH_T"; then
+        pass "instr repair: the deleted hook is restored byte-identical"
+    else
+        fail "instr repair: the deleted hook was NOT restored — the sync called the repo up to date"
+    fi
+    local st
+    st=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+         "$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
+    [[ "$st" == "registered" ]] && pass "instr repair: the deleted registration is restored" \
+        || fail "instr repair: registration reads '$st' after a run that should have repaired it"
+}
+
 # ── Test 5e: a digest mismatch disables delivery and fails the run ────────
 
 test_sync_bootstrap_bad_digest() {
@@ -18410,6 +18469,9 @@ test_sync_bootstrap_dry_run
 test_sync_bootstrap
 test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
+# Straight after the drift test it generalises: same self-healing property,
+# the other two artifacts.
+test_sync_instructions_hook_repair
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident
 # verdicts, because those are exactly what its control run re-asserts before
