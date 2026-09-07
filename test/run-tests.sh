@@ -6187,7 +6187,8 @@ JSON
     # before anything is written.
     local shape
     for shape in '{"hooks": null}' '{"hooks": "nope"}' '{"hooks": []}' \
-                 '{"hooks": {"SessionStart": "nope"}}'; do
+                 '{"hooks": {"SessionStart": "nope"}}' \
+                 '{"hooks": {"SessionStart": null}}'; do
         printf '%s\n' "$shape" > "$d/unusable.json"
         result=$("$s" "$d/unusable.json")
         [[ "$result" == "unparseable" ]] \
@@ -6332,7 +6333,8 @@ PY
     # logged as `WARN: could not register ... ()` with an empty reason.
     local shape result
     for shape in '{"hooks": null}' '{"hooks": "nope"}' '{"hooks": []}' \
-                 '{"hooks": {"SessionStart": "nope"}}'; do
+                 '{"hooks": {"SessionStart": "nope"}}' \
+                 '{"hooks": {"SessionStart": null}}'; do
         printf '%s\n' "$shape" > "$d/unusable.json"
         rc=0
         result=$("$r" "$d/unusable.json" 2>"$d/unusable.err") || rc=$?
@@ -19055,7 +19057,7 @@ test_hook_event_seam() {
     local d="$TEST_DIR/eventseam"
     rm -rf "$d"; mkdir -p "$d"
     local f="$d/settings.json"
-    local result
+    local result rc
 
     # Start from a settings.json that already registers a SessionStart hook,
     # because "does not disturb what is there" is the whole contract.
@@ -19101,6 +19103,47 @@ assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"],
     result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="skills-bootstrap.sh" "$status" "$f")
     [[ "$result" == "no-entry" ]] && pass "event seam: a SessionStart hook is not read as an InstructionsLoaded one" \
         || fail "event seam: classifier read '$result' for the wrong event"
+
+    # A NULL UNDER THE EVENT KEY, on both lanes. The fifth shape, and the one
+    # the classifier missed while the registrar refused it: `groups is not
+    # None` reads {"hooks": {"<event>": null}} as "no array here" rather than
+    # "an array we cannot append to". sync.sh then wrote and COMMITTED the
+    # hook into a consumer where nothing would ever run it, printed a WARN,
+    # tallied `0 failed`, and did it again every run — and the dry run
+    # promised an entry the real run could not append, which is the one thing
+    # a preview exists not to do.
+    local nullshape
+    for nullshape in SessionStart InstructionsLoaded; do
+        printf '{"hooks": {"%s": null}}\n' "$nullshape" > "$d/nullkey.json"
+        result=$(BOOTSTRAP_HOOK_EVENT="$nullshape" \
+                 BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" "$status" "$d/nullkey.json")
+        [[ "$result" == "unparseable" ]] \
+            && pass "event seam: a null under $nullshape classifies unparseable" \
+            || fail "event seam: a null under $nullshape classified '$result'"
+        rc=0
+        result=$(BOOTSTRAP_HOOK_EVENT="$nullshape" \
+                 BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+                 BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/instructions-loaded.sh"' \
+                 "$reg" "$d/nullkey.json" 2>"$d/nullkey.err") || rc=$?
+        if [[ "$rc" -eq 3 && "$result" == "refused-unparseable" ]]; then
+            pass "event seam: the registrar refuses a null under $nullshape, exit 3"
+        else
+            fail "event seam: the registrar answered rc=$rc '$result' for a null under $nullshape"
+        fi
+        if [[ "$(cat "$d/nullkey.json")" == "$(printf '{"hooks": {"%s": null}}' "$nullshape")" ]]; then
+            pass "event seam: a null under $nullshape left the file byte-identical"
+        else
+            fail "event seam: a null under $nullshape rewrote the file it refused"
+        fi
+    done
+
+    # …and the isolation still holds: a null under ONE event is not a reason
+    # to refuse a file whose other event is perfectly appendable.
+    printf '{"hooks": {"InstructionsLoaded": null, "SessionStart": []}}\n' > "$d/nullother.json"
+    result=$(BOOTSTRAP_HOOK_BASENAME="skills-bootstrap.sh" "$status" "$d/nullother.json")
+    [[ "$result" == "no-entry" ]] \
+        && pass "event seam: a null under another event leaves ours usable" \
+        || fail "event seam: a null under another event classified ours '$result'"
 
     # Idempotence is per event: a second run must not append a duplicate.
     result=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \

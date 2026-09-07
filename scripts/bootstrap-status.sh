@@ -104,7 +104,17 @@ if "hooks" in doc and not isinstance(hooks, dict):
     print("unparseable")
     sys.exit(0)
 groups = hooks.get(event) if isinstance(hooks, dict) else None
-if groups is not None and not isinstance(groups, list):
+# `event in hooks`, and NOT `groups is not None` -- the same distinction the
+# line above draws for the level up, and the same one the registrar draws
+# (`isinstance(hooks, dict) and event in hooks and not isinstance(...)`).
+# A literal {"hooks": {"<event>": null}} has the key with a None value, so
+# `groups is not None` was false and the file classified `no-entry` while the
+# registrar refused it: sync.sh wrote and COMMITTED the hook into a consumer
+# nothing would ever run it in, printed a WARN, tallied `0 failed`, and did it
+# again on every run. It also broke dry-run/real parity, the one thing the
+# preview exists to promise -- the dry run said it would append an entry the
+# real run cannot append.
+if isinstance(hooks, dict) and event in hooks and not isinstance(groups, list):
     print("unparseable")
     sys.exit(0)
 if groups is None:
