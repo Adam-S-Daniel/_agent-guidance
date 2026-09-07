@@ -361,7 +361,22 @@ def agents_verdict(data, state, path):
     What is NOT checkable is a hand edit to prose INSIDE a well-formed managed
     block: that needs the template the block was generated from, and a
     consumer repo does not carry one. This verdict does not pretend otherwise.
+
+    THE FILENAME GATES ALL OF IT. Without that gate the structural checks ran
+    on every Project memory file that merely QUOTED a marker anywhere -- a
+    `.claude/rules/*.md` naming BEGIN MANAGED SECTION in prose, a rules file
+    or a nested CLAUDE.md carrying its own `## Repo-specific additions`
+    heading -- and each one produced a false EDITED verdict that travelled
+    into the receipt and was printed at the next session start. This repo's
+    own tree is clean, so nothing here would have shown it; the ~20 consumer
+    repos are where it would have fired. The name is checked rather than the
+    `<!-- Source: _agent-guidance -->` line the build script emits, because a
+    corruption that removed that line would then silently stop the checking --
+    a filename survives the damage the checks exist to find.
     """
+    if os.path.basename(path) != "AGENTS.md":
+        return None
+
     lines = data.split(b"\n")
     begins = [i for i, l in enumerate(lines) if BEGIN_MANAGED in l]
     ends = [i for i, l in enumerate(lines) if END_MANAGED in l]
