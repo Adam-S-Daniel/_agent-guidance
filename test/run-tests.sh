@@ -17838,6 +17838,24 @@ test_instructions_loaded_hook() {
     assert_contains "$d/out_trunc" "truncated" \
         "instructions-loaded: the truncated mismatch says so by name"
 
+    # ── (a) User: same length, different bytes ────────────────────────────
+    #
+    # The ONLY detector for an equal-length tamper. `fleet-memory state:
+    # records the payload sha256` pins the field on the WRITER side and
+    # nothing at all on the reader side, so deleting the comparison here left
+    # the whole suite green while an edited block read `loaded`.
+    instr_install_block "$d/cfg" "$payload" "$pver"
+    instr_write_state "$d/cfg" "$pver" "$pbytes" "$psha"
+    sed -i 's/CORAL-EGRET-52/CORAL-EGRET-53/' "$d/cfg/CLAUDE.md"
+    rm -f "$receipt"
+    instr_run "$d/out_samelen" "$(instr_event User session_start "$d/cfg/CLAUDE.md")"
+    assert_contains "$d/out_samelen" "fleet-guidance: LOAD MISMATCH" \
+        "instructions-loaded: an equal-length edit is a LOAD MISMATCH"
+    assert_contains "$d/out_samelen" "same length, different bytes" \
+        "instructions-loaded: the equal-length mismatch says which reason it is"
+    assert_not_contains "$d/out_samelen" "fleet-guidance: loaded" \
+        "instructions-loaded: an equal-length edit is never reported loaded"
+
     # ── (a) User: the block installed TWICE ───────────────────────────────
     #
     # The same corruption shape the AGENTS.md half of this hook is named after
@@ -18168,6 +18186,57 @@ assert d["truncated"] is False, d
     assert_not_contains "$d/out_hostile" "command not found" \
         "instructions-loaded: no shell error reaches the session"
 
+    # THE ASSERTION ABOVE CANNOT FAIL ON ITS OWN. The hook ends with
+    # `python3 -c "$PROGRAM" ... 2>/dev/null`, so every stderr byte is
+    # discarded whatever the program does — the silence is deliberate and
+    # right, and it certifies the redirection rather than the code. What a
+    # crash actually costs is the LOG LINE, so count those instead: four of
+    # the nine events above name a real path (a missing file, a directory, a
+    # path with a newline, and a real AGENTS.md), and each must have appended
+    # exactly one line. Removing the file_path guard, for instance, kills the
+    # program with an AttributeError that nothing else here would see.
+    local hostile_lines; hostile_lines="$(wc -l < "$logf" | tr -d ' ')"
+    if [[ "$hostile_lines" -eq 4 ]]; then
+        pass "instructions-loaded: every hostile event naming a path still wrote its log line"
+    else
+        fail "instructions-loaded: expected 4 log lines from the hostile battery, got $hostile_lines"
+    fi
+
+    # …and that still cannot see a crash on an event that writes no line
+    # either way — deleting the file_path guard, say, turns a silent exit into
+    # a silent AttributeError. So run the SAME hook with only its final
+    # `2>/dev/null` removed, where stderr is observable. The redirection stays
+    # in the shipped hook (an exception printed into a session is worse than
+    # silence); what changes is that the claim about it can now be false.
+    local loud="$d/hook-stderr-visible.sh"
+    python3 - "$INSTR_HOOK" "$loud" <<'PY'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+needle = '"$STATE" 2>/dev/null'
+assert src.count(needle) == 1, "the hook no longer ends with the redirection this strips"
+open(sys.argv[2], "w", encoding="utf-8").write(src.replace(needle, '"$STATE"', 1))
+PY
+    : > "$d/out_loud"
+    for bad in \
+        '{"hook_event_name":"InstructionsLoaded","memory_type":"User","load_reason":"session_start"}' \
+        '{"hook_event_name":"InstructionsLoaded"}' \
+        '{"hook_event_name":"InstructionsLoaded","file_path":null}' \
+        'not json at all' \
+        '[]' \
+        "$(instr_event User session_start "$d/does-not-exist.md")" \
+        "$(instr_event Project session_start "$repo")" \
+        "$(instr_event Project session_start "$nl_path")" \
+        "$(instr_event User session_start "$d/cfg/CLAUDE.md")" \
+        "$(instr_event Project session_start "$repo/AGENTS.md")"
+    do
+        printf '%s\n' "$bad" \
+            | CLAUDE_CONFIG_DIR="$d/cfg" bash "$loud" >> "$d/out_loud" 2>&1
+    done
+    assert_not_contains "$d/out_loud" "Traceback" \
+        "instructions-loaded: with stderr visible, no event produces an interpreter traceback"
+    assert_not_contains "$d/out_loud" "Error" \
+        "instructions-loaded: with stderr visible, no event produces a python error"
+
     # A 10 MB stdin, the shape that turns a per-load hook into a memory
     # problem. It must be refused, not parsed.
     if { head -c 10000000 /dev/zero | tr '\0' 'x'; } \
@@ -18177,6 +18246,39 @@ assert d["truncated"] is False, d
         || fail "instructions-loaded: a 10 MB stdin exited $INSTR_RC"
     assert_not_contains "$d/out_big" "Traceback" \
         "instructions-loaded: a 10 MB stdin produces no traceback"
+
+    # …and the BOUND, not just the crash. A 10 MB string of `x` is refused by
+    # json.loads whether or not the cap exists, so the assertions above hold
+    # with the cap deleted. A VALID event past the cap is what pins it, and an
+    # equally valid one just under proves the bound is not simply "refuse
+    # everything big".
+    local over under
+    over="$(python3 -c '
+import json, sys
+print(json.dumps({"hook_event_name": "InstructionsLoaded", "memory_type": "User",
+                  "load_reason": "session_start", "session_id": "ffff0001",
+                  "cwd": "/nonexistent-cwd", "file_path": sys.argv[1],
+                  "pad": "p" * (1 << 21)}))' "$d/cfg/CLAUDE.md")"
+    under="$(python3 -c '
+import json, sys
+print(json.dumps({"hook_event_name": "InstructionsLoaded", "memory_type": "User",
+                  "load_reason": "session_start", "session_id": "ffff0002",
+                  "cwd": "/nonexistent-cwd", "file_path": sys.argv[1],
+                  "pad": "p" * (900 * 1024)}))' "$d/cfg/CLAUDE.md")"
+    rm -f "$logf" "$receipt"
+    instr_run "$d/out_over" "$over"
+    if [[ -e "$logf" ]]; then
+        fail "instructions-loaded: a valid event past the 1 MB cap was parsed anyway"
+    else
+        pass "instructions-loaded: a valid event past the 1 MB stdin cap is refused"
+    fi
+    instr_run "$d/out_under" "$under"
+    if [[ -s "$logf" ]]; then
+        pass "instructions-loaded: a valid event under the cap is still handled"
+    else
+        fail "instructions-loaded: the stdin cap refused an event under the bound"
+    fi
+    rm -f "$receipt"
 
     instr_tree_print "$repo" > "$d/tree_after"
     instr_tree_print "$d/outside" >> "$d/tree_after"
@@ -18478,12 +18580,37 @@ sys.exit("control byte %r in the receipt" % bad.group(0) if bad else 0)
 
     # Observe-only: no decision field, ever. A hook that learned to block
     # would be a hook that can stop a session from starting.
-    assert_not_contains "$INSTR_HOOK" '"decision"' \
-        "instructions-loaded: the hook emits no decision field"
-    assert_not_contains "$INSTR_HOOK" '"continue"' \
-        "instructions-loaded: the hook emits no continue field"
-    assert_not_contains "$INSTR_HOOK" '"systemMessage"' \
-        "instructions-loaded: the hook emits no systemMessage field"
+    #
+    # Asserted on what the hook PRINTS, not on its source. The three greps
+    # this replaces were a lint of the file — they pass on any tree where the
+    # file does not exist, which is why they stayed green on the base branch,
+    # and a hook that built the string some other way would pass them too. The
+    # control channel is JSON on stdout, so the test is that nothing this hook
+    # prints is a JSON object at all.
+    cat "$d/out_loaded" "$d/out_agents_ok" "$d/out_hostile" "$d/out_big" \
+        > "$d/out_everything" 2>/dev/null
+    local field
+    for field in '"decision"' '"continue"' '"systemMessage"' 'decision' 'systemMessage'; do
+        assert_not_contains "$d/out_everything" "$field" \
+            "instructions-loaded: nothing it prints carries $field"
+    done
+    if python3 -c '
+import json, sys
+for n, line in enumerate(open(sys.argv[1], encoding="utf-8", errors="replace"), 1):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except Exception:
+        continue          # a plain verdict line is exactly what we want
+    if isinstance(obj, dict):
+        sys.exit("line %d is a JSON object on stdout: %s" % (n, line[:80]))
+' "$d/out_everything" 2>"$d/control.err"; then
+        pass "instructions-loaded: it never prints a JSON object, so it has no control channel"
+    else
+        fail "instructions-loaded: $(cat "$d/control.err")"
+    fi
 }
 
 # The measurement that replaces a figure quoted by hand. "19 copies = 332.3k
