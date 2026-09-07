@@ -18518,6 +18518,44 @@ test_instructions_report() {
     assert_contains "$d/out_empty" "no receipts" \
         "instructions-report: an absent log says so in words"
 
+    # "Nothing parsed" is not "nothing ran". A log full of noise used to
+    # report "the hook has not run here", which sends a reader off to check
+    # the registration when what they actually have is a corrupted file — and
+    # this script's own header makes exactly that distinction about its exit
+    # codes.
+    head -c 4000 /dev/urandom | base64 > "$logf"
+    report "$d/out_noise"
+    [[ $REPORT_RC -eq 3 ]] && pass "instructions-report: a log that parses to nothing exits 3, not 2" \
+        || fail "instructions-report: an unparseable log exited $REPORT_RC, expected 3"
+    assert_contains "$d/out_noise" "none of them parseable" \
+        "instructions-report: the unparseable-log message says which answer it is"
+    assert_not_contains "$d/out_noise" "has not run here" \
+        "instructions-report: an unreadable log is not reported as a hook that never ran"
+
+    # An EMPTY log is still "nothing ran" — the two must not collapse.
+    : > "$logf"
+    report "$d/out_emptyfile"
+    [[ $REPORT_RC -eq 2 ]] && pass "instructions-report: an empty log file still exits 2" \
+        || fail "instructions-report: an empty log file exited $REPORT_RC, expected 2"
+
+    # THE SAME `${HOME:-}` DISCIPLINE THE HOOK HAS. `${CLAUDE_CONFIG_DIR:-$HOME/...}`
+    # under `set -u` is a raw "HOME: unbound variable" from bash, in a script
+    # whose every other error is its own sentence.
+    rm -f "$logf"
+    local nohome_rc=0
+    env -u HOME -u CLAUDE_CONFIG_DIR "$script" > "$d/out_nohome" 2>&1 || nohome_rc=$?
+    assert_not_contains "$d/out_nohome" "unbound variable" \
+        "instructions-report: an unset HOME is not a raw shell error"
+    assert_contains "$d/out_nohome" "pass --config-dir" \
+        "instructions-report: an unset HOME says what to do about it"
+    [[ $nohome_rc -eq 1 ]] && pass "instructions-report: an unset HOME is a usage error, exit 1" \
+        || fail "instructions-report: an unset HOME exited $nohome_rc, expected 1"
+
+    # …and --config-dir answers the question, so it must not be refused.
+    env -u HOME -u CLAUDE_CONFIG_DIR "$script" --config-dir "$d/cfg" > "$d/out_nohome_ok" 2>&1
+    assert_not_contains "$d/out_nohome_ok" "pass --config-dir" \
+        "instructions-report: --config-dir satisfies an unset HOME"
+
     # Two sessions, one of them split across the rotated file, plus a line
     # nothing can parse.
     {

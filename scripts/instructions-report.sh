@@ -28,11 +28,21 @@ set -uo pipefail
 # --format      text (default) or json.
 #
 # Exit: 0 with a report, 2 when there is nothing to report at all (an absent or
-# empty log), 1 on a usage error. A run that found NOTHING must not read the
-# same as a run that found nothing wrong — the convention
-# scripts/check-guidance-coverage.js already follows here.
+# empty log), 3 when a log IS there but nothing in it could be parsed, 1 on a
+# usage error. A run that found NOTHING must not read the same as a run that
+# found nothing wrong — the convention scripts/check-guidance-coverage.js
+# already follows here — and "the hook has not run" is a different answer from
+# "the hook ran and its log is unreadable": the first is a wiring question,
+# the second is a corrupted file.
 
-CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# `${HOME:-}` and not `$HOME`: under `set -u` an unset HOME is a raw
+# "HOME: unbound variable" from bash rather than this script's own error. The
+# sibling hook writes it the same way, for the same reason. If the default is
+# what we end up using and neither variable is set, that is a usage error with
+# a sentence attached — checked after the flags are parsed, since
+# --config-dir answers it.
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+CONFIG_DIR_GIVEN=false
 SHOW_ALL=false
 FORMAT=text
 
@@ -45,10 +55,10 @@ need_value() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --config-dir) need_value "$@"; CONFIG_DIR="$2"; shift 2 ;;
+        --config-dir) need_value "$@"; CONFIG_DIR="$2"; CONFIG_DIR_GIVEN=true; shift 2 ;;
         --all)        SHOW_ALL=true; shift ;;
         --format)     need_value "$@"; FORMAT="$2"; shift 2 ;;
-        -h|--help)    sed -n '4,32p' "$0"; exit 0 ;;
+        -h|--help)    sed -n '4,36p' "$0"; exit 0 ;;
         *) echo "instructions-report: unknown argument '$1'" >&2; exit 1 ;;
     esac
 done
@@ -57,6 +67,11 @@ case "$FORMAT" in
     text|json) ;;
     *) echo "instructions-report: --format must be text or json, got '$FORMAT'" >&2; exit 1 ;;
 esac
+
+if ! $CONFIG_DIR_GIVEN && [[ -z "${CLAUDE_CONFIG_DIR:-}" && -z "${HOME:-}" ]]; then
+    echo "instructions-report: neither CLAUDE_CONFIG_DIR nor HOME is set — pass --config-dir DIR" >&2
+    exit 1
+fi
 
 command -v python3 >/dev/null 2>&1 || {
     echo "instructions-report: python3 is required to read the log" >&2; exit 1; }
@@ -134,6 +149,17 @@ for path in files:
             ts = str(rec.get("ts", ""))
             if ts > entry["last_ts"]:
                 entry["last_ts"] = ts
+
+# "Nothing parsed" and "nothing ran" are DIFFERENT ANSWERS, and this script's
+# own header makes that distinction about exit 2 versus 0. A log full of noise
+# reported "the hook has not run here", which sends a reader to check the
+# registration when what they have is a corrupted file.
+if not sessions and unparseable:
+    sys.stderr.write(
+        "instructions-report: %d line(s) under %s, none of them parseable -- "
+        "the hook has run here, but its log cannot be read\n"
+        % (unparseable, shorten(config_dir)))
+    sys.exit(3)
 
 if not present or not sessions:
     sys.stderr.write(
