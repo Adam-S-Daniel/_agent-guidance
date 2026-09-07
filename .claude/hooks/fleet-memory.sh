@@ -95,6 +95,15 @@ report_previous_session() {
     [ "$unread" = "1" ] || return 0
     fleet="$(grep -m1 -- '^fleet=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
     agents="$(grep -m1 -- '^agents=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
+    # THE READ SIDE OF THE SAME LANE. These values are echoed straight into a
+    # terminal, and this hook runs BEFORE any memory load — so a receipt the
+    # load-time hook has not rewritten is announced exactly as it sits on
+    # disk. That hook's own clean() runs at WRITE time only, which covers
+    # nothing on a machine where it never runs, and a planted receipt carrying
+    # ESC sequences and a 5,000-character value printed both live and in full.
+    # Same two rules clean() applies: no control characters, 200 characters.
+    fleet="${fleet//[[:cntrl:]]/}"; fleet="${fleet:0:200}"
+    agents="${agents//[[:cntrl:]]/}"; agents="${agents:0:200}"
     [ -n "$fleet" ] && echo "fleet-guidance: previous session $fleet"
     case "$agents" in
         ""|current*) ;;

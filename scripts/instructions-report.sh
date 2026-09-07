@@ -79,9 +79,25 @@ command -v python3 >/dev/null 2>&1 || {
 python3 - "$CONFIG_DIR" "$SHOW_ALL" "$FORMAT" <<'PY'
 import json
 import os
+import re
 import sys
 
 config_dir, show_all, fmt = sys.argv[1], sys.argv[2] == "true", sys.argv[3]
+
+# The log's values are DATA READ OUT OF A FILE that this script echoes into a
+# terminal. `--format json` escapes them for free; the TEXT mode -- the output
+# this script's own header calls "the thing people quote" and describes as
+# pasted into pull requests -- printed `session`, `last_ts`, `memory_type` and
+# `load_reason` verbatim, so a load_reason carrying an ANSI sequence reached
+# the terminal live. Same two rules the hook applies at write time: no control
+# characters, and a cap. Applied at PRINT time only, so the json form stays a
+# faithful record of what the log holds.
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+TEXT_CAP = 200
+
+
+def clean(value):
+    return CONTROL_CHARS.sub("", str(value))[:TEXT_CAP]
 log = os.path.join(config_dir, "instructions-log.jsonl")
 files = [log + ".1", log]      # oldest first, so ts ordering reads naturally
 
@@ -183,7 +199,7 @@ if fmt == "json":
 
 
 def pairs(mapping):
-    return " | ".join("%s %s" % (k, v) for k, v in sorted(mapping.items()))
+    return " | ".join("%s %s" % (clean(k), v) for k, v in sorted(mapping.items()))
 
 
 total_files = sum(s["files"] for s in chosen)
@@ -198,8 +214,8 @@ if truncated:
 for entry in chosen:
     print("")
     print("session %s  %d files, %d bytes  (last load %s)"
-          % (entry["session"] or "(unset)", entry["files"], entry["bytes"],
-             entry["last_ts"] or "unknown"))
+          % (clean(entry["session"]) or "(unset)", entry["files"],
+             entry["bytes"], clean(entry["last_ts"]) or "unknown"))
     print("  bytes by memory type   %s" % pairs(entry["by_memory_type"]))
     print("  files by load reason   %s" % pairs(entry["by_load_reason"]))
 PY

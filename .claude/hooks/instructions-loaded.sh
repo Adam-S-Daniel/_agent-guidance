@@ -428,8 +428,28 @@ def fleet_verdict(data, state):
     # like ours and is a fraction of its length.
     if end is None:
         present = len(b"\n".join(lines[payload_start:]))
-        return mismatch("truncated (%d of %s bytes, no END marker)" % (
-            present, state.get("bytes", "?")))
+        # `bytes` is DATA READ OUT OF A FILE, exactly like the version token,
+        # and it is the one value in a verdict string that neither
+        # version_token nor clean guards -- it reaches emit() and the next
+        # session's start line uncapped and unsanitised. A digit string or
+        # nothing.
+        raw_want = state.get("bytes", "")
+        # The NUMBER and the DISPLAY STRING are computed separately on
+        # purpose: the comparison below needs an int or nothing, and the
+        # message needs something safe to echo. Deriving one from the other
+        # couples "we could not read it" to "we must not print it", and the
+        # int() then becomes reachable with whatever the file held.
+        want_n = int(raw_want) if raw_want.isdigit() and len(raw_want) <= 20 else None
+        want = raw_want if want_n is not None else "?"
+        # A block LONGER than the one installed is not a truncation, and
+        # "truncated (57154 of 57143 bytes)" reads as a shrink that did not
+        # happen. What was actually found is the missing END marker; the byte
+        # pair is reported without a name it has not earned.
+        if want_n is not None and present >= want_n:
+            return mismatch("no END marker (%d bytes present, %s installed)"
+                            % (present, want))
+        return mismatch("truncated (%d of %s bytes, no END marker)"
+                        % (present, want))
     # A second END with only one BEGIN is not the doubling above; it is a
     # block whose payload swallowed another one's tail. Named separately so
     # the line says which shape was found.
