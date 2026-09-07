@@ -17663,6 +17663,25 @@ test_fleet_memory_state_file() {
     assert_contains "$receipt" "fleet=LOAD MISMATCH" \
         "fleet-memory state: marking it read preserves the verdict itself"
 
+    # A REDIRECTION THAT FAILS IS STILL A MESSAGE IN THE SESSION'S FACE.
+    # `{ ... } > "$FILE.tmp" 2>/dev/null` suppresses the commands INSIDE the
+    # braces; the failure of the redirection itself is reported by the shell
+    # before any of them runs, so a directory at that path printed
+    # "…state.tmp: Is a directory" beside the verdict. This file's whole
+    # posture is that a state or receipt it cannot write costs the next
+    # session its verdict and nothing else.
+    rm -f "$state" "$receipt"
+    mkdir -p "$state.tmp" "$receipt.read.tmp"
+    printf 'unread=1\nfleet=loaded (v1, 1 bytes)\n' > "$receipt"
+    run_fm > "$d/out_blocked_tmp" 2>&1
+    assert_not_contains "$d/out_blocked_tmp" "Is a directory" \
+        "fleet-memory state: a blocked state or receipt tmp path reaches nobody"
+    assert_contains "$d/out_blocked_tmp" "fleet-guidance:" \
+        "fleet-memory state: the verdict is still printed when the tmp path is blocked"
+    rmdir "$state.tmp" "$receipt.read.tmp"
+    rm -f "$receipt"
+    run_fm > /dev/null
+
     # No receipt at all — the ordinary first session on a machine. Nothing to
     # report, and nothing invented.
     rm -f "$receipt"

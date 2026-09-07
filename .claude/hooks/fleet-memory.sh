@@ -112,26 +112,39 @@ report_previous_session() {
 # planted there either.
 mark_receipt_read() {
     local tmp="$RECEIPT_FILE.read.tmp"
-    rm -f "$tmp" 2>/dev/null
-    if sed 's/^unread=1$/unread=0/' "$RECEIPT_FILE" > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$RECEIPT_FILE" 2>/dev/null
-    fi
-    rm -f "$tmp" 2>/dev/null
+    # Same wrapping as write_state, for the same reason: the failure of
+    # `> "$tmp"` is the shell's message, not sed's, so an inner 2>/dev/null
+    # would not cover it.
+    {
+        rm -f "$tmp"
+        if sed 's/^unread=1$/unread=0/' "$RECEIPT_FILE" > "$tmp"; then
+            mv "$tmp" "$RECEIPT_FILE"
+        fi
+        rm -f "$tmp"
+    } 2>/dev/null
     return 0
 }
 
 # Record what this run installed. Best-effort by construction: a state file
 # that cannot be written costs the next session its load-time verdict and
 # nothing else, so it must never turn a working delivery into a DEGRADED one.
+# The outer `2>/dev/null` covers the REDIRECTION, not just the commands inside
+# the braces. `{ ...; } > "$F" 2>/dev/null` applies the suppression only after
+# the redirection has been set up, so a directory at that path printed
+# "…state.tmp: Is a directory" into the session beside the verdict. Wrapping
+# the whole compound is what makes "costs the next session its verdict and
+# nothing else" true.
 write_state() {   # <verdict> <version> <bytes> <sha256>
     {
-        printf 'version=%s\n' "$2"
-        printf 'bytes=%s\n' "$3"
-        printf 'sha256=%s\n' "$4"
-        printf 'verdict=%s\n' "$1"
-        printf 'ts=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-    } > "$STATE_FILE.tmp" 2>/dev/null && mv "$STATE_FILE.tmp" "$STATE_FILE" 2>/dev/null
-    rm -f "$STATE_FILE.tmp" 2>/dev/null
+        {
+            printf 'version=%s\n' "$2"
+            printf 'bytes=%s\n' "$3"
+            printf 'sha256=%s\n' "$4"
+            printf 'verdict=%s\n' "$1"
+            printf 'ts=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+        } > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+        rm -f "$STATE_FILE.tmp"
+    } 2>/dev/null
     return 0
 }
 
