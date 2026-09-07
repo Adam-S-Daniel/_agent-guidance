@@ -305,9 +305,21 @@ def fleet_verdict(data, state):
     want_version = version_token(want_version)
 
     lines = data.split(b"\n")
-    begin = next((i for i, l in enumerate(lines) if l.startswith(BEGIN_FLEET)), None)
-    if begin is None:
+    # COUNTED, not "the first one". Taking the first BEGIN and the first END
+    # after it parses a DOUBLED file -- a regeneration that prepended a fresh
+    # block on top of the old one, the c86465f shape the AGENTS.md half of
+    # this hook is named after -- as one perfect block: measured on the
+    # earlier version, `golden + golden` read `loaded (v..., 57007 bytes)`
+    # while the session had loaded 114 kB. Counting is the only thing that
+    # tells a doubled file from a well-formed one, which is why
+    # check-agents-md.sh counts for the other block too.
+    begins = [i for i, l in enumerate(lines) if l.startswith(BEGIN_FLEET)]
+    if not begins:
         return mismatch("block absent from the file the session loaded")
+    if len(begins) != 1:
+        return mismatch("the managed block appears %d times in the file the "
+                        "session loaded" % len(begins))
+    begin = begins[0]
 
     version = "unknown"
     payload_start = begin + 1
@@ -316,7 +328,8 @@ def fleet_verdict(data, state):
         version = version_token(token)
         payload_start = begin + 2
 
-    end = next((i for i in range(payload_start, len(lines)) if lines[i].strip() == END_FLEET), None)
+    ends = [i for i in range(payload_start, len(lines)) if lines[i].strip() == END_FLEET]
+    end = ends[0] if ends else None
 
     if version != want_version:
         return mismatch("stale version (loaded v%s, installed v%s)" % (version, want_version))
@@ -328,6 +341,12 @@ def fleet_verdict(data, state):
         present = len(b"\n".join(lines[payload_start:]))
         return mismatch("truncated (%d of %s bytes, no END marker)" % (
             present, state.get("bytes", "?")))
+    # A second END with only one BEGIN is not the doubling above; it is a
+    # block whose payload swallowed another one's tail. Named separately so
+    # the line says which shape was found.
+    if len(ends) != 1:
+        return mismatch("expected exactly one END FLEET GUIDANCE line, found "
+                        "%d" % len(ends))
 
     payload = b"\n".join(lines[payload_start:end])
     if payload:
