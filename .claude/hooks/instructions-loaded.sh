@@ -167,6 +167,24 @@ def read_bytes(path, cap=FILE_CAP):
         return None
 
 
+def open_owned(path, flags):
+    """Open a path this hook owns, refusing to follow a symlink out of the dir.
+
+    `open(path, "a")` FOLLOWS a symlink. A link planted at the log -- or at the
+    receipt's tmp file -- would therefore make this hook append outside
+    $CLAUDE_CONFIG_DIR, and the header above states in absolute terms that it
+    never does. O_NOFOLLOW turns that into an OSError, which every caller here
+    already treats as "no receipt this time"; 0600 keeps a file we create
+    private rather than inheriting the umask.
+
+    Planting the link needs write access to ~/.claude, i.e. to the guidance and
+    to settings.json's hook commands, so this buys an attacker strictly less
+    than they already hold. It is fixed because the invariant is absolute, not
+    because the escape is a privilege.
+    """
+    return os.open(path, flags | os.O_NOFOLLOW, 0o600)
+
+
 def relativize(path):
     """A path that is never absolute.
 
@@ -369,9 +387,10 @@ def write_receipt(updates):
     keys = [k for k in order if k in existing] + sorted(k for k in existing if k not in order)
     tmp = RECEIPT + ".tmp"
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
+        fd = open_owned(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        with os.fdopen(fd, "wb") as fh:
             for key in keys:
-                fh.write("%s=%s\n" % (key, existing[key]))
+                fh.write(("%s=%s\n" % (key, existing[key])).encode("utf-8"))
         os.replace(tmp, RECEIPT)
     except Exception:
         try:
@@ -416,10 +435,17 @@ record = {
     "sha256": hashlib.sha256(content).hexdigest() if content is not None else "",
 }
 try:
-    if os.path.exists(LOG) and os.path.getsize(LOG) >= LOG_CAP:
-        os.replace(LOG, LOG + ".1")
-    with open(LOG, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=True) + "\n")
+    # lstat, not getsize: the size that decides a rotation must be the LOG's
+    # own, never that of whatever a symlink at that path points at. A symlink
+    # is a few dozen bytes, so it never rotates and never becomes the `.1`
+    # file that instructions-report.sh would then read through.
+    if os.path.lexists(LOG) and os.lstat(LOG).st_size >= LOG_CAP:
+        os.replace(LOG, LOG + ".1")   # renames the link itself, never follows
+    fd = open_owned(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+    with os.fdopen(fd, "wb") as fh:
+        # ensure_ascii makes this program's output pure ASCII, so the encode
+        # cannot raise on a path carrying non-ASCII bytes.
+        fh.write((json.dumps(record, ensure_ascii=True) + "\n").encode("ascii"))
 except Exception:
     pass
 
