@@ -18242,7 +18242,7 @@ PY
         "$(instr_event Project session_start "$repo/AGENTS.md")"
     do
         printf '%s\n' "$bad" \
-            | CLAUDE_CONFIG_DIR="$d/cfg" bash "$loud" >> "$d/out_loud" 2>&1
+            | CLAUDE_CONFIG_DIR="$d/cfg" bash "$loud" >> "$d/out_loud" 2>&1 || true
     done
     assert_not_contains "$d/out_loud" "Traceback" \
         "instructions-loaded: with stderr visible, no event produces an interpreter traceback"
@@ -18600,7 +18600,7 @@ sys.exit("control byte %r in the receipt" % bad.group(0) if bad else 0)
     # control channel is JSON on stdout, so the test is that nothing this hook
     # prints is a JSON object at all.
     cat "$d/out_loaded" "$d/out_agents_ok" "$d/out_hostile" "$d/out_big" \
-        > "$d/out_everything" 2>/dev/null
+        > "$d/out_everything" 2>/dev/null || true
     local field
     for field in '"decision"' '"continue"' '"systemMessage"' 'decision' 'systemMessage'; do
         assert_not_contains "$d/out_everything" "$field" \
@@ -18691,7 +18691,10 @@ test_instructions_report() {
         || fail "instructions-report: an unset HOME exited $nohome_rc, expected 1"
 
     # …and --config-dir answers the question, so it must not be refused.
-    env -u HOME -u CLAUDE_CONFIG_DIR "$script" --config-dir "$d/cfg" > "$d/out_nohome_ok" 2>&1
+    # `|| true`: the script exits 2 here (there is no log), and an unguarded
+    # non-zero command at statement level aborts the whole suite under `set -e`
+    # — the trap this file's own instr_run comment is about.
+    env -u HOME -u CLAUDE_CONFIG_DIR "$script" --config-dir "$d/cfg" > "$d/out_nohome_ok" 2>&1 || true
     assert_not_contains "$d/out_nohome_ok" "pass --config-dir" \
         "instructions-report: --config-dir satisfies an unset HOME"
 
