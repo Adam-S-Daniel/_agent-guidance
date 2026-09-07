@@ -177,6 +177,16 @@ except Exception:
 if not isinstance(event, dict):
     sys.exit(0)
 
+# Act on THIS event and no other. Unreachable from the fleet's own settings,
+# which register this hook only under InstructionsLoaded -- but a copy-pasted
+# entry under an event that also carries a `file_path` (FileChanged, say)
+# would have this hook logging every edited file as a memory load and judging
+# AGENTS.md files nobody asked it about. One comparison, and the seam that
+# lets the sync register two different hooks through one registrar makes
+# exactly that copy-paste plausible.
+if event.get("hook_event_name") != "InstructionsLoaded":
+    sys.exit(0)
+
 file_path = event.get("file_path")
 if not isinstance(file_path, str) or not file_path:
     sys.exit(0)

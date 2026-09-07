@@ -18179,6 +18179,31 @@ for n, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
     drain_case "no config dir" CLAUDE_CONFIG_DIR="$d/not-a-directory"
     drain_case "no python3" CLAUDE_CONFIG_DIR="$d/cfg" PATH="$d/nopy"
     drain_case "normal" CLAUDE_CONFIG_DIR="$d/cfg"
+
+    # ── It acts on InstructionsLoaded events, and on nothing else ─────────
+    #
+    # Registered only under InstructionsLoaded today, so this is unreachable
+    # from the fleet's own settings — but a copy-pasted entry under, say,
+    # FileChanged also carries a `file_path`, and the hook would then log
+    # every edited file as a memory load and judge AGENTS.md files nobody
+    # asked it about. One comparison closes it.
+    rm -f "$logf" "$receipt"
+    local wrong_event
+    wrong_event="$(python3 -c '
+import json, sys
+print(json.dumps({"hook_event_name": "FileChanged", "memory_type": "User",
+                  "load_reason": "session_start", "session_id": "eeee0001",
+                  "cwd": "/nonexistent-cwd", "file_path": sys.argv[1]}))' "$d/cfg/CLAUDE.md")"
+    instr_run "$d/out_wrong_event" "$wrong_event"
+    [[ $INSTR_RC -eq 0 ]] && pass "instructions-loaded: an event for another hook still exits 0" \
+        || fail "instructions-loaded: an event for another hook exited $INSTR_RC"
+    if [[ -e "$logf" ]]; then
+        fail "instructions-loaded: an event for another hook was logged as a memory load"
+    else
+        pass "instructions-loaded: an event for another hook writes no log line"
+    fi
+    assert_not_contains "$d/out_wrong_event" "fleet-guidance:" \
+        "instructions-loaded: an event for another hook produces no verdict"
     rm -f "$big"
     instr_install_block "$d/cfg" "$payload" "$pver"
     instr_write_state "$d/cfg" "$pver" "$pbytes" "$psha"
