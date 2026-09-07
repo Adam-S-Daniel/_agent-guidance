@@ -111,6 +111,7 @@ read -r -d '' INSTRUCTIONS_RECEIPT_PROGRAM <<'PY'
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 
@@ -133,6 +134,13 @@ FILE_CAP = 4 << 20      # a memory file larger than this is not one of ours
 STDIN_CAP = 1 << 20     # an InstructionsLoaded event is a few hundred bytes
 LOG_CAP = 1 << 20       # rotate the log here, bounded at two files total
 STATE_CAP = 64 << 10    # a state or receipt file larger than this is not ours
+VALUE_CAP = 200         # a receipt value; the longest verdict is ~65 chars
+
+# The version token is DATA READ OUT OF A FILE that ends up echoed verbatim
+# into a terminal by the next session's SessionStart hook. fleet-memory.sh
+# writes eight hex characters; nothing else needs to survive.
+VERSION_CHARS = re.compile(r"[^0-9a-zA-Z._-]")
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 # Read stdin to EOF BEFORE deciding whether to parse it. Exiting early on an
 # oversized event would leave the writer holding a closed pipe: it takes
@@ -251,6 +259,34 @@ def mismatch(text):
     return "LOAD MISMATCH \u2014 " + text
 
 
+def version_token(raw):
+    """A version id, or "unknown". Never anything else.
+
+    Measured on the unsanitised version: a 100,000-character token in
+    ~/.claude/CLAUDE.md produced a 100 kB receipt and a 100 kB line at the NEXT
+    session start, and a token carrying `\x1b[2J\x1b[1;31mSYSTEM: ...` reached
+    that line with its escapes intact -- the line the shipped stub tells every
+    agent on ~20 repos to read. Not a privilege (whoever writes that file owns
+    the guidance already), but a line that can be made to say anything, at any
+    length, is not a verdict.
+    """
+    if isinstance(raw, bytes):
+        raw = raw.decode("ascii", "replace")
+    return VERSION_CHARS.sub("", raw)[:16] or "unknown"
+
+
+def clean(value):
+    """A receipt value that cannot carry a control sequence or a screenful.
+
+    The receipt is a `key=value` file whose values are echoed into a terminal,
+    so a newline in one would forge a second key and a control sequence would
+    reach the session start intact. Applied to every value stored, not only to
+    the ones built from a version token, so a future verdict string inherits
+    the guarantee instead of re-earning it.
+    """
+    return CONTROL_CHARS.sub("", str(value))[:VALUE_CAP]
+
+
 def fleet_verdict(data, state):
     """What the session actually loaded, against what was installed.
 
@@ -263,6 +299,10 @@ def fleet_verdict(data, state):
     want_version = state.get("version", "")
     if not want_version:
         return None
+    # After the emptiness guard, not before it: an empty version means "no
+    # state to compare against", which version_token would turn into the
+    # string "unknown" and a verdict this hook has no business making.
+    want_version = version_token(want_version)
 
     lines = data.split(b"\n")
     begin = next((i for i, l in enumerate(lines) if l.startswith(BEGIN_FLEET)), None)
@@ -273,10 +313,7 @@ def fleet_verdict(data, state):
     payload_start = begin + 1
     if begin + 1 < len(lines) and lines[begin + 1].startswith(VERSION_PREFIX):
         token = lines[begin + 1][len(VERSION_PREFIX):].split(b"-->")[0].strip()
-        try:
-            version = token.decode("ascii")
-        except Exception:
-            version = "unknown"
+        version = version_token(token)
         payload_start = begin + 2
 
     end = next((i for i in range(payload_start, len(lines)) if lines[i].strip() == END_FLEET), None)
@@ -350,6 +387,7 @@ def agents_verdict(data, state, path):
     want_version = state.get("version", "")
     if not want_version:
         return None
+    want_version = version_token(want_version)
 
     payload = read_bytes(os.path.join(os.path.dirname(path), ".claude", "hooks",
                                       "fleet-guidance.md"))
@@ -394,6 +432,7 @@ def write_receipt(updates):
         if same_session and previous and not healthy(previous) and healthy(updates[key]):
             del updates[key]
     existing.update(updates)
+    existing = {k: clean(v) for k, v in existing.items()}
     order = ["ts", "session", "fleet", "agents"]
     keys = [k for k in order if k in existing] + sorted(k for k in existing if k not in order)
     tmp = RECEIPT + ".tmp"
