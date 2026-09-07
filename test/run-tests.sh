@@ -18046,6 +18046,39 @@ if d["sha256"] != sys.argv[3]:
         fail "instructions-loaded: log line — $(cat "$d/logline2.err")"
     fi
 
+    # A file larger than the 4 MiB read cap: the DIGEST covers the first
+    # 4 MiB, so the byte count must be the file's real size and the line must
+    # say the digest is partial. Reporting the cap as if it were the file made
+    # instructions-report.sh — sold as the measurement that replaces a
+    # hand-quoted figure — under-report without saying so.
+    rm -f "$logf" "$receipt"
+    truncate -s 5M "$repo/BIG.md"
+    instr_run "$d/out_big_file" "$(instr_event Project session_start "$repo/BIG.md")"
+    if python3 -c '
+import json, sys
+d = json.loads(sys.argv[1])
+assert d["bytes"] == 5 * 1024 * 1024, d["bytes"]
+assert d["truncated"] is True, d
+assert len(d["sha256"]) == 64, d["sha256"]
+' "$(tail -1 "$logf")" 2>"$d/bigfile.err"; then
+        pass "instructions-loaded: a file past the read cap logs its real size, flagged truncated"
+    else
+        fail "instructions-loaded: over-cap log line — $(cat "$d/bigfile.err")"
+    fi
+    rm -f "$repo/BIG.md"
+
+    rm -f "$logf"
+    instr_run "$d/out_small_file" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    if python3 -c '
+import json, sys
+d = json.loads(sys.argv[1])
+assert d["truncated"] is False, d
+' "$(tail -1 "$logf")" 2>"$d/smallfile.err"; then
+        pass "instructions-loaded: an ordinary memory file is not flagged truncated"
+    else
+        fail "instructions-loaded: under-cap log line — $(cat "$d/smallfile.err")"
+    fi
+
     # Rotation at 1 MB, so an unattended machine cannot fill a disk with
     # receipts. Bounded at two files: the live log and one predecessor.
     rm -f "$logf" "$logf.1"
@@ -18515,6 +18548,17 @@ test_instructions_report() {
     assert_contains "$d/out_all" "bbbb0002" "instructions-report: --all still includes the latest"
     assert_contains "$d/out_all" "63954" "instructions-report: the rotated file's bytes are counted"
     assert_contains "$d/out_all" "1 unparseable" "instructions-report: unparseable lines are counted, not fatal"
+
+    # A file past the hook's 4 MiB read cap: `bytes` is the file's real size,
+    # the digest covers only its first 4 MiB, and this report is the thing
+    # people quote — so it says so rather than leaving the flag in the log.
+    printf '{"ts":"2026-09-05T12:00:02Z","session":"bbbb0002","load_reason":"session_start","memory_type":"Project","file_path":"repo-b/BIG.md","bytes":104857600,"sha256":"x","truncated":true}\n' >> "$logf"
+    report "$d/out_trunc"
+    assert_contains "$d/out_trunc" "1 file(s) over the 4 MiB read cap" \
+        "instructions-report: an over-cap read is named, not silently averaged in"
+    report "$d/out_trunc_json" --format json
+    assert_contains "$d/out_trunc_json" '"truncated": 1' \
+        "instructions-report: the json surface carries the over-cap count too"
 
     # An absolute path in this output is the failure this whole lane guards:
     # the report gets pasted into pull requests on a public repo.

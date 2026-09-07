@@ -568,19 +568,40 @@ def emit(line):
 # than a directory. `session` is a truncated DIGEST of the session id, not the
 # id: it groups exactly as well and carries nothing onward.
 #
+# `truncated` says the digest covers only the first FILE_CAP bytes of a larger
+# file; `bytes` is the file's real size either way.
+#
 # `bytes: 0` with an empty `sha256` is how an unreadable path is recorded -- a
 # file that was deleted between the load and this hook, a directory, a path
 # that never existed. An empty file has a real digest, so the empty string can
 # only mean "not read".
 content = read_bytes(file_path)
+
+# `bytes` is the FILE's size, not the number of bytes this hook read. Above
+# FILE_CAP the digest covers only the first 4 MiB, and reporting the cap as if
+# it were the file made instructions-report.sh -- the measurement sold as the
+# replacement for a figure quoted by hand -- under-report without saying so.
+# `truncated` is what tells the two apart: a 100 MB file logs 104857600 bytes,
+# a partial digest, and truncated=true.
+size = len(content) if content is not None else 0
+truncated = False
+if content is not None and len(content) >= FILE_CAP:
+    try:
+        real = os.path.getsize(file_path)
+    except Exception:
+        real = size
+    truncated = real > size      # exactly FILE_CAP bytes is not truncation
+    size = real
+
 record = {
     "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "session": hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:8] if session_id else "",
     "load_reason": load_reason,
     "memory_type": memory_type,
     "file_path": relativize(file_path),
-    "bytes": len(content) if content is not None else 0,
+    "bytes": size,
     "sha256": hashlib.sha256(content).hexdigest() if content is not None else "",
+    "truncated": truncated,
 }
 try:
     # lstat, not getsize: the size that decides a rotation must be the LOG's

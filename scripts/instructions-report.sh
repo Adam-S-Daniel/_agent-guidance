@@ -84,6 +84,7 @@ def shorten(path):
 sessions = {}
 order = []
 unparseable = 0
+truncated = 0
 present = False
 
 for path in files:
@@ -120,6 +121,12 @@ for path in files:
                 order.append(key)
             entry["files"] += 1
             entry["bytes"] += size
+            # The hook reads at most 4 MiB of any one file, so a flagged line
+            # carries the file's real size beside a digest of its first 4 MiB.
+            # Said out loud rather than left in the log, because this report
+            # is the thing people quote.
+            if rec.get("truncated"):
+                truncated += 1
             mt = str(rec.get("memory_type", "")) or "(unset)"
             lr = str(rec.get("load_reason", "")) or "(unset)"
             entry["by_memory_type"][mt] = entry["by_memory_type"].get(mt, 0) + size
@@ -143,6 +150,7 @@ if fmt == "json":
     print(json.dumps({
         "log": shorten(log),
         "unparseable": unparseable,
+        "truncated": truncated,
         "sessions": chosen,
     }, indent=2, sort_keys=True))
     sys.exit(0)
@@ -158,6 +166,9 @@ print("instructions-report: %d session(s), %d files, %d bytes  (%s)"
       % (len(chosen), total_files, total_bytes, shorten(log)))
 if unparseable:
     print("  %d unparseable line(s) skipped" % unparseable)
+if truncated:
+    print("  %d file(s) over the 4 MiB read cap: bytes are the file's real "
+          "size, sha256 covers the first 4 MiB" % truncated)
 for entry in chosen:
     print("")
     print("session %s  %d files, %d bytes  (last load %s)"
