@@ -148,7 +148,7 @@
   heading: '"fleet-guidance: current" is not "the guidance is in context"'
   file: agents-md/base.md
   status: gap
-  bytes: 1053
+  bytes: 1189
 
 - id: skills-ecosystem
   heading: Skills ecosystem

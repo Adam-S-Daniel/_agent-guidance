@@ -46,9 +46,12 @@ its own output reaches nothing, the NEXT session start prints what it found:
 - `fleet-guidance: previous session LOAD MISMATCH — <reason>` — it was not:
   truncated after the session started, a stale version, or absent. Check this
   session's own verdict before trusting the guidance you are holding.
-- `agents-md: previous session BEHIND …` / `EDITED ABOVE THE MARKER …` — a
-  repo AGENTS.md out of step with the guidance in context. A healthy one says
-  nothing.
+- `agents-md: previous session BEHIND …` / `MANAGED BLOCK MALFORMED …` — a
+  repo AGENTS.md shipping different guidance from the one in context, or whose
+  managed block's markers are damaged (doubled, missing, out of order). A
+  healthy one says nothing. It does **not** check the managed text itself: a
+  hand edit inside a structurally intact block reads `current`, because
+  nothing records what that block should have said.
 
 ## The floor: rules that hold even when the guidance did not load
 

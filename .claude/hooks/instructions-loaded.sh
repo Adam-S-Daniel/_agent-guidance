@@ -379,7 +379,17 @@ def agents_verdict(data, state, path):
 
     What is NOT checkable is a hand edit to prose INSIDE a well-formed managed
     block: that needs the template the block was generated from, and a
-    consumer repo does not carry one. This verdict does not pretend otherwise.
+    consumer repo does not carry one -- fleet-guidance.state records the
+    digest of the PAYLOAD, while the managed region is rendered per-repo by
+    build-agents-md.sh from that repo's own `sections:`. Issue #123's item
+    1(b) asked for exactly that comparison; it is not implemented, and the
+    verdict is named MANAGED BLOCK MALFORMED rather than EDITED ABOVE THE
+    MARKER so it claims only what it measures. An operator reads the old name
+    as "someone changed the text", and a one-byte prose edit inside a
+    structurally intact block reads `current`. Closing 1(b) needs a
+    `Managed-sha256:` header line emitted at sync time -- a change to the
+    managed-block format in ~20 repos -- and is recorded as a follow-up in
+    docs/guidance-impact.md rather than smuggled in behind a verdict name.
 
     THE FILENAME GATES ALL OF IT. Without that gate the structural checks ran
     on every Project memory file that merely QUOTED a marker anywhere -- a
@@ -406,7 +416,7 @@ def agents_verdict(data, state, path):
     if not begins and not markers and not fragments:
         return None      # an ordinary project memory file; nothing to judge
 
-    edited = "EDITED ABOVE THE MARKER \u2014 "
+    edited = "MANAGED BLOCK MALFORMED \u2014 "
     if len(begins) != 1:
         return edited + "expected exactly one BEGIN MANAGED SECTION line, found %d" % len(begins)
     if len(ends) != 1:

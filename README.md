@@ -208,6 +208,21 @@ against a local stub API endpoint and never a real credential:
   hook (`fleet-guidance: previous session …`), which is what keeps a mismatch
   silent for one session and no longer.
 
+What it does **not** check is the managed text itself. Issue #123's item 1(b)
+asked for a hash of a repo's managed region against "the synced template
+recorded in the state file", and there is no such template:
+`fleet-guidance.state` records the digest of the *payload*
+(`agents-md/base.md`), while a repo's managed region is rendered per-repo by
+`build-agents-md.sh` from that repo's own `sections:`. So the `agents-md:`
+verdict is named `MANAGED BLOCK MALFORMED`, not `EDITED ABOVE THE MARKER`: it
+measures marker structure (doubled, missing, out of order, a truncated
+fragment) and the guidance version the repo ships, and a one-byte prose edit
+inside a structurally intact block reads `current`. Closing 1(b) means
+emitting a `Managed-sha256:` header line at sync time — a managed-block format
+change across ~20 repos — and is recorded as a rejected proposal in
+[`docs/guidance-impact.md`](docs/guidance-impact.md) rather than left implied
+by a verdict's name.
+
 `scripts/instructions-report.sh` totals the log per session — bytes per
 `memory_type`, files per `load_reason` — the measurement that replaces the
 332.3k figure quoted by hand since 2026-08-29. It never prints an absolute

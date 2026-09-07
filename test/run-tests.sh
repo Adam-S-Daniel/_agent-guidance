@@ -17371,9 +17371,9 @@ test_fleet_memory_state_file() {
     assert_not_contains "$d/out_prev_ok" "agents-md:" \
         "fleet-memory state: a current agents-md from last session stays quiet"
 
-    printf 'unread=1\nagents=EDITED ABOVE THE MARKER \xe2\x80\x94 found 2\n' > "$receipt"
+    printf 'unread=1\nagents=MANAGED BLOCK MALFORMED \xe2\x80\x94 found 2\n' > "$receipt"
     run_fm > "$d/out_prev_agents"
-    assert_contains "$d/out_prev_agents" "agents-md: previous session EDITED ABOVE THE MARKER" \
+    assert_contains "$d/out_prev_agents" "agents-md: previous session MANAGED BLOCK MALFORMED" \
         "fleet-memory state: an agents-md mismatch from last session is surfaced"
 
     # ANNOUNCED EXACTLY ONCE. Only a SessionStart read clears the `unread`
@@ -17644,8 +17644,8 @@ test_instructions_loaded_hook() {
     cat "$d/one.md" "$d/one.md" > "$repo/AGENTS.md"
     rm -f "$receipt"
     instr_run "$d/out_agents_edited" "$(instr_event Project session_start "$repo/AGENTS.md")"
-    assert_contains "$d/out_agents_edited" "agents-md: EDITED ABOVE THE MARKER" \
-        "instructions-loaded: a doubled managed block reads EDITED ABOVE THE MARKER"
+    assert_contains "$d/out_agents_edited" "agents-md: MANAGED BLOCK MALFORMED" \
+        "instructions-loaded: a doubled managed block reads MANAGED BLOCK MALFORMED"
     assert_not_contains "$d/out_agents_edited" "agents-md: current" \
         "instructions-loaded: a doubled block is never also reported current"
 
@@ -17657,8 +17657,8 @@ test_instructions_loaded_hook() {
         printf '%s\n' '<!-- END MANAGED SECTION -->'
     } > "$repo/AGENTS.md"
     instr_run "$d/out_agents_order" "$(instr_event Project session_start "$repo/AGENTS.md")"
-    assert_contains "$d/out_agents_order" "agents-md: EDITED ABOVE THE MARKER" \
-        "instructions-loaded: markers out of order read EDITED ABOVE THE MARKER"
+    assert_contains "$d/out_agents_order" "agents-md: MANAGED BLOCK MALFORMED" \
+        "instructions-loaded: markers out of order read MANAGED BLOCK MALFORMED"
 
     # A project memory file that is not a managed AGENTS.md at all — logged,
     # never judged. Most Project loads in the fleet are exactly this.
@@ -17666,7 +17666,7 @@ test_instructions_loaded_hook() {
 
     # …and "not a managed AGENTS.md" is decided by the FILENAME, before any
     # structural check runs. Judging every Project file that merely quotes the
-    # markers made `EDITED ABOVE THE MARKER` fire on ordinary repo content —
+    # markers made the malformed-block verdict fire on ordinary repo content —
     # a rules file that names the marker in prose, a rules file with its own
     # `## Repo-specific additions` heading, a nested CLAUDE.md with the same
     # heading. This repo's own tree is clean, so nothing here would have

@@ -764,7 +764,9 @@ not what the session loaded — the same gap as "the watch finished" against
 "CI passed", and three things live in it: a `CLAUDE_CONFIG_DIR` the CLI reads
 no memory from, a block truncated AFTER the session started (2026-09-05:
 56,099 bytes to 154, silent until the next SessionStart), and a repo
-`AGENTS.md` behind the guidance in context or edited above its marker. The
+`AGENTS.md` shipping different guidance from the one in context or carrying a
+malformed managed block (a hand edit INSIDE an intact block is not caught —
+nothing records what that block should have said). The
 `InstructionsLoaded` hook beside the SessionStart one writes a receipt at load
 time — its own stdout reaches nothing, measured on CLI 2.1.261 — so the NEXT
 session opens with `fleet-guidance: previous session loaded (v<id>, <n>
