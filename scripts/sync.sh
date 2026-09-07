@@ -63,6 +63,19 @@ BRANCH_NAME="agents-md-sync/update"
 # every repo it had ever proposed to.
 SYNC_BOT_EMAIL="agents-md-sync[bot]@users.noreply.github.com"
 DRY_RUN=false
+
+# AMBIENT BOOTSTRAP_HOOK_* VALUES ARE NOT INPUTS TO THIS RUN. bootstrap-status.sh
+# and register-bootstrap-hook.sh read that seam from the environment, and both
+# now REFUSE a set-but-empty value rather than silently defaulting -- correct in
+# themselves, and fatal here: the classifier is called in a plain command
+# substitution under `set -euo pipefail`, so an empty BOOTSTRAP_HOOK_EVENT left
+# over in a human's shell aborted the whole fleet run at the FIRST repo, with
+# one line and no summary (measured: exit 2 after 1 of 6 repos). This script
+# passes every value it means explicitly, so anything ambient is a leftover.
+# The same hygiene test/run-tests.sh applies to GH_TOKEN/GITHUB_TOKEN, for the
+# same reason.
+unset BOOTSTRAP_HOOK_EVENT BOOTSTRAP_HOOK_BASENAME BOOTSTRAP_HOOK_COMMAND \
+      BOOTSTRAP_HOOK_MATCHER BOOTSTRAP_HOOK_TIMEOUT
 WORK_DIR=$(mktemp -d)
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
 
@@ -837,7 +850,7 @@ for repo_name in "${REPOS[@]}"; do
                           "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
         if [[ "$fleet_reg_state" == "unparseable" ]]; then
             fleet_deliver=false
-            fleet_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it, keeping the full guidance inline"
+            fleet_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it, keeping the full guidance inline"
         else
             if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
                 cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
@@ -1041,7 +1054,7 @@ for repo_name in "${REPOS[@]}"; do
             # leave it silently dead, so withhold the whole artifact and say so.
             if [[ "$reg_state" == "unparseable" ]]; then
                 bootstrap_deliver=false
-                bootstrap_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it"
+                bootstrap_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it"
             fi
         fi
     fi

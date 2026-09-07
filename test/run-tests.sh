@@ -4068,7 +4068,7 @@ test_drift_report_bootstrap() {
     assert_row_contains "$rpt" "repo-ignored" "**blocked**" "drift report: a gitignored .claude/ is blocked, not missing"
     assert_row_note_contains "$rpt" "repo-ignored" '`.claude/` gitignored' "drift report: repo-ignored's Notes name the reason"
     assert_row_contains "$rpt" "repo-unparseable" "**refused**" "drift report: an unparseable settings.json is refused, not missing"
-    assert_row_note_contains "$rpt" "repo-unparseable" '`settings.json` unparseable' "drift report: repo-unparseable's Notes name the reason"
+    assert_row_note_contains "$rpt" "repo-unparseable" '`settings.json` cannot be parsed or appended to' "drift report: repo-unparseable's Notes name the reason"
     assert_row_contains "$rpt" "repo-hook-no-lock" "**degraded**" "drift report: a hook with no lock is degraded, not no-lock and not ok"
 
     # A `.gitignore` that says nothing about `.claude/` must not blocked-flag
@@ -6558,7 +6558,7 @@ assert ours == [("*", 10)], ours
     fi
 
     # ── repo-unparseable: refuse to edit, deliver nothing, leave it alone.
-    assert_contains "$TEST_DIR/sync-bootstrap.txt" "is not parseable JSON — refusing to edit it" "repo-unparseable: refusal is logged"
+    assert_contains "$TEST_DIR/sync-bootstrap.txt" "is one we cannot parse or cannot append to — refusing to edit it" "repo-unparseable: refusal is logged"
     local unparse="$TEST_DIR/verify-bootstrap-unparseable"
     git clone "$TEST_DIR/bare/bootorg_repo-unparseable" "$unparse" 2>/dev/null || {
         fail "repo-unparseable: could not clone"
@@ -6861,6 +6861,39 @@ PY
         fi
     done
 
+
+    # F2: THE REASON THE OPERATOR IS GIVEN HAS TO BE TRUE. `unparseable` was
+    # widened to cover a file that is VALID JSON with a `hooks` object we
+    # cannot append to, and the two messages branching on it still said "is
+    # not parseable JSON" — sending whoever reads the sync log hunting for a
+    # syntax error that is not there. The behaviour was right; the sentence
+    # was not.
+    local w3="$TEST_DIR/work/instr-valid-unusable"
+    rm -rf "$w3"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w3" >/dev/null 2>&1
+    git -C "$w3" config commit.gpgsign false
+    printf '{"hooks": []}\n' > "$w3/.claude/settings.json"
+    git -C "$w3" add -A >/dev/null 2>&1
+    git -C "$w3" commit -m "valid JSON, unusable hooks object" >/dev/null 2>&1
+    git -C "$w3" push origin HEAD:main >/dev/null 2>&1
+    if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
+        "$w3/.claude/settings.json" 2>/dev/null; then
+        pass "instr unusable: the fixture for the reworded message really is valid JSON"
+    else
+        fail "instr unusable: the fixture is not valid JSON, so it pins nothing"
+    fi
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-instr-validjson.txt" 2>&1 || true
+    awk '/^=== bootorg\/repo-no-lock ===/{f=1;next} /^=== /{f=0} f' \
+        "$TEST_DIR/sync-instr-validjson.txt" > "$TEST_DIR/sync-instr-validjson.section"
+    assert_contains "$TEST_DIR/sync-instr-validjson.section" \
+        "we cannot parse or cannot append to" \
+        "instr unusable: the withholding reason covers the whole widened class"
+    assert_not_contains "$TEST_DIR/sync-instr-validjson.section" \
+        "is not parseable JSON" \
+        "instr unusable: a valid JSON file is not reported as a syntax error"
+
     # Restore, and prove the repair path works from here too — which also
     # leaves the fixture as the tests after this one expect to find it.
     # A FRESH CLONE, not $w: the runs above pushed their own commits to main,
@@ -6883,6 +6916,46 @@ PY
         pass "instr unusable: a usable settings.json again delivers the hook"
     else
         fail "instr unusable: the repo stayed withheld after settings.json was repaired"
+    fi
+}
+
+
+# F6 — AN AMBIENT BOOTSTRAP_HOOK_* VALUE MUST NOT ABORT THE FLEET RUN.
+#
+# The seam's two scripts now refuse a set-but-empty value rather than silently
+# defaulting, which is right in itself and was fatal here: sync.sh calls the
+# classifier in a plain command substitution under `set -euo pipefail`, so an
+# empty BOOTSTRAP_HOOK_EVENT left over in a human's shell ended the whole run
+# at the FIRST repo with one line and no summary. Not reachable from CI, which
+# sets none of these — reachable by anyone who has just been experimenting
+# with the seam, which is exactly who runs sync.sh by hand.
+test_sync_ambient_bootstrap_env() {
+    echo ""
+    echo "=== Test: sync.sh (an ambient BOOTSTRAP_HOOK_* value does not abort the run) ==="
+
+    local rc=0
+    env BOOTSTRAP_HOOK_EVENT="" BOOTSTRAP_HOOK_BASENAME="" \
+        GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-ambient-env.txt" 2>&1 || rc=$?
+
+    if [[ $rc -eq 0 ]]; then
+        pass "ambient env: the run completes rather than exiting 2 at the first repo"
+    else
+        fail "ambient env: the run exited $rc — $(tail -1 "$TEST_DIR/sync-ambient-env.txt")"
+    fi
+    assert_contains "$TEST_DIR/sync-ambient-env.txt" "Sync complete" \
+        "ambient env: the run reaches its summary"
+    assert_not_contains "$TEST_DIR/sync-ambient-env.txt" "must be non-empty" \
+        "ambient env: the classifier is never handed the ambient value"
+    # Every repo, not just the first: the abort happened at the first
+    # classifier call, so a run that reached repo six reached all of them.
+    local seen
+    seen="$(grep -c '^=== bootorg/' "$TEST_DIR/sync-ambient-env.txt" || true)"
+    if [[ "$seen" -eq 6 ]]; then
+        pass "ambient env: all six bootorg repos were processed"
+    else
+        fail "ambient env: $seen of 6 repos processed"
     fi
 }
 
@@ -19506,6 +19579,7 @@ test_sync_bootstrap_drift
 # the other two artifacts.
 test_sync_instructions_hook_repair
 test_sync_instructions_unusable_array
+test_sync_ambient_bootstrap_env
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident
 # verdicts, because those are exactly what its control run re-asserts before

@@ -1171,7 +1171,7 @@ for repo_name in "${REPOS[@]}"; do
                         bootstrap_cell="?"
                     elif [[ "$settings_state" == "unparseable" ]]; then
                         bootstrap_cell="**refused**"
-                        notes="$notes; \`settings.json\` unparseable"
+                        notes="$notes; \`settings.json\` cannot be parsed or appended to"
                     elif [[ "$blocked" == yes ]]; then
                         bootstrap_cell="**blocked**"
                         notes="$notes; \`.claude/\` gitignored"
@@ -1404,7 +1404,7 @@ fi
     echo "| **drifted** | Hook present but differs from the pinned copy — the next sync overwrites it |"
     echo "| **missing** | Allowlisted and has a lock, but no hook — the next sync delivers it (unless the pinned hook was unavailable fleet-wide that run; the sync log says \`pinned hook unavailable this run\`) |"
     echo "| **blocked** | Allowlisted and has a lock, but the repo gitignores \`.claude/\` — \`git add\` cannot stage the hook, so every sync skips it with a warning. Does **not** self-heal: change that repo's \`.gitignore\`, or drop it from the allowlist |"
-    echo "| **refused** | Allowlisted and has a lock, but \`.claude/settings.json\` is not parseable JSON — the sync will not edit it, and withholds the hook rather than leave one nothing runs. Does **not** self-heal: fix that file |"
+    echo "| **refused** | Allowlisted and has a lock, but \`.claude/settings.json\` is one the sync cannot parse or cannot append to — it will not edit it, and withholds the hook rather than leave one nothing runs. Does **not** self-heal: fix that file |"
     echo "| **degraded** | Hook present in a repo with no \`skills.lock\` — it prints \`skills: DEGRADED\` into every session and no sync will revisit it. Commit a lock, or remove the hook |"
     echo "| no-lock | Allowlisted, no \`skills.lock\` yet — delivery deliberately withheld until the repo declares its bundles |"
     echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"
