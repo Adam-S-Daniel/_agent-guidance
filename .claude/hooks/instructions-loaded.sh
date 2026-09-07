@@ -416,24 +416,47 @@ def write_receipt(updates):
     a mismatch is never silent for more than one session. Merged rather than
     replaced, so a Project event does not erase the User verdict from the same
     session, and replaced atomically so a half-written receipt is never read.
+
+    `unread=1` is what makes "one session and no longer" TRUE rather than
+    approximately true, in both directions:
+
+      * a healthy verdict never replaces one nobody has announced yet, so two
+        sessions sharing one ~/.claude cannot erase each other's. Measured on
+        the earlier version: mismatch(S1) -> healthy(S2) -> mismatch(S1) ->
+        healthy(S2) left `fleet=loaded` and no session ever printed the
+        mismatch;
+      * fleet-memory.sh clears the flag when it announces the verdict, so a
+        machine whose load-time hook stopped running re-announces nothing.
+        That is also why there is no `ts` here: with the flag, "when" is
+        exactly "your previous session", and the per-load timestamps live in
+        instructions-log.jsonl where a report can total them.
     """
     existing = read_kv(RECEIPT)
-    # A MISMATCH IS NEVER OVERWRITTEN BY A HEALTHY VERDICT WITHIN ONE SESSION.
-    # A multi-repo session loads many AGENTS.md files; if the last one simply
-    # won, a repo reading BEHIND would be erased by the next repo reading
-    # current and the receipt would report the machine clean. A NEW session
-    # replaces freely -- otherwise one bad load would follow a machine forever
-    # and the line would stop meaning anything.
-    same_session = existing.get("session", "") == updates.get("session", "")
+    # A MISMATCH IS NEVER OVERWRITTEN BY A HEALTHY VERDICT WITHIN ONE SESSION,
+    # NOR WHILE IT IS STILL UNREAD. A multi-repo session loads many AGENTS.md
+    # files; if the last one simply won, a repo reading BEHIND would be erased
+    # by the next repo reading current and the receipt would report the
+    # machine clean. Once a SessionStart HAS announced it, a healthy verdict
+    # replaces it freely -- otherwise one bad load would follow a machine
+    # forever and the line would stop meaning anything.
+    sid = updates.get("session", "")
+    # `bool(sid) and ...`: an event with no session_id leaves `session` empty,
+    # and a bare equality test then reads EVERY later session as the same one.
+    # Measured on the earlier version, that froze the receipt permanently -- a
+    # mismatch recorded once survived every later healthy load and was
+    # re-announced at every session start on a machine that was now healthy.
+    same_session = bool(sid) and existing.get("session", "") == sid
+    unread = existing.get("unread", "") == "1"
     for key in ("fleet", "agents"):
         if key not in updates:
             continue
         previous = existing.get(key, "")
-        if same_session and previous and not healthy(previous) and healthy(updates[key]):
+        if (same_session or unread) and previous \
+                and not healthy(previous) and healthy(updates[key]):
             del updates[key]
     existing.update(updates)
     existing = {k: clean(v) for k, v in existing.items()}
-    order = ["ts", "session", "fleet", "agents"]
+    order = ["session", "unread", "fleet", "agents"]
     keys = [k for k in order if k in existing] + sorted(k for k in existing if k not in order)
     tmp = RECEIPT + ".tmp"
     try:
@@ -501,7 +524,7 @@ except Exception:
 
 # ---- the verdicts -------------------------------------------------------
 state = read_state()
-updates = {"ts": record["ts"], "session": record["session"]}
+updates = {"session": record["session"], "unread": "1"}
 verdicts = {}
 
 if content is not None and memory_type == "User":

@@ -80,9 +80,19 @@ LOG_FILE="$DEST_DIR/instructions-log.jsonl"
 # Print what the last session's load-time hook recorded, beside this run's own
 # verdict. A healthy agents-md stays quiet — it is the mismatch that has to
 # travel, and a line printed every session on every machine stops being read.
+#
+# EXACTLY ONCE, which is the half that needs a flag. The receipt carries
+# `unread=1` until a SessionStart announces it; this is the only reader, so
+# clearing it here is what "never silent for more than one session" means
+# operationally. Without it, a machine whose load-time hook stopped running —
+# an older CLI, a settings entry lost — re-announces one stale verdict at
+# every session start forever, and two sessions sharing one config dir erase
+# each other's verdicts before either is announced.
 report_previous_session() {
     [ -r "$RECEIPT_FILE" ] || return 0
-    local fleet agents
+    local unread fleet agents
+    unread="$(grep -m1 -- '^unread=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
+    [ "$unread" = "1" ] || return 0
     fleet="$(grep -m1 -- '^fleet=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
     agents="$(grep -m1 -- '^agents=' "$RECEIPT_FILE" 2>/dev/null | cut -d= -f2-)"
     [ -n "$fleet" ] && echo "fleet-guidance: previous session $fleet"
@@ -90,6 +100,23 @@ report_previous_session() {
         ""|current*) ;;
         *) echo "agents-md: previous session $agents" ;;
     esac
+    mark_receipt_read
+    return 0
+}
+
+# Clear the flag, preserving the verdict itself so `cat`ing the receipt still
+# says what happened. Best-effort like write_state: a receipt that cannot be
+# rewritten costs a repeated line, never the session. The tmp file is removed
+# before it is written so a symlink planted at that path is replaced rather
+# than followed, and the mv renames over the receipt without following one
+# planted there either.
+mark_receipt_read() {
+    local tmp="$RECEIPT_FILE.read.tmp"
+    rm -f "$tmp" 2>/dev/null
+    if sed 's/^unread=1$/unread=0/' "$RECEIPT_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$RECEIPT_FILE" 2>/dev/null
+    fi
+    rm -f "$tmp" 2>/dev/null
     return 0
 }
 
