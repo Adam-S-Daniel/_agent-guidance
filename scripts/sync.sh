@@ -1280,8 +1280,12 @@ for repo_name in "${REPOS[@]}"; do
     $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
     $instr_hook_written && add_paths+=("$INSTR_HOOK_REL_PATH")
     # Any of the three hooks can register in the same file in one run; add it
-    # once. `git add` twice is harmless, but the array is also what the commit
-    # message enumerates, and a path listed twice there reads as a bug.
+    # once. `git add` of a duplicate is harmless -- this is de-duplicated
+    # because a reader of `git add "${add_paths[@]}"` should be able to take
+    # the array as the list of what this run changed. (An earlier comment here
+    # said the commit MESSAGE enumerates the array. It does not: the message is
+    # one of four fixed strings, and what it names comes from $delivered
+    # below.)
     if { $fleet_registered_now || $instr_registered_now; } && ! $bootstrap_registered_now; then
         add_paths+=("$SETTINGS_REL_PATH")
     fi
@@ -1298,6 +1302,28 @@ for repo_name in "${REPOS[@]}"; do
         cd "$REPO_ROOT"; continue
     fi
 
+    # WHAT THIS RUN ACTUALLY DELIVERED, for the commit subject below. The
+    # "AGENTS.md was already up to date" branch used to be hard-coded to the
+    # skills-bootstrap hook, so a run whose only change was the fleet-memory
+    # or instructions-loaded hook committed under a subject naming a hook it
+    # had not touched. The first post-merge run is safe (the stub text moved,
+    # so the generic branch is used); a later fix to one hook alone is not.
+    delivered=()
+    if $bootstrap_hook_written || $bootstrap_registered_now; then
+        delivered+=("the skills-bootstrap hook")
+    fi
+    if $fleet_hook_written || $fleet_payload_written || $fleet_registered_now; then
+        delivered+=("the fleet-memory hook")
+    fi
+    if $instr_hook_written || $instr_registered_now; then
+        delivered+=("the instructions-loaded hook")
+    fi
+    delivered_list="the fleet hooks"
+    if [[ ${#delivered[@]} -gt 0 ]]; then
+        delivered_list="$(printf '%s, ' "${delivered[@]}")"
+        delivered_list="${delivered_list%, }"
+    fi
+
     bootstrap_note=""
     if $bootstrap_hook_written || $bootstrap_registered_now; then
         bootstrap_note="
@@ -1309,7 +1335,7 @@ own skills.lock declares which bundles it installs and is not touched."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
-        commit_message="chore: deliver the skills-bootstrap SessionStart hook
+        commit_message="chore: deliver ${delivered_list}
 
 AGENTS.md and the CLAUDE.md bridge were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_fixed; then

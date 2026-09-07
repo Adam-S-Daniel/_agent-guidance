@@ -23,6 +23,18 @@
 # The CLI emits an `InstructionsLoaded` event for every CLAUDE.md and
 # .claude/rules/*.md it loads. That event is the receipt the verdict lacks.
 #
+# WHAT THIS DOES NOT REACH, since the list above is wider than the mechanism.
+# fleet-memory.sh runs BEFORE memory is assembled (its own measurement 2), so
+# within a session it REPAIRS a truncated block before the `session_start`
+# load event fires. With only session_start events, a mid-session truncation
+# is therefore invisible to the receipt on the next session as well; it is
+# caught when the CLI emits a reload (`compact`, `nested_traversal`,
+# `path_glob_match`, `include`) after the truncation, which is exactly what
+# the `*` matcher registers for. The other two gaps -- a config dir the CLI
+# reads no memory from, and an AGENTS.md behind or malformed -- are closed
+# outright. The 2026-09-05 incident is the headline because it is the one that
+# cost something, not because it is the one this catches most cleanly.
+#
 # THE TWO MEASUREMENTS THIS DESIGN RESTS ON
 # -----------------------------------------
 # Both taken on the CLI in the container that wrote this file (2.1.261),
@@ -506,6 +518,17 @@ def write_receipt(updates):
         exactly "your previous session", and the per-load timestamps live in
         instructions-log.jsonl where a report can total them.
     """
+    # READ-MODIFY-WRITE, not atomic across concurrent events. os.replace makes
+    # the WRITE atomic, so a half-written receipt is never read and nothing is
+    # ever corrupted -- but two hook processes for two memory files in the same
+    # session can interleave between this read and that replace, and the later
+    # write then wins with a merge that did not see the earlier one. The window
+    # is small enough that a review could not provoke it in 50 concurrent
+    # rounds, and the cost when it does hit is one verdict lost from a receipt
+    # rather than a wrong verdict. Recorded because it is real, not because it
+    # was seen; closing it needs a lock file, which is a durable artifact in
+    # someone's config dir for a hook whose whole posture is to leave nothing
+    # behind it cannot justify.
     existing = read_kv(RECEIPT)
     # A MISMATCH IS NEVER OVERWRITTEN BY A HEALTHY VERDICT WITHIN ONE SESSION,
     # NOR WHILE IT IS STILL UNREAD. A multi-repo session loads many AGENTS.md

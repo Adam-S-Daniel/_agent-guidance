@@ -188,7 +188,13 @@ incidents — a `CLAUDE_CONFIG_DIR` the CLI reads no memory from, and a block
 truncated after the session started (2026-09-05: 56,099 bytes to 154, silent
 until the next session start).
 
-`.claude/hooks/instructions-loaded.sh` closes it. The sync delivers it on the
+`.claude/hooks/instructions-loaded.sh` closes it — with one honest limit:
+`fleet-memory.sh` runs *before* memory is assembled, so within a session it
+repairs a truncated block before the `session_start` load event fires. A
+mid-session truncation is caught on the next *reload* event, which is what the
+`*` matcher registers for, rather than by the following session's
+`session_start` alone. The other two gaps — a config dir the CLI reads no
+memory from, and an `AGENTS.md` behind or malformed — are closed outright. The sync delivers it on the
 same decision as `fleet-memory.sh` — a repo that gets the stub gets both —
 registered under the CLI's `InstructionsLoaded` event with a `*` matcher.
 On each memory-file load it compares what is in context against

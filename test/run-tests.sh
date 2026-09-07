@@ -6723,6 +6723,18 @@ PY
          "$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
     [[ "$st" == "registered" ]] && pass "instr repair: the deleted registration is restored" \
         || fail "instr repair: registration reads '$st' after a run that should have repaired it"
+
+    # THE COMMIT MESSAGE NAMES THE ARTIFACT IT DELIVERED. This run's only
+    # change is the receipt hook and its registration, and the one commit
+    # subject for "AGENTS.md and the bridge were already up to date" was
+    # hard-coded to the skills-bootstrap hook — which this run did not touch.
+    local subject; subject="$(git -C "$v" log -1 --pretty=%s)"
+    case "$subject" in
+        *instructions-loaded*)
+            pass "instr repair: the commit subject names the hook it delivered" ;;
+        *)
+            fail "instr repair: commit subject is '$subject' — it names the wrong artifact" ;;
+    esac
 }
 
 # DELIVER BOTH HALVES OR NEITHER. A settings.json that is valid JSON with a
