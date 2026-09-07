@@ -118,7 +118,13 @@ if isinstance(existing, list):
 
 # A "hooks" or "SessionStart" of the wrong TYPE is not something to coerce —
 # overwriting it would destroy configuration we do not understand.
-if hooks is not None and not isinstance(hooks, dict):
+#
+# `"hooks" in doc`, not `hooks is not None`: a literal `{"hooks": null}` has
+# the key with a None value, so the older test let it through to
+# setdefault("hooks", {}), which RETURNS the existing None and then raises
+# AttributeError -- a raw interpreter traceback on stderr and exit 1, which
+# sync.sh logged as `WARN: could not register ... ()` with an empty reason.
+if "hooks" in doc and not isinstance(hooks, dict):
     print("refused-unparseable")
     sys.exit(3)
 if isinstance(hooks, dict) and event in hooks \

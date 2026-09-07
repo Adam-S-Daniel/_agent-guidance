@@ -42,7 +42,11 @@ set -euo pipefail
 # Prints exactly one of:
 #   registered    — a hook command under that event references the basename
 #   no-entry      — valid JSON, but no such command (hook would never run)
-#   unparseable   — content present but not valid JSON (sync must not rewrite it)
+#   unparseable   — content we must not rewrite: not valid JSON, not a JSON
+#                   object, or a `hooks` / `hooks.<event>` of a type we cannot
+#                   append to. The last of those is deliberate — see the
+#                   classify() comment; a file the registrar will refuse must
+#                   not read as one the sync can safely deliver to.
 #   missing       — file absent or empty (or empty stdin)
 
 HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
@@ -73,9 +77,27 @@ if not isinstance(doc, dict):
     print("unparseable")
     sys.exit(0)
 
-groups = doc.get("hooks", {})
-groups = groups.get(event, []) if isinstance(groups, dict) else []
-if not isinstance(groups, list):
+# A `hooks` object we cannot APPEND TO is not "no entry here" -- it is a file
+# we must not touch, which is what `unparseable` already means to every
+# caller. Reading `{"hooks": null}`, `{"hooks": []}` or a non-list
+# `hooks.<event>` as `no-entry` let sync.sh keep delivering: it shrank that
+# repo AGENTS.md to the stub and only THEN did register-bootstrap-hook.sh
+# refuse (correctly) to edit the file -- leaving a repo stripped of the very
+# rules the stub tells you to go and read, with nothing registered to bring
+# them back, and `0 failed` on the tally. These are exactly the shapes the
+# registrar refuses; classifying them the same way moves the refusal one step
+# earlier, before anything is written.
+hooks = doc.get("hooks")
+# `"hooks" in doc`, not `hooks is not None`: a literal {"hooks": null} has the
+# key with a None value, and the registrar refuses that shape too.
+if "hooks" in doc and not isinstance(hooks, dict):
+    print("unparseable")
+    sys.exit(0)
+groups = hooks.get(event) if isinstance(hooks, dict) else None
+if groups is not None and not isinstance(groups, list):
+    print("unparseable")
+    sys.exit(0)
+if groups is None:
     groups = []
 
 for group in groups:

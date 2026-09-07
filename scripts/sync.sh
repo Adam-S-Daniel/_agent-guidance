@@ -847,6 +847,17 @@ for repo_name in "${REPOS[@]}"; do
             instr_reg_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
                               BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
                               "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+            # The same refusal the fleet_reg_state check above makes, for the
+            # array THIS hook needs. A settings.json whose SessionStart is
+            # fine but whose InstructionsLoaded is not a list would otherwise
+            # deliver the stub and the hook file, then have the registrar
+            # correctly refuse the entry: a delivered hook nothing runs, in a
+            # repo whose guidance has just been replaced by a note telling you
+            # to go and read it elsewhere. Deliver both halves or neither.
+            if [[ "$instr_reg_state" == "unparseable" ]]; then
+                fleet_deliver=false
+                fleet_reason="$SETTINGS_REL_PATH has a hooks.InstructionsLoaded we cannot append to — refusing to edit it, keeping the full guidance inline"
+            fi
         fi
     fi
 

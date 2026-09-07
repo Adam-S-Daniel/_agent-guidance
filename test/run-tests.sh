@@ -6177,6 +6177,33 @@ JSON
     result=$("$s" "$d/array.json")
     [[ "$result" == "unparseable" ]] && pass "non-object top level -> unparseable" || fail "non-object top level -> unparseable (got '$result')"
 
+    # A `hooks` object we cannot append to is not "no entry here" — it is a
+    # file we must not touch. Classifying it `no-entry` let the sync keep
+    # fleet_deliver true, shrink the repo's AGENTS.md to the stub, and then
+    # have the registrar correctly refuse: a repo stripped of the very rules
+    # the stub tells you to go and read, with nothing registered to bring them
+    # back. The registrar already refuses all four of these shapes; this makes
+    # the classifier agree with it so the refusal happens one step earlier,
+    # before anything is written.
+    local shape
+    for shape in '{"hooks": null}' '{"hooks": "nope"}' '{"hooks": []}' \
+                 '{"hooks": {"SessionStart": "nope"}}'; do
+        printf '%s\n' "$shape" > "$d/unusable.json"
+        result=$("$s" "$d/unusable.json")
+        [[ "$result" == "unparseable" ]] \
+            && pass "unusable hooks object $shape -> unparseable" \
+            || fail "unusable hooks object $shape -> unparseable (got '$result')"
+    done
+
+    # …and a hooks object that is fine for OUR event stays usable even when a
+    # different event's array is malformed: refusing the whole file on someone
+    # else's broken key would withhold delivery from a repo we can serve.
+    printf '%s\n' '{"hooks": {"PreToolUse": "nope", "SessionStart": []}}' > "$d/other-event-bad.json"
+    result=$("$s" "$d/other-event-bad.json")
+    [[ "$result" == "no-entry" ]] \
+        && pass "another event's malformed array -> still no-entry for ours" \
+        || fail "another event's malformed array -> still no-entry for ours (got '$result')"
+
     result=$("$s" "$d/absent.json")
     [[ "$result" == "missing" ]] && pass "absent file -> missing" || fail "absent file -> missing (got '$result')"
 
@@ -6283,6 +6310,29 @@ PY
     else
         fail "wrong-typed hooks key left byte-identical"
     fi
+    # A `hooks` of a type we cannot append to must be a NAMED refusal on one
+    # line, not an interpreter traceback. `{"hooks": null}` used to reach
+    # setdefault("hooks", {}), which returns the existing None and raises
+    # AttributeError — a raw traceback on stderr and exit 1, which sync.sh
+    # logged as `WARN: could not register ... ()` with an empty reason.
+    local shape result
+    for shape in '{"hooks": null}' '{"hooks": "nope"}' '{"hooks": []}' \
+                 '{"hooks": {"SessionStart": "nope"}}'; do
+        printf '%s\n' "$shape" > "$d/unusable.json"
+        rc=0
+        result=$("$r" "$d/unusable.json" 2>"$d/unusable.err") || rc=$?
+        if [[ "$rc" -eq 3 && "$result" == "refused-unparseable" && ! -s "$d/unusable.err" ]]; then
+            pass "register: $shape -> refused-unparseable, exit 3, nothing on stderr"
+        else
+            fail "register: $shape -> rc=$rc out='$result' stderr='$(head -1 "$d/unusable.err")'"
+        fi
+        if [[ "$(cat "$d/unusable.json")" == "$shape" ]]; then
+            pass "register: $shape left the file byte-identical"
+        else
+            fail "register: $shape rewrote the file it refused"
+        fi
+    done
+
 }
 
 # ── Test 5b: sync.sh delivers the bootstrap hook (opt-in, double-keyed) ────
@@ -6621,6 +6671,97 @@ PY
          "$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
     [[ "$st" == "registered" ]] && pass "instr repair: the deleted registration is restored" \
         || fail "instr repair: registration reads '$st' after a run that should have repaired it"
+}
+
+# DELIVER BOTH HALVES OR NEITHER. A settings.json that is valid JSON with a
+# SessionStart we can append to, but a `hooks.InstructionsLoaded` that is not
+# a list, used to get the hook file delivered and committed while its
+# registration was correctly refused — "a delivered hook nothing runs" — and
+# the repo AGENTS.md shrunk to the stub in the same commit: a repo stripped of
+# the very rules the stub tells you to go and read, with nothing registered to
+# bring them back, and `0 failed` on the tally forever. The classifier now
+# calls that shape unparseable, so the whole repo keeps the full guidance
+# inline instead, exactly as an unparseable settings.json already did.
+test_sync_instructions_unusable_array() {
+    echo ""
+    echo "=== Test: sync.sh (an unusable hooks.InstructionsLoaded withholds delivery) ==="
+
+    local w="$TEST_DIR/work/instr-unusable"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    cp "$w/.claude/settings.json" "$TEST_DIR/instr-unusable-settings.orig"
+    rm -f "$w/$INSTR_HOOK_REL_PATH_T"
+    python3 - "$w/.claude/settings.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+doc.setdefault("hooks", {})["InstructionsLoaded"] = "nope"
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\n")
+PY
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "an InstructionsLoaded array we cannot append to" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    local pushed_settings; pushed_settings="$(cat "$w/.claude/settings.json")"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-instr-unusable.txt"
+    assert_contains "$TEST_DIR/sync-instr-unusable.txt" \
+        "hooks.InstructionsLoaded we cannot append to" \
+        "instr unusable: the sync says why it is keeping the guidance inline"
+    assert_contains "$TEST_DIR/sync-instr-unusable.txt" "mode=full" \
+        "instr unusable: the repo keeps the FULL guidance rather than the stub"
+
+    local v="$TEST_DIR/verify-instr-unusable"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" 2>/dev/null || {
+        fail "instr unusable: could not clone"
+        return
+    }
+    if [[ -e "$v/$INSTR_HOOK_REL_PATH_T" ]]; then
+        fail "instr unusable: the hook was delivered into a repo it can never be registered in"
+    else
+        pass "instr unusable: no hook is delivered that nothing could run"
+    fi
+    if [[ "$(cat "$v/.claude/settings.json")" == "$pushed_settings" ]]; then
+        pass "instr unusable: settings.json is byte-identical to what was pushed"
+    else
+        fail "instr unusable: settings.json was rewritten"
+    fi
+    assert_contains "$v/AGENTS.md" "## Workstation layout" \
+        "instr unusable: AGENTS.md carries the full guidance, not the stub"
+
+    # Restore, and prove the repair path works from here too — which also
+    # leaves the fixture as the tests after this one expect to find it.
+    # A FRESH CLONE, not $w: the sync run above pushed its own commit to main,
+    # so a push from $w's stale HEAD is rejected as non-fast-forward and the
+    # restore silently never lands.
+    local w2="$TEST_DIR/work/instr-unusable-restore"
+    rm -rf "$w2"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w2" >/dev/null 2>&1
+    git -C "$w2" config commit.gpgsign false
+    cp "$TEST_DIR/instr-unusable-settings.orig" "$w2/.claude/settings.json"
+    git -C "$w2" add -A >/dev/null 2>&1
+    git -C "$w2" commit -m "restore a usable settings.json" >/dev/null 2>&1
+    git -C "$w2" push origin HEAD:main >/dev/null 2>&1
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-instr-restored.txt" 2>&1 || true
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" 2>/dev/null || return
+    if [[ -f "$v/$INSTR_HOOK_REL_PATH_T" ]]; then
+        pass "instr unusable: a usable settings.json again delivers the hook"
+    else
+        fail "instr unusable: the repo stayed withheld after settings.json was repaired"
+    fi
 }
 
 # ── Test 5e: a digest mismatch disables delivery and fails the run ────────
@@ -18472,6 +18613,7 @@ test_sync_bootstrap_drift
 # Straight after the drift test it generalises: same self-healing property,
 # the other two artifacts.
 test_sync_instructions_hook_repair
+test_sync_instructions_unusable_array
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident
 # verdicts, because those are exactly what its control run re-asserts before
