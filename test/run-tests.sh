@@ -6372,6 +6372,24 @@ test_sync_bootstrap() {
     local instr_state
     instr_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh"                   "$REPO_ROOT/scripts/bootstrap-status.sh" "$nolock/.claude/settings.json")
     [[ "$instr_state" == "registered" ]]         && pass "repo-no-lock: the InstructionsLoaded hook is registered, not just delivered"         || fail "repo-no-lock: the delivered hook reads '$instr_state' — a hook nothing runs"
+    # THE ENTRY sync.sh WRITES INTO ~20 CONSUMER REPOS, not the one this repo
+    # keeps for itself. `registered` only asks whether the basename appears
+    # somewhere under the event; narrowing the matcher from `*` to
+    # `session_start` left every assertion in the suite green while every
+    # consumer silently lost the reload coverage the matcher exists for — the
+    # CLI matches this event on `load_reason`, and a block truncated
+    # mid-session is only observable on the reload after.
+    if python3 -c '
+import json, sys
+groups = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["InstructionsLoaded"]
+ours = [(g.get("matcher"), e.get("timeout")) for g in groups for e in g.get("hooks", [])
+        if "instructions-loaded.sh" in str(e.get("command", ""))]
+assert ours == [("*", 10)], ours
+' "$nolock/.claude/settings.json" 2>"$TEST_DIR/instr_entry.err"; then
+        pass "repo-no-lock: the synced entry carries the '*' matcher and the 10-second timeout"
+    else
+        fail "repo-no-lock: the synced InstructionsLoaded entry is not ('*', 10) — $(tail -1 "$TEST_DIR/instr_entry.err")"
+    fi
     if [[ -e "$nolock/skills.lock" ]]; then
         fail "repo-no-lock: the sync did NOT create a skills.lock"
     else
@@ -17660,6 +17678,27 @@ test_instructions_loaded_hook() {
     assert_contains "$d/out_agents_order" "agents-md: MANAGED BLOCK MALFORMED" \
         "instructions-loaded: markers out of order read MANAGED BLOCK MALFORMED"
 
+    # The c86465f MARKER FRAGMENT: a marker line with something appended,
+    # which is what splitting a file on the marker SUBSTRING leaves behind.
+    # It has its own branch and its own message, and until this assertion it
+    # had no test at all — disabling only that branch left the suite green and
+    # the file named after the incident reported `current`. The line number is
+    # asserted, not just the words: the message exists to point at the line.
+    instr_agents_md "$repo/AGENTS.md"
+    sed -i 's/^## Repo-specific additions$/## Repo-specific additions extra/' "$repo/AGENTS.md"
+    local frag_line
+    frag_line="$(grep -n -- '^## Repo-specific additions extra$' "$repo/AGENTS.md" | cut -d: -f1)"
+    rm -f "$receipt"
+    instr_run "$d/out_agents_frag" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_frag" "agents-md: MANAGED BLOCK MALFORMED" \
+        "instructions-loaded: a truncated marker fragment reads MANAGED BLOCK MALFORMED"
+    assert_contains "$d/out_agents_frag" "a truncated marker fragment on line $frag_line" \
+        "instructions-loaded: the fragment verdict names the line it found"
+    assert_contains "$d/out_agents_frag" "c86465f" \
+        "instructions-loaded: the fragment verdict names the commit it is about"
+    assert_not_contains "$d/out_agents_frag" "agents-md: current" \
+        "instructions-loaded: a marker fragment is never also reported current"
+
     # A project memory file that is not a managed AGENTS.md at all — logged,
     # never judged. Most Project loads in the fleet are exactly this.
     printf '# A plain project CLAUDE.md\n\nNothing managed here.\n' > "$repo/CLAUDE.md"
@@ -18311,6 +18350,23 @@ assert "*" in matchers, matchers
         pass "self-hosted receipt: registered for every load reason"
     else
         fail "self-hosted receipt: no '*' matcher — some load reasons would fire nothing"
+    fi
+
+    # TEN SECONDS, deliberately. "A receipt hook that needs longer than ten
+    # seconds has stopped being observe-only" is the documented reason, and it
+    # is also the budget that makes a corrupt state file survivable rather
+    # than fatal (see the size caps in the hook). Nothing asserted the number
+    # until now: widening it to 900 left the whole suite green.
+    if python3 -c '
+import json, sys
+groups = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["InstructionsLoaded"]
+found = [e.get("timeout") for g in groups for e in g.get("hooks", [])
+         if "instructions-loaded.sh" in str(e.get("command", ""))]
+assert found == [10], found
+' "$settings" 2>/dev/null; then
+        pass "self-hosted receipt: registered with the documented 10-second timeout"
+    else
+        fail "self-hosted receipt: the InstructionsLoaded entry does not carry timeout 10"
     fi
 }
 
