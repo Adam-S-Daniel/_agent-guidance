@@ -48,7 +48,9 @@ set -euo pipefail
 # Prints exactly one of:
 #   already-registered  — no write; the hook was already named
 #   registered          — the file was created or appended to
-#   refused-unparseable — no write; the existing file is not a JSON object
+#   refused-unparseable — no write; the existing file is a symlink, or is not
+#                         a JSON object, or has a `hooks` / `hooks.<event>` of
+#                         a type we cannot append to
 #   refused-bad-env     — no write; a BOOTSTRAP_HOOK_* value is unusable
 #
 # Exit: 0 on either written or already-registered, 2 on usage (including a bad
@@ -58,6 +60,19 @@ TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
     echo "Usage: register-bootstrap-hook.sh <path-to-settings.json>" >&2
     exit 2
+fi
+
+# A SYMLINK IS A CONFIG WE DO NOT UNDERSTAND, which is this file's whole
+# posture. `open(target, "w")` follows one, so the link was preserved and its
+# TARGET rewritten -- in a consumer repo `git add .claude/settings.json` would
+# then stage an unchanged symlink while the real edit landed outside the tree,
+# and the sync would report a registration that the repo does not carry.
+# bootstrap-status.sh classifies the same shape `unparseable`, so the sync
+# withholds before it ever gets here rather than delivering a hook this would
+# then refuse to register.
+if [[ -L "$TARGET" ]]; then
+    echo "refused-unparseable"
+    exit 3
 fi
 
 # The command string and timeout are the delivery contract; keep them in step
@@ -91,9 +106,17 @@ bad_env() {
 [[ -n "$HOOK_EVENT" ]] || bad_env "BOOTSTRAP_HOOK_EVENT is set but empty; unset it to mean SessionStart"
 [[ -n "$HOOK_BASENAME" ]] || bad_env "BOOTSTRAP_HOOK_BASENAME is set but empty; an empty needle matches every command"
 [[ -n "$HOOK_COMMAND" ]] || bad_env "BOOTSTRAP_HOOK_COMMAND is set but empty; there would be nothing to run"
-# A whole number of seconds. No upper bound is imposed: what is too long for a
-# hook is the CLI's judgement, not this script's.
-[[ "$HOOK_TIMEOUT" =~ ^[0-9]+$ ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be a whole number of seconds, got '$HOOK_TIMEOUT'"
+# The last of the four empties, and the one that used to be accepted in
+# silence: an empty matcher registered `"matcher": ""`, which is neither of
+# the two things a caller could have meant (every event, or a named one).
+[[ -n "$HOOK_MATCHER" ]] || bad_env "BOOTSTRAP_HOOK_MATCHER is set but empty; pass '*' to match every event"
+# A whole number of seconds, 1 to 3600. The bounds are stated rather than
+# left to the CLI: 0 registers a hook that can never finish, and a value with
+# more digits than an hour has seconds is a typo, not a timeout -- both were
+# accepted unvalidated. The digit-count bound comes FIRST so the comparison
+# below is never handed a number bash cannot represent.
+[[ "$HOOK_TIMEOUT" =~ ^[0-9]{1,4}$ ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be a whole number of seconds between 1 and 3600, got '$HOOK_TIMEOUT'"
+[[ "$HOOK_TIMEOUT" -ge 1 && "$HOOK_TIMEOUT" -le 3600 ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be between 1 and 3600 seconds, got '$HOOK_TIMEOUT'"
 
 result=$(python3 -c '
 import copy, json, os, sys

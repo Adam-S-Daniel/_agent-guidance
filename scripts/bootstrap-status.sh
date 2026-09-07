@@ -42,11 +42,12 @@ set -euo pipefail
 # Prints exactly one of:
 #   registered    — a hook command under that event references the basename
 #   no-entry      — valid JSON, but no such command (hook would never run)
-#   unparseable   — content we must not rewrite: not valid JSON, not a JSON
-#                   object, or a `hooks` / `hooks.<event>` of a type we cannot
-#                   append to. The last of those is deliberate — see the
-#                   classify() comment; a file the registrar will refuse must
-#                   not read as one the sync can safely deliver to.
+#   unparseable   — content we must not rewrite: a symlink, not valid JSON,
+#                   not a JSON object, or a `hooks` / `hooks.<event>` of a
+#                   type we cannot append to. The last two are deliberate —
+#                   see the classify() comment; a file the registrar will
+#                   refuse must not read as one the sync can safely deliver
+#                   to.
 #   missing       — file absent or empty (or empty stdin)
 
 # `${VAR-default}`, not `${VAR:-default}`: with the colon, a set-but-empty
@@ -154,7 +155,15 @@ case "${1:-}" in
             echo "bootstrap-status.sh: $1 is a directory; pass its .claude/settings.json" >&2
             exit 2
         fi
-        if [[ ! -s "$1" ]]; then
+        # A SYMLINK IS CONTENT WE MUST NOT REWRITE, so it belongs in the
+        # same class as a file we cannot parse -- and it has to be decided
+        # HERE rather than left to the registrar, or the two disagree and the
+        # sync delivers a hook it then cannot register. The registrar refuses
+        # the same shape; this moves the refusal one step earlier, before
+        # anything is written, exactly as the unusable `hooks` shapes do.
+        if [[ -L "$1" ]]; then
+            echo "unparseable"
+        elif [[ ! -s "$1" ]]; then
             echo "missing"
         else
             classify < "$1"
