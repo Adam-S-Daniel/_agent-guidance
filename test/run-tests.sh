@@ -6425,6 +6425,70 @@ PY
     done
     rm -f "$d/goodenv.json"
 
+    # C2 — A LEADING ZERO IS OCTAL TO `[[ x -ge y ]]`, and the arithmetic
+    # bound this replaces got two things wrong with it. `08` printed a raw
+    # `[[: 08: value too great for base` from the SHELL before the clean
+    # refusal — two lines where adv-N8's closure was measured at one — and
+    # `010` was bounds-checked as octal 8 while being STORED as 10, `0100`
+    # checked as 64 and stored as 100. A bound that validates a different
+    # number than it admits is not a bound. The range now lives in the
+    # pattern, so all three are refused in one line with nothing stored.
+    local zeroenv zrc zstored
+    for zeroenv in 08 09 010 0100 019 0999; do
+        rm -f "$d/zeroenv.json"
+        zrc=0
+        result=$(env "BOOTSTRAP_HOOK_TIMEOUT=$zeroenv" "$r" "$d/zeroenv.json" \
+                 2>"$d/zeroenv.err") || zrc=$?
+        if [[ "$zrc" -eq 2 && "$result" == "refused-bad-env" ]]; then
+            pass "register: a leading-zero timeout $zeroenv is refused, exit 2"
+        else
+            fail "register: timeout $zeroenv answered rc=$zrc '$result'"
+        fi
+        if [[ "$(wc -l < "$d/zeroenv.err")" -eq 1 ]]; then
+            pass "register: timeout $zeroenv leaves exactly one line on stderr"
+        else
+            fail "register: timeout $zeroenv wrote $(wc -l < "$d/zeroenv.err") lines on stderr — $(head -1 "$d/zeroenv.err")"
+        fi
+        assert_not_contains "$d/zeroenv.err" "value too great for base" \
+            "register: timeout $zeroenv leaks no raw bash arithmetic error"
+        # THE STORED VALUE EQUALS THE CHECKED VALUE, which for a refusal means
+        # nothing is stored at all — the row that catches `010` being admitted
+        # as 8 and written as 10.
+        zstored="$(python3 -c '
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(doc["hooks"]["SessionStart"][0]["hooks"][0]["timeout"])
+except Exception:
+    print("none")' "$d/zeroenv.json" 2>/dev/null)"
+        if [[ "$zstored" == "none" ]]; then
+            pass "register: timeout $zeroenv stores nothing"
+        else
+            fail "register: timeout $zeroenv stored $zstored"
+        fi
+    done
+    rm -f "$d/zeroenv.json"
+
+    # The exact ends of the range, so the pattern is a RANGE and not four
+    # digits: 3599 and 3600 in, 3601 and 4000 out.
+    for goodenv in 999 1000 2999 3000 3599; do
+        rm -f "$d/goodenv.json"
+        rc=0
+        result=$(env "BOOTSTRAP_HOOK_TIMEOUT=$goodenv" "$r" "$d/goodenv.json") || rc=$?
+        [[ "$rc" -eq 0 && "$result" == "registered" ]] \
+            && pass "register: a $goodenv-second timeout is inside the accepted range" \
+            || fail "register: a $goodenv-second timeout was refused (rc=$rc '$result')"
+    done
+    for zeroenv in 3601 4000 9000; do
+        rm -f "$d/zeroenv.json"
+        zrc=0
+        result=$(env "BOOTSTRAP_HOOK_TIMEOUT=$zeroenv" "$r" "$d/zeroenv.json" 2>/dev/null) || zrc=$?
+        [[ "$zrc" -eq 2 && "$result" == "refused-bad-env" ]] \
+            && pass "register: a $zeroenv-second timeout is outside the accepted range" \
+            || fail "register: a $zeroenv-second timeout answered rc=$zrc '$result'"
+    done
+    rm -f "$d/goodenv.json" "$d/zeroenv.json"
+
 
     # An UNSET variable still means "use the default" — the seam's whole point
     # is that sync.sh's fleet-memory call passes four of the five and gets the

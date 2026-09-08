@@ -145,13 +145,28 @@ bad_env() {
 # silence: an empty matcher registered `"matcher": ""`, which is neither of
 # the two things a caller could have meant (every event, or a named one).
 [[ -n "$HOOK_MATCHER" ]] || bad_env "BOOTSTRAP_HOOK_MATCHER is set but empty; pass '*' to match every event"
-# A whole number of seconds, 1 to 3600. The bounds are stated rather than
-# left to the CLI: 0 registers a hook that can never finish, and a value with
-# more digits than an hour has seconds is a typo, not a timeout -- both were
-# accepted unvalidated. The digit-count bound comes FIRST so the comparison
-# below is never handed a number bash cannot represent.
-[[ "$HOOK_TIMEOUT" =~ ^[0-9]{1,4}$ ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be a whole number of seconds between 1 and 3600, got '$HOOK_TIMEOUT'"
-[[ "$HOOK_TIMEOUT" -ge 1 && "$HOOK_TIMEOUT" -le 3600 ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be between 1 and 3600 seconds, got '$HOOK_TIMEOUT'"
+# A whole number of seconds, 1 to 3600. The bounds are stated rather than left
+# to the CLI: 0 registers a hook that can never finish, and a value with more
+# digits than an hour has seconds is a typo, not a timeout -- both were
+# accepted unvalidated.
+#
+# THE RANGE IS IN THE PATTERN, and the arithmetic comparison it replaces is
+# why. `[[ x -ge y ]]` evaluates its operands, and in bash arithmetic a LEADING
+# ZERO means OCTAL. Measured: `08` printed a raw
+# `[[: 08: value too great for base (error token is "08")` from the shell
+# BEFORE the clean one-line refusal -- denting the exact property this
+# validation was measured on, "refused-bad-env, rc 2, one line on stderr, file
+# untouched" -- while `010` was bounds-checked as 8 and STORED as 10, and
+# `0100` was checked as 64 and stored as 100. Nothing wrong could actually be
+# written (a leading-zero four-digit value maxes at 0777, stored 777), but the
+# number that was checked was not the number that was stored, and a bound that
+# validates a different value than it admits is not a bound.
+#
+# A leading zero is refused rather than normalised: `08` is a typo in every
+# case a human types it, and int() in the program below would read it as 8
+# regardless, so admitting it would put the two readings back out of step.
+[[ "$HOOK_TIMEOUT" =~ ^([1-9][0-9]{0,2}|[1-2][0-9]{3}|3[0-5][0-9]{2}|3600)$ ]] \
+    || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be a whole number of seconds between 1 and 3600, got '$HOOK_TIMEOUT'"
 
 result=$(python3 -c '
 import copy, json, os, stat, sys
