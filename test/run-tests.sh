@@ -18250,6 +18250,156 @@ sys.exit("control byte %r reached the session start" % bad.group(0) if bad else 
         "fleet-memory state: skip still removes the managed block itself"
 }
 
+# S1/S2 — THE RECEIPT IS CLAIMED, AND A CLEAR THAT DID NOT HAPPEN IS LOUD.
+#
+# "Each of those three is announced exactly once, by the first session start
+# that sees it" is a sentence this repo ships into ~20 consumers' AGENTS.md.
+# Two SessionStarts beginning within the same tens of milliseconds falsified
+# it: both grepped `unread=1` out of the same receipt, both printed, and only
+# then did either clear the flag. Measured on the earlier version, 20 pairs per
+# row: 20/20 double announcements at zero stagger, 19-20/20 up to 20 ms.
+#
+# And the loud path that was supposed to make a failed clear visible was wired
+# to `mktemp` alone, which is the half that almost never fails: on a full
+# filesystem mktemp SUCCEEDS and the redirection into it fails, so five of five
+# consecutive session starts re-announced the same verdict with nothing on
+# stderr.
+test_fleet_memory_receipt_claim() {
+    echo ""
+    echo "TEST: fleet-memory.sh (the receipt is claimed before it is read)"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetclaim"
+    rm -rf "$d"; mkdir -p "$d"
+    local payload="$d/payload.md"
+    printf '# Fleet guidance\n\nThe canary is UMBER-SHRIKE-77.\n' > "$payload"
+
+    # ── S1: 20 pairs of concurrent session starts, one receipt each ────────
+    #
+    # The SCHEDULE is not deterministic and the OUTCOME is: whichever process
+    # wins the rename holds the only copy, so the other has nothing to read.
+    # Twenty pairs is a count, not a sample — an atomic claim cannot produce 21.
+    local i cfg n total=0 strays=0 h
+    for i in $(seq 1 20); do
+        h="$d/pair$i"; cfg="$h/.claude"
+        mkdir -p "$cfg"
+        printf 'session=aaaa1111\nunread=1\nfleet=LOAD MISMATCH — pair %d\n' "$i" > "$cfg/instructions-receipt.state"
+        chmod 600 "$cfg/instructions-receipt.state"
+        ( HOME="$h" CLAUDE_CONFIG_DIR="$cfg" FLEET_GUIDANCE_PAYLOAD="$payload" \
+              timeout --foreground 30 bash "$hook" > "$h/o1" 2>&1 ) &
+        local p1=$!
+        ( HOME="$h" CLAUDE_CONFIG_DIR="$cfg" FLEET_GUIDANCE_PAYLOAD="$payload" \
+              timeout --foreground 30 bash "$hook" > "$h/o2" 2>&1 ) &
+        local p2=$!
+        wait "$p1" "$p2"
+        n="$(cat "$h/o1" "$h/o2" | grep -c 'previous session' || true)"
+        total=$((total + n))
+        strays=$((strays + $(find "$cfg" -maxdepth 1 \
+            \( -name 'instructions-receipt.state.read.*' -o -name 'instructions-receipt.state.claim.*' \) \
+            2>/dev/null | wc -l)))
+    done
+    if [[ "$total" -eq 20 ]]; then
+        pass "fleet-memory claim: 20 pairs of concurrent session starts announce exactly 20 times"
+    else
+        fail "fleet-memory claim: 20 concurrent pairs produced $total announcements, not 20"
+    fi
+    if [[ "$strays" -eq 0 ]]; then
+        pass "fleet-memory claim: no claim or tmp file is left in any config dir"
+    else
+        fail "fleet-memory claim: $strays claim/tmp files were left behind"
+    fi
+    # The control, so "exactly 20" cannot be satisfied by a hook that announces
+    # nothing at all: one session start on one unread receipt announces once.
+    mkdir -p "$d/single/.claude"
+    printf 'session=bbbb2222\nunread=1\nfleet=LOAD MISMATCH — single\n' \
+        > "$d/single/.claude/instructions-receipt.state"
+    HOME="$d/single" CLAUDE_CONFIG_DIR="$d/single/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+        timeout --foreground 30 bash "$hook" > "$d/out_single" 2>&1
+    assert_contains "$d/out_single" "fleet-guidance: previous session LOAD MISMATCH" \
+        "fleet-memory claim: a single session start still announces the verdict once"
+    assert_contains "$d/single/.claude/instructions-receipt.state" "unread=0" \
+        "fleet-memory claim: and the claimed receipt is written back cleared"
+
+    # ── S2: a clear that did not happen is never silent ────────────────────
+    #
+    # Shadowed on PATH rather than by filling a disk: the failure mode under
+    # test is "the write inside the compound failed", and a stub that exits 1
+    # reproduces it deterministically where a tmpfs would make the suite
+    # dependent on mount privileges.
+    local shim="$d/shim"
+    mkdir -p "$shim"
+    printf '#!/bin/sh\nexit 1\n' > "$shim/sed"
+    chmod 755 "$shim/sed"
+    mkdir -p "$d/sedfail/.claude"
+    printf 'session=cccc3333\nunread=1\nfleet=LOAD MISMATCH — sed row\n' \
+        > "$d/sedfail/.claude/instructions-receipt.state"
+    local before_sed; before_sed="$(cat "$d/sedfail/.claude/instructions-receipt.state")"
+    HOME="$d/sedfail" CLAUDE_CONFIG_DIR="$d/sedfail/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+        PATH="$shim:$PATH" timeout --foreground 30 bash "$hook" > "$d/out_sedfail" 2>&1
+    assert_contains "$d/out_sedfail" "could not clear the previous session's receipt" \
+        "fleet-memory claim: a failed rewrite says so out loud, not only a failed mktemp"
+    assert_contains "$d/out_sedfail" "the line above will repeat next session" \
+        "fleet-memory claim: and the loud line says what the operator will see"
+    if [[ "$(cat "$d/sedfail/.claude/instructions-receipt.state")" == "$before_sed" ]]; then
+        pass "fleet-memory claim: a failed rewrite leaves the receipt untouched"
+    else
+        fail "fleet-memory claim: a failed rewrite changed the receipt"
+    fi
+    # THE CLAIM ITSELF IS A WRITE THAT CAN FAIL, and a hook that could not even
+    # claim the receipt has announced nothing — so the line has to say that
+    # rather than "the line above will repeat".
+    printf '#!/bin/sh\nexit 1\n' > "$shim/mv"
+    chmod 755 "$shim/mv"
+    mkdir -p "$d/mvfail/.claude"
+    printf 'session=dddd4444\nunread=1\nfleet=LOAD MISMATCH — mv row\n' \
+        > "$d/mvfail/.claude/instructions-receipt.state"
+    local before_mv; before_mv="$(cat "$d/mvfail/.claude/instructions-receipt.state")"
+    HOME="$d/mvfail" CLAUDE_CONFIG_DIR="$d/mvfail/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+        PATH="$shim:$PATH" timeout --foreground 30 bash "$hook" > "$d/out_mvfail" 2>&1
+    assert_contains "$d/out_mvfail" "could not clear the previous session's receipt" \
+        "fleet-memory claim: a failed claim says so out loud too"
+    assert_contains "$d/out_mvfail" "nothing was announced" \
+        "fleet-memory claim: and it says the verdict was not announced, not that a line will repeat"
+    if [[ "$(cat "$d/mvfail/.claude/instructions-receipt.state")" == "$before_mv" ]]; then
+        pass "fleet-memory claim: a failed claim leaves the receipt untouched"
+    else
+        fail "fleet-memory claim: a failed claim changed the receipt"
+    fi
+    rm -f "$shim/sed" "$shim/mv"
+
+    # THE WRITE-BACK MUST NOT CLOBBER A NEWER RECEIPT. `ln` fails with EEXIST
+    # rather than replacing, so a receipt written while this session start was
+    # announcing wins the name; the stale copy is dropped, and the receipt is
+    # left with exactly ONE name (instructions-loaded.sh's open_owned refuses a
+    # file with more).
+    mkdir -p "$d/newer/.claude"
+    local nreceipt="$d/newer/.claude/instructions-receipt.state"
+    printf 'session=eeee5555\nunread=1\nfleet=LOAD MISMATCH — will be superseded\n' > "$nreceipt"
+    # Fires ONLY on the hook's first read of the claim (`^unread=`), i.e.
+    # inside the window between the claim and the write-back — a shim that
+    # rewrote on every grep would also rewrite AFTER the write-back and make
+    # the assertion below true whatever the write-back did.
+    printf '#!/bin/sh\ncase " $* " in *"^unread="*) printf "session=ffff6666\\nunread=1\\nfleet=LOAD MISMATCH — newer\\n" > "%s" ;; esac\nexec /bin/grep "$@"\n' \
+        "$nreceipt" > "$shim/grep"
+    chmod 755 "$shim/grep"
+    HOME="$d/newer" CLAUDE_CONFIG_DIR="$d/newer/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+        PATH="$shim:$PATH" timeout --foreground 30 bash "$hook" > "$d/out_newer" 2>&1
+    rm -f "$shim/grep"
+    assert_contains "$nreceipt" "newer" \
+        "fleet-memory claim: a receipt written during the announcement is not clobbered by the write-back"
+    local nlinks; nlinks="$(stat -c '%h' "$nreceipt" 2>/dev/null)"
+    if [[ "$nlinks" == "1" ]]; then
+        pass "fleet-memory claim: the receipt is left with exactly one name"
+    else
+        fail "fleet-memory claim: the receipt has $nlinks names after the write-back"
+    fi
+    if [[ -z "$(find "$d/newer/.claude" -maxdepth 1 -name 'instructions-receipt.state.claim.*' 2>/dev/null)" ]]; then
+        pass "fleet-memory claim: the superseded claim is not left behind"
+    else
+        fail "fleet-memory claim: a superseded claim file was left in the config dir"
+    fi
+}
+
 # ── The InstructionsLoaded receipt ─────────────────────────────────────────
 #
 # MEASURED FIRST, on the CLI this container ships (2.1.261), against a stub
@@ -20087,6 +20237,7 @@ test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
 test_fleet_memory_hook
 test_fleet_memory_state_file
+test_fleet_memory_receipt_claim
 test_instructions_loaded_hook
 test_instructions_report
 
