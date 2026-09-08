@@ -348,23 +348,39 @@ def read_state():
     return read_kv(STATE)
 
 
-def state_oversized():
-    """True when the state file is too big for read_kv to touch at all.
+def state_unusable():
+    """Why read_kv could not use the state file, or None when it could.
 
-    read_kv returns {} for an oversized state file exactly as it does for an
+    read_kv returns {} for an unusable state file exactly as it does for an
     absent one, and fleet_verdict reads {} as "nothing to compare against" and
-    returns None -- so ONE corrupt file in the config dir silently disabled the
+    returns None -- so ONE bad file in the config dir silently disabled the
     whole receipt lane for a session: no verdict, no receipt, no line in the
     report, and fleet-memory.sh still printing `current`. The exposure is a
     single session (write_state rewrites the file at the next session start),
-    which is what the design promises; the SILENCE is what it does not. This
-    is the one bit that tells the two cases apart, so the verdict can say
-    which one it is.
+    which is what the design promises; the SILENCE is what it does not.
+
+    OVERSIZED WAS ONLY ONE SHAPE OF THAT SILENCE. A DIRECTORY or a FIFO at the
+    state path is rejected by read_kv's os.path.isfile -- correctly, and
+    without a word -- so the lane was disabled exactly as quietly as before for
+    every shape but the big one. Returning the REASON rather than a bit is what
+    makes the verdict able to name which it was.
+
+    An ABSENT state file is not one of them: that is a machine where
+    fleet-memory.sh never installed anything, and inventing a verdict for it
+    would be worse than the silence.
     """
     try:
-        return os.path.isfile(STATE) and os.path.getsize(STATE) > STATE_CAP
+        if not os.path.lexists(STATE):
+            return None
+        if not os.path.isfile(STATE):
+            return "fleet-guidance.state is not a regular file"
+        if os.path.getsize(STATE) > STATE_CAP:
+            return "fleet-guidance.state is over %d bytes" % STATE_CAP
+        if not os.access(STATE, os.R_OK):
+            return "fleet-guidance.state is not readable"
     except Exception:
-        return False
+        return None
+    return None
 
 
 # Every human-facing string in this program is built through here or written
@@ -789,9 +805,11 @@ verdicts = {}
 
 if content is not None and memory_type == "User":
     suffix = fleet_verdict(content, state)
-    if suffix is None and state_oversized():
-        suffix = mismatch("fleet-guidance.state is over %d bytes, so nothing "
-                          "could be compared this session" % STATE_CAP)
+    if suffix is None:
+        unusable = state_unusable()
+        if unusable:
+            suffix = mismatch(unusable + ", so nothing could be compared "
+                                         "this session")
     if suffix:
         verdicts["fleet"] = suffix
         emit("fleet-guidance: " + suffix)

@@ -19654,6 +19654,41 @@ print(json.dumps({"hook_event_name": "FileChanged", "memory_type": "User",
     rm -f "$d/cfg/fleet-guidance.state"
     cp "$d/state.good" "$d/cfg/fleet-guidance.state"
 
+    # N7 — OVERSIZED WAS ONLY ONE SHAPE OF THE SAME SILENCE. read_kv's
+    # os.path.isfile rejects a DIRECTORY and a FIFO at the state path too —
+    # correctly, and without a word — so the whole receipt lane was disabled
+    # exactly as quietly as before for every shape but the big one. Bounded,
+    # because a FIFO is the shape that hangs when something opens it.
+    local shape shape_rc
+    for shape in dir fifo; do
+        rm -f "$receipt" "$logf" "$d/cfg/fleet-guidance.state"
+        rm -rf "$d/cfg/fleet-guidance.state"
+        if [[ "$shape" == dir ]]; then
+            mkdir -p "$d/cfg/fleet-guidance.state"
+        else
+            mkfifo "$d/cfg/fleet-guidance.state"
+        fi
+        shape_rc=0
+        printf '%s\n' "$(instr_event User session_start "$d/cfg/CLAUDE.md")" \
+            | timeout --foreground 15 env CLAUDE_CONFIG_DIR="$d/cfg" bash "$INSTR_HOOK" \
+            > "$d/out_state_$shape" 2>&1 || shape_rc=$?
+        if [[ $shape_rc -eq 0 ]]; then
+            pass "instructions-loaded: a $shape at the state path still exits 0, and in time"
+        else
+            fail "instructions-loaded: a $shape at the state path exited $shape_rc"
+        fi
+        assert_contains "$d/out_state_$shape" \
+            "fleet-guidance: LOAD MISMATCH" \
+            "instructions-loaded: a $shape at the state path leaves a mark rather than nothing"
+        assert_contains "$d/out_state_$shape" "is not a regular file" \
+            "instructions-loaded: and the verdict names what it found, not the cap"
+        assert_contains "$receipt" "fleet=LOAD MISMATCH" \
+            "instructions-loaded: a $shape at the state path reaches the receipt too"
+        rm -rf "$d/cfg/fleet-guidance.state"
+    done
+    cp "$d/state.good" "$d/cfg/fleet-guidance.state"
+    rm -f "$receipt" "$logf"
+
     # The same cap on the receipt, which write_receipt reads before merging.
     rm -f "$receipt" "$logf"
     printf 'session=deadbeef\nfleet=LOAD MISMATCH \xe2\x80\x94 planted\npadding=' > "$receipt"
