@@ -18912,7 +18912,32 @@ sys.exit("control byte %r carried forward into the receipt" % bad.group(0) if ba
         "instructions-loaded: the BEHIND line names the version the session loaded"
     assert_not_contains "$d/out_agents_behind" " < v" \
         "instructions-loaded: BEHIND claims no ordering it cannot establish"
+
+    # N9 — A CORRUPT PAYLOAD IS NOT A VERSION DISAGREEMENT. read_bytes caps at
+    # FILE_CAP and returns whatever it got, and the digest was taken over that:
+    # an EMPTY fleet-guidance.md produced a confident
+    # `BEHIND — this repo ships ve3b0c442`, which is the sha of the empty
+    # string, and an over-cap one produced a version computed from its first
+    # 4 MiB. Both are "the file beside this AGENTS.md is not the payload".
+    : > "$repo/.claude/hooks/fleet-guidance.md"
+    rm -f "$receipt"
+    instr_run "$d/out_agents_empty" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_empty" "agents-md: cannot compare"         "instructions-loaded: an empty payload beside AGENTS.md says it cannot compare"
+    assert_contains "$d/out_agents_empty" "is empty"         "instructions-loaded: and names what it found"
+    assert_not_contains "$d/out_agents_empty" "BEHIND"         "instructions-loaded: an empty payload is never reported as a version disagreement"
+    assert_not_contains "$d/out_agents_empty" "e3b0c442"         "instructions-loaded: the sha of the empty string is never printed as this repo's version"
+
+    # Past the 4 MiB cap. Sparse, so the row costs a few blocks rather than
+    # five megabytes of writes.
+    truncate -s 5M "$repo/.claude/hooks/fleet-guidance.md"
+    rm -f "$receipt"
+    instr_run "$d/out_agents_huge" "$(instr_event Project session_start "$repo/AGENTS.md")"
+    assert_contains "$d/out_agents_huge" "agents-md: cannot compare"         "instructions-loaded: an over-cap payload says it cannot compare"
+    assert_contains "$d/out_agents_huge" "past the 4194304-byte cap"         "instructions-loaded: and names the cap it went past"
+    assert_not_contains "$d/out_agents_huge" "BEHIND"         "instructions-loaded: an over-cap payload is never reported as a version disagreement"
+
     cp "$payload" "$repo/.claude/hooks/fleet-guidance.md"
+    rm -f "$receipt"
 
     # The doubled managed block (c86465f) — the one shape of "edited above the
     # marker" a file can be caught in without holding the template it was

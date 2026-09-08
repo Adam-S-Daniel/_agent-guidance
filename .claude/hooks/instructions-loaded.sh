@@ -593,8 +593,9 @@ def agents_verdict(data, state, path):
     if os.path.basename(path) != "AGENTS.md":
         return None
 
-    payload = read_bytes(os.path.join(os.path.dirname(path), ".claude", "hooks",
-                                      "fleet-guidance.md"))
+    payload_path = os.path.join(os.path.dirname(path), ".claude", "hooks",
+                                "fleet-guidance.md")
+    payload = read_bytes(payload_path)
     if payload is None:
         return None      # not the synced AGENTS.md -- a nested one, a rules
                          # file of that name, or a repo the sync keeps on the
@@ -626,6 +627,26 @@ def agents_verdict(data, state, path):
     if not want_version:
         return None
     want_version = version_token(want_version)
+
+    # A CORRUPT PAYLOAD IS NOT A VERSION DISAGREEMENT, and reporting it as one
+    # is a confident answer to a question that was never asked. read_bytes caps
+    # at FILE_CAP and returns what it got, so the digest below was taken over
+    # whatever came back: an EMPTY fleet-guidance.md produced
+    # `BEHIND -- this repo ships ve3b0c442` (the sha of the empty string) and a
+    # 50 MB one produced a version computed from its first 4 MiB. Both are
+    # "the file beside this AGENTS.md is not the payload", which is what the
+    # line has to say.
+    if not payload:
+        return ("cannot compare \u2014 the fleet-guidance.md beside this "
+                "AGENTS.md is empty, so this repo's version cannot be computed")
+    try:
+        payload_size = os.path.getsize(payload_path)
+    except Exception:
+        payload_size = len(payload)
+    if payload_size > FILE_CAP:
+        return ("cannot compare \u2014 the fleet-guidance.md beside this "
+                "AGENTS.md is %d bytes, past the %d-byte cap, so this repo's "
+                "version cannot be computed" % (payload_size, FILE_CAP))
 
     repo_version = hashlib.sha256(payload).hexdigest()[:8]
     if repo_version == want_version:
