@@ -19051,10 +19051,23 @@ sys.exit("control byte %r carried forward into the receipt" % bad.group(0) if ba
     # never judged. Most Project loads in the fleet are exactly this.
     printf '# A plain project CLAUDE.md\n\nNothing managed here.\n' > "$repo/CLAUDE.md"
 
-    # …and "not a managed AGENTS.md" is decided by the FILENAME, before any
-    # structural check runs. Judging every Project file that merely quotes the
-    # markers made the malformed-block verdict fire on ordinary repo content —
-    # a rules file that names the marker in prose, a rules file with its own
+    # …and "not a managed AGENTS.md" is decided by TWO things, both before any
+    # structural check runs: the file is named AGENTS.md, and the synced
+    # payload `.claude/hooks/fleet-guidance.md` sits beside it. The filename
+    # alone was the earlier answer and it is now the cheap first half of the
+    # pair — it closed the three shapes below and nothing wider, which is what
+    # let `packages/api/AGENTS.md` and `.claude/rules/AGENTS.md` (the two rows
+    # further down) still be judged as the managed root file.
+    #
+    # Neither half is redundant. The payload is what tells a synced AGENTS.md
+    # from any other file of that name; the BASENAME is what stands between
+    # the fleet's root CLAUDE.md bridge — at the root, beside the payload, in
+    # every consumer — and a false MANAGED BLOCK MALFORMED on the single most
+    # common Project memory file there is.
+    #
+    # Judging every Project file that merely quotes the markers made the
+    # malformed-block verdict fire on ordinary repo content — a rules file
+    # that names the marker in prose, a rules file with its own
     # `## Repo-specific additions` heading, a nested CLAUDE.md with the same
     # heading. This repo's own tree is clean, so nothing here would have
     # caught it; ~20 consumer repos are where it would have fired, and the
