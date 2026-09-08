@@ -69,6 +69,19 @@ if [[ -z "$HOOK_BASENAME" || -z "$HOOK_EVENT" ]]; then
     exit 2
 fi
 
+# THE NEEDLE HAS TO IDENTIFY OUR HOOK, and non-empty is not the same test. The
+# needle is used as `needle in str(command)`, so any string SHORT enough to
+# appear inside an unrelated command answers `registered` for a settings.json
+# that names something else entirely: measured, `' '` (one space), `'.'` and
+# `'s'` each read `registered` against a file whose only entry was
+# `some-other.sh`, and the sync would then skip a repo whose hook never runs.
+# The empty-value guard above closed one value; this closes the class, by
+# requiring the shape of an actual hook FILENAME.
+if [[ ! "$HOOK_BASENAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$ ]]; then
+    echo "bootstrap-status.sh: BOOTSTRAP_HOOK_BASENAME must be a hook filename ending in .sh, got '$HOOK_BASENAME'" >&2
+    exit 2
+fi
+
 classify() {
     python3 -c '
 import json, sys

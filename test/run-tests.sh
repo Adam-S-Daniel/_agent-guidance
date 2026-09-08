@@ -20353,6 +20353,47 @@ assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"],
     fi
     rm -f "$d/shapes/fifoshape.json"
 
+    # N10 — A NEEDLE TOO WEAK TO IDENTIFY OUR HOOK. `needle in str(command)`
+    # means any short string appears inside an unrelated command: one space,
+    # `.` and `s` each read `registered` / `already-registered` against a
+    # settings.json whose only entry was some-other.sh — so the sync would skip
+    # a repo whose hook never runs, and the hook would never be registered
+    # anywhere. Non-empty was one value of the class the empty-value guard
+    # exists for; the shape of a hook FILENAME is the class.
+    printf '{"hooks": {"SessionStart": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash some-other.sh", "timeout": 9}]}]}}\n' \
+        > "$d/weakneedle.json"
+    local weak weak_rc weak_before
+    weak_before="$(cat "$d/weakneedle.json")"
+    for weak in ' ' '.' 's'; do
+        weak_rc=0
+        result=$(BOOTSTRAP_HOOK_BASENAME="$weak" "$status" "$d/weakneedle.json" 2>/dev/null) || weak_rc=$?
+        if [[ "$weak_rc" -eq 2 && "$result" != "registered" ]]; then
+            pass "weak needle: the classifier refuses BASENAME='$weak' rather than reading an unrelated hook as ours"
+        else
+            fail "weak needle: the classifier answered rc=$weak_rc '$result' for BASENAME='$weak'"
+        fi
+        weak_rc=0
+        result=$(BOOTSTRAP_HOOK_BASENAME="$weak" "$reg" "$d/weakneedle.json" 2>/dev/null) || weak_rc=$?
+        if [[ "$weak_rc" -eq 2 && "$result" == "refused-bad-env" ]]; then
+            pass "weak needle: the registrar refuses BASENAME='$weak' as a bad environment value"
+        else
+            fail "weak needle: the registrar answered rc=$weak_rc '$result' for BASENAME='$weak'"
+        fi
+    done
+    if [[ "$(cat "$d/weakneedle.json")" == "$weak_before" ]]; then
+        pass "weak needle: no refusal rewrote the file"
+    else
+        fail "weak needle: a refused needle still wrote to the file"
+    fi
+    # …and the two real ones still work, so the shape is a guard and not a
+    # narrowing that would refuse the fleet's own hooks.
+    for weak in fleet-memory.sh instructions-loaded.sh; do
+        result=$(BOOTSTRAP_HOOK_BASENAME="$weak" "$status" "$d/weakneedle.json")
+        [[ "$result" == "no-entry" ]] \
+            && pass "weak needle: BASENAME=$weak is still accepted and answers no-entry" \
+            || fail "weak needle: BASENAME=$weak answered '$result'"
+    done
+
     # A DANGLING link is `unwritable` too: writing there would create the
     # target outside the tree, and `git add` would stage an unchanged link.
     ln -sf "$d/linked/does-not-exist.json" "$d/linked/dangling.json"

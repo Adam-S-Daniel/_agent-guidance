@@ -131,6 +131,15 @@ bad_env() {
 }
 [[ -n "$HOOK_EVENT" ]] || bad_env "BOOTSTRAP_HOOK_EVENT is set but empty; unset it to mean SessionStart"
 [[ -n "$HOOK_BASENAME" ]] || bad_env "BOOTSTRAP_HOOK_BASENAME is set but empty; an empty needle matches every command"
+# …and non-empty is not the same test as "identifies our hook". The needle is
+# used as `needle in str(command)`, so any short string appears inside an
+# unrelated command: `' '`, `'.'` and `'s'` each read `already-registered`
+# against a settings.json whose only entry was `some-other.sh`, and the hook
+# would then never be registered anywhere. bootstrap-status.sh applies the same
+# shape, because a needle the two halves disagree about is the shape this seam
+# keeps being bitten by.
+[[ "$HOOK_BASENAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$ ]] \
+    || bad_env "BOOTSTRAP_HOOK_BASENAME must be a hook filename ending in .sh, got '$HOOK_BASENAME'"
 [[ -n "$HOOK_COMMAND" ]] || bad_env "BOOTSTRAP_HOOK_COMMAND is set but empty; there would be nothing to run"
 # The last of the four empties, and the one that used to be accepted in
 # silence: an empty matcher registered `"matcher": ""`, which is neither of
