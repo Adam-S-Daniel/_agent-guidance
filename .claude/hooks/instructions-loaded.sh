@@ -417,6 +417,14 @@ def clean(value):
     reach the session start intact. Applied to every value stored, not only to
     the ones built from a version token, so a future verdict string inherits
     the guarantee instead of re-earning it.
+
+    C0 AND DEL, WHICH IS NOT "no control characters". The class is
+    [\x00-\x1f\x7f]; the C1 range U+0080-U+009F is UTF-8 encoded as two bytes
+    and passes through untouched -- measured, "A ESC U+009B DEL U+0084 B" comes
+    out as 41 c2 9b c2 84 42, and U+009B is CSI to a terminal that honours
+    8-bit controls. Most UTF-8 terminals ignore them, and whoever can write
+    this file owns the guidance already, so it is recorded rather than widened;
+    what is not acceptable is a docstring claiming the wider class.
     """
     return CONTROL_CHARS.sub("", str(value))[:VALUE_CAP]
 

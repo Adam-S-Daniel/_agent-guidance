@@ -92,6 +92,10 @@ config_dir, show_all, fmt = sys.argv[1], sys.argv[2] == "true", sys.argv[3]
 # the terminal live. Same two rules the hook applies at write time: no control
 # characters, and a cap. Applied at PRINT time only, so the json form stays a
 # faithful record of what the log holds.
+#
+# "No control characters" means C0 and DEL, the class written below. The C1
+# range U+0080-U+009F is two UTF-8 bytes and survives -- measured, and the same
+# on the hook's clean() and fleet-memory.sh's. Recorded rather than widened.
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 TEXT_CAP = 200
 

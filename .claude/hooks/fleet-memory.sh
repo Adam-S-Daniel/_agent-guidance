@@ -136,6 +136,10 @@ report_previous_session() {
     # nothing on a machine where it never runs, and a planted receipt carrying
     # ESC sequences and a 5,000-character value printed both live and in full.
     # Same two rules clean() applies: no control characters, 200 characters.
+    # "No control characters" is C0 plus DEL in both -- bash's [[:cntrl:]] in
+    # this container's locale is exactly the class the hook's
+    # [\x00-\x1f\x7f] is, and the C1 range U+0080-U+009F survives both.
+    # Measured, and recorded rather than widened: see clean()'s docstring.
     fleet="${fleet//[[:cntrl:]]/}"; fleet="${fleet:0:200}"
     agents="${agents//[[:cntrl:]]/}"; agents="${agents:0:200}"
     [ -n "$fleet" ] && echo "fleet-guidance: previous session $fleet"
