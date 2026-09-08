@@ -153,14 +153,6 @@ case "${1:-}" in
         classify
         ;;
     *)
-        # A directory is a caller error, not a fifth classification. `-s` is
-        # TRUE for one (directories have nonzero size), so without this guard
-        # control reaches `classify < "$1"`, bash redirects stdin from the
-        # directory, and python3 dies with a core-level fatal error.
-        if [[ -d "$1" ]]; then
-            echo "bootstrap-status.sh: $1 is a directory; pass its .claude/settings.json" >&2
-            exit 2
-        fi
         # A SYMLINK IS TWO SEPARATE QUESTIONS, and answering them with one
         # word cost a healthy consumer its delivery. "Is the hook registered
         # here?" is about CONTENT and is answered by reading THROUGH the link,
@@ -185,13 +177,36 @@ case "${1:-}" in
         # reads as `unwritable` too -- `-s` is false for all of them, and
         # writing there would create or block on something outside the tree.
         if [[ -L "$1" ]]; then
+            # `-f` as well as `-s`, because both follow the link: a link to a
+            # DIRECTORY is `-s` true (directories have nonzero size), and
+            # `classify < "$1"` would then redirect stdin from a directory and
+            # kill python3 with a core-level fatal error.
             link_state="missing"
-            [[ -s "$1" ]] && link_state="$(classify < "$1")"
+            [[ -f "$1" && -s "$1" ]] && link_state="$(classify < "$1")"
             if [[ "$link_state" == "registered" ]]; then
                 echo "registered"
             else
                 echo "unwritable"
             fi
+        elif [[ ! -e "$1" ]]; then
+            echo "missing"
+        elif [[ ! -f "$1" ]]; then
+            # A DIRECTORY IS ONE REPO'S SHAPE, NOT THE RUN'S. This branch used
+            # to `exit 2` as a caller error, and sync.sh calls this script in a
+            # plain command substitution under `set -euo pipefail` -- so a
+            # consumer repo that committed a TREE at .claude/settings.json (a
+            # shape git stores and checks out perfectly well) ended the whole
+            # fleet run at whichever repo sorted first: measured, exit 2 after
+            # 1 of 6 repos, no summary, no failure tally. One repo's shape must
+            # fail one repo, which is the same rule the gitignore handling and
+            # the per-repo `continue`s exist for.
+            #
+            # `unwritable` rather than `unparseable` because that is what was
+            # found: nothing here can be parsed OR appended to, and the caller
+            # prints which. A FIFO, a socket and a device land here too, and
+            # none of them is opened -- `-f` is a stat, so there is nothing to
+            # block on.
+            echo "unwritable"
         elif [[ ! -s "$1" ]]; then
             echo "missing"
         else

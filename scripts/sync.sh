@@ -870,14 +870,24 @@ for repo_name in "${REPOS[@]}"; do
         cmp -s "$INSTR_HOOK_REL_PATH" "$INSTR_HOOK_SOURCE" \
             && instr_hook_state="current" || instr_hook_state="drifted"
     fi
+    # `|| ... =unparseable`, because a bare command substitution under
+    # `set -euo pipefail` makes the classifier's exit code the RUN's. One repo
+    # committing a tree at .claude/settings.json ended the whole fleet run at
+    # the first repo -- measured, exit 2 after 1 of 6, no summary and no
+    # tally. The classifier no longer exits 2 for that shape, and this is the
+    # standing guard that any FUTURE non-zero answer is one withheld repo
+    # rather than a dead run: "we could not get an answer" and "do not touch
+    # this file" are the same instruction to everything downstream.
     fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
-                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
+        || fleet_reg_state="unparseable"
     # A DIFFERENT event, so a different classification: a hook named under
     # SessionStart is not registered for InstructionsLoaded, and reading it as
     # such would leave a delivered hook nothing runs.
     instr_reg_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
                       BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
-                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
+        || instr_reg_state="unparseable"
 
     if [[ ! -r "$FLEET_HOOK_SOURCE" || ! -s "$FLEET_PAYLOAD_SOURCE" ]]; then
         fleet_deliver=false
@@ -1081,7 +1091,8 @@ for repo_name in "${REPOS[@]}"; do
                 hook_state="missing"
             fi
 
-            reg_state=$("$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+            reg_state=$("$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
+                || reg_state="unparseable"
 
             # An unreadable settings.json is never rewritten (same posture as
             # an existing CLAUDE.md). Delivering the hook file alone would

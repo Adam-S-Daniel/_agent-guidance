@@ -6208,17 +6208,24 @@ JSON
     result=$("$s" "$d/absent.json")
     [[ "$result" == "missing" ]] && pass "absent file -> missing" || fail "absent file -> missing (got '$result')"
 
-    # A repo root passed instead of its settings.json is the obvious hand-run
-    # slip. Directories have nonzero size, so the `-s` test alone lets one
-    # through into `classify < "$1"` and python3 dies on a directory stdin.
-    # It is a caller error (exit 2), and must NOT come back as one of the four
-    # classifications: `missing` would read as "no hook registered here".
+    # A DIRECTORY IS A CLASSIFICATION, NOT A CALLER ERROR — and the change of
+    # mind is the finding, not a preference. Directories have nonzero size, so
+    # the `-s` test alone lets one through into `classify < "$1"` and python3
+    # dies on a directory stdin; that much is unchanged, and the guard stays.
+    # What it must NOT do is `exit 2`: sync.sh calls this in a plain command
+    # substitution under `set -euo pipefail`, and a consumer repo that commits
+    # a TREE at .claude/settings.json (a shape git stores and checks out fine)
+    # then ends the whole fleet run at whichever repo sorts first — measured,
+    # exit 2 after 1 of 6 repos with no summary and no tally. `unwritable` is
+    # what was found: nothing here can be parsed or appended to. It must still
+    # never read as `missing`, which every caller takes as "no hook registered
+    # here, go ahead and add one".
     rc=0
-    result=$("$s" "$d" 2>/dev/null) || rc=$?
-    if [[ "$rc" -eq 2 && ! "$result" =~ (registered|no-entry|unparseable|missing) ]]; then
-        pass "directory argument -> exit 2 caller error (never a classification)"
+    result=$(timeout --foreground 20 "$s" "$d" 2>/dev/null) || rc=$?
+    if [[ "$rc" -eq 0 && "$result" == "unwritable" ]]; then
+        pass "directory argument -> unwritable, exit 0 (one repo's shape, not the run's)"
     else
-        fail "directory argument -> exit 2 caller error (never a classification) (got rc=$rc, stdout '$result')"
+        fail "directory argument -> unwritable, exit 0 (got rc=$rc, stdout '$result')"
     fi
 
     result=$(printf '' | "$s" -)
@@ -7184,6 +7191,100 @@ symlink_section() {   # <log suffix>
         "$TEST_DIR/sync-symlink-$1.txt" > "$TEST_DIR/sync-symlink-$1.section"
     [[ -s "$TEST_DIR/sync-symlink-$1.section" ]] || \
         fail "symlinked settings: the $1 run printed no section for bootorg/repo-no-lock, so its assertions have nothing to read"
+}
+
+# S3 — ONE CONSUMER'S REPO SHAPE MUST FAIL ONE REPO, NEVER THE RUN.
+#
+# `.claude/settings.json` as a DIRECTORY is representable in git (a tree with
+# any file under it) and checks out normally. bootstrap-status.sh answered it
+# with `exit 2` as a caller error, and sync.sh calls the classifier in a plain
+# command substitution under `set -euo pipefail` -- so that exit became the
+# RUN's. Measured on these fixtures: the run died after 1 of 6 repos, with no
+# summary and no failure tally, on a shape one repo of twenty could introduce
+# without anybody noticing.
+test_sync_settings_is_a_directory() {
+    echo ""
+    echo "=== Test: sync.sh (a directory at settings.json fails one repo, not the run) ==="
+
+    local w v rc=0 seen
+    w="$TEST_DIR/work/settings-dir"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    rm -f "$w/.claude/settings.json"
+    mkdir -p "$w/.claude/settings.json"
+    printf 'not a settings file\n' > "$w/.claude/settings.json/README"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "a tree where settings.json should be" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    if [[ "$(git -C "$w" ls-files -- '.claude/settings.json/README' | wc -l)" -eq 1 ]]; then
+        pass "settings dir: git really stored a tree at .claude/settings.json"
+    else
+        fail "settings dir: the fixture is not a committed directory"
+        return
+    fi
+
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-settings-dir.txt" 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "settings dir: the run completes rather than exiting at the first repo"
+    else
+        fail "settings dir: the run exited $rc — $(tail -1 "$TEST_DIR/sync-settings-dir.txt")"
+    fi
+    seen="$(grep -c '^=== bootorg/' "$TEST_DIR/sync-settings-dir.txt" || true)"
+    if [[ "$seen" -eq 6 ]]; then
+        pass "settings dir: all six bootorg repos were processed"
+    else
+        fail "settings dir: $seen of 6 repos processed"
+    fi
+    assert_contains "$TEST_DIR/sync-settings-dir.txt" "Sync complete" \
+        "settings dir: the run reaches its summary"
+    assert_not_contains "$TEST_DIR/sync-settings-dir.txt" "is a directory; pass its" \
+        "settings dir: the classifier does not abort with a caller error"
+
+    awk '/^=== bootorg\/repo-no-lock ===/{f=1;next} /^=== /{f=0} f' \
+        "$TEST_DIR/sync-settings-dir.txt" > "$TEST_DIR/sync-settings-dir.section"
+    [[ -s "$TEST_DIR/sync-settings-dir.section" ]] || \
+        fail "settings dir: the run printed no section for bootorg/repo-no-lock"
+    assert_contains "$TEST_DIR/sync-settings-dir.section" \
+        "is a directory and fleet-memory.sh is not registered through it" \
+        "settings dir: the withholding reason names the directory"
+    assert_contains "$TEST_DIR/sync-settings-dir.section" "settings=unwritable" \
+        "settings dir: the state line says which classification withheld it"
+
+    v="$TEST_DIR/verify-settings-dir"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -d "$v/.claude/settings.json" && -f "$v/.claude/settings.json/README" ]]; then
+        pass "settings dir: the directory is left exactly as it was"
+    else
+        fail "settings dir: the sync wrote into or replaced the directory"
+    fi
+
+    # Restore, so the drift-report tests after this one read an ordinary repo.
+    w="$TEST_DIR/work/settings-dir-restore"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    rm -rf "$w/.claude/settings.json"
+    printf '{}\n' > "$w/.claude/settings.json"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "restore a regular settings.json" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-settings-dir-restored.txt" 2>&1 || true
+    v="$TEST_DIR/verify-settings-dir-restored"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -f "$v/.claude/settings.json" ]] \
+       && grep -qF -- "fleet-memory.sh" "$v/.claude/settings.json" \
+       && ! grep -qF -- "## Workstation layout" "$v/AGENTS.md"; then
+        pass "settings dir: a regular settings.json again earns the stub"
+    else
+        fail "settings dir: the fixture did not converge after the directory was removed"
+    fi
 }
 
 # F6 — AN AMBIENT BOOTSTRAP_HOOK_* VALUE MUST NOT ABORT THE FLEET RUN.
@@ -19993,6 +20094,45 @@ assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"],
         fail "symlinked settings.json: the write went through the registered link"
     fi
 
+    # S3/N2/N3 — A DIRECTORY AND A FIFO, on both halves of the seam. The
+    # classifier used to `exit 2` for a directory, which sync.sh turns into the
+    # RUN's exit; the registrar died on one with a raw IsADirectoryError
+    # traceback and exit 1 (logged as `WARN: could not register ... ()` with an
+    # empty reason), and BLOCKED FOREVER on a FIFO, leaking the python3 child
+    # past the wrapper's death. Bounded here so a regression is a failure
+    # rather than a hung suite.
+    mkdir -p "$d/shapes/dirshape.json"
+    printf 'not a settings file\n' > "$d/shapes/dirshape.json/README"
+    mkfifo "$d/shapes/fifoshape.json"
+    local shape shape_rc
+    for shape in dirshape.json fifoshape.json; do
+        shape_rc=0
+        result=$(timeout --foreground 20 "$status" "$d/shapes/$shape" 2>"$d/shapes.err") || shape_rc=$?
+        if [[ "$shape_rc" -eq 0 && "$result" == "unwritable" ]]; then
+            pass "settings shapes: the classifier answers unwritable for $shape, exit 0"
+        else
+            fail "settings shapes: the classifier answered rc=$shape_rc '$result' for $shape"
+        fi
+        shape_rc=0
+        result=$(timeout --foreground 20 "$reg" "$d/shapes/$shape" 2>"$d/shapes-reg.err") || shape_rc=$?
+        if [[ "$shape_rc" -eq 3 && "$result" == "refused-not-a-regular-file" ]]; then
+            pass "settings shapes: the registrar refuses $shape by name, exit 3"
+        else
+            fail "settings shapes: the registrar answered rc=$shape_rc '$result' for $shape"
+        fi
+        if [[ ! -s "$d/shapes-reg.err" ]]; then
+            pass "settings shapes: the registrar prints no traceback for $shape"
+        else
+            fail "settings shapes: the registrar wrote to stderr for $shape — $(head -1 "$d/shapes-reg.err")"
+        fi
+    done
+    if [[ -d "$d/shapes/dirshape.json" && -f "$d/shapes/dirshape.json/README" && -p "$d/shapes/fifoshape.json" ]]; then
+        pass "settings shapes: neither the directory nor the FIFO was replaced"
+    else
+        fail "settings shapes: a refused shape was written over"
+    fi
+    rm -f "$d/shapes/fifoshape.json"
+
     # A DANGLING link is `unwritable` too: writing there would create the
     # target outside the tree, and `git add` would stage an unchanged link.
     ln -sf "$d/linked/does-not-exist.json" "$d/linked/dangling.json"
@@ -20117,6 +20257,7 @@ test_sync_bootstrap_drift
 test_sync_instructions_hook_repair
 test_sync_instructions_unusable_array
 test_sync_symlinked_settings
+test_sync_settings_is_a_directory
 test_sync_ambient_bootstrap_env
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident

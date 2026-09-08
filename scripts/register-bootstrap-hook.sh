@@ -53,6 +53,9 @@ set -euo pipefail
 #                         append to
 #   refused-symlink     — no write; the path is a symlink, and writing would
 #                         follow it out of the tree
+#   refused-not-a-regular-file
+#                       — no write; the path is a directory, a FIFO, a socket
+#                         or a device
 #   refused-bad-env     — no write; a BOOTSTRAP_HOOK_* value is unusable
 #
 # Exit: 0 on either written or already-registered, 2 on usage (including a bad
@@ -77,6 +80,24 @@ fi
 # so the sync never reaches here with a link it still needs to write to.
 if [[ -L "$TARGET" ]]; then
     echo "refused-symlink"
+    exit 3
+fi
+
+# A DIRECTORY, A FIFO, A SOCKET OR A DEVICE at the target, answered here rather
+# than by the interpreter. `open(target, encoding=...)` on a directory raised a
+# raw IsADirectoryError traceback and exit 1, which sync.sh logs as
+# `WARN: could not register ... ()` with an EMPTY reason -- the exact shape the
+# BOOTSTRAP_HOOK_TIMEOUT validation above exists to prevent. `open(target, "w")`
+# on a FIFO is worse: it blocks until a reader appears, past the timeout the
+# sync registers, and the `python3 -c` child is not reaped when the wrapper is
+# killed. Measured: rc 124 at a 20 s bound and one blocked python3 left behind.
+#
+# `-f` is a stat, so nothing is opened to find this out. The write itself is
+# guarded a second time below, on the OPENED fd rather than on the path, for
+# the same reason instructions-loaded.sh's open_owned is: the path is not the
+# file, and a check on the name alone loses a race it cannot see.
+if [[ -e "$TARGET" && ! -f "$TARGET" ]]; then
+    echo "refused-not-a-regular-file"
     exit 3
 fi
 
@@ -124,7 +145,7 @@ bad_env() {
 [[ "$HOOK_TIMEOUT" -ge 1 && "$HOOK_TIMEOUT" -le 3600 ]] || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be between 1 and 3600 seconds, got '$HOOK_TIMEOUT'"
 
 result=$(python3 -c '
-import copy, json, os, sys
+import copy, json, os, stat, sys
 
 target   = sys.argv[1]
 command  = sys.argv[2]
@@ -138,7 +159,11 @@ group = {
     "hooks": [{"type": "command", "command": command, "timeout": timeout}],
 }
 
-if os.path.exists(target) and os.path.getsize(target) > 0:
+# isfile, not exists: a directory or a FIFO here is not an empty settings.json
+# to be appended to, and reading either one is a traceback or a hang. The
+# wrapper refuses both before this program runs; this is the second lock on the
+# same door, because the two must never disagree about what is readable.
+if os.path.isfile(target) and os.path.getsize(target) > 0:
     with open(target, encoding="utf-8") as fh:
         raw = fh.read()
 else:
@@ -201,8 +226,26 @@ if json.loads(candidate) != want:
     print("refused-unparseable")
     sys.exit(3)
 
-with open(target, "w", encoding="utf-8") as fh:
-    fh.write(candidate)
+# THE CHECK IS ON THE OPENED FD, not on the path. `open(target, "w")` follows
+# whatever the name resolves to at the moment of the call and TRUNCATES it
+# before anything could look; O_NONBLOCK is what lets the fstat run at all when
+# the name turns out to be a FIFO, and 0o666 is the mode `open(..., "w")` would
+# have created with, so nothing about an ordinary write changes.
+fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o666)
+try:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        print("refused-not-a-regular-file")
+        sys.exit(3)
+    os.ftruncate(fd, 0)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(candidate)
+except OSError:
+    try:
+        os.close(fd)
+    except Exception:
+        pass
+    raise
 print("registered")
 ' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$HOOK_EVENT") || {
     status=$?

@@ -1151,9 +1151,21 @@ for repo_name in "${REPOS[@]}"; do
                     fetch_failed_paths+=("$SETTINGS_REL_PATH")
                     bootstrap_cell="?"
                 else
+                    # An `if`, not `A && B || C`: with the chain, the FALSE
+                    # branch of the `[[ -n ]]` fell through to the `||` and
+                    # set `unparseable` for every repo whose probe came back
+                    # empty -- which is the ordinary "no settings.json" case,
+                    # and it turned a `**blocked**` cell into `**refused**`.
+                    #
+                    # The guard itself is the one sync.sh's three call sites
+                    # carry: the classifier runs in a command substitution
+                    # under `set -euo pipefail`, so a non-zero answer would
+                    # end the whole report rather than mark one repo.
                     settings_state="missing"
-                    [[ -n "$settings_probe" ]] && \
-                        settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+                    if [[ -n "$settings_probe" ]]; then
+                        settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -) \
+                            || settings_state="unparseable"
+                    fi
 
                     # bootstrap_blocked now answers three ways, so its status is
                     # captured rather than read as a bare true/false: 2 means the
@@ -1194,7 +1206,8 @@ for repo_name in "${REPOS[@]}"; do
                     if [[ -z "$current_settings" ]]; then
                         bootstrap_status="missing"
                     else
-                        bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+                        bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -) \
+                            || bootstrap_status="unparseable"
                     fi
 
                     if [[ "$bootstrap_status" != "registered" ]]; then
