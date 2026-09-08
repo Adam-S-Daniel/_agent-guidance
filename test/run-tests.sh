@@ -19020,6 +19020,42 @@ sys.exit("control byte %r carried forward into the receipt" % bad.group(0) if ba
         fi
     done
 
+    # C1 — AND THE PAYLOAD IS NOT ENOUGH EITHER, which is what the basename
+    # gate is still there for. Moving the payload lookup above the structural
+    # checks (correctly) made the payload gate subsume the basename gate for
+    # every fixture in the suite: the five shapes above all sit in directories
+    # with no `.claude/hooks/fleet-guidance.md` beside them, so deleting
+    # `if os.path.basename(path) != "AGENTS.md": return None` became fully
+    # green — a floor that was 6-red one head earlier.
+    #
+    # The line is still load-bearing for the single most common Project memory
+    # file in the fleet. Every consumer repo carries a ROOT `CLAUDE.md` bridge
+    # importing @AGENTS.md, at the root, BESIDE the payload — so with the
+    # basename gate gone it is judged as the managed file and reports
+    # `agents-md: MANAGED BLOCK MALFORMED` into the receipt and the next
+    # session start. That is round-1 adv-S6 in its most common form.
+    #
+    # These two rows are root-level, are NOT named AGENTS.md, and DO quote a
+    # marker, which is the combination nothing else in the suite covers.
+    local notours_root
+    printf '<!-- Managed by _agent-guidance -->\n@AGENTS.md\n\nKeep the\nBEGIN MANAGED SECTION comment intact.\n' \
+        > "$repo/CLAUDE.md"
+    printf '# Notes\n\n## Repo-specific additions\n\nSome of our own.\n' \
+        > "$repo/NOTES.md"
+    for notours_root in "$repo/CLAUDE.md" "$repo/NOTES.md"; do
+        rm -f "$receipt"
+        instr_run "$d/out_root_notours" "$(instr_event Project session_start "$notours_root")"
+        assert_not_contains "$d/out_root_notours" "agents-md:" \
+            "instructions-loaded: root ${notours_root#$repo/} beside the payload is not judged as AGENTS.md"
+        if [[ -e "$receipt" ]] && grep -qF -- "agents=" "$receipt"; then
+            fail "instructions-loaded: root ${notours_root#$repo/} wrote an agents verdict into the receipt"
+        else
+            pass "instructions-loaded: root ${notours_root#$repo/} writes no agents verdict to the receipt"
+        fi
+    done
+    rm -f "$repo/NOTES.md"
+    printf '# A plain project CLAUDE.md\n\nNothing managed here.\n' > "$repo/CLAUDE.md"
+
     # THE POSITIVE CONTROL, same repo, same run. A gate that silenced
     # everything would satisfy every assertion above.
     instr_agents_md "$repo/AGENTS.md"

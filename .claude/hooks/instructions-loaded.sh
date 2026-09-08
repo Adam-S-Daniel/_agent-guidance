@@ -544,18 +544,35 @@ def agents_verdict(data, state, path):
     nothing here would have shown it; the ~20 consumer repos are where it
     would have fired.
 
-    So the test is the one thing that distinguishes the synced file from every
-    other file of that name: `.claude/hooks/fleet-guidance.md` beside it. Every
-    repo where this hook is REGISTERED is a repo sync.sh delivered that payload
-    to -- the whole write block sits inside `if $fleet_deliver` -- so the root
-    AGENTS.md always has the sibling and a nested one never does. It is also
-    what the version comparison below already needed, so the lookup is moved
-    rather than added.
+    So the test is the pair of things that distinguish the synced file from
+    every other file: it is named AGENTS.md, and `.claude/hooks/fleet-guidance.md`
+    sits beside it. Every repo where this hook is REGISTERED is a repo sync.sh
+    delivered that payload to -- the whole write block sits inside
+    `if $fleet_deliver` -- so the root AGENTS.md always has the sibling. The
+    payload lookup is also what the version comparison below already needed, so
+    it is moved rather than added.
+
+    NEITHER HALF IS REDUNDANT, and the claim that the sibling alone decides it
+    is the one this docstring used to make. Two corrections:
+
+      * "a nested AGENTS.md never has the sibling" is false. A consumer
+        VENDORED inside another consumer carries both, because sync.sh creates
+        exactly that pair in ~20 repos, so vendoring one is all it takes. Such
+        a file is judged, and correctly: it really is a synced AGENTS.md, and
+        it yields `current` or `BEHIND` rather than a false MALFORMED. What is
+        claimed here is only what the code decides -- the basename AND the
+        payload beside the file -- not a claim about repository layout.
+      * The BASENAME half is load-bearing on its own, and is not merely the
+        cheap first test. Every repo in this fleet carries a root `CLAUDE.md`
+        bridge importing @AGENTS.md, at the root, BESIDE the payload. Without
+        the basename gate that file is judged as the managed one and reports
+        MANAGED BLOCK MALFORMED -- the fleet's single most common Project
+        memory file, on every consumer.
 
     A SEPARATE FILE, not a `<!-- Source: _agent-guidance -->` line inside
     AGENTS.md: a corruption that removed such a line would silently stop the
     checking, and surviving the damage the checks exist to find is the whole
-    criterion. The basename test is kept ahead of it as the cheap half.
+    criterion.
     """
     if os.path.basename(path) != "AGENTS.md":
         return None
