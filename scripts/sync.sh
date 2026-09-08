@@ -181,6 +181,21 @@ fi
 log()  { echo "  $*"; }
 fail() { echo "  ERROR: $*"; }
 
+# What is actually AT a path, in words, for a withholding reason. The reason a
+# repo lost its delivery has to name what was found: "is one we cannot parse or
+# cannot append to" is false of a symlinked settings.json, which parses fine
+# and could be appended to -- the refusal there is posture, not capability, and
+# a reader sent hunting for a syntax error that is not there has been given a
+# worse answer than none.
+settings_shape() {
+    if   [[ -L "$1" ]]; then echo "a symlink"
+    elif [[ -d "$1" ]]; then echo "a directory"
+    elif [[ -p "$1" ]]; then echo "a named pipe"
+    elif [[ -e "$1" ]]; then echo "not a regular file"
+    else                     echo "absent"
+    fi
+}
+
 # Writes the standard two-line CLAUDE.md bridge (imports @AGENTS.md) to the
 # current directory. Shared by both the "CLAUDE.md absent" and the opted-in
 # "rewrite a broken bridge" paths so the byte-for-byte content can't drift
@@ -834,9 +849,35 @@ for repo_name in "${REPOS[@]}"; do
     instr_reason=""
     fleet_hook_state="missing"     # missing | current | drifted
     fleet_payload_state="missing"  # missing | current | drifted
-    fleet_reg_state="missing"      # registered | no-entry | unparseable | missing
+    fleet_reg_state="missing"      # registered | no-entry | unparseable | unwritable | missing
     instr_hook_state="missing"     # missing | current | drifted
-    instr_reg_state="missing"      # registered | no-entry | unparseable | missing
+    instr_reg_state="missing"      # registered | no-entry | unparseable | unwritable | missing
+
+    # EVERY STATE IS MEASURED BEFORE ANY DECISION IS TAKEN, because the log
+    # line below is the operator's only view of this repo and it used to
+    # describe the BRANCH rather than the repo. The three `cmp`s sat inside the
+    # `else`, so a withheld repo printed `hook=missing payload=missing` with
+    # both files sitting present and committed in its tree.
+    if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
+        cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
+            && fleet_hook_state="current" || fleet_hook_state="drifted"
+    fi
+    if [[ -f "$FLEET_PAYLOAD_REL_PATH" ]]; then
+        cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
+            && fleet_payload_state="current" || fleet_payload_state="drifted"
+    fi
+    if [[ -f "$INSTR_HOOK_REL_PATH" ]]; then
+        cmp -s "$INSTR_HOOK_REL_PATH" "$INSTR_HOOK_SOURCE" \
+            && instr_hook_state="current" || instr_hook_state="drifted"
+    fi
+    fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
+                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+    # A DIFFERENT event, so a different classification: a hook named under
+    # SessionStart is not registered for InstructionsLoaded, and reading it as
+    # such would leave a delivered hook nothing runs.
+    instr_reg_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+                      BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
 
     if [[ ! -r "$FLEET_HOOK_SOURCE" || ! -s "$FLEET_PAYLOAD_SOURCE" ]]; then
         fleet_deliver=false
@@ -845,43 +886,36 @@ for repo_name in "${REPOS[@]}"; do
          || git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
         fleet_deliver=false
         fleet_reason=".claude/ is gitignored in this repo — keeping the full guidance inline instead"
-    else
-        fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
-                          "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
-        if [[ "$fleet_reg_state" == "unparseable" ]]; then
-            fleet_deliver=false
-            fleet_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it, keeping the full guidance inline"
-        else
-            if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
-                cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
-                    && fleet_hook_state="current" || fleet_hook_state="drifted"
-            fi
-            if [[ -f "$FLEET_PAYLOAD_REL_PATH" ]]; then
-                cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
-                    && fleet_payload_state="current" || fleet_payload_state="drifted"
-            fi
-            if [[ -f "$INSTR_HOOK_REL_PATH" ]]; then
-                cmp -s "$INSTR_HOOK_REL_PATH" "$INSTR_HOOK_SOURCE" \
-                    && instr_hook_state="current" || instr_hook_state="drifted"
-            fi
-            # A DIFFERENT event, so a different classification: a hook named
-            # under SessionStart is not registered for InstructionsLoaded, and
-            # reading it as such would leave a delivered hook nothing runs.
-            instr_reg_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
-                              BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
-                              "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
-            # The same refusal the fleet_reg_state check above makes, for the
-            # array THIS hook needs — and scoped to THIS hook. A settings.json
-            # whose SessionStart is fine but whose InstructionsLoaded is not a
-            # list would otherwise get the hook file delivered and committed
-            # and then have the registrar correctly refuse the entry: a
-            # delivered hook nothing runs. Deliver both halves of THIS pair or
-            # neither; the fleet-memory pair beside it is untouched by a key
-            # that has nothing to do with it.
-            if [[ "$instr_reg_state" == "unparseable" ]]; then
-                instr_deliver=false
-                instr_reason="$SETTINGS_REL_PATH has a hooks.InstructionsLoaded we cannot parse or cannot append to — withholding the load-time receipt hook and its registration; the fleet-memory pair and AGENTS.md are unaffected"
-            fi
+    elif [[ "$fleet_reg_state" == "unparseable" ]]; then
+        fleet_deliver=false
+        fleet_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it, keeping the full guidance inline"
+    elif [[ "$fleet_reg_state" == "unwritable" ]]; then
+        # WITHDRAWING THE STUB IS CORRECT HERE AND NOWHERE NEAR IT. This branch
+        # is reached only when fleet-memory.sh is NOT registered in this repo
+        # AND the file we would have to add it to is not one we may write --
+        # so the hook genuinely cannot be made to run, and the full guidance
+        # inline is the right fallback. A repo whose hook IS registered
+        # classifies `registered` through the very same link and never arrives
+        # here: that is the whole point of the classifier answering the
+        # content question separately from the file-type one.
+        fleet_reason="$SETTINGS_REL_PATH is $(settings_shape "$SETTINGS_REL_PATH") and fleet-memory.sh is not registered through it — refusing to write there, keeping the full guidance inline"
+        fleet_deliver=false
+    fi
+
+    # The same refusal, for the array THIS hook needs — and scoped to THIS
+    # hook. A settings.json whose SessionStart is fine but whose
+    # InstructionsLoaded is not a list would otherwise get the hook file
+    # delivered and committed and then have the registrar correctly refuse the
+    # entry: a delivered hook nothing runs. Deliver both halves of THIS pair or
+    # neither; the fleet-memory pair beside it is untouched by a key that has
+    # nothing to do with it.
+    if $fleet_deliver; then
+        if [[ "$instr_reg_state" == "unparseable" ]]; then
+            instr_deliver=false
+            instr_reason="$SETTINGS_REL_PATH has a hooks.InstructionsLoaded we cannot parse or cannot append to — withholding the load-time receipt hook and its registration; the fleet-memory pair and AGENTS.md are unaffected"
+        elif [[ "$instr_reg_state" == "unwritable" ]]; then
+            instr_reason="$SETTINGS_REL_PATH is $(settings_shape "$SETTINGS_REL_PATH") and instructions-loaded.sh is not registered through it — withholding the load-time receipt hook and its registration; the fleet-memory pair and AGENTS.md are unaffected"
+            instr_deliver=false
         fi
     fi
 
@@ -1052,9 +1086,16 @@ for repo_name in "${REPOS[@]}"; do
             # An unreadable settings.json is never rewritten (same posture as
             # an existing CLAUDE.md). Delivering the hook file alone would
             # leave it silently dead, so withhold the whole artifact and say so.
+            #
+            # `unwritable` is the same withholding for a different reason: the
+            # hook is not named in this file and this is not a file we may add
+            # it to. Named separately so the log says which it was.
             if [[ "$reg_state" == "unparseable" ]]; then
                 bootstrap_deliver=false
                 bootstrap_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it"
+            elif [[ "$reg_state" == "unwritable" ]]; then
+                bootstrap_reason="$SETTINGS_REL_PATH is $(settings_shape "$SETTINGS_REL_PATH") and skills-bootstrap.sh is not registered through it — refusing to write there"
+                bootstrap_deliver=false
             fi
         fi
     fi

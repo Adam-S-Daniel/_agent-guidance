@@ -6960,6 +6960,232 @@ PY
 }
 
 
+# B1 — A SYMLINKED settings.json WITHHOLDS THE WRITE, NEVER THE REPO.
+#
+# `bootstrap-status.sh` answered `unparseable` for a symlink, sync.sh turned
+# that word into `fleet_deliver=false`, and that flipped FLEET_MODE for the
+# WHOLE repo. Measured end to end on these same fixtures: a consumer the
+# previous sync had left perfect (hook current, payload current, fleet-memory
+# registered, AGENTS.md the 5,687-byte stub), whose ONLY difference was a
+# committed symlink at `.claude/settings.json`, had its AGENTS.md pushed back
+# to 57,971 bytes of inline guidance -- while the SessionStart hook stayed
+# registered and kept installing the same 57 kB into ~/.claude/CLAUDE.md. The
+# guidance loaded twice, silently, with `0 failed` on the tally.
+#
+# The invariant this pins is the one the unit-level R2-N7 rows could not see,
+# because nothing drove sync.sh at a symlink at all: registration is a question
+# about CONTENT and is answered through the link; writing is a question about
+# the FILE and is refused. A repo whose hook is registered keeps mode=stub and
+# every delivered byte; a repo whose hook is NOT registered there cannot have
+# it added, so mode=full is the correct fallback and the reason says which
+# shape was found rather than blaming a syntax error that is not there.
+test_sync_symlinked_settings() {
+    echo ""
+    echo "=== Test: sync.sh (a symlinked settings.json withholds the write, not the repo) ==="
+
+    local w v target_before agents_before decided_dry decided_real
+
+    # The finding is about a repo the previous run left PERFECT, so the fixture
+    # is brought to that state first and the claim is checked rather than
+    # assumed -- every row below is meaningless if it starts anywhere else.
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-symlink-seed.txt" 2>&1 || true
+
+    w="$TEST_DIR/work/symlink-registered"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    if grep -qF -- "fleet-memory.sh" "$w/.claude/settings.json" 2>/dev/null \
+       && grep -qF -- "instructions-loaded.sh" "$w/.claude/settings.json" 2>/dev/null \
+       && [[ -f "$w/$FLEET_HOOK_REL_PATH_T" && -f "$w/$FLEET_PAYLOAD_REL_PATH_T" ]] \
+       && ! grep -qF -- "## Workstation layout" "$w/AGENTS.md"; then
+        pass "symlinked settings: the fixture starts fully delivered and on the stub"
+    else
+        fail "symlinked settings: the fixture did not start fully delivered — every row below would prove nothing"
+        return
+    fi
+
+    # ── Row 1: the link's target REGISTERS the hook ────────────────────────
+    # git stores a symlink natively (mode 120000) and checks it out as one, so
+    # this is a shape a consumer repo can really carry, not a local-only quirk.
+    git -C "$w" mv .claude/settings.json .claude/settings.real.json >/dev/null 2>&1
+    ln -s settings.real.json "$w/.claude/settings.json"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "settings.json becomes a symlink to a sibling" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    if [[ "$(git -C "$w" ls-files -s .claude/settings.json | awk '{print $1}')" == "120000" ]]; then
+        pass "symlinked settings: git really stored a symlink (mode 120000), not a copy"
+    else
+        fail "symlinked settings: the fixture is not a committed symlink"
+        return
+    fi
+    target_before="$(cat "$w/.claude/settings.real.json")"
+    agents_before="$(cat "$w/AGENTS.md")"
+
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" --dry-run \
+        > "$TEST_DIR/sync-symlink-reg-dry.txt" 2>&1 || true
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" \
+        > "$TEST_DIR/sync-symlink-reg-real.txt" 2>&1 || true
+    symlink_section reg-dry
+    symlink_section reg-real
+    assert_contains "$TEST_DIR/sync-symlink-reg-real.section" "mode=stub" \
+        "symlinked settings (registered): the repo keeps the stub"
+    assert_not_contains "$TEST_DIR/sync-symlink-reg-real.section" "mode=full" \
+        "symlinked settings (registered): the repo is not dragged back to the inline guidance"
+    assert_contains "$TEST_DIR/sync-symlink-reg-real.section" "Up to date — skipping." \
+        "symlinked settings (registered): nothing to do, so nothing is committed"
+    assert_not_contains "$TEST_DIR/sync-symlink-reg-real.section" "Pushed directly to" \
+        "symlinked settings (registered): no commit is pushed"
+
+    # DRY AND REAL AGREE, on the lines that carry the decision. A preview that
+    # promises what the real run refuses is the defect the instr-lane split was
+    # made for; the same parity has to hold for this branch.
+    decided_dry="$(grep -E '^  (fleet-memory|instructions-loaded|skills-bootstrap):' \
+        "$TEST_DIR/sync-symlink-reg-dry.section" || true)"
+    decided_real="$(grep -E '^  (fleet-memory|instructions-loaded|skills-bootstrap):' \
+        "$TEST_DIR/sync-symlink-reg-real.section" || true)"
+    if [[ -n "$decided_real" && "$decided_dry" == "$decided_real" ]]; then
+        pass "symlinked settings (registered): the dry run's decision lines are byte-identical to the real run's"
+    else
+        fail "symlinked settings (registered): dry/real decision lines differ (dry='$decided_dry' real='$decided_real')"
+    fi
+
+    v="$TEST_DIR/verify-symlink-reg"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ "$(cat "$v/AGENTS.md")" == "$agents_before" ]]; then
+        pass "symlinked settings (registered): AGENTS.md is byte-identical ($(wc -c < "$v/AGENTS.md" | tr -d ' ') bytes)"
+    else
+        fail "symlinked settings (registered): AGENTS.md changed ($(wc -c < "$v/AGENTS.md" | tr -d ' ') bytes, was $(printf '%s' "$agents_before" | wc -c | tr -d ' '))"
+    fi
+    assert_not_contains "$v/AGENTS.md" "## Workstation layout" \
+        "symlinked settings (registered): AGENTS.md keeps the stub, not 52 kB of inline guidance"
+    if [[ -L "$v/.claude/settings.json" ]]; then
+        pass "symlinked settings (registered): the link is still a link"
+    else
+        fail "symlinked settings (registered): the link was replaced by a regular file"
+    fi
+    if [[ "$(cat "$v/.claude/settings.real.json")" == "$target_before" ]]; then
+        pass "symlinked settings (registered): nothing was written through the link"
+    else
+        fail "symlinked settings (registered): the write went through the link"
+    fi
+    if [[ -f "$v/$FLEET_HOOK_REL_PATH_T" && -f "$v/$FLEET_PAYLOAD_REL_PATH_T" \
+          && -f "$v/$INSTR_HOOK_REL_PATH_T" ]]; then
+        pass "symlinked settings (registered): all three delivered files are still there"
+    else
+        fail "symlinked settings (registered): a delivered file was withdrawn"
+    fi
+
+    # ── Row 2: the link's target does NOT register the hook ────────────────
+    # Here the hook genuinely cannot be made to run -- the one case in which
+    # withdrawing the stub is right -- so the assertions are about the REASON,
+    # the state line, and the fact that nothing is written through the link.
+    w="$TEST_DIR/work/symlink-noentry"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    printf '{"env": {"KEEP_ME": "yes"}}\n' > "$w/.claude/settings.other.json"
+    rm -f "$w/.claude/settings.json"
+    ln -s settings.other.json "$w/.claude/settings.json"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "settings.json links to a file with no hook entries" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    target_before="$(cat "$w/.claude/settings.other.json")"
+
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" --dry-run \
+        > "$TEST_DIR/sync-symlink-ne-dry.txt" 2>&1 || true
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" \
+        > "$TEST_DIR/sync-symlink-ne-real.txt" 2>&1 || true
+    symlink_section ne-dry
+    symlink_section ne-real
+
+    assert_contains "$TEST_DIR/sync-symlink-ne-real.section" \
+        "is a symlink and fleet-memory.sh is not registered through it" \
+        "symlinked settings (no entry): the reason names the symlink, not a syntax error"
+    assert_not_contains "$TEST_DIR/sync-symlink-ne-real.section" \
+        "we cannot parse or cannot append to" \
+        "symlinked settings (no entry): a file that parses fine is not reported as unparseable"
+    assert_contains "$TEST_DIR/sync-symlink-ne-real.section" "mode=full" \
+        "symlinked settings (no entry): the mode decision is stated, and full is the correct fallback here"
+    # N1 — THE STATE LINE REPORTS THE REPO, NOT THE BRANCH. Both files are
+    # present and current in this fixture; the withheld branch used to print
+    # `hook=missing payload=missing` beside them because the three cmp calls
+    # sat inside the else.
+    assert_contains "$TEST_DIR/sync-symlink-ne-real.section" \
+        "hook=current payload=current settings=unwritable" \
+        "symlinked settings (no entry): the log line states the hook and payload states as they are"
+
+    decided_dry="$(grep -E '^  (fleet-memory|instructions-loaded|skills-bootstrap):' \
+        "$TEST_DIR/sync-symlink-ne-dry.section" || true)"
+    decided_real="$(grep -E '^  (fleet-memory|instructions-loaded|skills-bootstrap):' \
+        "$TEST_DIR/sync-symlink-ne-real.section" || true)"
+    if [[ -n "$decided_real" && "$decided_dry" == "$decided_real" ]]; then
+        pass "symlinked settings (no entry): the dry run's decision lines are byte-identical to the real run's"
+    else
+        fail "symlinked settings (no entry): dry/real decision lines differ (dry='$decided_dry' real='$decided_real')"
+    fi
+
+    v="$TEST_DIR/verify-symlink-ne"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -L "$v/.claude/settings.json" \
+          && "$(cat "$v/.claude/settings.other.json")" == "$target_before" ]]; then
+        pass "symlinked settings (no entry): nothing was written through the link"
+    else
+        fail "symlinked settings (no entry): the link or its target was rewritten"
+    fi
+    # The fallback really is the inline guidance, which is what makes
+    # withdrawing the stub SAFE in this one case rather than a silent loss.
+    assert_contains "$v/AGENTS.md" "## Workstation layout" \
+        "symlinked settings (no entry): the repo that cannot run the hook keeps the guidance inline"
+
+    # Restore, so the drift-report tests after this one observe an ordinary
+    # settings.json rather than a link (whose git CONTENT is the target path,
+    # which classifies unparseable through the report's stdin lane).
+    w="$TEST_DIR/work/symlink-restore"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    rm -f "$w/.claude/settings.json"
+    cp "$w/.claude/settings.real.json" "$w/.claude/settings.json"
+    rm -f "$w/.claude/settings.real.json" "$w/.claude/settings.other.json"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "restore a regular settings.json" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-symlink-restored.txt" 2>&1 || true
+    v="$TEST_DIR/verify-symlink-restored"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -f "$v/.claude/settings.json" && ! -L "$v/.claude/settings.json" ]] \
+       && grep -qF -- "fleet-memory.sh" "$v/.claude/settings.json" \
+       && ! grep -qF -- "## Workstation layout" "$v/AGENTS.md"; then
+        pass "symlinked settings: a regular settings.json again earns the stub"
+    else
+        fail "symlinked settings: the fixture did not converge after the link was removed"
+    fi
+}
+
+# The repo's own section of a sync log, so a whole-log assertion cannot be
+# satisfied (or falsified) by one of the five other bootorg fixtures.
+symlink_section() {   # <log suffix>
+    awk '/^=== bootorg\/repo-no-lock ===/{f=1;next} /^=== /{f=0} f' \
+        "$TEST_DIR/sync-symlink-$1.txt" > "$TEST_DIR/sync-symlink-$1.section"
+    [[ -s "$TEST_DIR/sync-symlink-$1.section" ]] || \
+        fail "symlinked settings: the $1 run printed no section for bootorg/repo-no-lock, so its assertions have nothing to read"
+}
+
 # F6 — AN AMBIENT BOOTSTRAP_HOOK_* VALUE MUST NOT ABORT THE FLEET RUN.
 #
 # The seam's two scripts now refuse a set-but-empty value rather than silently
@@ -19573,13 +19799,13 @@ assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"],
     local link_before; link_before="$(cat "$d/linked/real-settings.json")"
     ln -sf "$d/linked/real-settings.json" "$d/linked/settings.json"
     result=$("$status" "$d/linked/settings.json")
-    [[ "$result" == "unparseable" ]] \
-        && pass "symlinked settings.json: the classifier calls it unparseable" \
+    [[ "$result" == "unwritable" ]] \
+        && pass "symlinked settings.json: with no entry through it, the classifier calls it unwritable" \
         || fail "symlinked settings.json: the classifier said '$result'"
     rc=0
     result=$("$reg" "$d/linked/settings.json" 2>"$d/link.err") || rc=$?
-    if [[ "$rc" -eq 3 && "$result" == "refused-unparseable" ]]; then
-        pass "symlinked settings.json: the registrar refuses it, exit 3"
+    if [[ "$rc" -eq 3 && "$result" == "refused-symlink" ]]; then
+        pass "symlinked settings.json: the registrar refuses it by name, exit 3"
     else
         fail "symlinked settings.json: the registrar answered rc=$rc '$result'"
     fi
@@ -19587,6 +19813,47 @@ assert "skills-bootstrap.sh" in hooks["SessionStart"][0]["hooks"][0]["command"],
         pass "symlinked settings.json: the link and its target are both untouched"
     else
         fail "symlinked settings.json: the write went through the link"
+    fi
+
+    # B1 — AND THE OTHER HALF OF THE SAME SHAPE, which is what the row above
+    # could not distinguish. "Is the hook registered here?" is a question about
+    # CONTENT, and a symlinked settings.json whose target names the hook IS
+    # registered. Answering `unparseable` for it made sync.sh withdraw a
+    # healthy repo's whole delivery mode.
+    printf '{"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh", "timeout": 90}]}]}}\n' \
+        > "$d/linked/registered-settings.json"
+    local reglink_before; reglink_before="$(cat "$d/linked/registered-settings.json")"
+    ln -sf "$d/linked/registered-settings.json" "$d/linked/reglink.json"
+    result=$("$status" "$d/linked/reglink.json")
+    [[ "$result" == "registered" ]] \
+        && pass "symlinked settings.json: a link whose target registers the hook reads registered" \
+        || fail "symlinked settings.json: a link whose target registers the hook read '$result'"
+    # The two still AGREE about what gets written, which is nothing: the
+    # classifier says the caller need not write, and the registrar refuses to.
+    rc=0
+    result=$("$reg" "$d/linked/reglink.json" 2>"$d/reglink.err") || rc=$?
+    if [[ "$rc" -eq 3 && "$result" == "refused-symlink" ]]; then
+        pass "symlinked settings.json: the registrar still refuses to write through a registered link"
+    else
+        fail "symlinked settings.json: the registrar answered rc=$rc '$result' for a registered link"
+    fi
+    if [[ -L "$d/linked/reglink.json" && "$(cat "$d/linked/registered-settings.json")" == "$reglink_before" ]]; then
+        pass "symlinked settings.json: the registered link and its target are both untouched"
+    else
+        fail "symlinked settings.json: the write went through the registered link"
+    fi
+
+    # A DANGLING link is `unwritable` too: writing there would create the
+    # target outside the tree, and `git add` would stage an unchanged link.
+    ln -sf "$d/linked/does-not-exist.json" "$d/linked/dangling.json"
+    result=$("$status" "$d/linked/dangling.json")
+    [[ "$result" == "unwritable" ]] \
+        && pass "symlinked settings.json: a dangling link is unwritable, not missing" \
+        || fail "symlinked settings.json: a dangling link read '$result'"
+    if [[ ! -e "$d/linked/does-not-exist.json" ]]; then
+        pass "symlinked settings.json: classifying a dangling link created nothing at its target"
+    else
+        fail "symlinked settings.json: classifying a dangling link created its target"
     fi
 
     # Idempotence is per event: a second run must not append a duplicate.
@@ -19699,6 +19966,7 @@ test_sync_bootstrap_drift
 # the other two artifacts.
 test_sync_instructions_hook_repair
 test_sync_instructions_unusable_array
+test_sync_symlinked_settings
 test_sync_ambient_bootstrap_env
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident

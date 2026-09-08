@@ -48,9 +48,11 @@ set -euo pipefail
 # Prints exactly one of:
 #   already-registered  — no write; the hook was already named
 #   registered          — the file was created or appended to
-#   refused-unparseable — no write; the existing file is a symlink, or is not
-#                         a JSON object, or has a `hooks` / `hooks.<event>` of
-#                         a type we cannot append to
+#   refused-unparseable — no write; the existing file is not a JSON object, or
+#                         has a `hooks` / `hooks.<event>` of a type we cannot
+#                         append to
+#   refused-symlink     — no write; the path is a symlink, and writing would
+#                         follow it out of the tree
 #   refused-bad-env     — no write; a BOOTSTRAP_HOOK_* value is unusable
 #
 # Exit: 0 on either written or already-registered, 2 on usage (including a bad
@@ -67,11 +69,14 @@ fi
 # TARGET rewritten -- in a consumer repo `git add .claude/settings.json` would
 # then stage an unchanged symlink while the real edit landed outside the tree,
 # and the sync would report a registration that the repo does not carry.
-# bootstrap-status.sh classifies the same shape `unparseable`, so the sync
-# withholds before it ever gets here rather than delivering a hook this would
-# then refuse to register.
+# NAMED FOR WHAT IT FOUND, not folded into `refused-unparseable`: a symlinked
+# settings.json parses fine and could be appended to, so reporting it as
+# unparseable sent whoever read the sync log hunting for a syntax error that is
+# not there. bootstrap-status.sh answers `registered` or `unwritable` for the
+# same shape -- registered by CONTENT through the link, unwritable otherwise --
+# so the sync never reaches here with a link it still needs to write to.
 if [[ -L "$TARGET" ]]; then
-    echo "refused-unparseable"
+    echo "refused-symlink"
     exit 3
 fi
 

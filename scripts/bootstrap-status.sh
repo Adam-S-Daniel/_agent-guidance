@@ -42,12 +42,18 @@ set -euo pipefail
 # Prints exactly one of:
 #   registered    — a hook command under that event references the basename
 #   no-entry      — valid JSON, but no such command (hook would never run)
-#   unparseable   — content we must not rewrite: a symlink, not valid JSON,
-#                   not a JSON object, or a `hooks` / `hooks.<event>` of a
-#                   type we cannot append to. The last two are deliberate —
-#                   see the classify() comment; a file the registrar will
-#                   refuse must not read as one the sync can safely deliver
-#                   to.
+#   unparseable   — content we must not rewrite: not valid JSON, not a JSON
+#                   object, or a `hooks` / `hooks.<event>` of a type we cannot
+#                   append to. The last two are deliberate — see the classify()
+#                   comment; a file the registrar will refuse must not read as
+#                   one the sync can safely deliver to.
+#   unwritable    — the hook is NOT registered here and this is not a file we
+#                   could add it to: a symlink (writing follows it out of the
+#                   tree), a directory, a FIFO, a device. Separate from
+#                   `unparseable` because the two are withheld for different
+#                   reasons and the operator is told which — and separate from
+#                   `registered` because THAT question is answered by CONTENT,
+#                   whatever the file's type. See the dispatch below.
 #   missing       — file absent or empty (or empty stdin)
 
 # `${VAR-default}`, not `${VAR:-default}`: with the colon, a set-but-empty
@@ -155,14 +161,37 @@ case "${1:-}" in
             echo "bootstrap-status.sh: $1 is a directory; pass its .claude/settings.json" >&2
             exit 2
         fi
-        # A SYMLINK IS CONTENT WE MUST NOT REWRITE, so it belongs in the
-        # same class as a file we cannot parse -- and it has to be decided
-        # HERE rather than left to the registrar, or the two disagree and the
-        # sync delivers a hook it then cannot register. The registrar refuses
-        # the same shape; this moves the refusal one step earlier, before
-        # anything is written, exactly as the unusable `hooks` shapes do.
+        # A SYMLINK IS TWO SEPARATE QUESTIONS, and answering them with one
+        # word cost a healthy consumer its delivery. "Is the hook registered
+        # here?" is about CONTENT and is answered by reading THROUGH the link,
+        # exactly as it is for a regular file. "May we write here?" is about
+        # the FILE, and the answer is no -- `open(target, "w")` follows the
+        # link, so the edit lands outside the tree while `git add` stages an
+        # unchanged symlink.
+        #
+        # Collapsing both into `unparseable` made sync.sh withdraw the whole
+        # repo's delivery mode over a settings.json that was working: measured,
+        # a consumer left perfect by the previous sync (hook current, payload
+        # current, fleet-memory registered) whose ONLY difference was a
+        # symlinked settings.json had its AGENTS.md pushed from the 5,687-byte
+        # stub back to 57,971 bytes of inline guidance -- while the hook stayed
+        # registered and kept installing the same 57 kB into
+        # ~/.claude/CLAUDE.md, so that repo's sessions loaded the guidance
+        # TWICE. `0 failed` on the tally.
+        #
+        # So: registered is registered, whatever the file's type; anything else
+        # through a link is `unwritable`, which withholds the WRITE rather than
+        # the repo. A dangling link, or one pointing at a FIFO or a device,
+        # reads as `unwritable` too -- `-s` is false for all of them, and
+        # writing there would create or block on something outside the tree.
         if [[ -L "$1" ]]; then
-            echo "unparseable"
+            link_state="missing"
+            [[ -s "$1" ]] && link_state="$(classify < "$1")"
+            if [[ "$link_state" == "registered" ]]; then
+                echo "registered"
+            else
+                echo "unwritable"
+            fi
         elif [[ ! -s "$1" ]]; then
             echo "missing"
         else
