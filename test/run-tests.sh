@@ -19927,6 +19927,38 @@ test_instructions_report() {
     assert_not_contains "$d/out_noise" "has not run here" \
         "instructions-report: an unreadable log is not reported as a hook that never ran"
 
+    # N4/N5 — AND A PATH THAT IS NOT A FILE IS THE SAME ANSWER, NOT A HANG.
+    # A bare open() on a FIFO at the log path blocks forever — measured, rc
+    # 124 at a 60-second bound, in a script whose own header promises "a
+    # REPORT, not a gate — it never fails a build"; a hang is worse than a
+    # failure. A DIRECTORY there raised in open(), hit the bare `continue`,
+    # and left the run answering exit 2, "the hook has not run here", which
+    # sends a reader to check the registration when what they have is a
+    # corrupted path. Bounded, because the FIFO row is the one that hangs.
+    local logshape shape_rc
+    for logshape in dir fifo; do
+        rm -rf "$logf"
+        if [[ "$logshape" == dir ]]; then
+            mkdir -p "$logf"
+        else
+            mkfifo "$logf"
+        fi
+        shape_rc=0
+        timeout --foreground 20 "$script" --config-dir "$d/cfg" \
+            > "$d/out_log_$logshape" 2>&1 || shape_rc=$?
+        if [[ $shape_rc -eq 3 ]]; then
+            pass "instructions-report: a $logshape at the log path exits 3, in time"
+        else
+            fail "instructions-report: a $logshape at the log path exited $shape_rc, expected 3"
+        fi
+        assert_contains "$d/out_log_$logshape" "is not a readable file" \
+            "instructions-report: a $logshape at the log path says what it found"
+        assert_not_contains "$d/out_log_$logshape" "has not run here" \
+            "instructions-report: a $logshape at the log path is not reported as a hook that never ran"
+        rm -rf "$logf"
+    done
+    head -c 4000 /dev/urandom | base64 > "$logf"
+
     # -- The text mode is the one people quote, and it printed raw ---------
     #
     # `--format json` escapes these four fields for free; the text mode

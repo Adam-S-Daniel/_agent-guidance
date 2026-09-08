@@ -28,8 +28,8 @@ set -uo pipefail
 # --format      text (default) or json.
 #
 # Exit: 0 with a report, 2 when there is nothing to report at all (an absent or
-# empty log), 3 when a log IS there but nothing in it could be parsed, 1 on a
-# usage error. A run that found NOTHING must not read the same as a run that
+# empty log), 3 when a log IS there but could not be read -- nothing in it
+# parsed, or the path is not a readable file at all -- 1 on a usage error. A run that found NOTHING must not read the same as a run that
 # found nothing wrong — the convention scripts/check-guidance-coverage.js
 # already follows here — and "the hook has not run" is a different answer from
 # "the hook ran and its log is unreadable": the first is a wiring question,
@@ -115,16 +115,33 @@ def shorten(path):
 sessions = {}
 order = []
 unparseable = 0
+unreadable = 0
 truncated = 0
 present = False
 
 for path in files:
-    if not os.path.exists(path):
+    if not os.path.lexists(path):
+        continue
+    # isfile, not exists, and then O_NONBLOCK -- the same pair the hook's
+    # read_bytes and open_owned use, and for the same two reasons. A FIFO at
+    # the log path passes os.path.exists and then BLOCKS FOREVER in a bare
+    # open(): measured, rc 124 at a 60-second bound, on a script whose own
+    # header promises "a REPORT, not a gate -- it never fails a build". A hang
+    # is worse than a failure. And a DIRECTORY there passed os.path.exists,
+    # raised in open(), hit the bare `continue`, and left `present` true with
+    # no sessions -- so the run answered exit 2, "the hook has not run here",
+    # which sends a reader to check the registration when what they have is a
+    # corrupted path. Counted as unreadable, it answers exit 3 with the rest of
+    # the cannot-read class.
+    if not os.path.isfile(path):
+        unreadable += 1
         continue
     present = True
     try:
-        handle = open(path, encoding="utf-8", errors="replace")
+        handle = os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "r",
+                           encoding="utf-8", errors="replace")
     except Exception:
+        unreadable += 1
         continue
     with handle:
         for line in handle:
@@ -175,6 +192,13 @@ if not sessions and unparseable:
         "instructions-report: %d line(s) under %s, none of them parseable -- "
         "the hook has run here, but its log cannot be read\n"
         % (unparseable, shorten(config_dir)))
+    sys.exit(3)
+
+if not sessions and unreadable:
+    sys.stderr.write(
+        "instructions-report: the log under %s is not a readable file -- "
+        "the hook may have run here, but its log cannot be read\n"
+        % shorten(config_dir))
     sys.exit(3)
 
 if not present or not sessions:
