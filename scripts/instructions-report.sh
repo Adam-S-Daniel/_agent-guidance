@@ -150,14 +150,23 @@ for path in files:
                 continue
             try:
                 rec = json.loads(line)
-                key = str(rec.get("session", ""))
-                size = int(rec.get("bytes", 0))
             except Exception:
                 # A truncated tail or a half-written line is expected on a log
                 # an unattended hook appends to. Counted, never fatal.
                 unparseable += 1
                 continue
+            # ABOVE the .get calls, not below them. A bare scalar, a list or a
+            # literal `null` is valid JSON, so json.loads returns it happily
+            # and `rec.get(...)` is what raises -- which the except above
+            # already counted, leaving this check permanently unreachable. It
+            # read as a guard that was doing something; now it is one.
             if not isinstance(rec, dict):
+                unparseable += 1
+                continue
+            try:
+                key = str(rec.get("session", ""))
+                size = int(rec.get("bytes", 0))
+            except Exception:
                 unparseable += 1
                 continue
             entry = sessions.get(key)

@@ -20011,6 +20011,24 @@ test_instructions_report() {
     report "$d/out_noise"
     [[ $REPORT_RC -eq 3 ]] && pass "instructions-report: a log that parses to nothing exits 3, not 2" \
         || fail "instructions-report: an unparseable log exited $REPORT_RC, expected 3"
+
+    # N11 — A RECORD THAT IS VALID JSON BUT NOT AN OBJECT. `42`, `["a"]`,
+    # `null` and `"str"` all parse, so json.loads returns them happily and it
+    # was `rec.get(...)` that raised — which the surrounding except already
+    # counted, leaving the isinstance guard below it permanently unreachable.
+    # It now sits above the .get calls and owns the counting for these four,
+    # which is what makes it a guard rather than a line that reads like one.
+    printf '42\n["a"]\nnull\n"str"\n' > "$logf"
+    report "$d/out_nondict"
+    [[ $REPORT_RC -eq 3 ]] \
+        && pass "instructions-report: JSON that is not an object exits 3, not 2" \
+        || fail "instructions-report: a non-object log exited $REPORT_RC, expected 3"
+    assert_contains "$d/out_nondict" "4 line(s)" \
+        "instructions-report: every non-object record is counted, not skipped"
+    assert_not_contains "$d/out_nondict" "has not run here" \
+        "instructions-report: a log of non-object records is not a hook that never ran"
+
+    head -c 4000 /dev/urandom | base64 > "$logf"
     assert_contains "$d/out_noise" "none of them parseable" \
         "instructions-report: the unparseable-log message says which answer it is"
     assert_not_contains "$d/out_noise" "has not run here" \
