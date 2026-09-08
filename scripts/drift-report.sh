@@ -1151,9 +1151,21 @@ for repo_name in "${REPOS[@]}"; do
                     fetch_failed_paths+=("$SETTINGS_REL_PATH")
                     bootstrap_cell="?"
                 else
+                    # An `if`, not `A && B || C`: with the chain, the FALSE
+                    # branch of the `[[ -n ]]` fell through to the `||` and
+                    # set `unparseable` for every repo whose probe came back
+                    # empty -- which is the ordinary "no settings.json" case,
+                    # and it turned a `**blocked**` cell into `**refused**`.
+                    #
+                    # The guard itself is the one sync.sh's three call sites
+                    # carry: the classifier runs in a command substitution
+                    # under `set -euo pipefail`, so a non-zero answer would
+                    # end the whole report rather than mark one repo.
                     settings_state="missing"
-                    [[ -n "$settings_probe" ]] && \
-                        settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+                    if [[ -n "$settings_probe" ]]; then
+                        settings_state=$(echo "$settings_probe" | "$BOOTSTRAP_STATUS_SCRIPT" -) \
+                            || settings_state="unparseable"
+                    fi
 
                     # bootstrap_blocked now answers three ways, so its status is
                     # captured rather than read as a bare true/false: 2 means the
@@ -1171,7 +1183,7 @@ for repo_name in "${REPOS[@]}"; do
                         bootstrap_cell="?"
                     elif [[ "$settings_state" == "unparseable" ]]; then
                         bootstrap_cell="**refused**"
-                        notes="$notes; \`settings.json\` unparseable"
+                        notes="$notes; \`settings.json\` cannot be parsed or appended to"
                     elif [[ "$blocked" == yes ]]; then
                         bootstrap_cell="**blocked**"
                         notes="$notes; \`.claude/\` gitignored"
@@ -1194,7 +1206,8 @@ for repo_name in "${REPOS[@]}"; do
                     if [[ -z "$current_settings" ]]; then
                         bootstrap_status="missing"
                     else
-                        bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -)
+                        bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -) \
+                            || bootstrap_status="unparseable"
                     fi
 
                     if [[ "$bootstrap_status" != "registered" ]]; then
@@ -1404,7 +1417,7 @@ fi
     echo "| **drifted** | Hook present but differs from the pinned copy — the next sync overwrites it |"
     echo "| **missing** | Allowlisted and has a lock, but no hook — the next sync delivers it (unless the pinned hook was unavailable fleet-wide that run; the sync log says \`pinned hook unavailable this run\`) |"
     echo "| **blocked** | Allowlisted and has a lock, but the repo gitignores \`.claude/\` — \`git add\` cannot stage the hook, so every sync skips it with a warning. Does **not** self-heal: change that repo's \`.gitignore\`, or drop it from the allowlist |"
-    echo "| **refused** | Allowlisted and has a lock, but \`.claude/settings.json\` is not parseable JSON — the sync will not edit it, and withholds the hook rather than leave one nothing runs. Does **not** self-heal: fix that file |"
+    echo "| **refused** | Allowlisted and has a lock, but \`.claude/settings.json\` is one the sync cannot parse or cannot append to — it will not edit it, and withholds the hook rather than leave one nothing runs. Does **not** self-heal: fix that file |"
     echo "| **degraded** | Hook present in a repo with no \`skills.lock\` — it prints \`skills: DEGRADED\` into every session and no sync will revisit it. Commit a lock, or remove the hook |"
     echo "| no-lock | Allowlisted, no \`skills.lock\` yet — delivery deliberately withheld until the repo declares its bundles |"
     echo "| **unmanaged** | Hook present in a repo that is **not** allowlisted — it still runs; the sync has no delete path, so remove it by hand |"

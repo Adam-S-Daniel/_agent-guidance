@@ -19,8 +19,11 @@ be inlined here in every repo, which meant a session with 19 repos open
 carried 19 identical copies: 332.3k tokens of a 1M window, measured
 2026-08-29.
 
-**Check the session-start verdict before you rely on it.** The hook prints one
-line:
+**Check the session-start verdict before you rely on it.** The hook prints its
+own verdict as one of the lines below — and prints it LAST, after any
+`previous session …` lines from the section that follows. So the final
+`fleet-guidance:` line at session start is the one about the session you are
+in; an earlier one is about the session before it.
 
 - `fleet-guidance: installed (v<id>, <n> bytes)` or `fleet-guidance: current` —
   the full guidance is in context. Use it.
@@ -36,6 +39,26 @@ line:
   would when degraded — just don't report it as a problem or try to "fix" it.
 
 No verdict at all means the hook never ran — treat that as DEGRADED.
+
+**And that verdict is about the FILE, not about your context.** A separate
+`InstructionsLoaded` hook records what each session actually loaded; because
+its own output reaches nothing, the NEXT session start prints what it found:
+
+- `fleet-guidance: previous session loaded (v<id>, <n> bytes)` — the block in
+  context last session was the block that was installed.
+- `fleet-guidance: previous session LOAD MISMATCH — <reason>` — it was not:
+  truncated after the session started, a stale version, or absent. Check this
+  session's own verdict before trusting the guidance you are holding.
+- `agents-md: previous session BEHIND …` / `MANAGED BLOCK MALFORMED …` — a
+  repo AGENTS.md shipping different guidance from the one in context, or whose
+  managed block's markers are damaged (doubled, missing, out of order). A
+  healthy one says nothing. It does **not** check the managed text itself: a
+  hand edit inside a structurally intact block reads `current`, because
+  nothing records what that block should have said.
+
+Each of those three is announced exactly once, by the first session start that
+sees it. A line that appeared last session and not this one has been read, not
+resolved.
 
 ## The floor: rules that hold even when the guidance did not load
 

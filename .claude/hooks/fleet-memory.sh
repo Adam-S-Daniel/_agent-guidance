@@ -59,6 +59,208 @@ PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"
 DEST_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 DEST="$DEST_DIR/CLAUDE.md"
 
+# THE STATE FILE, and why this hook writes one at all.
+#
+# This hook can only report what it did TO THE FILE. What the session actually
+# LOADED is a different question, and the InstructionsLoaded hook beside this
+# one is the only thing that can answer it — but only if it has something to
+# compare against. That is this file: the version, the byte count and the
+# digest of the payload this run installed.
+#
+# The receipt written back the other way (instructions-receipt.state) is the
+# return path. Measured on CLI 2.1.261: an InstructionsLoaded hook's stdout
+# reaches nothing — not the CLI's stdout, not its stderr, not the transcript —
+# so the load-time verdict has no way to the session on its own. Printing the
+# PREVIOUS session's receipt here is that way, and it is why a mismatch is
+# never silent for more than one session.
+STATE_FILE="$DEST_DIR/fleet-guidance.state"
+RECEIPT_FILE="$DEST_DIR/instructions-receipt.state"
+LOG_FILE="$DEST_DIR/instructions-log.jsonl"
+
+# Print what the last session's load-time hook recorded, beside this run's own
+# verdict. A healthy agents-md stays quiet — it is the mismatch that has to
+# travel, and a line printed every session on every machine stops being read.
+#
+# EXACTLY ONCE, which is the half that needs a flag. The receipt carries
+# `unread=1` until a SessionStart announces it; this is the only reader, so
+# clearing it here is what "never silent for more than one session" means
+# operationally. Without it, a machine whose load-time hook stopped running —
+# an older CLI, a settings entry lost — re-announces one stale verdict at
+# every session start forever, and two sessions sharing one config dir erase
+# each other's verdicts before either is announced.
+report_previous_session() {
+    [ -r "$RECEIPT_FILE" ] || return 0
+    local claim unread fleet agents
+    # THE CLAIM, and why the read cannot simply be a read.
+    #
+    # "Announced exactly once" is the sentence this repo ships into ~20
+    # consumers' AGENTS.md, and two SessionStarts that begin within the same
+    # tens of milliseconds both falsified it: both grepped `unread=1` out of
+    # the same file, both printed, and only then did either clear the flag.
+    # Measured on the earlier version, 20 pairs per row: 20/20 double
+    # announcements at zero stagger, 19-20/20 up to 20 ms, 0/20 at 50 ms.
+    #
+    # rename(2) is the whole fix. The receipt is renamed aside BEFORE it is
+    # read, so exactly one process can ever hold it; the loser's mv fails with
+    # ENOENT, it has nothing to read, and it announces nothing. Reading first
+    # and clearing after is what made the window; there is no window to make
+    # smaller here, because the claim IS the read.
+    #
+    # `.claim.$$` rather than an mktemp name: mktemp would CREATE a file the
+    # loser then has to clean up, and the atomicity that matters is the rename
+    # SOURCE disappearing, not the destination being unique. Two concurrent
+    # session starts are two processes and cannot share a pid.
+    claim="$RECEIPT_FILE.claim.$$"
+    if ! mv "$RECEIPT_FILE" "$claim" 2>/dev/null; then
+        # Two different facts, told apart by whether the receipt is still
+        # there: another session start claimed it first (nothing to announce,
+        # nothing lost, stay quiet), or the rename itself failed, which is a
+        # receipt this hook could not read and must not pass over in silence.
+        [ -e "$RECEIPT_FILE" ] && \
+            echo "fleet-guidance: could not clear the previous session's receipt — nothing was announced; it will be next session."
+        return 0
+    fi
+    unread="$(grep -m1 -- '^unread=' "$claim" 2>/dev/null | cut -d= -f2-)"
+    if [ "$unread" != "1" ]; then
+        # Nothing to announce, but the verdict itself is preserved so `cat`ing
+        # the receipt still says what happened -- put it back.
+        restore_receipt "$claim"
+        return 0
+    fi
+    fleet="$(grep -m1 -- '^fleet=' "$claim" 2>/dev/null | cut -d= -f2-)"
+    agents="$(grep -m1 -- '^agents=' "$claim" 2>/dev/null | cut -d= -f2-)"
+    # THE READ SIDE OF THE SAME LANE. These values are echoed straight into a
+    # terminal, and this hook runs BEFORE any memory load — so a receipt the
+    # load-time hook has not rewritten is announced exactly as it sits on
+    # disk. That hook's own clean() runs at WRITE time only, which covers
+    # nothing on a machine where it never runs, and a planted receipt carrying
+    # ESC sequences and a 5,000-character value printed both live and in full.
+    # Same two rules clean() applies: no control characters, 200 characters.
+    # "No control characters" is C0 plus DEL in both -- bash's [[:cntrl:]] in
+    # this container's locale is exactly the class the hook's
+    # [\x00-\x1f\x7f] is, and the C1 range U+0080-U+009F survives both.
+    # Measured, and recorded rather than widened: see clean()'s docstring.
+    fleet="${fleet//[[:cntrl:]]/}"; fleet="${fleet:0:200}"
+    agents="${agents//[[:cntrl:]]/}"; agents="${agents:0:200}"
+    [ -n "$fleet" ] && echo "fleet-guidance: previous session $fleet"
+    case "$agents" in
+        ""|current*) ;;
+        *) echo "agents-md: previous session $agents" ;;
+    esac
+    mark_receipt_read "$claim"
+    return 0
+}
+
+# Clear the flag on the receipt this session start CLAIMED, preserving the
+# verdict itself so `cat`ing the receipt still says what happened. Best-effort
+# like write_state: a receipt that cannot be rewritten costs a repeated line,
+# never the session.
+#
+# IT WORKS ON THE CLAIM, NOT ON THE RECEIPT, which is what closes the
+# double-announce race the caller documents: the file was already renamed aside
+# before it was read, so nothing here can be racing another session start for
+# it. It also removes the window this comment used to record -- a verdict
+# written between the caller's grep and this rewrite being marked read without
+# being announced -- because there is no longer a re-read: the bytes rewritten
+# here are the same bytes that were announced. The window that replaces it is
+# recorded on restore_receipt below.
+#
+# A FIXED TMP NAME WAS A SECOND, PERMANENT ROUTE TO "ANNOUNCED FOREVER". With
+# `$RECEIPT_FILE.read.tmp` hard-coded, a DIRECTORY planted at that path made
+# `rm -f` fail, the redirection fail, and `2>/dev/null` swallow both: the flag
+# was never cleared and the same verdict was announced at 5 of 5 consecutive
+# session starts, with nothing on stderr. mktemp cannot collide with anything
+# already there, and when the clear does not happen -- for any reason, not just
+# a failure to create the file -- this says so out loud rather than looping in
+# silence.
+#
+# mktemp creates the file 0600, which is also what keeps the receipt at the
+# mode open_owned gave it. The older `sed > "$tmp"` inherited the umask and
+# quietly relaxed it to 0644 at the first session start after every write.
+mark_receipt_read() {   # <claimed receipt>
+    local claim="$1" tmp="" keep="$1" cleared=false
+    # THE LOUD LINE COVERS THE WHOLE COMPOUND, not just mktemp. Attached to
+    # mktemp alone it fired for the rarer half: on a full filesystem mktemp
+    # SUCCEEDS (a zero-byte file fits) and the redirection into it fails with
+    # ENOSPC, which the `if` caught, the `2>/dev/null` discarded, and the
+    # function returned 0 for. Measured: 5 of 5 consecutive session starts
+    # re-announced the same verdict with nothing on stderr -- a silent failure
+    # to clear, which is the one thing a "never silent for more than one
+    # session" contract cannot afford, and the exact symptom the mktemp name
+    # was introduced to remove.
+    if tmp="$(mktemp "$RECEIPT_FILE.read.XXXXXX" 2>/dev/null)"; then
+        # Same wrapping as write_state: the failure of `> "$tmp"` is the
+        # shell's message, not sed's, so an inner 2>/dev/null would not cover
+        # it.
+        if { sed 's/^unread=1$/unread=0/' "$claim" > "$tmp"; } 2>/dev/null; then
+            cleared=true
+            keep="$tmp"
+        else
+            rm -f "$tmp" 2>/dev/null
+            tmp=""
+        fi
+    else
+        tmp=""
+    fi
+    # Whichever copy we ended up with goes back under the receipt's own name:
+    # the cleared one when the rewrite worked, the CLAIMED ORIGINAL when it did
+    # not, so a failure costs a repeated line and never the verdict itself.
+    restore_receipt "$keep"
+    rm -f "$claim" 2>/dev/null
+    [ -n "$tmp" ] && rm -f "$tmp" 2>/dev/null
+    $cleared || \
+        echo "fleet-guidance: could not clear the previous session's receipt — the line above will repeat next session."
+    return 0
+}
+
+# Put a copy back at the receipt's own name WITHOUT overwriting a newer one.
+#
+# `ln`, not `mv`, and the difference is the whole point: link(2) fails with
+# EEXIST rather than replacing, so a receipt a load-time hook wrote while this
+# session start was announcing wins the name and our stale copy is dropped. The
+# link is unlinked immediately after, so the receipt is left with exactly one
+# name -- instructions-loaded.sh's open_owned refuses a file with more, and a
+# receipt permanently at nlink 2 would disable the write side it protects.
+#
+# THE RESIDUAL WINDOW, recorded the way this file records its others: between
+# the claim above and this call the receipt name does not exist, so a load-time
+# hook writing in that gap does its read-modify-write against nothing and
+# writes only its own verdict -- losing the SIBLING key (a `fleet` verdict when
+# it is writing `agents`, or the reverse) from the merge. That is the
+# read-modify-write window instructions-loaded.sh's write_receipt already
+# documents, one process wider; it costs one verdict from a receipt rather than
+# a wrong verdict, and closing it needs a lock file, which this hook's posture
+# does not buy.
+restore_receipt() {   # <file to put back>
+    if ln "$1" "$RECEIPT_FILE" 2>/dev/null; then
+        rm -f "$1" 2>/dev/null
+    fi
+    return 0
+}
+
+# Record what this run installed. Best-effort by construction: a state file
+# that cannot be written costs the next session its load-time verdict and
+# nothing else, so it must never turn a working delivery into a DEGRADED one.
+# The outer `2>/dev/null` covers the REDIRECTION, not just the commands inside
+# the braces. `{ ...; } > "$F" 2>/dev/null` applies the suppression only after
+# the redirection has been set up, so a directory at that path printed
+# "…state.tmp: Is a directory" into the session beside the verdict. Wrapping
+# the whole compound is what makes "costs the next session its verdict and
+# nothing else" true.
+write_state() {   # <verdict> <version> <bytes> <sha256>
+    {
+        {
+            printf 'version=%s\n' "$2"
+            printf 'bytes=%s\n' "$3"
+            printf 'sha256=%s\n' "$4"
+            printf 'verdict=%s\n' "$1"
+            printf 'ts=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+        } > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+        rm -f "$STATE_FILE.tmp"
+    } 2>/dev/null
+    return 0
+}
+
 degraded() {
     echo "fleet-guidance: DEGRADED — $1. Repo stub only; read the fleet guidance in _agent-guidance/agents-md/base.md before non-trivial work."
     exit 0
@@ -116,6 +318,10 @@ strip_managed_block() {
 case "${FLEET_GUIDANCE_SKIP:-}" in
     ""|0|false|FALSE|no|NO|off|OFF) ;;
     *)
+        # Everything, not just the block: a state file and a log left behind
+        # by an earlier session are still this hook's artifacts sitting in
+        # someone's config dir after they opted out.
+        rm -f "$STATE_FILE" "$RECEIPT_FILE" "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null
         if [ -e "$DEST" ]; then
             tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
             trap 'rm -f "$tmp" "$tmp.raw"' EXIT
@@ -134,6 +340,10 @@ case "${FLEET_GUIDANCE_SKIP:-}" in
         ;;
 esac
 
+# Before anything that can degrade, so a load-time mismatch recorded last
+# session is still reported by a run that cannot deliver this time.
+report_previous_session
+
 [ -n "$HOOK_DIR" ] || degraded "cannot resolve hook directory"
 [ -r "$PAYLOAD" ]  || degraded "no readable payload at $PAYLOAD"
 [ -s "$PAYLOAD" ]  || degraded "payload at $PAYLOAD is empty"
@@ -142,9 +352,9 @@ mkdir -p "$DEST_DIR" 2>/dev/null || degraded "cannot create $DEST_DIR"
 
 # Short content id, so the verdict names WHICH guidance landed. Any of these
 # three digest tools may be absent; a missing one is cosmetic, never fatal.
-version="$( { sha256sum "$PAYLOAD" 2>/dev/null || shasum -a 256 "$PAYLOAD" 2>/dev/null || openssl dgst -sha256 "$PAYLOAD" 2>/dev/null; } \
+payload_sha="$( { sha256sum "$PAYLOAD" 2>/dev/null || shasum -a 256 "$PAYLOAD" 2>/dev/null || openssl dgst -sha256 "$PAYLOAD" 2>/dev/null; } \
             | tr ' ' '\n' | grep -oE '^[0-9a-f]{64}$' | head -1 )"
-version="${version:0:8}"
+version="${payload_sha:0:8}"
 [ -n "$version" ] || version="unknown"
 
 tmp="$(mktemp 2>/dev/null)" || degraded "mktemp failed"
@@ -163,11 +373,13 @@ strip_managed_block "$tmp"
 bytes="$(wc -c < "$PAYLOAD" 2>/dev/null | tr -d ' ')"
 
 if cmp -s "$tmp" "$DEST" 2>/dev/null; then
+    write_state current "$version" "$bytes" "$payload_sha"
     echo "fleet-guidance: current (v$version, ${bytes} bytes) — ~/.claude/CLAUDE.md"
     exit 0
 fi
 
 if cp "$tmp" "$DEST" 2>/dev/null; then
+    write_state installed "$version" "$bytes" "$payload_sha"
     echo "fleet-guidance: installed (v$version, ${bytes} bytes) -> ~/.claude/CLAUDE.md"
 else
     degraded "could not write $DEST"

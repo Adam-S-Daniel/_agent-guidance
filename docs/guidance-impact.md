@@ -49,3 +49,40 @@ Rules:
 
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
+
+## 2026-09-07 — session-start-verdict-is-not-what-loaded — rejected
+
+- Motivation: [#123](https://github.com/Adam-S-Daniel/_agent-guidance/issues/123)'s
+  item 1(b) asked the load-time hook to hash a repo's managed region against
+  "the synced template recorded in the state file", so a hand edit inside a
+  structurally intact managed block would be caught. Round-1 review found the
+  verdict named `EDITED ABOVE THE MARKER` while measuring only marker
+  structure — a name an operator reads as the check 1(b) asked for.
+- Change: the comparison is NOT implemented, and the verdict is renamed to
+  `MANAGED BLOCK MALFORMED` so it claims only what it measures (PR
+  [#124](https://github.com/Adam-S-Daniel/_agent-guidance/pull/124)). The
+  section and the repo stub now say plainly that a hand edit inside an intact
+  block reads `current`.
+- Eval: none — no fixture yet
+- Outcome: rejected 2026-09-07 — there is no comparand to hash against.
+  `fleet-guidance.state` records the digest of the PAYLOAD
+  (`agents-md/base.md`), while a repo's managed region is rendered per-repo by
+  `build-agents-md.sh` from that repo's own `sections:` list. Closing 1(b)
+  means emitting a `Managed-sha256:` header line into the managed block at
+  sync time and verifying it in the hook — a change to the managed-block
+  format in ~20 repos, and a self-referential digest (the line cannot cover
+  itself). Worth doing on its own terms and in its own PR; not worth
+  smuggling in behind a verdict name.
+
+## 2026-09-05 — session-start-verdict-is-not-what-loaded — create
+
+- Motivation: the session-start verdict reports what `fleet-memory.sh` did to
+  `~/.claude/CLAUDE.md`, not what the session loaded. On 2026-09-05 a test
+  mutation cut that file from 56,099 bytes to 154 while a session ran, and
+  nothing said so until the next SessionStart ([#123](https://github.com/Adam-S-Daniel/_agent-guidance/issues/123)).
+- Change: one section naming the gap, the load-time receipt lines the next
+  session prints, and `scripts/instructions-report.sh` — the per-session
+  measurement that replaces the 332.3k figure quoted by hand since 2026-08-29
+  (branch `claude/agent-guidance-123`).
+- Eval: none — no fixture yet
+- Outcome: opened 2026-09-05; merges with this PR.

@@ -32,6 +32,10 @@ on:
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
       # a fix to it would sit here firing no run to deliver itself.
       - ".claude/hooks/fleet-memory.sh"
+      # Copied verbatim into the same repos, on the same decision: the
+      # load-time receipt that says whether the block fleet-memory installed
+      # is the block the session actually loaded.
+      - ".claude/hooks/instructions-loaded.sh"
       # This file. `SYNC_OWNERS` below decides WHICH ~20 repos the run touches,
       # and the dispatch inputs decide whether it writes at all — an owner
       # added or removed here is as much a policy change as an allowlist edit,

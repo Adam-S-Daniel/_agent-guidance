@@ -46,6 +46,13 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# The load-time receipt, delivered on the SAME decision as fleet-memory and
+# never on one of its own. fleet-memory can only report what it did to the
+# file; this reports what the session LOADED, which is the question the
+# 2026-09-05 mid-session truncation went unanswered for. A repo that gets the
+# stub gets both, or it gets a verdict nothing can check.
+INSTR_HOOK_REL_PATH=".claude/hooks/instructions-loaded.sh"
+INSTR_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/instructions-loaded.sh"
 MARKER="## Repo-specific additions"
 BRANCH_NAME="agents-md-sync/update"
 # The committer identity every commit this sync makes is written under (set on
@@ -56,6 +63,19 @@ BRANCH_NAME="agents-md-sync/update"
 # every repo it had ever proposed to.
 SYNC_BOT_EMAIL="agents-md-sync[bot]@users.noreply.github.com"
 DRY_RUN=false
+
+# AMBIENT BOOTSTRAP_HOOK_* VALUES ARE NOT INPUTS TO THIS RUN. bootstrap-status.sh
+# and register-bootstrap-hook.sh read that seam from the environment, and both
+# now REFUSE a set-but-empty value rather than silently defaulting -- correct in
+# themselves, and fatal here: the classifier is called in a plain command
+# substitution under `set -euo pipefail`, so an empty BOOTSTRAP_HOOK_EVENT left
+# over in a human's shell aborted the whole fleet run at the FIRST repo, with
+# one line and no summary (measured: exit 2 after 1 of 6 repos). This script
+# passes every value it means explicitly, so anything ambient is a leftover.
+# The same hygiene test/run-tests.sh applies to GH_TOKEN/GITHUB_TOKEN, for the
+# same reason.
+unset BOOTSTRAP_HOOK_EVENT BOOTSTRAP_HOOK_BASENAME BOOTSTRAP_HOOK_COMMAND \
+      BOOTSTRAP_HOOK_MATCHER BOOTSTRAP_HOOK_TIMEOUT
 WORK_DIR=$(mktemp -d)
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
 
@@ -160,6 +180,47 @@ fi
 
 log()  { echo "  $*"; }
 fail() { echo "  ERROR: $*"; }
+
+# What is actually AT a path, in words, for a withholding reason. The reason a
+# repo lost its delivery has to name what was found: "is one we cannot parse or
+# cannot append to" is false of a symlinked settings.json, which parses fine
+# and could be appended to -- the refusal there is posture, not capability, and
+# a reader sent hunting for a syntax error that is not there has been given a
+# worse answer than none.
+# A per-repo git command whose failure must NOT take the whole run with it.
+#
+# `git add "${add_paths[@]}"` was unguarded under `set -euo pipefail`, so a
+# consumer whose `.claude` is a committed SYMLINK -- a shape git stores
+# natively and a plausible dotfiles/monorepo convention -- ended the FLEET run:
+# `fatal: pathspec '.claude/hooks/instructions-loaded.sh' is beyond a symbolic
+# link`, exit 128, 1 of 6 repos, no summary and no tally. Everything the repo
+# needed had already been written into the throwaway clone, which is discarded
+# either way, so nothing reached the consumer -- but nothing was reported about
+# the five repos the run never touched either.
+#
+# The other per-repo git commands in the loop are already inside an `if`, a
+# `||` or a `&&` (check-ignore, diff --cached, commit, push, ls-remote,
+# checkout, rev-parse, fetch, log); these four -- the two identity settings,
+# the token remote and the staging -- were the ones running bare.
+#
+# `2>&1` and the first line only: git's fatal is one line and the rest is
+# advice, and a per-repo error line in a fleet log has to stay one line.
+repo_git() {   # <what it was for> <git args...>
+    local what="$1"; shift
+    local out
+    out=$(git "$@" 2>&1) && return 0
+    fail "$repo_name: $what — $(head -1 <<< "$out")"
+    return 1
+}
+
+settings_shape() {
+    if   [[ -L "$1" ]]; then echo "a symlink"
+    elif [[ -d "$1" ]]; then echo "a directory"
+    elif [[ -p "$1" ]]; then echo "a named pipe"
+    elif [[ -e "$1" ]]; then echo "not a regular file"
+    else                     echo "absent"
+    fi
+}
 
 # Writes the standard two-line CLAUDE.md bridge (imports @AGENTS.md) to the
 # current directory. Shared by both the "CLAUDE.md absent" and the opted-in
@@ -772,18 +833,29 @@ for repo_name in "${REPOS[@]}"; do
         ((FAIL_COUNT++)) || true
         continue
     fi
-    cd "$repo_dir"
+    if ! cd "$repo_dir"; then
+        fail "$repo_name: could not enter the clone at $repo_dir"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # Configure git identity for commits (not inherited in fresh clones)
-    git config user.name "agents-md-sync[bot]"
-    git config user.email "$SYNC_BOT_EMAIL"
+    if ! repo_git "could not set the commit identity" config user.name "agents-md-sync[bot]" \
+       || ! repo_git "could not set the commit identity" config user.email "$SYNC_BOT_EMAIL"; then
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # Embed token in remote URL so git push can authenticate in CI (no TTY).
     # gh-repo-clone sets an HTTPS remote but does not persist credentials for
     # subsequent git operations, causing:
     #   fatal: could not read Username for 'https://github.com': No such device or address
     if [[ -n "${GH_TOKEN:-}" ]]; then
-        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"
+        if ! repo_git "could not point the clone's origin at the authenticated URL" \
+                remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"; then
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
     fi
 
     # ── fleet-memory: classify, then choose this repo's AGENTS.md mode ──
@@ -802,9 +874,57 @@ for repo_name in "${REPOS[@]}"; do
 
     fleet_deliver=true
     fleet_reason=""
+    # WITHHELD SEPARATELY FROM THE FLEET-MEMORY PAIR. `fleet_deliver=false`
+    # selects FLEET_MODE=full for the WHOLE repo, and using it for a defect in
+    # `hooks.InstructionsLoaded` alone put 52 kB of inline guidance back into
+    # the AGENTS.md of a repo whose SessionStart hook was still registered and
+    # still writing the same 57 kB into ~/.claude/CLAUDE.md — the guidance
+    # loaded twice, silently, with `0 failed` and a log line reading
+    # `mode=full ... settings=registered`. Measured: 5,687 to 57,971 bytes.
+    # The refusal belongs to the pair it is about.
+    instr_deliver=true
+    instr_reason=""
     fleet_hook_state="missing"     # missing | current | drifted
     fleet_payload_state="missing"  # missing | current | drifted
-    fleet_reg_state="missing"      # registered | no-entry | unparseable | missing
+    fleet_reg_state="missing"      # registered | no-entry | unparseable | unwritable | missing
+    instr_hook_state="missing"     # missing | current | drifted
+    instr_reg_state="missing"      # registered | no-entry | unparseable | unwritable | missing
+
+    # EVERY STATE IS MEASURED BEFORE ANY DECISION IS TAKEN, because the log
+    # line below is the operator's only view of this repo and it used to
+    # describe the BRANCH rather than the repo. The three `cmp`s sat inside the
+    # `else`, so a withheld repo printed `hook=missing payload=missing` with
+    # both files sitting present and committed in its tree.
+    if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
+        cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
+            && fleet_hook_state="current" || fleet_hook_state="drifted"
+    fi
+    if [[ -f "$FLEET_PAYLOAD_REL_PATH" ]]; then
+        cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
+            && fleet_payload_state="current" || fleet_payload_state="drifted"
+    fi
+    if [[ -f "$INSTR_HOOK_REL_PATH" ]]; then
+        cmp -s "$INSTR_HOOK_REL_PATH" "$INSTR_HOOK_SOURCE" \
+            && instr_hook_state="current" || instr_hook_state="drifted"
+    fi
+    # `|| ... =unparseable`, because a bare command substitution under
+    # `set -euo pipefail` makes the classifier's exit code the RUN's. One repo
+    # committing a tree at .claude/settings.json ended the whole fleet run at
+    # the first repo -- measured, exit 2 after 1 of 6, no summary and no
+    # tally. The classifier no longer exits 2 for that shape, and this is the
+    # standing guard that any FUTURE non-zero answer is one withheld repo
+    # rather than a dead run: "we could not get an answer" and "do not touch
+    # this file" are the same instruction to everything downstream.
+    fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
+                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
+        || fleet_reg_state="unparseable"
+    # A DIFFERENT event, so a different classification: a hook named under
+    # SessionStart is not registered for InstructionsLoaded, and reading it as
+    # such would leave a delivered hook nothing runs.
+    instr_reg_state=$(BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+                      BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+                      "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
+        || instr_reg_state="unparseable"
 
     if [[ ! -r "$FLEET_HOOK_SOURCE" || ! -s "$FLEET_PAYLOAD_SOURCE" ]]; then
         fleet_deliver=false
@@ -813,32 +933,62 @@ for repo_name in "${REPOS[@]}"; do
          || git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
         fleet_deliver=false
         fleet_reason=".claude/ is gitignored in this repo — keeping the full guidance inline instead"
-    else
-        fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
-                          "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
-        if [[ "$fleet_reg_state" == "unparseable" ]]; then
-            fleet_deliver=false
-            fleet_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it, keeping the full guidance inline"
-        else
-            if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
-                cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
-                    && fleet_hook_state="current" || fleet_hook_state="drifted"
-            fi
-            if [[ -f "$FLEET_PAYLOAD_REL_PATH" ]]; then
-                cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
-                    && fleet_payload_state="current" || fleet_payload_state="drifted"
-            fi
+    elif [[ "$fleet_reg_state" == "unparseable" ]]; then
+        fleet_deliver=false
+        fleet_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it, keeping the full guidance inline"
+    elif [[ "$fleet_reg_state" == "unwritable" ]]; then
+        # WITHDRAWING THE STUB IS CORRECT HERE AND NOWHERE NEAR IT. This branch
+        # is reached only when fleet-memory.sh is NOT registered in this repo
+        # AND the file we would have to add it to is not one we may write --
+        # so the hook genuinely cannot be made to run, and the full guidance
+        # inline is the right fallback. A repo whose hook IS registered
+        # classifies `registered` through the very same link and never arrives
+        # here: that is the whole point of the classifier answering the
+        # content question separately from the file-type one.
+        fleet_reason="$SETTINGS_REL_PATH is $(settings_shape "$SETTINGS_REL_PATH") and fleet-memory.sh is not registered through it — refusing to write there, keeping the full guidance inline"
+        fleet_deliver=false
+    fi
+
+    # The same refusal, for the array THIS hook needs — and scoped to THIS
+    # hook. A settings.json whose SessionStart is fine but whose
+    # InstructionsLoaded is not a list would otherwise get the hook file
+    # delivered and committed and then have the registrar correctly refuse the
+    # entry: a delivered hook nothing runs. Deliver both halves of THIS pair or
+    # neither; the fleet-memory pair beside it is untouched by a key that has
+    # nothing to do with it.
+    if $fleet_deliver; then
+        if [[ "$instr_reg_state" == "unparseable" ]]; then
+            instr_deliver=false
+            instr_reason="$SETTINGS_REL_PATH has a hooks.InstructionsLoaded we cannot parse or cannot append to — withholding the load-time receipt hook and its registration; the fleet-memory pair and AGENTS.md are unaffected"
+        elif [[ "$instr_reg_state" == "unwritable" ]]; then
+            instr_reason="$SETTINGS_REL_PATH is $(settings_shape "$SETTINGS_REL_PATH") and instructions-loaded.sh is not registered through it — withholding the load-time receipt hook and its registration; the fleet-memory pair and AGENTS.md are unaffected"
+            instr_deliver=false
         fi
     fi
+
+    # The whole write block sits inside `if $fleet_deliver`, so a repo the
+    # fleet half cannot reach is one the receipt half cannot reach either.
+    $fleet_deliver || instr_deliver=false
 
     if $fleet_deliver; then FLEET_MODE=stub; else FLEET_MODE=full; fi
     [[ -n "$fleet_reason" ]] && log "fleet-memory: $fleet_reason."
     log "fleet-memory: mode=$FLEET_MODE hook=$fleet_hook_state payload=$fleet_payload_state settings=$fleet_reg_state"
+    [[ -n "$instr_reason" ]] && log "WARN: $instr_reason."
+    $fleet_deliver && log "instructions-loaded: hook=$instr_hook_state settings=$instr_reg_state"
 
+    # A withheld receipt hook must not keep the repo permanently out of date,
+    # or every run re-clones and re-checks a repo it has already decided not
+    # to write to.
+    instr_needs_work=false
+    if $instr_deliver && { [[ "$instr_hook_state" != "current" ]] \
+                        || [[ "$instr_reg_state" != "registered" ]]; }; then
+        instr_needs_work=true
+    fi
     fleet_up_to_date=true
     if $fleet_deliver && { [[ "$fleet_hook_state" != "current" ]] \
                         || [[ "$fleet_payload_state" != "current" ]] \
-                        || [[ "$fleet_reg_state" != "registered" ]]; }; then
+                        || [[ "$fleet_reg_state" != "registered" ]] \
+                        || $instr_needs_work; }; then
         fleet_up_to_date=false
     fi
 
@@ -978,14 +1128,22 @@ for repo_name in "${REPOS[@]}"; do
                 hook_state="missing"
             fi
 
-            reg_state=$("$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+            reg_state=$("$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
+                || reg_state="unparseable"
 
             # An unreadable settings.json is never rewritten (same posture as
             # an existing CLAUDE.md). Delivering the hook file alone would
             # leave it silently dead, so withhold the whole artifact and say so.
+            #
+            # `unwritable` is the same withholding for a different reason: the
+            # hook is not named in this file and this is not a file we may add
+            # it to. Named separately so the log says which it was.
             if [[ "$reg_state" == "unparseable" ]]; then
                 bootstrap_deliver=false
-                bootstrap_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it"
+                bootstrap_reason="$SETTINGS_REL_PATH is one we cannot parse or cannot append to — refusing to edit it"
+            elif [[ "$reg_state" == "unwritable" ]]; then
+                bootstrap_reason="$SETTINGS_REL_PATH is $(settings_shape "$SETTINGS_REL_PATH") and skills-bootstrap.sh is not registered through it — refusing to write there"
+                bootstrap_deliver=false
             fi
         fi
     fi
@@ -1059,6 +1217,20 @@ for repo_name in "${REPOS[@]}"; do
             esac
             [[ "$fleet_reg_state" != "registered" ]] && \
                 log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+            # Gated, because a preview that promises what the real run will
+            # refuse is worse than no preview: on the shape below the dry run
+            # said it would append an InstructionsLoaded entry the registrar
+            # cannot append.
+            if $instr_deliver; then
+                case "$instr_hook_state" in
+                    missing) log "[DRY RUN] Would add $INSTR_HOOK_REL_PATH" ;;
+                    drifted) log "[DRY RUN] Would overwrite drifted $INSTR_HOOK_REL_PATH" ;;
+                esac
+                [[ "$instr_reg_state" != "registered" ]] && \
+                    log "[DRY RUN] Would append an InstructionsLoaded entry for instructions-loaded.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+            else
+                log "[DRY RUN] Would NOT touch $INSTR_HOOK_REL_PATH or its registration (the fleet-memory pair and AGENTS.md are delivered as usual)"
+            fi
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
@@ -1167,6 +1339,8 @@ for repo_name in "${REPOS[@]}"; do
     fleet_hook_written=false
     fleet_payload_written=false
     fleet_registered_now=false
+    instr_hook_written=false
+    instr_registered_now=false
 
     if $fleet_deliver; then
         if [[ "$fleet_hook_state" != "current" ]]; then
@@ -1200,6 +1374,35 @@ for repo_name in "${REPOS[@]}"; do
                 log "WARN: could not register fleet-memory in $SETTINGS_REL_PATH ($fleet_register_result) — leaving it untouched."
             fi
         fi
+        # The load-time receipt, written on the same decision. Registered
+        # under InstructionsLoaded rather than SessionStart, with a `*`
+        # matcher because the CLI matches this event on `load_reason` and a
+        # block truncated mid-session is only observable on the reload after.
+        # The timeout is deliberately short: a receipt hook that needs longer
+        # than ten seconds has stopped being observe-only.
+        if $instr_deliver && [[ "$instr_hook_state" != "current" ]]; then
+            mkdir -p "$(dirname "$INSTR_HOOK_REL_PATH")"
+            cp "$INSTR_HOOK_SOURCE" "$INSTR_HOOK_REL_PATH"
+            chmod 0755 "$INSTR_HOOK_REL_PATH"
+            instr_hook_written=true
+            log "instructions-loaded: hook ${instr_hook_state} — written."
+        fi
+
+        if $instr_deliver && [[ "$instr_reg_state" != "registered" ]]; then
+            mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+            if instr_register_result=$(
+                    BOOTSTRAP_HOOK_EVENT="InstructionsLoaded" \
+                    BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/instructions-loaded.sh"' \
+                    BOOTSTRAP_HOOK_BASENAME="instructions-loaded.sh" \
+                    BOOTSTRAP_HOOK_MATCHER='*' \
+                    BOOTSTRAP_HOOK_TIMEOUT="10" \
+                    "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
+                [[ "$instr_register_result" == "registered" ]] && instr_registered_now=true
+                log "instructions-loaded: settings.json — $instr_register_result."
+            else
+                log "WARN: could not register instructions-loaded in $SETTINGS_REL_PATH ($instr_register_result) — leaving it untouched."
+            fi
+        fi
     fi
 
     add_paths=(AGENTS.md)
@@ -1208,11 +1411,21 @@ for repo_name in "${REPOS[@]}"; do
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
     $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
-    # Both hooks can register in the same file in one run; add it once.
-    if $fleet_registered_now && ! $bootstrap_registered_now; then
+    $instr_hook_written && add_paths+=("$INSTR_HOOK_REL_PATH")
+    # Any of the three hooks can register in the same file in one run; add it
+    # once. `git add` of a duplicate is harmless -- this is de-duplicated
+    # because a reader of `git add "${add_paths[@]}"` should be able to take
+    # the array as the list of what this run changed. (An earlier comment here
+    # said the commit MESSAGE enumerates the array. It does not: the message is
+    # one of four fixed strings, and what it names comes from $delivered
+    # below.)
+    if { $fleet_registered_now || $instr_registered_now; } && ! $bootstrap_registered_now; then
         add_paths+=("$SETTINGS_REL_PATH")
     fi
-    git add "${add_paths[@]}"
+    if ! repo_git "could not stage the files this run wrote" add "${add_paths[@]}"; then
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # Whatever else changed, skills.lock is never among it. Cheap, absolute,
     # and checked HERE rather than trusted: a staged lock means some future
@@ -1223,6 +1436,28 @@ for repo_name in "${REPOS[@]}"; do
         fail "$repo_name: refusing to commit — $LOCK_REL_PATH is staged, and the sync must never write it."
         ((FAIL_COUNT++)) || true
         cd "$REPO_ROOT"; continue
+    fi
+
+    # WHAT THIS RUN ACTUALLY DELIVERED, for the commit subject below. The
+    # "AGENTS.md was already up to date" branch used to be hard-coded to the
+    # skills-bootstrap hook, so a run whose only change was the fleet-memory
+    # or instructions-loaded hook committed under a subject naming a hook it
+    # had not touched. The first post-merge run is safe (the stub text moved,
+    # so the generic branch is used); a later fix to one hook alone is not.
+    delivered=()
+    if $bootstrap_hook_written || $bootstrap_registered_now; then
+        delivered+=("the skills-bootstrap hook")
+    fi
+    if $fleet_hook_written || $fleet_payload_written || $fleet_registered_now; then
+        delivered+=("the fleet-memory hook")
+    fi
+    if $instr_hook_written || $instr_registered_now; then
+        delivered+=("the instructions-loaded hook")
+    fi
+    delivered_list="the fleet hooks"
+    if [[ ${#delivered[@]} -gt 0 ]]; then
+        delivered_list="$(printf '%s, ' "${delivered[@]}")"
+        delivered_list="${delivered_list%, }"
     fi
 
     bootstrap_note=""
@@ -1236,7 +1471,7 @@ own skills.lock declares which bundles it installs and is not touched."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
-        commit_message="chore: deliver the skills-bootstrap SessionStart hook
+        commit_message="chore: deliver ${delivered_list}
 
 AGENTS.md and the CLAUDE.md bridge were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_fixed; then
