@@ -7287,6 +7287,98 @@ test_sync_settings_is_a_directory() {
     fi
 }
 
+# S4 — A GIT COMMAND THAT FAILS IN ONE REPO MUST FAIL ONE REPO.
+#
+# A consumer whose `.claude` is a committed SYMLINK — git stores one natively,
+# and it is a plausible dotfiles or monorepo convention — passes every check
+# (the classifier reads settings.json through the link and answers correctly)
+# and then dies at `git add`: `fatal: pathspec
+# '.claude/hooks/instructions-loaded.sh' is beyond a symbolic link`, exit 128,
+# 1 of 6 repos, no summary. Everything had already been written into the
+# throwaway clone, which is discarded either way, so nothing reached the
+# consumer — but nothing was reported about the repos the run never reached.
+test_sync_claude_dir_is_a_symlink() {
+    echo ""
+    echo "=== Test: sync.sh (a symlinked .claude/ fails one repo, not the run) ==="
+
+    local w v rc=0 seen
+    w="$TEST_DIR/work/claudedir-link"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    git -C "$w" mv .claude config >/dev/null 2>&1
+    ln -s config "$w/.claude"
+    # The repo must still NEED work, or the run reaches "Up to date — skipping"
+    # and never stages anything: the abort is at `git add`, not before it.
+    rm -f "$w/config/hooks/instructions-loaded.sh"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m ".claude is a symlink to config/" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    if [[ "$(git -C "$w" ls-files -s .claude | awk '{print $1}')" == "120000" ]]; then
+        pass "claude dir link: git really stored .claude as a symlink"
+    else
+        fail "claude dir link: the fixture is not a committed symlink"
+        return
+    fi
+
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-claudedir.txt" 2>&1 || rc=$?
+    seen="$(grep -c '^=== bootorg/' "$TEST_DIR/sync-claudedir.txt" || true)"
+    if [[ "$seen" -eq 6 ]]; then
+        pass "claude dir link: all six bootorg repos were processed"
+    else
+        fail "claude dir link: $seen of 6 repos processed"
+    fi
+    assert_contains "$TEST_DIR/sync-claudedir.txt" "Sync complete" \
+        "claude dir link: the run reaches its summary"
+    assert_contains "$TEST_DIR/sync-claudedir.txt" "1 failed" \
+        "claude dir link: the tally counts the one repo that failed"
+    assert_contains "$TEST_DIR/sync-claudedir.txt" \
+        "repo-no-lock: could not stage the files this run wrote" \
+        "claude dir link: the failure names the repo and what it was doing"
+    assert_contains "$TEST_DIR/sync-claudedir.txt" "beyond a symbolic link" \
+        "claude dir link: and carries git's own first line as the reason"
+    # The existing convention: a run with failures exits 1, and it is the
+    # SUMMARY that has to survive, not the exit code.
+    if [[ $rc -eq 1 ]]; then
+        pass "claude dir link: the run exits 1 for a failed repo, not 128 mid-loop"
+    else
+        fail "claude dir link: the run exited $rc"
+    fi
+
+    v="$TEST_DIR/verify-claudedir"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -L "$v/.claude" && ! -e "$v/config/hooks/instructions-loaded.sh" ]]; then
+        pass "claude dir link: nothing was pushed into the repo that failed"
+    else
+        fail "claude dir link: the failed repo received a commit"
+    fi
+
+    # Restore: back to a real .claude/ directory, and let the sync reconverge.
+    w="$TEST_DIR/work/claudedir-restore"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    rm -f "$w/.claude"
+    git -C "$w" mv config .claude >/dev/null 2>&1
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "restore a real .claude directory" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-claudedir-restored.txt" 2>&1 || true
+    v="$TEST_DIR/verify-claudedir-restored"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -d "$v/.claude" && ! -L "$v/.claude" && -f "$v/$INSTR_HOOK_REL_PATH_T" ]]; then
+        pass "claude dir link: a real .claude/ again receives the hook"
+    else
+        fail "claude dir link: the fixture did not converge after the link was removed"
+    fi
+}
+
 # F6 — AN AMBIENT BOOTSTRAP_HOOK_* VALUE MUST NOT ABORT THE FLEET RUN.
 #
 # The seam's two scripts now refuse a set-but-empty value rather than silently
@@ -20258,6 +20350,7 @@ test_sync_instructions_hook_repair
 test_sync_instructions_unusable_array
 test_sync_symlinked_settings
 test_sync_settings_is_a_directory
+test_sync_claude_dir_is_a_symlink
 test_sync_ambient_bootstrap_env
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident

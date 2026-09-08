@@ -187,6 +187,32 @@ fail() { echo "  ERROR: $*"; }
 # and could be appended to -- the refusal there is posture, not capability, and
 # a reader sent hunting for a syntax error that is not there has been given a
 # worse answer than none.
+# A per-repo git command whose failure must NOT take the whole run with it.
+#
+# `git add "${add_paths[@]}"` was unguarded under `set -euo pipefail`, so a
+# consumer whose `.claude` is a committed SYMLINK -- a shape git stores
+# natively and a plausible dotfiles/monorepo convention -- ended the FLEET run:
+# `fatal: pathspec '.claude/hooks/instructions-loaded.sh' is beyond a symbolic
+# link`, exit 128, 1 of 6 repos, no summary and no tally. Everything the repo
+# needed had already been written into the throwaway clone, which is discarded
+# either way, so nothing reached the consumer -- but nothing was reported about
+# the five repos the run never touched either.
+#
+# The other per-repo git commands in the loop are already inside an `if`, a
+# `||` or a `&&` (check-ignore, diff --cached, commit, push, ls-remote,
+# checkout, rev-parse, fetch, log); these four -- the two identity settings,
+# the token remote and the staging -- were the ones running bare.
+#
+# `2>&1` and the first line only: git's fatal is one line and the rest is
+# advice, and a per-repo error line in a fleet log has to stay one line.
+repo_git() {   # <what it was for> <git args...>
+    local what="$1"; shift
+    local out
+    out=$(git "$@" 2>&1) && return 0
+    fail "$repo_name: $what — $(head -1 <<< "$out")"
+    return 1
+}
+
 settings_shape() {
     if   [[ -L "$1" ]]; then echo "a symlink"
     elif [[ -d "$1" ]]; then echo "a directory"
@@ -807,18 +833,29 @@ for repo_name in "${REPOS[@]}"; do
         ((FAIL_COUNT++)) || true
         continue
     fi
-    cd "$repo_dir"
+    if ! cd "$repo_dir"; then
+        fail "$repo_name: could not enter the clone at $repo_dir"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # Configure git identity for commits (not inherited in fresh clones)
-    git config user.name "agents-md-sync[bot]"
-    git config user.email "$SYNC_BOT_EMAIL"
+    if ! repo_git "could not set the commit identity" config user.name "agents-md-sync[bot]" \
+       || ! repo_git "could not set the commit identity" config user.email "$SYNC_BOT_EMAIL"; then
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # Embed token in remote URL so git push can authenticate in CI (no TTY).
     # gh-repo-clone sets an HTTPS remote but does not persist credentials for
     # subsequent git operations, causing:
     #   fatal: could not read Username for 'https://github.com': No such device or address
     if [[ -n "${GH_TOKEN:-}" ]]; then
-        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"
+        if ! repo_git "could not point the clone's origin at the authenticated URL" \
+                remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"; then
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
     fi
 
     # ── fleet-memory: classify, then choose this repo's AGENTS.md mode ──
@@ -1385,7 +1422,10 @@ for repo_name in "${REPOS[@]}"; do
     if { $fleet_registered_now || $instr_registered_now; } && ! $bootstrap_registered_now; then
         add_paths+=("$SETTINGS_REL_PATH")
     fi
-    git add "${add_paths[@]}"
+    if ! repo_git "could not stage the files this run wrote" add "${add_paths[@]}"; then
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # Whatever else changed, skills.lock is never among it. Cheap, absolute,
     # and checked HERE rather than trusted: a staged lock means some future
