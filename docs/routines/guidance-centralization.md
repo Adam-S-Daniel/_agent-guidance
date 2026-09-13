@@ -1602,6 +1602,48 @@ cached memory), and the redundant copy that used to sit in `agentskills`'
 repo-specific section is gone. Neither needs further action from a future
 run.
 
+### Measured 2026-09-13, fourth fired run
+
+Tool availability repeated the 2026-09-01/09-02/09-06 shape exactly, for a
+fourth consecutive fire: `mcp__Claude_Code_Remote__list_repos`,
+`list_triggers` and `add_repo` were all three absent (no ToolSearch hit for
+the `Claude_Code_Remote` family) and the `gh` CLI was absent too (`which gh`
+exited 1). Per this section's own note that a fourth identical measurement
+confirms a known shape rather than surfacing a new gap, this is recorded as
+the one-line repeat: set (a) again `NOT COMPUTABLE (no enumeration tool
+available)`.
+
+Both GitHub MCP connectors answered (`mcp__github__get_me` and
+`mcp__github-mcp__get_me` both resolved to the same account), and
+`mcp__github__`'s Actions tools (`actions_list`, `actions_get`,
+`get_check_run`, `get_job_logs`) were present and schema-loadable — the
+fuller profile, matching 2026-09-02/09-06 rather than 2026-09-01's
+narrower one.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos) as the substitute for `list_triggers`; it mapped 1:1 onto
+`repos.yml`'s 19-name non-structural union (22 total minus both forks and
+`superoutrigger`). 0 unattached, same substitute-not-equivalent caveat as
+the prior three runs.
+
+Set (c) computed cleanly via individual `git ls-remote` probes
+(`GIT_TERMINAL_PROMPT=0`) for all 22 `repos.yml` names under the owner
+recorded in the existing Step 2 mapping: all 22 resolved on the first
+probe, no fallback owner needed. 0 unreadable. As in the prior three runs,
+`gh repo list ... --json` was unavailable, so this is single-source
+verification only.
+
+`repos.yml` on `main` was unchanged from the 2026-09-06 measurement (still
+the same 22-name union). Both previously-flagged centralization candidates
+remain correctly resolved — re-confirmed by a direct fetch of
+`agentskills/AGENTS.md` (no `gh api --jq` restatement present) and of
+`base.md` itself (carries both rules) rather than from cached memory. A
+full pass over all 19 in-scope repos' `## Repo-specific additions` content
+surfaced no new promotion candidates and no new redundant copies this run.
+`cms-platform#395` (the connector write-path PR opened 2026-09-02) was
+merged by the operator at `2026-09-02T16:28:46Z` and is no longer a
+standing item.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
