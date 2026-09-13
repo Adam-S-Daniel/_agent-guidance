@@ -183,7 +183,15 @@ report_previous_session() {
     if [ "$unread" != "1" ]; then
         # Nothing to announce, but the verdict itself is preserved so `cat`ing
         # the receipt still says what happened -- put it back.
+        #
+        # AND CLEAN UP AFTER IT EITHER WAY. restore_receipt unlinks its source
+        # only on the paths where the copy is accounted for; this path used to
+        # return without a sweep, so a restore that lost the name to a newer
+        # receipt left the claimed copy in the config dir for ever -- one per
+        # occurrence, never cleaned. mark_receipt_read's path below already
+        # sweeps unconditionally; this is the other half of the same rule.
         restore_receipt "$claim"
+        rm -f "$claim" 2>/dev/null
         return 0
     fi
     fleet="$(grep -m1 -- '^fleet=' <<<"$body" 2>/dev/null | cut -d= -f2-)"
@@ -290,8 +298,41 @@ mark_receipt_read() {   # <claimed receipt>
 # documents, one process wider; it costs one verdict from a receipt rather than
 # a wrong verdict, and closing it needs a lock file, which this hook's posture
 # does not buy.
+#
+# THREE OUTCOMES, NOT TWO, and collapsing the last two destroyed the receipt in
+# silence. `ln` has exactly one success and two quite different failures:
+#
+#   * EEXIST -- a newer receipt already holds the name. That is the outcome
+#     this function exists to get right: drop our stale copy and say nothing.
+#   * ENOSYS/EPERM/EXDEV -- THIS FILESYSTEM CANNOT HARD-LINK. exFAT and FAT
+#     cannot; some network and fuse mounts cannot. Nothing is at the receipt
+#     name, and the older code neither linked, nor moved, nor removed, nor
+#     said anything -- so the caller's own `rm -f` finished the job and the
+#     verdict was gone. Measured with `ln` shadowed on PATH to exit 1 (the
+#     shape such a filesystem presents): with unread=1 the line was announced
+#     and then the RECEIPT WAS GONE with no "could not clear" line at all,
+#     because mark_receipt_read had already set cleared=true; with unread=0
+#     nothing was announced, the receipt was gone, and an orphan
+#     `instructions-receipt.state.claim.<pid>` was left in the config dir.
+#     That falsifies the sentence two paragraphs up -- on such a filesystem a
+#     failure cost the verdict itself and produced no line.
+#
+# The shell has no errno, and does not need one: whether the receipt name is
+# occupied is the whole question, and `[ -e ]` asks it directly. `mv` is the
+# fallback rather than the default because mv REPLACES, which is exactly what
+# the EEXIST branch exists to avoid -- it is reached only once the name has
+# been seen to be free.
 restore_receipt() {   # <file to put back>
     if ln "$1" "$RECEIPT_FILE" 2>/dev/null; then
+        rm -f "$1" 2>/dev/null
+    elif [ -e "$RECEIPT_FILE" ]; then
+        # A newer receipt won the name. Ours is stale by construction; drop it.
+        rm -f "$1" 2>/dev/null
+    elif mv "$1" "$RECEIPT_FILE" 2>/dev/null; then
+        :   # no hard links on this filesystem; the name was free, so a rename
+            # is the same outcome by another syscall
+    else
+        echo "fleet-guidance: could not put the previous session's receipt back — its verdict is lost."
         rm -f "$1" 2>/dev/null
     fi
     return 0

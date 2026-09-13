@@ -18748,6 +18748,78 @@ test_fleet_memory_receipt_claim() {
     else
         fail "fleet-memory claim: the receipt was swallowed into the claim directory"
     fi
+
+    # ── R4-S2: A FAILED RESTORE NEVER LOSES THE RECEIPT IN SILENCE ─────────
+    #
+    # `ln` fails two quite different ways and the code told only one of them:
+    # EEXIST (a newer receipt won the name — drop ours, correct) and "this
+    # filesystem cannot hard-link" (exFAT, FAT, some network and fuse mounts).
+    # In the second case nothing was at the receipt name, nothing was linked,
+    # moved or said, and the caller's own `rm -f` finished the job. Shadowed on
+    # PATH with a stub that exits 1 — the shape such a filesystem presents, and
+    # the technique this suite already uses for `sed` and `mv` above.
+    printf '#!/bin/sh\nexit 1\n' > "$shim/ln"
+    chmod 755 "$shim/ln"
+    local ustate
+    for ustate in 1 0; do
+        local ld="$d/lnfail-$ustate"
+        mkdir -p "$ld/.claude"
+        printf 'session=8888bbbb\nunread=%s\nfleet=LOAD MISMATCH — ln row %s\n' \
+            "$ustate" "$ustate" > "$ld/.claude/instructions-receipt.state"
+        HOME="$ld" CLAUDE_CONFIG_DIR="$ld/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+            PATH="$shim:$PATH" timeout --foreground 20 bash "$hook" \
+            > "$d/out_lnfail_$ustate" 2>&1
+        if [[ -f "$ld/.claude/instructions-receipt.state" ]]; then
+            pass "fleet-memory restore: a filesystem without hard links keeps the receipt (unread=$ustate)"
+        else
+            fail "fleet-memory restore: the receipt was destroyed when ln failed (unread=$ustate)"
+        fi
+        assert_contains "$ld/.claude/instructions-receipt.state" "ln row $ustate" \
+            "fleet-memory restore: and the verdict itself survives (unread=$ustate)"
+        if [[ -z "$(find "$ld/.claude" -maxdepth 1 -name 'instructions-receipt.state.claim.*' 2>/dev/null)" ]]; then
+            pass "fleet-memory restore: no orphan claim file is left behind (unread=$ustate)"
+        else
+            fail "fleet-memory restore: an orphan claim file was left behind (unread=$ustate)"
+        fi
+        # Never lost AND never silently lost: the "verdict is lost" line is the
+        # last resort, and this row must not reach it.
+        assert_not_contains "$d/out_lnfail_$ustate" "its verdict is lost" \
+            "fleet-memory restore: the last-resort line does not fire when the fallback works (unread=$ustate)"
+    done
+    # The announcement still happened exactly once on the unread=1 row — the
+    # file the assert_not_contains above reads is this same non-empty output.
+    assert_contains "$d/out_lnfail_1" "fleet-guidance: previous session LOAD MISMATCH" \
+        "fleet-memory restore: the verdict is still announced once when ln fails"
+    if [[ "$(grep -c 'previous session' "$d/out_lnfail_1" || true)" -eq 1 ]]; then
+        pass "fleet-memory restore: announced exactly once, not twice"
+    else
+        fail "fleet-memory restore: announced $(grep -c 'previous session' "$d/out_lnfail_1") times"
+    fi
+    # And the receipt was actually CLEARED, so the next session start stays
+    # quiet: the mv fallback carries the rewritten copy, not the stale one.
+    assert_contains "$d/lnfail-1/.claude/instructions-receipt.state" "unread=0" \
+        "fleet-memory restore: the mv fallback puts back the CLEARED copy"
+
+    # EEXIST is still told apart from it. With `ln` stubbed out, a receipt
+    # already sitting at the name must win and our stale copy must be dropped —
+    # never replaced by an `mv` that overwrites it.
+    local ed="$d/lnfail-eexist"
+    mkdir -p "$ed/.claude"
+    printf 'session=9999cccc\nunread=1\nfleet=LOAD MISMATCH — stale\n' \
+        > "$ed/.claude/instructions-receipt.state"
+    printf '#!/bin/sh\ncase " $* " in *"^unread="*) printf "session=dddd0000\\nunread=1\\nfleet=LOAD MISMATCH — newer than stale\\n" > "%s" ;; esac\nexec /bin/grep "$@"\n' \
+        "$ed/.claude/instructions-receipt.state" > "$shim/grep"
+    chmod 755 "$shim/grep"
+    HOME="$ed" CLAUDE_CONFIG_DIR="$ed/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+        PATH="$shim:$PATH" timeout --foreground 20 bash "$hook" > "$d/out_lneexist" 2>&1
+    rm -f "$shim/grep" "$shim/ln"
+    assert_contains "$ed/.claude/instructions-receipt.state" "newer than stale" \
+        "fleet-memory restore: a newer receipt still wins the name when ln is unavailable"
+    if [[ -z "$(find "$ed/.claude" -maxdepth 1 -name 'instructions-receipt.state.claim.*' 2>/dev/null)" ]]; then
+        pass "fleet-memory restore: and the superseded claim copy is removed"
+    else
+        fail "fleet-memory restore: a superseded claim copy was left behind"
+    fi
 }
 
 # ── The InstructionsLoaded receipt ─────────────────────────────────────────
