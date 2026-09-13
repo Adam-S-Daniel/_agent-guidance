@@ -18655,6 +18655,99 @@ test_fleet_memory_receipt_claim() {
     else
         fail "fleet-memory claim: a superseded claim file was left in the config dir"
     fi
+
+    # ── R4-S1: NO PATH THIS HOOK OPENS FOR READING MAY BLOCK ───────────────
+    #
+    # `[ -r ]` is true for a FIFO, the claim renames one happily, and the read
+    # that followed blocked for a writer that never came: measured rc 124 at a
+    # 60-second bound with a `grep` left blocked for ever, one per session
+    # start, and the guidance not installed at all that session. Bounded well
+    # under the hook's registered timeout so a regression is a FAILURE here
+    # rather than a suite that hangs.
+    local shape start elapsed rc=0
+    for shape in fifo dir; do
+        local sd="$d/block-$shape" scfg
+        scfg="$sd/.claude"
+        mkdir -p "$scfg"
+        if [[ "$shape" == fifo ]]; then
+            mkfifo "$scfg/instructions-receipt.state"
+        else
+            mkdir -p "$scfg/instructions-receipt.state"
+        fi
+        start=$SECONDS
+        HOME="$sd" CLAUDE_CONFIG_DIR="$scfg" FLEET_GUIDANCE_PAYLOAD="$payload" \
+            timeout --foreground 20 bash "$hook" < /dev/null > "$d/out_block_$shape" 2>&1
+        rc=$?
+        elapsed=$((SECONDS - start))
+        if [[ $rc -eq 0 && $elapsed -lt 15 ]]; then
+            pass "fleet-memory read: a $shape at the receipt path returns 0 in ${elapsed}s, it does not hang"
+        else
+            fail "fleet-memory read: a $shape at the receipt path exited $rc after ${elapsed}s"
+        fi
+        # The session still gets its guidance: a corrupt receipt costs the
+        # PREVIOUS session's verdict and nothing else.
+        assert_contains "$d/out_block_$shape" "fleet-guidance: installed" \
+            "fleet-memory read: a $shape at the receipt path still installs the guidance"
+        if [[ -z "$(find "$scfg" -maxdepth 1 -name 'instructions-receipt.state.claim.*' 2>/dev/null)" ]]; then
+            pass "fleet-memory read: a $shape at the receipt path leaves no claim entry behind"
+        else
+            fail "fleet-memory read: a $shape at the receipt path left a claim entry"
+        fi
+        # The plant is still where it was put — nothing was renamed aside into
+        # a name nobody will ever look at again.
+        if [[ -e "$scfg/instructions-receipt.state" ]]; then
+            pass "fleet-memory read: the $shape is left where it was, not claimed aside"
+        else
+            fail "fleet-memory read: the $shape was renamed out from under the receipt name"
+        fi
+        # No orphan. The hook's children are all short-lived greps and cats;
+        # anything still alive under this config dir is a blocked read.
+        local survivors
+        ps -eo args > "$d/ps-$shape.txt" 2>/dev/null || true
+        survivors="$(grep -cF -- "$scfg" "$d/ps-$shape.txt" || true)"
+        if [[ "$survivors" -eq 0 ]]; then
+            pass "fleet-memory read: a $shape at the receipt path leaves no surviving process"
+        else
+            fail "fleet-memory read: $survivors process(es) survive the $shape row"
+        fi
+    done
+
+    # ── R4-S1/N1: THE CLAIM NAME REFUSES TO OVERWRITE A DIRECTORY ──────────
+    #
+    # `mv file dir/` SUCCEEDS by moving the file INTO the directory, so a
+    # directory planted at `<receipt>.claim.<pid>` swallowed the receipt in
+    # silence: nothing announced, nothing restorable, the verdict left at
+    # `<receipt>.claim.<pid>/instructions-receipt.state`. The wrapper below
+    # plants the directory under the pid the hook itself will use — `$$`
+    # survives `exec`, so the sh that mkdirs and the bash that claims are one
+    # process.
+    mkdir -p "$d/claimdir/.claude"
+    local cdr="$d/claimdir/.claude/instructions-receipt.state"
+    printf 'session=7777aaaa\nunread=1\nfleet=LOAD MISMATCH — claim-dir row\n' > "$cdr"
+    local cbefore; cbefore="$(cat "$cdr")"
+    printf '#!/bin/sh\nmkdir -p "$1.claim.$$"\nexec bash "$2"\n' > "$d/claimdir/wrap.sh"
+    chmod 755 "$d/claimdir/wrap.sh"
+    HOME="$d/claimdir" CLAUDE_CONFIG_DIR="$d/claimdir/.claude" FLEET_GUIDANCE_PAYLOAD="$payload" \
+        timeout --foreground 20 sh "$d/claimdir/wrap.sh" "$cdr" "$hook" \
+        > "$d/out_claimdir" 2>&1
+    assert_contains "$d/out_claimdir" "could not clear the previous session's receipt" \
+        "fleet-memory claim: a directory at the claim name is refused out loud"
+    assert_contains "$d/out_claimdir" "nothing was announced" \
+        "fleet-memory claim: and the line says the verdict was not announced"
+    if [[ -f "$cdr" && "$(cat "$cdr")" == "$cbefore" ]]; then
+        pass "fleet-memory claim: the receipt survives a directory at the claim name"
+    else
+        fail "fleet-memory claim: the receipt did not survive a directory at the claim name"
+    fi
+    # Non-vacuous by construction: the file it reads is the run's own output,
+    # asserted non-empty here, and the swallowed path is the one the old
+    # behaviour produced.
+    if [[ -s "$d/out_claimdir" ]] && ! find "$d/claimdir/.claude" -mindepth 2 \
+            -name 'instructions-receipt.state' 2>/dev/null | grep -q .; then
+        pass "fleet-memory claim: the receipt was not moved inside the planted directory"
+    else
+        fail "fleet-memory claim: the receipt was swallowed into the claim directory"
+    fi
 }
 
 # ── The InstructionsLoaded receipt ─────────────────────────────────────────

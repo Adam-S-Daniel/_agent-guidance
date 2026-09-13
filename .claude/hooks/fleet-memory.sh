@@ -89,8 +89,29 @@ LOG_FILE="$DEST_DIR/instructions-log.jsonl"
 # every session start forever, and two sessions sharing one config dir erase
 # each other's verdicts before either is announced.
 report_previous_session() {
+    # `-f`, NOT `-r`, and the gap between the two is an unbounded hang. `-r` is
+    # a stat and is TRUE for a FIFO; the claim below renames it happily; and the
+    # read that follows then opens it and BLOCKS for a writer that never comes.
+    # Measured on the version that used `-r`: a FIFO planted at this path took
+    # the hook to rc 124 at a 60-second bound and left a `grep` blocked on it
+    # for ever, one per session start, while the guidance was not installed at
+    # all that session. Every sibling in this programme already uses the right
+    # test -- instructions-loaded.sh's read_bytes and read_kv use
+    # os.path.isfile, its open_owned adds O_NONBLOCK and S_ISREG,
+    # instructions-report.sh uses isfile plus O_NONBLOCK, and the registrar
+    # uses `-e && ! -f`. This read was the one left on a stat that does not ask
+    # the question.
+    #
+    # THE INVARIANT, stated because a mechanism is not one: no path this hook
+    # opens for READING may block. Every read below is preceded by a
+    # regular-file test on the name that is actually opened -- this one, the
+    # CLAIMED name (the claim can only rename what was there a moment ago, and
+    # a racing plant can put a FIFO under the new name too), and $PAYLOAD
+    # further down. $DEST's reads are already behind strip_managed_block's
+    # `[ -f "$DEST" ] || degraded`.
+    [ -f "$RECEIPT_FILE" ] || return 0
     [ -r "$RECEIPT_FILE" ] || return 0
-    local claim unread fleet agents
+    local claim unread fleet agents body
     # THE CLAIM, and why the read cannot simply be a read.
     #
     # "Announced exactly once" is the sentence this repo ships into ~20
@@ -111,6 +132,24 @@ report_previous_session() {
     # SOURCE disappearing, not the destination being unique. Two concurrent
     # session starts are two processes and cannot share a pid.
     claim="$RECEIPT_FILE.claim.$$"
+    # NOTHING MAY ALREADY BE AT THE CLAIM NAME. `mv file dir/` SUCCEEDS by
+    # moving the file INTO the directory, so a directory planted at this
+    # predictable name swallowed the receipt: nothing to read, nothing
+    # announced, the restore below unable to put anything back, and the verdict
+    # left unreachable at `<receipt>.claim.<pid>/instructions-receipt.state`.
+    # That is the same shape this file already records for the retired fixed
+    # `.read.tmp` name, at a new name, and worse -- the old one announced for
+    # ever where this one destroys.
+    #
+    # `mv -T` is the direct answer and is GNU-only; this hook ships to every
+    # consumer including macOS, where BSD mv rejects the flag and every claim
+    # would fail. A prior existence test is the portable equivalent: the name
+    # carries our own pid, so anything already there was planted, and refusing
+    # to claim leaves the receipt untouched for the next session start to find.
+    if [ -e "$claim" ]; then
+        echo "fleet-guidance: could not clear the previous session's receipt — nothing was announced; it will be next session."
+        return 0
+    fi
     if ! mv "$RECEIPT_FILE" "$claim" 2>/dev/null; then
         # Two different facts, told apart by whether the receipt is still
         # there: another session start claimed it first (nothing to announce,
@@ -120,15 +159,35 @@ report_previous_session() {
             echo "fleet-guidance: could not clear the previous session's receipt — nothing was announced; it will be next session."
         return 0
     fi
-    unread="$(grep -m1 -- '^unread=' "$claim" 2>/dev/null | cut -d= -f2-)"
+    # THE CLAIMED NAME GETS ITS OWN REGULAR-FILE TEST. The test above was of
+    # the receipt name a rename ago, and a plant that lands between the two
+    # arrives under the claim name instead -- so the read would block exactly as
+    # it did before. Re-asking is one stat and closes the window; the claimed
+    # thing is left where it is rather than restored, because putting a FIFO
+    # back at the receipt name would reinstate the trap for the next session.
+    if [ ! -f "$claim" ]; then
+        echo "fleet-guidance: the previous session's receipt is not a regular file — nothing was announced."
+        return 0
+    fi
+    # ONE BOUNDED READ, not three unbounded ones. Three `grep <file>` calls were
+    # three opens of a path that had already been vouched for once; reading the
+    # file once into a variable leaves a single sink to guard and caps what a
+    # corrupt receipt can cost -- read_kv on the other side of this lane caps
+    # its own read for the same measured reason (a 1 GB state file spent the
+    # whole timeout budget). The keys are then matched from the VALUE with a
+    # here-string, never through a pipe into an early-exiting `grep -m1`: a
+    # pipe there takes SIGPIPE once the payload passes the 64 KiB pipe buffer,
+    # which is a false negative with a timer on it.
+    body="$(head -c 65536 -- "$claim" 2>/dev/null)"
+    unread="$(grep -m1 -- '^unread=' <<<"$body" 2>/dev/null | cut -d= -f2-)"
     if [ "$unread" != "1" ]; then
         # Nothing to announce, but the verdict itself is preserved so `cat`ing
         # the receipt still says what happened -- put it back.
         restore_receipt "$claim"
         return 0
     fi
-    fleet="$(grep -m1 -- '^fleet=' "$claim" 2>/dev/null | cut -d= -f2-)"
-    agents="$(grep -m1 -- '^agents=' "$claim" 2>/dev/null | cut -d= -f2-)"
+    fleet="$(grep -m1 -- '^fleet=' <<<"$body" 2>/dev/null | cut -d= -f2-)"
+    agents="$(grep -m1 -- '^agents=' <<<"$body" 2>/dev/null | cut -d= -f2-)"
     # THE READ SIDE OF THE SAME LANE. These values are echoed straight into a
     # terminal, and this hook runs BEFORE any memory load — so a receipt the
     # load-time hook has not rewritten is announced exactly as it sits on
@@ -345,6 +404,13 @@ esac
 report_previous_session
 
 [ -n "$HOOK_DIR" ] || degraded "cannot resolve hook directory"
+# `-f` before `-r`, the same pair as the receipt read above: this path is read
+# four times below (sha256sum, cat, wc -c, and cmp through the assembled tmp),
+# and $FLEET_GUIDANCE_PAYLOAD lets a caller point it anywhere. A FIFO here was
+# refused only incidentally, by `-s` being false for a pipe; a directory got
+# past both tests and was caught two commands later by `cat` failing. Neither
+# is the test the invariant asks for.
+[ -f "$PAYLOAD" ]  || degraded "payload at $PAYLOAD is not a regular file"
 [ -r "$PAYLOAD" ]  || degraded "no readable payload at $PAYLOAD"
 [ -s "$PAYLOAD" ]  || degraded "payload at $PAYLOAD is empty"
 
