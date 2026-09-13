@@ -858,6 +858,51 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── Nothing this run writes may land outside the clone ─────────────
+    #
+    # A consumer that commits `.claude` as a SYMLINK TO AN ABSOLUTE PATH made
+    # the sync write five files -- settings.json plus four hook/payload files,
+    # 57 kB -- to that path ON THE RUNNER, at a location the repo chooses,
+    # before `git add` failed and the repo was counted as failed. Measured on
+    # this branch and, with four of the five files, on main: the file set is
+    # not new, but the run now CONTINUES past it, reporting only "could not
+    # stage" and saying nothing about the out-of-tree write. On a public
+    # consumer that commit can arrive through a merged pull request.
+    #
+    # THE INVARIANT: before ANY delivery, every path component this run writes
+    # THROUGH is a real directory or a real file in the clone. `git add`
+    # noticing afterwards is not the same property -- by then the bytes are
+    # already outside the tree.
+    #
+    # The paths, and why these and not others. Everything this loop writes is
+    # one of: AGENTS.md, CLAUDE.md, and five files under `.claude/`. The five
+    # reach the filesystem through `mkdir -p "$(dirname ...)"` plus `cp` or the
+    # registrar, so `.claude` and `.claude/hooks` are the two components, and
+    # the four hook/payload leaves are the four names a `cp` could follow.
+    #
+    # `.claude/settings.json` is DELIBERATELY NOT HERE. A symlink there is a
+    # shape this sync now supports on purpose: bootstrap-status.sh answers the
+    # CONTENT question through the link and `unwritable` otherwise, the
+    # registrar refuses to write through it by name, and the repo keeps its
+    # stub. Refusing the repo for it would undo that and re-take the delivery
+    # away from a working consumer -- the exact regression round 3 was called
+    # to fix. AGENTS.md and CLAUDE.md are not here either: a symlink at either
+    # is an in-tree editorial convention with no `.claude` write behind it, and
+    # widening a refusal past the measured shape is how a guard starts costing
+    # repos their delivery.
+    write_through=""
+    for wt_path in .claude .claude/hooks "$HOOK_REL_PATH" "$FLEET_HOOK_REL_PATH" \
+                   "$FLEET_PAYLOAD_REL_PATH" "$INSTR_HOOK_REL_PATH"; do
+        if [[ -L "$wt_path" ]]; then write_through="$wt_path"; break; fi
+    done
+    if [[ -n "$write_through" ]]; then
+        # settings_shape()'s vocabulary, so a reader meets the same words here
+        # as in the withholding reasons below.
+        fail "$repo_name: $write_through is $(settings_shape "$write_through") — every file this run would write under .claude/ lands outside the clone through it; refusing to deliver anything to this repo"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+
     # ── fleet-memory: classify, then choose this repo's AGENTS.md mode ──
     #
     # ONE decision, not two. The stub in AGENTS.md is only safe for a repo that

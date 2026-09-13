@@ -7351,38 +7351,57 @@ test_sync_settings_is_a_directory() {
     fi
 }
 
-# S4 — A GIT COMMAND THAT FAILS IN ONE REPO MUST FAIL ONE REPO.
+# S4/R4-S3 — A GIT COMMAND THAT FAILS IN ONE REPO MUST FAIL ONE REPO, AND
+# NOTHING THIS RUN WRITES MAY LAND OUTSIDE THE CLONE.
 #
 # A consumer whose `.claude` is a committed SYMLINK — git stores one natively,
-# and it is a plausible dotfiles or monorepo convention — passes every check
-# (the classifier reads settings.json through the link and answers correctly)
-# and then dies at `git add`: `fatal: pathspec
+# and it is a plausible dotfiles or monorepo convention — used to pass every
+# check and then die at `git add`: `fatal: pathspec
 # '.claude/hooks/instructions-loaded.sh' is beyond a symbolic link`, exit 128,
-# 1 of 6 repos, no summary. Everything had already been written into the
-# throwaway clone, which is discarded either way, so nothing reached the
-# consumer — but nothing was reported about the repos the run never reached.
+# 1 of 6 repos, no summary. Round 3 guarded the git commands so that failed one
+# repo instead of the run. What that left open is the half BEFORE the staging:
+# by the time `git add` objects, five files (settings.json plus four
+# hook/payload files, 57 kB) have already been written THROUGH the link, to
+# whatever absolute path the repo named, on the runner. The link target here is
+# outside every clone precisely so the test can look at it.
 test_sync_claude_dir_is_a_symlink() {
     echo ""
-    echo "=== Test: sync.sh (a symlinked .claude/ fails one repo, not the run) ==="
+    echo "=== Test: sync.sh (a symlinked .claude/ fails one repo and writes nothing outside) ==="
 
-    local w v rc=0 seen
+    local w v rc=0 seen outside
+    outside="$TEST_DIR/outside/claudedir"
+    rm -rf "$TEST_DIR/outside"; mkdir -p "$outside"
     w="$TEST_DIR/work/claudedir-link"
     rm -rf "$w"
     git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
     git -C "$w" config commit.gpgsign false
     git -C "$w" mv .claude config >/dev/null 2>&1
-    ln -s config "$w/.claude"
-    # The repo must still NEED work, or the run reaches "Up to date — skipping"
-    # and never stages anything: the abort is at `git add`, not before it.
+    ln -s "$outside" "$w/.claude"
+    # The repo must still NEED work, so the refusal below is a refusal and not
+    # a repo the run would have skipped anyway.
     rm -f "$w/config/hooks/instructions-loaded.sh"
     git -C "$w" add -A >/dev/null 2>&1
-    git -C "$w" commit -m ".claude is a symlink to config/" >/dev/null 2>&1
+    git -C "$w" commit -m ".claude is a symlink to an absolute path" >/dev/null 2>&1
     git -C "$w" push origin HEAD:main >/dev/null 2>&1
     if [[ "$(git -C "$w" ls-files -s .claude | awk '{print $1}')" == "120000" ]]; then
         pass "claude dir link: git really stored .claude as a symlink"
     else
         fail "claude dir link: the fixture is not a committed symlink"
         return
+    fi
+
+    # DRY FIRST, so the parity claim is measured rather than asserted: a guard
+    # that fires only on the real run would make the preview a lie.
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" --dry-run > "$TEST_DIR/sync-claudedir-dry.txt" 2>&1 || true
+    assert_contains "$TEST_DIR/sync-claudedir-dry.txt" \
+        "repo-no-lock: .claude is a symlink" \
+        "claude dir link: the dry run refuses the same repo for the same reason"
+    if [[ -z "$(ls -A "$outside" 2>/dev/null)" ]]; then
+        pass "claude dir link: the dry run wrote nothing through the link"
+    else
+        fail "claude dir link: the dry run wrote $(ls -A "$outside" | wc -l) entries outside the clone"
     fi
 
     GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
@@ -7399,10 +7418,18 @@ test_sync_claude_dir_is_a_symlink() {
     assert_contains "$TEST_DIR/sync-claudedir.txt" "1 failed" \
         "claude dir link: the tally counts the one repo that failed"
     assert_contains "$TEST_DIR/sync-claudedir.txt" \
-        "repo-no-lock: could not stage the files this run wrote" \
-        "claude dir link: the failure names the repo and what it was doing"
-    assert_contains "$TEST_DIR/sync-claudedir.txt" "beyond a symbolic link" \
-        "claude dir link: and carries git's own first line as the reason"
+        "repo-no-lock: .claude is a symlink" \
+        "claude dir link: the failure names the repo and what was found"
+    assert_contains "$TEST_DIR/sync-claudedir.txt" \
+        "lands outside the clone" \
+        "claude dir link: and says why that is refused"
+    # THE MEASUREMENT THIS TEST EXISTS FOR. Five files, 57 kB, used to land
+    # here before `git add` objected.
+    if [[ -z "$(ls -A "$outside" 2>/dev/null)" ]]; then
+        pass "claude dir link: nothing was written outside the clone"
+    else
+        fail "claude dir link: $(ls -A "$outside" | wc -l) entries were written outside the clone"
+    fi
     # The existing convention: a run with failures exits 1, and it is the
     # SUMMARY that has to survive, not the exit code.
     if [[ $rc -eq 1 ]]; then
@@ -7414,7 +7441,7 @@ test_sync_claude_dir_is_a_symlink() {
     v="$TEST_DIR/verify-claudedir"
     rm -rf "$v"
     git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
-    if [[ -L "$v/.claude" && ! -e "$v/config/hooks/instructions-loaded.sh" ]]; then
+    if [[ -L "$v/.claude" ]]; then
         pass "claude dir link: nothing was pushed into the repo that failed"
     else
         fail "claude dir link: the failed repo received a commit"
@@ -7440,6 +7467,96 @@ test_sync_claude_dir_is_a_symlink() {
         pass "claude dir link: a real .claude/ again receives the hook"
     else
         fail "claude dir link: the fixture did not converge after the link was removed"
+    fi
+}
+
+# THE `git add` GUARD KEEPS ITS OWN FLOOR, ON A SHAPE THE SYMLINK REFUSAL ABOVE
+# DOES NOT REACH.
+#
+# The round-3 guard on the per-repo git commands was pinned by exactly one
+# fixture — the symlinked `.claude` — and R4-S3's refusal now stops that fixture
+# before staging, which would have left the guard with no red mutation at all:
+# a remedy quietly deleting the floor beside it, which is the shape this whole
+# round exists to avoid. So the floor gets a fixture of its own, one the new
+# refusal cannot reach: a repo with NO tracked AGENTS.md that GITIGNORES the
+# name. `git add AGENTS.md` on an explicitly-named ignored path exits 1 with
+# "The following paths are ignored", the sync writes AGENTS.md unconditionally
+# and stages it unconditionally, and `.claude` is an ordinary directory
+# throughout.
+test_sync_git_add_fails_one_repo() {
+    echo ""
+    echo "=== Test: sync.sh (a git add that fails costs one repo, not the run) ==="
+
+    local w v rc=0 seen
+    w="$TEST_DIR/work/addfail"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    git -C "$w" rm -q --cached AGENTS.md >/dev/null 2>&1
+    rm -f "$w/AGENTS.md"
+    printf 'AGENTS.md\n' > "$w/.gitignore"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "AGENTS.md is untracked and gitignored here" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    if [[ -z "$(git -C "$w" ls-files AGENTS.md)" ]]; then
+        pass "add fail: the fixture really has no tracked AGENTS.md"
+    else
+        fail "add fail: AGENTS.md is still tracked in the fixture"
+        return
+    fi
+
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-addfail.txt" 2>&1 || rc=$?
+    seen="$(grep -c '^=== bootorg/' "$TEST_DIR/sync-addfail.txt" || true)"
+    if [[ "$seen" -eq 6 ]]; then
+        pass "add fail: all six bootorg repos were processed"
+    else
+        fail "add fail: $seen of 6 repos processed"
+    fi
+    assert_contains "$TEST_DIR/sync-addfail.txt" "Sync complete" \
+        "add fail: the run reaches its summary"
+    assert_contains "$TEST_DIR/sync-addfail.txt" "1 failed" \
+        "add fail: the tally counts the one repo that failed"
+    assert_contains "$TEST_DIR/sync-addfail.txt" \
+        "repo-no-lock: could not stage the files this run wrote" \
+        "add fail: the failure names the repo and what it was doing"
+    assert_contains "$TEST_DIR/sync-addfail.txt" "ignored by one of your .gitignore files" \
+        "add fail: and carries git's own first line as the reason"
+    if [[ $rc -eq 1 ]]; then
+        pass "add fail: the run exits 1 for a failed repo, not 128 mid-loop"
+    else
+        fail "add fail: the run exited $rc"
+    fi
+    v="$TEST_DIR/verify-addfail"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ ! -f "$v/AGENTS.md" ]]; then
+        pass "add fail: nothing was pushed into the repo that failed"
+    else
+        fail "add fail: the failed repo received a commit"
+    fi
+
+    # Restore, so the fixture is left as the rest of the suite expects it.
+    w="$TEST_DIR/work/addfail-restore"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    rm -f "$w/.gitignore"
+    printf '# AGENTS.md\n\n## Repo-specific additions\n' > "$w/AGENTS.md"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "restore a tracked AGENTS.md" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$TEST_DIR/sync-addfail-restored.txt" 2>&1 || true
+    v="$TEST_DIR/verify-addfail-restored"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-no-lock" "$v" >/dev/null 2>&1
+    if [[ -f "$v/AGENTS.md" ]]; then
+        pass "add fail: a tracked AGENTS.md again receives the managed content"
+    else
+        fail "add fail: the fixture did not converge after the gitignore was removed"
     fi
 }
 
@@ -20780,6 +20897,7 @@ test_sync_instructions_unusable_array
 test_sync_symlinked_settings
 test_sync_settings_is_a_directory
 test_sync_claude_dir_is_a_symlink
+test_sync_git_add_fails_one_repo
 test_sync_ambient_bootstrap_env
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident
