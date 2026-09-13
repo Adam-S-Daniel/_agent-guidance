@@ -140,6 +140,41 @@ if isinstance(hooks, dict) and event in hooks and not isinstance(groups, list):
 if groups is None:
     groups = []
 
+# THE NEEDLE NAMES A FILE, so it has to match a WHOLE BASENAME and not a
+# substring. `needle in str(command)` said yes to `other.sh` inside
+# `some-other.sh` -- measured, `registered`/`already-registered` against a
+# settings.json whose only entry names a different hook -- so the shape gate on
+# the environment variable, which only rejects needles that are not filenames,
+# does not close it. A match counts only when neither neighbour could be part
+# of the same filename. No regex: this is a boundary test on two characters.
+NAME_CHARS = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+              "abcdefghijklmnopqrstuvwxyz0123456789._-")
+
+
+def name_char(c):
+    # `c in NAME_CHARS` alone is TRUE for the EMPTY string -- every string
+    # contains it -- so a needle at the very start or the very end of the
+    # command read as if it had a name character beside it and no match was
+    # ever found there. Measured: the fleet default command
+    # `bash .claude/hooks/skills-bootstrap.sh` ends in the needle, and the
+    # classifier answered `no-entry` for a file that registers it.
+    return bool(c) and c in NAME_CHARS
+
+
+def names_hook(command, needle):
+    text = str(command)
+    at = 0
+    while True:
+        i = text.find(needle, at)
+        if i < 0:
+            return False
+        before = text[i - 1] if i > 0 else ""
+        after = text[i + len(needle):i + len(needle) + 1]
+        if not name_char(before) and not name_char(after):
+            return True
+        at = i + 1
+
+
 for group in groups:
     if not isinstance(group, dict):
         continue
@@ -147,7 +182,7 @@ for group in groups:
     if not isinstance(entries, list):
         continue
     for entry in entries:
-        if isinstance(entry, dict) and needle in str(entry.get("command", "")):
+        if isinstance(entry, dict) and names_hook(entry.get("command", ""), needle):
             print("registered")
             sys.exit(0)
 

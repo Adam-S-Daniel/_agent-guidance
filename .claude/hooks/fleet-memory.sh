@@ -111,7 +111,7 @@ report_previous_session() {
     # `[ -f "$DEST" ] || degraded`.
     [ -f "$RECEIPT_FILE" ] || return 0
     [ -r "$RECEIPT_FILE" ] || return 0
-    local claim unread fleet agents body
+    local claim unread fleet agents body announced=false
     # THE CLAIM, and why the read cannot simply be a read.
     #
     # "Announced exactly once" is the sentence this repo ships into ~20
@@ -209,12 +209,16 @@ report_previous_session() {
     # Measured, and recorded rather than widened: see clean()'s docstring.
     fleet="${fleet//[[:cntrl:]]/}"; fleet="${fleet:0:200}"
     agents="${agents//[[:cntrl:]]/}"; agents="${agents:0:200}"
-    [ -n "$fleet" ] && echo "fleet-guidance: previous session $fleet"
+    # WHETHER A LINE WAS ACTUALLY PRINTED, because the failure sentence below
+    # says "the line above will repeat next session" and there is not always a
+    # line above: a receipt whose `fleet` is empty and whose `agents` begins
+    # `current` announces nothing at all and still marks the receipt read.
+    [ -n "$fleet" ] && { echo "fleet-guidance: previous session $fleet"; announced=true; }
     case "$agents" in
         ""|current*) ;;
-        *) echo "agents-md: previous session $agents" ;;
+        *) echo "agents-md: previous session $agents"; announced=true ;;
     esac
-    mark_receipt_read "$claim"
+    mark_receipt_read "$claim" "$announced"
     return 0
 }
 
@@ -244,8 +248,8 @@ report_previous_session() {
 # mktemp creates the file 0600, which is also what keeps the receipt at the
 # mode open_owned gave it. The older `sed > "$tmp"` inherited the umask and
 # quietly relaxed it to 0644 at the first session start after every write.
-mark_receipt_read() {   # <claimed receipt>
-    local claim="$1" tmp="" keep="$1" cleared=false
+mark_receipt_read() {   # <claimed receipt> [<true if a line was printed>]
+    local claim="$1" announced="${2:-true}" tmp="" keep="$1" cleared=false
     # THE LOUD LINE COVERS THE WHOLE COMPOUND, not just mktemp. Attached to
     # mktemp alone it fired for the rarer half: on a full filesystem mktemp
     # SUCCEEDS (a zero-byte file fits) and the redirection into it fails with
@@ -275,8 +279,18 @@ mark_receipt_read() {   # <claimed receipt>
     restore_receipt "$keep"
     rm -f "$claim" 2>/dev/null
     [ -n "$tmp" ] && rm -f "$tmp" 2>/dev/null
-    $cleared || \
-        echo "fleet-guidance: could not clear the previous session's receipt — the line above will repeat next session."
+    # The sentence has to be true of what the operator can see. "The line above
+    # will repeat" is right only when there IS a line above; when the receipt
+    # announced nothing, what repeats is the silent re-read, and saying so is
+    # the difference between a message and a message that sends someone
+    # scrolling for a line that was never printed.
+    if ! $cleared; then
+        if [ "$announced" = true ]; then
+            echo "fleet-guidance: could not clear the previous session's receipt — the line above will repeat next session."
+        else
+            echo "fleet-guidance: could not clear the previous session's receipt — it will be re-read next session."
+        fi
+    fi
     return 0
 }
 

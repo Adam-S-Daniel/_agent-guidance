@@ -181,12 +181,6 @@ fi
 log()  { echo "  $*"; }
 fail() { echo "  ERROR: $*"; }
 
-# What is actually AT a path, in words, for a withholding reason. The reason a
-# repo lost its delivery has to name what was found: "is one we cannot parse or
-# cannot append to" is false of a symlinked settings.json, which parses fine
-# and could be appended to -- the refusal there is posture, not capability, and
-# a reader sent hunting for a syntax error that is not there has been given a
-# worse answer than none.
 # A per-repo git command whose failure must NOT take the whole run with it.
 #
 # `git add "${add_paths[@]}"` was unguarded under `set -euo pipefail`, so a
@@ -209,10 +203,26 @@ repo_git() {   # <what it was for> <git args...>
     local what="$1"; shift
     local out
     out=$(git "$@" 2>&1) && return 0
-    fail "$repo_name: $what — $(head -1 <<< "$out")"
+    # REDACTED, not merely believed safe. One of this function's callers passes
+    # `remote set-url origin https://x-access-token:$GH_TOKEN@github.com/...`,
+    # and this line is printed into a PUBLIC Actions log. Measured today: git
+    # answers `error: No such remote 'origin'` and never echoes the URL back,
+    # so there is no leak as things stand -- but "today's git does not quote
+    # its argument" is a property of a program we do not own, and a
+    # `--verbose`, a different git, or a different failure mode turns it into
+    # one. Blanking the userinfo of any URL in the line costs nothing and does
+    # not depend on that. Lexical by nature -- a token inside one string -- so
+    # a pattern is the right tool here, as it is not for code or config shape.
+    fail "$repo_name: $what — $(head -1 <<< "$out" | sed -E 's#(https?://)[^/@[:space:]]*@#\1***@#g')"
     return 1
 }
 
+# What is actually AT a path, in words, for a withholding reason. The reason a
+# repo lost its delivery has to name what was found: "is one we cannot parse or
+# cannot append to" is false of a symlinked settings.json, which parses fine
+# and could be appended to -- the refusal there is posture, not capability, and
+# a reader sent hunting for a syntax error that is not there has been given a
+# worse answer than none.
 settings_shape() {
     if   [[ -L "$1" ]]; then echo "a symlink"
     elif [[ -d "$1" ]]; then echo "a directory"
@@ -960,6 +970,16 @@ for repo_name in "${REPOS[@]}"; do
     # standing guard that any FUTURE non-zero answer is one withheld repo
     # rather than a dead run: "we could not get an answer" and "do not touch
     # this file" are the same instruction to everything downstream.
+    #
+    # SO IT HAS NO REACHABLE TRIGGER TODAY, AND THAT IS THE POINT. Measured on
+    # the full suite by two reviewers and again here: deleting both `||`
+    # clauses leaves the suite GREEN, because nothing left can make the
+    # classifier answer non-zero once the seam variables are unset and every
+    # file type has a word of its own. A test for this line therefore cannot
+    # exist, and the next reader is owed that sentence rather than left to file
+    # it as dead code or to go and write the test that cannot be written. What
+    # IS pinned is the belt -- the classifier answering `unwritable` instead of
+    # exiting 2 -- and its mutation is red.
     fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
                       "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH") \
         || fleet_reg_state="unparseable"

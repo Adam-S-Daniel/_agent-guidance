@@ -229,6 +229,7 @@ if fmt == "json":
     print(json.dumps({
         "log": shorten(log),
         "unparseable": unparseable,
+        "unreadable": unreadable,
         "truncated": truncated,
         "sessions": chosen,
     }, indent=2, sort_keys=True))
@@ -245,6 +246,16 @@ print("instructions-report: %d session(s), %d files, %d bytes  (%s)"
       % (len(chosen), total_files, total_bytes, shorten(log)))
 if unparseable:
     print("  %d unparseable line(s) skipped" % unparseable)
+# COUNTED IS NOT REPORTED. The exit-3 branch above is guarded by
+# `not sessions and unreadable`, so a directory or a FIFO at the ROTATED
+# instructions-log.jsonl.1 beside a perfectly healthy main log gave exit 0 and
+# an ordinary report with no mention of it at all -- half the log silently
+# missing from a number this script exists to make quotable. Said here for the
+# same reason the unparseable count is: a total assembled from fewer files than
+# there are has to say so.
+if unreadable:
+    print("  %d log file(s) could not be read: this total is short by whatever "
+          "they held" % unreadable)
 if truncated:
     print("  %d file(s) over the 4 MiB read cap: bytes are the file's real "
           "size, sha256 covers the first 4 MiB" % truncated)

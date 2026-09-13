@@ -368,6 +368,17 @@ def state_unusable():
     An ABSENT state file is not one of them: that is a machine where
     fleet-memory.sh never installed anything, and inventing a verdict for it
     would be worse than the silence.
+
+    AND NEITHER WAS THE SIMPLEST CORRUPTION THERE IS. The four tests below all
+    ask about the FILE; a state file that passes every one of them and still
+    carries no `version=` was silent exactly as before. Three shapes reach it,
+    and the first is the one a machine produces on its own: a ZERO-BYTE state
+    file, which is what an interrupted or ENOSPC write leaves behind; a
+    `version=` with an empty value; and a symlink to an unrelated regular file,
+    which read_kv follows and reads happily. fleet_verdict returns None for
+    exactly one reason -- an empty want_version -- so reaching this function
+    with a present state file already MEANS the version is missing, and naming
+    it cannot fire for a healthy one.
     """
     try:
         if not os.path.lexists(STATE):
@@ -378,6 +389,8 @@ def state_unusable():
             return "fleet-guidance.state is over %d bytes" % STATE_CAP
         if not os.access(STATE, os.R_OK):
             return "fleet-guidance.state is not readable"
+        if not read_kv(STATE).get("version", ""):
+            return "fleet-guidance.state carries no version"
     except Exception:
         return None
     return None
@@ -605,9 +618,20 @@ def agents_verdict(data, state, path):
                                 "fleet-guidance.md")
     payload = read_bytes(payload_path)
     if payload is None:
-        return None      # not the synced AGENTS.md -- a nested one, a rules
-                         # file of that name, or a repo the sync keeps on the
-                         # inlined guidance
+        # PRESENT-BUT-UNREADABLE IS NOT ABSENT, and answering both with silence
+        # is the same defect the empty and over-cap branches below were given a
+        # sentence for. read_bytes returns None for a DIRECTORY and for a FIFO
+        # at this path as well as for nothing at all (its os.path.isfile is
+        # what keeps the FIFO from hanging), so a payload that is obviously
+        # there but is not a file judged nothing and said nothing. Absent stays
+        # silent -- that is a nested AGENTS.md, a rules file of that name, or a
+        # repo the sync keeps on the inlined guidance, and none of them is a
+        # fault.
+        if os.path.lexists(payload_path):
+            return ("cannot compare \u2014 the fleet-guidance.md beside this "
+                    "AGENTS.md is not a readable regular file, so this repo's "
+                    "version cannot be computed")
+        return None
 
     lines = data.split(b"\n")
     begins = [i for i, l in enumerate(lines) if BEGIN_MANAGED in l]

@@ -18939,6 +18939,304 @@ test_fleet_memory_receipt_claim() {
     fi
 }
 
+
+# ── R4 NITS: the corruptions that were counted but never spoken ────────────
+test_r4_named_silences() {
+    echo ""
+    echo "TEST: R4 nits (a corruption that is present is named, not passed over)"
+
+    local hook="$REPO_ROOT/.claude/hooks/instructions-loaded.sh"
+    local fm="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/r4nits"
+    rm -rf "$d"; mkdir -p "$d"
+
+    # ── adv-N2: a state file that is READ and carries no version ───────────
+    #
+    # lexists, isfile, getsize and access all pass for a ZERO-BYTE state file —
+    # which is what an interrupted or ENOSPC write leaves behind — and for a
+    # `version=` with an empty value, and for a symlink to an unrelated regular
+    # file, which read_kv follows and reads happily. All three disabled the
+    # whole receipt lane in silence: no verdict, no receipt, no report line.
+    local shape sd guidance
+    printf '# Fleet guidance\n\nThe canary is UMBER-SHRIKE-77.\n' > "$d/payload.md"
+    for shape in zero empty-version foreign; do
+        sd="$d/state-$shape"; mkdir -p "$sd/.claude"
+        case "$shape" in
+            zero)          : > "$sd/.claude/fleet-guidance.state" ;;
+            empty-version) printf 'version=\nbytes=12\n' > "$sd/.claude/fleet-guidance.state" ;;
+            foreign)       printf 'this file is not a state file\n' > "$sd/unrelated.txt"
+                           ln -s "$sd/unrelated.txt" "$sd/.claude/fleet-guidance.state" ;;
+        esac
+        printf '<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->\nx\n<!-- END FLEET GUIDANCE -->\n' \
+            > "$sd/CLAUDE.md"
+        CLAUDE_CONFIG_DIR="$sd/.claude" HOME="$sd" timeout --foreground 20 bash "$hook" <<JSON > "$d/out_state_$shape" 2>&1
+{"hook_event_name":"InstructionsLoaded","memory_type":"User","file_path":"$sd/CLAUDE.md","session_id":"r4n2","load_reason":"startup"}
+JSON
+        assert_contains "$sd/.claude/instructions-receipt.state" "carries no version" \
+            "r4 nits: a state file with no version ($shape) leaves a named mark"
+        assert_contains "$sd/.claude/instructions-receipt.state" "LOAD MISMATCH" \
+            "r4 nits: and it is a mismatch, not a quiet nothing ($shape)"
+    done
+    # The control, so "named" cannot be satisfied by a hook that marks
+    # everything: a HEALTHY state file still produces no such reason.
+    sd="$d/state-ok"; mkdir -p "$sd/.claude"
+    guidance="$sd/payload.md"; printf 'guidance body\n' > "$guidance"
+    printf 'version=abc12345\nbytes=15\nsha256=deadbeef\n' > "$sd/.claude/fleet-guidance.state"
+    printf '<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->\n<!-- fleet-guidance-version: abc12345 -->\nguidance body\n<!-- END FLEET GUIDANCE -->\n' \
+        > "$sd/CLAUDE.md"
+    CLAUDE_CONFIG_DIR="$sd/.claude" HOME="$sd" timeout --foreground 20 bash "$hook" <<JSON > "$d/out_state_ok" 2>&1
+{"hook_event_name":"InstructionsLoaded","memory_type":"User","file_path":"$sd/CLAUDE.md","session_id":"r4n2ok","load_reason":"startup"}
+JSON
+    assert_not_contains "$sd/.claude/instructions-receipt.state" "carries no version" \
+        "r4 nits: a healthy state file is not marked as versionless"
+    assert_contains "$sd/.claude/instructions-receipt.state" "fleet=" \
+        "r4 nits: and the healthy control really did write a receipt"
+
+    # ── adv-N3: a payload that is present but is not a regular file ────────
+    #
+    # read_bytes returns None for a DIRECTORY and a FIFO exactly as it does for
+    # nothing at all, so agents_verdict concluded "not the synced AGENTS.md"
+    # and judged nothing — silence for a file that is obviously there.
+    for shape in dir fifo; do
+        sd="$d/payload-$shape"; mkdir -p "$sd/repo/.claude/hooks" "$sd/.claude"
+        if [[ "$shape" == dir ]]; then
+            mkdir -p "$sd/repo/.claude/hooks/fleet-guidance.md"
+        else
+            mkfifo "$sd/repo/.claude/hooks/fleet-guidance.md"
+        fi
+        printf 'version=abc12345\n' > "$sd/.claude/fleet-guidance.state"
+        printf '<!-- BEGIN MANAGED SECTION -->\nx\n<!-- END MANAGED SECTION -->\n\n## Repo-specific additions\n' \
+            > "$sd/repo/AGENTS.md"
+        CLAUDE_CONFIG_DIR="$sd/.claude" HOME="$sd" timeout --foreground 20 bash "$hook" <<JSON > "$d/out_payload_$shape" 2>&1
+{"hook_event_name":"InstructionsLoaded","memory_type":"Project","file_path":"$sd/repo/AGENTS.md","session_id":"r4n3","load_reason":"startup"}
+JSON
+        assert_contains "$sd/.claude/instructions-receipt.state" "not a readable regular file" \
+            "r4 nits: a $shape at the payload path says it cannot compare"
+    done
+    # And ABSENT still says nothing — the deliberately silent case, which is
+    # the whole reason the two are told apart.
+    sd="$d/payload-absent"; mkdir -p "$sd/repo" "$sd/.claude"
+    printf 'version=abc12345\n' > "$sd/.claude/fleet-guidance.state"
+    printf '<!-- BEGIN MANAGED SECTION -->\nx\n<!-- END MANAGED SECTION -->\n\n## Repo-specific additions\n' \
+        > "$sd/repo/AGENTS.md"
+    CLAUDE_CONFIG_DIR="$sd/.claude" HOME="$sd" timeout --foreground 20 bash "$hook" <<JSON > "$d/out_payload_absent" 2>&1
+{"hook_event_name":"InstructionsLoaded","memory_type":"Project","file_path":"$sd/repo/AGENTS.md","session_id":"r4n3a","load_reason":"startup"}
+JSON
+    if [[ ! -f "$sd/.claude/instructions-receipt.state" ]]; then
+        pass "r4 nits: an absent payload still writes no verdict at all"
+    else
+        fail "r4 nits: an absent payload produced a verdict: $(cat "$sd/.claude/instructions-receipt.state")"
+    fi
+
+    # ── adv-N6: the failure sentence matches what is on the screen ─────────
+    #
+    # A receipt whose `fleet` is empty and whose `agents` begins `current`
+    # announces nothing at all and still marks the receipt read; if the clear
+    # then fails, "the line above will repeat next session" points at a line
+    # that was never printed.
+    local shim="$d/shim"; mkdir -p "$shim"
+    printf '#!/bin/sh\nexit 1\n' > "$shim/sed"; chmod 755 "$shim/sed"
+    mkdir -p "$d/quiet/.claude"
+    printf 'session=1111eeee\nunread=1\nagents=current (vabc12345)\n' \
+        > "$d/quiet/.claude/instructions-receipt.state"
+    HOME="$d/quiet" CLAUDE_CONFIG_DIR="$d/quiet/.claude" FLEET_GUIDANCE_PAYLOAD="$d/payload.md" \
+        PATH="$shim:$PATH" timeout --foreground 20 bash "$fm" > "$d/out_quiet" 2>&1
+    assert_contains "$d/out_quiet" "could not clear the previous session's receipt" \
+        "r4 nits: a failed clear is still loud when nothing was announced"
+    assert_contains "$d/out_quiet" "it will be re-read next session" \
+        "r4 nits: and the sentence does not point at a line that was never printed"
+    assert_not_contains "$d/out_quiet" "the line above will repeat" \
+        "r4 nits: the 'line above' wording is withheld when there is no line above"
+    # The other half, so the assert_not_contains above is not vacuous and the
+    # wording was not simply deleted: a receipt that DID announce still gets it.
+    mkdir -p "$d/loud/.claude"
+    printf 'session=2222ffff\nunread=1\nfleet=LOAD MISMATCH — loud row\n' \
+        > "$d/loud/.claude/instructions-receipt.state"
+    HOME="$d/loud" CLAUDE_CONFIG_DIR="$d/loud/.claude" FLEET_GUIDANCE_PAYLOAD="$d/payload.md" \
+        PATH="$shim:$PATH" timeout --foreground 20 bash "$fm" > "$d/out_loud" 2>&1
+    assert_contains "$d/out_loud" "the line above will repeat next session" \
+        "r4 nits: a receipt that did announce still says the line above will repeat"
+    rm -f "$shim/sed"
+
+    # ── adv-N7: the needle matches a WHOLE basename, not a substring ───────
+    #
+    # `needle in str(command)` said yes to `other.sh` inside `some-other.sh`,
+    # so a settings.json naming a different hook read `registered` and the real
+    # hook would never have been registered anywhere. Both halves of the seam
+    # are driven, because a needle the two disagree about is the shape this
+    # seam keeps being bitten by.
+    local sj="$d/needle.json" cls reg
+    printf '{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"bash \\"$CLAUDE_PROJECT_DIR/.claude/hooks/some-other.sh\\"","timeout":90}]}]}}\n' \
+        > "$sj"
+    local before_needle; before_needle="$(cat "$sj")"
+    cls="$(BOOTSTRAP_HOOK_BASENAME="other.sh" "$REPO_ROOT/scripts/bootstrap-status.sh" "$sj" 2>&1 || true)"
+    if [[ "$cls" == "no-entry" ]]; then
+        pass "r4 nits: the classifier does not read some-other.sh as other.sh"
+    else
+        fail "r4 nits: the classifier answered '$cls' for other.sh against some-other.sh"
+    fi
+    reg="$(BOOTSTRAP_HOOK_BASENAME="other.sh" BOOTSTRAP_HOOK_COMMAND="bash other.sh" \
+           "$REPO_ROOT/scripts/register-bootstrap-hook.sh" "$sj" 2>&1 || true)"
+    if [[ "$reg" == "registered" ]]; then
+        pass "r4 nits: and the registrar adds the entry rather than calling it already there"
+    else
+        fail "r4 nits: the registrar answered '$reg' for other.sh against some-other.sh"
+    fi
+    # The positive control: the real basename still matches through a path and
+    # a quote, which is the only shape the fleet actually passes.
+    printf '%s' "$before_needle" > "$sj"
+    cls="$(BOOTSTRAP_HOOK_BASENAME="some-other.sh" "$REPO_ROOT/scripts/bootstrap-status.sh" "$sj" 2>&1 || true)"
+    if [[ "$cls" == "registered" ]]; then
+        pass "r4 nits: the whole basename still matches inside a quoted path"
+    else
+        fail "r4 nits: the classifier answered '$cls' for the exact basename"
+    fi
+    reg="$(BOOTSTRAP_HOOK_BASENAME="some-other.sh" "$REPO_ROOT/scripts/register-bootstrap-hook.sh" "$sj" 2>&1 || true)"
+    if [[ "$reg" == "already-registered" ]]; then
+        pass "r4 nits: and the registrar agrees with it"
+    else
+        fail "r4 nits: the registrar answered '$reg' for the exact basename"
+    fi
+    # THE EDGES OF THE STRING ARE BOUNDARIES TOO, and the obvious spelling of
+    # the test gets this wrong: `c in NAME_CHARS` is TRUE for the empty string,
+    # so a needle at the very start or the very end of the command reads as if
+    # a name character sat beside it. The fleet's own default command ENDS in
+    # the needle, so getting it wrong un-registers every consumer.
+    local edge
+    for edge in 'bash .claude/hooks/some-other.sh' 'some-other.sh --flag'; do
+        printf '{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"%s","timeout":90}]}]}}\n' \
+            "$edge" > "$d/edge.json"
+        cls="$(BOOTSTRAP_HOOK_BASENAME="some-other.sh" "$REPO_ROOT/scripts/bootstrap-status.sh" "$d/edge.json" 2>&1 || true)"
+        if [[ "$cls" == "registered" ]]; then
+            pass "r4 nits: the needle matches at the edge of the command ($edge)"
+        else
+            fail "r4 nits: the classifier answered '$cls' for '$edge'"
+        fi
+    done
+
+    # ── adv-N4: the registrar refuses a settings.json with a second name ───
+    #
+    # A HARD LINK is a second name for the same inode, so the write lands under
+    # both and the sibling changes with it — measured. open_owned in
+    # instructions-loaded.sh refuses st_nlink != 1 for exactly this reason.
+    local hl="$d/hardlink.json" sib="$d/sibling.json"
+    printf '{}\n' > "$hl"
+    ln "$hl" "$sib"
+    local sib_before; sib_before="$(cat "$sib")"
+    reg="$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" BOOTSTRAP_HOOK_COMMAND="bash fleet-memory.sh" \
+           "$REPO_ROOT/scripts/register-bootstrap-hook.sh" "$hl" 2>&1 || true)"
+    if [[ "$reg" == "refused-multiply-linked" ]]; then
+        pass "r4 nits: the registrar refuses a settings.json that has a second name"
+    else
+        fail "r4 nits: the registrar answered '$reg' for a hard-linked settings.json"
+    fi
+    if [[ "$(cat "$sib")" == "$sib_before" ]]; then
+        pass "r4 nits: and the sibling name is byte-identical afterwards"
+    else
+        fail "r4 nits: the sibling name changed with the write"
+    fi
+    # The control: one name, same content, is written.
+    printf '{}\n' > "$d/onename.json"
+    reg="$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" BOOTSTRAP_HOOK_COMMAND="bash fleet-memory.sh" \
+           "$REPO_ROOT/scripts/register-bootstrap-hook.sh" "$d/onename.json" 2>&1 || true)"
+    if [[ "$reg" == "registered" ]]; then
+        pass "r4 nits: a settings.json with exactly one name is still written"
+    else
+        fail "r4 nits: the registrar answered '$reg' for an ordinary settings.json"
+    fi
+}
+
+# ── R4 nits: the report says how much of the log it could not read ─────────
+test_r4_report_unreadable_is_reported() {
+    echo ""
+    echo "TEST: instructions-report (an unreadable log file is named even when others parse)"
+
+    local rep="$REPO_ROOT/scripts/instructions-report.sh"
+    local d="$TEST_DIR/r4report"
+    rm -rf "$d"; mkdir -p "$d/.claude"
+    printf '{"ts":"2026-09-07T10:00:00Z","session":"aaaa1111","load_reason":"startup","memory_type":"User","file_path":"~/.claude/CLAUDE.md","bytes":100,"sha256":"x","truncated":false}\n' \
+        > "$d/.claude/instructions-log.jsonl"
+    # A DIRECTORY at the ROTATED log, beside a perfectly healthy main log. The
+    # exit-3 branch is guarded by `not sessions and unreadable`, so this gave
+    # exit 0 and an ordinary report with no mention of it: half the log missing
+    # from a number this script exists to make quotable.
+    mkdir -p "$d/.claude/instructions-log.jsonl.1"
+    local rc=0
+    CLAUDE_CONFIG_DIR="$d/.claude" HOME="$d" timeout --foreground 20 bash "$rep" \
+        > "$d/out_text" 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "r4 report: a healthy main log still reports, exit 0"
+    else
+        fail "r4 report: the run exited $rc"
+    fi
+    assert_contains "$d/out_text" "could not be read" \
+        "r4 report: and the unreadable rotated file is named in the text report"
+    assert_contains "$d/out_text" "this total is short by whatever they held" \
+        "r4 report: with what it costs the number beside it"
+    CLAUDE_CONFIG_DIR="$d/.claude" HOME="$d" timeout --foreground 20 bash "$rep" --format json \
+        > "$d/out_json" 2>&1 || true
+    assert_contains "$d/out_json" '"unreadable": 1' \
+        "r4 report: the json surface carries the count too"
+    # The control: with nothing unreadable, neither surface mentions it — so
+    # the assert_not_contains below reads a file proven non-empty by the
+    # assertion beside it.
+    rm -rf "$d/.claude/instructions-log.jsonl.1"
+    CLAUDE_CONFIG_DIR="$d/.claude" HOME="$d" timeout --foreground 20 bash "$rep" \
+        > "$d/out_clean" 2>&1 || true
+    assert_contains "$d/out_clean" "1 session(s)" \
+        "r4 report: the clean control really did produce a report"
+    assert_not_contains "$d/out_clean" "could not be read" \
+        "r4 report: and says nothing about unreadable files when there are none"
+}
+
+
+# ── R4 code nit 5: a git error line carries no URL userinfo into the log ───
+#
+# repo_git prints the first line of git's combined output, and one of its
+# callers passes the authenticated remote URL as an argument. Today's git does
+# not echo that argument back, so there is no leak as things stand — but that
+# is a property of a program we do not own, and this line goes into a PUBLIC
+# Actions log. The shim below makes git answer with a URL that DOES carry
+# userinfo, which is the shape a --verbose or a different git could produce.
+test_r4_repo_git_redacts_url_userinfo() {
+    echo ""
+    echo "=== Test: sync.sh (a git error line carries no URL userinfo) ==="
+
+    local d realgit seen rc=0
+    d="$TEST_DIR/r4redact"
+    realgit="$(command -v git)"
+    rm -rf "$d"; mkdir -p "$d/bin"
+    {
+        printf '#!/bin/sh\n'
+        printf 'case "$PWD::$*" in\n'
+        printf '  *bootorg_repo-no-lock*"config user.name"*)\n'
+        printf '      echo "fatal: unable to access %s" >&2\n' \
+            "'https://not-a-real-credential@github.com/bootorg/repo-no-lock.git/'"
+        printf '      exit 128 ;;\n'
+        printf 'esac\n'
+        printf 'exec %s "$@"\n' "$realgit"
+    } > "$d/bin/git"
+    chmod 755 "$d/bin/git"
+
+    GITHUB_REPOSITORY_OWNER=bootorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" PATH="$d/bin:$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" > "$d/out" 2>&1 || rc=$?
+    assert_contains "$d/out" "could not set the commit identity" \
+        "r4 redact: the failing repo is named with what it was doing"
+    assert_contains "$d/out" "https://***@github.com" \
+        "r4 redact: the URL userinfo is blanked in the printed line"
+    assert_not_contains "$d/out" "not-a-real-credential" \
+        "r4 redact: and the userinfo itself never reaches the log"
+    seen="$(grep -c '^=== bootorg/' "$d/out" || true)"
+    if [[ "$seen" -eq 6 ]]; then
+        pass "r4 redact: all six bootorg repos were still processed"
+    else
+        fail "r4 redact: $seen of 6 repos processed"
+    fi
+    assert_contains "$d/out" "1 failed" \
+        "r4 redact: and the tally counts the one repo that failed"
+}
+
 # ── The InstructionsLoaded receipt ─────────────────────────────────────────
 #
 # MEASURED FIRST, on the CLI this container ships (2.1.261), against a stub
@@ -20898,6 +21196,9 @@ test_sync_symlinked_settings
 test_sync_settings_is_a_directory
 test_sync_claude_dir_is_a_symlink
 test_sync_git_add_fails_one_repo
+test_r4_named_silences
+test_r4_report_unreadable_is_reported
+test_r4_repo_git_redacts_url_userinfo
 test_sync_ambient_bootstrap_env
 test_drift_report_bootstrap
 # Immediately after the test that establishes bootorg/repo-adopted's confident

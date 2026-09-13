@@ -205,6 +205,41 @@ if raw.strip():
 else:
     doc = {}
 
+# THE NEEDLE NAMES A FILE, so it has to match a WHOLE BASENAME and not a
+# substring. `needle in str(command)` said yes to `other.sh` inside
+# `some-other.sh` -- measured, `registered`/`already-registered` against a
+# settings.json whose only entry names a different hook -- so the shape gate on
+# the environment variable, which only rejects needles that are not filenames,
+# does not close it. A match counts only when neither neighbour could be part
+# of the same filename. No regex: this is a boundary test on two characters.
+NAME_CHARS = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+              "abcdefghijklmnopqrstuvwxyz0123456789._-")
+
+
+def name_char(c):
+    # `c in NAME_CHARS` alone is TRUE for the EMPTY string -- every string
+    # contains it -- so a needle at the very start or the very end of the
+    # command read as if it had a name character beside it and no match was
+    # ever found there. Measured: the fleet default command
+    # `bash .claude/hooks/skills-bootstrap.sh` ends in the needle, and the
+    # classifier answered `no-entry` for a file that registers it.
+    return bool(c) and c in NAME_CHARS
+
+
+def names_hook(command, needle):
+    text = str(command)
+    at = 0
+    while True:
+        i = text.find(needle, at)
+        if i < 0:
+            return False
+        before = text[i - 1] if i > 0 else ""
+        after = text[i + len(needle):i + len(needle) + 1]
+        if not name_char(before) and not name_char(after):
+            return True
+        at = i + 1
+
+
 # Idempotence: same semantic test bootstrap-status.sh applies. Anything that
 # already names the hook in a SessionStart command is left completely alone —
 # including a hand-written entry whose quoting or timeout differs from ours.
@@ -218,7 +253,7 @@ if isinstance(existing, list):
         if not isinstance(entries, list):
             continue
         for e in entries:
-            if isinstance(e, dict) and needle in str(e.get("command", "")):
+            if isinstance(e, dict) and names_hook(e.get("command", ""), needle):
                 print("already-registered")
                 sys.exit(0)
 
@@ -257,9 +292,27 @@ if json.loads(candidate) != want:
 # have created with, so nothing about an ordinary write changes.
 fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o666)
 try:
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
         os.close(fd)
         print("refused-not-a-regular-file")
+        sys.exit(3)
+    # AND EXACTLY ONE NAME, which is the other half of the same question and
+    # was left out when this guard was hardened for type. A HARD LINK is a
+    # second name for the same inode, so the write lands under both and the
+    # sibling changes with it -- measured: a settings.json hard-linked to a
+    # file outside the tree was written through, and the sibling changed.
+    # open_owned in instructions-loaded.sh refuses st_nlink != 1 for exactly
+    # this reason and says so in its own docstring; the two must not disagree
+    # about what "a file we own" means. Unreachable through a git checkout
+    # (git stores no hard links), so this is posture rather than a live hole --
+    # and bootstrap-status.sh is deliberately NOT changed to match: it only
+    # READS, reading a hard-linked file is harmless, and answering `unwritable`
+    # there would withdraw the delivery mode of a working consumer over a
+    # shape it can reach no other way.
+    if st.st_nlink != 1:
+        os.close(fd)
+        print("refused-multiply-linked")
         sys.exit(3)
     os.ftruncate(fd, 0)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
