@@ -144,6 +144,12 @@
   status: gap
   bytes: 7761
 
+- id: session-start-verdict-is-not-what-loaded
+  heading: '"fleet-guidance: current" is not "the guidance is in context"'
+  file: agents-md/base.md
+  status: gap
+  bytes: 1189
+
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md

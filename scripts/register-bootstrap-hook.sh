@@ -37,14 +37,29 @@ set -euo pipefail
 # `.claude/settings.local.json` is never read or written — it is a developer's
 # personal, gitignored file.
 #
+# The EVENT is a seam, not a constant. BOOTSTRAP_HOOK_EVENT (default
+# `SessionStart`) says which `hooks.<event>` array to append to, so the
+# InstructionsLoaded hook the fleet also delivers gets this same
+# append-never-overwrite proof rather than a second registrar written beside
+# it — a second one would be a second place for that proof to rot.
+#
 # Usage: register-bootstrap-hook.sh <path-to-settings.json>
 #
 # Prints exactly one of:
 #   already-registered  — no write; the hook was already named
 #   registered          — the file was created or appended to
-#   refused-unparseable — no write; the existing file is not a JSON object
+#   refused-unparseable — no write; the existing file is not a JSON object, or
+#                         has a `hooks` / `hooks.<event>` of a type we cannot
+#                         append to
+#   refused-symlink     — no write; the path is a symlink, and writing would
+#                         follow it out of the tree
+#   refused-not-a-regular-file
+#                       — no write; the path is a directory, a FIFO, a socket
+#                         or a device
+#   refused-bad-env     — no write; a BOOTSTRAP_HOOK_* value is unusable
 #
-# Exit: 0 on either written or already-registered, 2 on usage, 3 on refusal.
+# Exit: 0 on either written or already-registered, 2 on usage (including a bad
+# environment value), 3 on refusal.
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
@@ -52,28 +67,127 @@ if [[ -z "$TARGET" ]]; then
     exit 2
 fi
 
+# A SYMLINK IS A CONFIG WE DO NOT UNDERSTAND, which is this file's whole
+# posture. `open(target, "w")` follows one, so the link was preserved and its
+# TARGET rewritten -- in a consumer repo `git add .claude/settings.json` would
+# then stage an unchanged symlink while the real edit landed outside the tree,
+# and the sync would report a registration that the repo does not carry.
+# NAMED FOR WHAT IT FOUND, not folded into `refused-unparseable`: a symlinked
+# settings.json parses fine and could be appended to, so reporting it as
+# unparseable sent whoever read the sync log hunting for a syntax error that is
+# not there. bootstrap-status.sh answers `registered` or `unwritable` for the
+# same shape -- registered by CONTENT through the link, unwritable otherwise --
+# so the sync never reaches here with a link it still needs to write to.
+if [[ -L "$TARGET" ]]; then
+    echo "refused-symlink"
+    exit 3
+fi
+
+# A DIRECTORY, A FIFO, A SOCKET OR A DEVICE at the target, answered here rather
+# than by the interpreter. `open(target, encoding=...)` on a directory raised a
+# raw IsADirectoryError traceback and exit 1, which sync.sh logs as
+# `WARN: could not register ... ()` with an EMPTY reason -- the exact shape the
+# BOOTSTRAP_HOOK_TIMEOUT validation above exists to prevent. `open(target, "w")`
+# on a FIFO is worse: it blocks until a reader appears, past the timeout the
+# sync registers, and the `python3 -c` child is not reaped when the wrapper is
+# killed. Measured: rc 124 at a 20 s bound and one blocked python3 left behind.
+#
+# `-f` is a stat, so nothing is opened to find this out. The write itself is
+# guarded a second time below, on the OPENED fd rather than on the path, for
+# the same reason instructions-loaded.sh's open_owned is: the path is not the
+# file, and a check on the name alone loses a race it cannot see.
+if [[ -e "$TARGET" && ! -f "$TARGET" ]]; then
+    echo "refused-not-a-regular-file"
+    exit 3
+fi
+
 # The command string and timeout are the delivery contract; keep them in step
 # with bootstrap-status.sh's basename key and with the live consumer shape.
-HOOK_COMMAND="${BOOTSTRAP_HOOK_COMMAND:-bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"}"
-HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume}"
-HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT:-90}"
-HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
+#
+# `${VAR-default}`, NOT `${VAR:-default}`. With the colon an EXPLICITLY EMPTY
+# value silently becomes the default, so `BOOTSTRAP_HOOK_EVENT=` registered
+# under SessionStart and `BOOTSTRAP_HOOK_TIMEOUT=` wrote 90 — a caller that
+# passed an empty variable by accident got a working registration in the wrong
+# place rather than an error. Unset still means "use the default"; set-but-
+# empty is now a refusal.
+HOOK_COMMAND="${BOOTSTRAP_HOOK_COMMAND-bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"}"
+HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER-startup|resume}"
+HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT-90}"
+HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME-skills-bootstrap.sh}"
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT-SessionStart}"
+
+# Validated HERE rather than in the python program, so a bad value is a named
+# one-line refusal instead of an interpreter traceback: `int(sys.argv[4])` on
+# `BOOTSTRAP_HOOK_TIMEOUT=abc` produced a raw ValueError and exit 1, which
+# sync.sh logs as `WARN: could not register ... ()` with an empty reason.
+#
+# An empty BASENAME is the one with teeth: `"" in str(command)` is TRUE for
+# every string, so the idempotence test would read "already-registered" for
+# any file at all and the hook would never be registered anywhere.
+bad_env() {
+    echo "refused-bad-env"
+    echo "register-bootstrap-hook.sh: $1" >&2
+    exit 2
+}
+[[ -n "$HOOK_EVENT" ]] || bad_env "BOOTSTRAP_HOOK_EVENT is set but empty; unset it to mean SessionStart"
+[[ -n "$HOOK_BASENAME" ]] || bad_env "BOOTSTRAP_HOOK_BASENAME is set but empty; an empty needle matches every command"
+# …and non-empty is not the same test as "identifies our hook". The needle is
+# used as `needle in str(command)`, so any short string appears inside an
+# unrelated command: `' '`, `'.'` and `'s'` each read `already-registered`
+# against a settings.json whose only entry was `some-other.sh`, and the hook
+# would then never be registered anywhere. bootstrap-status.sh applies the same
+# shape, because a needle the two halves disagree about is the shape this seam
+# keeps being bitten by.
+[[ "$HOOK_BASENAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$ ]] \
+    || bad_env "BOOTSTRAP_HOOK_BASENAME must be a hook filename ending in .sh, got '$HOOK_BASENAME'"
+[[ -n "$HOOK_COMMAND" ]] || bad_env "BOOTSTRAP_HOOK_COMMAND is set but empty; there would be nothing to run"
+# The last of the four empties, and the one that used to be accepted in
+# silence: an empty matcher registered `"matcher": ""`, which is neither of
+# the two things a caller could have meant (every event, or a named one).
+[[ -n "$HOOK_MATCHER" ]] || bad_env "BOOTSTRAP_HOOK_MATCHER is set but empty; pass '*' to match every event"
+# A whole number of seconds, 1 to 3600. The bounds are stated rather than left
+# to the CLI: 0 registers a hook that can never finish, and a value with more
+# digits than an hour has seconds is a typo, not a timeout -- both were
+# accepted unvalidated.
+#
+# THE RANGE IS IN THE PATTERN, and the arithmetic comparison it replaces is
+# why. `[[ x -ge y ]]` evaluates its operands, and in bash arithmetic a LEADING
+# ZERO means OCTAL. Measured: `08` printed a raw
+# `[[: 08: value too great for base (error token is "08")` from the shell
+# BEFORE the clean one-line refusal -- denting the exact property this
+# validation was measured on, "refused-bad-env, rc 2, one line on stderr, file
+# untouched" -- while `010` was bounds-checked as 8 and STORED as 10, and
+# `0100` was checked as 64 and stored as 100. Nothing wrong could actually be
+# written (a leading-zero four-digit value maxes at 0777, stored 777), but the
+# number that was checked was not the number that was stored, and a bound that
+# validates a different value than it admits is not a bound.
+#
+# A leading zero is refused rather than normalised: `08` is a typo in every
+# case a human types it, and int() in the program below would read it as 8
+# regardless, so admitting it would put the two readings back out of step.
+[[ "$HOOK_TIMEOUT" =~ ^([1-9][0-9]{0,2}|[1-2][0-9]{3}|3[0-5][0-9]{2}|3600)$ ]] \
+    || bad_env "BOOTSTRAP_HOOK_TIMEOUT must be a whole number of seconds between 1 and 3600, got '$HOOK_TIMEOUT'"
 
 result=$(python3 -c '
-import copy, json, os, sys
+import copy, json, os, stat, sys
 
 target   = sys.argv[1]
 command  = sys.argv[2]
 matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 needle   = sys.argv[5]
+event    = sys.argv[6]
 
 group = {
     "matcher": matcher,
     "hooks": [{"type": "command", "command": command, "timeout": timeout}],
 }
 
-if os.path.exists(target) and os.path.getsize(target) > 0:
+# isfile, not exists: a directory or a FIFO here is not an empty settings.json
+# to be appended to, and reading either one is a traceback or a hang. The
+# wrapper refuses both before this program runs; this is the second lock on the
+# same door, because the two must never disagree about what is readable.
+if os.path.isfile(target) and os.path.getsize(target) > 0:
     with open(target, encoding="utf-8") as fh:
         raw = fh.read()
 else:
@@ -91,11 +205,46 @@ if raw.strip():
 else:
     doc = {}
 
+# THE NEEDLE NAMES A FILE, so it has to match a WHOLE BASENAME and not a
+# substring. `needle in str(command)` said yes to `other.sh` inside
+# `some-other.sh` -- measured, `registered`/`already-registered` against a
+# settings.json whose only entry names a different hook -- so the shape gate on
+# the environment variable, which only rejects needles that are not filenames,
+# does not close it. A match counts only when neither neighbour could be part
+# of the same filename. No regex: this is a boundary test on two characters.
+NAME_CHARS = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+              "abcdefghijklmnopqrstuvwxyz0123456789._-")
+
+
+def name_char(c):
+    # `c in NAME_CHARS` alone is TRUE for the EMPTY string -- every string
+    # contains it -- so a needle at the very start or the very end of the
+    # command read as if it had a name character beside it and no match was
+    # ever found there. Measured: the fleet default command
+    # `bash .claude/hooks/skills-bootstrap.sh` ends in the needle, and the
+    # classifier answered `no-entry` for a file that registers it.
+    return bool(c) and c in NAME_CHARS
+
+
+def names_hook(command, needle):
+    text = str(command)
+    at = 0
+    while True:
+        i = text.find(needle, at)
+        if i < 0:
+            return False
+        before = text[i - 1] if i > 0 else ""
+        after = text[i + len(needle):i + len(needle) + 1]
+        if not name_char(before) and not name_char(after):
+            return True
+        at = i + 1
+
+
 # Idempotence: same semantic test bootstrap-status.sh applies. Anything that
 # already names the hook in a SessionStart command is left completely alone —
 # including a hand-written entry whose quoting or timeout differs from ours.
 hooks = doc.get("hooks")
-existing = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
+existing = hooks.get(event, []) if isinstance(hooks, dict) else []
 if isinstance(existing, list):
     for g in existing:
         if not isinstance(g, dict):
@@ -104,22 +253,28 @@ if isinstance(existing, list):
         if not isinstance(entries, list):
             continue
         for e in entries:
-            if isinstance(e, dict) and needle in str(e.get("command", "")):
+            if isinstance(e, dict) and names_hook(e.get("command", ""), needle):
                 print("already-registered")
                 sys.exit(0)
 
 # A "hooks" or "SessionStart" of the wrong TYPE is not something to coerce —
 # overwriting it would destroy configuration we do not understand.
-if hooks is not None and not isinstance(hooks, dict):
+#
+# `"hooks" in doc`, not `hooks is not None`: a literal `{"hooks": null}` has
+# the key with a None value, so the older test let it through to
+# setdefault("hooks", {}), which RETURNS the existing None and then raises
+# AttributeError -- a raw interpreter traceback on stderr and exit 1, which
+# sync.sh logged as `WARN: could not register ... ()` with an empty reason.
+if "hooks" in doc and not isinstance(hooks, dict):
     print("refused-unparseable")
     sys.exit(3)
-if isinstance(hooks, dict) and "SessionStart" in hooks \
-        and not isinstance(hooks["SessionStart"], list):
+if isinstance(hooks, dict) and event in hooks \
+        and not isinstance(hooks[event], list):
     print("refused-unparseable")
     sys.exit(3)
 
 want = copy.deepcopy(doc)
-want.setdefault("hooks", {}).setdefault("SessionStart", []).append(group)
+want.setdefault("hooks", {}).setdefault(event, []).append(group)
 
 candidate = json.dumps(want, indent=2) + "\n"
 
@@ -130,10 +285,46 @@ if json.loads(candidate) != want:
     print("refused-unparseable")
     sys.exit(3)
 
-with open(target, "w", encoding="utf-8") as fh:
-    fh.write(candidate)
+# THE CHECK IS ON THE OPENED FD, not on the path. `open(target, "w")` follows
+# whatever the name resolves to at the moment of the call and TRUNCATES it
+# before anything could look; O_NONBLOCK is what lets the fstat run at all when
+# the name turns out to be a FIFO, and 0o666 is the mode `open(..., "w")` would
+# have created with, so nothing about an ordinary write changes.
+fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o666)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        os.close(fd)
+        print("refused-not-a-regular-file")
+        sys.exit(3)
+    # AND EXACTLY ONE NAME, which is the other half of the same question and
+    # was left out when this guard was hardened for type. A HARD LINK is a
+    # second name for the same inode, so the write lands under both and the
+    # sibling changes with it -- measured: a settings.json hard-linked to a
+    # file outside the tree was written through, and the sibling changed.
+    # open_owned in instructions-loaded.sh refuses st_nlink != 1 for exactly
+    # this reason and says so in its own docstring; the two must not disagree
+    # about what "a file we own" means. Unreachable through a git checkout
+    # (git stores no hard links), so this is posture rather than a live hole --
+    # and bootstrap-status.sh is deliberately NOT changed to match: it only
+    # READS, reading a hard-linked file is harmless, and answering `unwritable`
+    # there would withdraw the delivery mode of a working consumer over a
+    # shape it can reach no other way.
+    if st.st_nlink != 1:
+        os.close(fd)
+        print("refused-multiply-linked")
+        sys.exit(3)
+    os.ftruncate(fd, 0)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(candidate)
+except OSError:
+    try:
+        os.close(fd)
+    except Exception:
+        pass
+    raise
 print("registered")
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME") || {
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$HOOK_EVENT") || {
     status=$?
     [[ -n "$result" ]] && echo "$result"
     exit "$status"
