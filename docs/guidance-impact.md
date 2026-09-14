@@ -52,126 +52,126 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-14 — working-in-these-repos — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1366 to 862 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1366 to 862 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — anything-you-name-gets-its-link — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 2681 to 1056 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 2681 to 1056 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — finding-your-unknowns — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1520 to 729 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1520 to 729 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — workstation-layout — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 653 to 462 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 653 to 462 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: exempt (skipped row)
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — sessions-get-cut-off — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1152 to 536 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1152 to 536 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — security — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 493 to 372 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 493 to 372 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — data-exposure-in-ci — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 2247 to 1331 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 2247 to 1331 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — network-allowlists — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1223 to 688 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1223 to 688 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — automation-vs-branch-protection — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 2483 to 1242 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 2483 to 1242 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — two-github-connectors — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 4055 to 1492 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 4055 to 1492 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — github-404-means-not-authorized — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1787 to 938 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1787 to 938 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — fleet-spans-two-owners — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 2987 to 1169 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 2987 to 1169 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — watch-finished-is-not-ci-passed — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 3988 to 1509 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 3988 to 1509 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — git-push-does-not-mean-commit-exists — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 3026 to 1182 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 3026 to 1182 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — dependency-updates — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1086 to 531 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1086 to 531 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — name-becomes-scanner-data — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 3292 to 1215 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 3292 to 1215 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — pinning-github-actions — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 3963 to 1513 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 3963 to 1513 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — subagent-delegation — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 7761 to 2714 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 7761 to 2714 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — skills-ecosystem — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 2612 to 1274 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 2612 to 1274 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — two-setup-gaps — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 5615 to 2256 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 5615 to 2256 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
 
 ## 2026-09-14 — git-practices — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
-- Change: Condensed from 1393 to 714 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #NNN)
+- Change: Condensed from 1393 to 714 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-14 (PR #NNN)
+- Outcome: pending — opened 2026-09-14 (PR #128)
