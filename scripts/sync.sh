@@ -47,6 +47,10 @@ FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 MARKER="## Repo-specific additions"
+# Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
+# codex-cli 0.154.0, measured 2026-09-14). Same constant in
+# check-agents-md.sh and drift-report.sh; the three gates must not drift apart.
+CODEX_PROJECT_DOC_MAX_BYTES=32768
 BRANCH_NAME="agents-md-sync/update"
 # The committer identity every commit this sync makes is written under (set on
 # each clone below) AND the identity the PR-fallback force-push guard
@@ -910,6 +914,42 @@ for repo_name in "${REPOS[@]}"; do
         # but fails the anchored `sed -n "/^${MARKER}/..."` parse on the next
         # sync, leaving repo_specific empty and dropping all preserved content.
         new_agents_md="$(printf '%s\n%s\n' "$managed_content" "$repo_specific")"
+    fi
+
+    # ── Codex project-doc budget ───────────────────────────────────────
+    #
+    # WARN, NEVER BLOCK. Codex (codex-cli 0.154.0, measured 2026-09-14) reads
+    # the AGENTS.md chain under a running byte budget `project_doc_max_bytes`,
+    # default 32768, and a file that does not fit is CUT at that byte — not
+    # skipped, not reported. The only trace is a `tracing::warn!("project doc
+    # exceeds remaining budget; truncating")` in
+    # `codex-rs/core/src/agents_md.rs`, which no ordinary session ever sees.
+    # Measured 2026-09-14 on cms-platform: `codex debug prompt-input` rendered
+    # a 55,788-byte AGENTS.md (a feature-branch checkout; `main`'s copy was
+    # 71,794 bytes) as exactly 32,768 bytes, ending mid-heading at
+    # `## An unapproved gate holds its concu`.
+    #
+    # The managed half is ours and is held under budget by this repo's own
+    # size tests; the overflow is always in "## Repo-specific additions",
+    # which belongs to the repo. So this run says so and syncs anyway. Failing
+    # the repo — or skipping the push — would withhold the managed guidance
+    # over content the sync has no business editing, which is the wrong half
+    # to punish, and would leave the repo with a STALE managed block on top of
+    # the additions that were already too long.
+    #
+    # Sited after BOTH assignments above and before the up-to-date and
+    # --dry-run branches, so the warning is about the file's size rather than
+    # about this run changing it: a repo that has been over budget since long
+    # before this run is exactly the one nobody is going to notice otherwise,
+    # and it is also the one that reports "Up to date — skipping". The byte
+    # count is of what `echo "$new_agents_md" > AGENTS.md` actually writes —
+    # that `echo` adds the trailing newline command substitution stripped, so
+    # `printf '%s\n'` here counts the same bytes. `wc` reads to EOF, so the
+    # pipe has no early-exit reader and no SIGPIPE hazard (issue #81).
+    agents_md_bytes=$(printf '%s\n' "$new_agents_md" | wc -c | tr -d ' ')
+    if [[ "$agents_md_bytes" -gt "$CODEX_PROJECT_DOC_MAX_BYTES" ]]; then
+        echo "::warning::$repo_name: AGENTS.md is $agents_md_bytes bytes — over Codex's ${CODEX_PROJECT_DOC_MAX_BYTES}-byte project-doc budget (project_doc_max_bytes); Codex truncates it silently at that byte. Trim '## Repo-specific additions' (move long-form to docs/)."
+        log "AGENTS.md is $agents_md_bytes bytes — over Codex's ${CODEX_PROJECT_DOC_MAX_BYTES}-byte project-doc budget; syncing it anyway (the managed half is under budget; the additions are the repo's to trim)."
     fi
 
     # ── Diff check ─────────────────────────────────────────────────────

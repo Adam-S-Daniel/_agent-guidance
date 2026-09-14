@@ -3604,7 +3604,14 @@ test_sync_round_trip_no_marker() {
     local MARKER="## Repo-specific additions"
     local preserve_block assemble_block
     preserve_block=$(extract_sync_block "Preserve repo-specific content" "Assemble")
-    assemble_block=$(extract_sync_block "Assemble" "Diff check")
+    # Terminated at "Codex project-doc budget", the section that now follows
+    # the assemble block, rather than at "Diff check" further down. The budget
+    # warning is not part of assembling the file — it measures the result and
+    # calls `log`/`$repo_name`, neither of which exists here — so extracting
+    # through it would drag a whole unrelated section into this eval and abort
+    # the run on an unbound variable. Anything inserted between assembly and
+    # the diff check has to be its own `# ── ` section for exactly this reason.
+    assemble_block=$(extract_sync_block "Assemble" "Codex project-doc budget")
 
     # Seed a hand-written AGENTS.md with NO marker — the scenario that used
     # to get inverted.
@@ -17024,6 +17031,14 @@ test_fleet_memory_hook() {
     local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
     local d="$TEST_DIR/fleetmem"
     mkdir -p "$d/cfg"
+    # This lane is about the CLAUDE destination alone, and pinning CODEX_HOME
+    # at a path that does not exist is what keeps it that way on a developer
+    # machine that DOES have ~/.codex. Without it every assertion below would
+    # be reading a two-destination verdict, and — far worse — the run would
+    # write this fixture's payload into that developer's real global Codex
+    # instructions. `local -x` exports for the duration of this function only;
+    # test_fleet_memory_codex sets its own.
+    local -x CODEX_HOME="$d/no-codex-in-this-lane"
     local payload="$d/payload.md"
     printf '# Fleet guidance\n\nThe canary is TEAL-HERON-31.\n' > "$payload"
 
@@ -17253,6 +17268,570 @@ test_fleet_memory_hook() {
 
 # ── Run all tests ──────────────────────────────────────────────────────────
 
+# ── Codex's project-doc budget ─────────────────────────────────────────────
+#
+# Codex (codex-cli 0.154.0, measured 2026-09-14) reads the AGENTS.md chain from
+# the project root down to cwd under a RUNNING byte budget,
+# `project_doc_max_bytes`, default 32768, and a file that does not fit is CUT
+# at that byte — not skipped, not reported. The only trace is a
+# `tracing::warn!("project doc exceeds remaining budget; truncating")` in
+# `codex-rs/core/src/agents_md.rs` that no ordinary session surfaces. Measured
+# on cms-platform: `codex debug prompt-input` rendered exactly 32,768 bytes of
+# a 55,788-byte AGENTS.md, ending mid-heading at
+# `## An unapproved gate holds its concu`.
+#
+# These two hold the MANAGED half clear of that ceiling, which is the thing
+# that makes the "warn, never block" posture defensible for a consumer's own
+# additions: the sync gets to say "the overflow is yours" only for as long as
+# ours provably is not. See docs/decisions/0012.
+test_agents_md_size_budget() {
+    echo ""
+    echo "=== Test: the managed AGENTS.md stays inside Codex's project-doc budget ==="
+
+    # FULL mode with EVERY section — the largest managed block this build can
+    # emit, i.e. what a repo that cannot receive the fleet-memory hook is
+    # handed. The ceiling here is 28672 (28 KiB) rather than Codex's 32768,
+    # so such a repo keeps at least 4 KiB for "## Repo-specific additions"
+    # instead of being handed a file that is legal and unextendable.
+    local full_bytes
+    full_bytes=$(AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh" \
+        docker dotnet go javascript python rust typescript | wc -c | tr -d ' ')
+    if [[ "$full_bytes" -le 28672 ]]; then
+        pass "size budget: full build with every section is $full_bytes bytes (<= 28672)"
+    else
+        fail "size budget: full build with every section is $full_bytes bytes, over 28672 — trim agents-md/base.md; Codex cuts a repo's AGENTS.md at 32768 bytes with nothing on screen to say so"
+    fi
+
+    # STUB mode, which is what all 19 repos are on. 8192 is deliberately
+    # generous: the claim being pinned is that the always-on floor stays small
+    # enough that a repo's own additions have effectively the whole budget.
+    local stub_bytes
+    stub_bytes=$("$REPO_ROOT/scripts/build-agents-md.sh" | wc -c | tr -d ' ')
+    if [[ "$stub_bytes" -le 8192 ]]; then
+        pass "size budget: stub build is $stub_bytes bytes (<= 8192)"
+    else
+        fail "size budget: stub build is $stub_bytes bytes, over 8192 — agents-md/stub.md is the always-on floor in every repo"
+    fi
+}
+
+# ── check-agents-md.sh invariant 7 (Codex's budget) ────────────────────────
+#
+# THE BOUNDARY IS THE TEST, and it is also this invariant's proof that the
+# verifier can fail. 32768 is what Codex keeps, so a file of exactly that size
+# is legal and one byte more is not; a check written with `-ge` instead of
+# `-gt` passes the second fixture and fails the first, and nothing else in the
+# suite would notice. The two fixtures differ in ONE byte and in nothing else —
+# same markers, same order, padding below the marker where a repo's own
+# additions live.
+test_check_agents_md_budget() {
+    echo ""
+    echo "=== Test: check-agents-md.sh (Codex project-doc budget, invariant 7) ==="
+
+    local script="$REPO_ROOT/scripts/check-agents-md.sh"
+    local at_budget="$TEST_DIR/check-agents-md-at-budget.md"
+    local over_budget="$TEST_DIR/check-agents-md-over-budget.md"
+    local out exit_code pad_bytes
+
+    cat > "$at_budget" <<'EOF'
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+some managed content
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+EOF
+    pad_bytes=$(( 32768 - $(wc -c < "$at_budget") ))
+    if [[ "$pad_bytes" -le 0 ]]; then
+        fail "check-agents-md budget: the fixture is already >= 32768 bytes before padding — both legs below would be meaningless"
+        return
+    fi
+    # Deterministic filler: no random bytes, no date, no locale. `tr` over
+    # /dev/zero gives exactly pad_bytes of 'x'.
+    head -c "$pad_bytes" /dev/zero | tr '\0' 'x' >> "$at_budget"
+    if [[ "$(wc -c < "$at_budget" | tr -d ' ')" -ne 32768 ]]; then
+        fail "check-agents-md budget: could not build a fixture of exactly 32768 bytes (got $(wc -c < "$at_budget"))"
+        return
+    fi
+
+    cp "$at_budget" "$over_budget"
+    printf 'x' >> "$over_budget"
+
+    out="$TEST_DIR/check-agents-md-at-budget.out"
+    exit_code=0
+    "$script" "$at_budget" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 0 ]]; then
+        pass "check-agents-md budget: a file of exactly 32768 bytes passes"
+    else
+        fail "check-agents-md budget: a file of exactly 32768 bytes passes — exit $exit_code: $(cat "$out")"
+    fi
+
+    out="$TEST_DIR/check-agents-md-over-budget.out"
+    exit_code=0
+    "$script" "$over_budget" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "check-agents-md budget: 32769 bytes fails"
+    else
+        fail "check-agents-md budget: 32769 bytes fails — exit $exit_code: $(cat "$out")"
+    fi
+    assert_contains "$out" "exceeds Codex's project-doc budget" \
+        "check-agents-md budget: the failure names the budget it broke"
+    assert_contains "$out" "32769 bytes" \
+        "check-agents-md budget: the failure names the file's actual size"
+}
+
+# ── sync.sh and Codex's budget ─────────────────────────────────────────────
+#
+# WARN, NEVER BLOCK. The managed half is under budget (test_agents_md_size_budget
+# above), so an over-budget consumer file is over budget in its own
+# "## Repo-specific additions" — content the sync has no business editing. A run
+# that failed or skipped such a repo would withhold the managed guidance as a
+# punishment for content we do not own, AND leave a stale managed block sitting
+# on top of additions that were too long either way. So the two halves of this
+# test are equally load-bearing: the annotation is emitted, and the repo is not
+# failed.
+#
+# bigorg/repo-big-agents-md is the fixture because it already exists for issue
+# #81 and is far past 32768 bytes for a reason unrelated to this check — its
+# size is the marker-race fixture's whole point — so it cannot be quietly
+# shrunk without that test going red first.
+test_sync_codex_budget() {
+    echo ""
+    echo "=== Test: sync.sh (Codex project-doc budget warning) ==="
+
+    local out="$TEST_DIR/sync-codex-budget.txt"
+    local before after
+    before=$(bare_fleet_fingerprint)
+
+    GITHUB_REPOSITORY_OWNER=bigorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" --dry-run > "$out" 2>&1 || true
+
+    assert_contains "$out" "::warning::" \
+        "codex budget (sync): an over-budget AGENTS.md gets a GitHub annotation"
+    assert_contains "$out" "32768" \
+        "codex budget (sync): the annotation names the budget"
+    assert_contains "$out" "project_doc_max_bytes" \
+        "codex budget (sync): the annotation names Codex's setting"
+    assert_contains "$out" "Repo-specific additions" \
+        "codex budget (sync): the annotation names the half the repo can trim"
+    # The half that matters more: this is not a failure and not a skip.
+    assert_contains "$out" "0 failed" \
+        "codex budget (sync): over budget is not counted as a failed repo"
+    assert_not_contains "$out" "ERROR:" \
+        "codex budget (sync): over budget does not error the repo"
+
+    after=$(bare_fleet_fingerprint)
+    if [[ "$before" == "$after" ]]; then
+        pass "codex budget (sync): --dry-run still wrote nothing"
+    else
+        fail "codex budget (sync): --dry-run wrote to the fleet"
+    fi
+
+    # CONTROL — a fleet that is under budget gets no annotation at all, and
+    # the run really did walk repos rather than finding none (which would make
+    # the negative vacuous, the failure this suite's helpers keep being fixed
+    # for).
+    local under="$TEST_DIR/sync-codex-budget-under.txt"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" --dry-run > "$under" 2>&1 || true
+
+    assert_contains "$under" "=== testorg/repo-with-sync ===" \
+        "codex budget (sync, control): the control run really did process repos"
+    assert_not_contains "$under" "project-doc budget" \
+        "codex budget (sync, control): a fleet under budget gets no budget warning"
+}
+
+# ── drift-report.sh and Codex's budget ─────────────────────────────────────
+#
+# A NOTE, never a status. The file is not drifted and the sync is not going to
+# fix it, so `codex-truncated` joins the Notes column beside the lock summary
+# rather than replacing a verdict — which is also why the assertion is scoped
+# to the Notes CELL: a document-wide needle would match the legend paragraph
+# that explains the clause, and could never fail.
+test_drift_report_codex_budget() {
+    echo ""
+    echo "=== Test: drift-report.sh (codex-truncated note) ==="
+
+    local rpt="$TEST_DIR/drift-codex-budget.md"
+    GITHUB_REPOSITORY_OWNER=bigorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    assert_row_note_contains "$rpt" "bigorg/repo-big-agents-md" "codex-truncated" \
+        "codex budget (drift): an over-budget AGENTS.md is flagged in Notes"
+    assert_row_note_contains "$rpt" "bigorg/repo-big-agents-md" "32768" \
+        "codex budget (drift): the note names the budget"
+    assert_contains "$rpt" "project_doc_max_bytes" \
+        "codex budget (drift): the legend explains the clause"
+
+    # CONTROL — a repo whose AGENTS.md is comfortably under budget carries no
+    # such clause, and the row exists, so the negative is about a cell rather
+    # than about a missing row.
+    local under="$TEST_DIR/drift-codex-budget-under.md"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$under" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    assert_scoped_line_lacks "$under" "testorg/repo-up-to-date-no-claude" "codex-truncated" \
+        "codex budget (drift, control): a repo under budget carries no clause"
+}
+
+# ── register-codex-hook.sh ─────────────────────────────────────────────────
+#
+# Same posture as register-bootstrap-hook.sh and tested the same way, because
+# the file it edits is the operator's own ~/.codex/hooks.json: append a
+# separate group, never rewrite one, refuse rather than guess, and never create
+# the Codex home itself.
+#
+# Every structural assertion here PARSES the JSON with python3. A grep can tell
+# that the string "fleet-memory.sh" is somewhere in the file; it cannot tell
+# our group being APPENDED from our command being spliced into somebody else's
+# group — which is the failure that silently inherits their matcher and
+# timeout, and is the only one worth writing this test for.
+test_register_codex_hook() {
+    echo ""
+    echo "=== Test: register-codex-hook.sh (user-level Codex SessionStart hook) ==="
+
+    local script="$REPO_ROOT/scripts/register-codex-hook.sh"
+    local d="$TEST_DIR/codexhook"
+    rm -rf "$d"
+    mkdir -p "$d/home"
+    local target="$d/home/hooks.json"
+    local out rc shape
+
+    # 1. Absent file → created.
+    rc=0
+    out=$(CODEX_HOME="$d/home" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out1"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-codex-hook: a first run exits 0"
+    else
+        fail "register-codex-hook: a first run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out1" "registered" "register-codex-hook: says it registered"
+    assert_contains "$d/out1" "/hooks" "register-codex-hook: names the trust step the operator still owes"
+
+    rc=0
+    shape=$(python3 - "$target" 2>&1 <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+groups = doc["hooks"]["SessionStart"]
+assert isinstance(groups, list), "SessionStart is not a list"
+assert len(groups) == 1, "expected exactly one group, got %d" % len(groups)
+g = groups[0]
+assert g["matcher"] == "startup|resume", "matcher is %r" % g.get("matcher")
+entries = g["hooks"]
+assert len(entries) == 1, "expected one handler, got %d" % len(entries)
+e = entries[0]
+assert e["type"] == "command", "type is %r" % e.get("type")
+assert e["timeout"] == 30, "timeout is %r" % e.get("timeout")
+assert e["statusMessage"] == "fleet-guidance", "statusMessage is %r" % e.get("statusMessage")
+assert "fleet-memory.sh" in e["command"], "command does not name the hook"
+assert "git rev-parse --show-toplevel" in e["command"], "command does not resolve from the git root"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-codex-hook: the written JSON has the documented Codex hook shape"
+    else
+        fail "register-codex-hook: the written JSON has the documented Codex hook shape — $shape"
+    fi
+
+    # 2. Idempotent: says so, and does not rewrite a single byte.
+    cp "$target" "$d/after-first.json"
+    rc=0
+    out=$(CODEX_HOME="$d/home" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out2"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-codex-hook: a second run exits 0"
+    else
+        fail "register-codex-hook: a second run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out2" "already-registered" "register-codex-hook: a second run says already-registered"
+    if cmp -s "$d/after-first.json" "$target"; then
+        pass "register-codex-hook: a second run changes nothing"
+    else
+        fail "register-codex-hook: a second run rewrote the file"
+    fi
+
+    # 3. An operator's own SessionStart group survives, ours is APPENDED after
+    #    it, and an unrelated top-level key is untouched.
+    mkdir -p "$d/existing"
+    local existing="$d/existing/hooks.json"
+    cat > "$existing" <<'EOF'
+{
+  "description": "my own workspace hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/my_own_notes.py",
+            "timeout": 5,
+            "statusMessage": "Loading session notes"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{ "type": "command", "command": "true" }]
+      }
+    ]
+  }
+}
+EOF
+    cp "$existing" "$d/existing-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/existing" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out3"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-codex-hook: appending to an existing file exits 0"
+    else
+        fail "register-codex-hook: appending to an existing file exits 0 — got $rc: $out"
+    fi
+
+    rc=0
+    shape=$(python3 - "$d/existing-before.json" "$existing" 2>&1 <<'PY'
+import json, sys
+
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+
+b = before["hooks"]["SessionStart"]
+a = after["hooks"]["SessionStart"]
+assert len(a) == len(b) + 1, "expected one added group, got %d -> %d" % (len(b), len(a))
+# Order AND content: the operator's group is still first and is deep-equal.
+assert a[0] == b[0], "the pre-existing group changed: %r -> %r" % (b[0], a[0])
+assert a[-1]["hooks"][0]["command"].find("fleet-memory.sh") >= 0, "ours was not appended last"
+# Nothing else in the document moved.
+assert after["description"] == before["description"], "an unrelated top-level key changed"
+assert after["hooks"]["SessionEnd"] == before["hooks"]["SessionEnd"], "an unrelated event changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-codex-hook: an existing SessionStart group survives and ours is appended"
+    else
+        fail "register-codex-hook: an existing SessionStart group survives and ours is appended — $shape"
+    fi
+
+    # 4. Unparseable → exit 3, and NOT ONE BYTE written. A hooks.json we cannot
+    #    read is one we cannot safely edit; losing an operator's hook config is
+    #    far worse than not registering ours.
+    mkdir -p "$d/broken"
+    local broken="$d/broken/hooks.json"
+    printf '{ "hooks": { "SessionStart": [ oops\n' > "$broken"
+    cp "$broken" "$d/broken-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/broken" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out4"
+    if [[ $rc -eq 3 ]]; then
+        pass "register-codex-hook: an unparseable file exits 3"
+    else
+        fail "register-codex-hook: an unparseable file exits 3 — got $rc: $out"
+    fi
+    assert_contains "$d/out4" "refused-unparseable" "register-codex-hook: the refusal says why"
+    if cmp -s "$d/broken-before.json" "$broken"; then
+        pass "register-codex-hook: an unparseable file is left untouched"
+    else
+        fail "register-codex-hook: an unparseable file was rewritten"
+    fi
+
+    # 5. No Codex home → refuse, and create NOTHING. An empty ~/.codex reads as
+    #    "Codex is set up here" to everything that probes for it, this repo's
+    #    own hook included, so conjuring one is worse than not registering.
+    rc=0
+    out=$(CODEX_HOME="$d/no-codex-here" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out5"
+    if [[ $rc -ne 0 ]]; then
+        pass "register-codex-hook: a missing Codex home exits non-zero (got $rc)"
+    else
+        fail "register-codex-hook: a missing Codex home exited 0"
+    fi
+    assert_contains "$d/out5" "refused-no-codex-home" "register-codex-hook: the refusal names the missing home"
+    if [[ -e "$d/no-codex-here" ]]; then
+        fail "register-codex-hook: a missing Codex home was created"
+    else
+        pass "register-codex-hook: a missing Codex home is not created"
+    fi
+}
+
+# ── fleet-memory.sh: the Codex destination ─────────────────────────────────
+#
+# The same marked block, to a SECOND surface: ~/.codex/AGENTS.md, Codex's
+# GLOBAL user instructions, which are loaded by
+# `codex-rs/codex-home/src/instructions/mod.rs` and — unlike a repo's own
+# AGENTS.md — are not counted against `project_doc_max_bytes`. That is the
+# whole reason the guidance goes there rather than into each repo's file: at
+# ~50 kB it would blow a 32768-byte budget in every repo at once and silently
+# evict each repo's own additions (docs/decisions/0012).
+#
+# What these guard is not "does it write a second file" but the three ways a
+# second destination goes wrong: it gets created on a machine that does not
+# want it, it fails and takes the FIRST destination down with it, or it fails
+# silently. The last is why every leg checks the verdict line as well as the
+# files.
+# shellcheck disable=SC2088  # the tilde needles below are LITERAL: they are
+# the verdict's own display text, not paths this test opens.
+test_fleet_memory_codex() {
+    echo ""
+    echo "TEST: fleet-memory.sh (Codex global instructions)"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-codex"
+    rm -rf "$d"
+    mkdir -p "$d/cfg" "$d/codex"
+    local payload="$d/payload.md"
+    printf '# Fleet guidance\n\nThe canary is CODEX-IBIS-77.\n' > "$payload"
+
+    local claude_dest="$d/cfg/CLAUDE.md"
+    local codex_dest="$d/codex/AGENTS.md"
+    local out rc
+
+    # 1. Both surfaces in play.
+    rm -f "$claude_dest" "$codex_dest"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" CODEX_HOME="$d/codex" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_both"
+    [[ $rc -eq 0 ]] && pass "fleet-memory (codex): a two-destination run exits 0" \
+        || fail "fleet-memory (codex): a two-destination run exit $rc"
+    assert_contains "$d/out_both" "fleet-guidance: installed" \
+        "fleet-memory (codex): reports installed"
+    assert_contains "$d/out_both" "~/.claude/CLAUDE.md, ~/.codex/AGENTS.md" \
+        "fleet-memory (codex): the verdict names both destinations"
+    assert_contains "$codex_dest" "CODEX-IBIS-77" \
+        "fleet-memory (codex): the payload reaches Codex's global instructions"
+    assert_contains "$codex_dest" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory (codex): the Codex copy is a MARKED block, not a bare dump"
+    assert_contains "$claude_dest" "CODEX-IBIS-77" \
+        "fleet-memory (codex): the Claude destination still got it too"
+
+    # Byte-identical block on both surfaces — one payload, one version id.
+    if cmp -s "$claude_dest" "$codex_dest"; then
+        pass "fleet-memory (codex): both destinations carry the identical block"
+    else
+        fail "fleet-memory (codex): the two destinations diverged"
+    fi
+
+    # A second run is `current` for both, and rewrites neither.
+    local sum_before; sum_before="$(sha256sum "$codex_dest" | cut -d' ' -f1)"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" CODEX_HOME="$d/codex" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"
+    printf '%s' "$out" > "$d/out_both2"
+    assert_contains "$d/out_both2" "fleet-guidance: current" \
+        "fleet-memory (codex): a second run reports current"
+    assert_contains "$d/out_both2" "~/.codex/AGENTS.md" \
+        "fleet-memory (codex): the current verdict names Codex too"
+    if [[ "$sum_before" == "$(sha256sum "$codex_dest" | cut -d' ' -f1)" ]]; then
+        pass "fleet-memory (codex): idempotent at the Codex destination"
+    else
+        fail "fleet-memory (codex): the second run changed the Codex file"
+    fi
+
+    # 2. NO ~/.codex — the machine that has never run Codex. Nothing is
+    #    created there, and the verdict is exactly the single-destination line
+    #    it was before this hook learned about Codex at all.
+    mkdir -p "$d/cfg2"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg2" CODEX_HOME="$d/no-codex-here" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_nocodex"
+    [[ $rc -eq 0 ]] && pass "fleet-memory (codex): a Codex-less machine exits 0" \
+        || fail "fleet-memory (codex): a Codex-less machine exit $rc"
+    if [[ -e "$d/no-codex-here" ]]; then
+        fail "fleet-memory (codex): ~/.codex was CREATED on a machine that has no Codex"
+    else
+        pass "fleet-memory (codex): ~/.codex is never created"
+    fi
+    assert_contains "$d/out_nocodex" "~/.claude/CLAUDE.md" \
+        "fleet-memory (codex): the verdict still names the Claude destination"
+    assert_not_contains "$d/out_nocodex" "~/.codex/AGENTS.md" \
+        "fleet-memory (codex): the verdict lists only destinations that were in play"
+
+    # 3. FLEET_GUIDANCE_SKIP clears BOTH surfaces, and leaves the developer's
+    #    own bytes exactly as they were. One flag, because the reason to opt
+    #    out — user-level files are global on a durable machine — is the same
+    #    reason on each.
+    mkdir -p "$d/skipcfg" "$d/skipcodex"
+    local skip_claude="$d/skipcfg/CLAUDE.md"
+    local skip_codex="$d/skipcodex/AGENTS.md"
+    printf '# My personal global instructions\n\nPrefer pnpm on this machine.\n' > "$skip_claude"
+    printf '# My own Codex notes\n\nUse the repo formatter, not mine.\n' > "$skip_codex"
+    cp "$skip_claude" "$d/skip-claude.orig"
+    cp "$skip_codex" "$d/skip-codex.orig"
+    CLAUDE_CONFIG_DIR="$d/skipcfg" CODEX_HOME="$d/skipcodex" \
+        FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" >/dev/null 2>&1
+    assert_contains "$skip_codex" "CODEX-IBIS-77" \
+        "fleet-memory (codex, skip): the block was installed first, so there is something to remove"
+    out="$(CLAUDE_CONFIG_DIR="$d/skipcfg" CODEX_HOME="$d/skipcodex" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_skip_both"
+    [[ $rc -eq 0 ]] && pass "fleet-memory (codex, skip): exits 0" \
+        || fail "fleet-memory (codex, skip): exit $rc"
+    assert_contains "$d/out_skip_both" "skipped" "fleet-memory (codex, skip): announces itself"
+    assert_contains "$d/out_skip_both" "~/.codex/AGENTS.md" \
+        "fleet-memory (codex, skip): names the Codex destination it cleared"
+    assert_not_contains "$skip_codex" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory (codex, skip): the block is gone from the Codex file"
+    assert_not_contains "$skip_claude" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory (codex, skip): the block is gone from the Claude file"
+    if cmp -s "$d/skip-claude.orig" "$skip_claude"; then
+        pass "fleet-memory (codex, skip): the Claude file is byte-identical to before"
+    else
+        fail "fleet-memory (codex, skip): the Claude file changed beyond the block"
+    fi
+    if cmp -s "$d/skip-codex.orig" "$skip_codex"; then
+        pass "fleet-memory (codex, skip): the Codex file is byte-identical to before"
+    else
+        fail "fleet-memory (codex, skip): the Codex file changed beyond the block"
+    fi
+
+    # 4. A broken CODEX destination must not cost the CLAUDE one its delivery,
+    #    and must not be silent. Root can read anything, so this is skipped
+    #    LOUDLY there rather than passing vacuously.
+    if [[ "$(id -u)" -ne 0 ]]; then
+        mkdir -p "$d/nrcfg" "$d/nrcodex"
+        local nr_claude="$d/nrcfg/CLAUDE.md"
+        local nr_codex="$d/nrcodex/AGENTS.md"
+        rm -f "$nr_claude"
+        printf 'PERSONAL CODEX CONTENT THAT MUST SURVIVE\n' > "$nr_codex"
+        chmod 200 "$nr_codex"
+        out="$(CLAUDE_CONFIG_DIR="$d/nrcfg" CODEX_HOME="$d/nrcodex" \
+               FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_nr_codex"
+        chmod 600 "$nr_codex"
+        [[ $rc -eq 0 ]] && pass "fleet-memory (codex, unreadable): still exits 0" \
+            || fail "fleet-memory (codex, unreadable): exit $rc"
+        if [[ "$(head -1 "$d/out_nr_codex")" == "fleet-guidance: DEGRADED"* ]]; then
+            pass "fleet-memory (codex, unreadable): the verdict line starts DEGRADED"
+        else
+            fail "fleet-memory (codex, unreadable): the verdict is '$(head -1 "$d/out_nr_codex")'"
+        fi
+        assert_contains "$d/out_nr_codex" "$nr_codex" \
+            "fleet-memory (codex, unreadable): the DEGRADED line names the Codex destination"
+        assert_contains "$nr_codex" "PERSONAL CODEX CONTENT THAT MUST SURVIVE" \
+            "fleet-memory (codex, unreadable): the unreadable file is NOT overwritten"
+        # THE HALF THAT MATTERS MOST: the other destination was still written.
+        assert_contains "$nr_claude" "CODEX-IBIS-77" \
+            "fleet-memory (codex, unreadable): the Claude destination was delivered anyway"
+    else
+        echo "  SKIP: fleet-memory Codex unreadable-dest case (running as root; root bypasses it)"
+    fi
+}
+
 echo "========================================="
 echo "  Agent Guidance Integration Tests"
 echo "========================================="
@@ -17406,7 +17985,18 @@ test_check_guidance_touch
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
+# The Codex lane. The three size/gate tests read only this repo's own files;
+# the sync and drift legs are --dry-run / read-only over the bigorg fixture,
+# so they can sit anywhere after the bares exist. Ordered so the budget
+# CEILING (what the managed half may weigh) is asserted before the gates that
+# police a consumer's file against it.
+test_agents_md_size_budget
+test_check_agents_md_budget
+test_sync_codex_budget
+test_drift_report_codex_budget
+test_register_codex_hook
 test_fleet_memory_hook
+test_fleet_memory_codex
 
 echo ""
 echo "========================================="

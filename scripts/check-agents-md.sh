@@ -64,8 +64,38 @@ set -euo pipefail
 #      SECTION line, which precedes the single "## Repo-specific additions"
 #      line — the ordering sync.sh's parse depends on (managed content
 #      above the marker, repo-specific content at-and-below it).
+#   7. The file is no larger than Codex's project-doc budget, 32768 bytes.
+#
+# Invariant 7 is the only one here that is not about structure, and it is the
+# only one whose failure is INVISIBLE in a normal session — which is why it is
+# checked rather than left to whoever notices. Codex (codex-cli 0.154.0,
+# measured 2026-09-14) walks AGENTS.md from the project root down to cwd under
+# a running byte budget `project_doc_max_bytes`, default 32768. A file that
+# does not fit the remaining budget is not skipped and not reported: it is CUT
+# at that byte, with only a `tracing::warn!("project doc exceeds remaining
+# budget; truncating")` in `codex-rs/core/src/agents_md.rs` that no ordinary
+# session ever sees. Measured 2026-09-14 on cms-platform: `codex debug
+# prompt-input` — which renders the model-visible instructions without
+# a model call — showed exactly 32,768 bytes of a 55,788-byte AGENTS.md
+# (a feature-branch checkout; `main`'s copy was 71,794 bytes), ending
+# mid-heading at `## An unapproved gate holds its concu`. Everything
+# after that byte, the whole "## Repo-specific additions" half
+# included, was simply not there, and nothing in the session said so.
+#
+# This is a per-FILE check, so it is the one an over-budget repo can act on.
+# The budget is a chain total, so a repo with nested AGENTS.md files can still
+# truncate while every single file passes; `docs/decisions/0012` records why
+# that residual is accepted rather than chased here.
+#
+# The remedy is always the same and is always the repo's own: trim
+# "## Repo-specific additions" and move long-form content to docs/. The managed
+# half above the marker is held under budget by this repo's own size tests.
 
 MARKER="## Repo-specific additions"
+# Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
+# codex-cli 0.154.0). Kept as a named constant here, in sync.sh and in
+# drift-report.sh so the three gates cannot drift apart.
+CODEX_PROJECT_DOC_MAX_BYTES=32768
 
 check_file() {
     local file="$1"
@@ -146,6 +176,17 @@ check_file() {
             echo "check-agents-md: $file — markers are out of order (BEGIN at line $begin_line, END at line $end_line, marker at line $marker_line) — expected BEGIN before END before the marker, which is the ordering sync.sh's parse depends on"
             ok=1
         fi
+    fi
+
+    # Invariant 7: the file fits Codex's project-doc budget. `wc -c` on the
+    # file itself — the bytes Codex reads — not a byte count of some string
+    # the shell is holding, and not a pipe into a reader that could exit
+    # early (see issue #81).
+    local bytes
+    bytes=$(wc -c < "$file" | tr -d ' ')
+    if [[ "$bytes" -gt "$CODEX_PROJECT_DOC_MAX_BYTES" ]]; then
+        echo "check-agents-md: $file — $bytes bytes exceeds Codex's project-doc budget of $CODEX_PROJECT_DOC_MAX_BYTES bytes (project_doc_max_bytes); Codex truncates at that byte with no visible warning — trim '## Repo-specific additions' (move long-form to docs/)"
+        ok=1
     fi
 
     return "$ok"
