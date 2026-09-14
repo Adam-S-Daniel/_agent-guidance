@@ -1644,6 +1644,63 @@ surfaced no new promotion candidates and no new redundant copies this run.
 merged by the operator at `2026-09-02T16:28:46Z` and is no longer a
 standing item.
 
+### Measured 2026-09-14, fifth fired run
+
+Tool availability repeated the 2026-09-01/09-02/09-06/09-13 shape exactly,
+for a fifth consecutive fire: `mcp__Claude_Code_Remote__list_repos`,
+`list_triggers` and `add_repo` were all three absent (ToolSearch for the
+`Claude_Code_Remote` family returned no matching tool) and the `gh` CLI was
+absent too (`which gh` exited 1). Set (a) again `NOT COMPUTABLE (no
+enumeration tool available)`, recorded as the one-line repeat this
+section's own convention calls for.
+
+Both GitHub MCP connectors answered (`mcp__github__get_me` and
+`mcp__github-mcp__get_me` both resolved to the same account), and
+`mcp__github__`'s Actions tools (`actions_list`, `actions_get`,
+`get_check_run`, `get_job_logs`) were present and schema-loadable — the
+fuller profile, matching 2026-09-02/09-06/09-13 rather than 2026-09-01's
+narrower one.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos) as the substitute for `list_triggers`; it mapped 1:1 onto
+`repos.yml`'s 19-name non-structural union (22 total minus both forks and
+`superoutrigger`). 0 unattached, same substitute-not-equivalent caveat as
+the prior four runs.
+
+Set (c) computed cleanly via individual `git ls-remote` probes
+(`GIT_TERMINAL_PROMPT=0`) for all 22 `repos.yml` names under the owner
+recorded in the existing Step 2 mapping: all 22 resolved on the first
+probe, no fallback owner needed. 0 unreadable. As in the prior four runs,
+`gh repo list ... --json` was unavailable, so this is single-source
+verification only, not the dual-source cross-check Step 2 calls for.
+
+`repos.yml` on `main` was unchanged from the 2026-09-13 measurement (still
+the same 22-name union: `cron_coverage.fleet` 13 + `out_of_scope` 9,
+`exclude: []`). All 19 in-scope repos' local checkouts were verified
+byte-identical to their own `origin/main` (or, for `scratch-claude-001`,
+its actual default branch `claude/setup-github-pages-ZCksi`) before being
+read, rather than trusted as already current. Every repo's managed half
+matched a fresh `./scripts/build-agents-md.sh` run (modulo the documented
+command-substitution trailing-newline trim), every repo carried exactly
+one `## Repo-specific additions` marker, and every `CLAUDE.md` carried
+exactly one line-start `@AGENTS.md` bridge. The drift report
+(`drift-report-latest`, generated 2026-09-13 11:14 UTC) agreed on all 19
+rows (`up-to-date`, marker `yes`, `bridge-ok`) but was not relied on as the
+source of truth per §1 — the direct checks above are what this line cites.
+
+Both previously-flagged centralization candidates remain correctly
+resolved (re-confirmed by direct fetch of `agentskills/AGENTS.md` and
+`base.md` on `main` rather than cached memory). A full pass over all 19
+in-scope repos' `## Repo-specific additions` content, including a grep for
+generalizing language (`every repo`, `fleet-wide`, `standing rule`, `general
+rule`, etc.) and for base.md's own signature phrases duplicated locally,
+surfaced no new promotion candidates and no new redundant copies this run.
+Two open PRs exist in `_agent-guidance` (#124, a large paused one-way-door
+review effort touching `.claude/hooks/` and `agents-md/base.md`; #111, an
+automated `skills_bootstrap` hook-pin bump) — neither is a `repos.yml`
+classify/remove PR nor a base.md promotion this Routine opened, so neither
+needed action this run.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
