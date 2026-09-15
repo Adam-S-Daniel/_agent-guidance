@@ -440,6 +440,35 @@ per-owner App tokens but keeps the default `github.token` as a base fallback
 minted, its private repos simply show up as fetch failures in the report — a
 workable degraded mode rather than a hard failure.
 
+## Dependabot config health
+
+A daily sweep (`scripts/dependabot-config-health.js`) over every non-fork,
+non-archived repo under both `SYNC_OWNERS`, filing ONE `ci`-labelled tracking
+issue IN the affected repo when its `.github/dependabot.yml` is invalid
+(GitHub's own `dependabot` check run on that config concluded failure) or
+silent (no Dependabot update job has run within its own schedule's
+threshold). See
+[ADR 0014](docs/decisions/0014-dependabot-config-health-is-swept-centrally.md)
+for the 36-day incident that motivated it, the measured facts the design
+rests on, and the rejected alternatives.
+
+Credential: the existing `agents-md-sync` GitHub App, widened on 2026-09-15
+with Actions: Read, Checks: Read and Issues: Read & write (it already carried
+Contents: write, Pull requests: write and Metadata: read for the AGENTS.md
+sync) — no new App and no new private key.
+`.github/workflows/dependabot-config-health.yml` mints the same per-owner
+tokens `sync.yml`/`drift-report.yml` already do, from the same repository
+**variable** `APP_CLIENT_ID` and repository **secret** `APP_PRIVATE_KEY`
+(see "Required secrets" above), down-scoped at mint time via
+`actions/create-github-app-token`'s `permission-*` inputs to exactly what the
+sweep needs.
+
+Local dry run:
+
+```bash
+SYNC_OWNERS="Adam-S-Daniel jodidaniel" node scripts/dependabot-config-health.js --dry-run
+```
+
 ## Cron coverage
 
 A `schedule:`-triggered workflow fails silently — no PR goes red, nothing

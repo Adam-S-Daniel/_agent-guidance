@@ -68,7 +68,7 @@ jobs:
       # next to a targeted fetch's added complexity (reading the base sha out
       # of $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
       # saving.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
@@ -182,7 +182,7 @@ jobs:
       # any row here is `covered`, a fixture rename on that branch reds THIS
       # repo's CI on the next run, with no change on this side at all.
       - name: Check out skills-evals (read-only, for fixture existence)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Adam-S-Daniel/skills-evals
           path: skills-evals

@@ -86,7 +86,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Install yq
         env:
@@ -173,7 +173,7 @@ jobs:
       # The script refuses a shallow checkout up front and says so, rather than
       # letting either failure be mistaken for drift.
       - name: Check out the skills registry
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Adam-S-Daniel/agentskills
           path: registries/agentskills
@@ -185,7 +185,7 @@ jobs:
       # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
       # because anything in this run bumps cms-platform's own pin.
       - name: Check out the federated source registry
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Adam-S-Daniel/cms-platform
           path: registries/cms-platform
