@@ -54,6 +54,10 @@ SKILLS_SIDECAR="${OUTPUT_FILE%.md}-skills-unclassified.txt"
 # the other stands.
 SKILLS_ORPHAN_SIDECAR="${OUTPUT_FILE%.md}-skills-orphans.txt"
 MARKER="## Repo-specific additions"
+# Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
+# codex-cli 0.154.0, measured 2026-09-14). Same constant in
+# check-agents-md.sh and sync.sh; the three gates must not drift apart.
+CODEX_PROJECT_DOC_MAX_BYTES=32768
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
 BRANCH_NAME="agents-md-sync/update"
 SELF_REPO="${SYNC_SELF_REPO:-_agent-guidance}"
@@ -980,6 +984,42 @@ for repo_name in "${REPOS[@]}"; do
         status="**no-agents-md**"
         notes="AGENTS.md not found in repo"
     else
+        # ── Codex project-doc budget ────────────────────────────────────
+        #
+        # Reported here and ONLY here: this is the one branch where the file
+        # is known to have arrived whole (`fetch_file_content` returned 0 and
+        # verified the decoded byte count against the API's own `size`) and to
+        # be non-empty. A byte count taken off a short read would understate
+        # the file and publish a clean Notes cell for a repo that is in fact
+        # truncated — #81's failure mode one column over.
+        #
+        # Codex (codex-cli 0.154.0) walks the AGENTS.md chain under a running
+        # budget `project_doc_max_bytes`, default 32768, and CUTS a file that
+        # does not fit at that byte. The only trace is a `tracing::warn!` in
+        # `codex-rs/core/src/agents_md.rs` that no ordinary session sees.
+        # Measured 2026-09-14 on cms-platform: `codex debug prompt-input`
+        # rendered exactly 32,768 bytes of a 55,788-byte AGENTS.md (a
+        # feature-branch checkout; `main`'s copy was 71,794 bytes), ending
+        # mid-heading at `## An unapproved gate holds its concu`.
+        #
+        # A NOTE, never a status: the file is not drifted, and the sync is not
+        # going to fix it — the managed half is under budget, so the overflow
+        # is in the repo's own additions and only the repo can trim them.
+        #
+        # `printf '%s' | wc -c`, and the pipe is safe: `wc` reads to EOF, so
+        # there is no early-exit reader to leave the writer holding bytes and
+        # taking SIGPIPE (issue #81 — the hazard is `grep -q`, not `wc`).
+        # Command substitution stripped the file's trailing newline when
+        # `current_agents` was assigned, so this is one byte short of the file
+        # on disk; that only matters for a file of exactly
+        # CODEX_PROJECT_DOC_MAX_BYTES + 1 bytes ending in a newline, which
+        # loses one byte to truncation and is not worth re-reading the file to
+        # catch.
+        agents_bytes=$(printf '%s' "$current_agents" | wc -c | tr -d ' ')
+        if [[ "$agents_bytes" -gt "$CODEX_PROJECT_DOC_MAX_BYTES" ]]; then
+            notes="${notes:+$notes; }codex-truncated: $agents_bytes bytes > $CODEX_PROJECT_DOC_MAX_BYTES (Codex \`project_doc_max_bytes\`) — trim '## Repo-specific additions'"
+        fi
+
         # Check marker header
         # -x (whole line), not a bare substring match. The managed block's own
         # BEGIN header QUOTES the marker verbatim —
@@ -1381,6 +1421,19 @@ fi
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
     echo "| **fetch-failed** | A file this row is built from could not be read, or could not be understood — the request failed for a reason this run could not resolve to a plain absence (a 401, a 403, a rate limit, a 5xx, a network fault, or a 404 on a repo the credential cannot see at all), or the decoded byte count disagreed with the API's own \`size\`, or the bytes arrived whole and would not parse. **Notes** names the file; every column it feeds is withheld as \`?\` rather than guessed; see issue #81 |"
+    echo ""
+    echo "**Codex project-doc budget**"
+    echo ""
+    echo "A \`codex-truncated:\` clause in **Notes** means that repo's AGENTS.md is"
+    echo "larger than Codex's \`project_doc_max_bytes\` (default $CODEX_PROJECT_DOC_MAX_BYTES bytes,"
+    echo "codex-cli 0.154.0). Codex cuts the file at that byte and says nothing a"
+    echo "session can see — measured 2026-09-14, a 55,788-byte AGENTS.md rendered"
+    echo "through \`codex debug prompt-input\` as exactly 32,768 bytes, ending"
+    echo "mid-heading. Claude Code reads the whole file and is unaffected, so this"
+    echo "is a note and never a status: the managed half is held under budget by"
+    echo "this repo's tests, the overflow is in \`## Repo-specific additions\`, and"
+    echo "only that repo can trim it. The sync warns and syncs anyway. See"
+    echo "\`docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md\`."
     echo ""
     echo "**CLAUDE.md bridge legend**"
     echo ""

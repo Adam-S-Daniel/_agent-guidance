@@ -59,6 +59,95 @@ The skills that used to live here (`debug-github-workflows`,
   additions" section. Reasoning:
   [`docs/decisions/0002`](docs/decisions/0002-unconditional-rules-live-in-the-guidance-not-a-skill.md).
 
+### Codex
+
+Claude Code reads a repo's `AGENTS.md` whole; **Codex does not**. It walks the
+`AGENTS.md` chain from the project root down to cwd under a running byte
+budget, `project_doc_max_bytes`, **default 32768**, and a file that does not
+fit is *cut at that byte* — not skipped, not reported. The only trace is a
+`tracing::warn!` in `codex-rs/core/src/agents_md.rs` that no ordinary session
+surfaces. Measured 2026-09-14 (codex-cli 0.154.0): `codex debug prompt-input`,
+which renders the model-visible instructions without a model call, showed
+exactly 32,768 bytes of a 55,788-byte checkout of cms-platform's AGENTS.md
+(the copy on `main` was 71,794 bytes), ending mid-heading.
+
+Three gates make that visible, and none of them blocks a repo — the managed
+half is under budget by construction, so an overrun is always in the repo's own
+`## Repo-specific additions`:
+
+- `scripts/check-agents-md.sh` invariant **7**: a file over 32768 bytes fails,
+  naming the byte count and the remedy.
+- `scripts/sync.sh` emits a `::warning::` naming the repo and its size, and
+  **syncs it anyway** — withholding the managed guidance over content the sync
+  does not own would be the wrong half to punish.
+- `scripts/drift-report.sh` adds a `codex-truncated: <bytes> > 32768` clause to
+  that repo's **Notes**, explained in the report's own legend.
+
+The managed half is held clear of the budget by size tests in
+`test/run-tests.sh`: `agents-md/base.md` ≤ 24 KiB and a full-mode build with
+every section ≤ 28 KiB, so even a full-mode repo keeps ≥ 4 KiB for its own
+additions (a stub-mode repo — all 19 today — keeps nearly all of it).
+
+The guidance itself reaches Codex a different way. The `fleet-memory`
+SessionStart hook (`.claude/hooks/fleet-memory.sh`) writes its marked block to
+**two** destinations: `~/.claude/CLAUDE.md`, Claude Code's user memory, and
+`~/.codex/AGENTS.md`, Codex's global **user** instructions — which are loaded
+by `codex-rs/codex-home/src/instructions/mod.rs` and are *not* counted against
+the project-doc budget. The Codex write happens only when `~/.codex` already
+exists; the hook never creates it, so a machine without Codex gets nothing new.
+One verdict line covers both, and `FLEET_GUIDANCE_SKIP` opts out of both.
+
+Codex runs that hook through a **user-level** `SessionStart` entry, registered
+once per machine with `scripts/register-codex-hook.sh` (default target
+`~/.codex/hooks.json`) and then **trusted once** in the Codex TUI with
+`/hooks` — Codex trusts non-managed hooks per definition hash per config layer,
+so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
+Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
+
+### Memory notes outside a repo
+
+Claude Code's auto-memory writes one markdown file per fact under
+`${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<encoded-cwd>/memory/`, one directory
+per cwd a session has ever run in — **22** on this machine, none of them inside
+any repo. A fact recorded there is a fact one agent on one machine can see.
+
+**The contract:** every note whose `metadata.type` is not `user` carries
+`metadata.home`, either `<owner>/<repo>:<path>` or
+`https://github.com/<owner>/<repo>/blob/<ref>/<path>`, naming the *committed*
+file that holds the durable copy — an ADR, a `docs/` page, that repo's
+`## Repo-specific additions`, or a skill in the registry. With a home the note
+is a **pointer**; the repo copy is the source of truth. A `type: user` note is
+exempt: it is about the person, not the work. A home is **dangling** when a
+local clone of `<repo>` is found but `<path>` is not in it.
+
+- `.claude/hooks/memory-home.sh` runs on two events. On **SessionStart** it
+  marks the session and names any homeless or dangling note (up to five, then
+  `+K more`) — and prints **nothing** when every note has a home. On **Stop**
+  it blocks with `{"decision":"block","reason":"…"}` when *this* session (notes
+  newer than its marker) wrote one without a home, once: `stop_hook_active`
+  turns the second pass into a `systemMessage` instead. It never edits or
+  deletes a note and always exits 0. `memory-home: DEGRADED — <reason>` is
+  reserved for **run-level** faults — no python3, no PyYAML, an unreadable hook
+  event, an unwritable marker directory — and gates nothing. A note it cannot
+  *parse* is a finding about that note, not a verdict about the run: the scan
+  continues and the note is flagged with its reason,
+  `<path> (unparseable frontmatter — quote the description or fix the YAML)`.
+  That case is the common one, not the exotic one — Claude Code writes
+  `description:` values unquoted, so any description containing `: ` is YAML
+  PyYAML rejects, and four such notes existed here the day the hook was
+  written.
+- `scripts/register-memory-home-hook.sh` wires both groups into
+  `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` — **user level**, because
+  memory is per machine, not per repo. Same posture as the two registrars
+  above: append never overwrite, exit 3 on an unparseable file with no write,
+  idempotent, and it never creates the config directory. `--hook <abs path>`
+  overrides the wired path, which is how a run from a worktree points at the
+  main checkout.
+
+Promotion is deliberately **not** automatic — choosing which repo owns a fact,
+and which file inside it, is judgment. Reasoning:
+[`docs/decisions/0013`](docs/decisions/0013-a-memory-note-outside-a-repo-names-its-home.md).
+
 ### Section manifest
 
 [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml) is one row per
@@ -419,7 +508,8 @@ file extension.
 ```
 agents-md/              # managed AGENTS.md content (base + opt-in sections)
 scripts/                # build, sync, drift-report, lock bump, cron
-                        #   coverage, status, routine capture
+                        #   coverage, status, routine capture, Codex hook
+                        #   registration
 docs/decisions/         # ADRs (start at the README there)
 docs/routines/          # specs for the scheduled Claude Routines that audit
                         #   what no workflow here can check

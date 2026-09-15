@@ -25,6 +25,8 @@ a page.
 | [0009](0009-a-federated-pin-advances-on-a-scoped-question.md) | A federated pin advances, and only on a question scoped to that source |
 | [0010](0010-the-hook-pin-is-re-pinned-from-here.md) | The hook pin is re-pinned nightly too, and only ever proposed |
 | [0011](0011-skills-bootstrap-scope-is-exhaustive.md) | Skills-bootstrap scope is exhaustive, and an unclassified repo is a nudge |
+| [0012](0012-codex-gets-the-guidance-as-user-instructions.md) | Codex gets the guidance as global user instructions, and the project budget is warned, never blocked |
+| [0013](0013-a-memory-note-outside-a-repo-names-its-home.md) | A memory note outside a repo names its home, and a session that wrote one without it does not stop |
 
 ## Format
 

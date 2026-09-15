@@ -3604,7 +3604,14 @@ test_sync_round_trip_no_marker() {
     local MARKER="## Repo-specific additions"
     local preserve_block assemble_block
     preserve_block=$(extract_sync_block "Preserve repo-specific content" "Assemble")
-    assemble_block=$(extract_sync_block "Assemble" "Diff check")
+    # Terminated at "Codex project-doc budget", the section that now follows
+    # the assemble block, rather than at "Diff check" further down. The budget
+    # warning is not part of assembling the file — it measures the result and
+    # calls `log`/`$repo_name`, neither of which exists here — so extracting
+    # through it would drag a whole unrelated section into this eval and abort
+    # the run on an unbound variable. Anything inserted between assembly and
+    # the diff check has to be its own `# ── ` section for exactly this reason.
+    assemble_block=$(extract_sync_block "Assemble" "Codex project-doc budget")
 
     # Seed a hand-written AGENTS.md with NO marker — the scenario that used
     # to get inverted.
@@ -17024,6 +17031,14 @@ test_fleet_memory_hook() {
     local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
     local d="$TEST_DIR/fleetmem"
     mkdir -p "$d/cfg"
+    # This lane is about the CLAUDE destination alone, and pinning CODEX_HOME
+    # at a path that does not exist is what keeps it that way on a developer
+    # machine that DOES have ~/.codex. Without it every assertion below would
+    # be reading a two-destination verdict, and — far worse — the run would
+    # write this fixture's payload into that developer's real global Codex
+    # instructions. `local -x` exports for the duration of this function only;
+    # test_fleet_memory_codex sets its own.
+    local -x CODEX_HOME="$d/no-codex-in-this-lane"
     local payload="$d/payload.md"
     printf '# Fleet guidance\n\nThe canary is TEAL-HERON-31.\n' > "$payload"
 
@@ -17253,6 +17268,1139 @@ test_fleet_memory_hook() {
 
 # ── Run all tests ──────────────────────────────────────────────────────────
 
+# ── Codex's project-doc budget ─────────────────────────────────────────────
+#
+# Codex (codex-cli 0.154.0, measured 2026-09-14) reads the AGENTS.md chain from
+# the project root down to cwd under a RUNNING byte budget,
+# `project_doc_max_bytes`, default 32768, and a file that does not fit is CUT
+# at that byte — not skipped, not reported. The only trace is a
+# `tracing::warn!("project doc exceeds remaining budget; truncating")` in
+# `codex-rs/core/src/agents_md.rs` that no ordinary session surfaces. Measured
+# on cms-platform: `codex debug prompt-input` rendered exactly 32,768 bytes of
+# a 55,788-byte AGENTS.md, ending mid-heading at
+# `## An unapproved gate holds its concu`.
+#
+# These two hold the MANAGED half clear of that ceiling, which is the thing
+# that makes the "warn, never block" posture defensible for a consumer's own
+# additions: the sync gets to say "the overflow is yours" only for as long as
+# ours provably is not. See docs/decisions/0012.
+test_agents_md_size_budget() {
+    echo ""
+    echo "=== Test: the managed AGENTS.md stays inside Codex's project-doc budget ==="
+
+    # FULL mode with EVERY section — the largest managed block this build can
+    # emit, i.e. what a repo that cannot receive the fleet-memory hook is
+    # handed. The ceiling here is 28672 (28 KiB) rather than Codex's 32768,
+    # so such a repo keeps at least 4 KiB for "## Repo-specific additions"
+    # instead of being handed a file that is legal and unextendable.
+    local full_bytes
+    full_bytes=$(AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh" \
+        docker dotnet go javascript python rust typescript | wc -c | tr -d ' ')
+    if [[ "$full_bytes" -le 28672 ]]; then
+        pass "size budget: full build with every section is $full_bytes bytes (<= 28672)"
+    else
+        fail "size budget: full build with every section is $full_bytes bytes, over 28672 — trim agents-md/base.md; Codex cuts a repo's AGENTS.md at 32768 bytes with nothing on screen to say so"
+    fi
+
+    # STUB mode, which is what all 19 repos are on. 8192 is deliberately
+    # generous: the claim being pinned is that the always-on floor stays small
+    # enough that a repo's own additions have effectively the whole budget.
+    local stub_bytes
+    stub_bytes=$("$REPO_ROOT/scripts/build-agents-md.sh" | wc -c | tr -d ' ')
+    if [[ "$stub_bytes" -le 8192 ]]; then
+        pass "size budget: stub build is $stub_bytes bytes (<= 8192)"
+    else
+        fail "size budget: stub build is $stub_bytes bytes, over 8192 — agents-md/stub.md is the always-on floor in every repo"
+    fi
+}
+
+# ── check-agents-md.sh invariant 7 (Codex's budget) ────────────────────────
+#
+# THE BOUNDARY IS THE TEST, and it is also this invariant's proof that the
+# verifier can fail. 32768 is what Codex keeps, so a file of exactly that size
+# is legal and one byte more is not; a check written with `-ge` instead of
+# `-gt` passes the second fixture and fails the first, and nothing else in the
+# suite would notice. The two fixtures differ in ONE byte and in nothing else —
+# same markers, same order, padding below the marker where a repo's own
+# additions live.
+test_check_agents_md_budget() {
+    echo ""
+    echo "=== Test: check-agents-md.sh (Codex project-doc budget, invariant 7) ==="
+
+    local script="$REPO_ROOT/scripts/check-agents-md.sh"
+    local at_budget="$TEST_DIR/check-agents-md-at-budget.md"
+    local over_budget="$TEST_DIR/check-agents-md-over-budget.md"
+    local out exit_code pad_bytes
+
+    cat > "$at_budget" <<'EOF'
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+> **Managed by [`_agent-guidance`].**
+some managed content
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+EOF
+    pad_bytes=$(( 32768 - $(wc -c < "$at_budget") ))
+    if [[ "$pad_bytes" -le 0 ]]; then
+        fail "check-agents-md budget: the fixture is already >= 32768 bytes before padding — both legs below would be meaningless"
+        return
+    fi
+    # Deterministic filler: no random bytes, no date, no locale. `tr` over
+    # /dev/zero gives exactly pad_bytes of 'x'.
+    head -c "$pad_bytes" /dev/zero | tr '\0' 'x' >> "$at_budget"
+    if [[ "$(wc -c < "$at_budget" | tr -d ' ')" -ne 32768 ]]; then
+        fail "check-agents-md budget: could not build a fixture of exactly 32768 bytes (got $(wc -c < "$at_budget"))"
+        return
+    fi
+
+    cp "$at_budget" "$over_budget"
+    printf 'x' >> "$over_budget"
+
+    out="$TEST_DIR/check-agents-md-at-budget.out"
+    exit_code=0
+    "$script" "$at_budget" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 0 ]]; then
+        pass "check-agents-md budget: a file of exactly 32768 bytes passes"
+    else
+        fail "check-agents-md budget: a file of exactly 32768 bytes passes — exit $exit_code: $(cat "$out")"
+    fi
+
+    out="$TEST_DIR/check-agents-md-over-budget.out"
+    exit_code=0
+    "$script" "$over_budget" > "$out" 2>&1 || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "check-agents-md budget: 32769 bytes fails"
+    else
+        fail "check-agents-md budget: 32769 bytes fails — exit $exit_code: $(cat "$out")"
+    fi
+    assert_contains "$out" "exceeds Codex's project-doc budget" \
+        "check-agents-md budget: the failure names the budget it broke"
+    assert_contains "$out" "32769 bytes" \
+        "check-agents-md budget: the failure names the file's actual size"
+}
+
+# ── sync.sh and Codex's budget ─────────────────────────────────────────────
+#
+# WARN, NEVER BLOCK. The managed half is under budget (test_agents_md_size_budget
+# above), so an over-budget consumer file is over budget in its own
+# "## Repo-specific additions" — content the sync has no business editing. A run
+# that failed or skipped such a repo would withhold the managed guidance as a
+# punishment for content we do not own, AND leave a stale managed block sitting
+# on top of additions that were too long either way. So the two halves of this
+# test are equally load-bearing: the annotation is emitted, and the repo is not
+# failed.
+#
+# bigorg/repo-big-agents-md is the fixture because it already exists for issue
+# #81 and is far past 32768 bytes for a reason unrelated to this check — its
+# size is the marker-race fixture's whole point — so it cannot be quietly
+# shrunk without that test going red first.
+test_sync_codex_budget() {
+    echo ""
+    echo "=== Test: sync.sh (Codex project-doc budget warning) ==="
+
+    local out="$TEST_DIR/sync-codex-budget.txt"
+    local before after
+    before=$(bare_fleet_fingerprint)
+
+    GITHUB_REPOSITORY_OWNER=bigorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" --dry-run > "$out" 2>&1 || true
+
+    assert_contains "$out" "::warning::" \
+        "codex budget (sync): an over-budget AGENTS.md gets a GitHub annotation"
+    assert_contains "$out" "32768" \
+        "codex budget (sync): the annotation names the budget"
+    assert_contains "$out" "project_doc_max_bytes" \
+        "codex budget (sync): the annotation names Codex's setting"
+    assert_contains "$out" "Repo-specific additions" \
+        "codex budget (sync): the annotation names the half the repo can trim"
+    # The half that matters more: this is not a failure and not a skip.
+    assert_contains "$out" "0 failed" \
+        "codex budget (sync): over budget is not counted as a failed repo"
+    assert_not_contains "$out" "ERROR:" \
+        "codex budget (sync): over budget does not error the repo"
+
+    after=$(bare_fleet_fingerprint)
+    if [[ "$before" == "$after" ]]; then
+        pass "codex budget (sync): --dry-run still wrote nothing"
+    else
+        fail "codex budget (sync): --dry-run wrote to the fleet"
+    fi
+
+    # CONTROL — a fleet that is under budget gets no annotation at all, and
+    # the run really did walk repos rather than finding none (which would make
+    # the negative vacuous, the failure this suite's helpers keep being fixed
+    # for).
+    local under="$TEST_DIR/sync-codex-budget-under.txt"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" --dry-run > "$under" 2>&1 || true
+
+    assert_contains "$under" "=== testorg/repo-with-sync ===" \
+        "codex budget (sync, control): the control run really did process repos"
+    assert_not_contains "$under" "project-doc budget" \
+        "codex budget (sync, control): a fleet under budget gets no budget warning"
+}
+
+# ── drift-report.sh and Codex's budget ─────────────────────────────────────
+#
+# A NOTE, never a status. The file is not drifted and the sync is not going to
+# fix it, so `codex-truncated` joins the Notes column beside the lock summary
+# rather than replacing a verdict — which is also why the assertion is scoped
+# to the Notes CELL: a document-wide needle would match the legend paragraph
+# that explains the clause, and could never fail.
+test_drift_report_codex_budget() {
+    echo ""
+    echo "=== Test: drift-report.sh (codex-truncated note) ==="
+
+    local rpt="$TEST_DIR/drift-codex-budget.md"
+    GITHUB_REPOSITORY_OWNER=bigorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    assert_row_note_contains "$rpt" "bigorg/repo-big-agents-md" "codex-truncated" \
+        "codex budget (drift): an over-budget AGENTS.md is flagged in Notes"
+    assert_row_note_contains "$rpt" "bigorg/repo-big-agents-md" "32768" \
+        "codex budget (drift): the note names the budget"
+    assert_contains "$rpt" "project_doc_max_bytes" \
+        "codex budget (drift): the legend explains the clause"
+
+    # CONTROL — a repo whose AGENTS.md is comfortably under budget carries no
+    # such clause, and the row exists, so the negative is about a cell rather
+    # than about a missing row.
+    local under="$TEST_DIR/drift-codex-budget-under.md"
+    GITHUB_REPOSITORY_OWNER=testorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$under" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+
+    assert_scoped_line_lacks "$under" "testorg/repo-up-to-date-no-claude" "codex-truncated" \
+        "codex budget (drift, control): a repo under budget carries no clause"
+}
+
+# ── register-codex-hook.sh ─────────────────────────────────────────────────
+#
+# Same posture as register-bootstrap-hook.sh and tested the same way, because
+# the file it edits is the operator's own ~/.codex/hooks.json: append a
+# separate group, never rewrite one, refuse rather than guess, and never create
+# the Codex home itself.
+#
+# Every structural assertion here PARSES the JSON with python3. A grep can tell
+# that the string "fleet-memory.sh" is somewhere in the file; it cannot tell
+# our group being APPENDED from our command being spliced into somebody else's
+# group — which is the failure that silently inherits their matcher and
+# timeout, and is the only one worth writing this test for.
+test_register_codex_hook() {
+    echo ""
+    echo "=== Test: register-codex-hook.sh (user-level Codex SessionStart hook) ==="
+
+    local script="$REPO_ROOT/scripts/register-codex-hook.sh"
+    local d="$TEST_DIR/codexhook"
+    rm -rf "$d"
+    mkdir -p "$d/home"
+    local target="$d/home/hooks.json"
+    local out rc shape
+
+    # 1. Absent file → created.
+    rc=0
+    out=$(CODEX_HOME="$d/home" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out1"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-codex-hook: a first run exits 0"
+    else
+        fail "register-codex-hook: a first run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out1" "registered" "register-codex-hook: says it registered"
+    assert_contains "$d/out1" "/hooks" "register-codex-hook: names the trust step the operator still owes"
+
+    rc=0
+    shape=$(python3 - "$target" 2>&1 <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+groups = doc["hooks"]["SessionStart"]
+assert isinstance(groups, list), "SessionStart is not a list"
+assert len(groups) == 1, "expected exactly one group, got %d" % len(groups)
+g = groups[0]
+assert g["matcher"] == "startup|resume", "matcher is %r" % g.get("matcher")
+entries = g["hooks"]
+assert len(entries) == 1, "expected one handler, got %d" % len(entries)
+e = entries[0]
+assert e["type"] == "command", "type is %r" % e.get("type")
+assert e["timeout"] == 30, "timeout is %r" % e.get("timeout")
+assert e["statusMessage"] == "fleet-guidance", "statusMessage is %r" % e.get("statusMessage")
+assert "fleet-memory.sh" in e["command"], "command does not name the hook"
+assert "git rev-parse --show-toplevel" in e["command"], "command does not resolve from the git root"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-codex-hook: the written JSON has the documented Codex hook shape"
+    else
+        fail "register-codex-hook: the written JSON has the documented Codex hook shape — $shape"
+    fi
+
+    # 2. Idempotent: says so, and does not rewrite a single byte.
+    cp "$target" "$d/after-first.json"
+    rc=0
+    out=$(CODEX_HOME="$d/home" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out2"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-codex-hook: a second run exits 0"
+    else
+        fail "register-codex-hook: a second run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out2" "already-registered" "register-codex-hook: a second run says already-registered"
+    if cmp -s "$d/after-first.json" "$target"; then
+        pass "register-codex-hook: a second run changes nothing"
+    else
+        fail "register-codex-hook: a second run rewrote the file"
+    fi
+
+    # 3. An operator's own SessionStart group survives, ours is APPENDED after
+    #    it, and an unrelated top-level key is untouched.
+    mkdir -p "$d/existing"
+    local existing="$d/existing/hooks.json"
+    cat > "$existing" <<'EOF'
+{
+  "description": "my own workspace hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/my_own_notes.py",
+            "timeout": 5,
+            "statusMessage": "Loading session notes"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{ "type": "command", "command": "true" }]
+      }
+    ]
+  }
+}
+EOF
+    cp "$existing" "$d/existing-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/existing" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out3"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-codex-hook: appending to an existing file exits 0"
+    else
+        fail "register-codex-hook: appending to an existing file exits 0 — got $rc: $out"
+    fi
+
+    rc=0
+    shape=$(python3 - "$d/existing-before.json" "$existing" 2>&1 <<'PY'
+import json, sys
+
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+
+b = before["hooks"]["SessionStart"]
+a = after["hooks"]["SessionStart"]
+assert len(a) == len(b) + 1, "expected one added group, got %d -> %d" % (len(b), len(a))
+# Order AND content: the operator's group is still first and is deep-equal.
+assert a[0] == b[0], "the pre-existing group changed: %r -> %r" % (b[0], a[0])
+assert a[-1]["hooks"][0]["command"].find("fleet-memory.sh") >= 0, "ours was not appended last"
+# Nothing else in the document moved.
+assert after["description"] == before["description"], "an unrelated top-level key changed"
+assert after["hooks"]["SessionEnd"] == before["hooks"]["SessionEnd"], "an unrelated event changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-codex-hook: an existing SessionStart group survives and ours is appended"
+    else
+        fail "register-codex-hook: an existing SessionStart group survives and ours is appended — $shape"
+    fi
+
+    # 4. Unparseable → exit 3, and NOT ONE BYTE written. A hooks.json we cannot
+    #    read is one we cannot safely edit; losing an operator's hook config is
+    #    far worse than not registering ours.
+    mkdir -p "$d/broken"
+    local broken="$d/broken/hooks.json"
+    printf '{ "hooks": { "SessionStart": [ oops\n' > "$broken"
+    cp "$broken" "$d/broken-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/broken" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out4"
+    if [[ $rc -eq 3 ]]; then
+        pass "register-codex-hook: an unparseable file exits 3"
+    else
+        fail "register-codex-hook: an unparseable file exits 3 — got $rc: $out"
+    fi
+    assert_contains "$d/out4" "refused-unparseable" "register-codex-hook: the refusal says why"
+    if cmp -s "$d/broken-before.json" "$broken"; then
+        pass "register-codex-hook: an unparseable file is left untouched"
+    else
+        fail "register-codex-hook: an unparseable file was rewritten"
+    fi
+
+    # 5. No Codex home → refuse, and create NOTHING. An empty ~/.codex reads as
+    #    "Codex is set up here" to everything that probes for it, this repo's
+    #    own hook included, so conjuring one is worse than not registering.
+    rc=0
+    out=$(CODEX_HOME="$d/no-codex-here" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out5"
+    if [[ $rc -ne 0 ]]; then
+        pass "register-codex-hook: a missing Codex home exits non-zero (got $rc)"
+    else
+        fail "register-codex-hook: a missing Codex home exited 0"
+    fi
+    assert_contains "$d/out5" "refused-no-codex-home" "register-codex-hook: the refusal names the missing home"
+    if [[ -e "$d/no-codex-here" ]]; then
+        fail "register-codex-hook: a missing Codex home was created"
+    else
+        pass "register-codex-hook: a missing Codex home is not created"
+    fi
+}
+
+# ── fleet-memory.sh: the Codex destination ─────────────────────────────────
+#
+# The same marked block, to a SECOND surface: ~/.codex/AGENTS.md, Codex's
+# GLOBAL user instructions, which are loaded by
+# `codex-rs/codex-home/src/instructions/mod.rs` and — unlike a repo's own
+# AGENTS.md — are not counted against `project_doc_max_bytes`. That is the
+# whole reason the guidance goes there rather than into each repo's file: at
+# ~50 kB it would blow a 32768-byte budget in every repo at once and silently
+# evict each repo's own additions (docs/decisions/0012).
+#
+# What these guard is not "does it write a second file" but the three ways a
+# second destination goes wrong: it gets created on a machine that does not
+# want it, it fails and takes the FIRST destination down with it, or it fails
+# silently. The last is why every leg checks the verdict line as well as the
+# files.
+# shellcheck disable=SC2088  # the tilde needles below are LITERAL: they are
+# the verdict's own display text, not paths this test opens.
+test_fleet_memory_codex() {
+    echo ""
+    echo "TEST: fleet-memory.sh (Codex global instructions)"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-codex"
+    rm -rf "$d"
+    mkdir -p "$d/cfg" "$d/codex"
+    local payload="$d/payload.md"
+    printf '# Fleet guidance\n\nThe canary is CODEX-IBIS-77.\n' > "$payload"
+
+    local claude_dest="$d/cfg/CLAUDE.md"
+    local codex_dest="$d/codex/AGENTS.md"
+    local out rc
+
+    # 1. Both surfaces in play.
+    rm -f "$claude_dest" "$codex_dest"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" CODEX_HOME="$d/codex" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_both"
+    [[ $rc -eq 0 ]] && pass "fleet-memory (codex): a two-destination run exits 0" \
+        || fail "fleet-memory (codex): a two-destination run exit $rc"
+    assert_contains "$d/out_both" "fleet-guidance: installed" \
+        "fleet-memory (codex): reports installed"
+    assert_contains "$d/out_both" "~/.claude/CLAUDE.md, ~/.codex/AGENTS.md" \
+        "fleet-memory (codex): the verdict names both destinations"
+    assert_contains "$codex_dest" "CODEX-IBIS-77" \
+        "fleet-memory (codex): the payload reaches Codex's global instructions"
+    assert_contains "$codex_dest" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory (codex): the Codex copy is a MARKED block, not a bare dump"
+    assert_contains "$claude_dest" "CODEX-IBIS-77" \
+        "fleet-memory (codex): the Claude destination still got it too"
+
+    # Byte-identical block on both surfaces — one payload, one version id.
+    if cmp -s "$claude_dest" "$codex_dest"; then
+        pass "fleet-memory (codex): both destinations carry the identical block"
+    else
+        fail "fleet-memory (codex): the two destinations diverged"
+    fi
+
+    # A second run is `current` for both, and rewrites neither.
+    local sum_before; sum_before="$(sha256sum "$codex_dest" | cut -d' ' -f1)"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg" CODEX_HOME="$d/codex" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"
+    printf '%s' "$out" > "$d/out_both2"
+    assert_contains "$d/out_both2" "fleet-guidance: current" \
+        "fleet-memory (codex): a second run reports current"
+    assert_contains "$d/out_both2" "~/.codex/AGENTS.md" \
+        "fleet-memory (codex): the current verdict names Codex too"
+    if [[ "$sum_before" == "$(sha256sum "$codex_dest" | cut -d' ' -f1)" ]]; then
+        pass "fleet-memory (codex): idempotent at the Codex destination"
+    else
+        fail "fleet-memory (codex): the second run changed the Codex file"
+    fi
+
+    # 2. NO ~/.codex — the machine that has never run Codex. Nothing is
+    #    created there, and the verdict is exactly the single-destination line
+    #    it was before this hook learned about Codex at all.
+    mkdir -p "$d/cfg2"
+    out="$(CLAUDE_CONFIG_DIR="$d/cfg2" CODEX_HOME="$d/no-codex-here" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_nocodex"
+    [[ $rc -eq 0 ]] && pass "fleet-memory (codex): a Codex-less machine exits 0" \
+        || fail "fleet-memory (codex): a Codex-less machine exit $rc"
+    if [[ -e "$d/no-codex-here" ]]; then
+        fail "fleet-memory (codex): ~/.codex was CREATED on a machine that has no Codex"
+    else
+        pass "fleet-memory (codex): ~/.codex is never created"
+    fi
+    assert_contains "$d/out_nocodex" "~/.claude/CLAUDE.md" \
+        "fleet-memory (codex): the verdict still names the Claude destination"
+    assert_not_contains "$d/out_nocodex" "~/.codex/AGENTS.md" \
+        "fleet-memory (codex): the verdict lists only destinations that were in play"
+
+    # 3. FLEET_GUIDANCE_SKIP clears BOTH surfaces, and leaves the developer's
+    #    own bytes exactly as they were. One flag, because the reason to opt
+    #    out — user-level files are global on a durable machine — is the same
+    #    reason on each.
+    mkdir -p "$d/skipcfg" "$d/skipcodex"
+    local skip_claude="$d/skipcfg/CLAUDE.md"
+    local skip_codex="$d/skipcodex/AGENTS.md"
+    printf '# My personal global instructions\n\nPrefer pnpm on this machine.\n' > "$skip_claude"
+    printf '# My own Codex notes\n\nUse the repo formatter, not mine.\n' > "$skip_codex"
+    cp "$skip_claude" "$d/skip-claude.orig"
+    cp "$skip_codex" "$d/skip-codex.orig"
+    CLAUDE_CONFIG_DIR="$d/skipcfg" CODEX_HOME="$d/skipcodex" \
+        FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" >/dev/null 2>&1
+    assert_contains "$skip_codex" "CODEX-IBIS-77" \
+        "fleet-memory (codex, skip): the block was installed first, so there is something to remove"
+    out="$(CLAUDE_CONFIG_DIR="$d/skipcfg" CODEX_HOME="$d/skipcodex" \
+           FLEET_GUIDANCE_PAYLOAD="$payload" FLEET_GUIDANCE_SKIP=1 bash "$hook" 2>&1)"; rc=$?
+    printf '%s' "$out" > "$d/out_skip_both"
+    [[ $rc -eq 0 ]] && pass "fleet-memory (codex, skip): exits 0" \
+        || fail "fleet-memory (codex, skip): exit $rc"
+    assert_contains "$d/out_skip_both" "skipped" "fleet-memory (codex, skip): announces itself"
+    assert_contains "$d/out_skip_both" "~/.codex/AGENTS.md" \
+        "fleet-memory (codex, skip): names the Codex destination it cleared"
+    assert_not_contains "$skip_codex" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory (codex, skip): the block is gone from the Codex file"
+    assert_not_contains "$skip_claude" "BEGIN FLEET GUIDANCE" \
+        "fleet-memory (codex, skip): the block is gone from the Claude file"
+    if cmp -s "$d/skip-claude.orig" "$skip_claude"; then
+        pass "fleet-memory (codex, skip): the Claude file is byte-identical to before"
+    else
+        fail "fleet-memory (codex, skip): the Claude file changed beyond the block"
+    fi
+    if cmp -s "$d/skip-codex.orig" "$skip_codex"; then
+        pass "fleet-memory (codex, skip): the Codex file is byte-identical to before"
+    else
+        fail "fleet-memory (codex, skip): the Codex file changed beyond the block"
+    fi
+
+    # 4. A broken CODEX destination must not cost the CLAUDE one its delivery,
+    #    and must not be silent. Root can read anything, so this is skipped
+    #    LOUDLY there rather than passing vacuously.
+    if [[ "$(id -u)" -ne 0 ]]; then
+        mkdir -p "$d/nrcfg" "$d/nrcodex"
+        local nr_claude="$d/nrcfg/CLAUDE.md"
+        local nr_codex="$d/nrcodex/AGENTS.md"
+        rm -f "$nr_claude"
+        printf 'PERSONAL CODEX CONTENT THAT MUST SURVIVE\n' > "$nr_codex"
+        chmod 200 "$nr_codex"
+        out="$(CLAUDE_CONFIG_DIR="$d/nrcfg" CODEX_HOME="$d/nrcodex" \
+               FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" 2>&1)"; rc=$?
+        printf '%s' "$out" > "$d/out_nr_codex"
+        chmod 600 "$nr_codex"
+        [[ $rc -eq 0 ]] && pass "fleet-memory (codex, unreadable): still exits 0" \
+            || fail "fleet-memory (codex, unreadable): exit $rc"
+        if [[ "$(head -1 "$d/out_nr_codex")" == "fleet-guidance: DEGRADED"* ]]; then
+            pass "fleet-memory (codex, unreadable): the verdict line starts DEGRADED"
+        else
+            fail "fleet-memory (codex, unreadable): the verdict is '$(head -1 "$d/out_nr_codex")'"
+        fi
+        assert_contains "$d/out_nr_codex" "$nr_codex" \
+            "fleet-memory (codex, unreadable): the DEGRADED line names the Codex destination"
+        assert_contains "$nr_codex" "PERSONAL CODEX CONTENT THAT MUST SURVIVE" \
+            "fleet-memory (codex, unreadable): the unreadable file is NOT overwritten"
+        # THE HALF THAT MATTERS MOST: the other destination was still written.
+        assert_contains "$nr_claude" "CODEX-IBIS-77" \
+            "fleet-memory (codex, unreadable): the Claude destination was delivered anyway"
+    else
+        echo "  SKIP: fleet-memory Codex unreadable-dest case (running as root; root bypasses it)"
+    fi
+}
+
+# ── memory-home.sh: a memory note names the committed copy of its fact ─────
+#
+# The subject is a hook that runs on TWO events against files that live
+# OUTSIDE every repo, so every leg below pins all three environment variables
+# that decide where it looks: CLAUDE_CONFIG_DIR (the notes and the session
+# markers), CLAUDE_PROJECT_DIR (the first three clone candidates) and HOME
+# (the fourth, `$HOME/repos/<repo>`, and the fallback config dir). HOME is the
+# one it is tempting to leave alone and the one that would quietly invalidate
+# the fixtures: this machine really does have ~/repos/_agent-guidance, so a run
+# that inherited it would resolve a fixture's home against a REAL checkout and
+# pass for a reason the fixture never arranged.
+#
+# `MEMORY.md` is in the fixture on purpose and carries no frontmatter. It is
+# the note-shaped file the scan must skip, and skipping it is asserted
+# NEGATIVELY — if it were scanned the whole run would print DEGRADED — which is
+# why several legs below also assert the absence of that word.
+test_memory_home_hook() {
+    echo ""
+    echo "TEST: memory-home.sh (a memory note names its repo home)"
+
+    local d="$TEST_DIR/memoryhome"
+    rm -rf "$d"
+    local MH_HOOK="$REPO_ROOT/.claude/hooks/memory-home.sh"
+    local MH_CFG="$d/cfg"
+    local MH_HOME="$d/home"
+    local MH_PROJ="$d/proj"
+    local mem="$MH_CFG/projects/-home-x/memory"
+    mkdir -p "$mem" "$MH_HOME" "$MH_PROJ/_agent-guidance/docs/decisions"
+
+    # The one clone the fixtures resolve against, and the one file in it.
+    : > "$MH_PROJ/_agent-guidance/docs/decisions/0013-real.md"
+
+    # <outfile> <event json> — runs the hook, captures stdout+stderr, records
+    # the exit code in MH_RC. Nothing here lets a non-zero code through
+    # silently: "always exits 0" is itself one of the claims under test.
+    mh() {
+        MH_RC=0
+        printf '%s' "$2" | env HOME="$MH_HOME" CLAUDE_CONFIG_DIR="$MH_CFG" \
+            CLAUDE_PROJECT_DIR="$MH_PROJ" bash "$MH_HOOK" > "$1" 2>&1 || MH_RC=$?
+    }
+    local MH_RC=0
+
+    local ss='{"session_id":"sess-a","hook_event_name":"SessionStart","source":"startup"}'
+
+    printf -- '---\nname: index\n---\nnot a note\n' > "$mem/MEMORY.md"
+    cat > "$mem/homed.md" <<'EOF'
+---
+name: homed
+description: a fact whose durable copy is committed
+metadata:
+  type: reference
+  home: Adam-S-Daniel/_agent-guidance:docs/decisions/0013-real.md
+---
+body
+EOF
+    cat > "$mem/person.md" <<'EOF'
+---
+name: person
+description: how the operator likes to be written to
+metadata:
+  type: user
+---
+body
+EOF
+
+    # 1. CLEAN → SILENT. The anti-nag claim, and the reason this hook can be
+    #    left registered: an operator who is greeted by a status line they did
+    #    not ask for learns to skim it, and the next real finding goes with it.
+    mh "$d/out-clean" "$ss"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: SessionStart exits 0 on a clean scan"
+    else
+        fail "memory-home: SessionStart exits 0 on a clean scan — got $MH_RC"
+    fi
+    if [[ ! -s "$d/out-clean" ]]; then
+        pass "memory-home: SessionStart prints NOTHING when every note has a resolvable home"
+    else
+        fail "memory-home: SessionStart prints NOTHING when every note has a resolvable home — got '$(cat "$d/out-clean")'"
+    fi
+
+    # 2. A homeless note is named; the `type: user` note beside it is not.
+    cat > "$mem/homeless.md" <<'EOF'
+---
+name: homeless
+description: a fact that lives only here
+metadata:
+  type: project
+---
+body
+EOF
+    mh "$d/out-homeless" "$ss"
+    assert_contains "$d/out-homeless" "have no repo home" \
+        "memory-home: SessionStart names a homeless note"
+    assert_contains "$d/out-homeless" "$mem/homeless.md" \
+        "memory-home: the nudge names the note's path"
+    assert_contains "$d/out-homeless" "set metadata.home" \
+        "memory-home: the nudge says what to set"
+    assert_not_contains "$d/out-homeless" "$mem/person.md" \
+        "memory-home: a type: user note is exempt"
+    assert_not_contains "$d/out-homeless" "$mem/homed.md" \
+        "memory-home: a note with a resolvable home is not flagged"
+    assert_not_contains "$d/out-homeless" "$mem/MEMORY.md" \
+        "memory-home: MEMORY.md is excluded from the scan, not judged as a note"
+    assert_not_contains "$d/out-homeless" "DEGRADED" \
+        "memory-home: a scan that found something is not a degraded scan"
+
+    # 3. DANGLING: the clone is present, the file it names is not. This is the
+    #    promotion that was promised and never made, which a presence check on
+    #    `metadata.home` alone cannot see.
+    cat > "$mem/dangling.md" <<'EOF'
+---
+name: dangling
+description: home names a file that was never committed
+metadata:
+  type: project
+  home: Adam-S-Daniel/_agent-guidance:docs/decisions/9999-never-written.md
+---
+body
+EOF
+    mh "$d/out-dangling" "$ss"
+    assert_contains "$d/out-dangling" "$mem/dangling.md" \
+        "memory-home: a dangling home is flagged (clone present, path absent)"
+    assert_not_contains "$d/out-dangling" "$mem/homed.md" \
+        "memory-home: the resolvable home in the same clone still passes"
+
+    # 4. TRUNCATION. Eight more homeless notes, in a second project directory:
+    #    ten flagged in total with the two above, so five paths and then
+    #    "+5 more". A nudge that pastes thirty paths into context costs more
+    #    than the thing it is warning about. The count is asserted alongside
+    #    the truncation marker so the arithmetic is checked rather than
+    #    assumed — `-home-many` sorts before `-home-x`, so the five shown are
+    #    n1..n5 whatever else is flagged.
+    local many="$MH_CFG/projects/-home-many/memory"
+    mkdir -p "$many"
+    local i
+    for i in 1 2 3 4 5 6 7 8; do
+        printf -- '---\nname: n%s\nmetadata:\n  type: project\n---\nbody\n' "$i" > "$many/n$i.md"
+    done
+    mh "$d/out-many" "$ss"
+    assert_contains "$d/out-many" "memory-home: 10 memory note(s)" \
+        "memory-home: the nudge counts every flagged note, not only the listed ones"
+    assert_contains "$d/out-many" "+5 more" \
+        "memory-home: more than five flagged notes truncate with +K more"
+    assert_contains "$d/out-many" "$many/n5.md" \
+        "memory-home: the fifth flagged note is still listed"
+    assert_not_contains "$d/out-many" "$many/n6.md" \
+        "memory-home: the sixth flagged note is folded into +K more"
+    rm -rf "$MH_CFG/projects/-home-many"
+
+    # 5. THE MARKER, and the prune. 14 days is the cutoff; the stale marker's
+    #    mtime is set with `touch -d` rather than by waiting, so this is a fact
+    #    about the file, not about the clock.
+    if [[ -f "$MH_CFG/memory-home/sess-a" ]]; then
+        pass "memory-home: SessionStart writes a marker for this session"
+    else
+        fail "memory-home: SessionStart writes a marker for this session — no file at $MH_CFG/memory-home/sess-a"
+    fi
+    : > "$MH_CFG/memory-home/stale-session"
+    touch -d '20 days ago' "$MH_CFG/memory-home/stale-session"
+    : > "$MH_CFG/memory-home/recent-session"
+    touch -d '3 days ago' "$MH_CFG/memory-home/recent-session"
+    mh "$d/out-prune" '{"session_id":"sess-b","hook_event_name":"SessionStart","source":"resume"}'
+    if [[ ! -e "$MH_CFG/memory-home/stale-session" ]]; then
+        pass "memory-home: a marker older than 14 days is pruned"
+    else
+        fail "memory-home: a marker older than 14 days is pruned — stale-session survived"
+    fi
+    if [[ -f "$MH_CFG/memory-home/recent-session" ]]; then
+        pass "memory-home: a marker inside 14 days is kept"
+    else
+        fail "memory-home: a marker inside 14 days is kept — recent-session was pruned"
+    fi
+
+    # 6. A session id from stdin becomes a PATH. Anything outside [A-Za-z0-9_-]
+    #    is dropped rather than escaped, so no id can walk out of the marker
+    #    directory — asserted on the directory's contents, not on the sanitizer.
+    mh "$d/out-traversal" '{"session_id":"../../escaped","hook_event_name":"SessionStart","source":"startup"}'
+    if [[ ! -e "$MH_CFG/escaped" && ! -e "$MH_CFG/projects/escaped" ]]; then
+        pass "memory-home: a traversing session id cannot write outside the marker directory"
+    else
+        fail "memory-home: a traversing session id wrote outside the marker directory"
+    fi
+
+    # ── Stop ───────────────────────────────────────────────────────────────
+    #
+    # Scoped to THIS session's writes: notes whose mtime is at or after the
+    # session's own marker. Everything below sets those mtimes explicitly.
+    local stop_open='{"session_id":"sess-stop","hook_event_name":"Stop","stop_hook_active":false}'
+    local stop_again='{"session_id":"sess-stop","hook_event_name":"Stop","stop_hook_active":true}'
+
+    mh "$d/out-mark-stop" '{"session_id":"sess-stop","hook_event_name":"SessionStart","source":"startup"}'
+    find "$MH_CFG/projects" -name '*.md' -exec touch -d '2 days ago' {} +
+
+    # 7. Everything predates the marker → this session wrote none of it → the
+    #    turn ends. The gate is about what THIS session left behind, not about
+    #    the backlog the SessionStart nudge already named.
+    mh "$d/out-stop-old" "$stop_open"
+    if [[ $MH_RC -eq 0 && ! -s "$d/out-stop-old" ]]; then
+        pass "memory-home: Stop allows a note whose mtime predates the session marker"
+    else
+        fail "memory-home: Stop allows a note whose mtime predates the session marker — rc=$MH_RC out='$(cat "$d/out-stop-old")'"
+    fi
+
+    # 8. THE BLOCK LANE. Same fixture, one note touched forward.
+    touch "$mem/homeless.md"
+    mh "$d/out-stop-block" "$stop_open"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: a blocking Stop still exits 0 (the JSON is the decision, not the code)"
+    else
+        fail "memory-home: a blocking Stop still exits 0 — got $MH_RC"
+    fi
+    assert_contains "$d/out-stop-block" '"decision": "block"' \
+        "memory-home: Stop blocks on a note this session wrote with no repo home"
+    assert_contains "$d/out-stop-block" "$mem/homeless.md" \
+        "memory-home: the block reason names the note"
+    assert_contains "$d/out-stop-block" "the repo copy is the source of truth" \
+        "memory-home: the block reason states the contract"
+    assert_not_contains "$d/out-stop-block" "$mem/person.md" \
+        "memory-home: Stop exempts a type: user note too"
+    # The output has to be the JSON object and nothing else — a stray line
+    # beside it is what turns a decision into a parse error.
+    local first_byte
+    first_byte=$(head -c 1 "$d/out-stop-block")
+    if [[ "$first_byte" == "{" && "$(wc -l < "$d/out-stop-block")" -eq 1 ]]; then
+        pass "memory-home: a blocking Stop prints only the JSON object"
+    else
+        fail "memory-home: a blocking Stop prints only the JSON object — got '$(cat "$d/out-stop-block")'"
+    fi
+    if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["decision"]=="block"; assert d["reason"].startswith("memory-home:")' "$d/out-stop-block" 2>/dev/null; then
+        pass "memory-home: the block is a parseable object with decision and reason"
+    else
+        fail "memory-home: the block is a parseable object with decision and reason"
+    fi
+
+    # 9. THE LOOP GUARD. stop_hook_active true means Claude is already
+    #    continuing because of a stop hook; blocking again would spend Claude
+    #    Code's eight consecutive continuations on one sentence.
+    mh "$d/out-stop-again" "$stop_again"
+    assert_not_contains "$d/out-stop-again" '"decision": "block"' \
+        "memory-home: stop_hook_active true does not block again"
+    assert_contains "$d/out-stop-again" "not blocking again" \
+        "memory-home: the second pass still says what is unhomed"
+    assert_contains "$d/out-stop-again" "systemMessage" \
+        "memory-home: the second pass surfaces through systemMessage"
+
+    # 10. No marker — the hook was registered mid-session — so there is no
+    #     honest way to tell what this session wrote, and a gate that blocks on
+    #     a guess is worse than no gate.
+    mh "$d/out-stop-nomarker" '{"session_id":"never-started","hook_event_name":"Stop","stop_hook_active":false}'
+    if [[ $MH_RC -eq 0 && ! -s "$d/out-stop-nomarker" ]]; then
+        pass "memory-home: Stop with no session marker does nothing"
+    else
+        fail "memory-home: Stop with no session marker does nothing — out='$(cat "$d/out-stop-nomarker")'"
+    fi
+
+    # 11. An event this hook is not registered for is a silent no-op.
+    mh "$d/out-other" '{"session_id":"sess-stop","hook_event_name":"PreToolUse"}'
+    if [[ $MH_RC -eq 0 && ! -s "$d/out-other" ]]; then
+        pass "memory-home: any other event exits 0 silently"
+    else
+        fail "memory-home: any other event exits 0 silently — out='$(cat "$d/out-other")'"
+    fi
+
+    # ── A note this script cannot parse is a FINDING, not a verdict ────────
+    #
+    # 12. The fixture is the real one: Claude Code writes `description:` itself
+    #     and does not quote it, so an ordinary description containing `: ` is
+    #     frontmatter PyYAML rejects outright. FOUR such notes existed on this
+    #     machine the day this hook was written, and an earlier draft that
+    #     treated a parse failure as a run-level degrade printed their names
+    #     and gated nothing — every session DEGRADED forever, no note ever
+    #     nudged. So: flagged like a homeless note, labelled with the remedy,
+    #     and the scan keeps going.
+    printf -- '---\nname: colon\ndescription: Decap delete uses the git data api with delete: true + editorial_workflow\nmetadata:\n  type: feedback\n---\nbody\n' > "$mem/colon.md"
+    printf 'just a body, no frontmatter at all\n' > "$mem/nofm.md"
+    mh "$d/out-colon" "$ss"
+    assert_not_contains "$d/out-colon" "memory-home: DEGRADED" \
+        "memory-home: an unparseable note does not degrade the run"
+    assert_contains "$d/out-colon" "$mem/colon.md (unparseable frontmatter" \
+        "memory-home: an unparseable note is flagged, labelled with why"
+    assert_contains "$d/out-colon" "quote the description or fix the YAML" \
+        "memory-home: the label names the remedy, not the exception class"
+    assert_contains "$d/out-colon" "$mem/nofm.md (no YAML frontmatter block" \
+        "memory-home: a note with no frontmatter at all is flagged and labelled"
+    # THE HALF THAT MATTERS MOST: the notes beside the bad one are still judged.
+    assert_contains "$d/out-colon" "$mem/homeless.md" \
+        "memory-home: the scan continues past an unparseable note"
+    assert_not_contains "$d/out-colon" "$mem/homed.md" \
+        "memory-home: a resolvable home still passes in a run that hit a bad note"
+    assert_not_contains "$d/out-colon" "$mem/person.md" \
+        "memory-home: a type: user note is still exempt in that run"
+
+    # 12b. On Stop it blocks exactly like a homeless note — it has no home this
+    #      hook can see — and only when THIS session wrote it.
+    find "$MH_CFG/projects" -name '*.md' -exec touch -d '2 days ago' {} +
+    touch "$mem/colon.md"
+    mh "$d/out-colon-stop" "$stop_open"
+    assert_contains "$d/out-colon-stop" '"decision": "block"' \
+        "memory-home: Stop blocks on an unparseable note this session wrote"
+    assert_contains "$d/out-colon-stop" "$mem/colon.md (unparseable frontmatter" \
+        "memory-home: the block reason carries the label too"
+    assert_not_contains "$d/out-colon-stop" "$mem/homeless.md" \
+        "memory-home: an older homeless note is still out of this session's scope"
+    mh "$d/out-colon-again" "$stop_again"
+    assert_not_contains "$d/out-colon-again" '"decision": "block"' \
+        "memory-home: the one-nudge loop guard covers the unparseable case too"
+    rm -f "$mem/colon.md" "$mem/nofm.md"
+
+    # ── Degrade, never crash: RUN-LEVEL faults only ────────────────────────
+    #
+    # 13. PyYAML absent. Simulated by a `yaml` module on PYTHONPATH that raises
+    #     on import, which is what a machine without it does from this script's
+    #     point of view — and it is checked before any note is opened, so the
+    #     verdict cannot depend on which note happened to be first.
+    mkdir -p "$d/fakelib"
+    printf 'raise ImportError("PyYAML is not installed in this fixture")\n' > "$d/fakelib/yaml.py"
+    MH_RC=0
+    printf '%s' "$stop_open" | env HOME="$MH_HOME" CLAUDE_CONFIG_DIR="$MH_CFG" \
+        CLAUDE_PROJECT_DIR="$MH_PROJ" PYTHONPATH="$d/fakelib" \
+        bash "$MH_HOOK" > "$d/out-noyaml" 2>&1 || MH_RC=$?
+    assert_contains "$d/out-noyaml" "memory-home: DEGRADED" \
+        "memory-home: a missing PyYAML degrades"
+    assert_contains "$d/out-noyaml" "PyYAML" \
+        "memory-home: the DEGRADED line names PyYAML"
+    assert_not_contains "$d/out-noyaml" '"decision": "block"' \
+        "memory-home: a missing PyYAML blocks nothing"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: a missing PyYAML still exits 0"
+    else
+        fail "memory-home: a missing PyYAML still exits 0 — got $MH_RC"
+    fi
+
+    # 14. Nothing under the notes directory was written to or removed. The hook
+    #     nudges and gates; the agent does the promotion.
+    if [[ -f "$mem/homeless.md" && -f "$mem/person.md" && -f "$mem/homed.md" \
+          && -f "$mem/dangling.md" && -f "$mem/MEMORY.md" ]]; then
+        pass "memory-home: every note survives the run untouched"
+    else
+        fail "memory-home: a note was removed by the hook"
+    fi
+    if grep -qF -- "no repo home" "$mem/homeless.md" 2>/dev/null; then
+        fail "memory-home: the hook wrote into a note"
+    else
+        pass "memory-home: the hook never writes into a note"
+    fi
+
+    unset -f mh
+}
+
+# ── register-memory-home-hook.sh ───────────────────────────────────────────
+#
+# Same posture as register-codex-hook and register-bootstrap-hook, one event
+# further: TWO groups, on two different events, appended separately. The legs
+# that matter are the ones about the operator's own file — a settings.json this
+# script cannot parse is one it cannot safely edit, and losing a machine's
+# harness config is far worse than missing this gate.
+test_register_memory_home_hook() {
+    echo ""
+    echo "=== Test: register-memory-home-hook.sh (user-level SessionStart + Stop) ==="
+
+    local script="$REPO_ROOT/scripts/register-memory-home-hook.sh"
+    local d="$TEST_DIR/memoryhomehook"
+    rm -rf "$d"
+    mkdir -p "$d/cfg"
+    local target="$d/cfg/settings.json"
+    local out rc shape
+
+    # 1. Absent file → created, with both groups in the documented shape.
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/cfg" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out1"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: a first run exits 0"
+    else
+        fail "register-memory-home-hook: a first run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out1" "registered" "register-memory-home-hook: says it registered"
+    assert_contains "$d/out1" ".claude/hooks/memory-home.sh" \
+        "register-memory-home-hook: names the hook path it wired"
+
+    rc=0
+    shape=$(python3 - "$target" 2>&1 <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+hooks = doc["hooks"]
+assert set(hooks) == {"SessionStart", "Stop"}, "unexpected events: %r" % sorted(hooks)
+
+ss = hooks["SessionStart"]
+assert len(ss) == 1, "expected one SessionStart group, got %d" % len(ss)
+assert ss[0]["matcher"] == "startup|resume", "matcher is %r" % ss[0].get("matcher")
+
+stop = hooks["Stop"]
+assert len(stop) == 1, "expected one Stop group, got %d" % len(stop)
+assert "matcher" not in stop[0], "the Stop group carries a matcher: %r" % stop[0]
+
+for label, group in (("SessionStart", ss[0]), ("Stop", stop[0])):
+    entries = group["hooks"]
+    assert len(entries) == 1, "%s: expected one handler, got %d" % (label, len(entries))
+    e = entries[0]
+    assert e["type"] == "command", "%s: type is %r" % (label, e.get("type"))
+    assert e["timeout"] == 15, "%s: timeout is %r" % (label, e.get("timeout"))
+    assert "memory-home.sh" in e["command"], "%s: command does not name the hook" % label
+    # The missing-script arm SAYS so rather than failing silently: a gate that
+    # is off without announcing it is the failure this hook exists to prevent.
+    assert "DEGRADED" in e["command"], "%s: command has no degraded arm" % label
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: the written JSON has both groups in the documented shape"
+    else
+        fail "register-memory-home-hook: the written JSON has both groups in the documented shape — $shape"
+    fi
+
+    # 2. Idempotent: says so, and does not rewrite a single byte.
+    cp "$target" "$d/after-first.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/cfg" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out2"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: a second run exits 0"
+    else
+        fail "register-memory-home-hook: a second run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out2" "already-registered" \
+        "register-memory-home-hook: a second run says already-registered"
+    if cmp -s "$d/after-first.json" "$target"; then
+        pass "register-memory-home-hook: a second run changes nothing"
+    else
+        fail "register-memory-home-hook: a second run rewrote the file"
+    fi
+
+    # 3. An operator's own SessionStart group survives byte-for-byte as parsed
+    #    JSON, ours is appended after it, and unrelated keys do not move.
+    mkdir -p "$d/existing"
+    local existing="$d/existing/settings.json"
+    cat > "$existing" <<'EOF'
+{
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "true" }]
+      }
+    ]
+  }
+}
+EOF
+    cp "$existing" "$d/existing-before.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/existing" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out3"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: appending to an existing file exits 0"
+    else
+        fail "register-memory-home-hook: appending to an existing file exits 0 — got $rc: $out"
+    fi
+
+    rc=0
+    shape=$(python3 - "$d/existing-before.json" "$existing" 2>&1 <<'PY'
+import json, sys
+
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+
+b = before["hooks"]["SessionStart"]
+a = after["hooks"]["SessionStart"]
+assert len(a) == len(b) + 1, "expected one added group, got %d -> %d" % (len(b), len(a))
+# Order AND content: the operator's group is still first and is deep-equal.
+assert a[0] == b[0], "the pre-existing group changed: %r -> %r" % (b[0], a[0])
+assert "memory-home.sh" in a[-1]["hooks"][0]["command"], "ours was not appended last"
+assert len(after["hooks"]["Stop"]) == 1, "the Stop group was not added"
+# Nothing else in the document moved.
+assert after["model"] == before["model"], "an unrelated top-level key changed"
+assert after["hooks"]["PreToolUse"] == before["hooks"]["PreToolUse"], "an unrelated event changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: an existing SessionStart group survives and ours is appended"
+    else
+        fail "register-memory-home-hook: an existing SessionStart group survives and ours is appended — $shape"
+    fi
+
+    # 4. --hook is embedded VERBATIM. This is what lets a run from a worktree
+    #    wire the main checkout's copy rather than a path that disappears with
+    #    the worktree, so the exact string has to survive into the file.
+    mkdir -p "$d/hookflag"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/hookflag" "$script" --hook /opt/checkouts/_agent-guidance/.claude/hooks/memory-home.sh 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out4"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: --hook exits 0"
+    else
+        fail "register-memory-home-hook: --hook exits 0 — got $rc: $out"
+    fi
+    rc=0
+    shape=$(python3 - "$d/hookflag/settings.json" 2>&1 <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+want = "h=/opt/checkouts/_agent-guidance/.claude/hooks/memory-home.sh;"
+for event in ("SessionStart", "Stop"):
+    cmd = doc["hooks"][event][0]["hooks"][0]["command"]
+    assert want in cmd, "%s command does not embed the --hook path verbatim: %r" % (event, cmd)
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: the --hook path is embedded verbatim on both events"
+    else
+        fail "register-memory-home-hook: the --hook path is embedded verbatim on both events — $shape"
+    fi
+
+    # 5. Unparseable → exit 3, and NOT ONE BYTE written.
+    mkdir -p "$d/broken"
+    local broken="$d/broken/settings.json"
+    printf '{ "hooks": { "Stop": [ oops\n' > "$broken"
+    cp "$broken" "$d/broken-before.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/broken" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out5"
+    if [[ $rc -eq 3 ]]; then
+        pass "register-memory-home-hook: an unparseable file exits 3"
+    else
+        fail "register-memory-home-hook: an unparseable file exits 3 — got $rc: $out"
+    fi
+    assert_contains "$d/out5" "refused-unparseable" \
+        "register-memory-home-hook: the refusal says why"
+    if cmp -s "$d/broken-before.json" "$broken"; then
+        pass "register-memory-home-hook: an unparseable file is left untouched"
+    else
+        fail "register-memory-home-hook: an unparseable file was rewritten"
+    fi
+
+    # 6. No config dir → refuse, and create NOTHING. A missing ~/.claude means
+    #    Claude Code has never run for this user; conjuring one so a hook can be
+    #    registered into it writes config for a tool that is not set up.
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/no-claude-here" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out6"
+    if [[ $rc -eq 4 ]]; then
+        pass "register-memory-home-hook: a missing config dir exits 4"
+    else
+        fail "register-memory-home-hook: a missing config dir exits 4 — got $rc: $out"
+    fi
+    assert_contains "$d/out6" "refused-no-config-dir" \
+        "register-memory-home-hook: the refusal names the missing config dir"
+    if [[ -e "$d/no-claude-here" ]]; then
+        fail "register-memory-home-hook: a missing config dir was created"
+    else
+        pass "register-memory-home-hook: a missing config dir is not created"
+    fi
+}
+
 echo "========================================="
 echo "  Agent Guidance Integration Tests"
 echo "========================================="
@@ -17406,7 +18554,23 @@ test_check_guidance_touch
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
+# The Codex lane. The three size/gate tests read only this repo's own files;
+# the sync and drift legs are --dry-run / read-only over the bigorg fixture,
+# so they can sit anywhere after the bares exist. Ordered so the budget
+# CEILING (what the managed half may weigh) is asserted before the gates that
+# police a consumer's file against it.
+test_agents_md_size_budget
+test_check_agents_md_budget
+test_sync_codex_budget
+test_drift_report_codex_budget
+test_register_codex_hook
 test_fleet_memory_hook
+test_fleet_memory_codex
+# The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
+# CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
+# user-level registrar for the reader.
+test_memory_home_hook
+test_register_memory_home_hook
 
 echo ""
 echo "========================================="
