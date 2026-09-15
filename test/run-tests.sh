@@ -17013,6 +17013,41 @@ GHSTUB
         "sweep (control): an empty listing did not become one nameless PR"
 }
 
+# ── dependabot-config-health.js ──────────────────────────────────────────────
+
+test_dependabot_config_health() {
+    echo ""
+    echo "=== Test: dependabot-config-health.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the cron gate: a check that quietly does not
+    # run is the failure this suite exists to catch. CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "dependabot config health: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/dependabot-config-health-tap.txt" rc=0
+    # NEVER pipe this — the script runs under `set -euo pipefail`, and a pipe's
+    # exit status belongs to the LAST command in it, not to `node --test`.
+    # Capture to a file and read $? straight off the command instead.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-dependabot-config-health.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # A minimum count is the cheapest proof anything actually ran: a suite that
+    # merely `require()`d the module and defined zero tests would otherwise
+    # exit 0 with "# pass 0", which reads exactly like a healthy green run. 30
+    # is comfortably below the ~60 tests the spec's numbered list (items 1-14)
+    # actually produces.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 30 ]]; then
+        pass "dependabot config health: node:test suite is green ($pass_n passed)"
+    else
+        fail "dependabot config health: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=30): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
 #
@@ -18559,6 +18594,7 @@ test_check_guidance_touch
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
+test_dependabot_config_health
 # The Codex lane. The three size/gate tests read only this repo's own files;
 # the sync and drift legs are --dry-run / read-only over the bigorg fixture,
 # so they can sit anywhere after the bares exist. Ordered so the budget
