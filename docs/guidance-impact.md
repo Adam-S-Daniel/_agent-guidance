@@ -70,9 +70,9 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-15 — git-practices — edit
 - Motivation: cms-platform#434's body put a closing keyword before the full URL of _agent-guidance#136, a PR in another repo, and merging #434 left that PR closed unmerged; the rule from PR #137 named only issue numbers (_agent-guidance#132).
-- Change: The closing-keyword bullet now covers full issue/PR URLs in any repo, says a PR is closed too, and no longer implies backticks protect anything (PR #NNN)
+- Change: The closing-keyword bullet now covers full issue/PR URLs in any repo, says a PR is closed too, and no longer implies backticks protect anything (PR #142)
 - Eval: scratch tests 2026-09-15, n=6, one per case: a keyword before a full URL closed its target 4/4 where no backtick touched the URL (same-repo issue and cross-repo PR from a PR body; cross-repo PR from a commit message, plain and in backticks with a trailing space) and 0/2 where one did (PR-body code span; commit-message backticks abutting the URL) — https://github.com/Adam-S-Daniel/_agent-guidance/issues/132
-- Outcome: pending — opened 2026-09-15 (PR #NNN)
+- Outcome: pending — opened 2026-09-15 (PR #142)
 
 ## 2026-09-15 — git-practices — edit
 - Motivation: cms-platform#283 closed unfixed through merge commit `78617e1`, whose hand-written message quoted the closing keyword in a code span (_agent-guidance#132).
