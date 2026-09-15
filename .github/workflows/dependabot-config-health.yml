@@ -1,0 +1,104 @@
+name: Dependabot config health
+# Daily sweep of scripts/dependabot-config-health.js over every non-fork,
+# non-archived repo under both SYNC_OWNERS: files ONE `ci`-labelled tracking
+# issue IN the affected repo when its `.github/dependabot.yml` is invalid
+# (GitHub's own `dependabot` check run concluded failure) or silent (no
+# update-job run within its own schedule's threshold). Background, the
+# measured facts the design rests on, and the credential this runs under:
+# docs/decisions/0014-dependabot-config-health-is-swept-centrally.md.
+#
+# Credential: the existing `agents-md-sync` GitHub App (widened 2026-09-15
+# with Actions: Read, Checks: Read, Issues: Read & write; both installations
+# re-accepted) — repository variable `APP_CLIENT_ID`, repository secret
+# `APP_PRIVATE_KEY`. The mint steps below down-scope each token to exactly
+# what this sweep needs via the action's `permission-*` inputs, since the App
+# itself also carries Contents: write and Pull requests: write for the
+# AGENTS.md sync — this workflow must never actually hold either.
+run-name: >-
+  ${{ github.event_name == 'schedule'
+        && format('scheduled — {0}', github.event.schedule)
+     || format('manual — @{0}', github.actor) }}
+
+on:
+  schedule:
+    # Before this repo's scheduled-run-health (47 8 * * *), whose 48h scan
+    # window covers this workflow's own runs too — no separate watcher needed.
+    - cron: '29 7 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report findings without opening/updating/shutting the tracking issue (true/false)'
+        type: string
+        default: 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      # ── Per-owner tokens from agents-md-sync, down-scoped ──
+      # continue-on-error: true, matching drift-report.yml's own mint steps —
+      # a missing installation on one owner must only cost that owner's
+      # repos, never the whole run. --require-owner-tokens below turns a
+      # missing token into a loud per-owner failure rather than a silently
+      # partial sweep.
+      - name: Mint installation token for Adam-S-Daniel
+        id: token_adam_s_daniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: Adam-S-Daniel
+          permission-checks: read
+          permission-actions: read
+          permission-contents: read
+          permission-pull-requests: read
+          permission-issues: write
+
+      - name: Mint installation token for jodidaniel
+        id: token_jodidaniel
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: jodidaniel
+          permission-checks: read
+          permission-actions: read
+          permission-contents: read
+          permission-pull-requests: read
+          permission-issues: write
+
+      # NO plain GH_TOKEN / github.token fallback: the default token cannot
+      # write issues in another repo and would silently downgrade this run to
+      # a partial read instead of a named per-owner failure. NOTHING is
+      # interpolated into this run: block — repo/owner names are already
+      # public, but the habit is the guard — so args are built in bash from
+      # env, never from `${{ }}` rendered straight into the command line.
+      - name: Run the dependabot-config-health sweep
+        env:
+          GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
+          GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
+          SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
+          SWEEP_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          args=(--require-owner-tokens)
+          if [ "$SWEEP_DRY_RUN" == "true" ]; then
+            args+=(--dry-run)
+          fi
+          node scripts/dependabot-config-health.js "${args[@]}"
