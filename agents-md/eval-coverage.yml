@@ -94,7 +94,7 @@
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
   status: gap
-  bytes: 1492
+  bytes: 1415
 
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
@@ -106,7 +106,7 @@
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
   status: gap
-  bytes: 1169
+  bytes: 1127
 
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
@@ -160,7 +160,7 @@
   heading: Git practices
   file: agents-md/base.md
   status: gap
-  bytes: 714
+  bytes: 852
 
 - id: section-docker
   heading: Docker
