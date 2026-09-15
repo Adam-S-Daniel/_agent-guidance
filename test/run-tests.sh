@@ -17832,6 +17832,547 @@ test_fleet_memory_codex() {
     fi
 }
 
+# ── memory-home.sh: a memory note names the committed copy of its fact ─────
+#
+# The subject is a hook that runs on TWO events against files that live
+# OUTSIDE every repo, so every leg below pins all three environment variables
+# that decide where it looks: CLAUDE_CONFIG_DIR (the notes and the session
+# markers), CLAUDE_PROJECT_DIR (the first three clone candidates) and HOME
+# (the fourth, `$HOME/repos/<repo>`, and the fallback config dir). HOME is the
+# one it is tempting to leave alone and the one that would quietly invalidate
+# the fixtures: this machine really does have ~/repos/_agent-guidance, so a run
+# that inherited it would resolve a fixture's home against a REAL checkout and
+# pass for a reason the fixture never arranged.
+#
+# `MEMORY.md` is in the fixture on purpose and carries no frontmatter. It is
+# the note-shaped file the scan must skip, and skipping it is asserted
+# NEGATIVELY — if it were scanned the whole run would print DEGRADED — which is
+# why several legs below also assert the absence of that word.
+test_memory_home_hook() {
+    echo ""
+    echo "TEST: memory-home.sh (a memory note names its repo home)"
+
+    local d="$TEST_DIR/memoryhome"
+    rm -rf "$d"
+    local MH_HOOK="$REPO_ROOT/.claude/hooks/memory-home.sh"
+    local MH_CFG="$d/cfg"
+    local MH_HOME="$d/home"
+    local MH_PROJ="$d/proj"
+    local mem="$MH_CFG/projects/-home-x/memory"
+    mkdir -p "$mem" "$MH_HOME" "$MH_PROJ/_agent-guidance/docs/decisions"
+
+    # The one clone the fixtures resolve against, and the one file in it.
+    : > "$MH_PROJ/_agent-guidance/docs/decisions/0013-real.md"
+
+    # <outfile> <event json> — runs the hook, captures stdout+stderr, records
+    # the exit code in MH_RC. Nothing here lets a non-zero code through
+    # silently: "always exits 0" is itself one of the claims under test.
+    mh() {
+        MH_RC=0
+        printf '%s' "$2" | env HOME="$MH_HOME" CLAUDE_CONFIG_DIR="$MH_CFG" \
+            CLAUDE_PROJECT_DIR="$MH_PROJ" bash "$MH_HOOK" > "$1" 2>&1 || MH_RC=$?
+    }
+    local MH_RC=0
+
+    local ss='{"session_id":"sess-a","hook_event_name":"SessionStart","source":"startup"}'
+
+    printf -- '---\nname: index\n---\nnot a note\n' > "$mem/MEMORY.md"
+    cat > "$mem/homed.md" <<'EOF'
+---
+name: homed
+description: a fact whose durable copy is committed
+metadata:
+  type: reference
+  home: Adam-S-Daniel/_agent-guidance:docs/decisions/0013-real.md
+---
+body
+EOF
+    cat > "$mem/person.md" <<'EOF'
+---
+name: person
+description: how the operator likes to be written to
+metadata:
+  type: user
+---
+body
+EOF
+
+    # 1. CLEAN → SILENT. The anti-nag claim, and the reason this hook can be
+    #    left registered: an operator who is greeted by a status line they did
+    #    not ask for learns to skim it, and the next real finding goes with it.
+    mh "$d/out-clean" "$ss"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: SessionStart exits 0 on a clean scan"
+    else
+        fail "memory-home: SessionStart exits 0 on a clean scan — got $MH_RC"
+    fi
+    if [[ ! -s "$d/out-clean" ]]; then
+        pass "memory-home: SessionStart prints NOTHING when every note has a resolvable home"
+    else
+        fail "memory-home: SessionStart prints NOTHING when every note has a resolvable home — got '$(cat "$d/out-clean")'"
+    fi
+
+    # 2. A homeless note is named; the `type: user` note beside it is not.
+    cat > "$mem/homeless.md" <<'EOF'
+---
+name: homeless
+description: a fact that lives only here
+metadata:
+  type: project
+---
+body
+EOF
+    mh "$d/out-homeless" "$ss"
+    assert_contains "$d/out-homeless" "have no repo home" \
+        "memory-home: SessionStart names a homeless note"
+    assert_contains "$d/out-homeless" "$mem/homeless.md" \
+        "memory-home: the nudge names the note's path"
+    assert_contains "$d/out-homeless" "set metadata.home" \
+        "memory-home: the nudge says what to set"
+    assert_not_contains "$d/out-homeless" "$mem/person.md" \
+        "memory-home: a type: user note is exempt"
+    assert_not_contains "$d/out-homeless" "$mem/homed.md" \
+        "memory-home: a note with a resolvable home is not flagged"
+    assert_not_contains "$d/out-homeless" "DEGRADED" \
+        "memory-home: MEMORY.md is excluded from the scan, not parsed and degraded over"
+
+    # 3. DANGLING: the clone is present, the file it names is not. This is the
+    #    promotion that was promised and never made, which a presence check on
+    #    `metadata.home` alone cannot see.
+    cat > "$mem/dangling.md" <<'EOF'
+---
+name: dangling
+description: home names a file that was never committed
+metadata:
+  type: project
+  home: Adam-S-Daniel/_agent-guidance:docs/decisions/9999-never-written.md
+---
+body
+EOF
+    mh "$d/out-dangling" "$ss"
+    assert_contains "$d/out-dangling" "$mem/dangling.md" \
+        "memory-home: a dangling home is flagged (clone present, path absent)"
+    assert_not_contains "$d/out-dangling" "$mem/homed.md" \
+        "memory-home: the resolvable home in the same clone still passes"
+
+    # 4. TRUNCATION. Eight more homeless notes, in a second project directory:
+    #    ten flagged in total with the two above, so five paths and then
+    #    "+5 more". A nudge that pastes thirty paths into context costs more
+    #    than the thing it is warning about. The count is asserted alongside
+    #    the truncation marker so the arithmetic is checked rather than
+    #    assumed — `-home-many` sorts before `-home-x`, so the five shown are
+    #    n1..n5 whatever else is flagged.
+    local many="$MH_CFG/projects/-home-many/memory"
+    mkdir -p "$many"
+    local i
+    for i in 1 2 3 4 5 6 7 8; do
+        printf -- '---\nname: n%s\nmetadata:\n  type: project\n---\nbody\n' "$i" > "$many/n$i.md"
+    done
+    mh "$d/out-many" "$ss"
+    assert_contains "$d/out-many" "memory-home: 10 memory note(s)" \
+        "memory-home: the nudge counts every flagged note, not only the listed ones"
+    assert_contains "$d/out-many" "+5 more" \
+        "memory-home: more than five flagged notes truncate with +K more"
+    assert_contains "$d/out-many" "$many/n5.md" \
+        "memory-home: the fifth flagged note is still listed"
+    assert_not_contains "$d/out-many" "$many/n6.md" \
+        "memory-home: the sixth flagged note is folded into +K more"
+    rm -rf "$MH_CFG/projects/-home-many"
+
+    # 5. THE MARKER, and the prune. 14 days is the cutoff; the stale marker's
+    #    mtime is set with `touch -d` rather than by waiting, so this is a fact
+    #    about the file, not about the clock.
+    if [[ -f "$MH_CFG/memory-home/sess-a" ]]; then
+        pass "memory-home: SessionStart writes a marker for this session"
+    else
+        fail "memory-home: SessionStart writes a marker for this session — no file at $MH_CFG/memory-home/sess-a"
+    fi
+    : > "$MH_CFG/memory-home/stale-session"
+    touch -d '20 days ago' "$MH_CFG/memory-home/stale-session"
+    : > "$MH_CFG/memory-home/recent-session"
+    touch -d '3 days ago' "$MH_CFG/memory-home/recent-session"
+    mh "$d/out-prune" '{"session_id":"sess-b","hook_event_name":"SessionStart","source":"resume"}'
+    if [[ ! -e "$MH_CFG/memory-home/stale-session" ]]; then
+        pass "memory-home: a marker older than 14 days is pruned"
+    else
+        fail "memory-home: a marker older than 14 days is pruned — stale-session survived"
+    fi
+    if [[ -f "$MH_CFG/memory-home/recent-session" ]]; then
+        pass "memory-home: a marker inside 14 days is kept"
+    else
+        fail "memory-home: a marker inside 14 days is kept — recent-session was pruned"
+    fi
+
+    # 6. A session id from stdin becomes a PATH. Anything outside [A-Za-z0-9_-]
+    #    is dropped rather than escaped, so no id can walk out of the marker
+    #    directory — asserted on the directory's contents, not on the sanitizer.
+    mh "$d/out-traversal" '{"session_id":"../../escaped","hook_event_name":"SessionStart","source":"startup"}'
+    if [[ ! -e "$MH_CFG/escaped" && ! -e "$MH_CFG/projects/escaped" ]]; then
+        pass "memory-home: a traversing session id cannot write outside the marker directory"
+    else
+        fail "memory-home: a traversing session id wrote outside the marker directory"
+    fi
+
+    # ── Stop ───────────────────────────────────────────────────────────────
+    #
+    # Scoped to THIS session's writes: notes whose mtime is at or after the
+    # session's own marker. Everything below sets those mtimes explicitly.
+    local stop_open='{"session_id":"sess-stop","hook_event_name":"Stop","stop_hook_active":false}'
+    local stop_again='{"session_id":"sess-stop","hook_event_name":"Stop","stop_hook_active":true}'
+
+    mh "$d/out-mark-stop" '{"session_id":"sess-stop","hook_event_name":"SessionStart","source":"startup"}'
+    find "$MH_CFG/projects" -name '*.md' -exec touch -d '2 days ago' {} +
+
+    # 7. Everything predates the marker → this session wrote none of it → the
+    #    turn ends. The gate is about what THIS session left behind, not about
+    #    the backlog the SessionStart nudge already named.
+    mh "$d/out-stop-old" "$stop_open"
+    if [[ $MH_RC -eq 0 && ! -s "$d/out-stop-old" ]]; then
+        pass "memory-home: Stop allows a note whose mtime predates the session marker"
+    else
+        fail "memory-home: Stop allows a note whose mtime predates the session marker — rc=$MH_RC out='$(cat "$d/out-stop-old")'"
+    fi
+
+    # 8. THE BLOCK LANE. Same fixture, one note touched forward.
+    touch "$mem/homeless.md"
+    mh "$d/out-stop-block" "$stop_open"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: a blocking Stop still exits 0 (the JSON is the decision, not the code)"
+    else
+        fail "memory-home: a blocking Stop still exits 0 — got $MH_RC"
+    fi
+    assert_contains "$d/out-stop-block" '"decision": "block"' \
+        "memory-home: Stop blocks on a note this session wrote with no repo home"
+    assert_contains "$d/out-stop-block" "$mem/homeless.md" \
+        "memory-home: the block reason names the note"
+    assert_contains "$d/out-stop-block" "the repo copy is the source of truth" \
+        "memory-home: the block reason states the contract"
+    assert_not_contains "$d/out-stop-block" "$mem/person.md" \
+        "memory-home: Stop exempts a type: user note too"
+    # The output has to be the JSON object and nothing else — a stray line
+    # beside it is what turns a decision into a parse error.
+    local first_byte
+    first_byte=$(head -c 1 "$d/out-stop-block")
+    if [[ "$first_byte" == "{" && "$(wc -l < "$d/out-stop-block")" -eq 1 ]]; then
+        pass "memory-home: a blocking Stop prints only the JSON object"
+    else
+        fail "memory-home: a blocking Stop prints only the JSON object — got '$(cat "$d/out-stop-block")'"
+    fi
+    if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["decision"]=="block"; assert d["reason"].startswith("memory-home:")' "$d/out-stop-block" 2>/dev/null; then
+        pass "memory-home: the block is a parseable object with decision and reason"
+    else
+        fail "memory-home: the block is a parseable object with decision and reason"
+    fi
+
+    # 9. THE LOOP GUARD. stop_hook_active true means Claude is already
+    #    continuing because of a stop hook; blocking again would spend Claude
+    #    Code's eight consecutive continuations on one sentence.
+    mh "$d/out-stop-again" "$stop_again"
+    assert_not_contains "$d/out-stop-again" '"decision": "block"' \
+        "memory-home: stop_hook_active true does not block again"
+    assert_contains "$d/out-stop-again" "not blocking again" \
+        "memory-home: the second pass still says what is unhomed"
+    assert_contains "$d/out-stop-again" "systemMessage" \
+        "memory-home: the second pass surfaces through systemMessage"
+
+    # 10. No marker — the hook was registered mid-session — so there is no
+    #     honest way to tell what this session wrote, and a gate that blocks on
+    #     a guess is worse than no gate.
+    mh "$d/out-stop-nomarker" '{"session_id":"never-started","hook_event_name":"Stop","stop_hook_active":false}'
+    if [[ $MH_RC -eq 0 && ! -s "$d/out-stop-nomarker" ]]; then
+        pass "memory-home: Stop with no session marker does nothing"
+    else
+        fail "memory-home: Stop with no session marker does nothing — out='$(cat "$d/out-stop-nomarker")'"
+    fi
+
+    # 11. An event this hook is not registered for is a silent no-op.
+    mh "$d/out-other" '{"session_id":"sess-stop","hook_event_name":"PreToolUse"}'
+    if [[ $MH_RC -eq 0 && ! -s "$d/out-other" ]]; then
+        pass "memory-home: any other event exits 0 silently"
+    else
+        fail "memory-home: any other event exits 0 silently — out='$(cat "$d/out-other")'"
+    fi
+
+    # ── Degrade, never crash ───────────────────────────────────────────────
+    #
+    # 12. Frontmatter this script cannot parse is a note it has no standing to
+    #     judge. It says so, naming the file, and gates nothing — the block
+    #     lane above is what proves that "no block" here is a real difference
+    #     and not a hook that never blocks.
+    printf -- '---\nname: bad\n  description: [unclosed\n---\nbody\n' > "$mem/bad.md"
+    mh "$d/out-bad" "$stop_open"
+    assert_contains "$d/out-bad" "memory-home: DEGRADED" \
+        "memory-home: unparseable frontmatter degrades"
+    assert_contains "$d/out-bad" "$mem/bad.md" \
+        "memory-home: the DEGRADED line names the file it could not parse"
+    assert_not_contains "$d/out-bad" '"decision": "block"' \
+        "memory-home: a degraded scan blocks nothing"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: a degraded scan still exits 0"
+    else
+        fail "memory-home: a degraded scan still exits 0 — got $MH_RC"
+    fi
+    rm -f "$mem/bad.md"
+
+    # 13. PyYAML absent. Simulated by a `yaml` module on PYTHONPATH that raises
+    #     on import, which is what a machine without it does from this script's
+    #     point of view — and it is checked before any note is opened, so the
+    #     verdict cannot depend on which note happened to be first.
+    mkdir -p "$d/fakelib"
+    printf 'raise ImportError("PyYAML is not installed in this fixture")\n' > "$d/fakelib/yaml.py"
+    MH_RC=0
+    printf '%s' "$stop_open" | env HOME="$MH_HOME" CLAUDE_CONFIG_DIR="$MH_CFG" \
+        CLAUDE_PROJECT_DIR="$MH_PROJ" PYTHONPATH="$d/fakelib" \
+        bash "$MH_HOOK" > "$d/out-noyaml" 2>&1 || MH_RC=$?
+    assert_contains "$d/out-noyaml" "memory-home: DEGRADED" \
+        "memory-home: a missing PyYAML degrades"
+    assert_contains "$d/out-noyaml" "PyYAML" \
+        "memory-home: the DEGRADED line names PyYAML"
+    assert_not_contains "$d/out-noyaml" '"decision": "block"' \
+        "memory-home: a missing PyYAML blocks nothing"
+    if [[ $MH_RC -eq 0 ]]; then
+        pass "memory-home: a missing PyYAML still exits 0"
+    else
+        fail "memory-home: a missing PyYAML still exits 0 — got $MH_RC"
+    fi
+
+    # 14. Nothing under the notes directory was written to or removed. The hook
+    #     nudges and gates; the agent does the promotion.
+    if [[ -f "$mem/homeless.md" && -f "$mem/person.md" && -f "$mem/homed.md" \
+          && -f "$mem/dangling.md" && -f "$mem/MEMORY.md" ]]; then
+        pass "memory-home: every note survives the run untouched"
+    else
+        fail "memory-home: a note was removed by the hook"
+    fi
+    if grep -qF -- "no repo home" "$mem/homeless.md" 2>/dev/null; then
+        fail "memory-home: the hook wrote into a note"
+    else
+        pass "memory-home: the hook never writes into a note"
+    fi
+
+    unset -f mh
+}
+
+# ── register-memory-home-hook.sh ───────────────────────────────────────────
+#
+# Same posture as register-codex-hook and register-bootstrap-hook, one event
+# further: TWO groups, on two different events, appended separately. The legs
+# that matter are the ones about the operator's own file — a settings.json this
+# script cannot parse is one it cannot safely edit, and losing a machine's
+# harness config is far worse than missing this gate.
+test_register_memory_home_hook() {
+    echo ""
+    echo "=== Test: register-memory-home-hook.sh (user-level SessionStart + Stop) ==="
+
+    local script="$REPO_ROOT/scripts/register-memory-home-hook.sh"
+    local d="$TEST_DIR/memoryhomehook"
+    rm -rf "$d"
+    mkdir -p "$d/cfg"
+    local target="$d/cfg/settings.json"
+    local out rc shape
+
+    # 1. Absent file → created, with both groups in the documented shape.
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/cfg" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out1"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: a first run exits 0"
+    else
+        fail "register-memory-home-hook: a first run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out1" "registered" "register-memory-home-hook: says it registered"
+    assert_contains "$d/out1" ".claude/hooks/memory-home.sh" \
+        "register-memory-home-hook: names the hook path it wired"
+
+    rc=0
+    shape=$(python3 - "$target" 2>&1 <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+hooks = doc["hooks"]
+assert set(hooks) == {"SessionStart", "Stop"}, "unexpected events: %r" % sorted(hooks)
+
+ss = hooks["SessionStart"]
+assert len(ss) == 1, "expected one SessionStart group, got %d" % len(ss)
+assert ss[0]["matcher"] == "startup|resume", "matcher is %r" % ss[0].get("matcher")
+
+stop = hooks["Stop"]
+assert len(stop) == 1, "expected one Stop group, got %d" % len(stop)
+assert "matcher" not in stop[0], "the Stop group carries a matcher: %r" % stop[0]
+
+for label, group in (("SessionStart", ss[0]), ("Stop", stop[0])):
+    entries = group["hooks"]
+    assert len(entries) == 1, "%s: expected one handler, got %d" % (label, len(entries))
+    e = entries[0]
+    assert e["type"] == "command", "%s: type is %r" % (label, e.get("type"))
+    assert e["timeout"] == 15, "%s: timeout is %r" % (label, e.get("timeout"))
+    assert "memory-home.sh" in e["command"], "%s: command does not name the hook" % label
+    # The missing-script arm SAYS so rather than failing silently: a gate that
+    # is off without announcing it is the failure this hook exists to prevent.
+    assert "DEGRADED" in e["command"], "%s: command has no degraded arm" % label
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: the written JSON has both groups in the documented shape"
+    else
+        fail "register-memory-home-hook: the written JSON has both groups in the documented shape — $shape"
+    fi
+
+    # 2. Idempotent: says so, and does not rewrite a single byte.
+    cp "$target" "$d/after-first.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/cfg" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out2"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: a second run exits 0"
+    else
+        fail "register-memory-home-hook: a second run exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out2" "already-registered" \
+        "register-memory-home-hook: a second run says already-registered"
+    if cmp -s "$d/after-first.json" "$target"; then
+        pass "register-memory-home-hook: a second run changes nothing"
+    else
+        fail "register-memory-home-hook: a second run rewrote the file"
+    fi
+
+    # 3. An operator's own SessionStart group survives byte-for-byte as parsed
+    #    JSON, ours is appended after it, and unrelated keys do not move.
+    mkdir -p "$d/existing"
+    local existing="$d/existing/settings.json"
+    cat > "$existing" <<'EOF'
+{
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "true" }]
+      }
+    ]
+  }
+}
+EOF
+    cp "$existing" "$d/existing-before.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/existing" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out3"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: appending to an existing file exits 0"
+    else
+        fail "register-memory-home-hook: appending to an existing file exits 0 — got $rc: $out"
+    fi
+
+    rc=0
+    shape=$(python3 - "$d/existing-before.json" "$existing" 2>&1 <<'PY'
+import json, sys
+
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+
+b = before["hooks"]["SessionStart"]
+a = after["hooks"]["SessionStart"]
+assert len(a) == len(b) + 1, "expected one added group, got %d -> %d" % (len(b), len(a))
+# Order AND content: the operator's group is still first and is deep-equal.
+assert a[0] == b[0], "the pre-existing group changed: %r -> %r" % (b[0], a[0])
+assert "memory-home.sh" in a[-1]["hooks"][0]["command"], "ours was not appended last"
+assert len(after["hooks"]["Stop"]) == 1, "the Stop group was not added"
+# Nothing else in the document moved.
+assert after["model"] == before["model"], "an unrelated top-level key changed"
+assert after["hooks"]["PreToolUse"] == before["hooks"]["PreToolUse"], "an unrelated event changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: an existing SessionStart group survives and ours is appended"
+    else
+        fail "register-memory-home-hook: an existing SessionStart group survives and ours is appended — $shape"
+    fi
+
+    # 4. --hook is embedded VERBATIM. This is what lets a run from a worktree
+    #    wire the main checkout's copy rather than a path that disappears with
+    #    the worktree, so the exact string has to survive into the file.
+    mkdir -p "$d/hookflag"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/hookflag" "$script" --hook /opt/checkouts/_agent-guidance/.claude/hooks/memory-home.sh 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out4"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: --hook exits 0"
+    else
+        fail "register-memory-home-hook: --hook exits 0 — got $rc: $out"
+    fi
+    rc=0
+    shape=$(python3 - "$d/hookflag/settings.json" 2>&1 <<'PY'
+import json, sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+want = "h=/opt/checkouts/_agent-guidance/.claude/hooks/memory-home.sh;"
+for event in ("SessionStart", "Stop"):
+    cmd = doc["hooks"][event][0]["hooks"][0]["command"]
+    assert want in cmd, "%s command does not embed the --hook path verbatim: %r" % (event, cmd)
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: the --hook path is embedded verbatim on both events"
+    else
+        fail "register-memory-home-hook: the --hook path is embedded verbatim on both events — $shape"
+    fi
+
+    # 5. Unparseable → exit 3, and NOT ONE BYTE written.
+    mkdir -p "$d/broken"
+    local broken="$d/broken/settings.json"
+    printf '{ "hooks": { "Stop": [ oops\n' > "$broken"
+    cp "$broken" "$d/broken-before.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/broken" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out5"
+    if [[ $rc -eq 3 ]]; then
+        pass "register-memory-home-hook: an unparseable file exits 3"
+    else
+        fail "register-memory-home-hook: an unparseable file exits 3 — got $rc: $out"
+    fi
+    assert_contains "$d/out5" "refused-unparseable" \
+        "register-memory-home-hook: the refusal says why"
+    if cmp -s "$d/broken-before.json" "$broken"; then
+        pass "register-memory-home-hook: an unparseable file is left untouched"
+    else
+        fail "register-memory-home-hook: an unparseable file was rewritten"
+    fi
+
+    # 6. No config dir → refuse, and create NOTHING. A missing ~/.claude means
+    #    Claude Code has never run for this user; conjuring one so a hook can be
+    #    registered into it writes config for a tool that is not set up.
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/no-claude-here" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out6"
+    if [[ $rc -eq 4 ]]; then
+        pass "register-memory-home-hook: a missing config dir exits 4"
+    else
+        fail "register-memory-home-hook: a missing config dir exits 4 — got $rc: $out"
+    fi
+    assert_contains "$d/out6" "refused-no-config-dir" \
+        "register-memory-home-hook: the refusal names the missing config dir"
+    if [[ -e "$d/no-claude-here" ]]; then
+        fail "register-memory-home-hook: a missing config dir was created"
+    else
+        pass "register-memory-home-hook: a missing config dir is not created"
+    fi
+}
+
 echo "========================================="
 echo "  Agent Guidance Integration Tests"
 echo "========================================="
@@ -17997,6 +18538,11 @@ test_drift_report_codex_budget
 test_register_codex_hook
 test_fleet_memory_hook
 test_fleet_memory_codex
+# The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
+# CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
+# user-level registrar for the reader.
+test_memory_home_hook
+test_register_memory_home_hook
 
 echo ""
 echo "========================================="

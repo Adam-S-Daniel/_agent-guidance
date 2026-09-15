@@ -104,6 +104,43 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
 Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 
+### Memory notes outside a repo
+
+Claude Code's auto-memory writes one markdown file per fact under
+`${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<encoded-cwd>/memory/`, one directory
+per cwd a session has ever run in — **22** on this machine, none of them inside
+any repo. A fact recorded there is a fact one agent on one machine can see.
+
+**The contract:** every note whose `metadata.type` is not `user` carries
+`metadata.home`, either `<owner>/<repo>:<path>` or
+`https://github.com/<owner>/<repo>/blob/<ref>/<path>`, naming the *committed*
+file that holds the durable copy — an ADR, a `docs/` page, that repo's
+`## Repo-specific additions`, or a skill in the registry. With a home the note
+is a **pointer**; the repo copy is the source of truth. A `type: user` note is
+exempt: it is about the person, not the work. A home is **dangling** when a
+local clone of `<repo>` is found but `<path>` is not in it.
+
+- `.claude/hooks/memory-home.sh` runs on two events. On **SessionStart** it
+  marks the session and names any homeless or dangling note (up to five, then
+  `+K more`) — and prints **nothing** when every note has a home. On **Stop**
+  it blocks with `{"decision":"block","reason":"…"}` when *this* session (notes
+  newer than its marker) wrote one without a home, once: `stop_hook_active`
+  turns the second pass into a `systemMessage` instead. It never edits or
+  deletes a note, always exits 0, and degrades to one
+  `memory-home: DEGRADED — <reason>` line when python3, PyYAML or a note's
+  frontmatter is not there to read.
+- `scripts/register-memory-home-hook.sh` wires both groups into
+  `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` — **user level**, because
+  memory is per machine, not per repo. Same posture as the two registrars
+  above: append never overwrite, exit 3 on an unparseable file with no write,
+  idempotent, and it never creates the config directory. `--hook <abs path>`
+  overrides the wired path, which is how a run from a worktree points at the
+  main checkout.
+
+Promotion is deliberately **not** automatic — choosing which repo owns a fact,
+and which file inside it, is judgment. Reasoning:
+[`docs/decisions/0013`](docs/decisions/0013-a-memory-note-outside-a-repo-names-its-home.md).
+
 ### Section manifest
 
 [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml) is one row per

@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-14 — finding-your-unknowns — edit
+- Motivation: a memory note written this session held facts that lived only on a PR branch; nothing checked the "never the only copy" rule.
+- Change: States the memory-home contract (metadata.home) and the Stop gate that enforces it (PR #128)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-14 (PR #128)
+
 ## 2026-09-14 — working-in-these-repos — edit
 - Motivation: Codex 0.154 truncates project instructions at 32,768 bytes (`project_doc_max_bytes`) silently; base.md alone was 55,954 bytes.
 - Change: Condensed from 1366 to 862 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
