@@ -104,6 +104,14 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
 Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 
+The candidate Codex Cloud bootstrap uses its environment lifecycle. After this
+change reaches the default branch, run
+`bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
+maintenance. The mode creates the Cloud Codex home, targets only the effective
+global Codex instruction file, and persists its verdict inside that file.
+Configuration and current verification status:
+[`docs/codex-cloud.md`](docs/codex-cloud.md).
+
 ### Memory notes outside a repo
 
 Claude Code's auto-memory writes one markdown file per fact under

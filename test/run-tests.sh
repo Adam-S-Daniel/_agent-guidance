@@ -23,6 +23,11 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # bit local runs; unsetting both here makes the run deterministic everywhere.
 unset GH_TOKEN GITHUB_TOKEN
 
+# Codex Cloud setup/maintenance runs the shared guidance hook directly before
+# the agent starts. Keep its focused, standard-library subprocess coverage in
+# a separate module so failures propagate through this integration runner.
+python3 -m unittest discover -s "$SCRIPT_DIR" -p 'test_codex_cloud*.py' -v
+
 # Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
 # means rather than the directory several artifacts share.
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
