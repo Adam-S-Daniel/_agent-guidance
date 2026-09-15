@@ -103,12 +103,18 @@ Three properties of the surface shaped what could be built:
    idempotent by the needle `memory-home.sh`, and never `mkdir` the config
    directory (exit 4 instead).
 
-8. **No automatic moving, ever.** Per decision 2 above the mechanism nudges and
-   gates; the agent does the promotion. The hook never modifies or deletes a
-   note, and it always exits 0: a missing python3 or PyYAML, an unreadable
-   note, an unparseable frontmatter block each print one
-   `memory-home: DEGRADED — <reason>` line and gate nothing. A note this script
-   cannot parse is a note it has no standing to judge.
+8. **No automatic moving, and a DEGRADE is a RUN-LEVEL fault only.** The
+   mechanism nudges and gates; the agent does the promotion. The hook never
+   modifies or deletes a note and always exits 0. It prints
+   `memory-home: DEGRADED — <reason>` and gates nothing for the four faults
+   that are about the run rather than about a note: no python3, no PyYAML, a
+   hook event on stdin that is not readable JSON, and a marker directory that
+   cannot be written or read. **A note it cannot parse is a FINDING about that
+   note.** The scan continues past it, the note is flagged exactly like a
+   homeless one, and the label says what is wrong:
+   `<path> (unparseable frontmatter — quote the description or fix the YAML)`.
+   On Stop such a note blocks like a homeless one, under the same one-nudge
+   loop guard, because it has no home the hook can see.
 
 ## Consequences
 
@@ -126,6 +132,18 @@ Three properties of the surface shaped what could be built:
   the SessionStart nudge, because that arm scans everything rather than only
   this session's writes. The gate is therefore two-layered by necessity, not by
   belt-and-braces: neither arm alone is sufficient.
+- **The harness itself writes unparseable YAML, which is why a parse failure is
+  a finding and not a degrade.** Claude Code writes `description:` values and
+  does not quote them, so an ordinary description containing `: ` — "… with
+  delete: true + editorial_workflow" — is frontmatter PyYAML rejects outright
+  with *mapping values are not allowed here*. **Four** such notes existed on
+  this machine on 2026-09-14. The first draft of this hook treated any parse
+  failure as run-level: a SessionStart probe against the real config directory
+  printed those four filenames and gated nothing, which is what every session
+  on the machine would have done, forever. A gate whose commonest input
+  switches it off is not a gate. The residual is that an unparseable note is
+  reported under "no repo home" when it may in fact have one — the hook cannot
+  read it, and naming it with the reason is more honest than skipping it.
 - **A home naming a repo with no local clone is unverifiable, and is accepted.**
   The alternative — network resolution — would put an authenticated GitHub call
   in front of every session start and would turn an offline machine into a

@@ -17933,8 +17933,10 @@ EOF
         "memory-home: a type: user note is exempt"
     assert_not_contains "$d/out-homeless" "$mem/homed.md" \
         "memory-home: a note with a resolvable home is not flagged"
+    assert_not_contains "$d/out-homeless" "$mem/MEMORY.md" \
+        "memory-home: MEMORY.md is excluded from the scan, not judged as a note"
     assert_not_contains "$d/out-homeless" "DEGRADED" \
-        "memory-home: MEMORY.md is excluded from the scan, not parsed and degraded over"
+        "memory-home: a scan that found something is not a degraded scan"
 
     # 3. DANGLING: the clone is present, the file it names is not. This is the
     #    promotion that was promised and never made, which a presence check on
@@ -18093,27 +18095,53 @@ EOF
         fail "memory-home: any other event exits 0 silently — out='$(cat "$d/out-other")'"
     fi
 
-    # ── Degrade, never crash ───────────────────────────────────────────────
+    # ── A note this script cannot parse is a FINDING, not a verdict ────────
     #
-    # 12. Frontmatter this script cannot parse is a note it has no standing to
-    #     judge. It says so, naming the file, and gates nothing — the block
-    #     lane above is what proves that "no block" here is a real difference
-    #     and not a hook that never blocks.
-    printf -- '---\nname: bad\n  description: [unclosed\n---\nbody\n' > "$mem/bad.md"
-    mh "$d/out-bad" "$stop_open"
-    assert_contains "$d/out-bad" "memory-home: DEGRADED" \
-        "memory-home: unparseable frontmatter degrades"
-    assert_contains "$d/out-bad" "$mem/bad.md" \
-        "memory-home: the DEGRADED line names the file it could not parse"
-    assert_not_contains "$d/out-bad" '"decision": "block"' \
-        "memory-home: a degraded scan blocks nothing"
-    if [[ $MH_RC -eq 0 ]]; then
-        pass "memory-home: a degraded scan still exits 0"
-    else
-        fail "memory-home: a degraded scan still exits 0 — got $MH_RC"
-    fi
-    rm -f "$mem/bad.md"
+    # 12. The fixture is the real one: Claude Code writes `description:` itself
+    #     and does not quote it, so an ordinary description containing `: ` is
+    #     frontmatter PyYAML rejects outright. FOUR such notes existed on this
+    #     machine the day this hook was written, and an earlier draft that
+    #     treated a parse failure as a run-level degrade printed their names
+    #     and gated nothing — every session DEGRADED forever, no note ever
+    #     nudged. So: flagged like a homeless note, labelled with the remedy,
+    #     and the scan keeps going.
+    printf -- '---\nname: colon\ndescription: Decap delete uses the git data api with delete: true + editorial_workflow\nmetadata:\n  type: feedback\n---\nbody\n' > "$mem/colon.md"
+    printf 'just a body, no frontmatter at all\n' > "$mem/nofm.md"
+    mh "$d/out-colon" "$ss"
+    assert_not_contains "$d/out-colon" "memory-home: DEGRADED" \
+        "memory-home: an unparseable note does not degrade the run"
+    assert_contains "$d/out-colon" "$mem/colon.md (unparseable frontmatter" \
+        "memory-home: an unparseable note is flagged, labelled with why"
+    assert_contains "$d/out-colon" "quote the description or fix the YAML" \
+        "memory-home: the label names the remedy, not the exception class"
+    assert_contains "$d/out-colon" "$mem/nofm.md (no YAML frontmatter block" \
+        "memory-home: a note with no frontmatter at all is flagged and labelled"
+    # THE HALF THAT MATTERS MOST: the notes beside the bad one are still judged.
+    assert_contains "$d/out-colon" "$mem/homeless.md" \
+        "memory-home: the scan continues past an unparseable note"
+    assert_not_contains "$d/out-colon" "$mem/homed.md" \
+        "memory-home: a resolvable home still passes in a run that hit a bad note"
+    assert_not_contains "$d/out-colon" "$mem/person.md" \
+        "memory-home: a type: user note is still exempt in that run"
 
+    # 12b. On Stop it blocks exactly like a homeless note — it has no home this
+    #      hook can see — and only when THIS session wrote it.
+    find "$MH_CFG/projects" -name '*.md' -exec touch -d '2 days ago' {} +
+    touch "$mem/colon.md"
+    mh "$d/out-colon-stop" "$stop_open"
+    assert_contains "$d/out-colon-stop" '"decision": "block"' \
+        "memory-home: Stop blocks on an unparseable note this session wrote"
+    assert_contains "$d/out-colon-stop" "$mem/colon.md (unparseable frontmatter" \
+        "memory-home: the block reason carries the label too"
+    assert_not_contains "$d/out-colon-stop" "$mem/homeless.md" \
+        "memory-home: an older homeless note is still out of this session's scope"
+    mh "$d/out-colon-again" "$stop_again"
+    assert_not_contains "$d/out-colon-again" '"decision": "block"' \
+        "memory-home: the one-nudge loop guard covers the unparseable case too"
+    rm -f "$mem/colon.md" "$mem/nofm.md"
+
+    # ── Degrade, never crash: RUN-LEVEL faults only ────────────────────────
+    #
     # 13. PyYAML absent. Simulated by a `yaml` module on PYTHONPATH that raises
     #     on import, which is what a machine without it does from this script's
     #     point of view — and it is checked before any note is opened, so the

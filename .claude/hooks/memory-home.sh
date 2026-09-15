@@ -64,13 +64,30 @@
 #   section says so." The Stop section says nothing of the kind, so Stop
 #   honours it — that is the one-nudge arm below.
 #
-# ALWAYS EXITS 0, AND DEGRADES RATHER THAN CRASHING. A missing python3 or
-# PyYAML, an unreadable note, an unparseable frontmatter block: each prints one
-# `memory-home: DEGRADED — <reason>` line and blocks NOTHING. A gate that
-# breaks a session is worse than a gate that is honest about being off, and a
-# note this script cannot parse is a note it has no standing to judge.
+# ALWAYS EXITS 0, AND DEGRADES RATHER THAN CRASHING — but a DEGRADE is a
+# RUN-LEVEL fault only: no python3, no PyYAML, a hook event on stdin that is not
+# readable JSON, a marker directory that cannot be written or read. Those print
+# one `memory-home: DEGRADED — <reason>` line and gate nothing, because none of
+# them is evidence about anybody's notes.
 #
-# On SessionStart that DEGRADED line is context Claude sees. On Stop, exit 0
+# A NOTE THIS SCRIPT CANNOT PARSE IS A FINDING ABOUT THAT NOTE, NOT A VERDICT
+# ABOUT THE RUN. The scan keeps going, the note is flagged exactly like a
+# homeless one, and the label says what is wrong with it:
+#
+#   /…/memory/feedback_decap.md (unparseable frontmatter — quote the description or fix the YAML)
+#
+# That is not a hypothetical. Claude Code writes `description:` values itself,
+# and it does not quote them, so an ordinary description containing `: ` —
+# "… with delete: true + editorial_workflow" — is frontmatter PyYAML rejects
+# outright ("mapping values are not allowed here"). FOUR such notes existed on
+# this machine the day this hook was written. An earlier draft treated a parse
+# failure as a run-level degrade, and a SessionStart probe against the real
+# config directory printed those four filenames and gated nothing: every
+# session on the machine would have been DEGRADED forever, and no note would
+# ever have been nudged. A gate whose commonest input turns it off is not a
+# gate.
+#
+# On SessionStart a DEGRADED line is context Claude sees. On Stop, exit 0
 # with plain-text stdout goes to the debug log only ("For most events, Claude
 # Code writes stdout to the debug log and doesn't show it in the transcript")
 # and is never a hook error — the right posture for a degrade, which must not
@@ -169,33 +186,40 @@ def note_paths():
 
 
 def note_metadata(path):
-    """-> (metadata dict, None) | (None, reason)."""
+    """-> (metadata dict, None) | (None, label).
+
+    The label is a SHORT reason, shown in parentheses beside the note's own
+    path — it names a fault in that one file, so it never carries the path
+    itself and it never ends the run.
+    """
     try:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except Exception as exc:
-        return None, "%s could not be read (%s)" % (path, exc.__class__.__name__)
+        return None, "could not be read (%s)" % exc.__class__.__name__
 
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
-        return None, "%s has no YAML frontmatter block" % path
+        return None, "no YAML frontmatter block — add one naming metadata.home"
     end = None
     for i in range(1, len(lines)):
         if lines[i].strip() in ("---", "..."):
             end = i
             break
     if end is None:
-        return None, "%s has an unterminated frontmatter block" % path
+        return None, "unterminated frontmatter block"
     try:
         front = yaml.safe_load("\n".join(lines[1:end]))
-    except Exception as exc:
-        return None, "%s has unparseable frontmatter (%s)" % (
-            path, exc.__class__.__name__)
+    except Exception:
+        # Overwhelmingly this is an unquoted `: ` inside `description:` — see
+        # the header. The remedy is named rather than the exception class,
+        # because the class is what an agent cannot act on.
+        return None, "unparseable frontmatter — quote the description or fix the YAML"
 
     if front is None:
         front = {}
     if not isinstance(front, dict):
-        return None, "%s frontmatter is not a mapping" % path
+        return None, "frontmatter is not a mapping"
     meta = front.get("metadata")
     # A note with no `metadata:` at all is not malformed — it is simply a note
     # with no type and no home, which is exactly what this gate is for.
@@ -247,33 +271,39 @@ def find_clone(repo):
 
 
 def scan():
-    """-> (flagged note paths, degrade reasons)."""
-    flagged = []
-    reasons = []
+    """-> [(path, display)] — one entry per note that needs attention.
+
+    `display` is the path, plus a parenthesised label when the note could not
+    be parsed. A parse failure never stops the walk and never becomes a
+    run-level verdict: an unreadable note is one finding among however many
+    the directory holds, and the notes beside it are still judged.
+    """
+    findings = []
     for path in note_paths():
-        meta, reason = note_metadata(path)
-        if reason is not None:
-            reasons.append(reason)
+        meta, label = note_metadata(path)
+        if label is not None:
+            findings.append((path, "%s (%s)" % (path, label)))
             continue
         note_type = meta.get("type")
         if isinstance(note_type, str) and note_type.strip() == "user":
             continue
         resolved = split_home(meta.get("home"))
         if resolved is None:
-            flagged.append(path)
+            findings.append((path, path))
             continue
         repo, rel = resolved
         clone = find_clone(repo)
         if clone is None:
             continue                      # accepted unverified, silently
         if not os.path.exists(os.path.join(clone, rel)):
-            flagged.append(path)          # dangling: the clone is here, the file is not
-    return flagged, reasons
+            # Dangling: the clone is here, the file it names is not.
+            findings.append((path, path))
+    return findings
 
 
-def render(paths):
-    shown = ", ".join(paths[:LIST_LIMIT])
-    extra = len(paths) - LIST_LIMIT
+def render(displays):
+    shown = ", ".join(displays[:LIST_LIMIT])
+    extra = len(displays) - LIST_LIMIT
     if extra > 0:
         shown += ", +%d more" % extra
     return shown
@@ -304,17 +334,19 @@ if hook_event == "SessionStart":
                 "the session marker under %s could not be written (%s), so the "
                 "Stop gate has nothing to scope to" % (MARKER_DIR, exc.__class__.__name__))
 
-    flagged, reasons = scan()
-    reasons = marker_reasons + reasons
-    if reasons:
-        degraded("; ".join(reasons))
-    if not flagged:
+    # A marker we could not write is RUN-LEVEL: without it the Stop arm has
+    # nothing to scope to. Nothing the scan finds is run-level.
+    if marker_reasons:
+        degraded("; ".join(marker_reasons))
+
+    findings = scan()
+    if not findings:
         sys.exit(0)                   # ANTI-NAG: a clean scan says nothing
     emit("memory-home: %d memory note(s) outside any repo have no repo home — %s. "
          "Promote each into the repo that owns the fact (ADR, docs/, "
          "'## Repo-specific additions', the skills registry) and set "
          "metadata.home; a note about the person (type: user) is exempt."
-         % (len(flagged), render(flagged)))
+         % (len(findings), render([d for _, d in findings])))
     sys.exit(0)
 
 # ── Stop: gate on what THIS session wrote ──────────────────────────────────
@@ -331,15 +363,11 @@ except Exception as exc:
     degraded("the session marker %s could not be read (%s); nothing gated."
              % (marker, exc.__class__.__name__))
 
-flagged, reasons = scan()
-if reasons:
-    degraded("; ".join(reasons))
-
 written_this_session = []
-for path in flagged:
+for path, display in scan():
     try:
         if os.path.getmtime(path) >= since:
-            written_this_session.append(path)
+            written_this_session.append(display)
     except Exception:
         pass                          # a note that vanished mid-scan is not a block
 if not written_this_session:

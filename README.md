@@ -126,9 +126,16 @@ local clone of `<repo>` is found but `<path>` is not in it.
   it blocks with `{"decision":"block","reason":"…"}` when *this* session (notes
   newer than its marker) wrote one without a home, once: `stop_hook_active`
   turns the second pass into a `systemMessage` instead. It never edits or
-  deletes a note, always exits 0, and degrades to one
-  `memory-home: DEGRADED — <reason>` line when python3, PyYAML or a note's
-  frontmatter is not there to read.
+  deletes a note and always exits 0. `memory-home: DEGRADED — <reason>` is
+  reserved for **run-level** faults — no python3, no PyYAML, an unreadable hook
+  event, an unwritable marker directory — and gates nothing. A note it cannot
+  *parse* is a finding about that note, not a verdict about the run: the scan
+  continues and the note is flagged with its reason,
+  `<path> (unparseable frontmatter — quote the description or fix the YAML)`.
+  That case is the common one, not the exotic one — Claude Code writes
+  `description:` values unquoted, so any description containing `: ` is YAML
+  PyYAML rejects, and four such notes existed here the day the hook was
+  written.
 - `scripts/register-memory-home-hook.sh` wires both groups into
   `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` — **user level**, because
   memory is per machine, not per repo. Same posture as the two registrars
