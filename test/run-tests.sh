@@ -15411,12 +15411,13 @@ untouched body
 #
 # THE CLAIM THIS PINS. ci.yml carries a `workflow_dispatch` trigger and a long
 # comment arguing the addition is safe. That argument rests on two properties,
-# and only one of them lives in another repo: that this workflow publishes no
-# REQUIRED status context is a repo-settings fact (`required_status_checks:
-# []`), asserted there; that this file has NO `concurrency:` block, at workflow
-# or job level, is local and is the half a future tidy-up adds without reading
-# why it was missing. With both a dispatch and a concurrency group, two events
-# on one head sha can leave a cancelled run behind — the trap in AGENTS.md.
+# and only one of them lives in another repo: its `test` context is meant to
+# be required per cms-platform#437, which is exactly why the local
+# no-concurrency half is load-bearing; that this file has NO `concurrency:`
+# block, at workflow or job level, is local and is the half a future tidy-up
+# adds without reading why it was missing. With both a dispatch and a
+# concurrency group, two events on one head sha can leave a cancelled run
+# behind — the trap in AGENTS.md.
 #
 # Locked here because this repo's own convention says so and the precedent sits
 # a few hundred lines up: test_bump_workflow asserts skills-lock-bump.yml's
@@ -16965,7 +16966,11 @@ GHSTUB
     chmod +x "$TEST_DIR/bin-sweepfail/gh"
 
     local out="$TEST_DIR/sweep-out.txt" exit_code=0
-    PATH="$TEST_DIR/bin-sweepfail:$PATH" bash "$body" > "$out" 2>&1 || exit_code=$?
+    # SELF_WORKFLOW: the step's own env now sets it from `github.workflow`;
+    # without it here the new empty-SELF_WORKFLOW guard fires first and this
+    # test would be asserting about THAT message instead of the listing
+    # failure it exists to cover.
+    PATH="$TEST_DIR/bin-sweepfail:$PATH" SELF_WORKFLOW="Dependabot auto-merge" bash "$body" > "$out" 2>&1 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         pass "sweep: a failed PR listing exits non-zero"
@@ -16998,7 +17003,7 @@ GHSTUB
     chmod +x "$TEST_DIR/bin-sweepempty/gh"
 
     local ctl="$TEST_DIR/sweep-control.txt" ctl_code=0
-    PATH="$TEST_DIR/bin-sweepempty:$PATH" bash "$body" > "$ctl" 2>&1 || ctl_code=$?
+    PATH="$TEST_DIR/bin-sweepempty:$PATH" SELF_WORKFLOW="Dependabot auto-merge" bash "$body" > "$ctl" 2>&1 || ctl_code=$?
 
     if [[ $ctl_code -eq 0 ]]; then
         pass "sweep (control): a genuinely empty listing still exits 0"
@@ -17011,6 +17016,294 @@ GHSTUB
     # which would make a genuinely empty list into a bogus PR "number".
     assert_not_contains "$ctl" "Open Dependabot PR(s):" \
         "sweep (control): an empty listing did not become one nameless PR"
+}
+
+# ── Test: dependabot-auto-merge.yml no longer merges before CI reports ────
+#
+# cms-platform#437: `gh pr merge --auto` does not "no-op" when nothing is
+# required — gh treats CLEAN/HAS_HOOKS/UNSTABLE as already mergeable and
+# merges immediately, `--auto` or not. The fix has two halves, and both are
+# asserted here rather than trusted from the diff: job `auto-merge` no longer
+# carries a merge step at all (structural), and job `sweep`'s merge is gated
+# on a check from OUTSIDE this workflow and pinned to the head that gate
+# judged (behavioural — extracted from the real YAML and RUN, not read as
+# text, for the same reason test_dependabot_sweep_list_failure above is run
+# rather than grepped).
+test_dependabot_sweep_merge_gating() {
+    echo ""
+    echo "=== Test: dependabot-auto-merge.yml (no premature merge; sweep gates on outside CI, pinned to head) ==="
+
+    if ! command -v node >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1; then
+        fail "auto-merge sweep gating: bash, jq and node must all be available — refusing to skip"
+        return
+    fi
+
+    local wf="$REPO_ROOT/.github/workflows/dependabot-auto-merge.yml"
+
+    # ── Structural: job `auto-merge` carries no merge step of its own ─────
+    local step_names="$TEST_DIR/auto-merge-gating-step-names.txt"
+    local step_names_err="$TEST_DIR/auto-merge-gating-step-names.err"
+    if ! workflow_step_names "$wf" "auto-merge" > "$step_names" 2> "$step_names_err"; then
+        fail "auto-merge: could not read job auto-merge's step names — $(head -1 "$step_names_err")"
+    else
+        local expected joined
+        expected=$'Checkout\nFetch base ref\nGet Dependabot metadata\nVerify only manifest paths changed\nDisable auto-merge (path check failed)'
+        joined=$(cat "$step_names")
+        if [[ "$joined" == "$expected" ]]; then
+            pass "auto-merge: job auto-merge's steps are exactly Checkout, Fetch base ref, Get Dependabot metadata, Verify only manifest paths changed, Disable auto-merge (path check failed)"
+        else
+            fail "auto-merge: job auto-merge's steps should be exactly [Checkout, Fetch base ref, Get Dependabot metadata, Verify only manifest paths changed, Disable auto-merge (path check failed)], got [$(tr '\n' ',' < "$step_names")] — per cms-platform#437, gh merges on the spot when nothing is required, so this job must not attempt a merge of its own"
+        fi
+    fi
+
+    # ── Behavioural: extract job sweep's "Sweep open Dependabot PRs" run body
+    local body="$TEST_DIR/auto-merge-gating-sweep-body.sh"
+    if ! workflow_run_body "$wf" 'app/dependabot' > "$body" 2>"$TEST_DIR/auto-merge-gating-extract.err"; then
+        fail "auto-merge sweep gating: could not extract the sweep step — $(cat "$TEST_DIR/auto-merge-gating-extract.err")"
+        return
+    fi
+    if grep -qF '${{' "$body"; then
+        fail "auto-merge sweep gating: the step now interpolates \${{ }} — extract-and-run no longer models it"
+        return
+    fi
+    if ! bash -n "$body" 2>"$TEST_DIR/auto-merge-gating-syntax.err"; then
+        fail "auto-merge sweep gating: the extracted step is not valid bash — $(head -1 "$TEST_DIR/auto-merge-gating-syntax.err")"
+        return
+    fi
+
+    local binhome="$TEST_DIR/auto-merge-gating-bin"
+    mkdir -p "$binhome"
+    cat > "$binhome/git" <<'GITSTUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+    fetch) exit 0 ;;
+    diff) echo ".github/workflows/ci.yml"; exit 0 ;;
+    *)
+        echo "mock git: unexpected call: $*" >&2
+        exit 1
+        ;;
+esac
+GITSTUB
+    chmod +x "$binhome/git"
+
+    # `gh` stub: logs every call, serves `pr list`/`pr view` from FIXTURES,
+    # fails `pr merge` only when its LAST arg (the PR number — kept last by
+    # the workflow so `--match-head-commit <sha>` never gets mistaken for it)
+    # is listed in MERGE_FAILS, and answers `api` the way a real 404 does —
+    # body on stdout, exit 1 — per AGENTS.md's "gh api ... --jq on an HTTP
+    # error" trap, so a caller doing `x=$(gh api ...) || x=""` is exercised
+    # honestly. Anything unmodeled exits 90, loud rather than a silent 0/1
+    # that could be mistaken for a modeled outcome.
+    cat > "$binhome/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FIXTURES/calls.log"
+case "${1:-}" in
+    pr)
+        case "${2:-}" in
+            list)
+                cat "$FIXTURES/pr-numbers.txt"
+                exit 0
+                ;;
+            view)
+                num="$3"
+                counter="$FIXTURES/view-count-${num}"
+                n=0
+                [[ -f "$counter" ]] && n=$(cat "$counter")
+                n=$((n + 1))
+                echo "$n" > "$counter"
+                if [[ "$n" -gt 1 && -f "$FIXTURES/pr-${num}.after.json" ]]; then
+                    cat "$FIXTURES/pr-${num}.after.json"
+                else
+                    cat "$FIXTURES/pr-${num}.json"
+                fi
+                exit 0
+                ;;
+            merge)
+                last="${*: -1}"
+                case " ${MERGE_FAILS:-} " in
+                    *" ${last} "*)
+                        echo "mock gh: merge refused for #${last}" >&2
+                        exit 1
+                        ;;
+                    *) exit 0 ;;
+                esac
+                ;;
+            update-branch)
+                exit 0
+                ;;
+            *)
+                echo "mock gh: unexpected pr subcommand: $*" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    api)
+        echo '{"message":"Not Found"}'
+        exit 1
+        ;;
+    *)
+        exit 90
+        ;;
+esac
+GHSTUB
+    chmod +x "$binhome/gh"
+
+    # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json>
+    write_pr() {
+        local file="$1" num="$2" head="$3" mergeable="$4" mstate="$5" rollup="$6"
+        printf '{"number":%s,"baseRefName":"main","headRefOid":"%s","mergeable":"%s","mergeStateStatus":"%s","statusCheckRollup":%s}\n' \
+            "$num" "$head" "$mergeable" "$mstate" "$rollup" > "$file"
+    }
+
+    # run_case <fixtures-dir> <merge-fails> <self-workflow> <out-file> — runs
+    # the extracted step against that fixture set and prints the exit code.
+    run_case() {
+        local fx="$1" mf="$2" sw="$3" out="$4" rc=0
+        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" \
+            GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
+            bash "$body" > "$out" 2>&1 || rc=$?
+        echo "$rc"
+    }
+
+    local HEAD_X="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local HEAD_Y="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    local SELF="Dependabot auto-merge"
+
+    # (a) CI `test` SUCCESS + this workflow's own `auto-merge` SUCCESS — the
+    #     merge fires exactly once, pinned to the head these checks judged.
+    local fx_a="$TEST_DIR/auto-merge-gating-case-a"
+    mkdir -p "$fx_a"
+    printf '900\n' > "$fx_a/pr-numbers.txt"
+    write_pr "$fx_a/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_a="$TEST_DIR/auto-merge-gating-out-a.txt" rc_a
+    rc_a=$(run_case "$fx_a" "" "$SELF" "$out_a")
+    if [[ "$rc_a" -eq 0 ]]; then
+        pass "sweep gating (a): CI green + own-workflow green exits 0"
+    else
+        fail "sweep gating (a): CI green + own-workflow green exits 0 — got $rc_a: $(cat "$out_a")"
+    fi
+    local merges_a
+    merges_a=$(grep -c '^pr merge ' "$fx_a/calls.log" 2>/dev/null || true)
+    if [[ "$merges_a" == "1" ]]; then
+        pass "sweep gating (a): exactly one pr merge call"
+    else
+        fail "sweep gating (a): exactly one pr merge call — got ${merges_a:-0}: $(cat "$fx_a/calls.log" 2>/dev/null)"
+    fi
+    assert_contains "$fx_a/calls.log" "--match-head-commit $HEAD_X" \
+        "sweep gating (a): the merge is pinned with --match-head-commit <head-sha>"
+    if grep -qE -- "--match-head-commit $HEAD_X 900\$" "$fx_a/calls.log" 2>/dev/null; then
+        pass "sweep gating (a): the merge call ends with the PR number"
+    else
+        fail "sweep gating (a): the merge call should end with the PR number — got: $(cat "$fx_a/calls.log" 2>/dev/null)"
+    fi
+    assert_contains "$out_a" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (a): summary is merged=1 updated=0 skipped=0 blocked=0 failed=0"
+
+    # (b) every check on the head is from THIS workflow — no real CI has
+    #     reported, so the floor must not be satisfied by the gate itself.
+    local fx_b="$TEST_DIR/auto-merge-gating-case-b"
+    mkdir -p "$fx_b"
+    printf '900\n' > "$fx_b/pr-numbers.txt"
+    write_pr "$fx_b/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_b="$TEST_DIR/auto-merge-gating-out-b.txt" rc_b
+    rc_b=$(run_case "$fx_b" "" "$SELF" "$out_b")
+    if [[ ! -f "$fx_b/calls.log" ]] || ! grep -qF -- 'pr merge' "$fx_b/calls.log"; then
+        pass "sweep gating (b): no pr merge call when every check is this workflow's own"
+    else
+        fail "sweep gating (b): no pr merge call when every check is this workflow's own — got: $(cat "$fx_b/calls.log")"
+    fi
+    assert_contains "$out_b" "every check on its head comes from this workflow" \
+        "sweep gating (b): it says why it skipped"
+    assert_contains "$out_b" "skipped=1" \
+        "sweep gating (b): summary counts it as skipped"
+
+    # (c) CI has reported but not yet concluded (`conclusion: null`) — no
+    #     merge, same as any other not-yet-green check.
+    local fx_c="$TEST_DIR/auto-merge-gating-case-c"
+    mkdir -p "$fx_c"
+    printf '900\n' > "$fx_c/pr-numbers.txt"
+    write_pr "$fx_c/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":null},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_c="$TEST_DIR/auto-merge-gating-out-c.txt"
+    run_case "$fx_c" "" "$SELF" "$out_c" >/dev/null
+    if [[ ! -f "$fx_c/calls.log" ]] || ! grep -qF -- 'pr merge' "$fx_c/calls.log"; then
+        pass "sweep gating (c): no pr merge call while CI's conclusion is still null"
+    else
+        fail "sweep gating (c): no pr merge call while CI's conclusion is still null — got: $(cat "$fx_c/calls.log")"
+    fi
+
+    # (d) the pinned merge is refused and the head has since moved — do not
+    #     fall through to update-branch; the next sweep judges the new head.
+    local fx_d="$TEST_DIR/auto-merge-gating-case-d"
+    mkdir -p "$fx_d"
+    printf '900\n' > "$fx_d/pr-numbers.txt"
+    write_pr "$fx_d/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    write_pr "$fx_d/pr-900.after.json" 900 "$HEAD_Y" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_d="$TEST_DIR/auto-merge-gating-out-d.txt" rc_d
+    rc_d=$(run_case "$fx_d" "900" "$SELF" "$out_d")
+    if [[ "$rc_d" -eq 0 ]]; then
+        pass "sweep gating (d): a refused merge with a moved head still exits 0"
+    else
+        fail "sweep gating (d): a refused merge with a moved head still exits 0 — got $rc_d: $(cat "$out_d")"
+    fi
+    assert_not_contains "$fx_d/calls.log" "update-branch" \
+        "sweep gating (d): does not fall through to pr update-branch when the head moved"
+    assert_contains "$out_d" "its head moved" \
+        "sweep gating (d): it says the head moved"
+    assert_contains "$out_d" "skipped=1" \
+        "sweep gating (d): summary counts it as skipped, not updated"
+
+    # (e) SELF_WORKFLOW is empty — the sweep cannot tell its own checks from
+    #     real CI, so it must refuse outright rather than merge blind.
+    local out_e="$TEST_DIR/auto-merge-gating-out-e.txt" rc_e
+    rc_e=$(run_case "$fx_a" "" "" "$out_e")
+    if [[ "$rc_e" -ne 0 ]]; then
+        pass "sweep gating (e): an empty SELF_WORKFLOW exits non-zero"
+    else
+        fail "sweep gating (e): an empty SELF_WORKFLOW exits non-zero — got 0: $(cat "$out_e")"
+    fi
+    assert_contains "$out_e" "SELF_WORKFLOW is empty" \
+        "sweep gating (e): it says why"
+
+    # (f) headRefOid is not a 40-hex sha — refuse rather than merge unpinned.
+    local fx_f="$TEST_DIR/auto-merge-gating-case-f"
+    mkdir -p "$fx_f"
+    printf '900\n' > "$fx_f/pr-numbers.txt"
+    write_pr "$fx_f/pr-900.json" 900 "abc" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_f="$TEST_DIR/auto-merge-gating-out-f.txt"
+    run_case "$fx_f" "" "$SELF" "$out_f" >/dev/null
+    if [[ ! -f "$fx_f/calls.log" ]] || ! grep -qF -- 'pr merge' "$fx_f/calls.log"; then
+        pass "sweep gating (f): no pr merge call when headRefOid is not a 40-hex sha"
+    else
+        fail "sweep gating (f): no pr merge call when headRefOid is not a 40-hex sha — got: $(cat "$fx_f/calls.log")"
+    fi
+
+    # (g) the pinned merge is refused, the head has NOT moved, and the PR is
+    #     BEHIND — refresh the branch rather than retry the merge.
+    local fx_g="$TEST_DIR/auto-merge-gating-case-g"
+    mkdir -p "$fx_g"
+    printf '900\n' > "$fx_g/pr-numbers.txt"
+    write_pr "$fx_g/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "BEHIND" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_g="$TEST_DIR/auto-merge-gating-out-g.txt" rc_g
+    rc_g=$(run_case "$fx_g" "900" "$SELF" "$out_g")
+    if [[ "$rc_g" -eq 0 ]]; then
+        pass "sweep gating (g): a refused BEHIND merge with an unmoved head still exits 0"
+    else
+        fail "sweep gating (g): a refused BEHIND merge with an unmoved head still exits 0 — got $rc_g: $(cat "$out_g")"
+    fi
+    assert_contains "$fx_g/calls.log" "update-branch" \
+        "sweep gating (g): falls through to pr update-branch"
+    assert_contains "$out_g" "updated=1" \
+        "sweep gating (g): summary counts it as updated"
+
+    unset -f write_pr
+    unset -f run_case
 }
 
 # ── dependabot-config-health.js ──────────────────────────────────────────────
@@ -18594,6 +18887,7 @@ test_check_guidance_touch
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
+test_dependabot_sweep_merge_gating
 test_dependabot_config_health
 # The Codex lane. The three size/gate tests read only this repo's own files;
 # the sync and drift legs are --dry-run / read-only over the bigorg fixture,
