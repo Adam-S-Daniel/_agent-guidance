@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-15 — dependency-updates — edit
+- Motivation: the section prescribed `semver-major-days: 30` for every ecosystem with no exception; GitHub rejects that key on `github-actions` as a schema error, and four repos ran zero Dependabot updates from 2026-08-10 until found (#133).
+- Change: restricts `semver-major-days` to ecosystems that support SemVer cooldown and states it is never valid on `github-actions` (PR #136)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-15 (PR #136)
+
 ## 2026-09-14 — finding-your-unknowns — edit
 - Motivation: a memory note written this session held facts that lived only on a PR branch; nothing checked the "never the only copy" rule.
 - Change: States the memory-home contract (metadata.home) and the Stop gate that enforces it (PR #128)
