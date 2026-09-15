@@ -124,7 +124,7 @@
   heading: Dependency updates
   file: agents-md/base.md
   status: gap
-  bytes: 531
+  bytes: 520
 
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads

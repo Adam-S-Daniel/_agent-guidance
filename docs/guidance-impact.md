@@ -50,12 +50,6 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
-## 2026-09-15 — git-practices — edit
-- Motivation: cms-platform#283 closed unfixed through merge commit `78617e1`, whose hand-written message quoted the closing keyword in a code span (_agent-guidance#132).
-- Change: Adds the closing-keyword rule and tightens the squash bullet so the full build stays under its 28,672-byte ceiling (PR #137)
-- Eval: scratch-claude-001 tests, n=6, one per case: a code span in a commit message closed its issue 3/3 (branch commit, merge-time `--body`, `PR_BODY` merge commit); a PR body closed 1/1 plain and 1/1 in double quotes, 0/1 in a code span — https://github.com/Adam-S-Daniel/_agent-guidance/issues/132#issuecomment-5687434470
-- Outcome: pending — opened 2026-09-15 (PR #137)
-
 ## 2026-09-15 — two-github-connectors — edit
 - Motivation: room for the closing-keyword rule (_agent-guidance#132): the full build with every section was 28,648 of the suite's 28,672-byte ceiling.
 - Change: Drops "a 404 means not visible to THIS connector — re-check on the other", which the adjacent 404 section already says (PR #137)
@@ -66,6 +60,18 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: room for the closing-keyword rule (_agent-guidance#132), same size budget as the two-github-connectors entry.
 - Change: Folds the "Enumerate owners; never hardcode one" bullet into the intro sentence that already names `SYNC_OWNERS` (PR #137)
 - Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-15 (PR #137)
+
+## 2026-09-15 — dependency-updates — edit
+- Motivation: the section prescribed `semver-major-days: 30` for every ecosystem with no exception; GitHub rejects that key on `github-actions` as a schema error, and four repos ran zero Dependabot updates from 2026-08-10 until found (#133).
+- Change: restricts `semver-major-days` to ecosystems that support SemVer cooldown and states it is never valid on `github-actions` (PR #136)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-15 (PR #136)
+
+## 2026-09-15 — git-practices — edit
+- Motivation: cms-platform#283 closed unfixed through merge commit `78617e1`, whose hand-written message quoted the closing keyword in a code span (_agent-guidance#132).
+- Change: Adds the closing-keyword rule and tightens the squash bullet so the full build stays under its 28,672-byte ceiling (PR #137)
+- Eval: scratch-claude-001 tests, n=6, one per case: a code span in a commit message closed its issue 3/3 (branch commit, merge-time `--body`, `PR_BODY` merge commit); a PR body closed 1/1 plain and 1/1 in double quotes, 0/1 in a code span — https://github.com/Adam-S-Daniel/_agent-guidance/issues/132#issuecomment-5687434470
 - Outcome: pending — opened 2026-09-15 (PR #137)
 
 ## 2026-09-14 — finding-your-unknowns — edit
