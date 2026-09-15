@@ -113,11 +113,20 @@ END_MARK='<!-- END FLEET GUIDANCE -->'
 # context in the repo that carries it.
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || HOOK_DIR=""
 PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"
+CODEX_DEST_DIR="${CODEX_HOME:-$HOME/.codex}"
+
+# One spelling policy serves both execution modes. Character classes keep the
+# comparison case-insensitive without adding an external command to the
+# shell-only legacy path.
+case "${FLEET_GUIDANCE_SKIP:-}" in
+    ""|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) FLEET_GUIDANCE_SKIP_ENABLED=0 ;;
+    *) FLEET_GUIDANCE_SKIP_ENABLED=1 ;;
+esac
 
 if [ "$CODEX_CLOUD" -eq 1 ]; then
     cloud_result="$(python3 - \
-        "${CODEX_HOME:-$HOME/.codex}" "$PAYLOAD" "$BEGIN_MARK" "$END_MARK" \
-        "${FLEET_GUIDANCE_SKIP:-}" 2>/dev/null <<'PY'
+        "$CODEX_DEST_DIR" "$PAYLOAD" "$BEGIN_MARK" "$END_MARK" \
+        "$FLEET_GUIDANCE_SKIP_ENABLED" 2>/dev/null <<'PY'
 import hashlib
 import os
 import pathlib
@@ -169,7 +178,7 @@ try:
     payload_path = pathlib.Path(sys.argv[2])
     begin = sys.argv[3].encode()
     end = sys.argv[4].encode()
-    skip = sys.argv[5].lower() not in ("", "0", "false", "no", "off")
+    skip = sys.argv[5] == "1"
 
     payload = b""
     if not skip:
@@ -212,13 +221,9 @@ try:
 
     span = marker_span(original, begin, end)
     if skip:
-        block = (
-            begin
-            + b"\n"
-            + b"fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set) "
+        body = (
+            b"fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set) "
             + "— Codex Cloud setup and maintenance".encode()
-            + b"\n"
-            + end
             + b"\n"
         )
         verdict = f"fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set) — persisted in {label}"
@@ -229,16 +234,13 @@ try:
             f"fleet-guidance: installed (v{version}, {len(payload)} bytes) "
             "— Codex Cloud setup and maintenance"
         ).encode()
-        block = (
-            begin
-            + b"\n"
-            + f"<!-- fleet-guidance-version: {version} -->\n".encode()
+        body = (
+            f"<!-- fleet-guidance-version: {version} -->\n".encode()
             + persisted
             + b"\n"
             + payload_body
-            + end
-            + b"\n"
         )
+    block = begin + b"\n" + body + end + b"\n"
 
     if span is None:
         separator = b"" if not original or original.endswith(b"\n") else b"\n"
@@ -299,7 +301,6 @@ fi
 # message names the resolved path instead, because those have to be actionable.
 CLAUDE_DEST_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CLAUDE_DEST="$CLAUDE_DEST_DIR/CLAUDE.md"
-CODEX_DEST_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_DEST="$CODEX_DEST_DIR/AGENTS.md"
 # shellcheck disable=SC2088  # the tilde is LITERAL here on purpose: these two
 # are prose shown to a human, never paths anything opens. The paths are the
@@ -419,12 +420,13 @@ strip_managed_block() {
 # session sitting in the file and still loading — an opt-out that does not opt
 # you out, which is worse than none because it looks like it worked.
 #
-# `0`, `false`, `no` and `off` are honoured as OFF. Treating any non-empty
-# value as ON would make `FLEET_GUIDANCE_SKIP=0` mean "skip", and a flag whose
-# disabled spelling enables it is a trap worth two lines of code to avoid.
-case "${FLEET_GUIDANCE_SKIP:-}" in
-    ""|0|false|FALSE|no|NO|off|OFF) ;;
-    *)
+# `0`, `false`, `no` and `off` are honoured as OFF, case-insensitively. Treating
+# any non-empty value as ON would make `FLEET_GUIDANCE_SKIP=0` mean "skip", and
+# a flag whose disabled spelling enables it is a trap worth two lines of code
+# to avoid.
+case "$FLEET_GUIDANCE_SKIP_ENABLED" in
+    0) ;;
+    1)
         removed=""      # destinations a block was actually removed from
         present=0       # destinations that exist at all
         for i in "${!DEST_PATHS[@]}"; do

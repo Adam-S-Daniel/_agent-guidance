@@ -31,6 +31,21 @@ class CodexCloudDeliveryTests(unittest.TestCase):
         self.assertEqual(self.repo_agents_before, (REPO_ROOT / "AGENTS.md").read_bytes())
         self.tempdir.cleanup()
 
+    def permission_limited_preexec(self, *readable_dirs):
+        if os.geteuid() != 0:
+            return None
+        nobody = pwd.getpwnam("nobody")
+        self.root.chmod(0o755)
+        self.payload.chmod(0o644)
+        for directory in readable_dirs:
+            directory.chmod(0o755)
+
+        def demote():
+            os.setgid(nobody.pw_gid)
+            os.setuid(nobody.pw_uid)
+
+        return demote
+
     def run_cloud(
         self,
         *,
@@ -56,8 +71,9 @@ class CodexCloudDeliveryTests(unittest.TestCase):
             env.pop("FLEET_GUIDANCE_SKIP", None)
         else:
             env["FLEET_GUIDANCE_SKIP"] = skip
+        effective_args = ["--codex-cloud"] if args is None else args
         result = subprocess.run(
-            ["bash", str(HOOK), *(args or ["--codex-cloud"])],
+            ["bash", str(HOOK), *effective_args],
             cwd=REPO_ROOT,
             env=env,
             text=True,
@@ -65,12 +81,13 @@ class CodexCloudDeliveryTests(unittest.TestCase):
             check=False,
             preexec_fn=preexec_fn,
         )
-        self.assertEqual([], list(self.tmpdir_path.iterdir()), "Cloud mode wrote outside its target")
-        self.assertEqual(
-            [],
-            list(self.root.rglob(".fleet-guidance-*")),
-            "Cloud mode leaked an atomic-write temporary file",
-        )
+        if effective_args == ["--codex-cloud"]:
+            self.assertEqual([], list(self.tmpdir_path.iterdir()), "Cloud mode wrote outside its target")
+            self.assertEqual(
+                [],
+                list(self.root.rglob(".fleet-guidance-*")),
+                "Cloud mode leaked an atomic-write temporary file",
+            )
         return result
 
     def expected_installed_block(self, payload=None):
@@ -225,17 +242,7 @@ class CodexCloudDeliveryTests(unittest.TestCase):
                 else:
                     override.write_text("OVERRIDE MUST SURVIVE\n", encoding="utf-8")
                     override.chmod(0o200)
-                    if os.geteuid() == 0:
-                        nobody = pwd.getpwnam("nobody")
-                        self.root.chmod(0o755)
-                        home.chmod(0o755)
-                        self.payload.chmod(0o644)
-
-                        def demote():
-                            os.setgid(nobody.pw_gid)
-                            os.setuid(nobody.pw_uid)
-
-                        preexec_fn = demote
+                    preexec_fn = self.permission_limited_preexec(home)
                 try:
                     result = self.run_cloud(codex_home=home, preexec_fn=preexec_fn)
                 finally:
@@ -286,17 +293,7 @@ class CodexCloudDeliveryTests(unittest.TestCase):
         blocked = self.root / "blocked"
         blocked.mkdir()
         blocked.chmod(0o555)
-        preexec_fn = None
-        if os.geteuid() == 0:
-            nobody = pwd.getpwnam("nobody")
-            self.root.chmod(0o755)
-            self.payload.chmod(0o644)
-
-            def demote():
-                os.setgid(nobody.pw_gid)
-                os.setuid(nobody.pw_uid)
-
-            preexec_fn = demote
+        preexec_fn = self.permission_limited_preexec()
         try:
             result = self.run_cloud(codex_home=blocked, preexec_fn=preexec_fn)
         finally:
@@ -312,18 +309,7 @@ class CodexCloudDeliveryTests(unittest.TestCase):
         before = b"OPERATOR CONTENT THAT MUST SURVIVE\n"
         destination.write_bytes(before)
         destination.chmod(0o200)
-        preexec_fn = None
-        if os.geteuid() == 0:
-            nobody = pwd.getpwnam("nobody")
-            self.root.chmod(0o755)
-            home.chmod(0o755)
-            self.payload.chmod(0o644)
-
-            def demote():
-                os.setgid(nobody.pw_gid)
-                os.setuid(nobody.pw_uid)
-
-            preexec_fn = demote
+        preexec_fn = self.permission_limited_preexec(home)
         try:
             result = self.run_cloud(codex_home=home, preexec_fn=preexec_fn)
         finally:
@@ -337,6 +323,32 @@ class CodexCloudDeliveryTests(unittest.TestCase):
 
         self.assert_one_degraded_line(result)
         self.assertFalse(self.codex_home.exists())
+
+    def test_skip_off_spellings_reenable_both_modes(self):
+        off_values = ("0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off")
+        for mode in ("cloud", "legacy"):
+            for value in off_values:
+                with self.subTest(mode=mode, value=value):
+                    codex_home = self.root / f"{mode}-{value}"
+                    codex_home.mkdir()
+                    args = None if mode == "cloud" else []
+
+                    result = self.run_cloud(codex_home=codex_home, skip=value, args=args)
+
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertNotIn("fleet-guidance: skipped", result.stdout)
+                    self.assertIn("ORANGE-TERN-130", (codex_home / "AGENTS.md").read_text(encoding="utf-8"))
+
+    def test_codex_home_alone_does_not_select_cloud_mode(self):
+        self.codex_home.mkdir(parents=True)
+
+        result = self.run_cloud(args=[])
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue((self.claude_config / "CLAUDE.md").is_file())
+        codex_content = (self.codex_home / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("ORANGE-TERN-130", codex_content)
+        self.assertNotIn("fleet-guidance: installed", codex_content)
 
 
 if __name__ == "__main__":

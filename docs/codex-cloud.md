@@ -43,6 +43,15 @@ markers, and unwritable destinations print one `DEGRADED` line and exit
 nonzero, allowing setup or maintenance to stop instead of silently launching
 without the full guidance.
 
+### Mode selection
+
+Only the explicit `--codex-cloud` argument selects Cloud mode; setup and
+maintenance supply it directly. `CODEX_HOME` chooses the destination location
+only. The hook does not infer Cloud from the operating system, hostname, or
+path, so setting `CODEX_HOME` during a normal SessionStart run retains the
+legacy behavior: it writes Claude plus that Codex home when the Codex home
+already exists, and retains its exit-zero failure policy.
+
 `FLEET_GUIDANCE_SKIP=1` removes the payload and persists an explicit skipped
 verdict. Removing the flag (or setting it to `0`, `false`, `no`, or `off`) on a
 later setup or maintenance run restores the payload.

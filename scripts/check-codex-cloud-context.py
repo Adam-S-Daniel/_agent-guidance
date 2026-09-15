@@ -118,7 +118,7 @@ def expected_cloud_block(payload):
         f"{payload_with_newline}"
         f"{END}\n"
     )
-    return block, verdict
+    return block
 
 
 def check(response_path, payload_path, repo_agents_path):
@@ -153,7 +153,7 @@ def check(response_path, payload_path, repo_agents_path):
         raise CheckFailure("assistant turn is incomplete or failed")
 
     envelope = initial_instruction_envelope(turn)
-    block, verdict = expected_cloud_block(payload)
+    block = expected_cloud_block(payload)
     if envelope.count(BEGIN) != 1 or envelope.count(END) != 1:
         raise CheckFailure("instruction envelope does not contain exactly one managed fleet block")
     if envelope.count(payload) != 1:
@@ -161,12 +161,6 @@ def check(response_path, payload_path, repo_agents_path):
     if envelope.count(block) != 1:
         raise CheckFailure("managed fleet block is incomplete or does not match the expected payload")
     block_at = envelope.find(block)
-    installed_block = envelope[block_at : block_at + len(block)]
-    verdict_lines = [
-        line for line in installed_block.splitlines() if line.startswith("fleet-guidance:")
-    ]
-    if verdict_lines != [verdict]:
-        raise CheckFailure("managed fleet block does not contain one installed verdict")
 
     if envelope.count(additions) != 1:
         raise CheckFailure("repo-specific additions are missing, truncated, or duplicated")
