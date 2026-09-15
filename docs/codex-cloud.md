@@ -9,8 +9,9 @@ the installer directly before assembling the agent's instructions.
 1. Select **Manual** environment setup. Merely adding setup and maintenance
    text while automatic setup remains enabled does not run those scripts, and
    an existing automatic-setup cache can keep using its old setup.
-2. Set `CODEX_HOME=/opt/codex` as a persistent environment variable. An
-   `export` inside setup does not persist into the agent process.
+2. For the current supported recipe, set `CODEX_HOME=/opt/codex` as a
+   persistent environment variable. This gives setup and the agent the same
+   destination; it is not an inherent Codex requirement, as measured below.
 3. Preserve the repository's dependency installation, then run the hook in
    both the **setup script** and the **maintenance script**:
 
@@ -25,14 +26,35 @@ bash .claude/hooks/fleet-memory.sh --codex-cloud
    cached container.
 
 Once the hook is on the default branch, the relative command above is the
-durable configuration. The successful pre-merge check instead downloaded the
+durable configuration. Because fresh setup may run against the default branch,
+the successful pre-merge check used a temporary bridge: it downloaded the
 installer from reviewed commit
 [`f417c13`](https://github.com/Adam-S-Daniel/_agent-guidance/commit/f417c13d27f99336169966c9709c1a8293686f74),
 verified SHA-256
 `d33d8e08de029bb118eb1f395b2b4b2f0f4c70b9cb85828ceb2e9580617e1845`,
 and pointed `FLEET_GUIDANCE_PAYLOAD` at the current checkout's
 `.claude/hooks/fleet-guidance.md`. That pinned the reviewed installer while
-still testing the payload from the branch Cloud actually checked out.
+still testing the payload from the branch Cloud actually checked out. The SHA
+pin and digest are unnecessary after the hook merges to the default branch.
+
+### Setup and agent environments
+
+A controlled 2026-09-15 probe removed the persistent UI `CODEX_HOME` and ran
+the installer with a command-local default:
+
+```bash
+CODEX_HOME="${CODEX_HOME:-/opt/codex}" \
+  bash .claude/hooks/fleet-memory.sh --codex-cloud
+```
+
+The setup log had no `CODEX_HOME`; it also had none of `CODEX_CLOUD`,
+`CODEX_CI`, `CODEX_ENVIRONMENT`, or `CODEX_ENV`. This is a measured distinction,
+not an exhaustive test of possible signals. In the resulting agent process,
+`CODEX_HOME` was `/opt/codex`, and the exact
+[`check-codex-cloud-context.py`](../scripts/check-codex-cloud-context.py) check
+passed. The persistent UI variable is therefore a convenient way to align both
+phases; a command-local default, or an equivalent repo-owned Cloud default,
+can provide the same alignment.
 
 The explicit mode targets Codex only. It selects a nonempty
 `$CODEX_HOME/AGENTS.override.md` when one exists, otherwise
@@ -45,12 +67,20 @@ without the full guidance.
 
 ### Mode selection
 
-Only the explicit `--codex-cloud` argument selects Cloud mode; setup and
-maintenance supply it directly. `CODEX_HOME` chooses the destination location
-only. The hook does not infer Cloud from the operating system, hostname, or
-path, so setting `CODEX_HOME` during a normal SessionStart run retains the
-legacy behavior: it writes Claude plus that Codex home when the Codex home
-already exists, and retains its exit-zero failure policy.
+`--codex-cloud` is this hook's implemented mode switch; setup and maintenance
+supply it directly. `CODEX_HOME` chooses the destination location only. The
+hook does not currently infer Cloud from the operating system, hostname, or
+path. This design choice does not prove automatic detection is impossible, but
+detection inside the script could only affect an invocation that already
+happened—it cannot cause Cloud to invoke the hook. A normal SessionStart run
+keeps the legacy behavior: it writes Claude plus an already-existing Codex home
+and retains its exit-zero failure policy.
+
+The Claude multi-repo bootstrap in
+[agentskills' delivery guide](https://github.com/Adam-S-Daniel/agentskills/blob/main/docs/multi-repo-delivery.md)
+addresses hook discovery across child repositories. The reproduction in
+[issue #130](https://github.com/Adam-S-Daniel/_agent-guidance/issues/130) uses
+one repository, so the two gaps are separate.
 
 `FLEET_GUIDANCE_SKIP=1` removes the payload and persists an explicit skipped
 verdict. Removing the flag (or setting it to `0`, `false`, `no`, or `off`) on a
