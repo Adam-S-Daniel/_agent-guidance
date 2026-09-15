@@ -1,23 +1,38 @@
 # Codex Cloud fleet guidance
 
-This is the candidate bootstrap route for Codex Cloud, pending a positive live
-context check. After the change reaches the default branch, add this command
-to both the environment's **setup script** and **maintenance script**:
+The manual environment bootstrap is verified for a fresh Codex Cloud
+container. It does not depend on user-hook registration or trust; Cloud runs
+the installer directly before assembling the agent's instructions.
+
+## Configure the environment
+
+1. Select **Manual** environment setup. Merely adding setup and maintenance
+   text while automatic setup remains enabled does not run those scripts, and
+   an existing automatic-setup cache can keep using its old setup.
+2. Set `CODEX_HOME=/opt/codex` as a persistent environment variable. An
+   `export` inside setup does not persist into the agent process.
+3. Preserve the repository's dependency installation, then run the hook in
+   both the **setup script** and the **maintenance script**:
 
 ```bash
+npm ci
 bash .claude/hooks/fleet-memory.sh --codex-cloud
 ```
 
-For a cold container, Cloud runs setup while caching the default branch and
-checks out the task's selected branch afterward. On a cached container it runs
-maintenance after checkout. Once this command exists on the default branch,
-setup creates `${CODEX_HOME:-$HOME/.codex}`; maintenance refreshes an older
-managed block and is byte-idempotent when the payload is already current.
-During pre-merge validation, a relative command against the default branch
-cannot exercise this branch-only mode; use only a reviewed, commit-pinned copy
-of the hook and payload. Setup-shell exports do not persist into the agent, so
-set a custom `CODEX_HOME` in the environment configuration rather than
-exporting it only inside setup or maintenance.
+4. Reset the environment cache before the first verification. Cloud runs setup
+   while caching the default branch for a fresh container, then checks out the
+   task's selected branch. It runs maintenance after checkout when resuming a
+   cached container.
+
+Once the hook is on the default branch, the relative command above is the
+durable configuration. The successful pre-merge check instead downloaded the
+installer from reviewed commit
+[`f417c13`](https://github.com/Adam-S-Daniel/_agent-guidance/commit/f417c13d27f99336169966c9709c1a8293686f74),
+verified SHA-256
+`d33d8e08de029bb118eb1f395b2b4b2f0f4c70b9cb85828ceb2e9580617e1845`,
+and pointed `FLEET_GUIDANCE_PAYLOAD` at the current checkout's
+`.claude/hooks/fleet-guidance.md`. That pinned the reviewed installer while
+still testing the payload from the branch Cloud actually checked out.
 
 The explicit mode targets Codex only. It selects a nonempty
 `$CODEX_HOME/AGENTS.override.md` when one exists, otherwise
@@ -34,8 +49,18 @@ later setup or maintenance run restores the payload.
 
 ## Diagnose delivery without a Codex CLI
 
-Some Cloud shells do not provide a `codex` executable. Select the same global
-file the installer does and inspect its persisted verdict:
+Some Cloud shells do not provide a `codex` executable. A short read-only
+diagnostic prompt is:
+
+> Do not use tools. Reply with exactly one word: the final word of the
+> `fleet-guidance: installed` line in your initial instructions.
+
+The expected word is `maintenance`. This is a convenient session check. The
+saved raw task response below is the stronger proof because it does not depend
+on a model report.
+
+To prove the installer wrote the file, select the same global file it does and
+inspect its persisted verdict:
 
 ```bash
 codex_home_dir="${CODEX_HOME:-$HOME/.codex}"
@@ -49,9 +74,13 @@ grep -F 'fleet-guidance:' "$codex_global_instructions"
 
 That result proves the setup or maintenance command installed the file. It
 does not prove the Cloud harness included the file in the model's context. A
-model-visible proof uses the completed task response's raw initial instruction
-envelope, before any prompt, tool output, reasoning, or model response can echo
-the text. Save the operator-supplied Cloud task response and run:
+model-visible proof uses
+`current_assistant_turn.thread_events.events` in the completed task response.
+The checker reads only the initial `rawResponseItem/completed` user
+instructions before any tool output, reasoning, or assistant response can echo
+the text. In a signed-in browser's developer tools, open the **Network** tab,
+reload the completed task, and save the JSON response from
+`GET /backend-api/wham/tasks/<task_id>` locally. Then run:
 
 ```bash
 python3 scripts/check-codex-cloud-context.py \
@@ -63,12 +92,36 @@ python3 scripts/check-codex-cloud-context.py \
 The checker fails closed unless that envelope contains one byte-exact payload
 inside one complete managed block, its one persisted installed verdict, and
 the expected repo-specific additions through end of file. It prints only a
-non-identifying result; it does not fetch authenticated task data. Live Cloud
-positive verification and rollout are still pending. A completed 2026-09-15
-baseline contained the repo-specific additions verbatim but no global managed
-block or full payload; the public reproduction is
-[_agent-guidance issue #130](https://github.com/Adam-S-Daniel/_agent-guidance/issues/130).
-Cloud support for user hooks has not been assumed either way.
+non-identifying result; it does not fetch authenticated task data. Raw task
+captures are authenticated and stay local—do not commit them or paste private
+environment IDs or task URLs into the repo. This response shape is an observed
+internal endpoint and may change; the checker fails closed if the response is
+unavailable or its structure changes.
+
+## Verification record
+
+On 2026-09-15, the original automatic-setup baseline contained complete
+repo-specific additions but no global block or full payload. After switching
+to Manual setup, persisting `CODEX_HOME`, and resetting the cache, two completed
+Cloud sessions at reviewed commit `f417c13` passed
+`check-codex-cloud-context.py`: the 24,465 byte fleet payload appeared exactly
+once in each raw initial instruction envelope, and the repo-specific additions
+were complete. Both logs said `Running setup scripts...` and
+`fleet-guidance: installed`. A third task resumed the cached environment, also
+passed the exact initial-envelope checker, and logged
+`Running maintenance scripts...` followed by
+`fleet-guidance: current (ve8a1ff3c, 24465 bytes) — ~/.codex/AGENTS.md`.
+Together these runs verify both cold setup delivery and cached maintenance
+delivery. The public record is
+[PR #131](https://github.com/Adam-S-Daniel/_agent-guidance/pull/131) and
+[issue #130](https://github.com/Adam-S-Daniel/_agent-guidance/issues/130).
+
+A local Codex CLI control independently loaded the complete 24,465 byte global
+payload plus a 32,760 byte project `AGENTS.md` into one 57,583 byte instruction
+envelope. Refresh and byte-idempotence through the maintenance command have
+deterministic test coverage as well as the live cached verification above.
+Live Cloud user-hook availability remains unverified; this manual lifecycle
+route does not depend on it.
 
 See OpenAI's documentation for [Cloud environment setup and maintenance](https://learn.chatgpt.com/docs/environments/cloud-environment)
 and the [Codex `AGENTS.md` instruction hierarchy](https://learn.chatgpt.com/docs/agent-configuration/agents-md).

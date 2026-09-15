@@ -104,12 +104,11 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
 Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 
-The candidate Codex Cloud bootstrap uses its environment lifecycle. After this
-change reaches the default branch, run
+The Codex Cloud cold-start path is verified with **Manual** environment setup
+and persistent `CODEX_HOME=/opt/codex`: preserve `npm ci`, then run
 `bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
-maintenance. The mode creates the Cloud Codex home, targets only the effective
-global Codex instruction file, and persists its verdict inside that file.
-Configuration and current verification status:
+maintenance, and reset the cache for the first verification. Setup and
+maintenance are both verified in live Cloud sessions. Configuration and proof:
 [`docs/codex-cloud.md`](docs/codex-cloud.md).
 
 ### Memory notes outside a repo

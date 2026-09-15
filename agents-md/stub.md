@@ -41,15 +41,15 @@ exists — Codex's global **user** instructions, outside its 32 KiB
 trust it in `/hooks`. `codex debug prompt-input` shows exactly what a session
 loaded; no `fleet-guidance:` line there means DEGRADED.
 
-The candidate Codex Cloud bootstrap is pending live positive verification.
-After it reaches the default branch, configure both environment setup and
-maintenance to run
-`bash .claude/hooks/fleet-memory.sh --codex-cloud`; see
+For Codex Cloud, use **Manual** environment setup with persistent
+`CODEX_HOME=/opt/codex`. Preserve the repository's dependency setup and run
+`bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
+maintenance; reset the cache for the first verification. Fresh setup and
+cached maintenance were verified in the `_agent-guidance` environment. See
 [`docs/codex-cloud.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/codex-cloud.md).
-If the Cloud shell has no
-`codex debug prompt-input`, that line in the effective global file proves only
-that setup wrote it. The saved task response's raw initial instruction
-envelope is the separate, echo-free proof that Cloud made it model-visible.
+If the Cloud shell has no `codex debug prompt-input`, the saved task response's
+raw initial instruction envelope is the echo-free proof of model-visible
+delivery.
 
 ## The floor: rules that hold even when the guidance did not load
 
