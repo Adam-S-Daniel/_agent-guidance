@@ -1765,6 +1765,66 @@ opened the day before this fire; #124, the paused one-way-door review of
 `skills_bootstrap` hook-pin bump); none is a `repos.yml` classify/remove PR
 or a base.md promotion this Routine opened, so none needed action this run.
 
+### Measured 2026-09-17, seventh fired run
+
+Tool availability repeated the 2026-09-01/09-02/09-06/09-13/09-14/09-16 shape
+exactly, for a seventh consecutive fire: `mcp__Claude_Code_Remote__list_repos`,
+`list_triggers` and `add_repo` were all three absent (no ToolSearch hit for
+the `Claude_Code_Remote` family) and the `gh` CLI was absent too (`which gh`
+exited 1). Set (a) again `NOT COMPUTABLE (no enumeration tool available)`,
+recorded as the one-line repeat this section's own convention calls for.
+
+Both GitHub MCP connectors answered (`mcp__github__get_me` and
+`mcp__github-mcp__get_me` both resolved to the same account), and
+`mcp__github__`'s Actions-tool schemas (`actions_list`, `actions_get`,
+`get_check_run`, `get_job_logs`) were present and schema-loadable — the
+fuller profile, matching 2026-09-02/09-06/09-13/09-14/09-16 rather than
+2026-09-01's narrower one.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos) as the substitute for `list_triggers`; it mapped 1:1 onto
+`repos.yml`'s 19-name non-structural union (22 total minus both forks and
+`superoutrigger`). 0 unattached, same substitute-not-equivalent caveat as
+the prior six runs.
+
+Set (c) computed cleanly via individual `git ls-remote` probes
+(`GIT_TERMINAL_PROMPT=0`) for all 22 `repos.yml` names under the owner
+recorded in the existing Step 2 mapping: all 22 resolved on the first
+probe, no fallback owner needed. 0 unreadable. As in the prior six runs,
+`gh repo list ... --json` was unavailable, so this is single-source
+verification only, not the dual-source cross-check Step 2 calls for.
+
+`repos.yml` on `main` was unchanged from the 2026-09-16 measurement (still
+the same 22-name union: `cron_coverage.fleet` 13 + `out_of_scope` 9,
+`exclude: []`). All 19 in-scope repos' local checkouts were verified
+byte-identical to their own `origin/main` (or, for `scratch-claude-001`,
+its actual default branch) before being read, and each repo's `AGENTS.md`
+last-touch commit predated this fire with no changes since the
+2026-09-15/09-16 sync — `cms-platform`'s only post-sync `AGENTS.md` touch
+was its own `v0.1.108` release-version line, in its repo-specific half.
+Every repo carried exactly one `## Repo-specific additions` marker and
+exactly one line-start `@AGENTS.md` bridge; a spot-check rebuild
+(`agentskills`) matched `./scripts/build-agents-md.sh` exactly, modulo the
+documented trailing-newline trim. The drift report (`drift-report-latest`,
+generated 2026-09-16 10:58 UTC) agreed on all 18 rows it covers
+(`up-to-date`, marker `yes`, `bridge-ok`, no open PRs, no sections) and was
+current, but was not relied on as the source of truth per §1 — the direct
+checks above are what this line cites.
+
+Both previously-flagged centralization candidates remain correctly resolved
+(re-confirmed by a direct grep of `base.md` on `main`, which carries both
+the `gh api --jq` HTTP-error-to-stdout gotcha and the general AST-vs-regex
+rule). A pass over all 19 in-scope repos' `## Repo-specific additions`
+content for new generalizing language or a new redundant duplicate of a
+base.md rule surfaced no new promotion candidates and no new redundant
+copies this run.
+
+Four PRs are open in `_agent-guidance` (#145, a `scheduled-run-health` pin
+bump; #143, a Dependabot auto-merge fix; #124, the paused one-way-door
+review of `.claude/hooks/` and `agents-md/base.md`; #111, the automated
+`skills_bootstrap` hook-pin bump); none is a `repos.yml` classify/remove PR
+or a base.md promotion this Routine opened, so none needed action this run.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
