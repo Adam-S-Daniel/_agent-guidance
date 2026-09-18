@@ -395,6 +395,11 @@ reusable-workflow ref is for review to catch.
   itself (the sync never writes one). A repo may be deliberately out — look
   for `skills.lock` rather than guess. Bundles cost always-on context, so
   this stays per-repo.
+- **A terminal session now loads the claude.ai account store too** (CLI
+  2.1.273+), as `anthropic-skills:<name>`, unless `setup.sh` has opted that
+  machine out with `syncClaudeAiSkills: false` — which it does, so a converged
+  machine loads the pinned bundles only and a cloud session cannot opt out and
+  loads both (agentskills' `docs/decisions/0010`).
 - New reusable skills graduate **into** the registry (sensitive ones into
   `agentskills-private`); a long skill splits across files.
 
