@@ -1893,6 +1893,77 @@ four the 2026-09-17 run listed); none is a `repos.yml` classify/remove PR
 or a base.md promotion this Routine opened, so none needed action this
 run either.
 
+### Measured 2026-09-19, ninth fired run
+
+Tool availability repeated the shape of all eight prior fires exactly:
+`mcp__Claude_Code_Remote__list_repos`, `list_triggers` and `add_repo` all
+three absent (no ToolSearch hit for the `Claude_Code_Remote` family), `gh`
+CLI absent (`which gh` exited 1). Set (a) again `NOT COMPUTABLE (no
+enumeration tool available)` — the one-line repeat this section's own
+convention calls for at this point.
+
+Both GitHub MCP connectors answered (`mcp__github__get_me` and
+`mcp__github-mcp__get_me` both resolved to the same account), and
+`mcp__github__`'s Actions-tool schemas loaded successfully — the fuller
+profile, matching every fire since 2026-09-02.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos) as the substitute for `list_triggers`; it mapped 1:1 onto
+`repos.yml`'s 19-name non-structural union (22 total minus both forks and
+`superoutrigger`). 0 unattached.
+
+Set (c) computed via individual `git ls-remote` probes
+(`GIT_TERMINAL_PROMPT=0`) for all 22 `repos.yml` names: the 19 in-scope
+repos resolved via `git fetch` against their own local checkouts, and
+`OctopusDeploy-Api`, `SonosAmpJuicePi` (both under `Adam-S-Daniel`) and
+`superoutrigger/superoutrigger` resolved on individual probes — all 22 on
+the first try, no fallback owner needed. 0 unreadable. `gh repo list
+... --json` remained unavailable, so single-source verification only.
+
+`repos.yml` on `main` was unchanged from the 2026-09-18 measurement (still
+the same 22-name union: `cron_coverage.fleet` 13 + `out_of_scope` 9,
+`exclude: []`). All 19 in-scope repos' local checkouts (each on its own
+task branch, not `main`) were diffed directly against their own
+`origin/main` (or `origin/<default-branch>` for `scratch-claude-001`) for
+both `AGENTS.md` and `CLAUDE.md` and found byte-identical on all 19 — a
+stronger check than a spot-fetch, run across the whole set rather than a
+sample. Every repo carried exactly one `## Repo-specific additions`
+marker and exactly one line-start `@AGENTS.md` bridge (`grep -c` on all
+19, not sampled). `base.md` (24,476 bytes) matched this run's own
+`fleet-guidance: installed` SessionStart verdict byte-for-byte and carries
+both previously-flagged candidates (the `gh api --jq` gotcha, the general
+AST-vs-regex rule). The drift report (`drift-report-latest`, generated
+2026-09-18 10:42 UTC, current) agreed on all 18 rows it covers
+(`up-to-date`, marker `yes`, `bridge-ok`, no open PRs, no sections), but
+was not relied on as the source of truth per §1 — the direct diffs above
+are what this line cites.
+
+An independent grep pass (not a re-read of prior conclusions) over all 19
+repos' `## Repo-specific additions` content for generalizing language
+(`every repo`, `fleet-wide`, `standing rule`, `general rule`, `across the
+fleet`, `all repos`, `account-wide`, `applies everywhere`) surfaced the
+same single non-finding the 2026-09-16 run recorded — `agentskills`'
+"fails every `git push` from every repo," describing a local incident, not
+a fleet claim — and nothing new. A separate grep for restatements of the
+two previously-promoted candidates (the `gh api --jq` stdout gotcha, the
+AST-vs-regex rule) found only `cms-platform`'s own canonical repo-specific
+pointer (its own `e2e/spec-ast.js` / `e2e/workflow-yaml-utils.js` files and
+`docs/CONTRIBUTING.md`), which is correctly scoped rather than a redundant
+restatement — the general form lives in `base.md`, the file-level pointer
+is genuinely repo-specific. No new promotion candidates, no new redundant
+copies, no section-opt-in candidates.
+
+The same four PRs are open in `_agent-guidance` (#145, #143, #124, #111);
+none is a `repos.yml` classify/remove PR or a base.md promotion this
+Routine opened, so none needed action this run.
+
+With nine consecutive identical tool-availability measurements now on
+record, that shape can be treated as this Routine's settled operating
+profile rather than something to re-derive at length on each fire — the
+probe stays worth attempting (a future edit to the Routine or its hosting
+environment could change it), but a tenth identical result is a one-line
+confirmation, not a finding.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
