@@ -1964,6 +1964,48 @@ probe stays worth attempting (a future edit to the Routine or its hosting
 environment could change it), but a tenth identical result is a one-line
 confirmation, not a finding.
 
+### Measured 2026-09-20, tenth fired run
+
+Tool availability held its settled shape for a tenth consecutive fire —
+`mcp__Claude_Code_Remote__list_repos`/`list_triggers`/`add_repo` and the
+`gh` CLI all absent, both GitHub MCP connectors answered, `mcp__github__`'s
+Actions-tool schemas loaded — recorded per this section's own convention as
+the one-line confirmation rather than a re-derived finding. Set (a) again
+`NOT COMPUTABLE (no enumeration tool available)`.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos) as the substitute for `list_triggers`, mapping 1:1 onto
+`repos.yml`'s unchanged 19-name non-structural union. 0 unattached. Set (c)
+computed via individual `git ls-remote` probes for all 22 `repos.yml`
+names — the 19 in-scope repos via `git fetch` against their own local
+checkouts, both forks and `superoutrigger/superoutrigger` via direct
+probes, all resolving on the first try. 0 unreadable; `gh repo list
+... --json` remained unavailable, so single-source verification only.
+
+`repos.yml` on `main` was unchanged from 2026-09-19. All 19 in-scope
+repos' local checkouts (each on its own task branch) diffed
+byte-identical against their own `origin/main` (or default branch) for
+both `AGENTS.md` and `CLAUDE.md`; every repo carried exactly one
+`## Repo-specific additions` marker and one line-start `@AGENTS.md`
+bridge. `base.md` (24,476 bytes) matched this run's own
+`fleet-guidance: installed` SessionStart verdict byte-for-byte, carries
+both previously-flagged candidates, and still does not name the stale
+`mcp__b26ebb34-…__*` prefix as current. Every repo's `AGENTS.md`
+last-touch commit predated this fire (09-15/09-16), so nothing landed
+fleet-wide since the 2026-09-19 pass. A keyword grep over all 19 repos'
+repo-specific sections for generalizing language and for restatements of
+the two promoted candidates surfaced only the same two known
+non-findings already dismissed (`agentskills`' "every `git push` from
+every repo", `cms-platform`'s own correctly-scoped AST/regex pointer).
+No new promotion candidates, no new redundant copies, no
+section-opt-in candidates. The drift report (`drift-report-latest`,
+generated 2026-09-19 10:26 UTC, current) agreed on all 18 rows it
+covers, but was not relied on as the source of truth per §1.
+
+The same four PRs are open in `_agent-guidance` (#145, #143, #124, #111);
+none is a `repos.yml` classify/remove PR or a base.md promotion this
+Routine opened, so none needed action this run.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
