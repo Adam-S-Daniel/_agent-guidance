@@ -2006,6 +2006,95 @@ The same four PRs are open in `_agent-guidance` (#145, #143, #124, #111);
 none is a `repos.yml` classify/remove PR or a base.md promotion this
 Routine opened, so none needed action this run.
 
+### Measured 2026-09-21, eleventh fired run
+
+Tool availability held its settled shape for an eleventh consecutive
+fire — `mcp__Claude_Code_Remote__list_repos`/`list_triggers`/`add_repo`
+and the `gh` CLI all absent (no ToolSearch hit for the `Claude_Code_Remote`
+family; `which gh` exited 1), both GitHub MCP connectors answered
+(`mcp__github__get_me` and `mcp__github-mcp__get_me` both resolved to
+`Adam-S-Daniel`, id 4205216), and `mcp__github__`'s Actions-tool schemas
+(`actions_list`, `pull_request_read`, etc.) loaded successfully — the
+fuller profile, matching every fire since 2026-09-02. Recorded per this
+section's own convention as the one-line confirmation. Set (a) again
+`NOT COMPUTABLE (no enumeration tool available)`.
+
+Set (b) again used the session's own GitHub "Repository Scope"
+declaration (19 repos) as the substitute for `list_triggers`; it mapped
+1:1 onto `repos.yml`'s unchanged 19-name non-structural union. 0
+unattached, same substitute-not-equivalent caveat as the prior ten runs.
+
+Set (c) computed via individual probes for all 22 `repos.yml` names: the
+19 in-scope repos resolved via `git fetch origin <default-branch>`
+against their own local checkouts (all succeeded), and both forks
+(`OctopusDeploy-Api`, `SonosAmpJuicePi`, both under `Adam-S-Daniel`) plus
+`superoutrigger/superoutrigger` resolved via direct `GIT_TERMINAL_PROMPT=0
+git ls-remote` probes — all 22 on the first try, no fallback owner
+needed. 0 unreadable. `gh repo list ... --json` remained unavailable, so
+this is single-source verification only, not the dual-source cross-check
+§0.5 Step 2 calls for.
+
+`repos.yml` on `main` (commit `49b84e0`) was unchanged from the
+2026-09-20 measurement — still `cron_coverage.fleet` 13 +
+`cron_coverage.out_of_scope` 9, `exclude: []`, the same 22-name union.
+All 19 in-scope repos' local checkouts were diffed directly against
+their own `origin/<default-branch>` for `AGENTS.md` (`git show
+origin/<branch>:AGENTS.md` vs. the working-tree file) and found
+byte-identical on all 19; every repo carried exactly one `##
+Repo-specific additions` marker and exactly one line-start `@AGENTS.md`
+bridge (`grep -c` on all 19). `_agent-guidance`'s own `AGENTS.md` passed
+`scripts/check-agents-md.sh` and matched a fresh
+`./scripts/build-agents-md.sh` regeneration exactly. `base.md` (24,476
+bytes) matched this run's own `fleet-guidance: installed` SessionStart
+verdict byte-for-byte, carries both previously-flagged candidates (the
+`gh api --jq` HTTP-error-to-stdout gotcha at line 244, the general
+AST-vs-regex rule at lines 22-24), and still names the stale
+`mcp__b26ebb34-…__*` prefix only as dated history ("until 2026-08-28")
+rather than as current guidance. The drift report (`drift-report-latest`,
+generated 2026-09-20 10:47 UTC, under a day old) agreed on all 18 rows it
+covers (`up-to-date`, marker `yes`, `bridge-ok`, no open PR, no
+sections), but was not relied on as the source of truth per §1 — the
+direct diffs above are what this line cites.
+
+A keyword grep over all 19 repos' repo-specific sections for
+generalizing language (`every repo`, `fleet-wide`, `standing rule`,
+`general rule`, `across the fleet`, `all repos`, `account-wide`,
+`applies everywhere`) surfaced only the same known non-finding the prior
+runs recorded (`agentskills`' "fails every `git push` from every repo,"
+a local incident, not a fleet claim). A second grep, widened this run to
+`never a regex` rather than the narrower phrase used previously, added
+one genuinely new hit beyond the two already-dismissed candidates:
+`adamdaniel.ai`'s "Parse structured formats with a real parser — never
+hand-roll" rule (workflow/`action.yml`/Decap-Jekyll YAML, citing GitHub
+enabling YAML anchors in workflows on 2025-09-18 and naming the Ruby
+parser `YAML.safe_load_file(..., aliases: true)` alongside the JS
+`yaml` package). Reviewed against §2A's standard: it is not a bare
+restatement of base.md's AST-vs-regex rule — that rule is scoped to
+*code-shape* lints (JS/AST via acorn), while this one is scoped to
+*parsing structured config/data formats* in a Ruby+JS toolchain, cites a
+dated incident base.md does not carry, and names the Ruby-side parser
+base.md has no occasion to mention. Judged correctly-scoped, same
+disposition as `cms-platform`'s AST/regex file-pointer — not a
+redundant copy, no PR proposed. Combined with `repo-settings`'s own
+unrelated `--jq` usages (also re-surfaced, also non-findings as in prior
+runs), no new promotion candidates and no new redundant copies this run.
+No section-opt-in candidates (first-party TS/Go/Rust/C# counts remain
+zero fleet-wide, unchanged from the 2026-08-28 baseline).
+
+The same four PRs remain open in `_agent-guidance` (#145, a
+`scheduled-run-health` pin bump; #143, a Dependabot auto-merge fix;
+#124, the paused one-way-door review of `.claude/hooks/` and
+`agents-md/base.md`; #111, the automated `skills_bootstrap` hook-pin
+bump) — checked individually via `get_files`, none touches a
+`repos.yml` classify/remove entry this Routine proposed nor a base.md
+promotion this Routine opened (#111 touches `repos.yml` but is the
+hook-pin bump, not a classification change; #124 touches `base.md` but
+is the pre-existing paused review), so none needed action this run.
+
+With eleven consecutive identical tool-availability measurements now on
+record, §0.5 Step 0's probe remains worth attempting each fire, but this
+shape should be treated as settled rather than re-argued.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
