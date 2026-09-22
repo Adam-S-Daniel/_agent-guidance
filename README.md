@@ -155,6 +155,15 @@ Promotion is deliberately **not** automatic — choosing which repo owns a fact,
 and which file inside it, is judgment. Reasoning:
 [`docs/decisions/0013`](docs/decisions/0013-a-memory-note-outside-a-repo-names-its-home.md).
 
+#### Codex memory provenance is not enforced yet
+
+Codex's native memory store does not expose Claude Code's one-note-per-fact
+frontmatter contract, and its asynchronous global consolidation does not offer
+the same per-fact, same-session `Stop` contract. A read-only audit of generated
+memory plus an auditor-owned provenance sidecar is proposed; no hook, auditor
+or registrar implements it yet. Reasoning and the remaining design work:
+[`docs/decisions/0015`](docs/decisions/0015-audit-codex-memories-after-generation-not-at-stop.md).
+
 ### Section manifest
 
 [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml) is one row per
