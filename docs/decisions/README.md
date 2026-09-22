@@ -28,6 +28,7 @@ a page.
 | [0012](0012-codex-gets-the-guidance-as-user-instructions.md) | Codex gets the guidance as global user instructions, and the project budget is warned, never blocked |
 | [0013](0013-a-memory-note-outside-a-repo-names-its-home.md) | A memory note outside a repo names its home, and a session that wrote one without it does not stop |
 | [0014](0014-dependabot-config-health-is-swept-centrally.md) | Dependabot config health is swept centrally, from here |
+| [0015](0015-bump-prs-never-ask-for-native-auto-merge.md) | Bump pull requests never ask for native auto-merge |
 
 ## Format
 

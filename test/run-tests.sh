@@ -2912,15 +2912,20 @@ case "$1" in
                 auto=""
                 for a in "$@"; do [[ "$a" == "--auto" ]] && auto=1; done
                 if [[ -n "$auto" ]]; then
-                    # --auto ARMS native auto-merge; it never merges anything
-                    # itself, which is why nothing below runs for it.
-                    # MOCK_AUTO_MERGE_FAILS reproduces what this fleet actually
-                    # does: with no required checks there is nothing to hold the
-                    # merge for, and GitHub refuses to arm at all.
-                    if [[ -n "${MOCK_AUTO_MERGE_FAILS:-}" ]]; then
-                        echo "failed to enable auto-merge: Pull request is in clean status" >&2
-                        exit 1
-                    fi
+                    # --auto does not only ARM native auto-merge: gh arms it
+                    # only when the PR is not already mergeable
+                    # (isImmediatelyMergeable, cli/cli
+                    # pkg/cmd/pr/merge/merge.go) — otherwise it merges the PR
+                    # on the spot, which is how nine bump PRs landed seconds
+                    # after opening on a fleet with nothing required (#141).
+                    # The one caller left using --auto is sync.sh's
+                    # protected-branch fallback, which stands in for a direct
+                    # push nothing gates either, so this mock's unconditional
+                    # success below is the right stand-in for it. Nothing in
+                    # this suite asks the mock to simulate a refusal to arm
+                    # any more, since the call that used to exercise that
+                    # path (bump-consumer-locks.sh's propose-pass attempt) no
+                    # longer exists.
                     exit 0
                 fi
                 pr_number="$1"
@@ -7647,7 +7652,6 @@ run_bump() {   # <output file> [script args...]
     MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
-    MOCK_AUTO_MERGE_FAILS="${BUMP_AUTO_MERGE_FAILS_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
@@ -8117,7 +8121,12 @@ test_bump_consumer_locks() {
     assert_contains "$body" "Generated, never hand-edited" "PR body: says the change is generator output"
     assert_contains "$body" "This lock has no federated sources." "PR body: says so when there is no federated half"
     assert_contains "$body" "This pull request merges itself" "PR body: discloses that no reviewer has to click merge"
-    assert_contains "$log" "native auto-merge armed" "auto-merge: requested on every PR this run opened"
+    # Regression guard for #141: the propose pass must not itself merge the PR
+    # it just opened. gh merges an already-mergeable PR on the spot rather
+    # than arming when nothing is required, which on this fleet means before
+    # any check runs — measured on nine bump PRs opened this way.
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged --auto" "auto-merge: the propose pass makes no merge call for the PR it just opened (#141)"
+    assert_not_contains "$log" "native auto-merge" "auto-merge: no native auto-merge attempt is logged for a PR this run opened (#141)"
     assert_contains "$body" "which skills.lock still pins" "PR body: quotes the consumer's own lock path, not this run's temp copy"
     assert_not_contains "$body" "$TEST_DIR" "PR body: no path from the machine that ran the bump"
     local fed_body="$BUMP_PR_BODY_DIR/bumporg_repo-federated.body"
@@ -11221,10 +11230,9 @@ run_sweep() {   # <output file> [script args...]
     BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
     BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
     BUMP_MERGE_FAIL_FOR_RUN="bumporg_repo-fail-merge" \
-    BUMP_AUTO_MERGE_FAILS_FOR_RUN=1 \
         run_bump "$@"
     unset BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN \
-          BUMP_MERGE_FAIL_FOR_RUN BUMP_AUTO_MERGE_FAILS_FOR_RUN
+          BUMP_MERGE_FAIL_FOR_RUN
 }
 
 # ── Test 8i1: --dry-run reports every merge it would make and makes none ──
@@ -11413,17 +11421,24 @@ test_bump_sweep() {
     # ── The summary carries the merges alongside the existing counts.
     assert_contains "$log" "2 merged, 1 proposed" "sweep: merges are counted in the summary line"
 
-    # ── Native auto-merge is attempted on the new PR and its refusal is not a
-    # failure. MOCK_AUTO_MERGE_FAILS reproduces this fleet's measured
-    # behaviour: with no required checks there is nothing to hold the merge
-    # for, and GitHub refuses to arm at all.
-    # Needles that would START with a dash are prefixed with the log's own
-    # first word: `grep -F -- "$needle"` is not what assert_contains runs, so a
-    # leading `--` is parsed by grep as an option, the grep errors, and
-    # assert_not_contains in particular would then PASS on anything.
-    assert_contains "$BUMP_PR_LOG" "pr-merged --auto --merge --repo bumporg/repo-aa-stale" "auto-merge: attempted on the PR this run opened"
-    assert_contains "$log" "native auto-merge did not arm" "auto-merge: its refusal is reported, not hidden"
-    assert_not_contains "$log" "2 failed ===" "auto-merge: a refusal to arm is not counted as a failure"
+    # ── Regression guard for #141: the propose pass makes no merge call of
+    # any kind for the PR it just opened. gh merges an already-mergeable PR
+    # on the spot rather than arming when nothing is required, which on this
+    # fleet means before any check runs — measured on nine bump PRs opened
+    # this way. Only the sweep above may merge anything, and every merge it
+    # makes is pinned to the commit its gate read.
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged --auto" "auto-merge: the propose pass makes no merge call for the PR it just opened (#141)"
+    # Counted, never `grep -q` in a pipe: under `pipefail` an early-exiting
+    # reader, or a first grep that matches nothing, makes the condition false
+    # and the else branch PASS on a run that merged nothing at all.
+    local merged_total merged_pinned
+    merged_total=$(grep -cF -- "pr-merged" "$BUMP_PR_LOG" || true)
+    merged_pinned=$(grep -F -- "pr-merged" "$BUMP_PR_LOG" | grep -cF -- "--match-head-commit" || true)
+    if [[ "${merged_total:-0}" -gt 0 && "$merged_total" == "$merged_pinned" ]]; then
+        pass "sweep: every merge in this run is pinned with --match-head-commit — only the sweep merged anything (#141)"
+    else
+        fail "sweep: every merge in this run is pinned with --match-head-commit — only the sweep merged anything (#141) — ${merged_pinned:-0} of ${merged_total:-0} pr-merged lines pinned"
+    fi
 
     rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
 }
