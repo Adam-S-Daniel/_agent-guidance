@@ -69,6 +69,12 @@ no backfill is planned; the file adds the fields git does not capture.
 - Outcome: pending — opened 2026-09-15 (PR #136)
 
 ## 2026-09-15 — git-practices — edit
+- Motivation: cms-platform#434's body put a closing keyword before the full URL of _agent-guidance#136, a PR in another repo, and merging #434 left that PR closed unmerged; the rule from PR #137 named only issue numbers (_agent-guidance#132).
+- Change: The closing-keyword bullet now covers full issue/PR URLs in any repo, says a PR is closed too, and no longer implies backticks protect anything (PR #142)
+- Eval: scratch tests 2026-09-15, n=6, one per case: a keyword before a full URL closed its target 4/4 where no backtick touched the URL (same-repo issue and cross-repo PR from a PR body; cross-repo PR from a commit message, plain and in backticks with a trailing space) and 0/2 where one did (PR-body code span; commit-message backticks abutting the URL) — https://github.com/Adam-S-Daniel/_agent-guidance/issues/132
+- Outcome: pending — opened 2026-09-15 (PR #142)
+
+## 2026-09-15 — git-practices — edit
 - Motivation: cms-platform#283 closed unfixed through merge commit `78617e1`, whose hand-written message quoted the closing keyword in a code span (_agent-guidance#132).
 - Change: Adds the closing-keyword rule and tightens the squash bullet so the full build stays under its 28,672-byte ceiling (PR #137)
 - Eval: scratch-claude-001 tests, n=6, one per case: a code span in a commit message closed its issue 3/3 (branch commit, merge-time `--body`, `PR_BODY` merge commit); a PR body closed 1/1 plain and 1/1 in double quotes, 0/1 in a code span — https://github.com/Adam-S-Daniel/_agent-guidance/issues/132#issuecomment-5687434470
