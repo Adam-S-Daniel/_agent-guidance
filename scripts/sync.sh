@@ -1547,8 +1547,19 @@ EOF
             fi
         fi
 
-        # Enable auto-merge so the PR lands on its own once checks pass. Merge
-        # commit FIRST, squash only as a fallback: the fleet default is
+        # Ask for auto-merge, and accept whichever of its two outcomes this
+        # produces. gh only ARMS the merge where a repo requires at least one
+        # check; where nothing is required — most of this fleet —
+        # `gh pr merge --auto` instead merges the PR on the spot, before any
+        # check has run. That is acceptable HERE, and only here: this
+        # fallback PR stands in for the direct push the sync makes on every
+        # other repo, which no check gates either, so an immediate merge
+        # loses nothing a direct push would already have skipped. Do not
+        # copy this call into anything whose merge needs to wait on CI — see
+        # #141 and cms-platform#437 — the same mechanism merged bump pull
+        # requests (bump-consumer-locks.sh) and Dependabot pull requests (the
+        # fleet's dependabot-auto-merge.yml) before their checks had run.
+        # Merge commit FIRST, squash only as a fallback: the fleet default is
         # merge-only (repo-settings' fleet.yml disables squash and rebase), and
         # the three cms-platform-managed repos that do keep squash allow plain
         # merges too — so `--merge` is the one method that works on every repo
