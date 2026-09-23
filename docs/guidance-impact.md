@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-22 — workstation-layout — edit
+- Motivation: ZENDA is retired and its replacement is `BOXY` (_agent-guidance#117); a bullet naming the old host sends every session to a machine that no longer exists.
+- Change: The Windows bullet names `BOXY` and adds where its WSL clones live; the manifest row moves from `skipped` (it was parked pending this rewrite) to `gap` (PR #157)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-22 (PR #157)
+
 ## 2026-09-15 — two-github-connectors — edit
 - Motivation: room for the closing-keyword rule (_agent-guidance#132): the full build with every section was 28,648 of the suite's 28,672-byte ceiling.
 - Change: Drops "a 404 means not visible to THIS connector — re-check on the other", which the adjacent 404 section already says (PR #137)
