@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-22 — sessions-get-cut-off — edit
+- Motivation: ZENDA, the host the sentence named, is being retired (_agent-guidance#117); the rule holds on any machine and in cloud sessions.
+- Change: The section's opening sentence no longer names a host (PR #NNN)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-22 (PR #NNN)
+
 ## 2026-09-15 — two-github-connectors — edit
 - Motivation: room for the closing-keyword rule (_agent-guidance#132): the full build with every section was 28,648 of the suite's 28,672-byte ceiling.
 - Change: Drops "a 404 means not visible to THIS connector — re-check on the other", which the adjacent 404 section already says (PR #137)

@@ -72,8 +72,7 @@ Repo locations are host-specific (on Windows, check `$env:COMPUTERNAME`).
 
 ## Sessions get cut off
 
-**`ZENDA` drops sessions mid-task, frequently** — any run can end between
-tool calls.
+**Sessions drop mid-task, often** — any run can end between tool calls.
 
 - **Commit and push as you go**, on a branch; a conversation, a dirty tree and
   a worktree do not survive the laptop.
