@@ -12,9 +12,10 @@ set -euo pipefail
 # PRs land without anyone clicking merge, and it runs FIRST for a reason that
 # is easy to lose: a PR merged seconds after it was opened is merged before
 # any check has started, so the day between two nightly runs IS the window a
-# consumer's CI gets. Native auto-merge would be the obvious mechanism and
-# cannot arm on most of this fleet (see the attempt after `gh pr create`, and
-# docs/decisions/0006).
+# consumer's CI gets. Native auto-merge is deliberately not used at all: where
+# nothing is required gh merges an already-mergeable PR on the spot instead of
+# arming it, and where something is required it waits only for the required
+# contexts, which this sweep does not — see docs/decisions/0015.
 #
 # PASS 2 — PROPOSE. For each repo the script:
 #   1. Fetches skills.lock from the default branch (absent → nothing to do)
@@ -2405,35 +2406,27 @@ $COMMIT_BODY" 2>&1); then
     # faith. BOTH copies are substituted, because the two scoped questions are
     # asked against two different temp files.
     # Output captured rather than discarded: gh prints the new PR's URL, and
-    # the auto-merge attempt below needs something to name.
+    # the log line below names it instead of leaving a bare "PR created."
     if pr_create_out=$(gh pr create \
         --head "$BRANCH_NAME" \
         --title "$PR_TITLE" \
         --body "$PR_BODY"); then
-        log "PR created."
+        log "PR created: $(tail -1 <<< "$pr_create_out")"
         ((OK_COUNT++)) || true
 
-        # Ask for native auto-merge as well, and do not care whether it takes.
-        # On this fleet it will not: the default-branch rulesets set
-        # `required_status_checks: []`, and with nothing to hold the merge FOR,
-        # GitHub refuses to arm auto-merge at all — it errors that the PR is
-        # already in a clean, mergeable state (measured; see the header of
-        # .github/workflows/dependabot-auto-merge.yml, which keeps its own
-        # `--auto` attempt for exactly this reason). Note what that refusal is
-        # NOT: it does not merge the PR here and now, seconds after opening it
-        # and before any check could start.
-        #
-        # It costs one API call and starts working for free the day any repo
-        # here grows a required check — on that repo, and only that repo, the
-        # PR then lands the moment its checks pass instead of waiting for
-        # tomorrow's sweep. A failure to arm is neither a run failure nor a
-        # per-repo failure: the sweep is what actually lands these.
-        pr_url=$(tail -1 <<< "$pr_create_out")
-        if auto_out=$(gh pr merge --auto --merge --repo "$repo_name" "$pr_url" 2>&1); then
-            log "native auto-merge armed — it lands when the checks it waits on pass."
-        else
-            log "native auto-merge did not arm (expected where the ruleset requires no checks) — tomorrow's sweep merges this PR instead: $(head -1 <<< "$auto_out")"
-        fi
+        # No merge is attempted here, of any kind. gh only ARMS auto-merge
+        # when a PR is not already mergeable (isImmediatelyMergeable, cli/cli
+        # pkg/cmd/pr/merge/merge.go); a PR whose checks have not concluded yet
+        # reads as immediately mergeable on any repo that requires none of
+        # them, which is most of this fleet, so `gh pr merge --auto` would
+        # merge it right here — seconds after opening it, before any check
+        # could start — rather than arm and wait. Measured on nine bump PRs
+        # this script itself opened (#141). Native auto-merge would in any
+        # case wait only for checks a ruleset marks REQUIRED, where this
+        # script's own sweep (sweep_bump_prs, pr_merge_verdict, above) waits
+        # for every check the PR reports. So the PR is left exactly as
+        # opened, and the next run's sweep is the only merge path — see
+        # docs/decisions/0015.
     else
         fail "PR creation failed for $repo_name"
         ((FAIL_COUNT++)) || true
