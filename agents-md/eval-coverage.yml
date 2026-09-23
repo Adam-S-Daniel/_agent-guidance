@@ -52,13 +52,8 @@
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
-  status: skipped
-  reason: >-
-    A machine reference being rewritten for the new laptop under
-    _agent-guidance#117; no behavior to measure until it settles. See
-    skills-evals#96.
-  since: "2026-09-04"
-  bytes: 462
+  status: gap
+  bytes: 473
 
 - id: sessions-get-cut-off
   heading: Sessions get cut off
