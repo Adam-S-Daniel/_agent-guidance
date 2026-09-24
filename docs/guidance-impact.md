@@ -217,3 +217,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: Condensed from 1393 to 714 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-14 (PR #128)
+
+## 2026-09-24 — git-practices — edit
+- Motivation: agentskills#179 said "For #176", so merging it left #176 open for a manual close.
+- Change: The closing-keyword bullet now says `Closes #N`, not `For #N`, when closing is meant; net −2 bytes (dropped the `--body`/`PR_BODY` aside) because the full build sat at its 28672-byte budget.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24

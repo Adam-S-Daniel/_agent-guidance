@@ -160,7 +160,7 @@
   heading: Git practices
   file: agents-md/base.md
   status: gap
-  bytes: 855
+  bytes: 853
 
 - id: section-docker
   heading: Docker
