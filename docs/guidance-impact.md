@@ -223,3 +223,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: The closing-keyword bullet now says `Closes #N`, not `For #N`, when closing is meant; net −2 bytes (dropped the `--body`/`PR_BODY` aside) because the full build sat at its 28672-byte budget.
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-24
+
+## 2026-09-24 — subagent-delegation — edit
+- Motivation: a delegated `_agent-guidance#163` check ran `bash test/run-tests.sh; echo "Exit code: $?"`, printed `Exit code: 1` and `1409 passed, 2 failed`, and reported "exit code 0" — the tool's code for the trailing `echo`. The parent caught it by re-running.
+- Change: The verifier bullet now says to run the verifier LAST in the delegated command and to re-run a self-contradicting report; the section was trimmed elsewhere to fit, net +2 bytes (the full build was at its 28672-byte budget).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24
