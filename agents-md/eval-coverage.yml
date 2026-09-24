@@ -58,13 +58,13 @@
     _agent-guidance#117; no behavior to measure until it settles. See
     skills-evals#96.
   since: "2026-09-04"
-  bytes: 462
+  bytes: 456
 
 - id: sessions-get-cut-off
   heading: Sessions get cut off
   file: agents-md/base.md
   status: gap
-  bytes: 536
+  bytes: 537
 
 - id: security
   heading: Security
@@ -142,19 +142,19 @@
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
   status: gap
-  bytes: 2716
+  bytes: 2723
 
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md
   status: gap
-  bytes: 1287
+  bytes: 1289
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
   status: gap
-  bytes: 2256
+  bytes: 2250
 
 - id: git-practices
   heading: Git practices

@@ -5,11 +5,11 @@ and the sync machinery that propagates it into every repo in the account, with a
 nightly drift dashboard.
 
 This repo deliberately does **not** carry skills. Reusable skills live in the
-canonical registry, [Adam-S-Daniel/agentskills](https://github.com/Adam-S-Daniel/agentskills)
-(private/sensitive ones in `agentskills-private`) — consume them from there via
+canonical registry, [Adam-S-Daniel/adam-agentskills](https://github.com/Adam-S-Daniel/adam-agentskills)
+(private/sensitive ones in `adam-agentskills-private`) — consume them from there via
 the plugin marketplace or that repo's `setup.sh`. The two-layer split (skills vs
 guidance) is documented in the registry's
-[`STRATEGY.md`](https://github.com/Adam-S-Daniel/agentskills/blob/main/STRATEGY.md).
+[`STRATEGY.md`](https://github.com/Adam-S-Daniel/adam-agentskills/blob/main/STRATEGY.md).
 The skills that used to live here (`debug-github-workflows`,
 `review-bash-ci-reliability`) were promoted into the registry.
 
@@ -183,8 +183,8 @@ to close it.
 
 [`docs/guidance-impact.md`](docs/guidance-impact.md) is the audit trail for
 every change to a `##` section's own content — creations, edits, renames,
-removals, and rejected proposals — modeled on agentskills'
-[`docs/skill-impact.md`](https://github.com/Adam-S-Daniel/agentskills/blob/main/docs/skill-impact.md).
+removals, and rejected proposals — modeled on adam-agentskills'
+[`docs/skill-impact.md`](https://github.com/Adam-S-Daniel/adam-agentskills/blob/main/docs/skill-impact.md).
 [`scripts/check-guidance-touch.js`](scripts/check-guidance-touch.js) (CI: the
 "Guidance touch gate" step in [`ci.yml`](.github/workflows/ci.yml),
 `pull_request` runs only) enforces it: for every manifest `id` whose section
@@ -206,7 +206,7 @@ the manifest exists at both shas and no fallback runs at all.
 
 The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a
 `SessionStart` hook from the
-[agentskills](https://github.com/Adam-S-Daniel/agentskills) registry that
+[adam-agentskills](https://github.com/Adam-S-Daniel/adam-agentskills) registry that
 installs a repo's declared skill bundles into **ephemeral** Claude surfaces
 (cloud sessions, CI runners). It no-ops on a developer's machine, where the
 marketplace install stays authoritative. This closes the gap where cloud
@@ -228,7 +228,7 @@ of that repo, naming a generator script no consumer has.
 
 **The sync never writes `skills.lock` — not even to create one.** Locks are
 per-repo and some federate several registries (adamdaniel.ai's carries both
-`agentskills` and `cms-platform`), so a fleet-wide writer would eventually
+`adam-agentskills` and `cms-platform`), so a fleet-wide writer would eventually
 flatten someone's declaration. There is deliberately no code path for it, and
 `sync.sh` refuses to commit if that file is ever staged.
 

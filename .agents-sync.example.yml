@@ -53,9 +53,9 @@ sections:
 # flatten someone's declaration.
 #
 # Generate a lock from the registry, not by hand:
-#   python3 scripts/generate_skills_lock.py --registry Adam-S-Daniel/agentskills \
+#   python3 scripts/generate_skills_lock.py --registry Adam-S-Daniel/adam-agentskills \
 #           --ref <sha> -o /path/to/your-repo/skills.lock
-# (run from an agentskills checkout; add one --source per extra registry —
+# (run from an adam-agentskills checkout; add one --source per extra registry —
 # omitting them on a REGENERATION silently de-federates an existing lock).
 #
 # Note the standing cost before adopting: every bundled skill's front-matter is
