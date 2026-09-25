@@ -35,7 +35,7 @@ below it:
 - [v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281)
   > Changed AGENTS.md support to also work on Amazon Bedrock, Google Vertex AI, Microsoft Foundry, LLM gateways, and sessions with telemetry disabled
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172), [claude-memory-map#47](https://github.com/Adam-S-Daniel/claude-memory-map/issues/47), [skills-evals#191](https://github.com/Adam-S-Daniel/skills-evals/issues/191)
 
 #### 2. SessionStart and Stop hook behavior the fleet's hooks rely on
 
@@ -54,14 +54,14 @@ below it:
 - [v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277)
   > Fixed sessions continued after `/clear` (restart, `--continue`, `--resume`) missing part of their first message when a SessionStart hook printed output, causing a full prompt-cache miss
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#173](https://github.com/Adam-S-Daniel/_agent-guidance/issues/173), [adam-agentskills#7](https://github.com/Adam-S-Daniel/adam-agentskills/issues/7)
 
 #### 3. `DirectoryAdded` hook for repos attached mid-session
 
 - [v2.1.219](https://github.com/anthropics/claude-code/releases/tag/v2.1.219)
   > Added `DirectoryAdded` hook that fires after `/add-dir` or the SDK `register_repo_root` control request registers a new working directory mid-session
 
-**Issues:** PENDING
+**Issues:** [adam-agentskills#8](https://github.com/Adam-S-Daniel/adam-agentskills/issues/8)
 
 #### 4. claude.ai-synced skills: naming, namespace, sync to terminals, trash
 
@@ -86,7 +86,7 @@ below it:
 - [v2.1.282](https://github.com/anthropics/claude-code/releases/tag/v2.1.282)
   > Changed skill folders, command files and workflow commands in the `anthropic-skills` or `claude-ai` namespace to no longer load; a plugin so named still loads but yields name ties to synced skills
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#174](https://github.com/Adam-S-Daniel/_agent-guidance/issues/174), [adam-agentskills#9](https://github.com/Adam-S-Daniel/adam-agentskills/issues/9), [skills-evals#196](https://github.com/Adam-S-Daniel/skills-evals/issues/196)
 
 #### 5. `installed_plugins.json` commit recording and update hints
 
@@ -99,7 +99,7 @@ below it:
 - [v2.1.280](https://github.com/anthropics/claude-code/releases/tag/v2.1.280)
   > Fixed `installed_plugins.json` keeping the install-time commit after updating a plugin from a GitHub repository or git URL that tracks a branch or tag
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175), [adam-agentskills#10](https://github.com/Adam-S-Daniel/adam-agentskills/issues/10), [skills-evals#192](https://github.com/Adam-S-Daniel/skills-evals/issues/192)
 
 #### 6. `claude plugin validate` checks added after the CI pin (2.1.223)
 
@@ -114,7 +114,7 @@ below it:
 - [v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281)
   > Improved plugin hook-failure errors to name the offending plugin, and added a `claude plugin validate` warning when a shell-form hook leaves `${CLAUDE_PLUGIN_ROOT}` unquoted (it breaks on plugin paths with spaces)
 
-**Issues:** PENDING
+**Issues:** [adam-agentskills#11](https://github.com/Adam-S-Daniel/adam-agentskills/issues/11)
 
 #### 7. Marketplace refresh and plugin install flow
 
@@ -131,7 +131,7 @@ below it:
 - [v2.1.280](https://github.com/anthropics/claude-code/releases/tag/v2.1.280)
   > Fixed background plugin marketplace auto-update ignoring git credential helpers, so private-repo marketplaces were re-cloned every run or never updated
 
-**Issues:** PENDING
+**Issues:** [adam-agentskills#12](https://github.com/Adam-S-Daniel/adam-agentskills/issues/12), [adam-agentskills-private#25](https://github.com/Adam-S-Daniel/adam-agentskills-private/issues/25)
 
 #### 8. Built-in tooling that overlaps the registry's own: `/skill-doctor`, `claude plugin eval`
 
@@ -140,7 +140,7 @@ below it:
 - [v2.1.269](https://github.com/anthropics/claude-code/releases/tag/v2.1.269)
   > Added `claude plugin eval`: run a plugin's eval suite against Claude Code and get scored, reproducible results (JSON + HTML report); see `claude plugin eval --help`
 
-**Issues:** PENDING
+**Issues:** [adam-agentskills#13](https://github.com/Adam-S-Daniel/adam-agentskills/issues/13), [skills-evals#193](https://github.com/Adam-S-Daniel/skills-evals/issues/193)
 
 #### 9. Which instructions subagents and headless runs load
 
@@ -151,7 +151,7 @@ below it:
 - [v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281)
   > Fixed `--setting-sources` (and SDK `settingSources`) not being forwarded to spawned sessions: teammates, `/bg`, `claude agents` sessions and `--worktree --tmux` now start with the parent's restriction
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#176](https://github.com/Adam-S-Daniel/_agent-guidance/issues/176), [skills-evals#194](https://github.com/Adam-S-Daniel/skills-evals/issues/194)
 
 #### 10. New models vs. the CLI versions the eval workflows pin
 
@@ -166,14 +166,14 @@ below it:
 - [v2.1.280](https://github.com/anthropics/claude-code/releases/tag/v2.1.280)
   > Added Claude Opus 5.5 (`claude-opus-5-5`), now the default Opus model — 1M context, $4/$20 per Mtok with $0.20/Mtok cache reads
 
-**Issues:** PENDING
+**Issues:** [skills-evals#195](https://github.com/Adam-S-Daniel/skills-evals/issues/195)
 
 #### 11. Cloud sessions can attach a repo from a different owner
 
 - [v2.1.282](https://github.com/anthropics/claude-code/releases/tag/v2.1.282)
   > [Cloud sessions] Added attaching a repository from a different GitHub owner, such as a fork's upstream, to a running cloud session that already has one, including sessions started from Slack
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#177](https://github.com/Adam-S-Daniel/_agent-guidance/issues/177)
 
 #### 12. Cloud environment network access
 
@@ -184,7 +184,7 @@ below it:
 - [v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277)
   > [Claude Code on the web] Fixed a cloud environment saved with Custom network access and no domains silently reverting to Trusted; the dialog now asks for at least one domain
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#178](https://github.com/Adam-S-Daniel/_agent-guidance/issues/178)
 
 #### 13. Auto-memory files, index limits and project directories
 
@@ -207,7 +207,7 @@ below it:
 - [v2.1.273](https://github.com/anthropics/claude-code/releases/tag/v2.1.273)
   > Fixed `permissions.blockReadsOutsideWorkingDirectories`: a memory directory chosen by a repository's settings is no longer loaded into the prompt, recalled, indexed, or used by memory extraction
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#179](https://github.com/Adam-S-Daniel/_agent-guidance/issues/179), [adam-agentskills#14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14), [claude-memory-map#48](https://github.com/Adam-S-Daniel/claude-memory-map/issues/48)
 
 #### 14. Instruction-size warnings
 
@@ -216,7 +216,7 @@ below it:
 - [v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281)
   > Improved the large CLAUDE.md startup notice to also count instruction files together, so many mid-sized files and @-imports are caught
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#180](https://github.com/Adam-S-Daniel/_agent-guidance/issues/180)
 
 #### 15. Worktree-isolated subagents can no longer reach the main checkout
 
@@ -227,13 +227,13 @@ below it:
 - [v2.1.222](https://github.com/anthropics/claude-code/releases/tag/v2.1.222)
   > Fixed worktree-isolated sessions and their subagents being able to run destructive git commands against the main checkout; isolation now applies to file edits and Bash in every session type
 
-**Issues:** PENDING
+**Issues:** [adam-agentskills#15](https://github.com/Adam-S-Daniel/adam-agentskills/issues/15)
 
-#### 16. "Claude Code on the web" is now "cloud sessions"
+#### 16. Claude Code on the web renamed to cloud sessions
 
 - [v2.1.274](https://github.com/anthropics/claude-code/releases/tag/v2.1.274)
   > Changed the `/status` GitHub line to read "Cloud sessions", and `/web-setup`, `/ultrareview`, and teleport messages to say "cloud session" instead of "Claude Code on the web"
 - [v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277)
   > [Claude Code on the web] Changed the admin Claude Code setting labeled "Web" to "Cloud sessions" and removed the redundant read-only Mobile row beneath it
 
-**Issues:** PENDING
+**Issues:** [claude-memory-map#49](https://github.com/Adam-S-Daniel/claude-memory-map/issues/49)

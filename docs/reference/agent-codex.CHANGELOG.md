@@ -37,7 +37,7 @@ below it:
 - [0.154.0](https://github.com/openai/codex/releases/tag/rust-v0.154.0)
   > Startup avoids running workspace-controlled helpers before trust is established, and the macOS sandbox blocks terminal input injection. (#42324, #42590)
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181)
 
 #### 2. Background server on by default; instruction refresh
 
@@ -50,7 +50,7 @@ below it:
 - [0.157.0](https://github.com/openai/codex/releases/tag/rust-v0.157.0)
   > Enabled automatic background-server startup for eligible interactive sessions, with recovery choices when server settings are incompatible. (#47179, #47318)
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182)
 
 #### 3. Plugins, marketplaces and skill catalogs
 
@@ -67,7 +67,7 @@ below it:
 - [0.154.0](https://github.com/openai/codex/releases/tag/rust-v0.154.0)
   > Existing sessions pick up newly installed plugin tools and refresh skills and hooks after external plugin upgrades or rollbacks. (#42284, #42593, #42990)
 
-**Issues:** PENDING
+**Issues:** [adam-agentskills#16](https://github.com/Adam-S-Daniel/adam-agentskills/issues/16)
 
 #### 4. `/import` of Claude Code settings and project-scoped memories
 
@@ -78,4 +78,4 @@ below it:
 - [0.157.0](https://github.com/openai/codex/releases/tag/rust-v0.157.0)
   > Made `/import` available in remote sessions and local background-server sessions. (#47317)
 
-**Issues:** PENDING
+**Issues:** [_agent-guidance#183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183)
