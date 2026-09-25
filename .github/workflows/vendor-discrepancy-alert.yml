@@ -1,0 +1,56 @@
+name: Vendor discrepancy alert
+# Step 5 ("Alert (automatic)") of
+# docs/reference/agent-discrepancy-process.md. On every push to main that
+# touches an agent-*.DISCREPANCIES.md file or a vendor-issue-drafts/ file,
+# runs scripts/discrepancy-alert.js to open one issue in this repo per new
+# discrepancy entry and per new vendor-issue draft, labeled
+# vendor-discrepancy and assigned to the repo owner. workflow_dispatch is
+# available for a manual run and defaults to a dry run.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/reference/agent-*.DISCREPANCIES.md"
+      - "docs/reference/vendor-issue-drafts/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan alerts without opening issues (true/false)"
+        type: string
+        default: "true"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - name: Open alert issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          before=$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")
+          after=$(jq -r '.after // empty' "$GITHUB_EVENT_PATH")
+          owner=$(jq -r '.repository.owner.login' "$GITHUB_EVENT_PATH")
+          dry=$(jq -r '.inputs.dry_run // "false"' "$GITHUB_EVENT_PATH")
+          args=(--repo "$GITHUB_REPOSITORY" --assignee "$owner" --after "${after:-HEAD}" --before "${before:-HEAD~1}")
+          if [ "$dry" == "true" ]; then
+            args+=(--dry-run)
+          fi
+          node scripts/discrepancy-alert.js "${args[@]}"
