@@ -50,6 +50,36 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-24 — workstation-layout — edit
+- Motivation: the public skills registry moved from Adam-S-Daniel/agentskills to Adam-S-Daniel/adam-agentskills (its ADR 0013), and the owner asked for the laptop's hostname to leave the fleet guidance.
+- Change: The clone-location bullet names "the owner's Windows laptop" instead of a hostname; the WSL-elevation bullet drops the retired `adam-local` bundle name and keeps the skill name (PR #167)
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — sessions-get-cut-off — edit
+- Motivation: the owner asked for the laptop's hostname to leave the fleet guidance; the full build sits at its 28,672-byte cap, so the added words are paid for in the same PR.
+- Change: The opening line names "the owner's laptop" instead of a hostname; "frequently" -> "often" and "the commit message ... or an ADR" -> "a commit message ... or ADR", wording only (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — subagent-delegation — edit
+- Motivation: the public skills registry moved to Adam-S-Daniel/adam-agentskills, where `disarm-inherited-reach` ships in the `adam-coding-anywhere` plugin, so `/adam:disarm-inherited-reach` no longer resolves.
+- Change: The invocation is now `/adam-coding-anywhere:disarm-inherited-reach`; "(a reviewer once did, unasked)" loses "unasked" to stay inside the byte cap (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — skills-ecosystem — edit
+- Motivation: the public skills registry moved from Adam-S-Daniel/agentskills (bundles `adam`, `adam-local`, `fastmail`) to Adam-S-Daniel/adam-agentskills (plugins `adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`, `adam-non-coding-local`), and agentskills-private was renamed adam-agentskills-private.
+- Change: Names the new registry, its four plugins and the `/<plugin>:<skill>` invocation form; ADR citations read "registry ADR NNNN" (same numbers in adam-agentskills); the private registry's new name; "at session start" -> "at start" for the byte cap (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — two-setup-gaps — edit
+- Motivation: the marketplace a durable machine adds and updates is now adam-agentskills, the multi-repo snippet lives in that repo, and the owner asked for the laptop's hostname to leave the fleet guidance.
+- Change: `marketplace add`/`update` name adam-agentskills; the snippet's home names adam-agentskills; the INSTALL example names "the owner's laptop"; small wording trims ("Once per session", "unset in", "never assume it", "yet says it did") keep the full build inside its 28,672-byte cap (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
 ## 2026-09-22 — skills-ecosystem — edit
 - Motivation: Claude Code 2.1.273+ syncs the claude.ai account store into terminal sessions too (agentskills issue #158); the section still read as though that channel were cloud-only.
 - Change: Added the terminals bullet (setup.sh opts a machine out, cloud sessions can't; agentskills' ADR 0010) and tightened the section's other bullets, wording only, so the full build stays at the 28,672-byte cap; section 1274 -> 1287 bytes (PR #153)

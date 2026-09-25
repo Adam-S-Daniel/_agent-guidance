@@ -47,9 +47,9 @@ default_sections: []
 # ephemeral session forever.
 #
 # The sync NEVER writes `skills.lock` — not even to create one. The lock is
-# per-repo by design (adamdaniel.ai's federates two registries; agentskills'
-# own is `adam`-only), so any fleet-wide writer would eventually flatten a
-# consumer's declaration. See the ADR.
+# per-repo by design (adamdaniel.ai's federates two registries; most others
+# lock only the two cloud-safe plugins), so any fleet-wide writer would
+# eventually flatten a consumer's declaration. See the ADR.
 skills_bootstrap:
   # The hook is FETCHED from the registry at this immutable commit, never
   # vendored here — one canonical copy, in the repo whose CI shellchecks and
@@ -67,15 +67,20 @@ skills_bootstrap:
   # without its digest is a fleet with delivery disabled until someone notices.
   # It stops at proposing: merging is what fans a new hook into every repo
   # below, so no bot does that. See docs/decisions/0010.
-  registry: Adam-S-Daniel/agentskills
+  #
+  # 2026-09-24: moved by hand from the retiring Adam-S-Daniel/agentskills to
+  # its successor Adam-S-Daniel/adam-agentskills (that repo's ADR 0013). The
+  # bumper re-pins within one registry and cannot change `registry`, so this
+  # one move was hand-made; `sha256` was recomputed from the bytes at `ref`.
+  registry: Adam-S-Daniel/adam-agentskills
   path: .claude/hooks/skills-bootstrap.sh
-  ref: c723012d429217976a73bfa37a99dd5a8f6cdbc8
+  ref: def7d1d13ff8ca8ff228a49f952ae6cf586fe1e2
   # sha256 of the file at `ref`. The ref is already content-addressed, so this
   # is belt-and-braces — but the artifact executes instruction text at session
   # start with no approval prompt, so "the bytes we deliver are the bytes that
   # were reviewed" is worth making mechanical rather than assumed. A mismatch
   # disables delivery for the whole run and fails it.
-  sha256: d43a2e042b1334a3513350fe35f8c5b030eedc478fa6a4c8847f8fa8b5edf92b
+  sha256: da1d581552b3463a900adb4e7c78132daf829bd2fb65a297781467160ce13849
   # The allowlist. Short repo names, matched the same way `exclude` is.
   #
   # Widened from two repos to ten on 2026-08-19 (ADR 0004). The two-repo start
@@ -95,18 +100,19 @@ skills_bootstrap:
   # because any other order invites a reader to look for a meaning in the
   # sequence.
   repos:
-    # lock: committed — federated (agentskills + cms-platform), with the hook
+    # Corrects a wrong reason, not just an omission. The old note grouped this
+    # repo with the public registry as "they AUTHOR the hook and the lock". It
+    # does not: it authors PRIVATE SKILLS, it consumes an ordinary lock like
+    # any other repo, and nothing here is a source of truth this sync could
+    # clobber. A wrong reason left standing is worse than a missing one — it
+    # survives review by looking already-decided.
+    # Renamed from `agentskills-private` on 2026-09-24.
+    # lock: committed — PR #8 merged 2026-08-19.
+    - adam-agentskills-private
+    # lock: committed — federated (adam-agentskills + cms-platform), with the hook
     # and its registration already in place. Listed so the sync keeps the hook
     # current against the pin above.
     - adamdaniel.ai
-    # Corrects a wrong reason, not just an omission. The old note grouped this
-    # repo with `agentskills` as "they AUTHOR the hook and the lock". It does
-    # not: it authors PRIVATE SKILLS, it will consume an ordinary `adam` lock
-    # like any other repo, and nothing here is a source of truth this sync
-    # could clobber. A wrong reason left standing is worse than a missing one —
-    # it survives review by looking already-decided.
-    # lock: committed — PR #8 merged 2026-08-19.
-    - agentskills-private
     # lock: committed — PR #19 merged 2026-08-19.
     - claude-memory-map
     # cms-platform and GHA-bench both gitignore `.claude/` — cms-platform with
@@ -165,11 +171,18 @@ skills_bootstrap:
   # "reconcile" the two lists; ADR 0003 ruled against collapsing the scope
   # keys, and this is the coupling that ruling was protecting.
   out_of_scope:
-    - repo: agentskills
+    - repo: adam-agentskills
       reason: >-
         Authors the hook and self-hosts it. Delivering it back would clobber
         the source of truth, and drift-report.sh exempts it from `unmanaged`
         for the same reason.
+    - repo: agentskills
+      reason: >-
+        Retiring: the former public registry, succeeded by adam-agentskills on
+        2026-09-24 and due to be archived. Its self-hosted hook is its own
+        copy; delivering the fleet's pin into a repo being wound down buys
+        nothing. Drop this entry once it is archived and discovery no longer
+        returns it.
 
     # WHAT THIS ABSENCE DOES NOT MEAN, written down because a fresh reader
     # re-derives the wrong corollary from it every time: it says nothing about
@@ -260,9 +273,9 @@ cron_coverage:
   # classified out of scope below.
   fleet:
     - _agent-guidance
+    - adam-agentskills
+    - adam-agentskills-private
     - adamdaniel.ai
-    - agentskills
-    - agentskills-private
     - claude-memory-map
     - cms-platform
     - fastmail-actions
@@ -298,6 +311,11 @@ cron_coverage:
     # only workflow (`deploy.yml`) is push-triggered, so there is no scheduled
     # run to cover. Give it a cron anyone depends on and it moves to `fleet:`.
     - scratch-claude-002
+    # RETIRING: the former public skills registry, succeeded by
+    # adam-agentskills on 2026-09-24 and due to be archived. Nobody is
+    # promising to watch a cron in a repo being wound down; once it is
+    # archived, discovery stops returning it and this entry can go.
+    - agentskills
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file

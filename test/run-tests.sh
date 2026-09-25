@@ -12469,7 +12469,7 @@ test_bump_workflow() {
     fi
 
     local registry_depth
-    registry_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$steps_file")
+    registry_depth=$(awk '$2 == "Adam-S-Daniel/adam-agentskills" { print $3 }' "$steps_file")
     if [[ "$registry_depth" == "0" ]]; then
         pass "bump workflow: the registry is checked out at full depth"
     else
@@ -12514,14 +12514,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: Adam-S-Daniel/agentskills
+          repository: Adam-S-Daniel/adam-agentskills
           fetch-depth: 0
   bump:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          repository: Adam-S-Daniel/agentskills
+          repository: Adam-S-Daniel/adam-agentskills
 YAML
     local decoy_steps="$TEST_DIR/two-job-bump-steps.txt"
     if ! workflow_steps "$decoy_wf" bump > "$decoy_steps" 2>/dev/null; then
@@ -12535,7 +12535,7 @@ YAML
             fi
         done < "$decoy_steps"
         local decoy_depth
-        decoy_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$decoy_steps")
+        decoy_depth=$(awk '$2 == "Adam-S-Daniel/adam-agentskills" { print $3 }' "$decoy_steps")
         if [[ -z "$decoy_unpinned" && "$decoy_depth" != "0" ]]; then
             pass "bump workflow: N6 the pin and fetch-depth assertions scoped to 'bump' do not read an earlier job's steps"
         else
