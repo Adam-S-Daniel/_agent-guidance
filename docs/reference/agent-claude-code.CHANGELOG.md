@@ -15,8 +15,11 @@ below it:
    change log**, **Window**, **Source text**, **Repos considered**.
 3. One `####` group per change, or set of related changes, that may affect a
    repo: a list item per change linking its release page, with the exact quote
-   beneath it as a `>` line; then **Issues** you opened. Search for duplicates
-   first, open one issue per affected repo, and link each back to this file.
+   beneath it as a `>` line; then **Issues** you opened, written to
+   [`agent-changelog-issues.md`](agent-changelog-issues.md).
+
+Behavior found to contradict an entry goes in
+[`agent-claude-code.DISCREPANCIES.md`](agent-claude-code.DISCREPANCIES.md).
 
 ## Entries
 
