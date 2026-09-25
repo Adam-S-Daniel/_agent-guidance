@@ -19,7 +19,9 @@ below it:
    [`agent-changelog-issues.md`](agent-changelog-issues.md).
 
 Behavior found to contradict an entry goes in
-[`agent-claude-code.DISCREPANCIES.md`](agent-claude-code.DISCREPANCIES.md).
+[`agent-claude-code.DISCREPANCIES.md`](agent-claude-code.DISCREPANCIES.md). Before
+writing a new entry, re-check that file's open discrepancies against the new
+window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 

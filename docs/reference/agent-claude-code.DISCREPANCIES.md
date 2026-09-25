@@ -13,6 +13,10 @@ to resolve an ambiguity, and quote what you relied on. When the vendor fixes it,
 update **Status**; don't delete the entry. Keep evidence public-safe: no tokens,
 emails, or personal paths.
 
+In the same PR, follow [`agent-discrepancy-process.md`](agent-discrepancy-process.md):
+search the vendor's tracker, decide whether to propose a vendor issue, and draft
+it. Merging the PR alerts the repo owner.
+
 ```markdown
 ### YYYY-MM-DD — <one-line summary>
 
@@ -24,6 +28,8 @@ emails, or personal paths.
 - **Observed:** what happened, with the minimal repro commands and the output that shows it
 - **Evidence:** link to the commit, test, CI run, or transcript that demonstrates it
 - **Found in / action taken:** issue or PR link; what the repo did (workaround, pin, test, upstream report)
+- **Vendor issues:** [#N](link) (open | closed, fixed in <version>), or `none found — searched YYYY-MM-DD: "<query>"; "<query>"`
+- **Vendor proposal:** `draft: [<file>](vendor-issue-drafts/claude-code/<file>.md)` | `covered by an existing issue` | `not proposed — <reason>` | `submitted: <link>`
 ```
 
 ## Entries
