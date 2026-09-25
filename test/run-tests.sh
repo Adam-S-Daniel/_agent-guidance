@@ -17356,6 +17356,38 @@ test_dependabot_config_health() {
     fi
 }
 
+test_discrepancy_alert() {
+    echo ""
+    echo "=== Test: discrepancy-alert.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the dependabot config health gate: a check
+    # that quietly does not run is the failure this suite exists to catch.
+    # CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "discrepancy alert: node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/discrepancy-alert-tap.txt" rc=0
+    # NEVER pipe this — the script runs under `set -euo pipefail`, and a pipe's
+    # exit status belongs to the LAST command in it, not to `node --test`.
+    # Capture to a file and read $? straight off the command instead.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-discrepancy-alert.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # A minimum count is the cheapest proof anything actually ran: a suite that
+    # merely `require()`d the module and defined zero tests would otherwise
+    # exit 0 with "# pass 0", which reads exactly like a healthy green run.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 20 ]]; then
+        pass "discrepancy alert: node:test suite is green ($pass_n passed)"
+    else
+        fail "discrepancy alert: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=20): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
 #
@@ -18904,6 +18936,7 @@ test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
 test_dependabot_sweep_merge_gating
 test_dependabot_config_health
+test_discrepancy_alert
 # The Codex lane. The three size/gate tests read only this repo's own files;
 # the sync and drift legs are --dry-run / read-only over the bigorg fixture,
 # so they can sit anywhere after the bares exist. Ordered so the budget
