@@ -23,7 +23,7 @@ it. Merging the PR alerts the repo owner.
 - **Kind:** contradicts changelog | undocumented change | changelog ambiguous | docs disagree with changelog
 - **Status:** open | worked around | reported upstream | fixed in <version>
 - **Observed on:** `claude --version` output; surface (local CLI, cloud session, CI, SDK); OS
-- **Changelog says:** > exact quote — [v2.1.N](https://github.com/anthropics/claude-code/releases/tag/v2.1.N), or "nothing" plus the version range where the behavior appeared
+- **Changelog says:** > exact quote — [v2.1.N](https://github.com/anthropics/claude-code/releases/tag/v2.1.N), published YYYY-MM-DDTHH:MMZ, or "nothing" plus the version range where the behavior appeared
 - **Docs say:** > exact quote — [page](URL), read YYYY-MM-DD (only if consulted)
 - **Observed:** what happened, with the minimal repro commands and the output that shows it
 - **Evidence:** link to the commit, test, CI run, or transcript that demonstrates it
