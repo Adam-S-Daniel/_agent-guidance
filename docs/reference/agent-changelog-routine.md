@@ -10,8 +10,7 @@ review for each new batch of Claude Code and Codex releases. Each run:
 - re-checks open discrepancies per
   [`agent-discrepancy-process.md`](agent-discrepancy-process.md).
 
-**Status: draft.** No trigger runs it yet. See
-[Before the first scheduled run](#before-the-first-scheduled-run).
+**Status: draft.** No trigger runs it yet.
 
 ## The trigger
 
@@ -195,19 +194,3 @@ Each was hit on 2026-09-25. The step that now prevents it is in parentheses.
 - The full suite aborts on the Python `yq` (6).
 - The shell's working directory resets after every command; use absolute
   paths.
-
-## Before the first scheduled run
-
-- **Commit the tooling.** The seeding run's scripts exist only in that
-  session's scratchpad. They need to land here as tested scripts. Until they
-  do, a run re-creates them from this page. The scripts are:
-  - bullet extraction for both vendors;
-  - quote rendering with publish times;
-  - entry rendering from the groups spec;
-  - issue-body generation with version stamping;
-  - body verification and repair over REST.
-- **Check the environment's network allowlist** against
-  [`network-allowlist-claude-environments.txt`](network-allowlist-claude-environments.txt).
-  It needs `github.com` for git, and `developers.openai.com` and
-  `learn.chatgpt.com` for the Codex feed.
-- **Choose the cadence and create the trigger.**
