@@ -237,6 +237,22 @@ skills_bootstrap:
     - repo: squarespacetemp
       reason: >-
         Dormant since 2026-03; no session happens there to spend the context.
+    # Surfaced by drift-report.sh's own discovery on 2026-09-24 (unclassified
+    # for both cron_coverage and skills_bootstrap) and confirmed absent from
+    # this file by the 2026-09-25 guidance-centralization audit. No
+    # AGENTS.md yet, and this audit's two GitHub MCP connectors could not
+    # read it (session-scope block on one, 404 on the other — the git
+    # credential probe got a login prompt rather than a clear not-found,
+    # consistent with a private repo neither connector is configured to
+    # read), so its purpose and operational status are unknown here. Filed
+    # out of scope provisionally on that basis, not as a claim it is scratch
+    # — move it to `repos:` above once it has a skills.lock and someone
+    # decides whether it should receive the hook.
+    - repo: e6-probe-marketplace
+      reason: >-
+        Newly discovered (2026-09-24 drift report); no skills.lock and no
+        AGENTS.md yet, purpose unverified by this audit. Reclassify once its
+        status is known.
 
   # Forks and archived repos are NOT listed above: discovery never reaches
   # them (`gh repo list --source --no-archived`), so their absence from
@@ -304,6 +320,17 @@ cron_coverage:
     - squarespacetemp
     - jc
     - 4A
+    # Surfaced by drift-report.sh's own discovery on 2026-09-24 as
+    # unclassified in this file. Reachable by discovery (non-fork,
+    # non-archived, under SYNC_OWNERS), so it needed an entry here or in
+    # `fleet:` — but this audit's two GitHub MCP connectors could not read
+    # it (session-scope block on one, 404 on the other) and the git
+    # credential probe returned a login prompt rather than a clear
+    # not-found, consistent with a private repo neither connector is
+    # configured to see. Filed here provisionally, not as an operational
+    # claim: move to `fleet:` once someone is actually watching a cron in
+    # it.
+    - e6-probe-marketplace
     # NOT scratch — the skills_bootstrap block above records it as a live
     # portfolio site, and leaving it filed under "nothing here anyone is
     # operating" would make one key of this file contradict the other. It is
