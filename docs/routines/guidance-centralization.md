@@ -2467,6 +2467,136 @@ this session shape, precisely because it runs on a different
 credential path (the scheduled workflow's own token) than anything
 available interactively here.
 
+### Measured 2026-09-26, fifteenth fired run
+
+Tool availability held its settled shape for a fifteenth consecutive
+fire — `mcp__Claude_Code_Remote__list_repos`/`list_triggers`/`add_repo`
+absent (no ToolSearch hit for the `Claude_Code_Remote` family) and the
+`gh` CLI absent (`which gh` produced no output/path), both GitHub MCP
+connectors answered (`mcp__github__get_me` and `mcp__github-mcp__get_me`
+both resolved to `Adam-S-Daniel`, id 4205216), and `mcp__github__`'s
+Actions-tool schemas (`actions_list`, `actions_get`, `get_check_run`,
+`get_job_logs`) loaded successfully — the fuller profile. Set (a) again
+`NOT COMPUTABLE (no enumeration tool available)` from the primary
+mechanism.
+
+**This run checked the drift-report's "Unclassified" block per the
+fourteenth run's own recommendation, and found the two prior findings
+resolved rather than new ones.** `drift-report.md` (`drift-report-latest`,
+generated 2026-09-25 11:20 UTC) still carried both blocks the
+fourteenth run had not yet seen fixed: "Unclassified for cron coverage /
+skills-bootstrap" naming `Adam-S-Daniel/adam-agentskills` and
+`Adam-S-Daniel/adam-agentskills-private`, and a jodidaniel-side
+"Registry names discovery did not return" naming `agentskills-private`.
+Per §1's own rule, these were treated as a lead to verify against the
+repo, not as ground truth: `repos.yml` fetched directly from `main`
+showed both names already correctly classified (`adam-agentskills` and
+`adam-agentskills-private` both in `cron_coverage.fleet` and
+`skills_bootstrap.repos`), because **`_agent-guidance#167` ("Move the
+fleet onto the adam-agentskills registry") merged at
+2026-09-25T17:49:01Z — six and a half hours after the drift report that
+still shows the old state was generated.** So both blocks are stale, not
+live; the next drift-report generation should clear them.
+
+**One genuine, new set (b) finding came out of chasing that PR down: a
+new fleet member exists that this session is not attached to.** #167
+retired the old public registry `Adam-S-Daniel/agentskills` in favour of
+a freshly-created `Adam-S-Daniel/adam-agentskills` (that repo's own ADR
+0013) and renamed the private registry `agentskills-private` to
+`adam-agentskills-private` (a genuine GitHub-level rename, confirmed by
+fetching the OLD url from this session's existing `agentskills-private`
+checkout and finding it resolves via redirect to content that
+self-identifies as `# adam-agentskills-private` in its own README — no
+new attachment needed for that one). `adam-agentskills` is different: it
+is a **new repo**, non-fork, not in `exclude:`, now in
+`cron_coverage.fleet`, and it is **not** among this session's 19 attached
+repos. `add_repo` was absent from this run's probe (per the settled
+shape above), so this run could not widen itself to attach it — matching
+§0.5 Step 5's documented wording for that case. It is readable anyway: a
+plain `https://` clone worked (public repo), and its `AGENTS.md` /
+`CLAUDE.md` were already present and current — the managed half matched
+a fresh `./scripts/build-agents-md.sh` stub build exactly (modulo the
+documented trailing-newline trim), so it is already receiving the
+fleet's guidance despite never having been attached to this Routine.
+Per §0.5 Step 5 / the anti-nag rule, "unattached but readable" is a
+footer-level configuration note, not a lead finding: **the operator's
+own move is to attach `Adam-S-Daniel/adam-agentskills` to this Routine
+on claude.ai**, the same way `jodidaniel/squarespacetemp` was attached
+on 2026-08-28. This is, notably, exactly the kind of event the operator
+asked this section to catch — a real repo joining the fleet's scope that
+the Routine cannot yet reach — even though it surfaced via a merged PR's
+side effects rather than via `list_repos`.
+
+Set (b) otherwise matched the settled substitute: this session's own
+GitHub "Repository Scope" declaration (19 repos, still under the OLD
+names `agentskills` / `agentskills-private`) mapped onto `repos.yml`'s
+now-**20**-repo non-structural AGENTS.md-sync universe (the prior 19 plus
+`adam-agentskills`) with exactly the one gap above. The old, retiring
+`agentskills` repo remains attached under its own unchanged name and
+continues to receive the sync normally (`exclude:` does not name it) —
+no action needed there until it is archived, per #167's own "not done
+here" note.
+
+Set (c) computed via individual probes: the 19 previously-attached repos
+resolved via `git fetch origin <default-branch>` against their own local
+checkouts (all succeeded, including `agentskills-private` resolving via
+its GitHub rename redirect), `adam-agentskills` resolved via a fresh
+`https://` clone, and both forks (`OctopusDeploy-Api`, `SonosAmpJuicePi`)
+plus `superoutrigger/superoutrigger` resolved via direct
+`GIT_TERMINAL_PROMPT=0 git ls-remote` probes — all resolved on the first
+try, no fallback owner needed. 0 unreadable. `gh repo list ... --json`
+remained unavailable, so this is single-source verification only.
+
+**Propagation of the just-merged base.md was verified directly, not
+assumed from the byte count matching this run's own SessionStart
+verdict.** `base.md` on `main` is now 24,487 bytes (`#167` trimmed
+wording elsewhere to pay for the registry-name and hostname-genericizing
+edit, netting back to the same size as before the edit) and no longer
+names either the retired registry or a specific laptop hostname — the
+"Workstation layout" section now reads "the owner's Windows laptop"
+generically. A fresh `./scripts/build-agents-md.sh` stub build was
+diffed against the committed managed half of all 18 consumers (the prior
+19 minus self-hosted `_agent-guidance`) plus `adam-agentskills`: all 19
+matched exactly, modulo the documented trailing-newline trim, and
+`_agent-guidance`'s own self-hosted `AGENTS.md` passed
+`scripts/check-agents-md.sh` and matched a fresh regeneration exactly.
+Propagation: **OK**.
+
+Both previously-flagged centralization candidates remain present in
+`base.md` (the `gh api --jq` HTTP-error-to-stdout gotcha at line 244,
+the general AST-vs-regex rule). A keyword grep over all 18 in-scope
+consumer repos' `## Repo-specific additions` content (plus
+`_agent-guidance`'s own) for generalizing language and for restatements
+of the two promoted candidates surfaced only the same known non-findings
+prior runs recorded (`agentskills`'s "fails every `git push` from every
+repo," `adamdaniel.ai`'s correctly-scoped "never hand-roll" parser rule,
+`cms-platform`'s correctly-scoped AST/regex file-pointer,
+`repo-settings`'s own unrelated `--jq` usages). No new promotion
+candidates, no new redundant copies, no section-opt-in candidates.
+
+`_agent-guidance#168` (the fourteenth run's `e6-probe-marketplace`
+classification proposal) remains open, unmerged, `mergeable_state:
+clean`, CI green (4 check runs: 2 `success`, 2 `skipped`), no review
+comments — demoted to the footer per §0.5 Step 6's "PR open" branch, no
+new PR opened for the same name.
+
+One observation outside this Routine's remit, noted and not acted on:
+`_agent-guidance#157` ("Workstation layout names BOXY") touches the same
+`agents-md/base.md` lines `#167` already rewrote to drop the hostname
+entirely, from a base predating `#167`'s merge; it was not opened by
+this Routine and is not a `repos.yml` classify/remove entry, so it is
+left for its own author/reviewer rather than this Routine's to
+reconcile.
+
+This run's own change is confined to this file (recording the above),
+which per §3 this Routine may merge on its own. Verified before pushing:
+`bash scripts/check-agents-md.sh` exit 0 (this file is not
+`AGENTS.md`-generating input); no other repo file touched. Push verified
+landed (`git merge-base --is-ancestor` against the pushed branch's tip).
+CI established green on the pull request itself — `get_check_runs` and
+`get_status` both read before merging, per §3's sequence — before
+merging with `merge_pull_request`, `merge_method: "merge"`.
+
 ### Guidance content
 
 - **18 repos** in the drift report's scope (15 `Adam-S-Daniel` + 3 `jodidaniel`);
