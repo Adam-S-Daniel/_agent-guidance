@@ -52,13 +52,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-27 — dependency-updates — edit
 - Motivation: the owner asked to stop adopting harness releases through manual pin-bump PRs: use the harness the environment already has, else install latest, and record which harness and model versions each run used.
-- Change: model harnesses (Claude Code, Codex CLI) are no longer pinned at all, replacing this PR's earlier "newest release, still exact" wording; the section is trimmed again to stay inside the 28,672-byte full-build cap (this PR; companion workflow changes in skills-evals#203 and adam-agentskills#28).
+- Change: harness CLIs (Claude Code, Codex; not `uses:` refs or SDK packages) are no longer pinned at all: the installed one, else latest, recording the harness version and the models used. Replaces this PR's earlier "newest release, still exact" wording; the "(they inherit `default-days`)" aside is dropped to stay inside the 28,672-byte full-build cap (PR #186; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/28).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-27
 
 ## 2026-09-27 — dependency-updates — edit
 - Motivation: the owner adopts new model harnesses on day one in practice, and asked the fleet rule to match; the 7-day wait had CI running Claude Code 2.1.211 while `latest` was 2.1.283.
-- Change: model harnesses (Claude Code, Codex CLI) skip the 7-day wait for a hand bump and take the newest release, still pinned exact; the rest of the section is reworded to pay for it inside the 28,672-byte full-build cap (this PR; companion pin bumps in skills-evals#203 and adam-agentskills).
+- Change: model harnesses (Claude Code, Codex CLI) skip the 7-day wait for a hand bump and take the newest release, still pinned exact; the rest of the section is reworded to pay for it inside the 28,672-byte full-build cap (PR #186; companion pin bumps in https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/28).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-27
 
