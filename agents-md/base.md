@@ -272,11 +272,12 @@ CLOSED without `gitleaks` on `PATH`, which a fresh container lacks
 
 Dependabot `cooldown`: `default-days: 7`; `semver-major-days: 30` where
 supported (not `github-actions`, #133). Version updates only (advisories
-bypass it); unset, it waits GitHub's 3-day minimum; leave
+bypass it); unset still waits 3 days; leave
 `semver-minor-days` / `-patch-days` undefined (they inherit `default-days`).
 **By hand**, nothing watches it: take the newest release past 7 days
-(`npm view <pkg> time --json`), pinned exact. **Model harnesses skip the
-wait** (Claude Code, Codex CLI; owner's call): newest release, still exact.
+(`npm view <pkg> time --json`), pinned exact. **Model harnesses are
+unpinned** (Claude Code, Codex CLI): the installed one, else latest; record the
+version used.
 
 ## A name you choose becomes data a scanner reads
 
