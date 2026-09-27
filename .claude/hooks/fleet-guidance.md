@@ -270,13 +270,13 @@ CLOSED without `gitleaks` on `PATH`, which a fresh container lacks
 
 ## Dependency updates
 
-Dependabot `cooldown`: `default-days: 7` always, `semver-major-days: 30` where
-supported, never `github-actions` (#133). Version updates only (an advisory
-bypasses it); unset `cooldown` isn't "no wait" (GitHub's implicit minimum: 3
-days); `semver-minor-days` / `semver-patch-days` stay undefined, falling back
-to `default-days`. A package added or bumped **by hand** has no automation
-watching it: check `npm view <pkg> time --json`, take the newest release past
-7 days, pin it exact (no caret).
+Dependabot `cooldown`: `default-days: 7`; `semver-major-days: 30` where
+supported (not `github-actions`, #133). Version updates only (advisories
+bypass it); unset, it waits GitHub's 3-day minimum; leave
+`semver-minor-days` / `-patch-days` undefined (they inherit `default-days`).
+**By hand**, nothing watches it: take the newest release past 7 days
+(`npm view <pkg> time --json`), pinned exact. **Model harnesses skip the
+wait** (Claude Code, Codex CLI; owner's call): newest release, still exact.
 
 ## A name you choose becomes data a scanner reads
 
