@@ -55,6 +55,7 @@ function fakeApi(overrides = {}) {
     checkRuns: overrides.checkRuns || (() => ({ total_count: 0, check_runs: [] })),
     workflowsPage: overrides.workflowsPage || (() => ({ total_count: 0, workflows: [] })),
     newestWorkflowRun: overrides.newestWorkflowRun || (() => null),
+    newestSuccessfulWorkflowRun: overrides.newestSuccessfulWorkflowRun || (() => null),
     openIssuesPage: overrides.openIssuesPage || (() => []),
     issueCommentsPage: overrides.issueCommentsPage || (() => []),
     ensureLabel: overrides.ensureLabel || (() => {}),
@@ -463,6 +464,127 @@ test("assessRepo(j): open-issue lookup 500 -> unknown, even though check+jobs ar
   );
   assert.equal(a.verdict, "unknown");
   assert.ok(a.unknowns.some((u) => u.includes("500")));
+});
+
+// ── 7b. #194 — a missing check narrowed to healthy for a config's first-ever
+// commit ──────────────────────────────────────────────────────────────────
+// adam-agentskills shape: created 2026-09-24T21:58Z with .github/dependabot.yml
+// already in its first commit (559ceb7), pushed directly — no PR, no check
+// run at all — yet 7 successful update jobs ran, latest 2026-09-25T18:32Z.
+// nowMs below mirrors this repo's actual "today" so the fixture reads like a
+// live dry run would.
+
+const K_NOW = Date.parse("2026-09-28T00:00:00Z");
+
+test("assessRepo(k1): #194 — missing check, single commit, a successful job after it -> healthy with a notice", () => {
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "559ceb7", date: "2026-09-24T21:58:00Z", onlyCommit: true }),
+    commitPulls: () => [],
+    checkRuns: () => ({ total_count: 0, check_runs: [] }), // no check run at all — no PR to look at either
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 42, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-09-25T18:32:00Z", html_url: "https://x/runs/7" }),
+    newestSuccessfulWorkflowRun: () => ({ run_started_at: "2026-09-25T18:32:00Z", html_url: "https://x/runs/7" }),
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/adam-agentskills", private: false, defaultBranch: "main" },
+    api, K_NOW, { label: "ci" },
+  );
+  assert.equal(a.verdict, "healthy");
+  assert.deepEqual(a.findings, []);
+  assert.deepEqual(a.unknowns, []);
+  assert.ok(a.notices.some((n) => n.includes("first and only commit")), `expected a notice, got: ${JSON.stringify(a.notices)}`);
+});
+
+test("assessRepo(k2): #194 — missing check, single commit, no jobs at all -> unknown (no proof available)", () => {
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "aaa111", date: "2026-09-24T21:58:00Z", onlyCommit: true }),
+    checkRuns: () => ({ total_count: 0, check_runs: [] }),
+    workflowsPage: () => ({ total_count: 0, workflows: [] }), // the updates workflow has never existed
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" },
+    api, K_NOW, { label: "ci" },
+  );
+  assert.notEqual(a.verdict, "healthy");
+  assert.equal(a.verdict, "unknown");
+  assert.deepEqual(a.notices, []);
+});
+
+test("assessRepo(k3): #194 — missing check, single commit, the only job ran BEFORE the commit -> unknown", () => {
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "bbb222", date: "2026-09-24T21:58:00Z", onlyCommit: true }),
+    checkRuns: () => ({ total_count: 0, check_runs: [] }),
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 9, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-09-20T00:00:00Z", html_url: "https://x/runs/old" }),
+    newestSuccessfulWorkflowRun: () => ({ run_started_at: "2026-09-20T00:00:00Z", html_url: "https://x/runs/old" }),
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" },
+    api, K_NOW, { label: "ci" },
+  );
+  assert.notEqual(a.verdict, "healthy");
+  assert.equal(a.verdict, "unknown");
+  assert.deepEqual(a.notices, []);
+});
+
+test("assessRepo(k4): #194 — missing check, SEVERAL commits ever -> unknown (#429: an invalid config can replace a valid one)", () => {
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "ccc333", date: "2026-09-24T21:58:00Z", onlyCommit: false }), // per_page=2 returned 2 rows
+    checkRuns: () => ({ total_count: 0, check_runs: [] }),
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 9, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-09-25T18:32:00Z", html_url: "https://x/runs/7" }),
+    newestSuccessfulWorkflowRun: () => { throw new Error("must never be called when onlyCommit is false — the cheap check must gate the expensive one"); },
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" },
+    api, K_NOW, { label: "ci" },
+  );
+  assert.notEqual(a.verdict, "healthy");
+  assert.equal(a.verdict, "unknown");
+  assert.deepEqual(a.notices, []);
+});
+
+test("assessRepo(k5): #194 — missing check, single commit, the only job after it FAILED -> unknown", () => {
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "ddd444", date: "2026-09-24T21:58:00Z", onlyCommit: true }),
+    checkRuns: () => ({ total_count: 0, check_runs: [] }),
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 9, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-09-25T18:32:00Z", html_url: "https://x/runs/failed" }),
+    newestSuccessfulWorkflowRun: () => null, // status=success returns nothing — the only job that ran, failed
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" },
+    api, K_NOW, { label: "ci" },
+  );
+  assert.notEqual(a.verdict, "healthy");
+  assert.equal(a.verdict, "unknown");
+  assert.deepEqual(a.notices, []);
+});
+
+test("assessRepo(k6): #194 — missing check, single commit, the new successful-job lookup itself errors -> stays unknown, never healthy", () => {
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "eee555", date: "2026-09-24T21:58:00Z", onlyCommit: true }),
+    checkRuns: () => ({ total_count: 0, check_runs: [] }),
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 9, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-09-25T18:32:00Z", html_url: "https://x/runs/7" }),
+    newestSuccessfulWorkflowRun: () => { throw new ApiError("Internal Server Error", 500); },
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" },
+    api, K_NOW, { label: "ci" },
+  );
+  // #258: an unknown answer is never healthy — a failed lookup on the new
+  // narrow path must fall back to exactly today's "missing check" unknown,
+  // never crash the assessment and never flip it to healthy.
+  assert.notEqual(a.verdict, "healthy");
+  assert.equal(a.verdict, "unknown");
+  assert.deepEqual(a.notices, []);
 });
 
 // ── 8. planIssueAction matrix ───────────────────────────────────────────────

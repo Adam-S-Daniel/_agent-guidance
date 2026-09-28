@@ -173,3 +173,47 @@ Discussion:
   `workflow_dispatch` needs the workflow file on the default branch before it
   can be triggered at all, so nothing here can be exercised against the real
   API before then.
+
+## Addendum (2026-09-28): narrowing "missing check" for a config's first-ever commit
+
+[#194](https://github.com/Adam-S-Daniel/_agent-guidance/issues/194) found a
+gap the strict "missing check → unknown" rule above did not anticipate.
+`Adam-S-Daniel/adam-agentskills` was created 2026-09-24T21:58Z with
+`.github/dependabot.yml` already present in its first commit (`559ceb7`),
+pushed directly with no PR. That commit carries **no** `dependabot` check run
+at all — not failure, just absent — and with no PR there is no merge commit
+to check either. Dependabot itself was fine: 7 successful update jobs ran,
+the newest at 2026-09-25T18:32Z. The sweep still read this as `unknown` every
+day from 2026-09-25
+([run 36321373390](https://github.com/Adam-S-Daniel/_agent-guidance/actions/runs/36321373390)),
+because `check.state === "missing"` mapped to unknown with no exception.
+
+**The narrowed rule.** A missing check now reads `healthy` — always with a
+notice line, never silently — only when BOTH hold:
+
+1. exactly one commit has ever touched `.github/dependabot.yml` on the
+   default branch, detected by reusing `newestPathCommit`'s existing
+   `commits?path=...` read at `per_page=2` (`onlyCommit: rows.length === 1`)
+   rather than a new call;
+2. a Dependabot update job with conclusion `success` started after that
+   commit's timestamp (`newestSuccessfulWorkflowRun`, a new
+   `runs?status=success&per_page=1` call, made ONLY once (1) already holds).
+
+Everything else about a missing check is untouched: several commits ever, no
+jobs, jobs only before the commit, only failed jobs after it, and any API
+error on the new lookup all still read `unknown`, exactly as before this
+addendum (`test/test-dependabot-config-health.js`'s `k1`-`k6`, covering
+#194's checklist plus the lookup-error case).
+
+**Why this does not reopen #429's hole.** #429 — restated as fact 2 above —
+found that an INVALID config REPLACING a valid one does not stop update
+jobs, so "jobs are recent" can never stand in for "the config parses" on its
+own: the jobs could be running against the *old*, still-valid config. That
+reasoning needs a previous config for the invalid one to have replaced. When
+`onlyCommit` is true, `.github/dependabot.yml` has never had a second
+version — there is no earlier config any job could be running against, so a
+job that both succeeded AND started after that one-and-only commit could
+only have parsed THAT commit's content. The multiple-commits case is exactly
+#429's shape and is unchanged: `onlyCommit` is false, the narrow lookup is
+never even attempted (proven in `k4` by making it throw if called), and a
+missing check stays `unknown`.
