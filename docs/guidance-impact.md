@@ -50,6 +50,24 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-28 — working-in-these-repos — edit
+- Motivation: the owner asked that every added or changed text use American English spelling (behavior, not behaviour), fleet-wide across both owners; the managed text itself said "behaviour".
+- Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #NNN).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — name-becomes-scanner-data — edit
+- Motivation: same owner request; the section said "serialising".
+- Change: "serialising" → "serializing", no other change (PR #NNN).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — two-setup-gaps — edit
+- Motivation: bytes for the American English bullet inside the full-build size budget (28,668 of 28,672 before).
+- Change: the opening sentence stops restating the heading ("Two setup gaps no repo can commit" → "No repo can commit either"); meaning unchanged (PR #NNN).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
 ## 2026-09-28 — dependency-updates — edit
 - Motivation: the owner reversed "the installed one, else latest" (written with a frequently updated laptop CLI in mind): a runner's preinstalled CLI can be any age, so a run should always install the newest release.
 - Change: a run (CI, an eval) installs the harness CLI at npm `latest`, not the installed one, and records the version and models used (PR #188; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/29).
