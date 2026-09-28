@@ -52,7 +52,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-28 — dependency-updates — edit
 - Motivation: the owner reversed "the installed one, else latest" (written with a frequently updated laptop CLI in mind): a runner's preinstalled CLI can be any age, so a run should always install the newest release.
-- Change: harness CLIs are always installed at latest, with the version and models used recorded (this PR; companion workflow changes in https://github.com/Adam-S-Daniel/skills-evals/pull/203 and a follow-up adam-agentskills PR).
+- Change: a run (CI, an eval) installs the harness CLI at npm `latest`, not the installed one, and records the version and models used (PR #188; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/29).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28
 
