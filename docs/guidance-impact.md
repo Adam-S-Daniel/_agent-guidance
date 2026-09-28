@@ -26,13 +26,13 @@ sensitive rejection is recorded by PR link alone.
 ```
 ## YYYY-MM-DD — <section-id> — <create|edit|rename|remove|rejected>
 - Motivation: one line — the incident, pattern, or issue that prompted it
-- Change: one line — what changed (PR #NNN)
+- Change: one line — what changed (PR #193)
 - Eval: a real result naming both what was measured and its outcome — an
   exit code (`exit 0`), a score fraction (`7.0/8`), or a sample size (`n=3`),
   alongside a fixture path, eval id, or report link for context; "none — no
   fixture yet" (legal only while the manifest row is `gap`); or "exempt
   (skipped row)" (legal only while the manifest row is `skipped`). Nothing
-  else satisfies this bullet — a placeholder like "TBD" or "TBD (PR #NNN)"
+  else satisfies this bullet — a placeholder like "TBD" or "TBD (PR #193)"
   does not, even though the latter contains a digit.
 - Outcome: merged YYYY-MM-DD, or rejected YYYY-MM-DD — one line why. The
   full proposal survives in the closed PR; link it rather than pasting it.
@@ -52,19 +52,19 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-28 — working-in-these-repos — edit
 - Motivation: the owner asked that every added or changed text use American English spelling (behavior, not behaviour), fleet-wide across both owners; the managed text itself said "behaviour".
-- Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #NNN).
+- Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #193).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28
 
 ## 2026-09-28 — name-becomes-scanner-data — edit
 - Motivation: same owner request; the section said "serialising".
-- Change: "serialising" → "serializing", no other change (PR #NNN).
+- Change: "serialising" → "serializing", no other change (PR #193).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28
 
 ## 2026-09-28 — two-setup-gaps — edit
 - Motivation: bytes for the American English bullet inside the full-build size budget (28,668 of 28,672 before).
-- Change: the opening sentence stops restating the heading ("Two setup gaps no repo can commit" → "No repo can commit either"); meaning unchanged (PR #NNN).
+- Change: the opening sentence stops restating the heading ("Two setup gaps no repo can commit" → "No repo can commit either"); meaning unchanged (PR #193).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28
 
