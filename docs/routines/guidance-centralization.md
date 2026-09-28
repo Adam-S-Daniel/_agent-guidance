@@ -2756,3 +2756,144 @@ it stays worth checking explicitly rather than assumed clean by default.
     as its instance.
   Check both against §2A's standard before proposing either; "it appears in two
   repos" is evidence, not a verdict.
+
+### Measured 2026-09-28, seventeenth fired run
+
+Tool availability held its settled shape for a seventeenth consecutive fire —
+`mcp__Claude_Code_Remote__list_repos`/`list_triggers`/`add_repo` absent (no
+ToolSearch hit for the `Claude_Code_Remote` family) and the `gh` CLI absent
+(`which gh` exit 1), both GitHub MCP connectors answered
+(`mcp__github__get_me` and `mcp__github-mcp__get_me` both resolved to
+`Adam-S-Daniel`, id 4205216), and `mcp__github__`'s Actions-tool schemas
+loaded successfully — the fuller profile. Set (a) again `NOT COMPUTABLE (no
+enumeration tool available)` from the primary mechanism.
+
+The drift-report "Unclassified" cross-check (the fourteenth run's own
+recommendation) was made again and is clean: `drift-report.md`
+(`drift-report-latest`, generated 2026-09-27 11:33 UTC, current — about 20.5
+hours old at read time) carries neither the "Unclassified for cron coverage /
+skills-bootstrap" block nor a "Registry names discovery did not return" line.
+Set (a) is 0 via this channel.
+
+**One finding of a kind not previously seen: a fleet repo transitioned into
+the "archived" structural-exclusion class live, and a cleanup pull request
+already exists for it.** `Adam-S-Daniel/agentskills` — the retiring former
+public registry, already carrying `out_of_scope` entries in both
+`skills_bootstrap` and `cron_coverage` with an explicit "drop this entry once
+it is archived" note — was confirmed `archived: true, private: true`
+(`pushed_at: 2026-09-27T23:54:57Z`) via a targeted, single-named-repo lookup
+(`search_repositories` with an exact `repo:owner/name` query). That is a
+different use from the broad "what exists" enumeration §0.5 distrusts —
+asking a known, already-classified repo for its own attributes is not the
+same query shape as asking an index what the account holds, and this run does
+not treat it as a precedent for using `search_repositories` more broadly.
+`Adam-S-Daniel/_agent-guidance#187` ("Drop the archived agentskills registry
+from repos.yml"), opened outside this Routine at 2026-09-28T00:43:17Z by the
+operator's own Claude Code session, already proposes removing exactly the two
+dangling entries `repos.yml`'s own comments called for. Per §3 this Routine
+must not merge a `repos.yml` change, so it is left alone. This is not treated
+as a set (c) finding: the repo has not left the account and is not unreadable
+— it is still attached to this Routine and still fetches and diffs cleanly
+(below) — it has simply joined the same structural-exclusion class as the two
+forks, exactly as its own registry comment anticipated. `M` is reported as 20
+this run, unchanged: `repos.yml` on `main` has not yet been updated to drop
+the entries (PR #187 is open, not merged), and the repo remains fully
+readable to this session either way.
+
+Set (b) again used the session's own GitHub "Repository Scope" declaration
+(19 repos, still under the OLD names `agentskills`/`agentskills-private`); it
+mapped onto `repos.yml`'s 20-name non-structural union with the same single
+gap the fifteenth and sixteenth runs reported, now for a third consecutive
+fire: `adam-agentskills`, classified in `fleet:`, not among the 19 attached.
+`add_repo` was again absent from this run's probe, so this run could not
+widen itself. Per the anti-nag rule this stays a footer note: readable by a
+plain `https://` clone, `AGENTS.md` (15,632 bytes, one marker, one bridge
+line) matched a fresh stub build exactly. The operator's own move is still to
+attach `Adam-S-Daniel/adam-agentskills` to this Routine on claude.ai.
+
+Set (c) computed via individual probes for all 23 `repos.yml` names: the 19
+attached repos resolved via `git fetch origin <default-branch>` against their
+own local checkouts (all succeeded, including the now-archived `agentskills`,
+and `agentskills-private` resolving via its GitHub rename redirect),
+`adam-agentskills` resolved via a fresh `https://` clone, and both forks
+(`OctopusDeploy-Api`, `SonosAmpJuicePi`) plus
+`superoutrigger/superoutrigger` resolved via direct
+`GIT_TERMINAL_PROMPT=0 git ls-remote` probes — all 23 on the first try, no
+fallback owner needed. 0 unreadable. `gh repo list ... --json` remained
+unavailable, so this is single-source verification only.
+
+`repos.yml` on `main` (`f7bab41`, "Move the fleet onto the adam-agentskills
+registry") was unchanged since the fifteenth/sixteenth runs' measurement — no
+new commit has landed there, PR #187 notwithstanding, since it is still open.
+All 19 attached repos' local checkouts were diffed directly against their own
+`origin/<default-branch>` for `AGENTS.md` and `CLAUDE.md` and found
+byte-identical on all 19; every repo carried exactly one `## Repo-specific
+additions` marker and exactly one line-start `@AGENTS.md` bridge (checked on
+all 19). All 20 non-structural repos' (the 19 attached plus
+`adam-agentskills`) managed halves matched a fresh
+`./scripts/build-agents-md.sh` stub build exactly, modulo the documented
+trailing-newline trim; `_agent-guidance`'s own self-hosted `AGENTS.md` passed
+`scripts/check-agents-md.sh` with no output (exit 0) and matched the same
+regeneration.
+
+**`base.md` changed substantially since the sixteenth run's measurement —
+five commits between 2026-09-27T22:26:14Z and 2026-09-28T02:33:00Z, all part
+of adversarial review rounds on PR #188 per their own commit messages (model
+harnesses skip the dependency cooling-off period and are unpinned rather than
+merely exempt from the wait; a run, not a live interactive session, installs
+npm `latest`), landing on `main` at commit `73c156e`, 24,484 bytes (down
+slightly from the sixteenth run's 24,487).** Worth correcting an assumption
+this run's own first pass at the stub-diff check nearly encoded as fact: the
+committed managed half of every consumer's `AGENTS.md` is a FIXED,
+content-independent stub template — confirmed by grepping `GHA-bench`'s
+`AGENTS.md` (last touched 2026-09-24, well before any of the five commits
+above) for the new wording and finding zero matches, while the same phrase is
+present in `base.md` on `main` right now. The stub does not, and is not meant
+to, embed base.md's prose; propagation of a base.md wording change is carried
+by the `fleet-guidance` SessionStart hook into `~/.claude/CLAUDE.md`, not
+into any committed file. So a stub-vs-stub diff across consumers (as run
+repeatedly in this file's own history) proves the WRAPPER is intact — no
+corrupted marker, no drifted template — and proves nothing about whether a
+specific base.md wording change propagated, because it would read identically
+clean whether or not that change had landed anywhere. The correct check for
+THIS run's actual question is this session's own SessionStart verdict:
+`fleet-guidance: installed (va1caa374, 24484 bytes)`, which matches
+`origin/main`'s base.md size (24,484 bytes) exactly. Propagation: **OK**,
+confirmed by that byte match — a future run chasing the same question should
+reach for the SessionStart verdict first rather than re-deriving this
+distinction under time pressure. Both previously-flagged centralization
+candidates remain present (the `gh api --jq` HTTP-error-to-stdout gotcha, the
+general AST-vs-regex rule), and the stale `mcp__b26ebb34-…__*` prefix still
+appears only as dated history.
+
+A keyword grep over all 19 attached repos' repo-specific sections (this
+session's own already-loaded copies of each `CLAUDE.md`/`AGENTS.md`,
+cross-checked against the git-diff confirmation above that none had changed
+since the sixteenth run) for generalizing language and for restatements of
+the two promoted candidates surfaced only the same known non-findings prior
+runs recorded (`agentskills`'s "fails every `git push` from every repo,"
+`adamdaniel.ai`'s correctly-scoped "never hand-roll" parser rule,
+`cms-platform`'s correctly-scoped AST/regex file-pointer, `repo-settings`'s
+own unrelated `--jq` usages). No new promotion candidates, no new redundant
+copies, no section-opt-in candidates (first-party TS/Go/Rust/C# counts not
+independently recounted this run).
+
+Six PRs are open in `_agent-guidance` — two new since the sixteenth run's
+measurement: **#189**, a Dependabot pin bump
+(`scheduled-run-health.yml` 0.1.109→0.1.112 for cms-platform), unrelated to
+this Routine; **#187**, described above. Carried forward: **#168** (the
+fourteenth run's `e6-probe-marketplace` classification proposal — still open,
+unmerged, CI green (4 check runs: 2 `success`, 2 `skipped`), a fresh
+re-probe of the repo returning the identical credential-prompt outcome
+unchanged since the fourteenth run); **#157** ("Workstation layout names
+BOXY," still touching lines `#167` already rewrote; not this Routine's);
+**#151** (the Codex memory-audit ADR, docs-only); **#124** (the paused
+one-way-door review). None of the six is a `repos.yml` classify/remove entry
+this Routine proposed (other than #168 itself, already demoted to the
+footer) or a `base.md` promotion this Routine opened, so none needed action
+this run beyond #168's existing footer demotion.
+
+With seventeen consecutive identical tool-availability measurements now on
+record for the primary mechanism, §0.5 Step 0's probe remains worth
+attempting each fire, but this shape should be treated as settled rather
+than re-argued.
