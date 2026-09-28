@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-28 — workstation-layout — edit
+- Motivation: measured 2026-09-28 by the owner: from PowerShell a bare `bash` resolves to WSL's launcher `C:\Windows\System32\bash.exe`, so a script meant for the Windows home (adam-agentskills' `setup.sh --owner-machine`) silently ran in WSL.
+- Change: the Windows-with-WSL bullet now says to invoke Git Bash by full path (`C:\Program Files\Git\bin\bash.exe`); elevation sentence tightened and the ADR reference dropped to stay inside the 28 KiB full-build budget (12 bytes of headroom) (PR pending).
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — skills-ecosystem — edit
+- Motivation: adam-agentskills PR #34 (ADR 0014) retired sync-skills and its global pre-push hook, so the "re-run `bash setup.sh`" advice for a push failing in every repo was false; a machine that pulled it without cleanup still fails because the hook points at a deleted script.
+- Change: the every-repo push-failure bullet now names the retired hook and `setup.sh --owner-machine` as the cleanup; ADR 0014 reference dropped for budget (PR pending).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
 ## 2026-09-28 — working-in-these-repos — edit
 - Motivation: the owner asked that every added or changed text use American English spelling (behavior, not behaviour), fleet-wide across both owners; the managed text itself said "behaviour".
 - Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #193).

@@ -58,7 +58,7 @@
     _agent-guidance#117; no behavior to measure until it settles. See
     skills-evals#96.
   since: "2026-09-04"
-  bytes: 456
+  bytes: 478
 
 - id: sessions-get-cut-off
   heading: Sessions get cut off
@@ -148,7 +148,7 @@
   heading: Skills ecosystem
   file: agents-md/base.md
   status: gap
-  bytes: 1289
+  bytes: 1278
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
