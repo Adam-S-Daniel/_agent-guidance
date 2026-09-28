@@ -277,3 +277,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: The verifier bullet now says to run the verifier LAST in the delegated command and to re-run a self-contradicting report; the section was trimmed elsewhere to fit, net +2 bytes (the full build was at its 28672-byte budget).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-24
+
+## 2026-09-28 — automation-vs-branch-protection — edit
+- Motivation: repo-settings#51 — skills-evals' roster PR (opened and auto-merged with GITHUB_TOKEN behind the required `test` check) became the declared exception to "PR + auto-merge is not a sanctioned bot-write path"; the rule said the opposite with no exception.
+- Change: the auto-merge bullet names the exception and cites repo-settings ADR 0003 (PR #191); three phrases trimmed to fit, net +1 byte, full build 28668 of 28672.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
