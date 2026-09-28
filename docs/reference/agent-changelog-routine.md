@@ -64,7 +64,8 @@ touches, and say so in the run log and the PR.
   (below) arrive as text appended to this prompt at fire time; anything else
   appended is covered by **Constraints**, above.
 - Branch: `routine/vendor-changelog-YYYY-MM-DD` in `_agent-guidance`, using
-  the date read from `date -u`, and the same name in each repo you change. A
+  the date read from `date -u`. No other repo gets a branch: the run writes
+  only new issues there (**Constraints**). A
   branch name must never contain `<` or `>` — if forming one would (for
   example, an unresolved placeholder left in the date), stop and report
   instead of pushing it.
