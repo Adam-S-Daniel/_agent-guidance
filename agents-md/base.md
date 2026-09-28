@@ -143,7 +143,8 @@ Fleet repos are PR-only on the default branch via ruleset, managed as code in
   declared in repo-settings' `fleet.yml`, never a hand-granted UI bypass; the
   AGENTS.md sync App is the example.
 - PR + auto-merge is not a sanctioned bot-write path for fleet repos; the
-  cms-platform-managed repos use it by design.
+  cms-platform-managed repos use it by design. One declared exception:
+  skills-evals' roster PR (repo-settings ADR 0003).
 - **A required status check gets no `concurrency` group** when its job can
   fire twice on one head sha (label events, `opened` + `synchronize`): a
   cancelled run can win the context and block the merge for good
