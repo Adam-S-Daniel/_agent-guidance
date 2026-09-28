@@ -2862,8 +2862,37 @@ case "$1" in
                 if [[ " ${MOCK_PR_HEAD_GARBLED:-} " == *" $repo_slug "* ]]; then
                     head_oid="not-a-sha"
                 fi
+                # The sweep's UNKNOWN retry (run 36447408427, 2026-09-28) reads
+                # the SAME PR more than once, so the mock needs to answer
+                # differently across calls. MOCK_PR_VIEW_COUNT_DIR, when set,
+                # gets one file per repo+PR counting exactly how many times
+                # this branch was asked — what a retry test proves the read
+                # bound against, rather than trusting the script's own log
+                # line. MOCK_PR_UNKNOWN_ONCE names repos whose FIRST view call
+                # answers mergeable=UNKNOWN and mergeStateStatus=UNKNOWN
+                # regardless of the fixture, then answers the fixture's own
+                # values from the second call on; MOCK_PR_UNKNOWN_ALWAYS names
+                # repos that answer UNKNOWN on every call, forcing the bound.
+                view_count=0
+                if [[ -n "${MOCK_PR_VIEW_COUNT_DIR:-}" ]]; then
+                    mkdir -p "$MOCK_PR_VIEW_COUNT_DIR"
+                    count_file="$MOCK_PR_VIEW_COUNT_DIR/${repo_slug}-${pr_number}.count"
+                    view_count=$(cat "$count_file" 2>/dev/null || echo 0)
+                    view_count=$((view_count + 1))
+                    echo "$view_count" > "$count_file"
+                fi
+                mergeable_override="" mergestate_override=""
+                if [[ " ${MOCK_PR_UNKNOWN_ALWAYS:-} " == *" $repo_slug "* ]] \
+                   || { [[ " ${MOCK_PR_UNKNOWN_ONCE:-} " == *" $repo_slug "* ]] \
+                        && [[ "$view_count" -le 1 ]]; }; then
+                    mergeable_override="UNKNOWN"
+                    mergestate_override="UNKNOWN"
+                fi
                 json=$(jq --argjson files "${files_json:-[]}" --arg oid "$head_oid" \
-                    '.files = $files | .headRefOid = $oid' <<< "$pr_obj")
+                    --arg mo "$mergeable_override" --arg ms "$mergestate_override" \
+                    '.files = $files | .headRefOid = $oid
+                     | (if $mo != "" then .mergeable = $mo else . end)
+                     | (if $ms != "" then .mergeStateStatus = $ms else . end)' <<< "$pr_obj")
                 if [[ -n "$jq_filter" ]]; then
                     echo "$json" | jq -r "$jq_filter"
                 else
@@ -7662,6 +7691,11 @@ run_bump() {   # <output file> [script args...]
     MOCK_REPO_LIST_STDERR_NOTICE="${BUMP_REPO_LIST_NOTICE_FOR_RUN:-}" \
     MOCK_PR_LIST_STDERR_NOTICE="${BUMP_PR_LIST_NOTICE_FOR_RUN:-}" \
     MOCK_GH_NO_MATCH_FLAG="${BUMP_NO_MATCH_FLAG_FOR_RUN:-}" \
+    MOCK_PR_UNKNOWN_ONCE="${BUMP_UNKNOWN_ONCE_FOR_RUN:-}" \
+    MOCK_PR_UNKNOWN_ALWAYS="${BUMP_UNKNOWN_ALWAYS_FOR_RUN:-}" \
+    MOCK_PR_VIEW_COUNT_DIR="${BUMP_VIEW_COUNT_DIR_FOR_RUN:-}" \
+    BUMP_UNKNOWN_RETRIES="${BUMP_UNKNOWN_RETRIES_FOR_RUN:-}" \
+    BUMP_UNKNOWN_RETRY_DELAY="${BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     BUMP_REGISTRY="bumporg/agentskills" \
     BUMP_CHECKOUTS="${BUMP_CHECKOUTS_FOR_RUN:-$BUMP_CHECKOUTS_ARG}" \
@@ -11503,6 +11537,108 @@ test_bump_sweep_head_match() {
     assert_contains "$log" "this gh has no 'gh pr merge --match-head-commit'" "head match: an older gh is reported, not assumed"
     assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "head match: an older gh still merges — the guard is hardening, not a dependency"
     assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
+}
+
+# ── Test 8i3b: mergeable=UNKNOWN is retried, bounded, before the sweep skips
+#
+# GitHub computes `mergeable` (and `mergeStateStatus`) lazily and answers
+# UNKNOWN on the first read after a while — run 36447408427 (2026-09-28)
+# skipped all nine bump PRs that night with "GitHub reports mergeable=UNKNOWN",
+# though every one was green, lock-only and merged cleanly by hand minutes
+# later. Three fixtures, three properties:
+#   * a PR that clears UNKNOWN on its second read is merged;
+#   * a PR that never clears it is skipped once the bound is spent, and the
+#     reason names how many reads were tried;
+#   * a REAL refusal (CONFLICTING) on the first read is not retried at all —
+#     the retry is keyed on the two literal UNKNOWN strings, nothing else.
+# The view-call counter (MOCK_PR_VIEW_COUNT_DIR) proves the read COUNT
+# directly rather than trusting the log line alone.
+setup_unknown_retry_repos() {
+    local branch="skills-lock-bump/update"
+    local bot='"author":{"login":"agents-md-sync[bot]"}'
+    local clean='"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":""'
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
+    mkdir -p "$SWEEP_BARE" "$SWEEP_PR_DIR"
+
+    # Resolves on the second read: the mock answers UNKNOWN once, then this
+    # fixture's own (clean, all-green) values.
+    make_sweep_repo repo-unknown-once "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":201,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    # Never resolves — every read comes back UNKNOWN, forcing the bound.
+    make_sweep_repo repo-unknown-always "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":202,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    # Negative control: a real conflict on the FIRST read must not be retried.
+    make_sweep_repo repo-unknown-conflict "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":203,\"headRefName\":\"$branch\",$bot,\"isDraft\":false,\"mergeable\":\"CONFLICTING\",\"mergeStateStatus\":\"DIRTY\",\"reviewDecision\":\"\",\"statusCheckRollup\":[]}"
+}
+
+test_bump_sweep_unknown_retry() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (sweep retries mergeable=UNKNOWN) ==="
+
+    setup_unknown_retry_repos
+    local view_count_dir="$TEST_DIR/unknown-view-counts"
+    rm -rf "$view_count_dir"
+
+    local once_tip conflict_before
+    once_tip=$(sweep_bump_branch_sha repo-unknown-once)
+    conflict_before=$(sweep_main_sha repo-unknown-conflict)
+
+    BUMP_UNKNOWN_ONCE_FOR_RUN="bumporg_repo-unknown-once" \
+    BUMP_UNKNOWN_ALWAYS_FOR_RUN="bumporg_repo-unknown-always" \
+    BUMP_VIEW_COUNT_DIR_FOR_RUN="$view_count_dir" \
+    BUMP_UNKNOWN_RETRIES_FOR_RUN=3 \
+    BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN=0 \
+        run_sweep "$TEST_DIR/sweep-unknown.txt"
+    unset BUMP_UNKNOWN_ONCE_FOR_RUN BUMP_UNKNOWN_ALWAYS_FOR_RUN \
+          BUMP_VIEW_COUNT_DIR_FOR_RUN BUMP_UNKNOWN_RETRIES_FOR_RUN \
+          BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN
+    local log="$TEST_DIR/sweep-unknown.txt"
+
+    # ── 1. UNKNOWN once, then MERGEABLE/CLEAN → merged.
+    assert_contains "$log" "bumporg/repo-unknown-once#201: MERGED with a merge commit" \
+        "unknown retry: a PR that clears UNKNOWN on the second read is merged"
+    if [[ "$(sweep_main_sha repo-unknown-once)" == "$once_tip" ]]; then
+        pass "unknown retry: the merged repo now carries the re-pinned lock"
+    else
+        fail "unknown retry: the merged repo now carries the re-pinned lock"
+    fi
+    if [[ "$(cat "$view_count_dir/bumporg_repo-unknown-once-201.count" 2>/dev/null)" == "2" ]]; then
+        pass "unknown retry: exactly two reads were made before it resolved"
+    else
+        fail "unknown retry: exactly two reads were made before it resolved — got $(cat "$view_count_dir/bumporg_repo-unknown-once-201.count" 2>/dev/null || echo none)"
+    fi
+
+    # ── 2. Never resolves → skipped, reason names the attempt count, and
+    # exactly the configured number of reads happened.
+    assert_contains "$log" "bumporg/repo-unknown-always#202: not merged — GitHub reports mergeable=UNKNOWN after 3 read(s)" \
+        "unknown retry: a PR still UNKNOWN after every attempt is skipped, naming the attempt count"
+    if [[ "$(cat "$view_count_dir/bumporg_repo-unknown-always-202.count" 2>/dev/null)" == "3" ]]; then
+        pass "unknown retry: exactly the configured number of reads (3) happened"
+    else
+        fail "unknown retry: exactly the configured number of reads (3) happened — got $(cat "$view_count_dir/bumporg_repo-unknown-always-202.count" 2>/dev/null || echo none)"
+    fi
+
+    # ── 3. CONFLICTING on the first read → skipped with no re-read at all.
+    assert_contains "$log" "bumporg/repo-unknown-conflict#203: not merged — GitHub reports mergeable=CONFLICTING" \
+        "unknown retry: a real conflict is still an immediate skip"
+    assert_not_contains "$log" "GitHub reports mergeable=CONFLICTING after" \
+        "unknown retry: a real conflict's reason never grows an attempt count"
+    if [[ "$(cat "$view_count_dir/bumporg_repo-unknown-conflict-203.count" 2>/dev/null)" == "1" ]]; then
+        pass "unknown retry: a non-UNKNOWN skip reads the PR exactly once"
+    else
+        fail "unknown retry: a non-UNKNOWN skip reads the PR exactly once — got $(cat "$view_count_dir/bumporg_repo-unknown-conflict-203.count" 2>/dev/null || echo none)"
+    fi
+    if [[ "$(sweep_main_sha repo-unknown-conflict)" == "$conflict_before" ]]; then
+        pass "unknown retry: the conflicted repo's default branch is untouched"
+    else
+        fail "unknown retry: the conflicted repo's default branch is untouched"
+    fi
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR" "$view_count_dir"
 }
 
 # ── Test 8i4: an unreadable pull request reports WHY ─────────────────────
@@ -18898,6 +19034,7 @@ test_bump_format_check_unreadable
 test_bump_sweep_dry_run
 test_bump_sweep
 test_bump_sweep_head_match
+test_bump_sweep_unknown_retry
 test_bump_sweep_view_failure_reports_why
 test_bump_sweep_branch_cleanup
 # The hook-pin lane, in a fixture dir of its own. Ordered: unchanged (nothing
