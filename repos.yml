@@ -176,13 +176,6 @@ skills_bootstrap:
         Authors the hook and self-hosts it. Delivering it back would clobber
         the source of truth, and drift-report.sh exempts it from `unmanaged`
         for the same reason.
-    - repo: agentskills
-      reason: >-
-        Retiring: the former public registry, succeeded by adam-agentskills on
-        2026-09-24 and due to be archived. Its self-hosted hook is its own
-        copy; delivering the fleet's pin into a repo being wound down buys
-        nothing. Drop this entry once it is archived and discovery no longer
-        returns it.
 
     # WHAT THIS ABSENCE DOES NOT MEAN, written down because a fresh reader
     # re-derives the wrong corollary from it every time: it says nothing about
@@ -311,11 +304,6 @@ cron_coverage:
     # only workflow (`deploy.yml`) is push-triggered, so there is no scheduled
     # run to cover. Give it a cron anyone depends on and it moves to `fleet:`.
     - scratch-claude-002
-    # RETIRING: the former public skills registry, succeeded by
-    # adam-agentskills on 2026-09-24 and due to be archived. Nobody is
-    # promising to watch a cron in a repo being wound down; once it is
-    # archived, discovery stops returning it and this entry can go.
-    - agentskills
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file
