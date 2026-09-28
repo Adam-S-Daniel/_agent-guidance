@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-09-28 — 0.157.1 through 0.158.0
+
+- **Checked:** 2026-09-28T21:26Z, [release log](https://github.com/openai/codex/releases) (`DRY_RUN`, `SCOPE=codex`)
+- **Latest version in the change log:** [0.158.0](https://github.com/openai/codex/releases/tag/rust-v0.158.0), published 2026-09-28T05:07Z
+- **Window:** 0.157.1 (published 2026-09-26T01:02Z; no notes) through 0.158.0: 2 stable releases, 11 bullets indexed (0.157.1/none, 0.158.0/0-10). Pre-releases (`-alpha`) excluded. Publish times read from each tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and each release's tag page; the pages walked included `rust-v0.157.0`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (default-branch head read): `_agent-guidance` 85e3d8d, `adam-agentskills` 9a754d1, `adam-agentskills-private` 3bb77f4, `adamdaniel.ai` 61893ff, `claude-memory-map` 62c5bd4, `cms-platform` 21810a6, `fastmail-actions` ae5e1ca, `GHA-bench` 8b1c7c2, `jodidaniel.com` 3e61a3a, `repo-settings` 523215d, `rss-inator` a10cfd9, `skills-evals` 18e5839, `wsl-automation` ce73630.
+
+No groups: a keyword grep over all 13 repos found the fleet's Codex dependencies to be the `AGENTS.md` chain, `codex debug prompt-input`, the SessionStart hook and its trust flag (`register-codex-hook.sh`), and the plugin-compatibility notes in `adam-agentskills`. None of the 0.158.0 bullets (copy-on-select, MCP OAuth client secrets, exec-server bearer tokens, transparent image backgrounds, terminal input approval, sandbox and Mermaid fixes, command completion events) touches one, so no issue is filed. 0.157.1's notes say only that release highlights could not be determined.
+
 ### 2026-09-25 — 0.144.1 through 0.157.0
 
 - **Checked:** 2026-09-25T16:20Z, [release log](https://github.com/openai/codex/releases)
