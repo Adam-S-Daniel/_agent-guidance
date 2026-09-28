@@ -35,7 +35,7 @@
   heading: Working in these repos
   file: agents-md/base.md
   status: gap
-  bytes: 862
+  bytes: 980
 
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
@@ -154,7 +154,7 @@
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
   status: gap
-  bytes: 2250
+  bytes: 2246
 
 - id: git-practices
   heading: Git practices
