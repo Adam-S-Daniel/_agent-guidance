@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-28 — dependency-updates — edit
+- Motivation: the owner reversed "the installed one, else latest" (written with a frequently updated laptop CLI in mind): a runner's preinstalled CLI can be any age, so a run should always install the newest release.
+- Change: a run (CI, an eval) installs the harness CLI at npm `latest`, not the installed one, and records the version and models used (PR #188; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/29).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
 ## 2026-09-27 — dependency-updates — edit
 - Motivation: the owner asked to stop adopting harness releases through manual pin-bump PRs: use the harness the environment already has, else install latest, and record which harness and model versions each run used.
 - Change: harness CLIs (Claude Code, Codex; not `uses:` refs or SDK packages) are no longer pinned at all: the installed one, else latest, recording the harness version and the models used. Replaces this PR's earlier "newest release, still exact" wording; the "(they inherit `default-days`)" aside is dropped to stay inside the 28,672-byte full-build cap (PR #186; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/28).
