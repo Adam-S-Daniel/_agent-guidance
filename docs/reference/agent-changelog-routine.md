@@ -147,37 +147,34 @@ Only after all three pass may the pause be lifted.
 **Hard rule.** Before ANY network fetch — release pages, clones beyond what
 the harness provides, API reads of other repos — the run must (a) pass the
 date, skill and branch checks below, and (b) commit a run-log line marked
-`in progress` to its branch, push it, and open the draft PR (or find the
-existing one to resume). Reads of this repo's own branch and PR do not
+`in progress` to its branch, push it, and open the draft PR. Reads of this repo's own branch and PR do not
 count as fetches. Every later stop — BLOCKED, freshness failure, or
 completion — replaces that line with the final result and pushes. A run
 that stops before (b) could not have pushed at all; it must report the
 reason in its final message and its push notification.
 
 1. **Confirm the skill is loaded.** Step 4 below depends on the
-   `vendor-release-impact-issues` skill (`adam-coding-anywhere`). This
-   repo's `skills.lock` currently pins `adam-agentskills` at a commit that
-   predates that skill's addition to the registry, so it will not always be
-   delivered. Check the session's own skill listing before doing anything
-   else. If the skill is not present, stop and report exactly:
+   `vendor-release-impact-issues` skill (`adam-coding-anywhere`), which this
+   repo's `skills.lock` delivers only while it pins an `adam-agentskills`
+   commit that contains it (it did not until 2026-09-28). Check the
+   session's own skill listing before doing anything else. If the skill is
+   not present, stop and report exactly:
    `BLOCKED: vendor-release-impact-issues not delivered (skills.lock pin
    predates it)`. Never improvise the issue format without it.
 2. Check the `fleet-guidance:` line. If it reads DEGRADED, read
    `agents-md/base.md` first and say so in the PR.
-3. **Resume, don't restart.**
-   - If the owner closed the last `routine/vendor-changelog-*` PR unmerged,
-     start fresh on this session's assigned branch — but search the affected repos' open and
-     closed issues first, so a fresh run never re-files one the closed PR
-     already produced.
-   - Otherwise, if an open PR on a `routine/vendor-changelog-*` branch
-     exists (the suffix differs per session, so match the prefix), resume
-     it; don't start a second one. Only the assigned branch may be pushed,
-     so if it differs from the PR's branch, say so in the PR and the final
-     message rather than pushing to the PR's branch. Read `vendor-issue-map.txt` from that branch for
-     the `<index> <issue number>` pairs already filed, and resume from that
-     map — never by matching titles, which can collide or drift. If newer
-     releases now exist than the branch's window covers, extend the window
-     in the same PR rather than opening a second one.
+3. **One run at a time.** Each session gets its own branch
+   (`routine/vendor-changelog-<suffix>`) and may push only that one, so a
+   run cannot continue an earlier run's PR.
+   - If an open PR on any `routine/vendor-changelog-*` branch exists, stop
+     and report exactly
+     `BLOCKED: earlier run's PR #<n> is still open (merge or close it first)`.
+     This is also what keeps two overlapping fires from both filing.
+   - If the owner closed the last such PR unmerged, start fresh, but first
+     read `vendor-issue-map.txt` from that PR's branch for the
+     `<index> <issue number>` pairs it already filed, and search the
+     affected repos' open and closed issues, so a fresh run never re-files
+     one. Match by that map, never by titles, which can collide or drift.
 4. **Check the branch and record the start.** Read the start time in UTC
    from `date -u` in the sandbox; it goes in the run log line (step 6) and
    the PR title, and has no other use. Check that the session's assigned
@@ -186,9 +183,9 @@ reason in its final message and its push notification.
 5. Note any switches from the trigger prompt (**Switches**, above) before
    continuing.
 6. **Open the PR before any fetch.** Commit the `in progress` run-log line
-   (step 6), push the assigned branch, and open, or keep open, a draft PR
-   right away, before any fetch or triage work, so an overlapping fire
-   finds it and resumes instead of duplicating it. Steps 1 to 5 of this
+   (step 6), push the assigned branch, and open a draft PR right away,
+   before any fetch or triage work, so an overlapping fire finds it and
+   stops (item 3) instead of duplicating it. Steps 1 to 5 of this
    section come first because they are checks; nothing else does.
 
 ### 1. Find the window
@@ -344,8 +341,9 @@ fixed before anything is filed.
 7. **File.** Probe first: write one issue and read it back (next step)
    before sending the rest. Then print each body just before posting it,
    and record `<index> <issue number>` in `vendor-issue-map.txt`, committed
-   to the branch, after each create — so a session cut off mid-run resumes
-   from the file instead of duplicating work.
+   to the branch, after each create — so after a session cut off mid-run,
+   the owner closes its PR and the next run reads the file (step 0, item
+   3) instead of duplicating work.
 8. **Verify from a raw REST read,** not the tool that wrote: exact title,
    body equal to what you generated
    (footer normalized), footer present. Prove the check can fail first.
