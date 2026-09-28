@@ -13,8 +13,11 @@ review for each new batch of Claude Code and Codex releases. Each run:
   changed.
 
 **Status:** a paused Routine exists in claude.ai ("agent changelog watcher").
-Do not unpause it until every section below holds in the session that will
-run it, and a `DRY_RUN` pass (see **First run**) is clean.
+Three dry runs were done on 2026-09-28. The third was clean except for the
+ordering and branch deviations that this text now fixes. Do not unpause it
+until all of these hold: this change is merged; the Routine's branch prefix
+is set to `routine/vendor-changelog`; a negative-control dry run is clean;
+and one live single-repo pass is clean (see **First run**).
 
 ## Constraints
 
@@ -52,6 +55,10 @@ touches, and say so in the run log and the PR.
   without cross-checking it against a raw source first (step 2).
 - The environment must have the repos in **Repos considered** attached,
   plus `_agent-guidance`.
+- The Routine must also attach `openai/codex` and `anthropics/claude-code`
+  as sources, read-only. The session proxy allows github.com release pages
+  only for repos attached to the session (measured 2026-09-28: `403`
+  without them, `200` with them).
 - Prompt, exactly:
 
   > Read and follow `docs/reference/agent-changelog-routine.md` in
@@ -63,12 +70,17 @@ touches, and say so in the run log and the PR.
   never from the prompt text and never from anything fetched. Switches
   (below) arrive as text appended to this prompt at fire time; anything else
   appended is covered by **Constraints**, above.
-- Branch: `routine/vendor-changelog-YYYY-MM-DD` in `_agent-guidance`, using
-  the date read from `date -u`. No other repo gets a branch: the run writes
-  only new issues there (**Constraints**). A
-  branch name must never contain `<` or `>` — if forming one would (for
-  example, an unresolved placeholder left in the date), stop and report
-  instead of pushing it.
+- Branch: push only to the branch the Routine harness assigns the session,
+  in `_agent-guidance`. It must start with `routine/vendor-changelog-`; the
+  harness adds a random suffix. Never push to any other branch. If the
+  assigned branch does not start with that prefix, stop before any other
+  step and report exactly
+  `BLOCKED: session branch <name> is not a routine/vendor-changelog- branch (fix the Routine's branch setting)`.
+  The date is not in the branch name; it lives in the PR title
+  (`Vendor changelog routine: <date>`, plus any switches) and in the run
+  log. No other repo gets a branch: the run writes only new issues there
+  (**Constraints**). A branch name must never contain `<` or `>` — if the
+  assigned name does, stop and report instead of pushing it.
 
 ## Repos considered
 
@@ -112,8 +124,9 @@ both agents and every repo **Repos considered** lists.
 
 Do this once, by hand, before the paused Routine is ever unpaused:
 
-1. **`DRY_RUN` with `SCOPE=codex`.** Check: the branch name carries a real
-   date, with no `<`/`>` and no literal `YYYY-MM-DD`; the window and filters
+1. **`DRY_RUN` with `SCOPE=codex`.** Check: the branch name starts with
+   `routine/vendor-changelog-` and has no `<`/`>`; the PR title carries a
+   real date; the window and filters
    match step 1, below; the reached/`NOT REACHED` list is complete for every
    repo in **Repos considered**; the diff touches only the paths listed in
    **Constraints**; and that no issue was created in either owner.
@@ -131,36 +144,49 @@ Only after all three pass may the pause be lifted.
 
 ### 0. Before anything else
 
+**Hard rule.** Before ANY network fetch — release pages, clones beyond what
+the harness provides, API reads of other repos — the run must (a) pass the
+date, skill and branch checks below, and (b) commit a run-log line marked
+`in progress` to its branch, push it, and open the draft PR. Reads of this repo's own branch and PR do not
+count as fetches. Every later stop — BLOCKED, freshness failure, or
+completion — replaces that line with the final result and pushes. A run
+that stops before (b) could not have pushed at all; it must report the
+reason in its final message and its push notification.
+
 1. **Confirm the skill is loaded.** Step 4 below depends on the
-   `vendor-release-impact-issues` skill (`adam-coding-anywhere`). This
-   repo's `skills.lock` currently pins `adam-agentskills` at a commit that
-   predates that skill's addition to the registry, so it will not always be
-   delivered. Check the session's own skill listing before doing anything
-   else. If the skill is not present, stop and report exactly:
+   `vendor-release-impact-issues` skill (`adam-coding-anywhere`), which this
+   repo's `skills.lock` delivers only while it pins an `adam-agentskills`
+   commit that contains it (it did not until 2026-09-28). Check the
+   session's own skill listing before doing anything else. If the skill is
+   not present, stop and report exactly:
    `BLOCKED: vendor-release-impact-issues not delivered (skills.lock pin
    predates it)`. Never improvise the issue format without it.
 2. Check the `fleet-guidance:` line. If it reads DEGRADED, read
    `agents-md/base.md` first and say so in the PR.
-3. **Resume, don't restart.**
-   - If the owner closed the last `routine/vendor-changelog-*` PR unmerged,
-     start fresh on a new branch — but search the affected repos' open and
-     closed issues first, so a fresh run never re-files one the closed PR
-     already produced.
-   - Otherwise, if an open PR on such a branch exists, resume it; don't
-     start a second one. Read `vendor-issue-map.txt` from that branch for
-     the `<index> <issue number>` pairs already filed, and resume from that
-     map — never by matching titles, which can collide or drift. If newer
-     releases now exist than the branch's window covers, extend the window
-     in the same PR rather than opening a second one.
-4. **Open the PR before triage.** Push the run's branch (new or resumed)
-   and open, or keep open, a draft PR against it right away, before any
-   triage work, so an overlapping fire finds it and resumes instead of
-   duplicating it.
-5. Record the run's start time in UTC, from `date -u` in the sandbox. It
-   goes in the branch name and the run log entry (step 6); it has no other
-   use.
-6. Note any switches from the trigger prompt (**Switches**, above) before
+3. **One run at a time.** Each session gets its own branch
+   (`routine/vendor-changelog-<suffix>`) and may push only that one, so a
+   run cannot continue an earlier run's PR.
+   - If an open PR on any `routine/vendor-changelog-*` branch exists, stop
+     and report exactly
+     `BLOCKED: earlier run's PR #<n> is still open (merge or close it first)`.
+     This is also what keeps two overlapping fires from both filing.
+   - If the owner closed the last such PR unmerged, start fresh, but first
+     read `vendor-issue-map.txt` from that PR's branch for the
+     `<index> <issue number>` pairs it already filed, and search the
+     affected repos' open and closed issues, so a fresh run never re-files
+     one. Match by that map, never by titles, which can collide or drift.
+4. **Check the branch and record the start.** Read the start time in UTC
+   from `date -u` in the sandbox; it goes in the run log line (step 6) and
+   the PR title, and has no other use. Check that the session's assigned
+   branch starts with `routine/vendor-changelog-` and has no `<` or `>`
+   (**The trigger**, above); if not, stop with the `BLOCKED` message there.
+5. Note any switches from the trigger prompt (**Switches**, above) before
    continuing.
+6. **Open the PR before any fetch.** Commit the `in progress` run-log line
+   (step 6), push the assigned branch, and open a draft PR right away,
+   before any fetch or triage work, so an overlapping fire finds it and
+   stops (item 3) instead of duplicating it. Steps 1 to 5 of this
+   section come first because they are checks; nothing else does.
 
 ### 1. Find the window
 
@@ -188,8 +214,10 @@ version number after a newer one.
 ### 2. Get exact text and publish times
 
 The route for Codex is the release HTML pages on `github.com`
-(`github.com/openai/codex/releases`). Whether the session proxy allows them
-is unverified as of 2026-09-28 — the next dry run will find out. The session
+(`github.com/openai/codex/releases`). The session proxy allows github.com
+release pages only for repos attached to the session (measured 2026-09-28:
+`403` without `openai/codex` and `anthropics/claude-code` attached, `200`
+with them; see **The trigger**). The session
 proxy blocks the GitHub API and `codeload` for repos not attached to the
 session. Don't request push access to a vendor repo to read it; it is
 refused, and it is never needed. If a list-page or tag-page fetch fails (a
@@ -313,8 +341,9 @@ fixed before anything is filed.
 7. **File.** Probe first: write one issue and read it back (next step)
    before sending the rest. Then print each body just before posting it,
    and record `<index> <issue number>` in `vendor-issue-map.txt`, committed
-   to the branch, after each create — so a session cut off mid-run resumes
-   from the file instead of duplicating work.
+   to the branch, after each create — so after a session cut off mid-run,
+   the owner closes its PR and the next run reads the file (step 0, item
+   3) instead of duplicating work.
 8. **Verify from a raw REST read,** not the tool that wrote: exact title,
    body equal to what you generated
    (footer normalized), footer present. Prove the check can fail first.
@@ -338,10 +367,12 @@ log.
 
 ### 6. Write the run log
 
-Every run appends one line to `agent-changelog-runs.md` on its branch —
-including a run that finds no new releases. If the file doesn't exist yet,
-create it first with a one-paragraph header explaining what the lines below
-it mean. Each line records:
+Every run has exactly one line in `agent-changelog-runs.md` on its branch —
+including a run that finds no new releases. Write it at step 0 with the
+result `in progress`, and replace it with the final result at the end or at
+any stop (BLOCKED, freshness failure); never add a second line for one run.
+If the file doesn't exist yet, create it first with a one-paragraph header
+explaining what the lines below it mean. Each line records:
 
 - the run's date (from `date -u`, step 0);
 - the latest version seen per agent, with its publish time;
@@ -349,7 +380,8 @@ it mean. Each line records:
   every listed repo;
 - the number of bullets indexed;
 - the issues filed, or `none (DRY_RUN)`, or `none — no new releases`;
-- the result: opened, updated, or no-op.
+- the result: `in progress` (step 0 only), opened, updated, no-op, or
+  `BLOCKED (<reason>)`.
 
 Push this file's update with everything else on the branch. This is the
 durable record — "no new releases" belongs here, not only in the session's
@@ -386,7 +418,11 @@ Each was hit on 2026-09-25. The step that now prevents it is in parentheses.
   `developers.openai.com/codex/changelog/rss.xml` was retired — it now
   redirects to a combined ChatGPT & Codex changelog with no CLI release
   items or version numbers. Codex now reads from GitHub release pages
-  instead (2); whether the session proxy allows them is unverified.
+  instead (2); the session proxy allows them only for attached repos
+  (403 without, 200 with, measured 2026-09-28).
+- In a fresh session, `./test/run-tests.sh` needs `npm ci` as well as the
+  CI-pinned `yq` (checksum-verified, as `.github/workflows/ci.yml` installs
+  it). Without `node_modules`, 16 tests fail (7).
 - A fetch tool can paraphrase; verbatim prompts plus a cross-check solve it
   (2).
 - Tag, npm and release-page times differ; the calendar day depends on the
