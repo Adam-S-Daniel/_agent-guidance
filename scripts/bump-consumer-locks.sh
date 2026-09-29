@@ -84,6 +84,25 @@ set -euo pipefail
 #                             under a personal token, PRs are authored by that
 #                             human instead, so the sweep merges nothing until
 #                             this is set — which is the safe direction.
+#   BUMP_UNKNOWN_RETRIES    — how many times the sweep reads a pull request
+#                             whose ONLY objection is mergeable=UNKNOWN or
+#                             mergeStateStatus=UNKNOWN before it gives up and
+#                             skips it (default: 4, i.e. up to 3 re-reads).
+#                             GitHub computes `mergeable` lazily and answers
+#                             UNKNOWN on the first read after a while — run
+#                             36447408427 (2026-09-28) skipped all nine bump
+#                             PRs that night with "GitHub reports
+#                             mergeable=UNKNOWN", though every one was green,
+#                             lock-only and merged cleanly by hand minutes
+#                             later. Every other skip reason (CONFLICTING,
+#                             DIRTY, BLOCKED, DRAFT, the wrong author, the
+#                             wrong branch, a second file in the diff, a red
+#                             check, ...) is refused on the first read, exactly
+#                             as before — this knob reaches only the UNKNOWN
+#                             case.
+#   BUMP_UNKNOWN_RETRY_DELAY — seconds to wait between those re-reads
+#                             (default: 5). Tests set this to 0 so the suite
+#                             never sleeps.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -778,6 +797,7 @@ sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
     local head_oid
+    local unknown_reads unknown_delay attempt outcome
     local -a match_args
     local -a numbers
 
@@ -845,61 +865,138 @@ sweep_bump_prs() {
         [[ ${#numbers[@]} -eq 0 ]] && continue
 
         for number in "${numbers[@]}"; do
-            pr_json="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')-pr-$number.json"
-            # Captured with its reason, the way `gh pr list` above already
-            # does it: an unreadable pull request is a counted failure, and a
-            # counted failure a scheduled run cannot diagnose from its own log
-            # is only half reported.
+            # The gate below judges a SNAPSHOT read by `gh pr view`, and
+            # GitHub computes `mergeable` (and, with it, `mergeStateStatus`)
+            # LAZILY: the first read after a while can answer UNKNOWN — not
+            # yet known, not a refusal. Run 36447408427 (2026-09-28) hit this
+            # on every one of nine bump PRs in one night: each was skipped
+            # with "GitHub reports mergeable=UNKNOWN", and every one merged
+            # cleanly by hand minutes later once GitHub had finished
+            # computing it. Because an unmerged bump branch blocks the next
+            # night's proposal ("already exists with different content —
+            # refusing to force-push"), one UNKNOWN stalls a consumer's
+            # re-pin indefinitely.
             #
-            # THE REDIRECTION ORDER IS LOAD-BEARING AND IS NOT A TIDY-UP.
-            # Redirections are applied left to right, so `2>&1 >"$pr_json"`
-            # first points stderr at wherever stdout goes right now — the
-            # command substitution — and only THEN sends stdout to the file.
-            # The reason lands in $view_err and the JSON lands in $pr_json.
-            # Written the other way round, `>"$pr_json" 2>&1` sends BOTH to the
-            # file: $view_err is always empty and the reason is discarded
-            # again, which is the bug this line is fixing.
-            if ! view_err=$(gh pr view "$number" --repo "$repo_name" --json \
-                number,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
-                2>&1 >"$pr_json"); then
-                fail "$repo_name#$number: could not read the pull request — $(head -1 <<< "$view_err")"
+            # So a SKIP whose only objection is one of those two UNKNOWNs is
+            # re-read and re-judged — asking is what prompts GitHub to
+            # compute it — up to BUMP_UNKNOWN_RETRIES times (default 4),
+            # sleeping BUMP_UNKNOWN_RETRY_DELAY seconds (default 5) between
+            # attempts. Every other SKIP reason (CONFLICTING, DIRTY, BLOCKED,
+            # DRAFT, the wrong author, the wrong branch, a second file in the
+            # diff, a red check, ...) is refused on the FIRST read, exactly as
+            # before: the retry below matches the two literal strings
+            # pr_merge_verdict prints for an UNKNOWN and nothing else, so a
+            # real refusal never enters this loop a second time.
+            unknown_reads="${BUMP_UNKNOWN_RETRIES:-4}"
+            unknown_delay="${BUMP_UNKNOWN_RETRY_DELAY:-5}"
+            outcome=""
+            for ((attempt = 1; attempt <= unknown_reads; attempt++)); do
+                pr_json="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')-pr-$number.json"
+                # Captured with its reason, the way `gh pr list` above already
+                # does it: an unreadable pull request is a counted failure, and a
+                # counted failure a scheduled run cannot diagnose from its own log
+                # is only half reported.
+                #
+                # THE REDIRECTION ORDER IS LOAD-BEARING AND IS NOT A TIDY-UP.
+                # Redirections are applied left to right, so `2>&1 >"$pr_json"`
+                # first points stderr at wherever stdout goes right now — the
+                # command substitution — and only THEN sends stdout to the file.
+                # The reason lands in $view_err and the JSON lands in $pr_json.
+                # Written the other way round, `>"$pr_json" 2>&1` sends BOTH to the
+                # file: $view_err is always empty and the reason is discarded
+                # again, which is the bug this line is fixing.
+                if ! view_err=$(gh pr view "$number" --repo "$repo_name" --json \
+                    number,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
+                    2>&1 >"$pr_json"); then
+                    outcome="view_error"
+                    break
+                fi
+
+                # Streams kept APART: this line IS the merge gate's answer, split
+                # into a verdict and a detail immediately below, so a stderr line
+                # from a run that exited 0 becomes the verdict. It fails SAFE — the
+                # first token of noise is not "READY", so the merge is refused —
+                # but the sweep then stalls on every repo, logging "not merged —"
+                # followed by that noise, which names no cause a reader can act on.
+                # Same producer and same measured mechanism as the shrink check
+                # below: a local `python3 -c`, which writes to stderr at exit 0
+                # when the inherited environment asks it to.
+                if ! verdict_err_file=$(mktemp -p "$WORK_DIR"); then
+                    outcome="tmp_error"
+                    break
+                fi
+                verdict_rc=0
+                verdict_line=$(pr_merge_verdict "$pr_json" "$BRANCH_NAME" \
+                    "$PR_AUTHOR" "$LOCK_REL_PATH" 2>"$verdict_err_file") || verdict_rc=$?
+                # Read then removed UNCONDITIONALLY, before the branch.
+                verdict_err=$(pick_diagnostic tool "$verdict_err_file")
+                rm -f "$verdict_err_file"
+                if [[ $verdict_rc -ne 0 ]]; then
+                    # "Cannot judge it" is not permission to merge it.
+                    outcome="judge_error"
+                    break
+                fi
+                verdict="${verdict_line%% *}"
+                detail="${verdict_line#* }"
+
+                if [[ "$verdict" == "READY" ]]; then
+                    outcome="ready"
+                    break
+                fi
+
+                if { [[ "$detail" == "GitHub reports mergeable=UNKNOWN" ]] \
+                     || [[ "$detail" == "mergeStateStatus=UNKNOWN" ]]; } \
+                   && (( attempt < unknown_reads )); then
+                    log "$repo_name#$number: $detail (attempt $attempt of $unknown_reads) — re-reading in ${unknown_delay}s, GitHub has not finished computing it yet"
+                    (( unknown_delay > 0 )) && sleep "$unknown_delay"
+                    continue
+                fi
+
+                # Exhausted the bound still UNKNOWN, or a real refusal on the
+                # first read. Only the UNKNOWN case gets an attempt count
+                # appended — every other reason already says everything it
+                # needs to on one read, and always did.
+                if [[ "$detail" == "GitHub reports mergeable=UNKNOWN" ]] \
+                   || [[ "$detail" == "mergeStateStatus=UNKNOWN" ]]; then
+                    detail="$detail after $attempt read(s)"
+                fi
+                outcome="skip"
+                break
+            done
+
+            # BUMP_UNKNOWN_RETRIES set to zero or negative disables the loop
+            # body entirely rather than reading the PR at all — not a
+            # narrower skip, a PR never judged. Refused rather than silently
+            # falling through to a merge with no snapshot behind it.
+            if [[ -z "$outcome" ]]; then
+                fail "$repo_name#$number: BUMP_UNKNOWN_RETRIES is '$unknown_reads' — must allow at least one read"
                 ((FAIL_COUNT++)) || true
                 continue
             fi
 
-            # Streams kept APART: this line IS the merge gate's answer, split
-            # into a verdict and a detail immediately below, so a stderr line
-            # from a run that exited 0 becomes the verdict. It fails SAFE — the
-            # first token of noise is not "READY", so the merge is refused —
-            # but the sweep then stalls on every repo, logging "not merged —"
-            # followed by that noise, which names no cause a reader can act on.
-            # Same producer and same measured mechanism as the shrink check
-            # below: a local `python3 -c`, which writes to stderr at exit 0
-            # when the inherited environment asks it to.
-            if ! verdict_err_file=$(mktemp -p "$WORK_DIR"); then
-                fail "$repo_name#$number: could not create a temp file to capture the merge gate's diagnostics"
-                ((FAIL_COUNT++)) || true
-                continue
-            fi
-            verdict_rc=0
-            verdict_line=$(pr_merge_verdict "$pr_json" "$BRANCH_NAME" \
-                "$PR_AUTHOR" "$LOCK_REL_PATH" 2>"$verdict_err_file") || verdict_rc=$?
-            # Read then removed UNCONDITIONALLY, before the branch.
-            verdict_err=$(pick_diagnostic tool "$verdict_err_file")
-            rm -f "$verdict_err_file"
-            if [[ $verdict_rc -ne 0 ]]; then
-                # "Cannot judge it" is not permission to merge it.
-                fail "$repo_name#$number: could not judge whether this pull request is safe to merge — ${verdict_err:-no diagnostic output}"
-                ((FAIL_COUNT++)) || true
-                continue
-            fi
-            verdict="${verdict_line%% *}"
-            detail="${verdict_line#* }"
-
-            if [[ "$verdict" != "READY" ]]; then
-                log "$repo_name#$number: not merged — $detail"
-                continue
-            fi
+            case "$outcome" in
+                view_error)
+                    fail "$repo_name#$number: could not read the pull request — $(head -1 <<< "$view_err")"
+                    ((FAIL_COUNT++)) || true
+                    continue
+                    ;;
+                tmp_error)
+                    fail "$repo_name#$number: could not create a temp file to capture the merge gate's diagnostics"
+                    ((FAIL_COUNT++)) || true
+                    continue
+                    ;;
+                judge_error)
+                    fail "$repo_name#$number: could not judge whether this pull request is safe to merge — ${verdict_err:-no diagnostic output}"
+                    ((FAIL_COUNT++)) || true
+                    continue
+                    ;;
+                skip)
+                    log "$repo_name#$number: not merged — $detail"
+                    continue
+                    ;;
+                ready)
+                    ;;  # falls through to the merge below, using the LAST read
+            esac
 
             if $DRY_RUN; then
                 log "[DRY RUN] Would merge $repo_name#$number with a merge commit — $detail"

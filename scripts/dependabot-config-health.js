@@ -228,13 +228,22 @@ function buildApi(env) {
       return getJson(owner, ["api", `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`]);
     },
     newestPathCommit(owner, repo, branch, filePath) {
+      // per_page=2, not 1: a second row costs nothing extra (one page either
+      // way) and lets the caller tell "this is the only commit that has ever
+      // touched the path" (rows.length === 1) from "there is at least one
+      // earlier one" (rows.length === 2) — the cheap detection #194 asks for,
+      // reusing the read this sweep already makes rather than a new call.
       const rows = getJson(owner, [
         "api",
-        `repos/${repo}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(filePath)}&per_page=1`,
+        `repos/${repo}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(filePath)}&per_page=2`,
       ]);
       if (!Array.isArray(rows) || !rows.length) return null;
       const c = rows[0];
-      return { sha: c.sha, date: c.commit && c.commit.committer && c.commit.committer.date };
+      return {
+        sha: c.sha,
+        date: c.commit && c.commit.committer && c.commit.committer.date,
+        onlyCommit: rows.length === 1,
+      };
     },
     commitPulls(owner, repo, sha) {
       return getJson(owner, ["api", `repos/${repo}/commits/${sha}/pulls`]);
@@ -250,6 +259,18 @@ function buildApi(env) {
     },
     newestWorkflowRun(owner, repo, workflowId) {
       const data = getJson(owner, ["api", `repos/${repo}/actions/workflows/${workflowId}/runs?per_page=1`]);
+      const runs = data && data.workflow_runs;
+      return Array.isArray(runs) && runs.length ? runs[0] : null;
+    },
+    // newestSuccessfulWorkflowRun — the newest run with conclusion success
+    // specifically (GitHub's own `status=success` filter), for #194's narrow
+    // missing-check proof. Only ever called when the cheap onlyCommit check
+    // has already passed — see assessRepo.
+    newestSuccessfulWorkflowRun(owner, repo, workflowId) {
+      const data = getJson(owner, [
+        "api",
+        `repos/${repo}/actions/workflows/${workflowId}/runs?status=success&per_page=1`,
+      ]);
       const runs = data && data.workflow_runs;
       return Array.isArray(runs) && runs.length ? runs[0] : null;
     },
@@ -388,6 +409,27 @@ function checkState(check) {
   return "unknown"; // queued, in_progress, ...
 }
 
+// firstCommitProvesHealthy — #194 / ADR 0014's addendum. GitHub sometimes
+// posts NO check run at all on the commit (or PR merge commit) that brought
+// a config onto the default branch — not failure, just absent — which the
+// strict rule below reads as unknown forever. That is right in general: fact
+// 2 in this file's header is that an INVALID config REPLACING a valid one
+// does not stop update jobs, so "jobs are recent" can never stand in for "the
+// config parses" on its own. But that reasoning needs a PREVIOUS config for
+// the invalid one to have replaced. When the path has exactly one commit
+// EVER (`pathCommit.onlyCommit`, cheaply proven by the caller, never
+// re-derived here), there is no earlier version a stale job could be running
+// against — so a job that both succeeded AND started after that one-and-only
+// commit could only have parsed THAT commit's content.
+function firstCommitProvesHealthy({ pathCommit, successfulJobStartedAt }) {
+  if (!pathCommit || !pathCommit.onlyCommit) return false;
+  if (!successfulJobStartedAt) return false;
+  const jobMs = Date.parse(successfulJobStartedAt);
+  const commitMs = Date.parse(pathCommit.date);
+  if (Number.isNaN(jobMs) || Number.isNaN(commitMs)) return false;
+  return jobMs > commitMs;
+}
+
 // jobsState — see this file's header, fact 2, for why "a recent job" alone
 // is never read as "a valid config": this function knows nothing about the
 // check run at all, only about timing. THROWS on a present-but-unparseable
@@ -416,13 +458,18 @@ function jobsState({ lastJobAt, configCommitAt, thresholdDays, nowMs }) {
 
 // verdictFor — the single place the two signals combine into one verdict.
 // "healthy" therefore requires check success AND jobs recent — see the
-// precedence chain at the bottom.
-function verdictFor({ config, check, jobs }) {
+// precedence chain at the bottom. `firstCommitProof` is #194's narrow
+// exception: truthy only when the caller has already confirmed both (a) the
+// config's path has exactly one commit ever and (b) a successful update job
+// started after it (see firstCommitProvesHealthy) — everything else about a
+// missing check is untouched.
+function verdictFor({ config, check, jobs, firstCommitProof }) {
   if (!config) {
-    return { verdict: "no-config", findings: [], unknowns: [] };
+    return { verdict: "no-config", findings: [], unknowns: [], notices: [] };
   }
   const findings = [];
   const unknowns = [];
+  const notices = [];
   if (check.state === "failure") {
     findings.push({ kind: "invalid-config", key: `check:${check.id}` });
   }
@@ -430,7 +477,14 @@ function verdictFor({ config, check, jobs }) {
     findings.push({ kind: "silent", key: `silent:${jobs.lastJobAt || "never"}` });
   }
   if (check.state === "missing") {
-    unknowns.push("GitHub's config check run could not be found on the path commit or its PR merge commit");
+    if (firstCommitProof) {
+      notices.push(
+        "no recorded config check, but the file's first and only commit has been followed by a " +
+          "successful Dependabot update job, which proves GitHub parsed it",
+      );
+    } else {
+      unknowns.push("GitHub's config check run could not be found on the path commit or its PR merge commit");
+    }
   } else if (check.state === "unknown") {
     unknowns.push(check.reason || "the config check run's status/conclusion could not be classified");
   }
@@ -442,7 +496,7 @@ function verdictFor({ config, check, jobs }) {
   else if (unknowns.length) verdict = "unknown";
   else if (jobs.state === "pending") verdict = "pending";
   else verdict = "healthy";
-  return { verdict, findings, unknowns };
+  return { verdict, findings, unknowns, notices };
 }
 
 // ── Evidence markers ───────────────────────────────────────────────────────
@@ -591,6 +645,7 @@ function logLine(assessment, { revealPrivate } = {}) {
   const parts = [`${assessment.repo}: ${assessment.verdict}`];
   if (assessment.findings.length) parts.push(`kinds=${assessment.findings.map((f) => f.kind).join(",")}`);
   if (assessment.unknowns.length) parts.push(`unknowns=${assessment.unknowns.join(" | ")}`);
+  if (assessment.notices && assessment.notices.length) parts.push(`notices=${assessment.notices.join(" | ")}`);
   return parts.join(" ");
 }
 
@@ -691,6 +746,7 @@ function assessRepo(target, api, nowMs, opts) {
       verdict: "unknown",
       findings: [],
       unknowns: ["no default branch (empty repository)"],
+      notices: [],
       issueLookupFailed: false,
       config: null, check: null, jobs: null, openIssue: null,
     };
@@ -723,9 +779,9 @@ function assessRepo(target, api, nowMs, opts) {
   let jobs = null;
 
   if (configErrorReason) {
-    verdictResult = { verdict: "unknown", findings: [], unknowns: [configErrorReason] };
+    verdictResult = { verdict: "unknown", findings: [], unknowns: [configErrorReason], notices: [] };
   } else if (!config) {
-    verdictResult = { verdict: "no-config", findings: [], unknowns: [] };
+    verdictResult = { verdict: "no-config", findings: [], unknowns: [], notices: [] };
   } else {
     const schedule = parseSchedule(config.raw);
     const thresholdDays = silenceThresholdDays(schedule.shortestDays);
@@ -772,6 +828,7 @@ function assessRepo(target, api, nowMs, opts) {
     let workflows = [];
     let total = null;
     let listError = null;
+    let updatesWf = null; // hoisted: #194's narrow proof below needs its id too
     for (let page = 1; page <= MAX_PAGES; page++) {
       let data;
       try {
@@ -801,7 +858,7 @@ function assessRepo(target, api, nowMs, opts) {
         reason: `the workflows listing was truncated (total_count ${total}, collected ${workflows.length}) — the updates workflow could not be confirmed present or absent`,
       };
     } else {
-      const updatesWf = workflows.find((w) => w && w.path === UPDATES_WORKFLOW_PATH);
+      updatesWf = workflows.find((w) => w && w.path === UPDATES_WORKFLOW_PATH) || null;
       if (!updatesWf) {
         jobs = buildJobsEnvelope({ lastJobAt: null, lastJobUrl: null, configCommitAt, thresholdDays, nowMs, intervalBasis, schedule });
       } else {
@@ -822,7 +879,26 @@ function assessRepo(target, api, nowMs, opts) {
       }
     }
 
-    verdictResult = verdictFor({ config, check, jobs });
+    // #194: only attempt the narrow missing-check proof when the cheap half
+    // (a) already holds — a single commit ever, an actual missing check, and
+    // an updates workflow to even ask about. Any error on this lookup must
+    // never flip the verdict to healthy (#258: an unknown answer is never
+    // healthy), so it is swallowed here and the ordinary missing-check
+    // unknown reason below covers this repo exactly as it did before.
+    let firstCommitProof = null;
+    if (check.state === "missing" && pathCommit && pathCommit.onlyCommit && updatesWf) {
+      try {
+        const successfulRun = api.newestSuccessfulWorkflowRun(owner, repo, updatesWf.id);
+        const startedAt = successfulRun ? (successfulRun.run_started_at || successfulRun.created_at || null) : null;
+        if (firstCommitProvesHealthy({ pathCommit, successfulJobStartedAt: startedAt })) {
+          firstCommitProof = { jobUrl: (successfulRun && successfulRun.html_url) || null, jobStartedAt: startedAt };
+        }
+      } catch {
+        firstCommitProof = null;
+      }
+    }
+
+    verdictResult = verdictFor({ config, check, jobs, firstCommitProof });
   }
 
   const unknowns = [...extraUnknowns, ...verdictResult.unknowns];
@@ -854,6 +930,7 @@ function assessRepo(target, api, nowMs, opts) {
     verdict,
     findings: verdictResult.findings,
     unknowns,
+    notices: verdictResult.notices || [],
     issueLookupFailed,
     config, check, jobs, openIssue,
   };
@@ -934,7 +1011,7 @@ function runSweep({
     } catch (e) {
       assessment = {
         owner: target.owner, repo: target.repo, private: target.private,
-        verdict: "unknown", findings: [], unknowns: [`assessment crashed: ${e.message}`],
+        verdict: "unknown", findings: [], unknowns: [`assessment crashed: ${e.message}`], notices: [],
         issueLookupFailed: false,
         config: null, check: null, jobs: null, openIssue: null,
       };
@@ -1090,6 +1167,7 @@ module.exports = {
   candidateShas,
   pickDependabotCheck,
   checkState,
+  firstCommitProvesHealthy,
   jobsState,
   verdictFor,
   extractReportedEvidence,
