@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-29 — dependency-updates — edit
+- Motivation: cms-platform, fastmail-actions, adam-agentskills, repo-settings, and claude-memory-map already exclude their own cms-platform releases from cooldown because required checks gate the release tag; scheduled-run-health callers fell 20 releases behind in [cms-platform#424](https://github.com/Adam-S-Daniel/cms-platform/issues/424), closed 2026-09-22.
+- Change: Records cms-platform's cooldown exclusion (#424) (PR #214).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-29 (PR #214)
+
+## 2026-09-29 — pinning-github-actions — edit
+- Motivation: cms-platform, fastmail-actions, adam-agentskills, repo-settings, and claude-memory-map already exclude their own cms-platform releases from cooldown because required checks gate the release tag; scheduled-run-health callers fell 20 releases behind in [cms-platform#424](https://github.com/Adam-S-Daniel/cms-platform/issues/424), closed 2026-09-22.
+- Change: Limits the 7-day wait to third-party releases, preserving the cms-platform release-tag carve-out (PR #214).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-29 (PR #214)
+
 ## 2026-09-29 — sessions-get-cut-off — remove
 - Motivation: the owner said the section is out of date (2026-09-29): the laptop-drops-sessions premise, and the commit-as-you-go / resume-pointer duties built on it, no longer apply.
 - Change: removed the "Sessions get cut off" section and its eval-coverage.yml row (PR #213).

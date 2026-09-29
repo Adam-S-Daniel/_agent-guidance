@@ -113,7 +113,7 @@
   heading: Dependency updates
   file: agents-md/base.md
   status: gap
-  bytes: 517
+  bytes: 549
 
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads
@@ -125,7 +125,7 @@
   heading: Pinning GitHub Actions
   file: agents-md/base.md
   status: gap
-  bytes: 1513
+  bytes: 1506
 
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
