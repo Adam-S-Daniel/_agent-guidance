@@ -52,9 +52,9 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-29 — sessions-get-cut-off — remove
 - Motivation: the owner said the section is out of date (2026-09-29): the laptop-drops-sessions premise, and the commit-as-you-go / resume-pointer duties built on it, no longer apply.
-- Change: removed the "Sessions get cut off" section and its eval-coverage.yml row (PR pending).
+- Change: removed the "Sessions get cut off" section and its eval-coverage.yml row (PR #213).
 - Eval: none — no fixture yet
-- Outcome: pending — opened 2026-09-29
+- Outcome: pending — opened 2026-09-29 (PR #213)
 
 ## 2026-09-28 — workstation-layout — edit
 - Motivation: One item was missing and one did not belong.
