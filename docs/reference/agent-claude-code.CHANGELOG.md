@@ -30,6 +30,31 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-09-29 — 2.1.283 through 2.1.284
+
+- **Checked:** 2026-09-29T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.284](https://github.com/anthropics/claude-code/releases/tag/v2.1.284), published 2026-09-28T18:02Z
+- **Window:** v2.1.283 (published 2026-09-25T21:50Z), the first stable release after v2.1.282, through v2.1.284: 2 releases, 194 bullets. Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** each release body is the matching `CHANGELOG.md` section in `anthropics/claude-code`; quotes are copied from that file. The v2.1.284 and v2.1.283 tag pages were fetched (HTTP 200) for their publish times only; one body (v2.1.284) was spot-checked against its tag page and matched.
+- **Repos considered:** `Adam-S-Daniel/_agent-guidance` only (run scoped with `SCOPE=claude-code,_agent-guidance`): reached 542e19a. The other fleet repos were not assessed in this run.
+
+#### 1. `installed_plugins.json` and plugin cache recovery (durable-machine install check)
+
+- [v2.1.283](https://github.com/anthropics/claude-code/releases/tag/v2.1.283), published 2026-09-25T21:50Z
+  > Fixed plugins that declare no version being silently restored at their source's newest commit, not the installed one, when their cached files were missing
+- [v2.1.283](https://github.com/anthropics/claude-code/releases/tag/v2.1.283), published 2026-09-25T21:50Z
+  > Fixed user-installed plugins and marketplaces failing to load with "cache-miss" after the home or config directory was moved, for example in bind-mounted devcontainers
+- [v2.1.283](https://github.com/anthropics/claude-code/releases/tag/v2.1.283), published 2026-09-25T21:50Z
+  > Fixed `installed_plugins.json` showing no plugins when it holds a record under an invalid plugin id; such a file loads again
+- [v2.1.283](https://github.com/anthropics/claude-code/releases/tag/v2.1.283), published 2026-09-25T21:50Z
+  > Fixed `installed_plugins.json` being rewritten, losing records, when it holds a record this version cannot read; `claude plugin` commands now name the record and say how to recover
+- [v2.1.283](https://github.com/anthropics/claude-code/releases/tag/v2.1.283), published 2026-09-25T21:50Z
+  > Improved recovery from an `installed_plugins.json` that cannot be read at all: its contents are kept in a file beside it before it is rebuilt, and `claude plugin list` names that file
+- [v2.1.284](https://github.com/anthropics/claude-code/releases/tag/v2.1.284), published 2026-09-28T18:02Z
+  > Fixed `sparsePaths` plugin marketplaces cloning empty and replacing a working local copy on older git (before 2.39), which failed every refresh with "marketplace.json file is no longer present"
+
+**Issues:** none filed. [_agent-guidance#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175) already covers this surface (`agents-md/base.md`, "Durable machine" paragraph: the stale-install check reads `gitCommitSha` from `installed_plugins.json`). These fixes may further change what that file holds on CLI 2.1.283 and later; add them to that issue's "To check" when it is worked.
+
 ### 2026-09-25 — 2.1.206 through 2.1.282
 
 - **Checked:** 2026-09-25T16:20Z, [release log](https://github.com/anthropics/claude-code/releases)
