@@ -12,12 +12,13 @@ review for each new batch of Claude Code and Codex releases. Each run:
 - appends one line to `agent-changelog-runs.md`, even when nothing else
   changed.
 
-**Status:** a paused Routine exists in claude.ai ("agent changelog watcher").
-Three dry runs were done on 2026-09-28. The third was clean except for the
-ordering and branch deviations that this text now fixes. Do not unpause it
-until all of these hold: this change is merged; the Routine's branch prefix
-is set to `routine/vendor-changelog`; a negative-control dry run is clean;
-and one live single-repo pass is clean (see **First run**).
+**Status:** enabled on 2026-09-29. The claude.ai Routine "agent changelog
+watcher" fires every Monday at 01:03 UTC, with its branch prefix set to
+`routine/vendor-changelog`. Before that it passed three dry runs
+(2026-09-28), a negative-control dry run (#205) and one live single-repo
+pass (#206; see **First run**). The live pass filed no issue, because its
+one group was already tracked, so filing and reading back a new issue has
+not yet run live.
 
 ## Constraints
 
