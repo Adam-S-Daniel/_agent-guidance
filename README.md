@@ -106,6 +106,19 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
 Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 
+**2026-09-28 — parent-directory launches:** from a multi-repo parent, the
+registered command runs the first child hook supporting `--workspace`; that
+hook selects the freshest immediate child's payload using the same delivery
+stamp and installed-block arbitration as normal runs. A second
+`fleet-workspace:` line lists the child repos whose `AGENTS.md` must be read
+before working in them, even when guidance is opted out. Codex does not load
+child instructions from the parent (nor through `--add-dir`); inlining 19
+repos' files would consume a large context budget for instructions relevant
+only while working in each repo. **Upgrade once per machine:** run
+[`scripts/register-codex-hook.sh`](scripts/register-codex-hook.sh), then
+re-trust the changed definition in `/hooks`. Only the exact previous default
+command is upgraded; hand-written variants stay untouched.
+
 The Codex Cloud cold-start path is verified with **Manual** environment setup
 and persistent `CODEX_HOME=/opt/codex`: preserve `npm ci`, then run
 `bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
