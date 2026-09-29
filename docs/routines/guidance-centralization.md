@@ -39,7 +39,7 @@ duplicate one:
 
 | Question | Answered by |
 |---|---|
-| Does each consumer's managed block match a fresh build? | `drift-report.yml`, nightly |
+| Does each consumer's managed block, fleet-memory hook, and guidance payload match their sources? | `drift-report.yml`, nightly |
 | Is the managed block delivered? | `sync.yml`, on push to `main` |
 | Is each `skills.lock` re-pinned? | `skills-lock-bump.yml`, nightly |
 | Is the hook pin current? | `scripts/bump-hook-pin.sh`, nightly |
