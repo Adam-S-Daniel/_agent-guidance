@@ -84,11 +84,15 @@
 # ----------------
 # With no arguments Claude Code runs this as a SessionStart hook; so does Codex,
 # through a user-level entry registered once per machine by
-# `scripts/register-codex-hook.sh`. Codex passes the hook event as one JSON
+# `scripts/register-codex-hook.sh`. With `--workspace <dir>`, Codex can start
+# from a parent of fleet repos: the freshest immediate child's payload takes
+# the normal delivery path, and a second line lists repo-local AGENTS.md files
+# that Codex did not load from that parent. `--codex-cloud` remains the explicit
+# setup mode. Codex passes the hook event as one JSON
 # object on stdin — this script never reads stdin, which is part of what makes
 # one file correct for both harnesses — and adds a command hook's plain-text
-# stdout to the session as developer context. So the single verdict line below
-# is what a Codex session sees, exactly as a Claude session does.
+# stdout to the session as developer context. Normal mode emits one verdict
+# line; workspace mode adds the repo list when one exists.
 #
 # In its normal hook mode it always exits 0. A guidance delivery that breaks
 # the session is worse than
@@ -102,14 +106,54 @@
 set -uo pipefail
 
 CODEX_CLOUD=0
-case "$#:${1-}" in
-    0:) ;;
-    1:--codex-cloud) CODEX_CLOUD=1 ;;
-    *)
-        echo "fleet-guidance: DEGRADED — unknown argument; expected no arguments or --codex-cloud"
-        exit 2
-        ;;
-esac
+WORKSPACE_DIR=""
+if [ "$#" -eq 0 ]; then
+    :
+elif [ "$#" -eq 1 ] && [ "$1" = --codex-cloud ]; then
+    CODEX_CLOUD=1
+elif [ "$#" -eq 2 ] && [ "$1" = --workspace ] && [ -d "$2" ]; then
+    WORKSPACE_DIR="$2"
+else
+    echo "fleet-guidance: DEGRADED — unknown argument or nonexistent workspace directory; expected no arguments, --codex-cloud, or --workspace <dir>"
+    exit 2
+fi
+
+WORKSPACE_LINE=""
+if [ -n "$WORKSPACE_DIR" ]; then
+    # Set the collation for Bash's glob and string comparisons in this mode.
+    # The normal and Cloud modes keep the caller's locale unchanged.
+    LC_ALL=C
+    export LC_ALL
+    # A repo's own AGENTS.md is only loaded when Codex starts inside that
+    # repo. Keep the inventory independent of payload delivery and opt-out.
+    workspace_names=()
+    for child in "$WORKSPACE_DIR"/* "$WORKSPACE_DIR"/.[!.]* "$WORKSPACE_DIR"/..?*; do
+        if { [ -d "$child/.git" ] || [ -f "$child/.git" ]; } && [ -f "$child/AGENTS.md" ]; then
+            workspace_names+=("$(basename "$child")")
+        fi
+    done
+    if [ "${#workspace_names[@]}" -gt 0 ]; then
+        sorted_names=()
+        sorted_count=0
+        for name in "${workspace_names[@]}"; do
+            position=$sorted_count
+            while [ "$position" -gt 0 ] && [[ "$name" < "${sorted_names[$((position - 1))]}" ]]; do
+                sorted_names[position]="${sorted_names[$((position - 1))]}"
+                position=$((position - 1))
+            done
+            sorted_names[position]="$name"
+            sorted_count=$((sorted_count + 1))
+        done
+        workspace_list=""
+        for name in "${sorted_names[@]}"; do
+            workspace_list="${workspace_list:+$workspace_list, }$name"
+        done
+        WORKSPACE_LINE="fleet-workspace: $WORKSPACE_DIR is a multi-repo parent; this session loaded no repo's own AGENTS.md (Codex reads them only from the launch directory's git root down). Before working in a repo, read its AGENTS.md: $workspace_list"
+    fi
+fi
+# shellcheck disable=SC2317  # reached through both EXIT traps below
+workspace_notice() { [ -z "$WORKSPACE_LINE" ] || printf '%s\n' "$WORKSPACE_LINE"; }
+trap workspace_notice EXIT
 
 BEGIN_MARK='<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->'
 END_MARK='<!-- END FLEET GUIDANCE -->'
@@ -120,6 +164,60 @@ END_MARK='<!-- END FLEET GUIDANCE -->'
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || HOOK_DIR=""
 PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"
 CODEX_DEST_DIR="${CODEX_HOME:-$HOME/.codex}"
+
+# The payload's bytes are an exact copy of agents-md/base.md, so an ordering
+# key cannot live inside them. Its last commit tells when this checkout
+# received those bytes; a dirty or untracked payload uses its file mtime.
+# One helper serves workspace selection and the normal installation path.
+normalize_stamp() {
+    # Decimal strings avoid octal interpretation and arithmetic overflow on
+    # malformed or unusually large metadata.
+    NORMAL_STAMP="$1"
+    case "$NORMAL_STAMP" in ""|*[!0-9]*) NORMAL_STAMP=0; return ;; esac
+    while [ "${#NORMAL_STAMP}" -gt 1 ] && [ "${NORMAL_STAMP:0:1}" = 0 ]; do
+        NORMAL_STAMP="${NORMAL_STAMP:1}"
+    done
+}
+payload_stamp() {
+    local source="$1" source_dir source_name git_worktree status stamp=0
+    source_dir="$(dirname "$source")"
+    source_name="$(basename "$source")"
+    if git_worktree="$(git -C "$source_dir" rev-parse --is-inside-work-tree 2>/dev/null)" &&
+        [ "$git_worktree" = true ]; then
+        if status="$(git -C "$source_dir" status --porcelain -- "$source_name" 2>/dev/null)"; then
+            if [ -n "$status" ]; then
+                stamp="$(stat -c %Y "$source" 2>/dev/null || stat -f %m "$source" 2>/dev/null)" || stamp=0
+            else
+                stamp="$(git -C "$source_dir" log -1 --format=%ct -- "$source_name" 2>/dev/null)" || stamp=0
+            fi
+        fi
+    fi
+    normalize_stamp "$stamp"
+    PAYLOAD_STAMP="$NORMAL_STAMP"
+}
+stamp_ge() {
+    [ "${#1}" -gt "${#2}" ] || {
+        [ "${#1}" -eq "${#2}" ] && { [ "$1" = "$2" ] || [[ "$1" > "$2" ]]; }
+    }
+}
+stamp_gt() { stamp_ge "$1" "$2" && [ "$1" != "$2" ]; }
+
+if [ -n "$WORKSPACE_DIR" ]; then
+    # Bash expands these paths in sorted order. Equal stamps keep the first.
+    workspace_payload=""
+    workspace_stamp=0
+    for candidate in "$WORKSPACE_DIR"/*/.claude/hooks/fleet-guidance.md; do
+        if [ ! -f "$candidate" ] || [ ! -r "$candidate" ] || [ ! -s "$candidate" ]; then
+            continue
+        fi
+        payload_stamp "$candidate"
+        if [ -z "$workspace_payload" ] || stamp_gt "$PAYLOAD_STAMP" "$workspace_stamp"; then
+            workspace_payload="$candidate"
+            workspace_stamp="$PAYLOAD_STAMP"
+        fi
+    done
+    [ -z "$workspace_payload" ] || PAYLOAD="$workspace_payload"
+fi
 
 # One spelling policy serves both execution modes. Character classes keep the
 # comparison case-insensitive without adding an external command to the
@@ -360,6 +458,7 @@ record_failure() { FAILURES="${FAILURES:+$FAILURES; }$1"; }
 TMP_FILES=()
 # shellcheck disable=SC2317  # reached through the EXIT trap below, not by a call
 cleanup_tmp() {
+    workspace_notice
     [ "${#TMP_FILES[@]}" -eq 0 ] && return 0
     local t
     for t in "${TMP_FILES[@]}"; do rm -f "$t"; done
@@ -540,43 +639,9 @@ version="${version:0:8}"
 
 bytes="$(wc -c < "$PAYLOAD" 2>/dev/null | tr -d ' ')"
 
-# The payload's bytes are an exact copy of agents-md/base.md, so an ordering
-# key cannot live inside them. Its last commit tells when this checkout
-# received those bytes; the digest identifies content but cannot order two
-# different versions. A dirty or untracked payload uses its file mtime.
 # See docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md.
-delivered=0
-payload_dir="$(dirname "$PAYLOAD")"
-payload_name="$(basename "$PAYLOAD")"
-if git_worktree="$(git -C "$payload_dir" rev-parse --is-inside-work-tree 2>/dev/null)" &&
-    [ "$git_worktree" = true ]; then
-    if status="$(git -C "$payload_dir" status --porcelain -- "$payload_name" 2>/dev/null)"; then
-        if [ -n "$status" ]; then
-            delivered="$(stat -c %Y "$PAYLOAD" 2>/dev/null || stat -f %m "$PAYLOAD" 2>/dev/null)" || delivered=0
-        else
-            delivered="$(git -C "$payload_dir" log -1 --format=%ct -- "$payload_name" 2>/dev/null)" || delivered=0
-        fi
-    fi
-fi
-
-# Keep decimal stamps as strings: `10#` and arithmetic comparisons can fail
-# on malformed or very large metadata, and leading zeroes must not be octal.
-normalize_stamp() {
-    NORMAL_STAMP="$1"
-    case "$NORMAL_STAMP" in ""|*[!0-9]*) NORMAL_STAMP=0; return ;; esac
-    while [ "${#NORMAL_STAMP}" -gt 1 ] && [ "${NORMAL_STAMP:0:1}" = 0 ]; do
-        NORMAL_STAMP="${NORMAL_STAMP:1}"
-    done
-}
-normalize_stamp "$delivered"
-delivered="$NORMAL_STAMP"
-
-stamp_ge() {
-    [ "${#1}" -gt "${#2}" ] || {
-        [ "${#1}" -eq "${#2}" ] && { [ "$1" = "$2" ] || [[ "$1" > "$2" ]]; }
-    }
-}
-stamp_gt() { stamp_ge "$1" "$2" && [ "$1" != "$2" ]; }
+payload_stamp "$PAYLOAD"
+delivered="$PAYLOAD_STAMP"
 
 # Read metadata from inside the managed block only. A developer's own prose
 # may mention either marker text without being delivery metadata.

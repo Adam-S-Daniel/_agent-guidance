@@ -18006,8 +18006,8 @@ test_drift_report_codex_budget() {
 #
 # Same posture as register-bootstrap-hook.sh and tested the same way, because
 # the file it edits is the operator's own ~/.codex/hooks.json: append a
-# separate group, never rewrite one, refuse rather than guess, and never create
-# the Codex home itself.
+# separate group, except for an exact legacy command upgraded in place; refuse
+# rather than guess, and never create the Codex home itself.
 #
 # Every structural assertion here PARSES the JSON with python3. A grep can tell
 # that the string "fleet-memory.sh" is somewhere in the file; it cannot tell
@@ -18183,6 +18183,395 @@ PY
         fail "register-codex-hook: a missing Codex home was created"
     else
         pass "register-codex-hook: a missing Codex home is not created"
+    fi
+}
+
+# A legacy registration belongs to the operator's existing matcher group. The
+# upgrade changes its command in place, while an operator-written variant is
+# deliberately left alone. Compare parsed JSON so order and every other field
+# stay part of the contract even when serialization changes.
+test_register_codex_hook_workspace_upgrade() {
+    echo ""
+    echo "TEST: register-codex-hook.sh (workspace command and legacy upgrade)"
+    local script="$REPO_ROOT/scripts/register-codex-hook.sh"
+    local d="$TEST_DIR/codexhook-workspace"
+    local target="$d/empty/hooks.json" out rc command
+    mkdir -p "$d/empty" "$d/legacy" "$d/manual"
+    : > "$target"
+    cat > "$d/expected-command" <<'EOF'
+bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
+EOF
+    rc=0
+    out=$(CODEX_HOME="$d/empty" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass 'register workspace: empty hooks.json registration exits 0'
+    else
+        fail "register workspace: empty hooks.json registration exit $rc: $out"
+    fi
+    rc=0
+    command=$(python3 - "$target" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$command" == "$(cat "$d/expected-command")" ]]; then
+        pass 'register workspace: empty hooks.json gets the exact workspace-capable command'
+    else
+        fail 'register workspace: empty hooks.json command differs from the delivery contract'
+    fi
+
+    # Put the legacy command in the MIDDLE of a group, with unrelated groups
+    # before and after it. A semantic comparison below permits exactly that
+    # command field to change, including its position in the original array.
+    python3 - "$d/legacy/hooks.json" <<'PY'
+import json, sys
+legacy = """bash -c 'h="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh"; [ -f "$h" ] && exec bash "$h"; exit 0'"""
+doc = {
+    "description": "operator configuration",
+    "hooks": {
+        "SessionStart": [
+            {"matcher": "first", "hooks": [{"type": "command", "command": "true"}]},
+            {"matcher": "custom-resume", "timeout": 17, "statusMessage": "Keep mine",
+             "hooks": [
+                 {"type": "command", "command": "printf before"},
+                 {"type": "command", "command": legacy, "timeout": 9,
+                  "statusMessage": "Fleet memory", "extra": {"preserve": [1, 2]}},
+                 {"type": "command", "command": "printf after"},
+             ]},
+            {"matcher": "last", "hooks": [{"type": "command", "command": "false"}]},
+        ],
+        "SessionEnd": [{"hooks": [{"type": "command", "command": "true"}]}],
+    },
+    "other": {"keep": "all fields"},
+}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\n")
+PY
+    cp "$d/legacy/hooks.json" "$d/legacy-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/legacy" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && "$out" == *'/hooks'* ]]; then
+        pass 'register workspace: legacy entry reports updated and asks for re-trust'
+    else
+        fail "register workspace: legacy upgrade exit $rc or wrong verdict: $out"
+    fi
+    rc=0
+    out=$(python3 - "$d/legacy-before.json" "$d/legacy/hooks.json" "$d/expected-command" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+with open(sys.argv[3], encoding="utf-8") as fh:
+    expected_command = fh.read().rstrip("\n")
+entry = before["hooks"]["SessionStart"][1]["hooks"][1]
+entry["command"] = expected_command
+assert before == after, "upgrade changed more than the one legacy command field"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$out" == OK ]]; then
+        pass 'register workspace: upgrade preserves all groups, order, and other fields'
+    else
+        fail "register workspace: upgrade changed unrelated JSON: $out"
+    fi
+    cp "$d/legacy/hooks.json" "$d/legacy-after.json"
+    rc=0
+    out=$(CODEX_HOME="$d/legacy" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/legacy-after.json" "$d/legacy/hooks.json"; then
+        pass 'register workspace: rerun after upgrade is already-registered and byte-identical'
+    else
+        fail "register workspace: rerun after upgrade changed hooks.json: $out"
+    fi
+
+    # A current registration wins over a leftover legacy entry regardless of
+    # position. In particular, a legacy entry encountered first must not be
+    # rewritten when the current definition is already present elsewhere.
+    local layout
+    for layout in legacy-first new-first same-group; do
+        mkdir -p "$d/$layout"
+        python3 - "$d/$layout/hooks.json" "$d/expected-command" "$layout" <<'PY'
+import json, sys
+legacy = """bash -c 'h="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh"; [ -f "$h" ] && exec bash "$h"; exit 0'"""
+with open(sys.argv[2], encoding="utf-8") as fh:
+    current = fh.read().rstrip("\n")
+legacy_entry = {"type": "command", "command": legacy, "timeout": 8}
+current_entry = {"type": "command", "command": current, "timeout": 12}
+layout = sys.argv[3]
+if layout == "same-group":
+    groups = [{"matcher": "both", "hooks": [legacy_entry, current_entry]}]
+else:
+    entries = [legacy_entry, current_entry]
+    if layout == "new-first":
+        entries.reverse()
+    groups = [{"matcher": str(index), "hooks": [entry]}
+              for index, entry in enumerate(entries)]
+doc = {"hooks": {"SessionStart": groups}, "other": "keep bytes"}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, separators=(",", ":"))
+PY
+        cp "$d/$layout/hooks.json" "$d/$layout-before.json"
+        rc=0
+        out=$(CODEX_HOME="$d/$layout" "$script" 2>&1) || rc=$?
+        if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+                && cmp -s "$d/$layout-before.json" "$d/$layout/hooks.json"; then
+            pass "register workspace: current plus legacy ($layout) stays byte-identical"
+        else
+            fail "register workspace: current plus legacy ($layout) was changed: $out"
+        fi
+    done
+
+    python3 - "$d/manual/hooks.json" <<'PY'
+import json, sys
+doc = {"hooks": {"SessionStart": [{"matcher": "mine", "hooks": [
+    {"type": "command", "command": "bash my/fleet-memory.sh", "timeout": 4}
+]}]}}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, separators=(",", ":"))
+PY
+    cp "$d/manual/hooks.json" "$d/manual-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/manual" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/manual-before.json" "$d/manual/hooks.json"; then
+        pass 'register workspace: hand-written variant stays byte-identical'
+    else
+        fail "register workspace: hand-written variant was changed: $out"
+    fi
+}
+
+# Run the actual command the registration script wrote, so a stale hook
+# definition cannot hide behind tests that invoke fleet-memory.sh directly.
+# Fixture repos are fresh git init repositories with no remote and fixed commit
+# dates; their payload stamps do not depend on the machine's clock.
+test_fleet_memory_workspace() {
+    echo ""
+    echo "TEST: registered Codex hook (multi-repo workspace)"
+    local d="$TEST_DIR/fleet-workspace"
+    local parent="$d/parent" empty="$d/empty" registered_command out rc
+    local repo hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    mkdir -p "$parent/alpha/.claude/hooks" "$parent/beta/.claude/hooks" \
+        "$empty" "$d/register-home"
+    rc=0
+    out=$(CODEX_HOME="$d/register-home" "$REPO_ROOT/scripts/register-codex-hook.sh" 2>&1) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        fail "fleet workspace: registration for command behavior exit $rc: $out"
+        return
+    fi
+    registered_command=$(python3 - "$d/register-home/hooks.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+PY
+)
+    for repo in alpha beta; do
+        git init -q "$parent/$repo"
+        git -C "$parent/$repo" config --local user.name 'Fleet fixture'
+        git -C "$parent/$repo" config --local user.email 'fleet@example.com'
+        git -C "$parent/$repo" config --local commit.gpgsign false
+        cp "$hook" "$parent/$repo/.claude/hooks/fleet-memory.sh"
+        printf '# %s repo instructions\n' "$repo" > "$parent/$repo/AGENTS.md"
+        printf '%s PAYLOAD\n' "${repo^^}" > "$parent/$repo/.claude/hooks/fleet-guidance.md"
+        git -C "$parent/$repo" add AGENTS.md .claude/hooks/fleet-memory.sh \
+            .claude/hooks/fleet-guidance.md
+        if [[ "$repo" == alpha ]]; then
+            GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+                git -C "$parent/$repo" commit -qm 'alpha fixture'
+        else
+            GIT_AUTHOR_DATE='@1700000100 +0000' GIT_COMMITTER_DATE='@1700000100 +0000' \
+                git -C "$parent/$repo" commit -qm 'beta fixture'
+        fi
+    done
+
+    workspace_run() {
+        local cwd="$1" cfg="$2" codex="$3"
+        mkdir -p "$cfg" "$codex"
+        (cd "$cwd" && env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD \
+            CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+            bash -c "$registered_command")
+    }
+    rc=0
+    out=$(workspace_run "$parent" "$d/normal-cfg" "$d/normal-codex" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/normal.out"
+    if [[ $rc -eq 0 && "$(wc -l < "$d/normal.out")" -eq 2 \
+            && "$(sed -n '2p' "$d/normal.out")" == "fleet-workspace: $parent is a multi-repo parent; this session loaded no repo's own AGENTS.md (Codex reads them only from the launch directory's git root down). Before working in a repo, read its AGENTS.md: alpha, beta" ]]; then
+        pass 'fleet workspace 2a: parent reports both repo instructions on exactly its second line'
+    else
+        fail "fleet workspace 2a: parent output/exit differs: $rc: $out"
+    fi
+    assert_contains "$d/normal-codex/AGENTS.md" 'BETA PAYLOAD' \
+        'fleet workspace 2a: newer child payload reaches Codex'
+    assert_not_contains "$d/normal-codex/AGENTS.md" 'ALPHA PAYLOAD' \
+        'fleet workspace 2a: older child payload does not replace newer'
+    rc=0
+    out=$(workspace_run "$parent" "$d/normal-cfg" "$d/normal-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ current* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: current verdict still lists repo instructions'
+    else
+        fail "fleet workspace: current output/exit differs: $rc: $out"
+    fi
+
+    mkdir -p "$d/degraded-cfg" "$d/degraded-codex/AGENTS.override.md"
+    rc=0
+    out=$(workspace_run "$parent" "$d/degraded-cfg" "$d/degraded-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ DEGRADED* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: DEGRADED verdict still lists repo instructions'
+    else
+        fail "fleet workspace: DEGRADED output/exit differs: $rc: $out"
+    fi
+
+    # Make the legacy hook FIRST in sorted path order. The registered command
+    # must skip it and run Alpha, whose selector must still inspect the newer
+    # payload in the legacy child.
+    mv "$parent/beta" "$parent/00-beta"
+    printf '#!/usr/bin/env bash\nexit 99\n' > "$parent/00-beta/.claude/hooks/fleet-memory.sh"
+    rc=0
+    out=$(workspace_run "$parent" "$d/oldhook-cfg" "$d/oldhook-codex" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/oldhook.out"
+    if [[ $rc -eq 0 && "$(wc -l < "$d/oldhook.out")" -eq 2 ]]; then
+        pass 'fleet workspace 2b: capable child runs when newer child has a legacy hook'
+    else
+        fail "fleet workspace 2b: no capable hook ran: $rc: $out"
+    fi
+    assert_contains "$d/oldhook-codex/AGENTS.md" 'BETA PAYLOAD' \
+        'fleet workspace 2b: capable hook still selects newer legacy child payload'
+    mv "$parent/00-beta" "$parent/beta"
+
+    mkdir -p "$parent/alpha/subdir"
+    for repo in "$parent/alpha" "$parent/alpha/subdir"; do
+        rc=0
+        out=$(workspace_run "$repo" "$d/child-${repo##*/}-cfg" \
+            "$d/child-${repo##*/}-codex" 2>&1) || rc=$?
+        if [[ $rc -eq 0 && "$out" == fleet-guidance:* \
+                && "$(printf '%s\n' "$out" | wc -l)" -eq 1 ]]; then
+            pass "fleet workspace 2c: $repo uses one-line normal mode"
+        else
+            fail "fleet workspace 2c: $repo output/exit differs: $rc: $out"
+        fi
+    done
+
+    rc=0
+    out=$(workspace_run "$empty" "$d/empty-cfg" "$d/empty-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && -z "$out" ]]; then
+        pass 'fleet workspace 2d: directory without fleet children is silent'
+    else
+        fail "fleet workspace 2d: expected silent exit 0, got $rc: $out"
+    fi
+
+    # Use a new, EMPTY Codex home: preexisting global guidance would mask the
+    # exact parent-launch gap this regression test needs to detect.
+    mkdir -p "$d/virgin-codex"
+    rc=0
+    out=$(workspace_run "$parent" "$d/virgin-cfg" "$d/virgin-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && -f "$d/virgin-codex/AGENTS.md" ]] \
+            && grep -qF 'BETA PAYLOAD' "$d/virgin-codex/AGENTS.md"; then
+        pass 'fleet workspace 2e: empty Codex home receives guidance from parent launch'
+    else
+        fail "fleet workspace 2e: empty Codex home has no guidance: $rc: $out"
+    fi
+
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/invalid-cfg" CODEX_HOME="$d/invalid-codex" \
+        bash "$hook" --workspace "$d/missing" 2>&1) || rc=$?
+    if [[ $rc -eq 2 && "$out" == 'fleet-guidance: DEGRADED'* ]]; then
+        pass 'fleet workspace: nonexistent directory exits 2 with DEGRADED usage line'
+    else
+        fail "fleet workspace: nonexistent directory exit/output differs: $rc: $out"
+    fi
+
+    rc=0
+    out=$(cd "$parent" && FLEET_GUIDANCE_SKIP=1 \
+        CLAUDE_CONFIG_DIR="$d/normal-cfg" CODEX_HOME="$d/normal-codex" \
+        bash -c "$registered_command" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/skip.out"
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ skipped* \
+            && "$(wc -l < "$d/skip.out")" -eq 2 \
+            && "$(sed -n '2p' "$d/skip.out")" == fleet-workspace:* \
+            && "$out" == *'alpha, beta'* \
+            && -f "$d/normal-codex/AGENTS.md" ]] \
+            && ! grep -qF 'BEGIN FLEET GUIDANCE' "$d/normal-codex/AGENTS.md"; then
+        pass 'fleet workspace: FLEET_GUIDANCE_SKIP still lists both repo instructions'
+    else
+        fail "fleet workspace: skip output/exit differs: $rc: $out"
+    fi
+
+    rc=0
+    out=$(cd "$parent" && FLEET_GUIDANCE_SKIP=1 \
+        CLAUDE_CONFIG_DIR="$d/normal-cfg" CODEX_HOME="$d/normal-codex" \
+        bash -c "$registered_command" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ skipped* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: skip with no block still lists repo instructions'
+    else
+        fail "fleet workspace: skip with no block output/exit differs: $rc: $out"
+    fi
+
+    mkdir -p "$d/skip-broken-cfg" "$d/skip-broken-codex/AGENTS.md"
+    rc=0
+    out=$(cd "$parent" && FLEET_GUIDANCE_SKIP=1 \
+        CLAUDE_CONFIG_DIR="$d/skip-broken-cfg" CODEX_HOME="$d/skip-broken-codex" \
+        bash -c "$registered_command" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ DEGRADED* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: degraded skip still lists repo instructions'
+    else
+        fail "fleet workspace: degraded skip output/exit differs: $rc: $out"
+    fi
+
+    # Equal committed delivery stamps choose the first candidate path. The
+    # later commit below intentionally uses an earlier fixed clock value.
+    printf 'BETA TIE PAYLOAD\n' > "$parent/beta/.claude/hooks/fleet-guidance.md"
+    git -C "$parent/beta" add .claude/hooks/fleet-guidance.md
+    GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+        git -C "$parent/beta" commit -qm 'tie stamp fixture'
+    rc=0
+    out=$(workspace_run "$parent" "$d/tie-cfg" "$d/tie-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && -f "$d/tie-codex/AGENTS.md" ]] \
+            && grep -qF 'ALPHA PAYLOAD' "$d/tie-codex/AGENTS.md"; then
+        pass 'fleet workspace: tied payload stamps choose first sorted child'
+    else
+        fail "fleet workspace: tied stamp selected wrong child: $rc: $out"
+    fi
+
+    # With no child payload, workspace mode uses the payload beside the
+    # invoked hook. The source hook has its own real fleet-guidance.md.
+    mv "$parent/alpha/.claude/hooks/fleet-guidance.md" "$d/alpha-payload.saved"
+    mv "$parent/beta/.claude/hooks/fleet-guidance.md" "$d/beta-payload.saved"
+    mkdir -p "$d/fallback-cfg" "$d/fallback-codex"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/fallback-cfg" CODEX_HOME="$d/fallback-codex" \
+        bash "$hook" --workspace "$parent" 2>&1) || rc=$?
+    local source_version
+    source_version=$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md")
+    source_version=${source_version:0:8}
+    if [[ $rc -eq 0 && -f "$d/fallback-codex/AGENTS.md" ]] \
+            && grep -qF "fleet-guidance-version: $source_version" "$d/fallback-codex/AGENTS.md" \
+            && [[ "$(printf '%s\n' "$out" | wc -l)" -eq 2 ]]; then
+        pass 'fleet workspace: no child payload falls back to invoked hook payload'
+    else
+        fail "fleet workspace: fallback payload/output differs: $rc: $out"
+    fi
+    mv "$d/alpha-payload.saved" "$parent/alpha/.claude/hooks/fleet-guidance.md"
+    mv "$d/beta-payload.saved" "$parent/beta/.claude/hooks/fleet-guidance.md"
+
+    # A child with a .git FILE (separate git dir) still owns AGENTS.md, even
+    # without a candidate payload. It joins the sorted inventory.
+    mkdir -p "$parent/gamma"
+    git init -q --separate-git-dir="$d/gamma-git" "$parent/gamma"
+    printf '# gamma instructions\n' > "$parent/gamma/AGENTS.md"
+    rc=0
+    out=$(workspace_run "$parent" "$d/gitfile-cfg" "$d/gitfile-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "${out#*$'\n'}" == *'alpha, beta, gamma' ]]; then
+        pass 'fleet workspace: .git file child joins sorted AGENTS.md inventory'
+    else
+        fail "fleet workspace: .git file child omitted: $rc: $out"
     fi
 }
 
@@ -19379,9 +19768,11 @@ test_check_agents_md_budget
 test_sync_codex_budget
 test_drift_report_codex_budget
 test_register_codex_hook
+test_register_codex_hook_workspace_upgrade
 test_fleet_memory_hook
 test_fleet_memory_codex
 test_fleet_memory_freshness
+test_fleet_memory_workspace
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.
