@@ -52,9 +52,15 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-09-28 — windows-with-wsl — edit
 - Motivation: measured 2026-09-28 by the owner: from PowerShell a bare `bash` resolves to WSL's launcher `C:\Windows\System32\bash.exe`, so a script meant for the Windows home (adam-agentskills' `setup.sh --owner-machine`) silently ran in WSL.
-- Change: the Windows-with-WSL bullet now says to invoke Git Bash by full path (`C:\Program Files\Git\bin\bash.exe`); elevation sentence tightened and the ADR reference dropped to stay inside the 28 KiB full-build budget (12 bytes of headroom) (PR pending).
+- Change: the Windows-with-WSL bullet now says to invoke Git Bash by full path (`C:\Program Files\Git\bin\bash.exe`); elevation sentence tightened and the ADR reference dropped to stay inside the 28 KiB full-build budget (12 bytes of headroom).
 - Eval: exempt (skipped row)
-- Outcome: pending — opened 2026-09-28
+- Outcome: pending — opened 2026-09-28 (PR #203)
+
+## 2026-09-28 — workstation-layout — edit
+- Motivation: One item was missing and one did not belong.
+- Change: Added WSL paths. Removed misplaced prompt-elevation note.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28 (PR #203)
 
 ## 2026-09-28 — skills-ecosystem — edit
 - Motivation: adam-agentskills PR #34 (ADR 0014) retired sync-skills and its global pre-push hook, so the "re-run `bash setup.sh`" advice for a push failing in every repo was false; a machine that pulled it without cleanup still fails because the hook points at a deleted script.
@@ -67,6 +73,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: Windows guidance no longer includes a real machine name. It also adds where clones live in WSL; the manifest row moves from `skipped` (it was parked pending this rewrite) to `gap` (PR #157)
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-22 (PR #157)
+
 ## 2026-09-28 — working-in-these-repos — edit
 - Motivation: the owner asked that every added or changed text use American English spelling (behavior, not behaviour), fleet-wide across both owners; the managed text itself said "behaviour".
 - Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #193).
