@@ -18348,6 +18348,301 @@ test_fleet_memory_codex() {
     fi
 }
 
+# Delivery ordering is per global file. These fixture repos have fixed commit
+# times, so stale and dirty checkouts do not depend on the test machine clock.
+test_fleet_memory_freshness() {
+    echo ""
+    echo "TEST: fleet-memory.sh (delivery ordering and atomic targets)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-freshness" repo="$TEST_DIR/fleetmem-freshness/repo"
+    local old="$TEST_DIR/fleetmem-freshness/old" cfg="$TEST_DIR/fleetmem-freshness/cfg"
+    local codex="$TEST_DIR/fleetmem-freshness/codex" out before rc
+    mkdir -p "$repo" "$old" "$cfg" "$codex"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    printf 'FIRST PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+        git -C "$repo" commit -qm 'first fixture'
+    run_freshness() {
+        CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+            FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook"
+    }
+
+    out="$(run_freshness)"; rc=$?
+    [[ $rc -eq 0 ]] && pass 'fleet freshness: fresh run exits 0' || fail "fleet freshness: fresh exit $rc"
+    printf '%s\n' "$out" > "$d/out"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000000' \
+        'fleet freshness: committed payload uses commit time'
+    assert_contains "$codex/AGENTS.md" 'fleet-guidance-delivered: 1700000000' \
+        'fleet freshness: both destinations receive the stamp'
+    cp "$codex/AGENTS.md" "$d/first.block"
+    ln "$cfg/CLAUDE.md" "$d/first.hardlink"
+
+    printf 'SECOND PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000100 +0000' GIT_COMMITTER_DATE='@1700000100 +0000' \
+        git -C "$repo" commit -qm 'second fixture'
+    out="$(run_freshness)"
+    printf '%s\n' "$out" > "$d/newer.out"
+    assert_contains "$d/newer.out" 'fleet-guidance: installed' \
+        'fleet freshness: newer payload reports installed'
+    assert_contains "$cfg/CLAUDE.md" 'SECOND PAYLOAD' 'fleet freshness: newer payload replaces old'
+    assert_not_contains "$cfg/CLAUDE.md" 'FIRST PAYLOAD' 'fleet freshness: old payload removed'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000100' \
+        'fleet freshness: newer commit time recorded'
+    assert_contains "$d/first.hardlink" 'FIRST PAYLOAD' \
+        'fleet freshness: replacement leaves old inode intact'
+
+    git init -q "$old"
+    git -C "$old" config user.name 'Fleet test'
+    git -C "$old" config user.email 'fleet@example.com'
+    printf 'FIRST PAYLOAD\n' > "$old/payload.md"
+    git -C "$old" add payload.md
+    GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+        git -C "$old" commit -qm 'old fixture'
+    cp "$cfg/CLAUDE.md" "$d/newer.before"
+    out="$(CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/stale.out"
+    local newer_hash
+    newer_hash="$(sha256sum "$repo/payload.md" | cut -c1-8)"
+    cmp -s "$d/newer.before" "$cfg/CLAUDE.md" && pass 'fleet freshness: stale payload leaves bytes unchanged' \
+        || fail 'fleet freshness: stale payload changed destination'
+    [[ "$out" == "fleet-guidance: current ("* ]] \
+        && pass 'fleet freshness: stale run has current verdict prefix' \
+        || fail 'fleet freshness: stale run lacks current verdict prefix'
+    assert_contains "$d/stale.out" "kept newer v$newer_hash at ~/.claude/CLAUDE.md" \
+        'fleet freshness: stale run names exact newer version'
+    assert_contains "$d/stale.out" '~/.claude/CLAUDE.md, v' \
+        'fleet freshness: distinct kept destinations are both named'
+
+    # Identical bytes committed later update only the ordering key, and a
+    # return to the earlier checkout must leave the file byte-identical.
+    printf 'SECOND PAYLOAD\n' > "$old/payload.md"
+    git -C "$old" add payload.md
+    GIT_AUTHOR_DATE='@1700000200 +0000' GIT_COMMITTER_DATE='@1700000200 +0000' \
+        git -C "$old" commit -qm 'same bytes later'
+    printf 'PERSONAL SUFFIX\n' >> "$cfg/CLAUDE.md"
+    out="$(CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/same-newer.out"
+    assert_contains "$d/same-newer.out" 'fleet-guidance: current' \
+        'fleet freshness: newer stamp on same hash reports current'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000200' \
+        'fleet freshness: same-hash stamp advances'
+    [[ "$(tail -1 "$cfg/CLAUDE.md")" == 'PERSONAL SUFFIX' ]] \
+        && pass 'fleet freshness: stamp-only update preserves block position and suffix' \
+        || fail 'fleet freshness: stamp-only update moved the personal suffix'
+    cp "$cfg/CLAUDE.md" "$d/same.before"
+    out="$(run_freshness)"
+    cmp -s "$d/same.before" "$cfg/CLAUDE.md" && pass 'fleet freshness: older same hash is byte-identical' \
+        || fail 'fleet freshness: older same hash rewrote the file'
+
+    # Missing and malformed legacy stamps sort as zero. A valid decimal stamp
+    # remains comparable even when it is too large for shell arithmetic.
+    sed -i '/fleet-guidance-delivered:/d' "$cfg/CLAUDE.md"
+    printf 'THIRD PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000300 +0000' GIT_COMMITTER_DATE='@1700000300 +0000' \
+        git -C "$repo" commit -qm 'third fixture'
+    out="$(run_freshness)"
+    assert_contains "$cfg/CLAUDE.md" 'THIRD PAYLOAD' 'fleet freshness: legacy unstamped block replaced'
+    sed -i 's/fleet-guidance-delivered: [0-9]*/fleet-guidance-delivered: invalid/' "$cfg/CLAUDE.md"
+    printf 'FOURTH PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000400 +0000' GIT_COMMITTER_DATE='@1700000400 +0000' \
+        git -C "$repo" commit -qm 'fourth fixture'
+    out="$(run_freshness)"
+    assert_contains "$cfg/CLAUDE.md" 'FOURTH PAYLOAD' 'fleet freshness: malformed stamp sorts as zero'
+    sed -i 's/fleet-guidance-delivered: [0-9]*/fleet-guidance-delivered: 999999999999999999999999999999/' "$cfg/CLAUDE.md"
+    cp "$cfg/CLAUDE.md" "$d/huge.before"
+    out="$(run_freshness)"
+    cmp -s "$d/huge.before" "$cfg/CLAUDE.md" && pass 'fleet freshness: huge decimal stamp compares safely' \
+        || fail 'fleet freshness: huge decimal stamp was overwritten'
+
+    printf 'OUTSIDE GIT\n' > "$d/outside.md"
+    mkdir -p "$d/outside-cfg"
+    out="$(CLAUDE_CONFIG_DIR="$d/outside-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/outside.md" bash "$hook")"
+    assert_contains "$d/outside-cfg/CLAUDE.md" 'fleet-guidance-delivered: 0' \
+        'fleet freshness: outside-git payload installs with zero stamp'
+    cp "$codex/AGENTS.md" "$d/codex.before"
+    out="$(CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/outside.md" bash "$hook")"
+    cmp -s "$d/codex.before" "$codex/AGENTS.md" \
+        && pass 'fleet freshness: outside-git payload cannot replace stamped content' \
+        || fail 'fleet freshness: outside-git payload replaced stamped content'
+
+    printf 'DIRTY PAYLOAD\n' > "$repo/payload.md"
+    touch -d '@1700000500' "$repo/payload.md"
+    out="$(run_freshness)"
+    assert_contains "$codex/AGENTS.md" 'fleet-guidance-delivered: 1700000500' \
+        'fleet freshness: dirty payload uses fixed mtime'
+    printf 'UNTRACKED PAYLOAD\n' > "$repo/untracked.md"
+    touch -d '@1700000550' "$repo/untracked.md"
+    mkdir -p "$d/untracked-cfg"
+    out="$(CLAUDE_CONFIG_DIR="$d/untracked-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/untracked.md" bash "$hook")"
+    assert_contains "$d/untracked-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000550' \
+        'fleet freshness: untracked payload uses fixed mtime'
+
+    # One stale destination and one writable destination make an installed
+    # verdict; two distinct newer versions must both appear in a current one.
+    mkdir -p "$d/mixed-cfg" "$d/mixed-codex"
+    cp "$cfg/CLAUDE.md" "$d/mixed-cfg/CLAUDE.md"
+    cp "$d/first.block" "$d/mixed-codex/AGENTS.md"
+    cp "$d/mixed-cfg/CLAUDE.md" "$d/mixed-claude.before"
+    local fourth_hash first_hash local_hash local_bytes expected
+    fourth_hash="$(git -C "$repo" show HEAD:payload.md | sha256sum | cut -c1-8)"
+    local_hash="$(sha256sum "$old/payload.md" | cut -c1-8)"
+    local_bytes="$(wc -c < "$old/payload.md" | tr -d ' ')"
+    out="$(CLAUDE_CONFIG_DIR="$d/mixed-cfg" CODEX_HOME="$d/mixed-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/mixed.out"
+    assert_contains "$d/mixed.out" 'fleet-guidance: installed' \
+        'fleet freshness: mixed kept and written reports installed'
+    cmp -s "$d/mixed-claude.before" "$d/mixed-cfg/CLAUDE.md" \
+        && pass 'fleet freshness: mixed run retains newer Claude bytes' \
+        || fail 'fleet freshness: mixed run changed newer Claude bytes'
+    assert_contains "$d/mixed-codex/AGENTS.md" 'fleet-guidance-delivered: 1700000200' \
+        'fleet freshness: mixed run advances older Codex destination'
+    expected="fleet-guidance: installed (v$local_hash, $local_bytes bytes) -> ~/.codex/AGENTS.md; kept newer v$fourth_hash at ~/.claude/CLAUDE.md — this checkout's payload is older, pull it to refresh"
+    if [[ "$out" == "$expected" ]]; then
+        pass 'fleet freshness: mixed verdict names only local Codex and exact newer Claude'
+    else
+        fail "fleet freshness: mixed verdict names only local Codex and exact newer Claude — got '$out'"
+    fi
+
+    mkdir -p "$d/opposite-cfg" "$d/opposite-codex"
+    cp "$d/first.block" "$d/opposite-cfg/CLAUDE.md"
+    cp "$d/mixed-claude.before" "$d/opposite-codex/AGENTS.md"
+    cp "$d/opposite-codex/AGENTS.md" "$d/opposite-codex.before"
+    out="$(CLAUDE_CONFIG_DIR="$d/opposite-cfg" CODEX_HOME="$d/opposite-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    expected="fleet-guidance: installed (v$local_hash, $local_bytes bytes) -> ~/.claude/CLAUDE.md; kept newer v$fourth_hash at ~/.codex/AGENTS.md — this checkout's payload is older, pull it to refresh"
+    if [[ "$out" == "$expected" ]]; then
+        pass 'fleet freshness: opposite mixed verdict names only local Claude and newer Codex'
+    else
+        fail "fleet freshness: opposite mixed verdict names only local Claude and newer Codex — got '$out'"
+    fi
+    assert_contains "$d/opposite-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000200' \
+        'fleet freshness: opposite mixed run advances Claude'
+    cmp -s "$d/opposite-codex.before" "$d/opposite-codex/AGENTS.md" \
+        && pass 'fleet freshness: opposite mixed run keeps Codex bytes' \
+        || fail 'fleet freshness: opposite mixed run changed newer Codex bytes'
+
+    mkdir -p "$d/current-cfg" "$d/current-codex"
+    cp "$d/first.block" "$d/current-cfg/CLAUDE.md"
+    cp "$d/mixed-codex/AGENTS.md" "$d/current-codex/AGENTS.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/current-cfg" CODEX_HOME="$d/current-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    expected="fleet-guidance: installed (v$local_hash, $local_bytes bytes) -> ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md"
+    if [[ "$out" == "$expected" ]]; then
+        pass 'fleet freshness: installed verdict includes both written and current local labels'
+    else
+        fail "fleet freshness: installed verdict includes both written and current local labels — got '$out'"
+    fi
+
+    cp "$d/first.block" "$d/mixed-codex/AGENTS.md"
+    sed -i 's/fleet-guidance-delivered: [0-9]*/fleet-guidance-delivered: 1700000600/' \
+        "$d/mixed-codex/AGENTS.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/mixed-cfg" CODEX_HOME="$d/mixed-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/two-kept.out"
+    # The saved first block carries its payload's version marker.
+    first_hash="$(sed -n 's/^<!-- fleet-guidance-version: \([0-9a-f]*\) -->$/\1/p' "$d/first.block")"
+    assert_contains "$d/two-kept.out" "v$fourth_hash at ~/.claude/CLAUDE.md" \
+        'fleet freshness: first distinct kept hash is named'
+    assert_contains "$d/two-kept.out" "v$first_hash at ~/.codex/AGENTS.md" \
+        'fleet freshness: second distinct kept hash is named'
+
+    # A nonempty override is Codex's effective file; an empty one falls back.
+    mkdir -p "$d/override-cfg" "$d/override-codex"
+    printf 'AGENTS PERSONAL\n' > "$d/override-codex/AGENTS.md"
+    printf 'OVERRIDE PERSONAL\n' > "$d/override-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/override.out"
+    assert_contains "$d/override.out" '~/.codex/AGENTS.override.md' \
+        'fleet freshness: nonempty override gets canonical label'
+    assert_contains "$d/override-codex/AGENTS.override.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: nonempty override receives payload'
+    [[ "$(cat "$d/override-codex/AGENTS.md")" == 'AGENTS PERSONAL' ]] \
+        && pass 'fleet freshness: inactive AGENTS.md stays untouched' \
+        || fail 'fleet freshness: inactive AGENTS.md changed'
+    : > "$d/override-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    assert_contains "$d/override-codex/AGENTS.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: empty override falls back to AGENTS.md'
+    printf 'OVERRIDE PERSONAL\n' > "$d/override-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    ln "$d/override-codex/AGENTS.override.md" "$d/override.snapshot"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_SKIP=1 bash "$hook")"
+    assert_not_contains "$d/override-codex/AGENTS.override.md" 'BEGIN FLEET GUIDANCE' \
+        'fleet freshness: skip clears override'
+    assert_not_contains "$d/override-codex/AGENTS.md" 'BEGIN FLEET GUIDANCE' \
+        'fleet freshness: skip clears AGENTS.md too'
+    assert_contains "$d/override.snapshot" 'DIRTY PAYLOAD' \
+        'fleet freshness: skip leaves old inode intact'
+
+    mkdir -p "$d/link-cfg" "$d/link-target"
+    printf 'CLAUDE PERSONAL\n' > "$d/link-target/memory.md"
+    chmod 600 "$d/link-target/memory.md"
+    ln -s "$d/link-target/memory.md" "$d/link-cfg/CLAUDE.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/link-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    [[ -L "$d/link-cfg/CLAUDE.md" ]] && pass 'fleet freshness: Claude symlink remains a link' \
+        || fail 'fleet freshness: Claude symlink was replaced'
+    assert_contains "$d/link-target/memory.md" 'CLAUDE PERSONAL' \
+        'fleet freshness: symlink target retains personal content'
+    assert_contains "$d/link-target/memory.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: symlink target receives payload'
+    [[ "$(stat -c %a "$d/link-target/memory.md")" == 600 ]] \
+        && pass 'fleet freshness: replacement retains mode 600' \
+        || fail 'fleet freshness: replacement lost mode 600'
+
+    mkdir -p "$d/link-codex" "$d/link-codex-cfg"
+    printf 'LINKED OVERRIDE PERSONAL\n' > "$d/link-target/override.md"
+    ln -s "$d/link-target/override.md" "$d/link-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/link-codex-cfg" CODEX_HOME="$d/link-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    [[ -L "$d/link-codex/AGENTS.override.md" ]] \
+        && pass 'fleet freshness: override symlink remains a link' \
+        || fail 'fleet freshness: override symlink was replaced'
+    assert_contains "$d/link-target/override.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: override symlink target receives payload'
+
+    mkdir -p "$d/invalid-cfg" "$d/invalid-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/invalid-cfg" CODEX_HOME="$d/invalid-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/invalid.out"
+    assert_contains "$d/invalid.out" 'DEGRADED' 'fleet freshness: invalid override reports failure'
+    assert_contains "$d/invalid-cfg/CLAUDE.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: invalid override does not prevent Claude delivery'
+    [[ ! -e "$d/invalid-codex/AGENTS.md" ]] \
+        && pass 'fleet freshness: invalid override never falls back silently' \
+        || fail 'fleet freshness: invalid override fell back to AGENTS.md'
+    mkdir -p "$d/broken-cfg" "$d/broken-codex"
+    ln -s "$d/broken-codex/missing.md" "$d/broken-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/broken-cfg" CODEX_HOME="$d/broken-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/broken.out"
+    assert_contains "$d/broken.out" 'DEGRADED' \
+        'fleet freshness: broken override link reports failure'
+    assert_contains "$d/broken-cfg/CLAUDE.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: broken override link does not stop Claude'
+    if find "$d" -name '.fleet-guidance.*' -print -quit | grep -q .; then
+        fail 'fleet freshness: temporary files remain after hook exit'
+    else
+        pass 'fleet freshness: all temporary files cleaned after hook exit'
+    fi
+}
+
 # ── memory-home.sh: a memory note names the committed copy of its fact ─────
 #
 # The subject is a hook that runs on TWO events against files that live
@@ -19086,6 +19381,7 @@ test_drift_report_codex_budget
 test_register_codex_hook
 test_fleet_memory_hook
 test_fleet_memory_codex
+test_fleet_memory_freshness
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.

@@ -96,6 +96,8 @@ by `codex-rs/codex-home/src/instructions/mod.rs` and are *not* counted against
 the project-doc budget. The Codex write happens only when `~/.codex` already
 exists; the hook never creates it, so a machine without Codex gets nothing new.
 One verdict line covers both, and `FLEET_GUIDANCE_SKIP` opts out of both.
+Normal hook runs keep the freshest delivered block per destination and report
+when a checkout is older; see [ADR 0016](docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md).
 
 Codex runs that hook through a **user-level** `SessionStart` entry, registered
 once per machine with `scripts/register-codex-hook.sh` (default target

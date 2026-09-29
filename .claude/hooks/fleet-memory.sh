@@ -42,9 +42,10 @@
 #   ~/.claude/CLAUDE.md   (or $CLAUDE_CONFIG_DIR/CLAUDE.md) — Claude Code's
 #                         user memory. Always.
 #   ~/.codex/AGENTS.md    (or $CODEX_HOME/AGENTS.md) — Codex's global USER
-#                         instructions. Normal hook mode writes it only when
-#                         that directory already exists; explicit Codex Cloud
-#                         mode creates the home because setup is the lifecycle.
+#                         instructions. A nonempty AGENTS.override.md takes
+#                         precedence in normal mode. Normal mode writes Codex
+#                         only when its home already exists; explicit Codex
+#                         Cloud mode creates the home during setup.
 #
 # The Codex destination is the GLOBAL one on purpose. Codex reads the AGENTS.md
 # chain from the project root down to cwd under a running byte budget,
@@ -62,8 +63,13 @@
 # the repo stub stays the floor inside the repo. See
 # docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md.
 #
-# A developer's own ~/.claude/CLAUDE.md or ~/.codex/AGENTS.md is theirs;
-# everything outside the markers is preserved byte-for-byte in both.
+# A developer's own global instructions are theirs; everything outside the
+# markers is preserved. Normal mode orders deliveries by the payload's last
+# commit time (or its mtime when dirty) so an older checkout cannot replace a
+# newer version. The `fleet-guidance-delivered` marker records that integer
+# epoch beside the version in normal-mode blocks. A tie favors this checkout;
+# the same hash only refreshes an older stamp. Replacements are atomic and
+# follow destination symlinks.
 #
 # CODEX CLOUD MODE
 # ----------------
@@ -302,12 +308,15 @@ fi
 CLAUDE_DEST_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CLAUDE_DEST="$CLAUDE_DEST_DIR/CLAUDE.md"
 CODEX_DEST="$CODEX_DEST_DIR/AGENTS.md"
+CODEX_OVERRIDE="$CODEX_DEST_DIR/AGENTS.override.md"
 # shellcheck disable=SC2088  # the tilde is LITERAL here on purpose: these two
 # are prose shown to a human, never paths anything opens. The paths are the
 # four lines above.
 CLAUDE_LABEL="~/.claude/CLAUDE.md"
 # shellcheck disable=SC2088
 CODEX_LABEL="~/.codex/AGENTS.md"
+# shellcheck disable=SC2088
+CODEX_OVERRIDE_LABEL="~/.codex/AGENTS.override.md"
 
 # Claude Code is always in play — its config dir is created if absent, as it
 # always was. Codex is in play only when its home ALREADY EXISTS: creating
@@ -317,8 +326,23 @@ CODEX_LABEL="~/.codex/AGENTS.md"
 DEST_PATHS=("$CLAUDE_DEST")
 DEST_LABELS=("$CLAUDE_LABEL")
 if [ -d "$CODEX_DEST_DIR" ]; then
-    DEST_PATHS+=("$CODEX_DEST")
-    DEST_LABELS+=("$CODEX_LABEL")
+    if [ -e "$CODEX_OVERRIDE" ] || [ -L "$CODEX_OVERRIDE" ]; then
+        if [ -f "$CODEX_OVERRIDE" ] && [ -r "$CODEX_OVERRIDE" ] && [ -s "$CODEX_OVERRIDE" ]; then
+            DEST_PATHS+=("$CODEX_OVERRIDE")
+            DEST_LABELS+=("$CODEX_OVERRIDE_LABEL")
+        elif [ ! -f "$CODEX_OVERRIDE" ] || [ ! -r "$CODEX_OVERRIDE" ]; then
+            # Still visit it: an invalid override must report a failure, not
+            # silently fall back to AGENTS.md.
+            DEST_PATHS+=("$CODEX_OVERRIDE")
+            DEST_LABELS+=("$CODEX_OVERRIDE_LABEL")
+        else
+            DEST_PATHS+=("$CODEX_DEST")
+            DEST_LABELS+=("$CODEX_LABEL")
+        fi
+    else
+        DEST_PATHS+=("$CODEX_DEST")
+        DEST_LABELS+=("$CODEX_LABEL")
+    fi
 fi
 
 # Joined once, for the verdict. Only destinations that were in play appear, so
@@ -338,16 +362,42 @@ TMP_FILES=()
 cleanup_tmp() {
     [ "${#TMP_FILES[@]}" -eq 0 ] && return 0
     local t
-    for t in "${TMP_FILES[@]}"; do rm -f "$t" "$t.raw"; done
+    for t in "${TMP_FILES[@]}"; do rm -f "$t"; done
     return 0
 }
 trap cleanup_tmp EXIT
 
 new_tmp() {
-    local t
-    t="$(mktemp 2>/dev/null)" || return 1
-    TMP_FILES+=("$t")
-    printf '%s' "$t"
+    TMP_PATH="$(mktemp "$1/.fleet-guidance.XXXXXX" 2>/dev/null)" || return 1
+    TMP_FILES+=("$TMP_PATH")
+}
+
+# Resolve the file itself before replacement. `mv` onto a symlink would replace
+# the link, whereas the agent still reads its target. The manual path is for
+# systems without readlink -f; the hop limit also refuses cycles.
+resolve_target() {
+    local path="$1" next parent hops=0
+    RESOLVED_DEST=""
+    if [ -L "$path" ] && [ ! -e "$path" ]; then return 1; fi
+    if RESOLVED_DEST="$(readlink -f -- "$path" 2>/dev/null)" && [ -n "$RESOLVED_DEST" ]; then
+        return 0
+    fi
+    while :; do
+        parent="$(cd -P "$(dirname "$path")" 2>/dev/null && pwd)" || return 1
+        path="$parent/$(basename "$path")"
+        [ -L "$path" ] || { RESOLVED_DEST="$path"; return 0; }
+        hops=$((hops + 1))
+        [ "$hops" -le 40 ] || return 1
+        next="$(readlink "$path" 2>/dev/null)" || return 1
+        case "$next" in /*) path="$next" ;; *) path="$parent/$next" ;; esac
+    done
+}
+
+replace_file() {
+    local source="$1" dest="$2" mode
+    mode="$(stat -c %a "$dest" 2>/dev/null || stat -f %Lp "$dest" 2>/dev/null)"
+    if [ -n "$mode" ]; then chmod "$mode" "$source" 2>/dev/null || :; fi
+    mv -f "$source" "$dest" 2>/dev/null
 }
 
 # A fault that leaves NOTHING deliverable anywhere — no payload, no hook
@@ -385,6 +435,7 @@ strip_managed_block() {
         return 1
     fi
 
+    TMP_FILES+=("$out.raw")
     if ! BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" awk '
         BEGIN { b = ENVIRON["BEGIN_MARK"]; e = ENVIRON["END_MARK"]; skip = 0 }
         index($0, b) == 1 { skip = 1; next }
@@ -429,18 +480,34 @@ case "$FLEET_GUIDANCE_SKIP_ENABLED" in
     1)
         removed=""      # destinations a block was actually removed from
         present=0       # destinations that exist at all
-        for i in "${!DEST_PATHS[@]}"; do
-            dest="${DEST_PATHS[$i]}"; label="${DEST_LABELS[$i]}"
-            [ -e "$dest" ] || continue
+        SKIP_PATHS=("$CLAUDE_DEST")
+        SKIP_LABELS=("$CLAUDE_LABEL")
+        if [ -d "$CODEX_DEST_DIR" ]; then
+            SKIP_PATHS+=("$CODEX_DEST")
+            SKIP_LABELS+=("$CODEX_LABEL")
+            if [ -e "$CODEX_OVERRIDE" ] || [ -L "$CODEX_OVERRIDE" ]; then
+                SKIP_PATHS+=("$CODEX_OVERRIDE")
+                SKIP_LABELS+=("$CODEX_OVERRIDE_LABEL")
+            fi
+        fi
+        for i in "${!SKIP_PATHS[@]}"; do
+            dest="${SKIP_PATHS[$i]}"; label="${SKIP_LABELS[$i]}"
+            [ -e "$dest" ] || [ -L "$dest" ] || continue
             present=$((present + 1))
-            tmp="$(new_tmp)" || { record_failure "mktemp failed"; continue; }
-            if ! strip_managed_block "$dest" "$tmp"; then
+            if ! resolve_target "$dest"; then
+                record_failure "could not resolve $dest"
+                continue
+            fi
+            target="$RESOLVED_DEST"
+            new_tmp "$(dirname "$target")" || { record_failure "mktemp failed for $dest"; continue; }
+            tmp="$TMP_PATH"
+            if ! strip_managed_block "$target" "$tmp"; then
                 record_failure "$STRIP_ERR"
                 continue
             fi
-            if cmp -s "$tmp" "$dest" 2>/dev/null; then
+            if cmp -s "$tmp" "$target" 2>/dev/null; then
                 continue                      # nothing of ours in there
-            elif cp "$tmp" "$dest" 2>/dev/null; then
+            elif replace_file "$tmp" "$target"; then
                 removed="${removed:+$removed, }$label"
             else
                 record_failure "FLEET_GUIDANCE_SKIP is set but $dest could not be rewritten to remove the managed block"
@@ -473,11 +540,100 @@ version="${version:0:8}"
 
 bytes="$(wc -c < "$PAYLOAD" 2>/dev/null | tr -d ' ')"
 
-# Install the block at ONE destination. Sets INSTALL_STATE to `written` or
-# `current`; on failure records the reason and returns non-zero, having
+# The payload's bytes are an exact copy of agents-md/base.md, so an ordering
+# key cannot live inside them. Its last commit tells when this checkout
+# received those bytes; the digest identifies content but cannot order two
+# different versions. A dirty or untracked payload uses its file mtime.
+# See docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md.
+delivered=0
+payload_dir="$(dirname "$PAYLOAD")"
+payload_name="$(basename "$PAYLOAD")"
+if git_worktree="$(git -C "$payload_dir" rev-parse --is-inside-work-tree 2>/dev/null)" &&
+    [ "$git_worktree" = true ]; then
+    if status="$(git -C "$payload_dir" status --porcelain -- "$payload_name" 2>/dev/null)"; then
+        if [ -n "$status" ]; then
+            delivered="$(stat -c %Y "$PAYLOAD" 2>/dev/null || stat -f %m "$PAYLOAD" 2>/dev/null)" || delivered=0
+        else
+            delivered="$(git -C "$payload_dir" log -1 --format=%ct -- "$payload_name" 2>/dev/null)" || delivered=0
+        fi
+    fi
+fi
+
+# Keep decimal stamps as strings: `10#` and arithmetic comparisons can fail
+# on malformed or very large metadata, and leading zeroes must not be octal.
+normalize_stamp() {
+    NORMAL_STAMP="$1"
+    case "$NORMAL_STAMP" in ""|*[!0-9]*) NORMAL_STAMP=0; return ;; esac
+    while [ "${#NORMAL_STAMP}" -gt 1 ] && [ "${NORMAL_STAMP:0:1}" = 0 ]; do
+        NORMAL_STAMP="${NORMAL_STAMP:1}"
+    done
+}
+normalize_stamp "$delivered"
+delivered="$NORMAL_STAMP"
+
+stamp_ge() {
+    [ "${#1}" -gt "${#2}" ] || {
+        [ "${#1}" -eq "${#2}" ] && { [ "$1" = "$2" ] || [[ "$1" > "$2" ]]; }
+    }
+}
+stamp_gt() { stamp_ge "$1" "$2" && [ "$1" != "$2" ]; }
+
+# Read metadata from inside the managed block only. A developer's own prose
+# may mention either marker text without being delivery metadata.
+read_installed_metadata() {
+    local dest="$1" raw
+    raw="$(awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+        $0 == b { inside=1; next }
+        $0 == e { inside=0 }
+        inside && /^<!-- fleet-guidance-version: / && !v { v=$0 }
+        inside && /^<!-- fleet-guidance-delivered: / && !d { d=$0 }
+        END { print v; print d }
+    ' "$dest" 2>/dev/null)" || raw=""
+    existing_version="${raw%%$'\n'*}"
+    existing_delivered="${raw#*$'\n'}"
+    if [[ "$existing_version" == '<!-- fleet-guidance-version: '*" -->" ]]; then
+        existing_version="${existing_version#<!-- fleet-guidance-version: }"
+        existing_version="${existing_version% -->}"
+    else existing_version=""; fi
+    [[ "$existing_version" =~ ^[0-9a-f]{8}$ ]] || existing_version=""
+    if [[ "$existing_delivered" == '<!-- fleet-guidance-delivered: '*" -->" ]]; then
+        existing_delivered="${existing_delivered#<!-- fleet-guidance-delivered: }"
+        existing_delivered="${existing_delivered% -->}"
+    else existing_delivered=""; fi
+    normalize_stamp "$existing_delivered"
+    existing_delivered="$NORMAL_STAMP"
+}
+
+# On a same-content upgrade, change only the ordering metadata. Retain the
+# block's position and its payload, including a personal suffix after it.
+update_stamp_only() {
+    local source="$1" out="$2" line ending inside=0 inserted=0
+    # shellcheck disable=SC2002  # the pipe lets pipefail detect a source read error
+    cat "$source" | {
+        while :; do
+            if IFS= read -r line; then ending=$'\n';
+            else ending=""; [ -n "$line" ] || break; fi
+            if [ "$line" = "$BEGIN_MARK" ]; then inside=1; fi
+            if [ "$inside" -eq 1 ] && [[ "$line" == '<!-- fleet-guidance-delivered: '* ]]; then
+                continue
+            fi
+            printf '%s%s' "$line" "$ending" || return 1
+            if [ "$inside" -eq 1 ] && [ "$inserted" -eq 0 ] && [[ "$line" == '<!-- fleet-guidance-version: '* ]]; then
+                printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" || return 1
+                inserted=1
+            fi
+            if [ "$line" = "$END_MARK" ]; then inside=0; fi
+        done
+        [ "$inserted" -eq 1 ]
+    } > "$out"
+}
+
+# Install the block at ONE destination. Sets INSTALL_STATE to `written`,
+# `current` (including a stamp-only refresh), or `kept`; on failure records
+# the reason and returns non-zero, having
 # changed nothing at that destination.
 install_to() {
-    local dest="$1" tmp dir
+    local dest="$1" label="$2" tmp dir target
     INSTALL_STATE=""
 
     # The parent directory: created for Claude Code exactly as it always was,
@@ -489,30 +645,78 @@ install_to() {
         return 1
     fi
 
-    tmp="$(new_tmp)" || { record_failure "mktemp failed"; return 1; }
+    if ! resolve_target "$dest"; then
+        record_failure "could not resolve $dest"
+        return 1
+    fi
+    target="$RESOLVED_DEST"
+    if [ "$dest" = "$CODEX_OVERRIDE" ] && { [ ! -f "$target" ] || [ ! -r "$target" ]; }; then
+        record_failure "$dest is not a readable regular file"
+        return 1
+    fi
+    if [ -e "$target" ]; then
+        if [ ! -f "$target" ] || [ ! -r "$target" ]; then
+            if [ ! -f "$target" ]; then
+                record_failure "$target exists but is not a regular file — refusing to replace it"
+            else
+                record_failure "$target exists but is not readable — refusing to overwrite content I cannot preserve"
+            fi
+            return 1
+        fi
+        read_installed_metadata "$target"
+        if [ "$existing_version" = "$version" ]; then
+            if ! stamp_gt "$delivered" "$existing_delivered"; then
+                INSTALL_STATE="current"
+                return 0
+            fi
+            dir="$(dirname "$target")"
+            new_tmp "$dir" || { record_failure "mktemp failed for $dest"; return 1; }
+            tmp="$TMP_PATH"
+            if ! update_stamp_only "$target" "$tmp"; then
+                record_failure "could not update delivery stamp in $dest"
+                return 1
+            fi
+            if replace_file "$tmp" "$target"; then
+                INSTALL_STATE="current"
+                return 0
+            fi
+            record_failure "could not write $dest"
+            return 1
+        fi
+        if ! stamp_ge "$delivered" "$existing_delivered"; then
+            INSTALL_STATE="kept"
+            KEPT="${KEPT:+$KEPT, }v${existing_version:-unknown} at $label"
+            return 0
+        fi
+    fi
 
-    if ! strip_managed_block "$dest" "$tmp"; then
+    dir="$(dirname "$target")"
+    new_tmp "$dir" || { record_failure "mktemp failed for $dest"; return 1; }
+    tmp="$TMP_PATH"
+
+    if ! strip_managed_block "$target" "$tmp"; then
         record_failure "$STRIP_ERR"
         return 1
     fi
     [ -s "$tmp" ] && printf '\n' >> "$tmp"
 
     {
-        printf '%s\n' "$BEGIN_MARK"
-        printf '<!-- fleet-guidance-version: %s -->\n' "$version"
-        cat "$PAYLOAD"
+        printf '%s\n' "$BEGIN_MARK" &&
+        printf '<!-- fleet-guidance-version: %s -->\n' "$version" &&
+        printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" &&
+        cat "$PAYLOAD" &&
         printf '%s\n' "$END_MARK"
     } >> "$tmp" 2>/dev/null || {
         record_failure "could not assemble the guidance block for $dest"
         return 1
     }
 
-    if cmp -s "$tmp" "$dest" 2>/dev/null; then
+    if cmp -s "$tmp" "$target" 2>/dev/null; then
         INSTALL_STATE="current"
         return 0
     fi
 
-    if cp "$tmp" "$dest" 2>/dev/null; then
+    if replace_file "$tmp" "$target"; then
         INSTALL_STATE="written"
         return 0
     fi
@@ -522,9 +726,18 @@ install_to() {
 }
 
 wrote=0
-for dest in "${DEST_PATHS[@]}"; do
-    install_to "$dest" || continue
-    [ "$INSTALL_STATE" = "written" ] && wrote=$((wrote + 1))
+KEPT=""
+local_labels=""
+for i in "${!DEST_PATHS[@]}"; do
+    dest="${DEST_PATHS[$i]}"; label="${DEST_LABELS[$i]}"
+    install_to "$dest" "$label" || continue
+    case "$INSTALL_STATE" in
+        written)
+            wrote=$((wrote + 1))
+            local_labels="${local_labels:+$local_labels, }$label"
+            ;;
+        current) local_labels="${local_labels:+$local_labels, }$label" ;;
+    esac
 done
 
 # ── Verdict ────────────────────────────────────────────────────────────────
@@ -533,14 +746,19 @@ done
 # Any destination that failed makes the whole run DEGRADED even when another
 # succeeded: a session holding the guidance in Claude Code and not in Codex is
 # running on the stub alone in one of its two harnesses, and it has to be able
-# to see that. Mixed success reads `installed` — the stronger,
-# an-action-was-taken word — and the list that follows is every destination
-# that was in play, i.e. every surface now carrying this version of the block.
+# to see that. An installed arrow names only destinations carrying the local
+# version; a kept suffix names each destination retaining newer guidance.
 if [ -n "$FAILURES" ]; then
     echo "fleet-guidance: DEGRADED — $FAILURES. Repo stub only there; read the fleet guidance in _agent-guidance/agents-md/base.md before non-trivial work."
-elif [ "$wrote" -gt 0 ]; then
-    echo "fleet-guidance: installed (v$version, ${bytes} bytes) -> $(dest_list)"
 else
-    echo "fleet-guidance: current (v$version, ${bytes} bytes) — $(dest_list)"
+    if [ "$wrote" -gt 0 ]; then
+        verdict="fleet-guidance: installed (v$version, ${bytes} bytes) -> $local_labels"
+    else
+        verdict="fleet-guidance: current (v$version, ${bytes} bytes) — $(dest_list)"
+    fi
+    if [ -n "$KEPT" ]; then
+        verdict="$verdict; kept newer $KEPT — this checkout's payload is older, pull it to refresh"
+    fi
+    echo "$verdict"
 fi
 exit 0
