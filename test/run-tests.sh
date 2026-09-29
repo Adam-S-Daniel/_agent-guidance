@@ -552,7 +552,10 @@ YAML
         "## Repo-specific additions" \
         "<!-- Add your repo-specific agent guidance below this line -->")"
     printf '%s\n%s\n' "$managed_for_repo7" "$marker_block" > AGENTS.md
-    git add .agents-sync.yml AGENTS.md
+    mkdir -p .claude/hooks
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
+    cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
+    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
@@ -896,7 +899,10 @@ YAML
         "## Repo-specific additions" \
         "<!-- Add your repo-specific agent guidance below this line -->")"
     printf '%s\n%s\n' "$managed" "$marker_block" > AGENTS.md
-    git add .agents-sync.yml AGENTS.md
+    mkdir -p .claude/hooks
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
+    cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
+    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
@@ -2328,6 +2334,9 @@ case "$1" in
                           {\"nameWithOwner\":\"bootorg/repo-unparseable\"}
                         ]"
                         ;;
+                    fleetorg)
+                        json='[{"nameWithOwner":"fleetorg/repo-payload"}]'
+                        ;;
                     bumporg)
                         # The lock-bump fixtures, enumerated off disk rather
                         # than listed here: several of them are stood up and
@@ -2635,6 +2644,11 @@ case "$1" in
                 echo '{"message":"Resource not accessible by integration","status":"403"}'
                 exit 1
             fi
+            if [[ " ${MOCK_CONTENTS_HTTP_FAIL_PATHS:-} " == *" $file_path "* ]]; then
+                echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+                echo '{"message":"Resource not accessible by integration","status":"403"}'
+                exit 1
+            fi
 
             # A 404 that reaches the caller on STDERR ONLY, which every reader
             # of this endpoint claims to handle and none of them was ever asked
@@ -2665,14 +2679,17 @@ case "$1" in
             fi
 
             if [[ -d "$bare_path" ]]; then
-                content=$(git -C "$bare_path" show "main:$file_path" 2>/dev/null || true)
-                if [[ -n "$content" ]]; then
+                if git -C "$bare_path" cat-file -e "main:$file_path" 2>/dev/null \
+                   && [[ "$(git -C "$bare_path" cat-file -t "main:$file_path")" == "blob" ]]; then
                     # `size` is not decoration: the real contents API always
                     # sends it, and fetch_file_content verifies its decode
                     # against it. A mock that omits it cannot exercise the
                     # check, which is exactly how #81 shipped green.
-                    size=$(echo "$content" | wc -c)
-                    encoded=$(echo "$content" | base64 -w 0)
+                    # Read the blob directly. A command substitution strips
+                    # trailing newlines and then echo invents one, hiding byte
+                    # drift in the fleet-guidance payload.
+                    size=$(git -C "$bare_path" cat-file -s "main:$file_path")
+                    encoded=$(git -C "$bare_path" show "main:$file_path" | base64 -w 0)
                     # MOCK_TRUNCATE_CONTENTS=<n> serves the first n base64 chars
                     # while still declaring the honest size -- i.e. the exact
                     # shape of #81: a short body that looks like a whole file.
@@ -4080,7 +4097,215 @@ test_drift_report() {
         "drift report: a fully classified fleet raises nothing"
 }
 
-# ── Test 4b: drift-report.sh skills-bootstrap column ──────────────────────
+# ── Test 4b: drift-report.sh fleet-memory artifacts ───────────────────────
+
+run_fleet_payload_report() {
+    local rc=0
+    MOCK_CONTENTS_HTTP_FAIL_PATHS="${1:-}" \
+    MOCK_TRUNCATE_CONTENTS="${2:+4}" \
+    MOCK_TRUNCATE_PATHS="${2:-}" \
+    GITHUB_REPOSITORY_OWNER=fleetorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-fleet-payload.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-fleet-output.txt" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        pass "fleet payload: report keeps its successful exit semantics"
+    else
+        fail "fleet payload: report exited $rc"
+    fi
+}
+
+push_fleet_payload_fixture() {
+    git -C "$TEST_DIR/work/fleet-payload" add -A
+    git -C "$TEST_DIR/work/fleet-payload" commit -m "fixture state" >/dev/null 2>&1
+    git -C "$TEST_DIR/work/fleet-payload" push origin HEAD:main >/dev/null 2>&1
+}
+
+test_drift_report_fleet_payload() {
+    echo ""
+    echo "=== Test: drift-report.sh (fleet-memory hook and payload) ==="
+
+    local bare="$TEST_DIR/bare/fleetorg_repo-payload"
+    local work="$TEST_DIR/work/fleet-payload"
+    local rpt="$TEST_DIR/drift-fleet-payload.md"
+    local expected_sha found_sha
+    mkdir -p "$bare" "$work/.claude/hooks"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    git -C "$work" config commit.gpgsign false
+    git -C "$work" remote add origin "$bare"
+    cat >"$work/.agents-sync.yml" <<'YAML'
+sections: []
+YAML
+    "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
+    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
+    push_fleet_payload_fixture
+
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**up-to-date**" \
+        "fleet payload: current hook and payload leave row up-to-date"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "ok" \
+        "fleet payload: current artifacts report ok"
+    expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" "expected \`${expected_sha:0:8}\`, found \`${expected_sha:0:8}\`" \
+        "fleet payload: current hash matches the installed verdict"
+
+    # A changed body and a changed trailing newline must both be visible.
+    printf 'stale payload\n' >"$work/.claude/hooks/fleet-guidance.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    found_sha=$(sha256sum "$work/.claude/hooks/fleet-guidance.md")
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
+        "fleet payload: stale payload drifts the row"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: stale payload has a drifted artifact cell"
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" "expected \`${expected_sha:0:8}\`, found \`${found_sha:0:8}\`" \
+        "fleet payload: expected and found short hashes are shown"
+
+    rm "$work/AGENTS.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**no-agents-md**" \
+        "fleet payload: stale payload does not hide missing AGENTS.md"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: artifact drift is still visible without AGENTS.md"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
+        "fleet payload: missing AGENTS.md keeps its primary status"
+    "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
+    push_fleet_payload_fixture
+
+    # Fail only the expected-content build. The wrapper forwards every other
+    # bash invocation to the real binary, so the report and fake gh still run.
+    local failbin="$TEST_DIR/fleet-build-failure-bin" real_bash
+    real_bash=$(command -v bash)
+    mkdir -p "$failbin"
+    cat >"$failbin/bash" <<'SH'
+#!/bin/sh
+if [ "$1" = "$FLEET_TEST_BUILD_PATH" ]; then
+    exit 1
+fi
+exec "$FLEET_TEST_REAL_BASH" "$@"
+SH
+    chmod +x "$failbin/bash"
+    FLEET_TEST_BUILD_PATH="$REPO_ROOT/scripts/build-agents-md.sh" \
+    FLEET_TEST_REAL_BASH="$real_bash" \
+    PATH="$failbin:$PATH" run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**update-failed**" \
+        "fleet payload: a failed AGENTS.md build keeps update-failed status"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: stale artifact remains visible after a failed build"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
+        "fleet payload: artifact drift does not hide a failed build"
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" 'Could not build expected content' \
+        "fleet payload: Notes retain the build failure"
+
+    : >"$work/.claude/hooks/fleet-guidance.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: a present zero-byte payload is drifted, not missing"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: present zero-byte payload is not absent"
+
+    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
+    printf '\n' >>"$work/.claude/hooks/fleet-guidance.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
+        "fleet payload: a trailing newline alone is drift"
+
+    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
+    printf 'stale hook\n' >"$work/.claude/hooks/fleet-memory.sh"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
+        "fleet payload: stale hook drifts the row"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: stale hook has a drifted artifact cell"
+
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
+    rm "$work/.claude/hooks/fleet-guidance.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: stub-mode missing payload reports missing"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
+        "fleet payload: stub-mode missing payload drifts the row"
+
+    AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
+    rm "$work/.claude/hooks/fleet-memory.sh"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**up-to-date**" \
+        "fleet payload: full-mode managed content matches its full source"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "—" \
+        "fleet payload: full-mode missing artifacts are not drift"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: full-mode absence is not called missing"
+
+    # sync.sh may preserve a legacy prefix ahead of the managed block. Its
+    # Mode marker still decides whether absent fleet files are required.
+    printf 'legacy prefix\n' >"$work/AGENTS.prefixed"
+    cat "$work/AGENTS.md" >>"$work/AGENTS.prefixed"
+    mv "$work/AGENTS.prefixed" "$work/AGENTS.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: a prefixed full-mode block does not require fleet files"
+
+    # The report cannot infer eligibility if the generated mode is absent.
+    sed '/^<!-- Mode: full -->$/d' "$work/AGENTS.md" >"$work/AGENTS.no-mode"
+    mv "$work/AGENTS.no-mode" "$work/AGENTS.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "unverified" \
+        "fleet payload: unknown mode leaves absent files unverified"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: unknown mode does not invent missing artifacts"
+
+    "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
+    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report ".claude/hooks/fleet-guidance.md"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**fetch-failed**" \
+        "fleet payload: payload read error withholds the row"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "?" \
+        "fleet payload: payload read error is unknown"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: failed read is not missing"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: failed read is not drifted"
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" '`.claude/hooks/fleet-guidance.md`' \
+        "fleet payload: failed path is named in Notes"
+
+    run_fleet_payload_report ".claude/hooks/fleet-memory.sh"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**fetch-failed**" \
+        "fleet payload: hook read error withholds the row"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: failed hook read is not missing"
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" '`.claude/hooks/fleet-memory.sh`' \
+        "fleet payload: failed hook path is named in Notes"
+
+    run_fleet_payload_report "" ".claude/hooks/fleet-guidance.md"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**fetch-failed**" \
+        "fleet payload: partial payload read withholds the row"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: partial payload read is not missing"
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" '`.claude/hooks/fleet-guidance.md`' \
+        "fleet payload: partial payload path is named in Notes"
+
+    run_fleet_payload_report "" ".claude/hooks/fleet-memory.sh"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**fetch-failed**" \
+        "fleet payload: partial hook read withholds the row"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: partial hook read is not missing"
+}
+
+# ── Test 4c: drift-report.sh skills-bootstrap column ──────────────────────
 
 test_drift_report_bootstrap() {
     echo ""
@@ -19640,6 +19865,7 @@ test_sync_bootstrap
 test_sync_bootstrap_idempotent
 test_sync_bootstrap_drift
 test_drift_report_bootstrap
+test_drift_report_fleet_payload
 # Immediately after the test that establishes bootorg/repo-adopted's confident
 # verdicts, because those are exactly what its control run re-asserts before
 # truncating one file at a time.

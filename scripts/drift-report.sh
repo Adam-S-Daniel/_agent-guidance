@@ -9,6 +9,7 @@ set -euo pipefail
 #   • Whether the repo-specific marker header is present
 #   • Whether CLAUDE.md imports @AGENTS.md (the Claude Code bridge)
 #   • Whether the skills-bootstrap hook is delivered, current and REGISTERED
+#   • Whether the fleet-memory hook and guidance payload match their sources
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
 #
@@ -34,6 +35,10 @@ BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
 BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
 BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
+FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
+FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
+FLEET_HOOK_SOURCE="$REPO_ROOT/$FLEET_HOOK_REL_PATH"
+FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
 # Every other input this script takes is parameterized — REPOS_YML just below,
@@ -300,6 +305,9 @@ pick_diagnostic() {
 fetch_file_content() {
     local repo="$1" path="$2"
     local json size tmp actual err err_text why rc=0 http_status http_re
+    # Direct callers can distinguish an absent file from a present zero-byte
+    # blob. Existing command-substitution callers still use only the rc/data.
+    FETCH_FILE_PRESENT=no
 
     err=$(mktemp -p "$WORK_DIR") || return 2
     json=$(gh api "repos/$repo/contents/$path" 2>"$err") || rc=$?
@@ -373,6 +381,7 @@ fetch_file_content() {
         return 2
     fi
 
+    FETCH_FILE_PRESENT=yes
     cat "$tmp"
     rm -f "$tmp"
     return 0
@@ -787,9 +796,9 @@ if [[ $repo_list_rc -ne 0 ]]; then
         echo ""
         echo "> Organization: \`$ORG\` — **not scanned this run**"
         echo ""
-        echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | Open PR | Sections | Notes |"
-        echo "|------------|--------|------------|-------------------|------------------|---------|----------|-------|"
-        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | $repo_list_note |"
+        echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | fleet-memory | fleet-guidance | Open PR | Sections | Notes |"
+        echo "|------------|--------|------------|-------------------|------------------|--------------|----------------|---------|----------|-------|"
+        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | ? | ? | $repo_list_note |"
     } >> "$OUTPUT_FILE"
     OWNER_FAILURES+=("$ORG")
     continue
@@ -858,12 +867,12 @@ echo ""
     echo ""
     echo "> Organization: \`$ORG\` — ${#REPOS[@]} repo(s) scanned"
     echo ""
-    echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | Open PR | Sections | Notes |"
-    echo "|------------|--------|------------|-------------------|------------------|---------|----------|-------|"
+    echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | fleet-memory | fleet-guidance | Open PR | Sections | Notes |"
+    echo "|------------|--------|------------|-------------------|------------------|--------------|----------------|---------|----------|-------|"
 } >> "$OUTPUT_FILE"
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
-    echo "| *(no repos found)* | — | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
+    echo "| *(no repos found)* | — | — | — | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
 fi
 
 for repo_name in "${REPOS[@]}"; do
@@ -875,6 +884,10 @@ for repo_name in "${REPOS[@]}"; do
     open_pr="none"
     sections_display="—"
     notes=""
+    fleet_mode="unknown"
+    fleet_hook_cell="unverified"
+    fleet_payload_cell="unverified"
+    fleet_drift=false
 
     # Every path this row could not READ, or could not UNDERSTAND. A name lands
     # here on a verified short read, on a request that failed for any reason this
@@ -984,6 +997,24 @@ for repo_name in "${REPOS[@]}"; do
         status="**no-agents-md**"
         notes="AGENTS.md not found in repo"
     else
+        # sync.sh records its delivery decision in the generated managed
+        # block, which may follow a preserved legacy prefix. Repo-specific
+        # prose below the block cannot supply this marker.
+        begin_count=$(grep -c '^<!-- BEGIN MANAGED SECTION' <<<"$current_agents" || true)
+        end_count=$(grep -c '^<!-- END MANAGED SECTION -->$' <<<"$current_agents" || true)
+        if [[ "$begin_count" -eq 1 && "$end_count" -eq 1 ]]; then
+            managed_header=$(sed -n '/^<!-- BEGIN MANAGED SECTION/,/^<!-- END MANAGED SECTION -->$/p' <<<"$current_agents")
+            mode_line_count=$(grep -c '^<!-- Mode: ' <<<"$managed_header" || true)
+        else
+            mode_line_count=0
+        fi
+        if [[ "$mode_line_count" -eq 1 ]]; then
+            mode_header=$(grep '^<!-- Mode: ' <<<"$managed_header")
+            case "$mode_header" in
+                '<!-- Mode: stub -->') fleet_mode="stub" ;;
+                '<!-- Mode: full -->') fleet_mode="full" ;;
+            esac
+        fi
         # ── Codex project-doc budget ────────────────────────────────────
         #
         # Reported here and ONLY here: this is the one branch where the file
@@ -1073,7 +1104,11 @@ for repo_name in "${REPOS[@]}"; do
             # the shared block below marks the row fetch-failed.
             :
         else
-            expected=$("$BUILD_SCRIPT" "${sections[@]}" 2>/dev/null || true)
+            # Keep the historical stub comparison for a legacy AGENTS.md
+            # without mode metadata. Only artifact absence stays unverified.
+            expected_mode="$fleet_mode"
+            [[ "$expected_mode" == "unknown" ]] && expected_mode="stub"
+            expected=$(AGENTS_MD_MODE="$expected_mode" "$BUILD_SCRIPT" "${sections[@]}" 2>/dev/null || true)
 
             if [[ -z "$expected" ]]; then
                 status="**update-failed**"
@@ -1108,6 +1143,60 @@ for repo_name in "${REPOS[@]}"; do
                 fi
             fi
         fi
+    fi
+
+    # ── Check fleet-memory delivery ────────────────────────────────────
+    # Read to files: command substitution strips trailing newlines, which are
+    # part of both installed artifacts and must remain visible to cmp/hash.
+    fleet_hook_file="$WORK_DIR/fleet-hook"
+    fleet_payload_file="$WORK_DIR/fleet-payload"
+    fleet_hook_rc=0
+    fetch_file_content "$repo_name" "$FLEET_HOOK_REL_PATH" >"$fleet_hook_file" || fleet_hook_rc=$?
+    fleet_hook_present="$FETCH_FILE_PRESENT"
+    fleet_payload_rc=0
+    fetch_file_content "$repo_name" "$FLEET_PAYLOAD_REL_PATH" >"$fleet_payload_file" || fleet_payload_rc=$?
+    fleet_payload_present="$FETCH_FILE_PRESENT"
+
+    if [[ "$fleet_hook_rc" -ne 0 ]]; then
+        fetch_failed_paths+=("$FLEET_HOOK_REL_PATH")
+        fleet_hook_cell="?"
+    elif [[ "$fleet_hook_present" == "yes" ]]; then
+        if cmp -s "$FLEET_HOOK_SOURCE" "$fleet_hook_file"; then
+            fleet_hook_cell="ok"
+        else
+            fleet_hook_cell="**drifted**"
+            fleet_drift=true
+        fi
+    elif [[ "$fleet_mode" == "stub" ]]; then
+        fleet_hook_cell="**missing**"
+        fleet_drift=true
+    elif [[ "$fleet_mode" == "full" ]]; then
+        fleet_hook_cell="—"
+    fi
+
+    expected_sha=$(sha256sum "$FLEET_PAYLOAD_SOURCE")
+    if [[ "$fleet_payload_rc" -ne 0 ]]; then
+        fetch_failed_paths+=("$FLEET_PAYLOAD_REL_PATH")
+        fleet_payload_cell="?"
+    elif [[ "$fleet_payload_present" == "yes" ]]; then
+        if cmp -s "$FLEET_PAYLOAD_SOURCE" "$fleet_payload_file"; then
+            fleet_payload_cell="ok"
+        else
+            fleet_payload_cell="**drifted**"
+            fleet_drift=true
+        fi
+        found_sha=$(sha256sum "$fleet_payload_file")
+        notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found \`${found_sha:0:8}\`"
+    elif [[ "$fleet_mode" == "stub" ]]; then
+        fleet_payload_cell="**missing**"
+        fleet_drift=true
+        notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found missing"
+    elif [[ "$fleet_mode" == "full" ]]; then
+        fleet_payload_cell="—"
+    fi
+
+    if $fleet_drift && [[ "$status" == "**up-to-date**" ]]; then
+        status="**drift-detected**"
     fi
 
     # ── Check CLAUDE.md bridge status ───────────────────────────────────
@@ -1309,7 +1398,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Write row ──────────────────────────────────────────────────────
 
-    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $bootstrap_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
+    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $bootstrap_cell | $fleet_hook_cell | $fleet_payload_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
 done
 
 # ── Unclassified for cron coverage ─────────────────────────────────────────
@@ -1415,8 +1504,8 @@ fi
     echo ""
     echo "| Status | Meaning |"
     echo "|--------|---------|"
-    echo "| **up-to-date** | Managed section matches the expected output |"
-    echo "| **drift-detected** | Managed section has diverged — needs sync |"
+    echo "| **up-to-date** | Managed section and required fleet-memory artifacts match their expected content |"
+    echo "| **drift-detected** | Managed section or fleet-memory artifact has diverged or is missing — needs sync |"
     echo "| **pr-open** | A sync PR is already open for this repo |"
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
@@ -1464,6 +1553,23 @@ fi
     echo "| unverified | Could not fetch the pinned hook this run — the drift comparison was skipped |"
     echo "| — | Not allowlisted and no hook present |"
     echo "| ? | A file this column is decided from (the hook, \`skills.lock\`, \`.claude/settings.json\`, or the repo's ignore rules) could not be read — withheld, not guessed (the row reads **fetch-failed**) |"
+    echo ""
+    echo "**fleet-memory and fleet-guidance legend**"
+    echo ""
+    echo "The generated AGENTS.md \`Mode\` header records sync.sh's delivery decision:"
+    echo "\`stub\` requires both files; \`full\` keeps the guidance inline. An"
+    echo "unknown mode does not establish that absent files are missing. Present"
+    echo "files are compared byte for byte in every mode. A drifted payload's"
+    echo "expected and found eight-character sha256 prefixes appear in **Notes**."
+    echo ""
+    echo "| Status | Meaning |"
+    echo "|--------|---------|"
+    echo "| ok | Present and byte-equal to the source in this repo |"
+    echo "| **drifted** | Present but its bytes differ from the source |"
+    echo "| **missing** | Absent in a stub-mode repo that requires it |"
+    echo "| — | Absent in a full-mode repo |"
+    echo "| unverified | Absent and AGENTS.md has no recognized mode |"
+    echo "| ? | Contents read failed or was partial — withheld; the row reads **fetch-failed** |"
     echo ""
     echo "**Cron-coverage classification**"
     echo ""

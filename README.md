@@ -37,7 +37,12 @@ The skills that used to live here (`debug-github-workflows`,
 - `scripts/drift-report.sh` (CI: nightly `drift-report.yml`) writes
   `drift-report.md`, a dashboard of which repos are missing or out of date,
   including a "CLAUDE.md bridge" column (`bridge-ok` / `no-import` /
-  `missing`). This tracks **AGENTS.md drift** — it is the guidance layer
+  `missing`) and byte comparisons for the fleet-memory hook and guidance
+  payload. The generated AGENTS.md `Mode` header records the sync's delivery
+  decision: a stub-mode repo needs both files, while a full-mode repo keeps
+  guidance inline. Without a recognized mode, missing files stay unverified;
+  a present payload's expected and found SHA-256 prefixes appear in Notes.
+  This tracks **guidance delivery drift** — it is the guidance layer
   working as designed, not the skill-copy drift that the strategy
   consolidation removed. Per repo-settings' ADR 0001, this generated data
   never lands on the protected default branch — the old standing-PR model
