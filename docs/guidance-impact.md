@@ -313,3 +313,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: the auto-merge bullet names the exception and cites repo-settings ADR 0003 (PR #191); three phrases trimmed to fit, net +1 byte, full build 28668 of 28672.
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — skills-ecosystem — edit
+- Motivation: adam-agentskills ADR 0014 retires the claude.ai account-store upload path and the global sync-skills pre-push hook; the section still described the hook as live and implied the account store carries the fleet's skills.
+- Change: the every-repo push-failure bullet now names a missing `sync-skills` hook script and `setup.sh --owner-machine` (which unregisters it); the terminal bullet says terminals still load Anthropic's own account skills; net small byte change.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
