@@ -18006,8 +18006,8 @@ test_drift_report_codex_budget() {
 #
 # Same posture as register-bootstrap-hook.sh and tested the same way, because
 # the file it edits is the operator's own ~/.codex/hooks.json: append a
-# separate group, never rewrite one, refuse rather than guess, and never create
-# the Codex home itself.
+# separate group, except for an exact legacy command upgraded in place; refuse
+# rather than guess, and never create the Codex home itself.
 #
 # Every structural assertion here PARSES the JSON with python3. A grep can tell
 # that the string "fleet-memory.sh" is somewhere in the file; it cannot tell
@@ -18186,6 +18186,395 @@ PY
     fi
 }
 
+# A legacy registration belongs to the operator's existing matcher group. The
+# upgrade changes its command in place, while an operator-written variant is
+# deliberately left alone. Compare parsed JSON so order and every other field
+# stay part of the contract even when serialization changes.
+test_register_codex_hook_workspace_upgrade() {
+    echo ""
+    echo "TEST: register-codex-hook.sh (workspace command and legacy upgrade)"
+    local script="$REPO_ROOT/scripts/register-codex-hook.sh"
+    local d="$TEST_DIR/codexhook-workspace"
+    local target="$d/empty/hooks.json" out rc command
+    mkdir -p "$d/empty" "$d/legacy" "$d/manual"
+    : > "$target"
+    cat > "$d/expected-command" <<'EOF'
+bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
+EOF
+    rc=0
+    out=$(CODEX_HOME="$d/empty" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass 'register workspace: empty hooks.json registration exits 0'
+    else
+        fail "register workspace: empty hooks.json registration exit $rc: $out"
+    fi
+    rc=0
+    command=$(python3 - "$target" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$command" == "$(cat "$d/expected-command")" ]]; then
+        pass 'register workspace: empty hooks.json gets the exact workspace-capable command'
+    else
+        fail 'register workspace: empty hooks.json command differs from the delivery contract'
+    fi
+
+    # Put the legacy command in the MIDDLE of a group, with unrelated groups
+    # before and after it. A semantic comparison below permits exactly that
+    # command field to change, including its position in the original array.
+    python3 - "$d/legacy/hooks.json" <<'PY'
+import json, sys
+legacy = """bash -c 'h="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh"; [ -f "$h" ] && exec bash "$h"; exit 0'"""
+doc = {
+    "description": "operator configuration",
+    "hooks": {
+        "SessionStart": [
+            {"matcher": "first", "hooks": [{"type": "command", "command": "true"}]},
+            {"matcher": "custom-resume", "timeout": 17, "statusMessage": "Keep mine",
+             "hooks": [
+                 {"type": "command", "command": "printf before"},
+                 {"type": "command", "command": legacy, "timeout": 9,
+                  "statusMessage": "Fleet memory", "extra": {"preserve": [1, 2]}},
+                 {"type": "command", "command": "printf after"},
+             ]},
+            {"matcher": "last", "hooks": [{"type": "command", "command": "false"}]},
+        ],
+        "SessionEnd": [{"hooks": [{"type": "command", "command": "true"}]}],
+    },
+    "other": {"keep": "all fields"},
+}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write("\n")
+PY
+    cp "$d/legacy/hooks.json" "$d/legacy-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/legacy" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && "$out" == *'/hooks'* ]]; then
+        pass 'register workspace: legacy entry reports updated and asks for re-trust'
+    else
+        fail "register workspace: legacy upgrade exit $rc or wrong verdict: $out"
+    fi
+    rc=0
+    out=$(python3 - "$d/legacy-before.json" "$d/legacy/hooks.json" "$d/expected-command" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+with open(sys.argv[3], encoding="utf-8") as fh:
+    expected_command = fh.read().rstrip("\n")
+entry = before["hooks"]["SessionStart"][1]["hooks"][1]
+entry["command"] = expected_command
+assert before == after, "upgrade changed more than the one legacy command field"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$out" == OK ]]; then
+        pass 'register workspace: upgrade preserves all groups, order, and other fields'
+    else
+        fail "register workspace: upgrade changed unrelated JSON: $out"
+    fi
+    cp "$d/legacy/hooks.json" "$d/legacy-after.json"
+    rc=0
+    out=$(CODEX_HOME="$d/legacy" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/legacy-after.json" "$d/legacy/hooks.json"; then
+        pass 'register workspace: rerun after upgrade is already-registered and byte-identical'
+    else
+        fail "register workspace: rerun after upgrade changed hooks.json: $out"
+    fi
+
+    # A current registration wins over a leftover legacy entry regardless of
+    # position. In particular, a legacy entry encountered first must not be
+    # rewritten when the current definition is already present elsewhere.
+    local layout
+    for layout in legacy-first new-first same-group; do
+        mkdir -p "$d/$layout"
+        python3 - "$d/$layout/hooks.json" "$d/expected-command" "$layout" <<'PY'
+import json, sys
+legacy = """bash -c 'h="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh"; [ -f "$h" ] && exec bash "$h"; exit 0'"""
+with open(sys.argv[2], encoding="utf-8") as fh:
+    current = fh.read().rstrip("\n")
+legacy_entry = {"type": "command", "command": legacy, "timeout": 8}
+current_entry = {"type": "command", "command": current, "timeout": 12}
+layout = sys.argv[3]
+if layout == "same-group":
+    groups = [{"matcher": "both", "hooks": [legacy_entry, current_entry]}]
+else:
+    entries = [legacy_entry, current_entry]
+    if layout == "new-first":
+        entries.reverse()
+    groups = [{"matcher": str(index), "hooks": [entry]}
+              for index, entry in enumerate(entries)]
+doc = {"hooks": {"SessionStart": groups}, "other": "keep bytes"}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, separators=(",", ":"))
+PY
+        cp "$d/$layout/hooks.json" "$d/$layout-before.json"
+        rc=0
+        out=$(CODEX_HOME="$d/$layout" "$script" 2>&1) || rc=$?
+        if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+                && cmp -s "$d/$layout-before.json" "$d/$layout/hooks.json"; then
+            pass "register workspace: current plus legacy ($layout) stays byte-identical"
+        else
+            fail "register workspace: current plus legacy ($layout) was changed: $out"
+        fi
+    done
+
+    python3 - "$d/manual/hooks.json" <<'PY'
+import json, sys
+doc = {"hooks": {"SessionStart": [{"matcher": "mine", "hooks": [
+    {"type": "command", "command": "bash my/fleet-memory.sh", "timeout": 4}
+]}]}}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, separators=(",", ":"))
+PY
+    cp "$d/manual/hooks.json" "$d/manual-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/manual" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/manual-before.json" "$d/manual/hooks.json"; then
+        pass 'register workspace: hand-written variant stays byte-identical'
+    else
+        fail "register workspace: hand-written variant was changed: $out"
+    fi
+}
+
+# Run the actual command the registration script wrote, so a stale hook
+# definition cannot hide behind tests that invoke fleet-memory.sh directly.
+# Fixture repos are fresh git init repositories with no remote and fixed commit
+# dates; their payload stamps do not depend on the machine's clock.
+test_fleet_memory_workspace() {
+    echo ""
+    echo "TEST: registered Codex hook (multi-repo workspace)"
+    local d="$TEST_DIR/fleet-workspace"
+    local parent="$d/parent" empty="$d/empty" registered_command out rc
+    local repo hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    mkdir -p "$parent/alpha/.claude/hooks" "$parent/beta/.claude/hooks" \
+        "$empty" "$d/register-home"
+    rc=0
+    out=$(CODEX_HOME="$d/register-home" "$REPO_ROOT/scripts/register-codex-hook.sh" 2>&1) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        fail "fleet workspace: registration for command behavior exit $rc: $out"
+        return
+    fi
+    registered_command=$(python3 - "$d/register-home/hooks.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+PY
+)
+    for repo in alpha beta; do
+        git init -q "$parent/$repo"
+        git -C "$parent/$repo" config --local user.name 'Fleet fixture'
+        git -C "$parent/$repo" config --local user.email 'fleet@example.com'
+        git -C "$parent/$repo" config --local commit.gpgsign false
+        cp "$hook" "$parent/$repo/.claude/hooks/fleet-memory.sh"
+        printf '# %s repo instructions\n' "$repo" > "$parent/$repo/AGENTS.md"
+        printf '%s PAYLOAD\n' "${repo^^}" > "$parent/$repo/.claude/hooks/fleet-guidance.md"
+        git -C "$parent/$repo" add AGENTS.md .claude/hooks/fleet-memory.sh \
+            .claude/hooks/fleet-guidance.md
+        if [[ "$repo" == alpha ]]; then
+            GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+                git -C "$parent/$repo" commit -qm 'alpha fixture'
+        else
+            GIT_AUTHOR_DATE='@1700000100 +0000' GIT_COMMITTER_DATE='@1700000100 +0000' \
+                git -C "$parent/$repo" commit -qm 'beta fixture'
+        fi
+    done
+
+    workspace_run() {
+        local cwd="$1" cfg="$2" codex="$3"
+        mkdir -p "$cfg" "$codex"
+        (cd "$cwd" && env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD \
+            CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+            bash -c "$registered_command")
+    }
+    rc=0
+    out=$(workspace_run "$parent" "$d/normal-cfg" "$d/normal-codex" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/normal.out"
+    if [[ $rc -eq 0 && "$(wc -l < "$d/normal.out")" -eq 2 \
+            && "$(sed -n '2p' "$d/normal.out")" == "fleet-workspace: $parent is a multi-repo parent; this session loaded no repo's own AGENTS.md (Codex reads them only from the launch directory's git root down). Before working in a repo, read its AGENTS.md: alpha, beta" ]]; then
+        pass 'fleet workspace 2a: parent reports both repo instructions on exactly its second line'
+    else
+        fail "fleet workspace 2a: parent output/exit differs: $rc: $out"
+    fi
+    assert_contains "$d/normal-codex/AGENTS.md" 'BETA PAYLOAD' \
+        'fleet workspace 2a: newer child payload reaches Codex'
+    assert_not_contains "$d/normal-codex/AGENTS.md" 'ALPHA PAYLOAD' \
+        'fleet workspace 2a: older child payload does not replace newer'
+    rc=0
+    out=$(workspace_run "$parent" "$d/normal-cfg" "$d/normal-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ current* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: current verdict still lists repo instructions'
+    else
+        fail "fleet workspace: current output/exit differs: $rc: $out"
+    fi
+
+    mkdir -p "$d/degraded-cfg" "$d/degraded-codex/AGENTS.override.md"
+    rc=0
+    out=$(workspace_run "$parent" "$d/degraded-cfg" "$d/degraded-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ DEGRADED* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: DEGRADED verdict still lists repo instructions'
+    else
+        fail "fleet workspace: DEGRADED output/exit differs: $rc: $out"
+    fi
+
+    # Make the legacy hook FIRST in sorted path order. The registered command
+    # must skip it and run Alpha, whose selector must still inspect the newer
+    # payload in the legacy child.
+    mv "$parent/beta" "$parent/00-beta"
+    printf '#!/usr/bin/env bash\nexit 99\n' > "$parent/00-beta/.claude/hooks/fleet-memory.sh"
+    rc=0
+    out=$(workspace_run "$parent" "$d/oldhook-cfg" "$d/oldhook-codex" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/oldhook.out"
+    if [[ $rc -eq 0 && "$(wc -l < "$d/oldhook.out")" -eq 2 ]]; then
+        pass 'fleet workspace 2b: capable child runs when newer child has a legacy hook'
+    else
+        fail "fleet workspace 2b: no capable hook ran: $rc: $out"
+    fi
+    assert_contains "$d/oldhook-codex/AGENTS.md" 'BETA PAYLOAD' \
+        'fleet workspace 2b: capable hook still selects newer legacy child payload'
+    mv "$parent/00-beta" "$parent/beta"
+
+    mkdir -p "$parent/alpha/subdir"
+    for repo in "$parent/alpha" "$parent/alpha/subdir"; do
+        rc=0
+        out=$(workspace_run "$repo" "$d/child-${repo##*/}-cfg" \
+            "$d/child-${repo##*/}-codex" 2>&1) || rc=$?
+        if [[ $rc -eq 0 && "$out" == fleet-guidance:* \
+                && "$(printf '%s\n' "$out" | wc -l)" -eq 1 ]]; then
+            pass "fleet workspace 2c: $repo uses one-line normal mode"
+        else
+            fail "fleet workspace 2c: $repo output/exit differs: $rc: $out"
+        fi
+    done
+
+    rc=0
+    out=$(workspace_run "$empty" "$d/empty-cfg" "$d/empty-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && -z "$out" ]]; then
+        pass 'fleet workspace 2d: directory without fleet children is silent'
+    else
+        fail "fleet workspace 2d: expected silent exit 0, got $rc: $out"
+    fi
+
+    # Use a new, EMPTY Codex home: preexisting global guidance would mask the
+    # exact parent-launch gap this regression test needs to detect.
+    mkdir -p "$d/virgin-codex"
+    rc=0
+    out=$(workspace_run "$parent" "$d/virgin-cfg" "$d/virgin-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && -f "$d/virgin-codex/AGENTS.md" ]] \
+            && grep -qF 'BETA PAYLOAD' "$d/virgin-codex/AGENTS.md"; then
+        pass 'fleet workspace 2e: empty Codex home receives guidance from parent launch'
+    else
+        fail "fleet workspace 2e: empty Codex home has no guidance: $rc: $out"
+    fi
+
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/invalid-cfg" CODEX_HOME="$d/invalid-codex" \
+        bash "$hook" --workspace "$d/missing" 2>&1) || rc=$?
+    if [[ $rc -eq 2 && "$out" == 'fleet-guidance: DEGRADED'* ]]; then
+        pass 'fleet workspace: nonexistent directory exits 2 with DEGRADED usage line'
+    else
+        fail "fleet workspace: nonexistent directory exit/output differs: $rc: $out"
+    fi
+
+    rc=0
+    out=$(cd "$parent" && FLEET_GUIDANCE_SKIP=1 \
+        CLAUDE_CONFIG_DIR="$d/normal-cfg" CODEX_HOME="$d/normal-codex" \
+        bash -c "$registered_command" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/skip.out"
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ skipped* \
+            && "$(wc -l < "$d/skip.out")" -eq 2 \
+            && "$(sed -n '2p' "$d/skip.out")" == fleet-workspace:* \
+            && "$out" == *'alpha, beta'* \
+            && -f "$d/normal-codex/AGENTS.md" ]] \
+            && ! grep -qF 'BEGIN FLEET GUIDANCE' "$d/normal-codex/AGENTS.md"; then
+        pass 'fleet workspace: FLEET_GUIDANCE_SKIP still lists both repo instructions'
+    else
+        fail "fleet workspace: skip output/exit differs: $rc: $out"
+    fi
+
+    rc=0
+    out=$(cd "$parent" && FLEET_GUIDANCE_SKIP=1 \
+        CLAUDE_CONFIG_DIR="$d/normal-cfg" CODEX_HOME="$d/normal-codex" \
+        bash -c "$registered_command" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ skipped* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: skip with no block still lists repo instructions'
+    else
+        fail "fleet workspace: skip with no block output/exit differs: $rc: $out"
+    fi
+
+    mkdir -p "$d/skip-broken-cfg" "$d/skip-broken-codex/AGENTS.md"
+    rc=0
+    out=$(cd "$parent" && FLEET_GUIDANCE_SKIP=1 \
+        CLAUDE_CONFIG_DIR="$d/skip-broken-cfg" CODEX_HOME="$d/skip-broken-codex" \
+        bash -c "$registered_command" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == fleet-guidance:\ DEGRADED* \
+            && "$(printf '%s\n' "$out" | wc -l)" -eq 2 \
+            && "${out#*$'\n'}" == fleet-workspace:* ]]; then
+        pass 'fleet workspace: degraded skip still lists repo instructions'
+    else
+        fail "fleet workspace: degraded skip output/exit differs: $rc: $out"
+    fi
+
+    # Equal committed delivery stamps choose the first candidate path. The
+    # later commit below intentionally uses an earlier fixed clock value.
+    printf 'BETA TIE PAYLOAD\n' > "$parent/beta/.claude/hooks/fleet-guidance.md"
+    git -C "$parent/beta" add .claude/hooks/fleet-guidance.md
+    GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+        git -C "$parent/beta" commit -qm 'tie stamp fixture'
+    rc=0
+    out=$(workspace_run "$parent" "$d/tie-cfg" "$d/tie-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && -f "$d/tie-codex/AGENTS.md" ]] \
+            && grep -qF 'ALPHA PAYLOAD' "$d/tie-codex/AGENTS.md"; then
+        pass 'fleet workspace: tied payload stamps choose first sorted child'
+    else
+        fail "fleet workspace: tied stamp selected wrong child: $rc: $out"
+    fi
+
+    # With no child payload, workspace mode uses the payload beside the
+    # invoked hook. The source hook has its own real fleet-guidance.md.
+    mv "$parent/alpha/.claude/hooks/fleet-guidance.md" "$d/alpha-payload.saved"
+    mv "$parent/beta/.claude/hooks/fleet-guidance.md" "$d/beta-payload.saved"
+    mkdir -p "$d/fallback-cfg" "$d/fallback-codex"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/fallback-cfg" CODEX_HOME="$d/fallback-codex" \
+        bash "$hook" --workspace "$parent" 2>&1) || rc=$?
+    local source_version
+    source_version=$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md")
+    source_version=${source_version:0:8}
+    if [[ $rc -eq 0 && -f "$d/fallback-codex/AGENTS.md" ]] \
+            && grep -qF "fleet-guidance-version: $source_version" "$d/fallback-codex/AGENTS.md" \
+            && [[ "$(printf '%s\n' "$out" | wc -l)" -eq 2 ]]; then
+        pass 'fleet workspace: no child payload falls back to invoked hook payload'
+    else
+        fail "fleet workspace: fallback payload/output differs: $rc: $out"
+    fi
+    mv "$d/alpha-payload.saved" "$parent/alpha/.claude/hooks/fleet-guidance.md"
+    mv "$d/beta-payload.saved" "$parent/beta/.claude/hooks/fleet-guidance.md"
+
+    # A child with a .git FILE (separate git dir) still owns AGENTS.md, even
+    # without a candidate payload. It joins the sorted inventory.
+    mkdir -p "$parent/gamma"
+    git init -q --separate-git-dir="$d/gamma-git" "$parent/gamma"
+    printf '# gamma instructions\n' > "$parent/gamma/AGENTS.md"
+    rc=0
+    out=$(workspace_run "$parent" "$d/gitfile-cfg" "$d/gitfile-codex" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "${out#*$'\n'}" == *'alpha, beta, gamma' ]]; then
+        pass 'fleet workspace: .git file child joins sorted AGENTS.md inventory'
+    else
+        fail "fleet workspace: .git file child omitted: $rc: $out"
+    fi
+}
+
 # ── fleet-memory.sh: the Codex destination ─────────────────────────────────
 #
 # The same marked block, to a SECOND surface: ~/.codex/AGENTS.md, Codex's
@@ -18345,6 +18734,301 @@ test_fleet_memory_codex() {
             "fleet-memory (codex, unreadable): the Claude destination was delivered anyway"
     else
         echo "  SKIP: fleet-memory Codex unreadable-dest case (running as root; root bypasses it)"
+    fi
+}
+
+# Delivery ordering is per global file. These fixture repos have fixed commit
+# times, so stale and dirty checkouts do not depend on the test machine clock.
+test_fleet_memory_freshness() {
+    echo ""
+    echo "TEST: fleet-memory.sh (delivery ordering and atomic targets)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-freshness" repo="$TEST_DIR/fleetmem-freshness/repo"
+    local old="$TEST_DIR/fleetmem-freshness/old" cfg="$TEST_DIR/fleetmem-freshness/cfg"
+    local codex="$TEST_DIR/fleetmem-freshness/codex" out before rc
+    mkdir -p "$repo" "$old" "$cfg" "$codex"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    printf 'FIRST PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+        git -C "$repo" commit -qm 'first fixture'
+    run_freshness() {
+        CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+            FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook"
+    }
+
+    out="$(run_freshness)"; rc=$?
+    [[ $rc -eq 0 ]] && pass 'fleet freshness: fresh run exits 0' || fail "fleet freshness: fresh exit $rc"
+    printf '%s\n' "$out" > "$d/out"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000000' \
+        'fleet freshness: committed payload uses commit time'
+    assert_contains "$codex/AGENTS.md" 'fleet-guidance-delivered: 1700000000' \
+        'fleet freshness: both destinations receive the stamp'
+    cp "$codex/AGENTS.md" "$d/first.block"
+    ln "$cfg/CLAUDE.md" "$d/first.hardlink"
+
+    printf 'SECOND PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000100 +0000' GIT_COMMITTER_DATE='@1700000100 +0000' \
+        git -C "$repo" commit -qm 'second fixture'
+    out="$(run_freshness)"
+    printf '%s\n' "$out" > "$d/newer.out"
+    assert_contains "$d/newer.out" 'fleet-guidance: installed' \
+        'fleet freshness: newer payload reports installed'
+    assert_contains "$cfg/CLAUDE.md" 'SECOND PAYLOAD' 'fleet freshness: newer payload replaces old'
+    assert_not_contains "$cfg/CLAUDE.md" 'FIRST PAYLOAD' 'fleet freshness: old payload removed'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000100' \
+        'fleet freshness: newer commit time recorded'
+    assert_contains "$d/first.hardlink" 'FIRST PAYLOAD' \
+        'fleet freshness: replacement leaves old inode intact'
+
+    git init -q "$old"
+    git -C "$old" config user.name 'Fleet test'
+    git -C "$old" config user.email 'fleet@example.com'
+    printf 'FIRST PAYLOAD\n' > "$old/payload.md"
+    git -C "$old" add payload.md
+    GIT_AUTHOR_DATE='@1700000000 +0000' GIT_COMMITTER_DATE='@1700000000 +0000' \
+        git -C "$old" commit -qm 'old fixture'
+    cp "$cfg/CLAUDE.md" "$d/newer.before"
+    out="$(CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/stale.out"
+    local newer_hash
+    newer_hash="$(sha256sum "$repo/payload.md" | cut -c1-8)"
+    cmp -s "$d/newer.before" "$cfg/CLAUDE.md" && pass 'fleet freshness: stale payload leaves bytes unchanged' \
+        || fail 'fleet freshness: stale payload changed destination'
+    [[ "$out" == "fleet-guidance: current ("* ]] \
+        && pass 'fleet freshness: stale run has current verdict prefix' \
+        || fail 'fleet freshness: stale run lacks current verdict prefix'
+    assert_contains "$d/stale.out" "kept newer v$newer_hash at ~/.claude/CLAUDE.md" \
+        'fleet freshness: stale run names exact newer version'
+    assert_contains "$d/stale.out" '~/.claude/CLAUDE.md, v' \
+        'fleet freshness: distinct kept destinations are both named'
+
+    # Identical bytes committed later update only the ordering key, and a
+    # return to the earlier checkout must leave the file byte-identical.
+    printf 'SECOND PAYLOAD\n' > "$old/payload.md"
+    git -C "$old" add payload.md
+    GIT_AUTHOR_DATE='@1700000200 +0000' GIT_COMMITTER_DATE='@1700000200 +0000' \
+        git -C "$old" commit -qm 'same bytes later'
+    printf 'PERSONAL SUFFIX\n' >> "$cfg/CLAUDE.md"
+    out="$(CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/same-newer.out"
+    assert_contains "$d/same-newer.out" 'fleet-guidance: current' \
+        'fleet freshness: newer stamp on same hash reports current'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000200' \
+        'fleet freshness: same-hash stamp advances'
+    [[ "$(tail -1 "$cfg/CLAUDE.md")" == 'PERSONAL SUFFIX' ]] \
+        && pass 'fleet freshness: stamp-only update preserves block position and suffix' \
+        || fail 'fleet freshness: stamp-only update moved the personal suffix'
+    cp "$cfg/CLAUDE.md" "$d/same.before"
+    out="$(run_freshness)"
+    cmp -s "$d/same.before" "$cfg/CLAUDE.md" && pass 'fleet freshness: older same hash is byte-identical' \
+        || fail 'fleet freshness: older same hash rewrote the file'
+
+    # Missing and malformed legacy stamps sort as zero. A valid decimal stamp
+    # remains comparable even when it is too large for shell arithmetic.
+    sed -i '/fleet-guidance-delivered:/d' "$cfg/CLAUDE.md"
+    printf 'THIRD PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000300 +0000' GIT_COMMITTER_DATE='@1700000300 +0000' \
+        git -C "$repo" commit -qm 'third fixture'
+    out="$(run_freshness)"
+    assert_contains "$cfg/CLAUDE.md" 'THIRD PAYLOAD' 'fleet freshness: legacy unstamped block replaced'
+    sed -i 's/fleet-guidance-delivered: [0-9]*/fleet-guidance-delivered: invalid/' "$cfg/CLAUDE.md"
+    printf 'FOURTH PAYLOAD\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000400 +0000' GIT_COMMITTER_DATE='@1700000400 +0000' \
+        git -C "$repo" commit -qm 'fourth fixture'
+    out="$(run_freshness)"
+    assert_contains "$cfg/CLAUDE.md" 'FOURTH PAYLOAD' 'fleet freshness: malformed stamp sorts as zero'
+    sed -i 's/fleet-guidance-delivered: [0-9]*/fleet-guidance-delivered: 999999999999999999999999999999/' "$cfg/CLAUDE.md"
+    cp "$cfg/CLAUDE.md" "$d/huge.before"
+    out="$(run_freshness)"
+    cmp -s "$d/huge.before" "$cfg/CLAUDE.md" && pass 'fleet freshness: huge decimal stamp compares safely' \
+        || fail 'fleet freshness: huge decimal stamp was overwritten'
+
+    printf 'OUTSIDE GIT\n' > "$d/outside.md"
+    mkdir -p "$d/outside-cfg"
+    out="$(CLAUDE_CONFIG_DIR="$d/outside-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/outside.md" bash "$hook")"
+    assert_contains "$d/outside-cfg/CLAUDE.md" 'fleet-guidance-delivered: 0' \
+        'fleet freshness: outside-git payload installs with zero stamp'
+    cp "$codex/AGENTS.md" "$d/codex.before"
+    out="$(CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/outside.md" bash "$hook")"
+    cmp -s "$d/codex.before" "$codex/AGENTS.md" \
+        && pass 'fleet freshness: outside-git payload cannot replace stamped content' \
+        || fail 'fleet freshness: outside-git payload replaced stamped content'
+
+    printf 'DIRTY PAYLOAD\n' > "$repo/payload.md"
+    touch -d '@1700000500' "$repo/payload.md"
+    out="$(run_freshness)"
+    assert_contains "$codex/AGENTS.md" 'fleet-guidance-delivered: 1700000500' \
+        'fleet freshness: dirty payload uses fixed mtime'
+    printf 'UNTRACKED PAYLOAD\n' > "$repo/untracked.md"
+    touch -d '@1700000550' "$repo/untracked.md"
+    mkdir -p "$d/untracked-cfg"
+    out="$(CLAUDE_CONFIG_DIR="$d/untracked-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/untracked.md" bash "$hook")"
+    assert_contains "$d/untracked-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000550' \
+        'fleet freshness: untracked payload uses fixed mtime'
+
+    # One stale destination and one writable destination make an installed
+    # verdict; two distinct newer versions must both appear in a current one.
+    mkdir -p "$d/mixed-cfg" "$d/mixed-codex"
+    cp "$cfg/CLAUDE.md" "$d/mixed-cfg/CLAUDE.md"
+    cp "$d/first.block" "$d/mixed-codex/AGENTS.md"
+    cp "$d/mixed-cfg/CLAUDE.md" "$d/mixed-claude.before"
+    local fourth_hash first_hash local_hash local_bytes expected
+    fourth_hash="$(git -C "$repo" show HEAD:payload.md | sha256sum | cut -c1-8)"
+    local_hash="$(sha256sum "$old/payload.md" | cut -c1-8)"
+    local_bytes="$(wc -c < "$old/payload.md" | tr -d ' ')"
+    out="$(CLAUDE_CONFIG_DIR="$d/mixed-cfg" CODEX_HOME="$d/mixed-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/mixed.out"
+    assert_contains "$d/mixed.out" 'fleet-guidance: installed' \
+        'fleet freshness: mixed kept and written reports installed'
+    cmp -s "$d/mixed-claude.before" "$d/mixed-cfg/CLAUDE.md" \
+        && pass 'fleet freshness: mixed run retains newer Claude bytes' \
+        || fail 'fleet freshness: mixed run changed newer Claude bytes'
+    assert_contains "$d/mixed-codex/AGENTS.md" 'fleet-guidance-delivered: 1700000200' \
+        'fleet freshness: mixed run advances older Codex destination'
+    expected="fleet-guidance: installed (v$local_hash, $local_bytes bytes) -> ~/.codex/AGENTS.md; kept newer v$fourth_hash at ~/.claude/CLAUDE.md — this checkout's payload is older, pull it to refresh"
+    if [[ "$out" == "$expected" ]]; then
+        pass 'fleet freshness: mixed verdict names only local Codex and exact newer Claude'
+    else
+        fail "fleet freshness: mixed verdict names only local Codex and exact newer Claude — got '$out'"
+    fi
+
+    mkdir -p "$d/opposite-cfg" "$d/opposite-codex"
+    cp "$d/first.block" "$d/opposite-cfg/CLAUDE.md"
+    cp "$d/mixed-claude.before" "$d/opposite-codex/AGENTS.md"
+    cp "$d/opposite-codex/AGENTS.md" "$d/opposite-codex.before"
+    out="$(CLAUDE_CONFIG_DIR="$d/opposite-cfg" CODEX_HOME="$d/opposite-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    expected="fleet-guidance: installed (v$local_hash, $local_bytes bytes) -> ~/.claude/CLAUDE.md; kept newer v$fourth_hash at ~/.codex/AGENTS.md — this checkout's payload is older, pull it to refresh"
+    if [[ "$out" == "$expected" ]]; then
+        pass 'fleet freshness: opposite mixed verdict names only local Claude and newer Codex'
+    else
+        fail "fleet freshness: opposite mixed verdict names only local Claude and newer Codex — got '$out'"
+    fi
+    assert_contains "$d/opposite-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000200' \
+        'fleet freshness: opposite mixed run advances Claude'
+    cmp -s "$d/opposite-codex.before" "$d/opposite-codex/AGENTS.md" \
+        && pass 'fleet freshness: opposite mixed run keeps Codex bytes' \
+        || fail 'fleet freshness: opposite mixed run changed newer Codex bytes'
+
+    mkdir -p "$d/current-cfg" "$d/current-codex"
+    cp "$d/first.block" "$d/current-cfg/CLAUDE.md"
+    cp "$d/mixed-codex/AGENTS.md" "$d/current-codex/AGENTS.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/current-cfg" CODEX_HOME="$d/current-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    expected="fleet-guidance: installed (v$local_hash, $local_bytes bytes) -> ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md"
+    if [[ "$out" == "$expected" ]]; then
+        pass 'fleet freshness: installed verdict includes both written and current local labels'
+    else
+        fail "fleet freshness: installed verdict includes both written and current local labels — got '$out'"
+    fi
+
+    cp "$d/first.block" "$d/mixed-codex/AGENTS.md"
+    sed -i 's/fleet-guidance-delivered: [0-9]*/fleet-guidance-delivered: 1700000600/' \
+        "$d/mixed-codex/AGENTS.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/mixed-cfg" CODEX_HOME="$d/mixed-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$old/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/two-kept.out"
+    # The saved first block carries its payload's version marker.
+    first_hash="$(sed -n 's/^<!-- fleet-guidance-version: \([0-9a-f]*\) -->$/\1/p' "$d/first.block")"
+    assert_contains "$d/two-kept.out" "v$fourth_hash at ~/.claude/CLAUDE.md" \
+        'fleet freshness: first distinct kept hash is named'
+    assert_contains "$d/two-kept.out" "v$first_hash at ~/.codex/AGENTS.md" \
+        'fleet freshness: second distinct kept hash is named'
+
+    # A nonempty override is Codex's effective file; an empty one falls back.
+    mkdir -p "$d/override-cfg" "$d/override-codex"
+    printf 'AGENTS PERSONAL\n' > "$d/override-codex/AGENTS.md"
+    printf 'OVERRIDE PERSONAL\n' > "$d/override-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/override.out"
+    assert_contains "$d/override.out" '~/.codex/AGENTS.override.md' \
+        'fleet freshness: nonempty override gets canonical label'
+    assert_contains "$d/override-codex/AGENTS.override.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: nonempty override receives payload'
+    [[ "$(cat "$d/override-codex/AGENTS.md")" == 'AGENTS PERSONAL' ]] \
+        && pass 'fleet freshness: inactive AGENTS.md stays untouched' \
+        || fail 'fleet freshness: inactive AGENTS.md changed'
+    : > "$d/override-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    assert_contains "$d/override-codex/AGENTS.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: empty override falls back to AGENTS.md'
+    printf 'OVERRIDE PERSONAL\n' > "$d/override-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    ln "$d/override-codex/AGENTS.override.md" "$d/override.snapshot"
+    out="$(CLAUDE_CONFIG_DIR="$d/override-cfg" CODEX_HOME="$d/override-codex" \
+        FLEET_GUIDANCE_SKIP=1 bash "$hook")"
+    assert_not_contains "$d/override-codex/AGENTS.override.md" 'BEGIN FLEET GUIDANCE' \
+        'fleet freshness: skip clears override'
+    assert_not_contains "$d/override-codex/AGENTS.md" 'BEGIN FLEET GUIDANCE' \
+        'fleet freshness: skip clears AGENTS.md too'
+    assert_contains "$d/override.snapshot" 'DIRTY PAYLOAD' \
+        'fleet freshness: skip leaves old inode intact'
+
+    mkdir -p "$d/link-cfg" "$d/link-target"
+    printf 'CLAUDE PERSONAL\n' > "$d/link-target/memory.md"
+    chmod 600 "$d/link-target/memory.md"
+    ln -s "$d/link-target/memory.md" "$d/link-cfg/CLAUDE.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/link-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    [[ -L "$d/link-cfg/CLAUDE.md" ]] && pass 'fleet freshness: Claude symlink remains a link' \
+        || fail 'fleet freshness: Claude symlink was replaced'
+    assert_contains "$d/link-target/memory.md" 'CLAUDE PERSONAL' \
+        'fleet freshness: symlink target retains personal content'
+    assert_contains "$d/link-target/memory.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: symlink target receives payload'
+    [[ "$(stat -c %a "$d/link-target/memory.md")" == 600 ]] \
+        && pass 'fleet freshness: replacement retains mode 600' \
+        || fail 'fleet freshness: replacement lost mode 600'
+
+    mkdir -p "$d/link-codex" "$d/link-codex-cfg"
+    printf 'LINKED OVERRIDE PERSONAL\n' > "$d/link-target/override.md"
+    ln -s "$d/link-target/override.md" "$d/link-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/link-codex-cfg" CODEX_HOME="$d/link-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    [[ -L "$d/link-codex/AGENTS.override.md" ]] \
+        && pass 'fleet freshness: override symlink remains a link' \
+        || fail 'fleet freshness: override symlink was replaced'
+    assert_contains "$d/link-target/override.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: override symlink target receives payload'
+
+    mkdir -p "$d/invalid-cfg" "$d/invalid-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/invalid-cfg" CODEX_HOME="$d/invalid-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/invalid.out"
+    assert_contains "$d/invalid.out" 'DEGRADED' 'fleet freshness: invalid override reports failure'
+    assert_contains "$d/invalid-cfg/CLAUDE.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: invalid override does not prevent Claude delivery'
+    [[ ! -e "$d/invalid-codex/AGENTS.md" ]] \
+        && pass 'fleet freshness: invalid override never falls back silently' \
+        || fail 'fleet freshness: invalid override fell back to AGENTS.md'
+    mkdir -p "$d/broken-cfg" "$d/broken-codex"
+    ln -s "$d/broken-codex/missing.md" "$d/broken-codex/AGENTS.override.md"
+    out="$(CLAUDE_CONFIG_DIR="$d/broken-cfg" CODEX_HOME="$d/broken-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$repo/payload.md" bash "$hook")"
+    printf '%s\n' "$out" > "$d/broken.out"
+    assert_contains "$d/broken.out" 'DEGRADED' \
+        'fleet freshness: broken override link reports failure'
+    assert_contains "$d/broken-cfg/CLAUDE.md" 'DIRTY PAYLOAD' \
+        'fleet freshness: broken override link does not stop Claude'
+    if find "$d" -name '.fleet-guidance.*' -print -quit | grep -q .; then
+        fail 'fleet freshness: temporary files remain after hook exit'
+    else
+        pass 'fleet freshness: all temporary files cleaned after hook exit'
     fi
 }
 
@@ -19084,8 +19768,11 @@ test_check_agents_md_budget
 test_sync_codex_budget
 test_drift_report_codex_budget
 test_register_codex_hook
+test_register_codex_hook_workspace_upgrade
 test_fleet_memory_hook
 test_fleet_memory_codex
+test_fleet_memory_freshness
+test_fleet_memory_workspace
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.

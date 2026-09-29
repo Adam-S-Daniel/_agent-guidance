@@ -96,6 +96,8 @@ by `codex-rs/codex-home/src/instructions/mod.rs` and are *not* counted against
 the project-doc budget. The Codex write happens only when `~/.codex` already
 exists; the hook never creates it, so a machine without Codex gets nothing new.
 One verdict line covers both, and `FLEET_GUIDANCE_SKIP` opts out of both.
+Normal hook runs keep the freshest delivered block per destination and report
+when a checkout is older; see [ADR 0016](docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md).
 
 Codex runs that hook through a **user-level** `SessionStart` entry, registered
 once per machine with `scripts/register-codex-hook.sh` (default target
@@ -103,6 +105,19 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 `/hooks` — Codex trusts non-managed hooks per definition hash per config layer,
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
 Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
+
+**2026-09-28 — parent-directory launches:** from a multi-repo parent, the
+registered command runs the first child hook supporting `--workspace`; that
+hook selects the freshest immediate child's payload using the same delivery
+stamp and installed-block arbitration as normal runs. A second
+`fleet-workspace:` line lists the child repos whose `AGENTS.md` must be read
+before working in them, even when guidance is opted out. Codex does not load
+child instructions from the parent (nor through `--add-dir`); inlining 19
+repos' files would consume a large context budget for instructions relevant
+only while working in each repo. **Upgrade once per machine:** run
+[`scripts/register-codex-hook.sh`](scripts/register-codex-hook.sh), then
+re-trust the changed definition in `/hooks`. Only the exact previous default
+command is upgraded; hand-written variants stay untouched.
 
 The Codex Cloud cold-start path is verified with **Manual** environment setup
 and persistent `CODEX_HOME=/opt/codex`: preserve `npm ci`, then run

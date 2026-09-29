@@ -29,30 +29,34 @@ set -euo pipefail
 #
 # THE COMMAND resolves the repo's OWN synced copy of the hook at the git root:
 #
-#   bash -c 'h="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh"; [ -f "$h" ] && exec bash "$h"; exit 0'
+#   bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
 #
 # Codex runs command hooks with the session `cwd` as the working directory and
 # may be started from a SUBDIRECTORY, so the docs recommend resolving repo-local
 # paths from the git root rather than relatively — that is what the
-# `git rev-parse` does. Outside a fleet repo (or outside a git repo at all) the
-# file is simply not there and the hook exits 0 having printed nothing: a
-# silent no-op, never an error in someone else's project.
+# `git rev-parse` does. From a multi-repo parent, the first immediate child
+# with a workspace-capable hook delivers the freshest child payload. Elsewhere
+# without such a child, the hook exits silently. The old default command is
+# upgraded in place on re-registration; the changed definition needs one new
+# trust action in `/hooks`.
 #
-# APPEND, NEVER OVERWRITE — the same posture as register-bootstrap-hook.sh, for
-# the same reason. A machine's ~/.codex/hooks.json may already carry the
-# operator's own hooks; this adds a SEPARATE matcher group to
-# `hooks.SessionStart` and leaves every existing group's matcher, timeout,
-# command and ORDER exactly as it found them. Adding our command inside
-# someone else's group would silently inherit their matcher and timeout.
+# APPEND FOR NEW REGISTRATIONS — the same posture as
+# register-bootstrap-hook.sh, for the same reason. A machine's
+# ~/.codex/hooks.json may already carry the operator's own hooks; a new
+# registration adds a SEPARATE matcher group to `hooks.SessionStart`. The one
+# exception is an entry whose command is exactly our old default: upgrade
+# that command in place, preserving its group, position and other fields.
+# Adding our command inside someone else's group would silently inherit their
+# matcher and timeout.
 #
 # Refuses rather than guesses. If the file is present but not parseable as a
 # JSON object, this script writes NOTHING and exits 3.
 #
 # The safety proof is a semantic guard, not a promise. After building the new
 # text we re-parse it and require it to equal, exactly, the ORIGINAL parsed
-# document with our one group appended. If that comparison fails the file is
-# left untouched. So a successful write provably means "the old hooks plus our
-# element" — no key dropped, no value coerced, no group reordered.
+# document with our one group appended or one exact legacy command changed.
+# If that comparison fails the file is left untouched. No key is dropped, no
+# value coerced, and no group reordered.
 #
 # Formatting is NOT preserved: the file is re-serialized with 2-space indent.
 # Only a file this script actually modifies is reformatted; a machine that is
@@ -69,11 +73,12 @@ set -euo pipefail
 #
 # Prints exactly one line, beginning with one of:
 #   register-codex-hook: registered           — the file was created or appended to
+#   register-codex-hook: updated              — exact legacy command replaced in place
 #   register-codex-hook: already-registered   — no write; the hook was already named
 #   register-codex-hook: refused-unparseable  — no write; the file is not a JSON object
 #   register-codex-hook: refused-no-codex-home — no write; the parent directory is absent
 #
-# Exit: 0 on registered or already-registered, 2 on usage, 3 on an unparseable
+# Exit: 0 on registered, updated, or already-registered; 2 on usage, 3 on an unparseable
 #       file, 4 when there is no Codex home to register into.
 
 TARGET="${1:-${CODEX_HOME:-$HOME/.codex}/hooks.json}"
@@ -92,7 +97,8 @@ fi
 # SECONDS in Codex; 30 is generous for a strip-and-copy of one file and well
 # under Codex's 600s default. `statusMessage` is what the TUI shows while the
 # hook runs, so it names the thing being delivered rather than the script.
-HOOK_COMMAND="bash -c 'h=\"\$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh\"; [ -f \"\$h\" ] && exec bash \"\$h\"; exit 0'"
+LEGACY_HOOK_COMMAND="bash -c 'h=\"\$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh\"; [ -f \"\$h\" ] && exec bash \"\$h\"; exit 0'"
+HOOK_COMMAND="bash -c 'r=\"\$(git rev-parse --show-toplevel 2>/dev/null)\"; h=\"\$r/.claude/hooks/fleet-memory.sh\"; [ -n \"\$r\" ] && [ -f \"\$h\" ] && exec bash \"\$h\"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace \"\$h\" 2>/dev/null && exec bash \"\$h\" --workspace \"\$PWD\"; done; exit 0'"
 HOOK_COMMAND="${CODEX_HOOK_COMMAND:-$HOOK_COMMAND}"
 HOOK_MATCHER="${CODEX_HOOK_MATCHER:-startup|resume}"
 HOOK_TIMEOUT="${CODEX_HOOK_TIMEOUT:-30}"
@@ -108,6 +114,7 @@ matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 status   = sys.argv[5]
 needle   = sys.argv[6]
+legacy   = sys.argv[7]
 
 group = {
     "matcher": matcher,
@@ -137,24 +144,37 @@ if raw.strip():
 else:
     doc = {}
 
-# Idempotence: anything that already names the hook in a SessionStart command
-# is left completely alone — including a hand-written entry whose quoting,
-# timeout or matcher differs from ours. Re-registering over the top would give
-# the operator a SECOND definition to review and trust in the /hooks browser,
-# and two entries that both run the same delivery.
+# An exact current command anywhere means registration is done, even when an
+# old default is also present. Otherwise an exact old default is ours to
+# upgrade. A hand-written entry is the operators own definition and remains
+# byte-identical on re-registration.
 hooks = doc.get("hooks")
 existing = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
+legacy_location = None
+manual_found = False
 if isinstance(existing, list):
-    for g in existing:
+    for group_index, g in enumerate(existing):
         if not isinstance(g, dict):
             continue
         entries = g.get("hooks", [])
         if not isinstance(entries, list):
             continue
-        for e in entries:
-            if isinstance(e, dict) and needle in str(e.get("command", "")):
+        for entry_index, e in enumerate(entries):
+            if not isinstance(e, dict):
+                continue
+            existing_command = e.get("command", "")
+            if existing_command == command:
                 print("already-registered")
                 sys.exit(0)
+            if needle in str(existing_command):
+                if existing_command == legacy and legacy_location is None:
+                    legacy_location = (group_index, entry_index)
+                else:
+                    manual_found = True
+
+if legacy_location is None and manual_found:
+    print("already-registered")
+    sys.exit(0)
 
 # A "hooks" or "SessionStart" of the wrong TYPE is not something to coerce —
 # overwriting it would destroy configuration we do not understand.
@@ -167,12 +187,19 @@ if isinstance(hooks, dict) and "SessionStart" in hooks \
     sys.exit(3)
 
 want = copy.deepcopy(doc)
-want.setdefault("hooks", {}).setdefault("SessionStart", []).append(group)
+if legacy_location is None:
+    want.setdefault("hooks", {}).setdefault("SessionStart", []).append(group)
+    outcome = "registered"
+else:
+    group_index, entry_index = legacy_location
+    want["hooks"]["SessionStart"][group_index]["hooks"][entry_index]["command"] = command
+    outcome = "updated"
 
 candidate = json.dumps(want, indent=2) + "\n"
 
 # The guard. Re-parsing the bytes we are about to write must reproduce exactly
-# "the original document plus our group" — nothing dropped, nothing coerced.
+# "the original document plus our group" or "the original with one exact
+# legacy command changed" — nothing dropped, nothing coerced.
 # If it does not, write nothing.
 if json.loads(candidate) != want:
     print("refused-unparseable")
@@ -180,8 +207,8 @@ if json.loads(candidate) != want:
 
 with open(target, "w", encoding="utf-8") as fh:
     fh.write(candidate)
-print("registered")
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_STATUS" "$HOOK_NEEDLE") || {
+print(outcome)
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_STATUS" "$HOOK_NEEDLE" "$LEGACY_HOOK_COMMAND") || {
     status=$?
     if [[ "$result" == "refused-unparseable" ]]; then
         echo "register-codex-hook: refused-unparseable — $TARGET is not a JSON object. Nothing written; fix or move that file and re-run."
@@ -197,6 +224,9 @@ case "$result" in
         ;;
     registered)
         echo "register-codex-hook: registered — added a SessionStart hook to $TARGET. Trust it once in the Codex TUI with \`/hooks\` before it will run (or pass --dangerously-bypass-hook-trust for a one-off \`codex exec\`)."
+        ;;
+    updated)
+        echo "register-codex-hook: updated — replaced the legacy SessionStart command in $TARGET. Re-trust the changed definition once in the Codex TUI with \`/hooks\`."
         ;;
     *)
         echo "register-codex-hook: $result"

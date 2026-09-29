@@ -91,8 +91,9 @@ repo's own additions in the process.
    and covers every repo opened on it — which is also the right shape for a
    hook whose write is global. The command resolves the repo's own synced copy
    at the git root (`git rev-parse --show-toplevel`, as the Codex docs
-   recommend, because a session may start in a subdirectory) and exits 0
-   silently outside a fleet repo.
+   recommend, because a session may start in a subdirectory). Parent-directory
+   discovery was added on 2026-09-28, below; without a local fleet hook or a
+   capable immediate child hook, it still exits 0 silently.
 
 ## Consequences
 
@@ -127,3 +128,32 @@ repo's own additions in the process.
   `AGENTS.override.md`, which takes precedence over `AGENTS.md` at both the
   project and the global layer and which nothing here writes, reads or checks
   — a repo (or a developer) that has one is outside every gate this ADR adds.
+
+## Addendum — parent-directory launches (2026-09-28)
+
+Measured with codex-cli 0.158.0 in WSL and an empty `CODEX_HOME`: starting in
+a multi-repo parent delivered NOTHING. There was no git root for the registered
+command to resolve, and no child repo's own `AGENTS.md` was loaded — Codex
+walks from the launch directory's git root down, never into its children;
+`--add-dir` does not load them either.
+
+The registered command now falls back to the first immediate child hook that
+supports `--workspace`. That hook chooses the freshest child payload by the
+existing delivery stamp, with sorted path order breaking ties, then uses the
+same normal delivery and installed-block arbitration. After the verdict,
+`fleet-workspace:` lists the child repos whose own `AGENTS.md` must be read
+before working in them. That list survives opt-out and delivery failure: it
+describes instructions the session has not loaded. We list rather than inline
+them because 19 repos' files would consume a large context budget, and each
+file matters only when working in its repo.
+
+From a parent directory, the registered command runs the hook script of the
+first immediate child supporting `--workspace`, so an untrusted child checkout
+can run its script just as an untrusted repo can through the existing git-root
+path. This widens that trust boundary to the launch directory's immediate
+children: do not launch Codex from a parent holding checkouts you do not trust.
+
+Run [`scripts/register-codex-hook.sh`](../../scripts/register-codex-hook.sh)
+once per machine, then re-trust the changed definition in `/hooks`. The exact
+previous default command is replaced in place, preserving its group, order
+and metadata; hand-written variants are the operator's and stay untouched.
