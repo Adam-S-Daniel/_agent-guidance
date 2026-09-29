@@ -55,12 +55,6 @@
   status: gap
   bytes: 274
 
-- id: sessions-get-cut-off
-  heading: Sessions get cut off
-  file: agents-md/base.md
-  status: gap
-  bytes: 537
-
 - id: security
   heading: Security
   file: agents-md/base.md
