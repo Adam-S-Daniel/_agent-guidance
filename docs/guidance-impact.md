@@ -50,15 +50,9 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
-## 2026-09-28 — windows-with-wsl — edit
-- Motivation: measured 2026-09-28 by the owner: from PowerShell a bare `bash` resolves to WSL's launcher `C:\Windows\System32\bash.exe`, so a script meant for the Windows home (adam-agentskills' `setup.sh --owner-machine`) silently ran in WSL.
-- Change: the Windows-with-WSL bullet now says to invoke Git Bash by full path (`C:\Program Files\Git\bin\bash.exe`); elevation sentence tightened and the ADR reference dropped to stay inside the 28 KiB full-build budget (12 bytes of headroom).
-- Eval: exempt (skipped row)
-- Outcome: pending — opened 2026-09-28 (PR #203)
-
 ## 2026-09-28 — workstation-layout — edit
 - Motivation: One item was missing and one did not belong.
-- Change: Added WSL paths. Removed misplaced prompt-elevation note.
+- Change: Added WSL paths. Removed misplaced prompt-elevation note. Dropped the `$env:COMPUTERNAME` hint. A Git Bash full-path note drafted for this section was left out because adam-agentskills' README already carries it (adam-agentskills PR #36).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28 (PR #203)
 

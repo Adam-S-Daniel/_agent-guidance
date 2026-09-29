@@ -53,7 +53,7 @@
   heading: Workstation layout
   file: agents-md/base.md
   status: gap
-  bytes: 476
+  bytes: 274
 
 - id: sessions-get-cut-off
   heading: Sessions get cut off

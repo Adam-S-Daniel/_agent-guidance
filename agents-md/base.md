@@ -62,14 +62,12 @@ new domain or subjective criteria.
 
 ## Workstation layout
 
-Repo locations are host-specific; on Windows check `$env:COMPUTERNAME`.
-
-- **The owner's Windows laptop**: clones live under
-  `D:\repos\<github-owner-or-org>\<repo>` (e.g.
-  `D:\repos\adam-s-daniel\wsl-automation`), never `C:\Users\<user>\...`.
-- **Any Windows host with WSL**: PowerShell from WSL is unelevated for an
-  agent (`windows-elevation-from-wsl`). Bare `bash` is WSL's, so scripts
-  run there: `& 'C:\Program Files\Git\bin\bash.exe' x.sh`.
+- Clones live under:
+  - **Windows**: 
+    `D:\repos\<github-owner-or-org>\<repo>` (e.g.
+    `D:\repos\adam-s-daniel\_agent_guidance`), never `C:\Users\<user>\...`.
+  - **WSL**: clones live under
+    `~/repos/<repo>` (e.g. `~/repos/_agent_guidance`)
 
 ## Sessions get cut off
 
