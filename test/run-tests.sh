@@ -2862,8 +2862,37 @@ case "$1" in
                 if [[ " ${MOCK_PR_HEAD_GARBLED:-} " == *" $repo_slug "* ]]; then
                     head_oid="not-a-sha"
                 fi
+                # The sweep's UNKNOWN retry (run 36447408427, 2026-09-28) reads
+                # the SAME PR more than once, so the mock needs to answer
+                # differently across calls. MOCK_PR_VIEW_COUNT_DIR, when set,
+                # gets one file per repo+PR counting exactly how many times
+                # this branch was asked — what a retry test proves the read
+                # bound against, rather than trusting the script's own log
+                # line. MOCK_PR_UNKNOWN_ONCE names repos whose FIRST view call
+                # answers mergeable=UNKNOWN and mergeStateStatus=UNKNOWN
+                # regardless of the fixture, then answers the fixture's own
+                # values from the second call on; MOCK_PR_UNKNOWN_ALWAYS names
+                # repos that answer UNKNOWN on every call, forcing the bound.
+                view_count=0
+                if [[ -n "${MOCK_PR_VIEW_COUNT_DIR:-}" ]]; then
+                    mkdir -p "$MOCK_PR_VIEW_COUNT_DIR"
+                    count_file="$MOCK_PR_VIEW_COUNT_DIR/${repo_slug}-${pr_number}.count"
+                    view_count=$(cat "$count_file" 2>/dev/null || echo 0)
+                    view_count=$((view_count + 1))
+                    echo "$view_count" > "$count_file"
+                fi
+                mergeable_override="" mergestate_override=""
+                if [[ " ${MOCK_PR_UNKNOWN_ALWAYS:-} " == *" $repo_slug "* ]] \
+                   || { [[ " ${MOCK_PR_UNKNOWN_ONCE:-} " == *" $repo_slug "* ]] \
+                        && [[ "$view_count" -le 1 ]]; }; then
+                    mergeable_override="UNKNOWN"
+                    mergestate_override="UNKNOWN"
+                fi
                 json=$(jq --argjson files "${files_json:-[]}" --arg oid "$head_oid" \
-                    '.files = $files | .headRefOid = $oid' <<< "$pr_obj")
+                    --arg mo "$mergeable_override" --arg ms "$mergestate_override" \
+                    '.files = $files | .headRefOid = $oid
+                     | (if $mo != "" then .mergeable = $mo else . end)
+                     | (if $ms != "" then .mergeStateStatus = $ms else . end)' <<< "$pr_obj")
                 if [[ -n "$jq_filter" ]]; then
                     echo "$json" | jq -r "$jq_filter"
                 else
@@ -2912,15 +2941,20 @@ case "$1" in
                 auto=""
                 for a in "$@"; do [[ "$a" == "--auto" ]] && auto=1; done
                 if [[ -n "$auto" ]]; then
-                    # --auto ARMS native auto-merge; it never merges anything
-                    # itself, which is why nothing below runs for it.
-                    # MOCK_AUTO_MERGE_FAILS reproduces what this fleet actually
-                    # does: with no required checks there is nothing to hold the
-                    # merge for, and GitHub refuses to arm at all.
-                    if [[ -n "${MOCK_AUTO_MERGE_FAILS:-}" ]]; then
-                        echo "failed to enable auto-merge: Pull request is in clean status" >&2
-                        exit 1
-                    fi
+                    # --auto does not only ARM native auto-merge: gh arms it
+                    # only when the PR is not already mergeable
+                    # (isImmediatelyMergeable, cli/cli
+                    # pkg/cmd/pr/merge/merge.go) — otherwise it merges the PR
+                    # on the spot, which is how nine bump PRs landed seconds
+                    # after opening on a fleet with nothing required (#141).
+                    # The one caller left using --auto is sync.sh's
+                    # protected-branch fallback, which stands in for a direct
+                    # push nothing gates either, so this mock's unconditional
+                    # success below is the right stand-in for it. Nothing in
+                    # this suite asks the mock to simulate a refusal to arm
+                    # any more, since the call that used to exercise that
+                    # path (bump-consumer-locks.sh's propose-pass attempt) no
+                    # longer exists.
                     exit 0
                 fi
                 pr_number="$1"
@@ -7647,7 +7681,6 @@ run_bump() {   # <output file> [script args...]
     MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
-    MOCK_AUTO_MERGE_FAILS="${BUMP_AUTO_MERGE_FAILS_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
@@ -7658,6 +7691,11 @@ run_bump() {   # <output file> [script args...]
     MOCK_REPO_LIST_STDERR_NOTICE="${BUMP_REPO_LIST_NOTICE_FOR_RUN:-}" \
     MOCK_PR_LIST_STDERR_NOTICE="${BUMP_PR_LIST_NOTICE_FOR_RUN:-}" \
     MOCK_GH_NO_MATCH_FLAG="${BUMP_NO_MATCH_FLAG_FOR_RUN:-}" \
+    MOCK_PR_UNKNOWN_ONCE="${BUMP_UNKNOWN_ONCE_FOR_RUN:-}" \
+    MOCK_PR_UNKNOWN_ALWAYS="${BUMP_UNKNOWN_ALWAYS_FOR_RUN:-}" \
+    MOCK_PR_VIEW_COUNT_DIR="${BUMP_VIEW_COUNT_DIR_FOR_RUN:-}" \
+    BUMP_UNKNOWN_RETRIES="${BUMP_UNKNOWN_RETRIES_FOR_RUN:-}" \
+    BUMP_UNKNOWN_RETRY_DELAY="${BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
     BUMP_REGISTRY="bumporg/agentskills" \
     BUMP_CHECKOUTS="${BUMP_CHECKOUTS_FOR_RUN:-$BUMP_CHECKOUTS_ARG}" \
@@ -8117,7 +8155,12 @@ test_bump_consumer_locks() {
     assert_contains "$body" "Generated, never hand-edited" "PR body: says the change is generator output"
     assert_contains "$body" "This lock has no federated sources." "PR body: says so when there is no federated half"
     assert_contains "$body" "This pull request merges itself" "PR body: discloses that no reviewer has to click merge"
-    assert_contains "$log" "native auto-merge armed" "auto-merge: requested on every PR this run opened"
+    # Regression guard for #141: the propose pass must not itself merge the PR
+    # it just opened. gh merges an already-mergeable PR on the spot rather
+    # than arming when nothing is required, which on this fleet means before
+    # any check runs — measured on nine bump PRs opened this way.
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged --auto" "auto-merge: the propose pass makes no merge call for the PR it just opened (#141)"
+    assert_not_contains "$log" "native auto-merge" "auto-merge: no native auto-merge attempt is logged for a PR this run opened (#141)"
     assert_contains "$body" "which skills.lock still pins" "PR body: quotes the consumer's own lock path, not this run's temp copy"
     assert_not_contains "$body" "$TEST_DIR" "PR body: no path from the machine that ran the bump"
     local fed_body="$BUMP_PR_BODY_DIR/bumporg_repo-federated.body"
@@ -11221,10 +11264,9 @@ run_sweep() {   # <output file> [script args...]
     BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
     BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
     BUMP_MERGE_FAIL_FOR_RUN="bumporg_repo-fail-merge" \
-    BUMP_AUTO_MERGE_FAILS_FOR_RUN=1 \
         run_bump "$@"
     unset BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN \
-          BUMP_MERGE_FAIL_FOR_RUN BUMP_AUTO_MERGE_FAILS_FOR_RUN
+          BUMP_MERGE_FAIL_FOR_RUN
 }
 
 # ── Test 8i1: --dry-run reports every merge it would make and makes none ──
@@ -11413,17 +11455,24 @@ test_bump_sweep() {
     # ── The summary carries the merges alongside the existing counts.
     assert_contains "$log" "2 merged, 1 proposed" "sweep: merges are counted in the summary line"
 
-    # ── Native auto-merge is attempted on the new PR and its refusal is not a
-    # failure. MOCK_AUTO_MERGE_FAILS reproduces this fleet's measured
-    # behaviour: with no required checks there is nothing to hold the merge
-    # for, and GitHub refuses to arm at all.
-    # Needles that would START with a dash are prefixed with the log's own
-    # first word: `grep -F -- "$needle"` is not what assert_contains runs, so a
-    # leading `--` is parsed by grep as an option, the grep errors, and
-    # assert_not_contains in particular would then PASS on anything.
-    assert_contains "$BUMP_PR_LOG" "pr-merged --auto --merge --repo bumporg/repo-aa-stale" "auto-merge: attempted on the PR this run opened"
-    assert_contains "$log" "native auto-merge did not arm" "auto-merge: its refusal is reported, not hidden"
-    assert_not_contains "$log" "2 failed ===" "auto-merge: a refusal to arm is not counted as a failure"
+    # ── Regression guard for #141: the propose pass makes no merge call of
+    # any kind for the PR it just opened. gh merges an already-mergeable PR
+    # on the spot rather than arming when nothing is required, which on this
+    # fleet means before any check runs — measured on nine bump PRs opened
+    # this way. Only the sweep above may merge anything, and every merge it
+    # makes is pinned to the commit its gate read.
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged --auto" "auto-merge: the propose pass makes no merge call for the PR it just opened (#141)"
+    # Counted, never `grep -q` in a pipe: under `pipefail` an early-exiting
+    # reader, or a first grep that matches nothing, makes the condition false
+    # and the else branch PASS on a run that merged nothing at all.
+    local merged_total merged_pinned
+    merged_total=$(grep -cF -- "pr-merged" "$BUMP_PR_LOG" || true)
+    merged_pinned=$(grep -F -- "pr-merged" "$BUMP_PR_LOG" | grep -cF -- "--match-head-commit" || true)
+    if [[ "${merged_total:-0}" -gt 0 && "$merged_total" == "$merged_pinned" ]]; then
+        pass "sweep: every merge in this run is pinned with --match-head-commit — only the sweep merged anything (#141)"
+    else
+        fail "sweep: every merge in this run is pinned with --match-head-commit — only the sweep merged anything (#141) — ${merged_pinned:-0} of ${merged_total:-0} pr-merged lines pinned"
+    fi
 
     rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
 }
@@ -11488,6 +11537,108 @@ test_bump_sweep_head_match() {
     assert_contains "$log" "this gh has no 'gh pr merge --match-head-commit'" "head match: an older gh is reported, not assumed"
     assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "head match: an older gh still merges — the guard is hardening, not a dependency"
     assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
+}
+
+# ── Test 8i3b: mergeable=UNKNOWN is retried, bounded, before the sweep skips
+#
+# GitHub computes `mergeable` (and `mergeStateStatus`) lazily and answers
+# UNKNOWN on the first read after a while — run 36447408427 (2026-09-28)
+# skipped all nine bump PRs that night with "GitHub reports mergeable=UNKNOWN",
+# though every one was green, lock-only and merged cleanly by hand minutes
+# later. Three fixtures, three properties:
+#   * a PR that clears UNKNOWN on its second read is merged;
+#   * a PR that never clears it is skipped once the bound is spent, and the
+#     reason names how many reads were tried;
+#   * a REAL refusal (CONFLICTING) on the first read is not retried at all —
+#     the retry is keyed on the two literal UNKNOWN strings, nothing else.
+# The view-call counter (MOCK_PR_VIEW_COUNT_DIR) proves the read COUNT
+# directly rather than trusting the log line alone.
+setup_unknown_retry_repos() {
+    local branch="skills-lock-bump/update"
+    local bot='"author":{"login":"agents-md-sync[bot]"}'
+    local clean='"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":""'
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
+    mkdir -p "$SWEEP_BARE" "$SWEEP_PR_DIR"
+
+    # Resolves on the second read: the mock answers UNKNOWN once, then this
+    # fixture's own (clean, all-green) values.
+    make_sweep_repo repo-unknown-once "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":201,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    # Never resolves — every read comes back UNKNOWN, forcing the bound.
+    make_sweep_repo repo-unknown-always "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":202,\"headRefName\":\"$branch\",$bot,$clean,\"statusCheckRollup\":[]}"
+
+    # Negative control: a real conflict on the FIRST read must not be retried.
+    make_sweep_repo repo-unknown-conflict "$BUMP_REF_CONTENT" "$branch" none \
+        "{\"number\":203,\"headRefName\":\"$branch\",$bot,\"isDraft\":false,\"mergeable\":\"CONFLICTING\",\"mergeStateStatus\":\"DIRTY\",\"reviewDecision\":\"\",\"statusCheckRollup\":[]}"
+}
+
+test_bump_sweep_unknown_retry() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (sweep retries mergeable=UNKNOWN) ==="
+
+    setup_unknown_retry_repos
+    local view_count_dir="$TEST_DIR/unknown-view-counts"
+    rm -rf "$view_count_dir"
+
+    local once_tip conflict_before
+    once_tip=$(sweep_bump_branch_sha repo-unknown-once)
+    conflict_before=$(sweep_main_sha repo-unknown-conflict)
+
+    BUMP_UNKNOWN_ONCE_FOR_RUN="bumporg_repo-unknown-once" \
+    BUMP_UNKNOWN_ALWAYS_FOR_RUN="bumporg_repo-unknown-always" \
+    BUMP_VIEW_COUNT_DIR_FOR_RUN="$view_count_dir" \
+    BUMP_UNKNOWN_RETRIES_FOR_RUN=3 \
+    BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN=0 \
+        run_sweep "$TEST_DIR/sweep-unknown.txt"
+    unset BUMP_UNKNOWN_ONCE_FOR_RUN BUMP_UNKNOWN_ALWAYS_FOR_RUN \
+          BUMP_VIEW_COUNT_DIR_FOR_RUN BUMP_UNKNOWN_RETRIES_FOR_RUN \
+          BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN
+    local log="$TEST_DIR/sweep-unknown.txt"
+
+    # ── 1. UNKNOWN once, then MERGEABLE/CLEAN → merged.
+    assert_contains "$log" "bumporg/repo-unknown-once#201: MERGED with a merge commit" \
+        "unknown retry: a PR that clears UNKNOWN on the second read is merged"
+    if [[ "$(sweep_main_sha repo-unknown-once)" == "$once_tip" ]]; then
+        pass "unknown retry: the merged repo now carries the re-pinned lock"
+    else
+        fail "unknown retry: the merged repo now carries the re-pinned lock"
+    fi
+    if [[ "$(cat "$view_count_dir/bumporg_repo-unknown-once-201.count" 2>/dev/null)" == "2" ]]; then
+        pass "unknown retry: exactly two reads were made before it resolved"
+    else
+        fail "unknown retry: exactly two reads were made before it resolved — got $(cat "$view_count_dir/bumporg_repo-unknown-once-201.count" 2>/dev/null || echo none)"
+    fi
+
+    # ── 2. Never resolves → skipped, reason names the attempt count, and
+    # exactly the configured number of reads happened.
+    assert_contains "$log" "bumporg/repo-unknown-always#202: not merged — GitHub reports mergeable=UNKNOWN after 3 read(s)" \
+        "unknown retry: a PR still UNKNOWN after every attempt is skipped, naming the attempt count"
+    if [[ "$(cat "$view_count_dir/bumporg_repo-unknown-always-202.count" 2>/dev/null)" == "3" ]]; then
+        pass "unknown retry: exactly the configured number of reads (3) happened"
+    else
+        fail "unknown retry: exactly the configured number of reads (3) happened — got $(cat "$view_count_dir/bumporg_repo-unknown-always-202.count" 2>/dev/null || echo none)"
+    fi
+
+    # ── 3. CONFLICTING on the first read → skipped with no re-read at all.
+    assert_contains "$log" "bumporg/repo-unknown-conflict#203: not merged — GitHub reports mergeable=CONFLICTING" \
+        "unknown retry: a real conflict is still an immediate skip"
+    assert_not_contains "$log" "GitHub reports mergeable=CONFLICTING after" \
+        "unknown retry: a real conflict's reason never grows an attempt count"
+    if [[ "$(cat "$view_count_dir/bumporg_repo-unknown-conflict-203.count" 2>/dev/null)" == "1" ]]; then
+        pass "unknown retry: a non-UNKNOWN skip reads the PR exactly once"
+    else
+        fail "unknown retry: a non-UNKNOWN skip reads the PR exactly once — got $(cat "$view_count_dir/bumporg_repo-unknown-conflict-203.count" 2>/dev/null || echo none)"
+    fi
+    if [[ "$(sweep_main_sha repo-unknown-conflict)" == "$conflict_before" ]]; then
+        pass "unknown retry: the conflicted repo's default branch is untouched"
+    else
+        fail "unknown retry: the conflicted repo's default branch is untouched"
+    fi
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR" "$view_count_dir"
 }
 
 # ── Test 8i4: an unreadable pull request reports WHY ─────────────────────
@@ -12454,7 +12605,7 @@ test_bump_workflow() {
     fi
 
     local registry_depth
-    registry_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$steps_file")
+    registry_depth=$(awk '$2 == "Adam-S-Daniel/adam-agentskills" { print $3 }' "$steps_file")
     if [[ "$registry_depth" == "0" ]]; then
         pass "bump workflow: the registry is checked out at full depth"
     else
@@ -12499,14 +12650,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: Adam-S-Daniel/agentskills
+          repository: Adam-S-Daniel/adam-agentskills
           fetch-depth: 0
   bump:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          repository: Adam-S-Daniel/agentskills
+          repository: Adam-S-Daniel/adam-agentskills
 YAML
     local decoy_steps="$TEST_DIR/two-job-bump-steps.txt"
     if ! workflow_steps "$decoy_wf" bump > "$decoy_steps" 2>/dev/null; then
@@ -12520,7 +12671,7 @@ YAML
             fi
         done < "$decoy_steps"
         local decoy_depth
-        decoy_depth=$(awk '$2 == "Adam-S-Daniel/agentskills" { print $3 }' "$decoy_steps")
+        decoy_depth=$(awk '$2 == "Adam-S-Daniel/adam-agentskills" { print $3 }' "$decoy_steps")
         if [[ -z "$decoy_unpinned" && "$decoy_depth" != "0" ]]; then
             pass "bump workflow: N6 the pin and fetch-depth assertions scoped to 'bump' do not read an earlier job's steps"
         else
@@ -15411,12 +15562,13 @@ untouched body
 #
 # THE CLAIM THIS PINS. ci.yml carries a `workflow_dispatch` trigger and a long
 # comment arguing the addition is safe. That argument rests on two properties,
-# and only one of them lives in another repo: that this workflow publishes no
-# REQUIRED status context is a repo-settings fact (`required_status_checks:
-# []`), asserted there; that this file has NO `concurrency:` block, at workflow
-# or job level, is local and is the half a future tidy-up adds without reading
-# why it was missing. With both a dispatch and a concurrency group, two events
-# on one head sha can leave a cancelled run behind — the trap in AGENTS.md.
+# and only one of them lives in another repo: its `test` context is meant to
+# be required per cms-platform#437, which is exactly why the local
+# no-concurrency half is load-bearing; that this file has NO `concurrency:`
+# block, at workflow or job level, is local and is the half a future tidy-up
+# adds without reading why it was missing. With both a dispatch and a
+# concurrency group, two events on one head sha can leave a cancelled run
+# behind — the trap in AGENTS.md.
 #
 # Locked here because this repo's own convention says so and the precedent sits
 # a few hundred lines up: test_bump_workflow asserts skills-lock-bump.yml's
@@ -16965,7 +17117,11 @@ GHSTUB
     chmod +x "$TEST_DIR/bin-sweepfail/gh"
 
     local out="$TEST_DIR/sweep-out.txt" exit_code=0
-    PATH="$TEST_DIR/bin-sweepfail:$PATH" bash "$body" > "$out" 2>&1 || exit_code=$?
+    # SELF_WORKFLOW: the step's own env now sets it from `github.workflow`;
+    # without it here the new empty-SELF_WORKFLOW guard fires first and this
+    # test would be asserting about THAT message instead of the listing
+    # failure it exists to cover.
+    PATH="$TEST_DIR/bin-sweepfail:$PATH" SELF_WORKFLOW="Dependabot auto-merge" bash "$body" > "$out" 2>&1 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         pass "sweep: a failed PR listing exits non-zero"
@@ -16998,7 +17154,7 @@ GHSTUB
     chmod +x "$TEST_DIR/bin-sweepempty/gh"
 
     local ctl="$TEST_DIR/sweep-control.txt" ctl_code=0
-    PATH="$TEST_DIR/bin-sweepempty:$PATH" bash "$body" > "$ctl" 2>&1 || ctl_code=$?
+    PATH="$TEST_DIR/bin-sweepempty:$PATH" SELF_WORKFLOW="Dependabot auto-merge" bash "$body" > "$ctl" 2>&1 || ctl_code=$?
 
     if [[ $ctl_code -eq 0 ]]; then
         pass "sweep (control): a genuinely empty listing still exits 0"
@@ -17011,6 +17167,294 @@ GHSTUB
     # which would make a genuinely empty list into a bogus PR "number".
     assert_not_contains "$ctl" "Open Dependabot PR(s):" \
         "sweep (control): an empty listing did not become one nameless PR"
+}
+
+# ── Test: dependabot-auto-merge.yml no longer merges before CI reports ────
+#
+# cms-platform#437: `gh pr merge --auto` does not "no-op" when nothing is
+# required — gh treats CLEAN/HAS_HOOKS/UNSTABLE as already mergeable and
+# merges immediately, `--auto` or not. The fix has two halves, and both are
+# asserted here rather than trusted from the diff: job `auto-merge` no longer
+# carries a merge step at all (structural), and job `sweep`'s merge is gated
+# on a check from OUTSIDE this workflow and pinned to the head that gate
+# judged (behavioural — extracted from the real YAML and RUN, not read as
+# text, for the same reason test_dependabot_sweep_list_failure above is run
+# rather than grepped).
+test_dependabot_sweep_merge_gating() {
+    echo ""
+    echo "=== Test: dependabot-auto-merge.yml (no premature merge; sweep gates on outside CI, pinned to head) ==="
+
+    if ! command -v node >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1; then
+        fail "auto-merge sweep gating: bash, jq and node must all be available — refusing to skip"
+        return
+    fi
+
+    local wf="$REPO_ROOT/.github/workflows/dependabot-auto-merge.yml"
+
+    # ── Structural: job `auto-merge` carries no merge step of its own ─────
+    local step_names="$TEST_DIR/auto-merge-gating-step-names.txt"
+    local step_names_err="$TEST_DIR/auto-merge-gating-step-names.err"
+    if ! workflow_step_names "$wf" "auto-merge" > "$step_names" 2> "$step_names_err"; then
+        fail "auto-merge: could not read job auto-merge's step names — $(head -1 "$step_names_err")"
+    else
+        local expected joined
+        expected=$'Checkout\nFetch base ref\nGet Dependabot metadata\nVerify only manifest paths changed\nDisable auto-merge (path check failed)'
+        joined=$(cat "$step_names")
+        if [[ "$joined" == "$expected" ]]; then
+            pass "auto-merge: job auto-merge's steps are exactly Checkout, Fetch base ref, Get Dependabot metadata, Verify only manifest paths changed, Disable auto-merge (path check failed)"
+        else
+            fail "auto-merge: job auto-merge's steps should be exactly [Checkout, Fetch base ref, Get Dependabot metadata, Verify only manifest paths changed, Disable auto-merge (path check failed)], got [$(tr '\n' ',' < "$step_names")] — per cms-platform#437, gh merges on the spot when nothing is required, so this job must not attempt a merge of its own"
+        fi
+    fi
+
+    # ── Behavioural: extract job sweep's "Sweep open Dependabot PRs" run body
+    local body="$TEST_DIR/auto-merge-gating-sweep-body.sh"
+    if ! workflow_run_body "$wf" 'app/dependabot' > "$body" 2>"$TEST_DIR/auto-merge-gating-extract.err"; then
+        fail "auto-merge sweep gating: could not extract the sweep step — $(cat "$TEST_DIR/auto-merge-gating-extract.err")"
+        return
+    fi
+    if grep -qF '${{' "$body"; then
+        fail "auto-merge sweep gating: the step now interpolates \${{ }} — extract-and-run no longer models it"
+        return
+    fi
+    if ! bash -n "$body" 2>"$TEST_DIR/auto-merge-gating-syntax.err"; then
+        fail "auto-merge sweep gating: the extracted step is not valid bash — $(head -1 "$TEST_DIR/auto-merge-gating-syntax.err")"
+        return
+    fi
+
+    local binhome="$TEST_DIR/auto-merge-gating-bin"
+    mkdir -p "$binhome"
+    cat > "$binhome/git" <<'GITSTUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+    fetch) exit 0 ;;
+    diff) echo ".github/workflows/ci.yml"; exit 0 ;;
+    *)
+        echo "mock git: unexpected call: $*" >&2
+        exit 1
+        ;;
+esac
+GITSTUB
+    chmod +x "$binhome/git"
+
+    # `gh` stub: logs every call, serves `pr list`/`pr view` from FIXTURES,
+    # fails `pr merge` only when its LAST arg (the PR number — kept last by
+    # the workflow so `--match-head-commit <sha>` never gets mistaken for it)
+    # is listed in MERGE_FAILS, and answers `api` the way a real 404 does —
+    # body on stdout, exit 1 — per AGENTS.md's "gh api ... --jq on an HTTP
+    # error" trap, so a caller doing `x=$(gh api ...) || x=""` is exercised
+    # honestly. Anything unmodeled exits 90, loud rather than a silent 0/1
+    # that could be mistaken for a modeled outcome.
+    cat > "$binhome/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FIXTURES/calls.log"
+case "${1:-}" in
+    pr)
+        case "${2:-}" in
+            list)
+                cat "$FIXTURES/pr-numbers.txt"
+                exit 0
+                ;;
+            view)
+                num="$3"
+                counter="$FIXTURES/view-count-${num}"
+                n=0
+                [[ -f "$counter" ]] && n=$(cat "$counter")
+                n=$((n + 1))
+                echo "$n" > "$counter"
+                if [[ "$n" -gt 1 && -f "$FIXTURES/pr-${num}.after.json" ]]; then
+                    cat "$FIXTURES/pr-${num}.after.json"
+                else
+                    cat "$FIXTURES/pr-${num}.json"
+                fi
+                exit 0
+                ;;
+            merge)
+                last="${*: -1}"
+                case " ${MERGE_FAILS:-} " in
+                    *" ${last} "*)
+                        echo "mock gh: merge refused for #${last}" >&2
+                        exit 1
+                        ;;
+                    *) exit 0 ;;
+                esac
+                ;;
+            update-branch)
+                exit 0
+                ;;
+            *)
+                echo "mock gh: unexpected pr subcommand: $*" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    api)
+        echo '{"message":"Not Found"}'
+        exit 1
+        ;;
+    *)
+        exit 90
+        ;;
+esac
+GHSTUB
+    chmod +x "$binhome/gh"
+
+    # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json>
+    write_pr() {
+        local file="$1" num="$2" head="$3" mergeable="$4" mstate="$5" rollup="$6"
+        printf '{"number":%s,"baseRefName":"main","headRefOid":"%s","mergeable":"%s","mergeStateStatus":"%s","statusCheckRollup":%s}\n' \
+            "$num" "$head" "$mergeable" "$mstate" "$rollup" > "$file"
+    }
+
+    # run_case <fixtures-dir> <merge-fails> <self-workflow> <out-file> — runs
+    # the extracted step against that fixture set and prints the exit code.
+    run_case() {
+        local fx="$1" mf="$2" sw="$3" out="$4" rc=0
+        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" \
+            GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
+            bash "$body" > "$out" 2>&1 || rc=$?
+        echo "$rc"
+    }
+
+    local HEAD_X="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    local HEAD_Y="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    local SELF="Dependabot auto-merge"
+
+    # (a) CI `test` SUCCESS + this workflow's own `auto-merge` SUCCESS — the
+    #     merge fires exactly once, pinned to the head these checks judged.
+    local fx_a="$TEST_DIR/auto-merge-gating-case-a"
+    mkdir -p "$fx_a"
+    printf '900\n' > "$fx_a/pr-numbers.txt"
+    write_pr "$fx_a/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_a="$TEST_DIR/auto-merge-gating-out-a.txt" rc_a
+    rc_a=$(run_case "$fx_a" "" "$SELF" "$out_a")
+    if [[ "$rc_a" -eq 0 ]]; then
+        pass "sweep gating (a): CI green + own-workflow green exits 0"
+    else
+        fail "sweep gating (a): CI green + own-workflow green exits 0 — got $rc_a: $(cat "$out_a")"
+    fi
+    local merges_a
+    merges_a=$(grep -c '^pr merge ' "$fx_a/calls.log" 2>/dev/null || true)
+    if [[ "$merges_a" == "1" ]]; then
+        pass "sweep gating (a): exactly one pr merge call"
+    else
+        fail "sweep gating (a): exactly one pr merge call — got ${merges_a:-0}: $(cat "$fx_a/calls.log" 2>/dev/null)"
+    fi
+    assert_contains "$fx_a/calls.log" "--match-head-commit $HEAD_X" \
+        "sweep gating (a): the merge is pinned with --match-head-commit <head-sha>"
+    if grep -qE -- "--match-head-commit $HEAD_X 900\$" "$fx_a/calls.log" 2>/dev/null; then
+        pass "sweep gating (a): the merge call ends with the PR number"
+    else
+        fail "sweep gating (a): the merge call should end with the PR number — got: $(cat "$fx_a/calls.log" 2>/dev/null)"
+    fi
+    assert_contains "$out_a" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (a): summary is merged=1 updated=0 skipped=0 blocked=0 failed=0"
+
+    # (b) every check on the head is from THIS workflow — no real CI has
+    #     reported, so the floor must not be satisfied by the gate itself.
+    local fx_b="$TEST_DIR/auto-merge-gating-case-b"
+    mkdir -p "$fx_b"
+    printf '900\n' > "$fx_b/pr-numbers.txt"
+    write_pr "$fx_b/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_b="$TEST_DIR/auto-merge-gating-out-b.txt" rc_b
+    rc_b=$(run_case "$fx_b" "" "$SELF" "$out_b")
+    if [[ ! -f "$fx_b/calls.log" ]] || ! grep -qF -- 'pr merge' "$fx_b/calls.log"; then
+        pass "sweep gating (b): no pr merge call when every check is this workflow's own"
+    else
+        fail "sweep gating (b): no pr merge call when every check is this workflow's own — got: $(cat "$fx_b/calls.log")"
+    fi
+    assert_contains "$out_b" "every check on its head comes from this workflow" \
+        "sweep gating (b): it says why it skipped"
+    assert_contains "$out_b" "skipped=1" \
+        "sweep gating (b): summary counts it as skipped"
+
+    # (c) CI has reported but not yet concluded (`conclusion: null`) — no
+    #     merge, same as any other not-yet-green check.
+    local fx_c="$TEST_DIR/auto-merge-gating-case-c"
+    mkdir -p "$fx_c"
+    printf '900\n' > "$fx_c/pr-numbers.txt"
+    write_pr "$fx_c/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":null},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_c="$TEST_DIR/auto-merge-gating-out-c.txt"
+    run_case "$fx_c" "" "$SELF" "$out_c" >/dev/null
+    if [[ ! -f "$fx_c/calls.log" ]] || ! grep -qF -- 'pr merge' "$fx_c/calls.log"; then
+        pass "sweep gating (c): no pr merge call while CI's conclusion is still null"
+    else
+        fail "sweep gating (c): no pr merge call while CI's conclusion is still null — got: $(cat "$fx_c/calls.log")"
+    fi
+
+    # (d) the pinned merge is refused and the head has since moved — do not
+    #     fall through to update-branch; the next sweep judges the new head.
+    local fx_d="$TEST_DIR/auto-merge-gating-case-d"
+    mkdir -p "$fx_d"
+    printf '900\n' > "$fx_d/pr-numbers.txt"
+    write_pr "$fx_d/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    write_pr "$fx_d/pr-900.after.json" 900 "$HEAD_Y" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_d="$TEST_DIR/auto-merge-gating-out-d.txt" rc_d
+    rc_d=$(run_case "$fx_d" "900" "$SELF" "$out_d")
+    if [[ "$rc_d" -eq 0 ]]; then
+        pass "sweep gating (d): a refused merge with a moved head still exits 0"
+    else
+        fail "sweep gating (d): a refused merge with a moved head still exits 0 — got $rc_d: $(cat "$out_d")"
+    fi
+    assert_not_contains "$fx_d/calls.log" "update-branch" \
+        "sweep gating (d): does not fall through to pr update-branch when the head moved"
+    assert_contains "$out_d" "its head moved" \
+        "sweep gating (d): it says the head moved"
+    assert_contains "$out_d" "skipped=1" \
+        "sweep gating (d): summary counts it as skipped, not updated"
+
+    # (e) SELF_WORKFLOW is empty — the sweep cannot tell its own checks from
+    #     real CI, so it must refuse outright rather than merge blind.
+    local out_e="$TEST_DIR/auto-merge-gating-out-e.txt" rc_e
+    rc_e=$(run_case "$fx_a" "" "" "$out_e")
+    if [[ "$rc_e" -ne 0 ]]; then
+        pass "sweep gating (e): an empty SELF_WORKFLOW exits non-zero"
+    else
+        fail "sweep gating (e): an empty SELF_WORKFLOW exits non-zero — got 0: $(cat "$out_e")"
+    fi
+    assert_contains "$out_e" "SELF_WORKFLOW is empty" \
+        "sweep gating (e): it says why"
+
+    # (f) headRefOid is not a 40-hex sha — refuse rather than merge unpinned.
+    local fx_f="$TEST_DIR/auto-merge-gating-case-f"
+    mkdir -p "$fx_f"
+    printf '900\n' > "$fx_f/pr-numbers.txt"
+    write_pr "$fx_f/pr-900.json" 900 "abc" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_f="$TEST_DIR/auto-merge-gating-out-f.txt"
+    run_case "$fx_f" "" "$SELF" "$out_f" >/dev/null
+    if [[ ! -f "$fx_f/calls.log" ]] || ! grep -qF -- 'pr merge' "$fx_f/calls.log"; then
+        pass "sweep gating (f): no pr merge call when headRefOid is not a 40-hex sha"
+    else
+        fail "sweep gating (f): no pr merge call when headRefOid is not a 40-hex sha — got: $(cat "$fx_f/calls.log")"
+    fi
+
+    # (g) the pinned merge is refused, the head has NOT moved, and the PR is
+    #     BEHIND — refresh the branch rather than retry the merge.
+    local fx_g="$TEST_DIR/auto-merge-gating-case-g"
+    mkdir -p "$fx_g"
+    printf '900\n' > "$fx_g/pr-numbers.txt"
+    write_pr "$fx_g/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "BEHIND" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_g="$TEST_DIR/auto-merge-gating-out-g.txt" rc_g
+    rc_g=$(run_case "$fx_g" "900" "$SELF" "$out_g")
+    if [[ "$rc_g" -eq 0 ]]; then
+        pass "sweep gating (g): a refused BEHIND merge with an unmoved head still exits 0"
+    else
+        fail "sweep gating (g): a refused BEHIND merge with an unmoved head still exits 0 — got $rc_g: $(cat "$out_g")"
+    fi
+    assert_contains "$fx_g/calls.log" "update-branch" \
+        "sweep gating (g): falls through to pr update-branch"
+    assert_contains "$out_g" "updated=1" \
+        "sweep gating (g): summary counts it as updated"
+
+    unset -f write_pr
+    unset -f run_case
 }
 
 # ── dependabot-config-health.js ──────────────────────────────────────────────
@@ -17045,6 +17489,38 @@ test_dependabot_config_health() {
         pass "dependabot config health: node:test suite is green ($pass_n passed)"
     else
         fail "dependabot config health: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=30): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+test_discrepancy_alert() {
+    echo ""
+    echo "=== Test: discrepancy-alert.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the dependabot config health gate: a check
+    # that quietly does not run is the failure this suite exists to catch.
+    # CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "discrepancy alert: node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/discrepancy-alert-tap.txt" rc=0
+    # NEVER pipe this — the script runs under `set -euo pipefail`, and a pipe's
+    # exit status belongs to the LAST command in it, not to `node --test`.
+    # Capture to a file and read $? straight off the command instead.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-discrepancy-alert.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # A minimum count is the cheapest proof anything actually ran: a suite that
+    # merely `require()`d the module and defined zero tests would otherwise
+    # exit 0 with "# pass 0", which reads exactly like a healthy green run.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 20 ]]; then
+        pass "discrepancy alert: node:test suite is green ($pass_n passed)"
+    else
+        fail "discrepancy alert: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=20): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -18558,6 +19034,7 @@ test_bump_format_check_unreadable
 test_bump_sweep_dry_run
 test_bump_sweep
 test_bump_sweep_head_match
+test_bump_sweep_unknown_retry
 test_bump_sweep_view_failure_reports_why
 test_bump_sweep_branch_cleanup
 # The hook-pin lane, in a fixture dir of its own. Ordered: unchanged (nothing
@@ -18594,7 +19071,9 @@ test_check_guidance_touch
 test_yq_preflight
 test_shared_repos_yml_helpers_are_identical
 test_dependabot_sweep_list_failure
+test_dependabot_sweep_merge_gating
 test_dependabot_config_health
+test_discrepancy_alert
 # The Codex lane. The three size/gate tests read only this repo's own files;
 # the sync and drift legs are --dry-run / read-only over the bigorg fixture,
 # so they can sit anywhere after the bares exist. Ordered so the budget

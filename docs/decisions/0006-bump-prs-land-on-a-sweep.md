@@ -4,7 +4,12 @@
 [0005](0005-consumer-locks-are-re-pinned-from-here.md) — "A pull request, never
 a direct push and never auto-merge", and the *Left open* bullet that begins
 "Nothing merges these". Everything else in 0005 stands unchanged, and this ADR
-depends on several parts of it.
+depends on several parts of it. Superseded in part by
+[0015](0015-bump-prs-never-ask-for-native-auto-merge.md) (2026-09-22), which
+reverses "A newly opened PR still asks for native auto-merge" and corrects this
+ADR's claim that GitHub "does not merge the PR instead. It declines to arm, and
+the PR sits": the sweep below is now the only merge path. The rest of this ADR
+stands.
 
 ## Context
 

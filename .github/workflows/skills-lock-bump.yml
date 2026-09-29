@@ -17,10 +17,10 @@ name: Bump the fleet's skills pins
 # and the diff is still the lock alone — and only then proposes new ones. A PR
 # merged seconds after it was opened is merged before any check has started;
 # the gap between two nightly runs is what gives a consumer's CI a full day to
-# report. Native auto-merge is the mechanism this would otherwise use and
-# cannot arm on this fleet (`required_status_checks: []` leaves it nothing to
-# hold the merge for), so the script attempts it anyway and does not depend on
-# it. See docs/decisions/0006.
+# report. Native auto-merge is deliberately not used: where nothing is
+# required gh merges an already-mergeable PR on the spot rather than arming
+# it, and where something is required it waits only for the required
+# contexts. See docs/decisions/0015.
 #
 # The re-pin itself is `generate_skills_lock.py --repin`, which lives in the
 # registry and is called, never reimplemented. The script probes the generator
@@ -175,8 +175,8 @@ jobs:
       - name: Check out the skills registry
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: Adam-S-Daniel/agentskills
-          path: registries/agentskills
+          repository: Adam-S-Daniel/adam-agentskills
+          path: registries/adam-agentskills
           fetch-depth: 0
           token: ${{ steps.token_adam_s_daniel.outputs.token || github.token }}
 
@@ -205,7 +205,7 @@ jobs:
           # one answer to "which registry is ours" instead of a second copy in
           # a workflow that can disagree with it.
           BUMP_CHECKOUTS: >-
-            Adam-S-Daniel/agentskills=${{ github.workspace }}/registries/agentskills
+            Adam-S-Daniel/adam-agentskills=${{ github.workspace }}/registries/adam-agentskills
             Adam-S-Daniel/cms-platform=${{ github.workspace }}/registries/cms-platform
           # Read through the environment, never interpolated into the command
           # below. `${{ inputs.* }}` inside a `run:` body is rendered into the
@@ -261,7 +261,7 @@ jobs:
           # string is passed as above so there is one spelling of "where the
           # checkouts are" in this file rather than two that can drift.
           BUMP_CHECKOUTS: >-
-            Adam-S-Daniel/agentskills=${{ github.workspace }}/registries/agentskills
+            Adam-S-Daniel/adam-agentskills=${{ github.workspace }}/registries/adam-agentskills
             Adam-S-Daniel/cms-platform=${{ github.workspace }}/registries/cms-platform
           # Through the environment, never interpolated into the `run:` body —
           # same rule, same incident, as the step above.

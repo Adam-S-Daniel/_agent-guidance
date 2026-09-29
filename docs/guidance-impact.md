@@ -50,6 +50,78 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-28 — working-in-these-repos — edit
+- Motivation: the owner asked that every added or changed text use American English spelling (behavior, not behaviour), fleet-wide across both owners; the managed text itself said "behaviour".
+- Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #193).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — name-becomes-scanner-data — edit
+- Motivation: same owner request; the section said "serialising".
+- Change: "serialising" → "serializing", no other change (PR #193).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — two-setup-gaps — edit
+- Motivation: bytes for the American English bullet inside the full-build size budget (28,668 of 28,672 before).
+- Change: the opening sentence stops restating the heading ("Two setup gaps no repo can commit" → "No repo can commit either"); meaning unchanged (PR #193).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — dependency-updates — edit
+- Motivation: the owner reversed "the installed one, else latest" (written with a frequently updated laptop CLI in mind): a runner's preinstalled CLI can be any age, so a run should always install the newest release.
+- Change: a run (CI, an eval) installs the harness CLI at npm `latest`, not the installed one, and records the version and models used (PR #188; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/29).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-27 — dependency-updates — edit
+- Motivation: the owner asked to stop adopting harness releases through manual pin-bump PRs: use the harness the environment already has, else install latest, and record which harness and model versions each run used.
+- Change: harness CLIs (Claude Code, Codex; not `uses:` refs or SDK packages) are no longer pinned at all: the installed one, else latest, recording the harness version and the models used. Replaces this PR's earlier "newest release, still exact" wording; the "(they inherit `default-days`)" aside is dropped to stay inside the 28,672-byte full-build cap (PR #186; companions https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/28).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-27
+
+## 2026-09-27 — dependency-updates — edit
+- Motivation: the owner adopts new model harnesses on day one in practice, and asked the fleet rule to match; the 7-day wait had CI running Claude Code 2.1.211 while `latest` was 2.1.283.
+- Change: model harnesses (Claude Code, Codex CLI) skip the 7-day wait for a hand bump and take the newest release, still pinned exact; the rest of the section is reworded to pay for it inside the 28,672-byte full-build cap (PR #186; companion pin bumps in https://github.com/Adam-S-Daniel/skills-evals/pull/203 and https://github.com/Adam-S-Daniel/adam-agentskills/pull/28).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-27
+
+## 2026-09-24 — workstation-layout — edit
+- Motivation: the public skills registry moved from Adam-S-Daniel/agentskills to Adam-S-Daniel/adam-agentskills (its ADR 0013), and the owner asked for the laptop's hostname to leave the fleet guidance.
+- Change: The clone-location bullet names "the owner's Windows laptop" instead of a hostname; the WSL-elevation bullet drops the retired `adam-local` bundle name and keeps the skill name (PR #167)
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — sessions-get-cut-off — edit
+- Motivation: the owner asked for the laptop's hostname to leave the fleet guidance; the full build sits at its 28,672-byte cap, so the added words are paid for in the same PR.
+- Change: The opening line names "the owner's laptop" instead of a hostname; "frequently" -> "often" and "the commit message ... or an ADR" -> "a commit message ... or ADR", wording only (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — subagent-delegation — edit
+- Motivation: the public skills registry moved to Adam-S-Daniel/adam-agentskills, where `disarm-inherited-reach` ships in the `adam-coding-anywhere` plugin, so `/adam:disarm-inherited-reach` no longer resolves.
+- Change: The invocation is now `/adam-coding-anywhere:disarm-inherited-reach`; "(a reviewer once did, unasked)" loses "unasked" to stay inside the byte cap (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — skills-ecosystem — edit
+- Motivation: the public skills registry moved from Adam-S-Daniel/agentskills (bundles `adam`, `adam-local`, `fastmail`) to Adam-S-Daniel/adam-agentskills (plugins `adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`, `adam-non-coding-local`), and agentskills-private was renamed adam-agentskills-private.
+- Change: Names the new registry, its four plugins and the `/<plugin>:<skill>` invocation form; ADR citations read "registry ADR NNNN" (same numbers in adam-agentskills); the private registry's new name; "at session start" -> "at start" for the byte cap (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-24 — two-setup-gaps — edit
+- Motivation: the marketplace a durable machine adds and updates is now adam-agentskills, the multi-repo snippet lives in that repo, and the owner asked for the laptop's hostname to leave the fleet guidance.
+- Change: `marketplace add`/`update` name adam-agentskills; the snippet's home names adam-agentskills; the INSTALL example names "the owner's laptop"; small wording trims ("Once per session", "unset in", "never assume it", "yet says it did") keep the full build inside its 28,672-byte cap (PR #167)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24 (PR #167)
+
+## 2026-09-22 — skills-ecosystem — edit
+- Motivation: Claude Code 2.1.273+ syncs the claude.ai account store into terminal sessions too (agentskills issue #158); the section still read as though that channel were cloud-only.
+- Change: Added the terminals bullet (setup.sh opts a machine out, cloud sessions can't; agentskills' ADR 0010) and tightened the section's other bullets, wording only, so the full build stays at the 28,672-byte cap; section 1274 -> 1287 bytes (PR #153)
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-22 (PR #153)
+
 ## 2026-09-15 — two-github-connectors — edit
 - Motivation: room for the closing-keyword rule (_agent-guidance#132): the full build with every section was 28,648 of the suite's 28,672-byte ceiling.
 - Change: Drops "a 404 means not visible to THIS connector — re-check on the other", which the adjacent 404 section already says (PR #137)
@@ -211,3 +283,27 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: Condensed from 1393 to 714 bytes (section) so the full-mode AGENTS.md and the ~/.codex/AGENTS.md copy fit Codex's project-doc budget (PR #128)
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-14 (PR #128)
+
+## 2026-09-24 — git-practices — edit
+- Motivation: agentskills#179 said "For #176", so merging it left #176 open for a manual close.
+- Change: The closing-keyword bullet now says `Closes #N`, not `For #N`, when closing is meant; net −2 bytes (dropped the `--body`/`PR_BODY` aside) because the full build sat at its 28672-byte budget.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24
+
+## 2026-09-24 — subagent-delegation — edit
+- Motivation: a delegated `_agent-guidance#163` check ran `bash test/run-tests.sh; echo "Exit code: $?"`, printed `Exit code: 1` and `1409 passed, 2 failed`, and reported "exit code 0" — the tool's code for the trailing `echo`. The parent caught it by re-running.
+- Change: The verifier bullet now says to run the verifier LAST in the delegated command and to re-run a self-contradicting report; the section was trimmed elsewhere to fit, net +2 bytes (the full build was at its 28672-byte budget).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-24
+
+## 2026-09-28 — automation-vs-branch-protection — edit
+- Motivation: repo-settings#51 — skills-evals' roster PR (opened and auto-merged with GITHUB_TOKEN behind the required `test` check) became the declared exception to "PR + auto-merge is not a sanctioned bot-write path"; the rule said the opposite with no exception.
+- Change: the auto-merge bullet names the exception and cites repo-settings ADR 0003 (PR #191); three phrases trimmed to fit, net +1 byte, full build 28668 of 28672.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
+## 2026-09-28 — skills-ecosystem — edit
+- Motivation: adam-agentskills ADR 0014 retires the claude.ai account-store upload path and the global sync-skills pre-push hook; the section still described the hook as live and implied the account store carries the fleet's skills.
+- Change: the every-repo push-failure bullet now names a missing `sync-skills` hook script and `setup.sh --owner-machine` (which unregisters it); the terminal bullet says terminals still load Anthropic's own account skills; net small byte change.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28

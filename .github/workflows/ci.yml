@@ -4,19 +4,21 @@ on:
   push:
     branches: ["**"]
   pull_request:
-  # Manual re-run, no inputs. Safe against BRANCH PROTECTION specifically
-  # because this workflow publishes NO required status context: repo-settings'
-  # fleet.yml lists Adam-S-Daniel/_agent-guidance with no overrides, so it
-  # inherits `defaults.ruleset.required_status_checks: []`. With nothing
-  # required, the multi-trigger hazard this fleet has been bitten by — two
-  # events producing runs for one head sha, GitHub non-deterministically
-  # surfacing a cancelled one, and the PR hard-blocking on a cancelled
-  # required check — has no context to attach to. There is also no
-  # `concurrency:` block in this file, at workflow or job level, so a dispatch
-  # cannot cancel a push/PR run already in flight for the same sha. Both are
-  # load bearing: give this workflow a required context or a concurrency group
-  # and this trigger needs re-examining, not just re-testing. Test 7g in
-  # test/run-tests.sh asserts the absence and the trigger set off this file.
+  # Manual re-run, no inputs. `test` publishes a status context meant to be
+  # REQUIRED on main — cms-platform#437 declares it in repo-settings'
+  # fleet.yml — so this trigger's safety no longer rests on nothing here
+  # being required. It rests on a narrower fact instead: this file carries NO
+  # `concurrency:` block, at workflow or job level, so a same-sha burst — a
+  # `push` on `**`, a `pull_request` event, and any manual dispatch, all
+  # landing on one head sha — leaves only runs that FINISH, never a cancelled
+  # run shadowing a success (the shape that hard-blocks a merge on a required
+  # check). Test 7g in test/run-tests.sh locks that absence and the trigger
+  # set off this file. The residual that absence does not cover: a human who
+  # cancels a dispatched run sitting on a PR's head sha leaves the required
+  # `test` context itself concluded `cancelled` on that sha until someone
+  # re-runs it — this trigger only guards against the multi-event race
+  # GitHub can produce on its own, not against a person cancelling one by
+  # hand.
   #
   # BRANCH PROTECTION IS NOT THE ONLY READER OF A CHECK CONCLUSION HERE, and
   # the other one does not care whether a check is required — so the paragraph
