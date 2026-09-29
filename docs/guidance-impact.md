@@ -67,7 +67,6 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: Windows guidance no longer includes a real machine name. It also adds where clones live in WSL; the manifest row moves from `skipped` (it was parked pending this rewrite) to `gap` (PR #157)
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-22 (PR #157)
-
 ## 2026-09-28 — working-in-these-repos — edit
 - Motivation: the owner asked that every added or changed text use American English spelling (behavior, not behaviour), fleet-wide across both owners; the managed text itself said "behaviour".
 - Change: new bullet requiring American English spelling in all added or changed text, comments and commits included; "New behaviour" → "New behavior". Room made inside the 28 KiB full-build budget by shortening the preamble's truncation sentence (PR #193).
