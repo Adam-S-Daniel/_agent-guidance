@@ -53,7 +53,7 @@
   heading: Workstation layout
   file: agents-md/base.md
   status: gap
-  bytes: 454
+  bytes: 274
 
 - id: sessions-get-cut-off
   heading: Sessions get cut off
@@ -143,7 +143,7 @@
   heading: Skills ecosystem
   file: agents-md/base.md
   status: gap
-  bytes: 1291
+  bytes: 1273
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about

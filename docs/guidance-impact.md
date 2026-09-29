@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-09-28 — workstation-layout — edit
+- Motivation: One item was missing and one did not belong.
+- Change: Added WSL paths. Removed misplaced prompt-elevation note. Dropped the `$env:COMPUTERNAME` hint. A Git Bash full-path note drafted for this section was left out because adam-agentskills' README already carries it (adam-agentskills PR #36).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28 (PR #203)
+
+## 2026-09-28 — skills-ecosystem — edit
+- Motivation: adam-agentskills PR #34 (ADR 0014) retired sync-skills and its global pre-push hook, so the "re-run `bash setup.sh`" advice for a push failing in every repo was false; a machine that pulled it without cleanup still fails because the hook points at a deleted script.
+- Change: the every-repo push-failure bullet now names the retired hook and `setup.sh --owner-machine` as the cleanup; ADR 0014 reference dropped for budget (PR pending).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-09-28
+
 ## 2026-09-22 — workstation-layout — edit
 - Motivation: ZENDA is retired (_agent-guidance#117); a bullet naming the old host sends every session to a machine that no longer exists.
 - Change: Windows guidance no longer includes a real machine name. It also adds where clones live in WSL; the manifest row moves from `skipped` (it was parked pending this rewrite) to `gap` (PR #157)
