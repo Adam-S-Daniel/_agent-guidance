@@ -30,6 +30,21 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-09-30 — 2.1.285 through 2.1.285
+
+- **Checked:** 2026-09-30T17:08Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.285](https://github.com/anthropics/claude-code/releases/tag/v2.1.285), published 2026-09-29T19:27Z
+- **Window:** v2.1.285 (published 2026-09-29T19:27Z), the first stable release after v2.1.284: 1 release, 136 bullets (2.1.285/0-135). Publish times are the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the release body is the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.285` listed by `git ls-remote --tags`); quotes are copied from that file. The v2.1.285 tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 6655756, `adam-agentskills` 41d223e, `adam-agentskills-private` f5d5d9e, `adamdaniel.ai` 4aa1acf, `claude-memory-map` d86a4da, `cms-platform` 7cbbe4c, `fastmail-actions` 4b092d6, `GHA-bench` a7cb9ec8, `jodidaniel.com` 92441f8, `repo-settings` a5f4781, `rss-inator` f3ee6b4, `skills-evals` cb3b084, `wsl-automation` 0ec6313.
+
+#### 1. Background Bash and PowerShell commands now stop after a time limit
+
+- [v2.1.285](https://github.com/anthropics/claude-code/releases/tag/v2.1.285), published 2026-09-29T19:27Z
+  > Changed background Bash and PowerShell commands to stop after a time limit (their `timeout` with `run_in_background`, default 30 min, max 2 h); Claude is notified when one is stopped
+
+**Issues:** [cms-platform#497](https://github.com/Adam-S-Daniel/cms-platform/issues/497)
+
 ### 2026-09-29 — 2.1.283 through 2.1.284
 
 - **Checked:** 2026-09-29T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
