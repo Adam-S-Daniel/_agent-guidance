@@ -5,6 +5,11 @@ set -euo pipefail
 #
 # Creates mock git repos and a fake `gh` CLI to validate the full pipeline
 # without needing GitHub access.
+#
+# Runs as independent groups in parallel (see "Groups" at the bottom):
+#   TEST_JOBS=N       run at most N groups at once (default: one per CPU;
+#                     TEST_JOBS=1 runs them one after another)
+#   TEST_GROUP=<name> run just that one group, in this process
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -23,24 +28,11 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # bit local runs; unsetting both here makes the run deterministic everywhere.
 unset GH_TOKEN GITHUB_TOKEN
 
-# Codex Cloud setup/maintenance runs the shared guidance hook directly before
-# the agent starts. Keep its focused, standard-library subprocess coverage in
-# a separate module so failures propagate through this integration runner.
-python3 -m unittest discover -s "$SCRIPT_DIR" -p 'test_codex_cloud*.py' -v
-
 # Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
 # means rather than the directory several artifacts share.
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
 FLEET_HOOK_REL_PATH_T=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH_T=".claude/hooks/fleet-guidance.md"
-
-# Ensure git identity is configured (CI runners may not have this set globally).
-if ! git config --global user.name &>/dev/null; then
-    git config --global user.name "test-runner"
-fi
-if ! git config --global user.email &>/dev/null; then
-    git config --global user.email "test@localhost"
-fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -19826,81 +19818,125 @@ PY
     fi
 }
 
-echo "========================================="
-echo "  Agent Guidance Integration Tests"
-echo "========================================="
+# ── Groups ─────────────────────────────────────────────────────────────────
+#
+# The suite runs as independent GROUPS, each in a fresh process of this same
+# script with its own TEST_DIR, HOME and GIT_CONFIG_GLOBAL, and with its own
+# copy of every fixture above, stood up from scratch. Inside a group the tests
+# run in the order written, exactly as the whole suite used to run serially;
+# across groups nothing is shared, so groups can run concurrently.
+#
+# A group boundary is only drawn where the serial run already started from a
+# clean slate: a lane in a fixture dir or mock org of its own, a test that
+# resets the bares or stands its own fixture up before reading anything, or
+# checks over this repo's committed files. Never split a run of tests that
+# hands state from one to the next — the ordering comments inside each group
+# say which runs those are. The union of the groups must name every test_
+# function exactly once; check_group_coverage refuses to run otherwise.
+#
+# Each entry is a group name; GROUP_<name> lists what it runs, in order.
+# group_codex_cloud is the one group that is not a list: it runs the Python
+# unittest modules and needs none of the shell fixtures.
+TEST_GROUPS=(
+    codex_cloud
+    sync
+    bootstrap
+    drift_testorg
+    drift
+    bump
+    sweep_merge
+    sweep_retry
+    sweep_cleanup
+    hook_pin
+    self_hosted
+    codex
+    memory_home
+)
 
-setup_mock_repos
-setup_bootstrap_repos
-setup_bump_repos
-create_mock_gh
-snapshot_bare_repos
-test_build_script
-test_bridge_status
-test_bootstrap_status
-test_register_bootstrap_hook
-# Before the first sync that writes anything, so "not one ref moved" is
-# measured against pristine bares rather than against whatever the previous
-# test left.
-test_sync_unknown_argument
-test_missing_repos_yml
-test_sync_dry_run
-test_sync_owner_list_failure
-test_sync_empty_owner
-test_sync_full
-test_commit_refused
-test_sync_protected_fallback
-test_sync_foreign_branch_commit
-test_sync_ancestor_branch_force_push
-test_sync_agents_sync_yml_unreadable
-test_sync_stale_cleanup
-test_sync_failure_exit_code
-test_sync_round_trip_no_marker
+GROUP_sync=(
+    test_build_script
+    test_bridge_status
+    test_bootstrap_status
+    test_register_bootstrap_hook
+    # Before the first sync that writes anything, so "not one ref moved" is
+    # measured against pristine bares rather than against whatever the previous
+    # test left.
+    test_sync_unknown_argument
+    test_missing_repos_yml
+    test_sync_dry_run
+    test_sync_owner_list_failure
+    test_sync_empty_owner
+    test_sync_full
+    test_commit_refused
+    test_sync_protected_fallback
+    test_sync_foreign_branch_commit
+    test_sync_ancestor_branch_force_push
+    test_sync_agents_sync_yml_unreadable
+    test_sync_stale_cleanup
+    test_sync_failure_exit_code
+    test_sync_round_trip_no_marker
+)
+
 # The skills-bootstrap lane mutates the bootorg bares in a fixed order:
 # dry-run (writes nothing) → deliver → re-run (no-op) → drift → report →
 # unmanaged report → bad digest → PR-body fallback. Each of the three that
-# needs a clean slate resets the bares itself.
-test_sync_bootstrap_dry_run
-test_sync_bootstrap
-test_sync_bootstrap_idempotent
-test_sync_bootstrap_drift
-test_drift_report_bootstrap
-test_drift_report_fleet_payload
-# Immediately after the test that establishes bootorg/repo-adopted's confident
-# verdicts, because those are exactly what its control run re-asserts before
-# truncating one file at a time.
-test_drift_report_partial_read_per_file
-test_drift_report_cron_classification
-test_drift_report_skills_classification
-test_drift_report_registry_orphan
-test_drift_report_registry_orphan_multi_owner
-test_drift_report_registry_orphan_owner_failure
-test_drift_report_marker_is_whole_line
-test_drift_report_partial_read
-test_drift_report_bootstrap_unmanaged
-test_drift_report_bootstrap_registry
-test_drift_report_probe_cleanup
-test_sync_bootstrap_bad_digest
-test_sync_bootstrap_pr_body
-# The sync now direct-pushes to main; restore the pristine bares so the drift
-# report observes the pre-sync baseline (test_sync_multi_owner resets itself).
-reset_bare_repos
-test_drift_report
-test_sync_multi_owner
-test_sync_per_owner_token
-test_drift_report_multi_owner
-test_drift_report_owner_list_failure
-test_drift_report_empty_owner
-# Sited after the three empty-owner tests it generalises, and it runs all three
-# scripts itself rather than riding any one of them.
-test_repo_list_stderr_notice
-test_harness_published_bump_branches
-test_drift_report_contents_unreadable
-test_drift_report_sync_yml_unparseable
-test_drift_report_marker_not_through_a_pipe
-test_check_cron_coverage
-test_check_registry
-test_capture_routine
+# needs a clean slate resets the bares itself — test_sync_bootstrap_dry_run
+# first of all, which is why this lane never depended on the sync lane before
+# it.
+GROUP_bootstrap=(
+    test_sync_bootstrap_dry_run
+    test_sync_bootstrap
+    test_sync_bootstrap_idempotent
+    test_sync_bootstrap_drift
+    test_drift_report_bootstrap
+    test_drift_report_fleet_payload
+    # Immediately after the test that establishes bootorg/repo-adopted's
+    # confident verdicts, because those are exactly what its control run
+    # re-asserts before truncating one file at a time.
+    test_drift_report_partial_read_per_file
+    test_drift_report_cron_classification
+    test_drift_report_marker_is_whole_line
+    test_drift_report_bootstrap_unmanaged
+    test_drift_report_bootstrap_registry
+    test_drift_report_probe_cleanup
+    test_sync_bootstrap_bad_digest
+    test_sync_bootstrap_pr_body
+)
+
+# Drift reports over testorg that used to sit inside the bootstrap lane. They
+# read testorg, which that lane never writes, and they ran after its opening
+# reset — so they always saw pristine testorg bares, which is what a fresh
+# group gives them.
+GROUP_drift_testorg=(
+    test_drift_report_skills_classification
+    test_drift_report_registry_orphan
+    test_drift_report_registry_orphan_multi_owner
+    test_drift_report_registry_orphan_owner_failure
+    test_drift_report_partial_read
+)
+
+# The sync lane direct-pushes to main; this lane observes the pre-sync
+# baseline, which a fresh group's bares already are (test_sync_multi_owner
+# resets them itself).
+GROUP_drift=(
+    test_drift_report
+    test_sync_multi_owner
+    test_sync_per_owner_token
+    test_drift_report_multi_owner
+    test_drift_report_owner_list_failure
+    test_drift_report_empty_owner
+    # Sited after the three empty-owner tests it generalises, and it runs all
+    # three scripts itself rather than riding any one of them.
+    test_repo_list_stderr_notice
+    test_harness_published_bump_branches
+    test_drift_report_contents_unreadable
+    test_drift_report_sync_yml_unparseable
+    test_drift_report_marker_not_through_a_pipe
+    test_check_cron_coverage
+    test_check_registry
+    test_capture_routine
+)
+
 # The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
 # the bares the sync and drift-report lanes share. Fixed order: the two runs
 # that must write nothing at all (a mistyped flag, a generator too old) while
@@ -19908,106 +19944,282 @@ test_capture_routine
 # misconfigured registry checkout. The last two stand their own fixture up in
 # a MOCK_BARE_DIR of their own and tear it down again, so they can be a
 # rejected push and a vanished bundle without those becoming standing state.
-test_bump_unknown_argument
-test_bump_generator_without_repin
-test_bump_owner_list_failure
-test_bump_contents_unreadable
-test_bump_dry_run
-test_bump_missing_source_checkout
-test_bump_consumer_locks
-test_bump_idempotent
-test_bump_shallow_registry
-test_bump_push_rejected
-test_bump_shrink_check_noisy_python
-test_bump_bundle_vanished
-test_bump_format_gate_empty_skills
-test_bump_digest_format_gate
-test_bump_generator_without_check_format
-test_bump_generator_without_scoped_flags
-test_bump_generator_with_one_scoped_flag
-test_bump_scoped_question_unanswerable
-test_bump_pr_body_slice_arithmetic
-test_bump_pr_claims_cross_product
-test_bump_stub_generator_parity
-test_bump_twice_federated_lock
-test_bump_format_and_federated
-test_bump_self_federating_lock
-test_bump_degraded_self_federating_lock
-test_bump_only_prefix_flag
-test_bump_generator_error_line
-test_bump_degraded_federated_body
-test_bump_which_half_could_not_be_read
-test_bump_format_check_unreadable
+GROUP_bump=(
+    test_bump_unknown_argument
+    test_bump_generator_without_repin
+    test_bump_owner_list_failure
+    test_bump_contents_unreadable
+    test_bump_dry_run
+    test_bump_missing_source_checkout
+    test_bump_consumer_locks
+    test_bump_idempotent
+    test_bump_shallow_registry
+    test_bump_push_rejected
+    test_bump_shrink_check_noisy_python
+    test_bump_bundle_vanished
+    test_bump_format_gate_empty_skills
+    test_bump_digest_format_gate
+    test_bump_generator_without_check_format
+    test_bump_generator_without_scoped_flags
+    test_bump_generator_with_one_scoped_flag
+    test_bump_scoped_question_unanswerable
+    test_bump_pr_body_slice_arithmetic
+    test_bump_pr_claims_cross_product
+    test_bump_stub_generator_parity
+    test_bump_twice_federated_lock
+    test_bump_format_and_federated
+    test_bump_self_federating_lock
+    test_bump_degraded_self_federating_lock
+    test_bump_only_prefix_flag
+    test_bump_generator_error_line
+    test_bump_degraded_federated_body
+    test_bump_which_half_could_not_be_read
+    test_bump_format_check_unreadable
+)
+
 # The sweep lane, in a bare dir and a PR fixture dir of its own: it MERGES,
 # which is the one thing in this repo nothing else undoes. Dry run first, so
-# "it merged nothing" is a statement about a run that had every chance to.
-test_bump_sweep_dry_run
-test_bump_sweep
-test_bump_sweep_head_match
-test_bump_sweep_unknown_retry
-test_bump_sweep_view_failure_reports_why
-test_bump_sweep_branch_cleanup
+# "it merged nothing" is a statement about a run that had every chance to —
+# and test_bump_sweep then merges the fleet that dry run stood up, so the two
+# stay together. Every sweep test after them rebuilds that fleet itself
+# (setup_sweep_repos / setup_unknown_retry_repos) before reading it, which is
+# what lets the rest of the lane split across groups.
+GROUP_sweep_merge=(
+    test_bump_sweep_dry_run
+    test_bump_sweep
+)
+GROUP_sweep_retry=(
+    test_bump_sweep_head_match
+    test_bump_sweep_unknown_retry
+    test_bump_sweep_view_failure_reports_why
+)
+GROUP_sweep_cleanup=(
+    test_bump_sweep_branch_cleanup
+)
+
 # The hook-pin lane, in a fixture dir of its own. Ordered: unchanged (nothing
 # to do) → dry run → the real bump → a second run with that PR open → the
 # refusals. Each step depends on the registry state the previous one left.
-test_hook_pin_unchanged
-# Sited here for its fixtures, not its subject: it is the first point in the
-# run where bumporg's registry checkout and $HOOK_PIN_DIR both exist. It reads
-# the hook-pin fixture in dry-run and leaves it in the same "nothing to do"
-# state test_hook_pin_dry_run below expects.
-test_repos_yml_scalars_under_noisy_yq
-test_hook_pin_dry_run
-test_hook_pin_pr_list_failure
-test_hook_pin_proposes
-test_hook_pin_orphaned_branch
-test_hook_pin_already_proposed
-test_hook_pin_refuses_broken_hook
-test_hook_pin_workflow_wiring
+GROUP_hook_pin=(
+    test_hook_pin_unchanged
+    # Sited here for its fixtures, not its subject: it is the first point in
+    # the group where bumporg's registry checkout and $HOOK_PIN_DIR both
+    # exist. It reads the hook-pin fixture in dry-run and leaves it in the
+    # same "nothing to do" state test_hook_pin_dry_run below expects.
+    test_repos_yml_scalars_under_noisy_yq
+    test_hook_pin_dry_run
+    test_hook_pin_pr_list_failure
+    test_hook_pin_proposes
+    test_hook_pin_orphaned_branch
+    test_hook_pin_already_proposed
+    test_hook_pin_refuses_broken_hook
+    test_hook_pin_workflow_wiring
+)
+
 # This repo's own committed files, not the mock fleet — nothing syncs or
 # reports on _agent-guidance, so these are the only checks they get.
-test_sync_workflow_trigger
-test_self_hosted_hook_pin
-test_self_hosted_fleet_payload
-test_bootstrap_allowlist_disjoint
-test_self_hosted_registration
-test_bump_script_self_consistency
-test_adr_0009_self_consistency
-test_bump_workflow
-test_ci_workflow_shape
-test_yq_install_pinned
-test_check_agents_md
-test_check_guidance_coverage
-test_check_guidance_touch
-test_yq_preflight
-test_shared_repos_yml_helpers_are_identical
-test_dependabot_sweep_list_failure
-test_dependabot_sweep_merge_gating
-test_dependabot_config_health
-test_discrepancy_alert
+GROUP_self_hosted=(
+    test_sync_workflow_trigger
+    test_self_hosted_hook_pin
+    test_self_hosted_fleet_payload
+    test_bootstrap_allowlist_disjoint
+    test_self_hosted_registration
+    test_bump_script_self_consistency
+    test_adr_0009_self_consistency
+    test_bump_workflow
+    test_ci_workflow_shape
+    test_yq_install_pinned
+    test_check_agents_md
+    test_check_guidance_coverage
+    test_check_guidance_touch
+    test_yq_preflight
+    test_shared_repos_yml_helpers_are_identical
+    test_dependabot_sweep_list_failure
+    test_dependabot_sweep_merge_gating
+    test_dependabot_config_health
+    test_discrepancy_alert
+)
+
 # The Codex lane. The three size/gate tests read only this repo's own files;
 # the sync and drift legs are --dry-run / read-only over the bigorg fixture,
 # so they can sit anywhere after the bares exist. Ordered so the budget
 # CEILING (what the managed half may weigh) is asserted before the gates that
 # police a consumer's file against it.
-test_agents_md_size_budget
-test_check_agents_md_budget
-test_sync_codex_budget
-test_drift_report_codex_budget
-test_register_codex_hook
-test_register_codex_hook_workspace_upgrade
-test_fleet_memory_hook
-test_fleet_memory_codex
-test_fleet_memory_freshness
-test_fleet_memory_workspace
+GROUP_codex=(
+    test_agents_md_size_budget
+    test_check_agents_md_budget
+    test_sync_codex_budget
+    test_drift_report_codex_budget
+    test_register_codex_hook
+    test_register_codex_hook_workspace_upgrade
+    test_fleet_memory_hook
+    test_fleet_memory_codex
+    test_fleet_memory_freshness
+    test_fleet_memory_workspace
+)
+
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.
-test_memory_home_hook
-test_register_memory_home_hook
+GROUP_memory_home=(
+    test_memory_home_hook
+    test_register_memory_home_hook
+)
 
-echo ""
-echo "========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "========================================="
+# Codex Cloud setup/maintenance runs the shared guidance hook directly before
+# the agent starts. Keep its focused, standard-library subprocess coverage in
+# a separate module so failures propagate through this integration runner:
+# under `set -e` a failing module ends this group without a Results line,
+# which run_groups reports as a failed group.
+group_codex_cloud() {
+    python3 -m unittest discover -s "$SCRIPT_DIR" -p 'test_codex_cloud*.py' -v
+}
 
-[[ $FAIL -eq 0 ]] && exit 0 || exit 1
+setup_fixtures() {
+    setup_mock_repos
+    setup_bootstrap_repos
+    setup_bump_repos
+    create_mock_gh
+    snapshot_bare_repos
+}
+
+# check_group_coverage — every test_ function this file defines is listed in
+# exactly one group, and every listed name is a defined function. Asked of
+# bash itself (`declare -F`, the arrays' own elements), not of this file's
+# text, so a comment or a string cannot satisfy it. A test that no group
+# names would otherwise simply stop running, green.
+check_group_coverage() {
+    local defined listed g ref problems=""
+    defined=$(declare -F | awk '$3 ~ /^test_/ { print $3 }' | sort)
+    listed=$(
+        for g in "${TEST_GROUPS[@]}"; do
+            [[ "$g" == codex_cloud ]] && continue
+            ref="GROUP_${g}[@]"
+            printf '%s\n' "${!ref}"
+        done | sort
+    )
+    local dup missing unknown
+    dup=$(uniq -d <<< "$listed")
+    missing=$(comm -23 <(printf '%s\n' "$defined") <(uniq <<< "$listed"))
+    unknown=$(comm -13 <(printf '%s\n' "$defined") <(uniq <<< "$listed"))
+    [[ -n "$dup" ]] && problems+="listed in more than one group: $(tr '\n' ' ' <<< "$dup")"$'\n'
+    [[ -n "$missing" ]] && problems+="defined but in no group: $(tr '\n' ' ' <<< "$missing")"$'\n'
+    [[ -n "$unknown" ]] && problems+="listed but not a test_ function: $(tr '\n' ' ' <<< "$unknown")"$'\n'
+    if [[ -n "$problems" ]]; then
+        printf 'run-tests.sh: the groups do not cover the suite:\n%s' "$problems" >&2
+        return 1
+    fi
+}
+
+# run_one_group <name> — the body of a child process: fixtures, then the
+# group's list in order, then the same Results line the whole suite prints.
+run_one_group() {
+    local g="$1" t
+    # Isolated per group, so a group never reads or writes the invoking user's
+    # git config, and two groups never race on one file. The identity is set
+    # here, in that file, because CI runners may not have one at all.
+    export HOME="$TEST_DIR/home"
+    export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+    mkdir -p "$HOME"
+    git config --global user.name "test-runner"
+    git config --global user.email "test@localhost"
+
+    echo "========================================="
+    echo "  Agent Guidance Integration Tests: $g"
+    echo "========================================="
+    if [[ "$g" == codex_cloud ]]; then
+        group_codex_cloud
+    else
+        setup_fixtures
+        local ref="GROUP_${g}[@]"
+        for t in "${!ref}"; do
+            "$t"
+        done
+    fi
+    echo ""
+    echo "========================================="
+    echo "  Results: $PASS passed, $FAIL failed"
+    echo "========================================="
+    [[ $FAIL -eq 0 ]] && exit 0 || exit 1
+}
+
+# run_groups — the parent: launch every group as a child of this script, at
+# most TEST_JOBS at a time (default: one per CPU; TEST_JOBS=1 runs them one
+# after another), buffer each child's output in a file of its own, then print
+# them all in TEST_GROUPS order so the log reads the same however the groups
+# were scheduled. A group fails if its child exits non-zero OR prints no
+# Results line (it died before the end), and any failed group fails the run.
+run_groups() {
+    local jobs="${TEST_JOBS:-$(nproc 2>/dev/null || echo 1)}"
+    if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+        echo "run-tests.sh: TEST_JOBS must be a positive integer, got '$jobs'" >&2
+        exit 2
+    fi
+    local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
+    local g dir running=0
+
+    # A killed parent takes its children with it; their TEST_DIRs live under
+    # this one (TMPDIR below), so the parent's own cleanup removes them too.
+    trap 'kill $(jobs -p) 2>/dev/null || true; wait; rm -rf "$TEST_DIR"' EXIT
+
+    for g in "${TEST_GROUPS[@]}"; do
+        if (( running >= jobs )); then
+            wait -n || true
+            running=$((running - 1))
+        fi
+        dir="$TEST_DIR/groups/$g"
+        mkdir -p "$dir/tmp"
+        (
+            start=$SECONDS
+            rc=0
+            TEST_GROUP="$g" TMPDIR="$dir/tmp" bash "$self" > "$dir/log" 2>&1 || rc=$?
+            echo "$rc $((SECONDS - start))" > "$dir/status"
+        ) &
+        running=$((running + 1))
+    done
+    wait
+
+    local rc secs line p f failed_groups="" summary=""
+    for g in "${TEST_GROUPS[@]}"; do
+        dir="$TEST_DIR/groups/$g"
+        cat "$dir/log"
+        read -r rc secs < "$dir/status" || { rc=missing; secs="?"; }
+        line=$(grep -E '^  Results: [0-9]+ passed, [0-9]+ failed$' "$dir/log" | tail -1) || line=""
+        if [[ -n "$line" ]]; then
+            p=$(sed -E 's/^  Results: ([0-9]+) passed.*/\1/' <<< "$line")
+            f=$(sed -E 's/.* ([0-9]+) failed$/\1/' <<< "$line")
+            PASS=$((PASS + p))
+            FAIL=$((FAIL + f))
+        else
+            p="-"; f="-"
+        fi
+        if [[ "$rc" != 0 || -z "$line" ]]; then
+            failed_groups+=" $g"
+        fi
+        summary+=$(printf '  %-14s %5s passed, %3s failed, exit %s, %ss' "$g" "$p" "$f" "$rc" "$secs")$'\n'
+    done
+
+    echo ""
+    echo "========================================="
+    echo "  Groups (TEST_JOBS=$jobs):"
+    printf '%s' "$summary"
+    if [[ -n "$failed_groups" ]]; then
+        echo "  FAILED GROUPS:$failed_groups"
+    fi
+    echo "  Results: $PASS passed, $FAIL failed"
+    echo "========================================="
+
+    [[ $FAIL -eq 0 && -z "$failed_groups" ]] && exit 0 || exit 1
+}
+
+check_group_coverage
+
+if [[ -n "${TEST_GROUP:-}" ]]; then
+    if [[ " ${TEST_GROUPS[*]} " != *" $TEST_GROUP "* ]]; then
+        echo "run-tests.sh: unknown TEST_GROUP '$TEST_GROUP' (one of: ${TEST_GROUPS[*]})" >&2
+        exit 2
+    fi
+    run_one_group "$TEST_GROUP"
+fi
+
+run_groups
