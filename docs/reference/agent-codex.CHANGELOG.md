@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-09-30 — 0.159.0 through 0.159.2
+
+- **Checked:** 2026-09-30T17:08Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.159.2](https://github.com/openai/codex/releases/tag/rust-v0.159.2), published 2026-09-29T23:57Z
+- **Window:** 0.159.0 (published 2026-09-29T08:05Z) through 0.159.2: 3 stable releases, 16 bullets indexed (0.159.0/0-13, 0.159.1/0, 0.159.2/0; the release-note highlights, not the trailing per-PR "Changelog" lists). Pre-releases (`-alpha`) excluded. Publish times read from each tag page's `datetime` attribute, UTC: 0.159.1 2026-09-29T20:32Z, 0.159.2 2026-09-29T23:57Z.
+- **Source text:** the GitHub release list pages 1-2 and each release's tag page; the pages walked included `rust-v0.158.0`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 6655756, `adam-agentskills` 41d223e, `adam-agentskills-private` f5d5d9e, `adamdaniel.ai` 4aa1acf, `claude-memory-map` d86a4da, `cms-platform` 7cbbe4c, `fastmail-actions` 4b092d6, `GHA-bench` a7cb9ec8, `jodidaniel.com` 92441f8, `repo-settings` a5f4781, `rss-inator` f3ee6b4, `skills-evals` cb3b084, `wsl-automation` 0ec6313.
+
+No group met the name-the-surface bar: a grep of the fleet for `prompt_suggestions`, `plugin-creator`, `instant_interrupt`, GPT-6 model names and `.aws` sandbox paths found no Codex dependency on any of them, so no issue was filed.
+
 ### 2026-09-28 — 0.157.1 through 0.158.0
 
 - **Checked:** 2026-09-28T21:26Z, [release log](https://github.com/openai/codex/releases) (`DRY_RUN`, `SCOPE=codex`)
