@@ -1,0 +1,24 @@
+# Issue map for the agent changelog routine (agent-changelog-routine.md).
+#
+# One line per issue the routine has filed: one per group per affected repo.
+# The routine reads this file before filing, so a group it already filed is
+# never filed twice, and appends a line right after each successful create.
+#
+# Format:
+#
+#   <agent>/<entry date>/<group> <owner>/<repo>#<n>
+#
+# Why the key has three parts: a group number restarts at 1 in every entry of
+# every agent's CHANGELOG, so a bare "1" would make a later run's group 1 look
+# already filed. The agent (claude-code or codex) plus the entry's date
+# heading plus the group number is unique across all runs.
+#
+# Why the value names the repo: an issue number is per repo, so "#497" alone
+# does not say which repo holds it. One group can affect several repos, which
+# is why a key may appear on more than one line (once per repo). The same key
+# paired with the same owner/repo twice, or the same owner/repo#n on two
+# lines, is an error: scripts/routine-merge-gate.js refuses to merge a PR
+# whose copy of this file breaks the format.
+#
+# Never edit or delete a line by hand except to fix a wrong one.
+claude-code/2026-09-30/1 Adam-S-Daniel/cms-platform#497
