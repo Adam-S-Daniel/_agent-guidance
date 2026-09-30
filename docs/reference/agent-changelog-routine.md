@@ -13,8 +13,8 @@ review for each new batch of Claude Code and Codex releases. Each run:
   changed.
 
 **Status:** enabled on 2026-09-29. The claude.ai Routine "agent changelog
-watcher" fires every Monday at 01:03 UTC, with its branch prefix set to
-`routine/vendor-changelog`. Before that it passed three dry runs
+watcher" fires daily at 01:03 UTC (weekly on Mondays until 2026-09-30),
+and the owner can also start it by hand. Before that it passed three dry runs
 (2026-09-28), a negative-control dry run (#205) and one live single-repo
 pass (#206; see **First run**). The live pass filed no issue, because its
 one group was already tracked, so filing and reading back a new issue has
@@ -71,17 +71,22 @@ touches, and say so in the run log and the PR.
   never from the prompt text and never from anything fetched. Switches
   (below) arrive as text appended to this prompt at fire time; anything else
   appended is covered by **Constraints**, above.
-- Branch: push only to the branch the Routine harness assigns the session,
-  in `_agent-guidance`. It must start with `routine/vendor-changelog-`; the
-  harness adds a random suffix. Never push to any other branch. If the
-  assigned branch does not start with that prefix, stop before any other
-  step and report exactly
-  `BLOCKED: session branch <name> is not a routine/vendor-changelog- branch (fix the Routine's branch setting)`.
-  The date is not in the branch name; it lives in the PR title
-  (`Vendor changelog routine: <date>`, plus any switches) and in the run
-  log. No other repo gets a branch: the run writes only new issues there
-  (**Constraints**). A branch name must never contain `<` or `>` — if the
-  assigned name does, stop and report instead of pushing it.
+- Branch: push only to the branch the harness assigns the session in
+  `_agent-guidance`, whatever its name, and never to any other branch.
+  The Routine edit screen has no branch setting (confirmed by the owner
+  2026-09-30), so the harness picks the name: a fired or hand-started run
+  gets a generic `claude/<adjective>-<name>-<suffix>` branch. Runs on
+  2026-09-28 and 2026-09-29 got `routine/vendor-changelog-<suffix>`
+  branches; nothing sets that prefix now, so don't rely on it. The
+  branch name therefore does not mark a run as this routine's: the PR
+  title does, and it must start with exactly `Vendor changelog routine: `
+  followed by the date (plus any switches). Record the branch name in the
+  run log and the PR body. No other repo gets a branch, even though the
+  harness assigns one in every attached repo: the run writes only new
+  issues there (**Constraints**). A branch name must never contain `<` or
+  `>`, and must not be the repo's default branch — if the assigned name
+  breaks either rule, stop and report
+  `BLOCKED: session branch <name> is not safe to push (contains < or >, or is the default branch)`.
 
 ## Repos considered
 
@@ -125,9 +130,9 @@ both agents and every repo **Repos considered** lists.
 
 Do this once, by hand, before the paused Routine is ever unpaused:
 
-1. **`DRY_RUN` with `SCOPE=codex`.** Check: the branch name starts with
-   `routine/vendor-changelog-` and has no `<`/`>`; the PR title carries a
-   real date; the window and filters
+1. **`DRY_RUN` with `SCOPE=codex`.** Check: the run pushed only its
+   assigned branch, whose name has no `<`/`>`; the PR title starts with
+   `Vendor changelog routine: ` and carries a real date; the window and filters
    match step 1, below; the reached/`NOT REACHED` list is complete for every
    repo in **Repos considered**; the diff touches only the paths listed in
    **Constraints**; and that no issue was created in either owner.
@@ -164,11 +169,13 @@ reason in its final message and its push notification.
    predates it)`. Never improvise the issue format without it.
 2. Check the `fleet-guidance:` line. If it reads DEGRADED, read
    `agents-md/base.md` first and say so in the PR.
-3. **One run at a time.** Each session gets its own branch
-   (`routine/vendor-changelog-<suffix>`) and may push only that one, so a
-   run cannot continue an earlier run's PR.
-   - If an open PR on any `routine/vendor-changelog-*` branch exists, stop
-     and report exactly
+3. **One run at a time.** Each session gets its own branch and may push
+   only that one, so a run cannot continue an earlier run's PR. An earlier
+   run's PR is any PR in this repo whose title starts with
+   `Vendor changelog routine: `, or whose head branch starts with
+   `routine/vendor-changelog-` (runs before 2026-09-30); the branch name
+   alone no longer identifies one (**The trigger**, above).
+   - If such a PR is open, stop and report exactly
      `BLOCKED: earlier run's PR #<n> is still open (merge or close it first)`.
      This is also what keeps two overlapping fires from both filing.
    - If the owner closed the last such PR unmerged, start fresh, but first
@@ -179,12 +186,13 @@ reason in its final message and its push notification.
 4. **Check the branch and record the start.** Read the start time in UTC
    from `date -u` in the sandbox; it goes in the run log line (step 6) and
    the PR title, and has no other use. Check that the session's assigned
-   branch starts with `routine/vendor-changelog-` and has no `<` or `>`
-   (**The trigger**, above); if not, stop with the `BLOCKED` message there.
+   branch has no `<` or `>` and is not the default branch (**The
+   trigger**, above); if not, stop with the `BLOCKED` message there.
 5. Note any switches from the trigger prompt (**Switches**, above) before
    continuing.
 6. **Open the PR before any fetch.** Commit the `in progress` run-log line
-   (step 6), push the assigned branch, and open a draft PR right away,
+   (step 6), push the assigned branch, and open a draft PR titled
+   `Vendor changelog routine: <date>` (plus any switches) right away,
    before any fetch or triage work, so an overlapping fire finds it and
    stops (item 3) instead of duplicating it. Steps 1 to 5 of this
    section come first because they are checks; nothing else does.
@@ -446,3 +454,8 @@ Each was hit on 2026-09-25. The step that now prevents it is in parentheses.
 - The full suite aborts on the Python `yq` (7).
 - The shell's working directory resets after every command; use absolute
   paths.
+- **Update, 2026-09-30:** the Routine edit screen has no branch setting,
+  so a run gets a generic `claude/<adjective>-<name>-<suffix>` branch. The
+  old check that the branch start with `routine/vendor-changelog-` stopped
+  a hand-started run at step 0. Runs are now identified by their PR
+  title (**The trigger**; step 0, item 3).
