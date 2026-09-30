@@ -14,8 +14,15 @@ repo-settings
 
 Claude Desktop only creates scheduled tasks through its own UI, so this
 cannot be committed as a file or set up by an agent. In Claude Desktop:
-Routines, then New routine, then Local, and set:
+Routines, then New routine, then Local. The owner created it on 2026-09-30
+with these settings:
 
+- **Name:** `handle-ready-for-review-issues-fleetwide`.
+- **Description:** "Turns each issue in Adam-S-Daniel and jodidaniel repos
+  labeled `agent-ready` into a ready-for-review PR in that issue's repo. First
+  created to process issues created by `agent-changelog-routine.md`."
+- **Branch:** `main`.
+- **Model:** default.
 - **Working folder:** `D:\repos\adam-s-daniel\_agent-guidance`.
 - **Schedule:** hourly.
 - **Worktree toggle:** OFF. The task makes its own worktrees, one per target
