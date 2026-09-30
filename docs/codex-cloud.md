@@ -45,6 +45,9 @@ its bytes, and run it with `--codex-cloud` and `CLAUDE_PROJECT_DIR` set to the
 selected checkout. This keeps the Cloud invocation on the reviewed revision
 while older delivered hook copies are still being refreshed across the fleet;
 the local delivered hook is the opt-in guard, not the invoked file.
+The hook drains SessionStart JSON from stdin. Cloud setup can keep stdin open,
+so the environment command redirects the hook's stdin from `/dev/null` to let
+setup finish.
 
 The environment script's relevant steps are:
 
@@ -65,7 +68,7 @@ else
     'e1c79a80a00bad2ade61c959115bf366366c34f5f7f616dcc236ad6e95dc5d19' \
     "$bootstrap_file" | sha256sum --check --status
   CLAUDE_PROJECT_DIR="$PWD" CODEX_HOME="${CODEX_HOME:-/opt/codex}" \
-    bash "$bootstrap_file" --codex-cloud
+    bash "$bootstrap_file" --codex-cloud </dev/null
 fi
 ```
 
@@ -220,12 +223,37 @@ built-in catalog entries.
 Keep local manifests and raw responses outside the repo when they contain
 private paths or task data.
 
-The fleet rollout covers 19 environments: 12 repos already carry a lock and
-seven deliberately do not. Live skill-discovery results remain pending until
-completed Cloud tasks from the revised setup are checked; the earlier guidance
-verification below does not establish skill discovery.
+The fleet rollout covers 19 environments: 12 repos carry a lock and seven
+deliberately do not. The [2026-09-30 verification record](#2026-09-30-fleet-skill-rollout)
+documents fresh and cached skill discovery for all 19.
 
 ## Verification record
+
+### 2026-09-30 fleet skill rollout
+
+The reviewed implementation is in the [skill installer PR #37](https://github.com/Adam-S-Daniel/adam-agentskills/pull/37),
+[environment reconciler PR #41](https://github.com/Adam-S-Daniel/wsl-automation/pull/41),
+and [Cloud catalog verifier PR #220](https://github.com/Adam-S-Daniel/_agent-guidance/pull/220).
+An initial pilot reached Cloud setup but waited for the bootstrap hook to drain
+stdin that setup kept open. Redirecting that invocation from `/dev/null` let
+setup finish. A final reconciliation dry run proposed no changes across the 19
+environments; their other settings and repository membership stayed in place.
+Two `repo_map.size` metadata values refreshed.
+
+All 19 fresh tasks completed and passed
+[`check-codex-cloud-skills.py`](../scripts/check-codex-cloud-skills.py) against
+their repository's committed `skills.lock`, or `{"skills": []}` for a repo
+without one. None of those fresh tasks had a maintenance marker. All 19 cached
+tasks completed, logged `Running maintenance scripts...`, and passed the same
+initial developer skill catalog check. Each locked repo's expected skill names and
+`SKILL.md` paths were present exactly once before assistant or tool output:
+ten repos expected nine skills each and two federated repos expected 23 each,
+for 136 expected fleet catalog entries per phase (272 across both phases).
+Each of the seven lockless repos had zero fleet skills in both phases. These
+38 saved-response checks report model-visible discovery; the earlier guidance
+checks below established the separate global-instruction delivery path.
+
+### 2026-09-15 fleet guidance delivery
 
 On 2026-09-15, the original automatic-setup baseline contained complete
 repo-specific additions but no global block or full payload. After switching
