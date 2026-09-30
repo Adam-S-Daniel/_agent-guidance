@@ -20149,6 +20149,8 @@ run_one_group() {
 # them all in TEST_GROUPS order so the log reads the same however the groups
 # were scheduled. A group fails if its child exits non-zero OR prints no
 # Results line (it died before the end), and any failed group fails the run.
+# Such a group adds one to FAIL unless its own Results line already counted a
+# failure, so the final Results line agrees with the exit code.
 run_groups() {
     local jobs="${TEST_JOBS:-$(nproc 2>/dev/null || echo 1)}"
     if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
@@ -20193,10 +20195,18 @@ run_groups() {
         else
             p="-"; f="-"
         fi
+        local note=""
         if [[ "$rc" != 0 || -z "$line" ]]; then
             failed_groups+=" $g"
+            # A group that died, or exited non-zero while claiming 0 failed,
+            # still failed: count it, so the Results line below can never
+            # read "0 failed" on a run that exits 1.
+            if [[ -z "$line" || "$f" == 0 ]]; then
+                FAIL=$((FAIL + 1))
+                note=" (+1 failed: exited $rc without reporting a failed assertion)"
+            fi
         fi
-        summary+=$(printf '  %-14s %5s passed, %3s failed, exit %s, %ss' "$g" "$p" "$f" "$rc" "$secs")$'\n'
+        summary+=$(printf '  %-14s %5s passed, %3s failed, exit %s, %ss%s' "$g" "$p" "$f" "$rc" "$secs" "$note")$'\n'
     done
 
     echo ""
