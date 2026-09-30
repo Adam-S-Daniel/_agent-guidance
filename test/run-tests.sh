@@ -17749,6 +17749,39 @@ test_discrepancy_alert() {
     fi
 }
 
+test_routine_merge_gate() {
+    echo ""
+    echo "=== Test: routine-merge-gate.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the discrepancy alert gate: the script
+    # parses the PR body with markdown-it, so a missing node_modules must fail
+    # loudly, never skip. CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "routine merge gate: node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/routine-merge-gate-tap.txt" rc=0
+    # NEVER pipe this — the script runs under `set -euo pipefail`, and a pipe's
+    # exit status belongs to the LAST command in it, not to `node --test`.
+    # Capture to a file and read $? straight off the command instead.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-routine-merge-gate.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # A minimum count is the cheapest proof anything actually ran: a suite that
+    # merely `require()`d the module and defined zero tests would otherwise
+    # exit 0 with "# pass 0". 58 is the suite's actual count, so a test
+    # deleted without updating this number fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 58 ]]; then
+        pass "routine merge gate: node:test suite is green ($pass_n passed)"
+    else
+        fail "routine merge gate: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=58): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
 #
@@ -19984,6 +20017,7 @@ test_dependabot_sweep_list_failure
 test_dependabot_sweep_merge_gating
 test_dependabot_config_health
 test_discrepancy_alert
+test_routine_merge_gate
 # The Codex lane. The three size/gate tests read only this repo's own files;
 # the sync and drift legs are --dry-run / read-only over the bigorg fixture,
 # so they can sit anywhere after the bares exist. Ordered so the budget
