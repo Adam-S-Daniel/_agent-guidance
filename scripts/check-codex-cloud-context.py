@@ -2,9 +2,10 @@
 """Verify fleet guidance in a saved Codex Cloud task response."""
 
 import hashlib
-import json
 import sys
 from pathlib import Path
+
+from codex_cloud_response import CheckFailure, load_response, validated_turn
 
 
 BEGIN = "<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->"
@@ -13,25 +14,11 @@ REPO_ADDITIONS = "## Repo-specific additions"
 RAW_COMPLETED = "rawResponseItem/completed"
 
 
-class CheckFailure(Exception):
-    pass
-
-
 def read_text(path, label):
     try:
         return Path(path).read_bytes().decode("utf-8")
     except (OSError, UnicodeError):
         raise CheckFailure(f"{label} is not readable UTF-8 text") from None
-
-
-def load_response(path):
-    try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        raise CheckFailure("saved task response is not readable JSON") from None
-    if not isinstance(value, dict):
-        raise CheckFailure("saved task response is not a JSON object")
-    return value
 
 
 def initial_instruction_envelope(turn):
@@ -144,14 +131,7 @@ def check(response_path, payload_path, repo_agents_path):
         )
     additions = repo_agents[addition_offsets[0]:]
 
-    turn = response.get("current_assistant_turn")
-    if not isinstance(turn, dict):
-        raise CheckFailure("saved task response has no current assistant turn")
-    if turn.get("type") != "assistant" or turn.get("role") != "assistant":
-        raise CheckFailure("current assistant turn has an invalid identity")
-    if turn.get("turn_status") != "completed" or turn.get("error") is not None:
-        raise CheckFailure("assistant turn is incomplete or failed")
-
+    turn = validated_turn(response)
     envelope = initial_instruction_envelope(turn)
     block = expected_cloud_block(payload)
     if envelope.count(BEGIN) != 1 or envelope.count(END) != 1:

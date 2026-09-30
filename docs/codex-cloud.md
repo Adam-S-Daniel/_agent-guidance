@@ -12,8 +12,9 @@ the installer directly before assembling the agent's instructions.
 2. For the current supported recipe, set `CODEX_HOME=/opt/codex` as a
    persistent environment variable. This gives setup and the agent the same
    destination; it is not an inherent Codex requirement, as measured below.
-3. Preserve the repository's dependency installation, then run the hook in
-   both the **setup script** and the **maintenance script**:
+3. Preserve the repository's dependency installation, then run the guidance
+   hook in both the **setup script** and the **maintenance script**. For this
+   repo the dependency step is `npm ci`:
 
 ```bash
 npm ci
@@ -24,6 +25,53 @@ bash .claude/hooks/fleet-memory.sh --codex-cloud
    while caching the default branch for a fresh container, then checks out the
    task's selected branch. It runs maintenance after checkout when resuming a
    cached container.
+
+### Fleet skill setup
+
+Each environment script enters its **selected repository's** checkout under
+`/workspace` before running setup. It installs Node dependencies only when
+that checkout has `package-lock.json`, runs the guidance hook, then enrolls in
+skill delivery only when the same checkout has `skills.lock` and the delivered
+`.claude/hooks/skills-bootstrap.sh`. An invalid or symlinked lock, or a missing
+or symlinked delivered hook in an enrolled repo, fails setup. Repos without a
+lock deliberately skip fleet skills.
+
+The reviewed Codex-capable bootstrap is pinned to
+[`1ecea259`](https://github.com/Adam-S-Daniel/adam-agentskills/commit/1ecea2593bcbca6b6073eedf50bb4ffa90ee77e8)
+with SHA-256
+`e1c79a80a00bad2ade61c959115bf366366c34f5f7f616dcc236ad6e95dc5d19`.
+For an enrolled repo, setup and maintenance download that exact file, verify
+its bytes, and run it with `--codex-cloud` and `CLAUDE_PROJECT_DIR` set to the
+selected checkout. This keeps the Cloud invocation on the reviewed revision
+while older delivered hook copies are still being refreshed across the fleet;
+the local delivered hook is the opt-in guard, not the invoked file.
+
+The environment script's relevant steps are:
+
+```bash
+cd "/workspace/$repository_name"
+if [[ -f package-lock.json ]]; then npm ci; fi
+CODEX_HOME="${CODEX_HOME:-/opt/codex}" bash .claude/hooks/fleet-memory.sh --codex-cloud
+if [[ ! -e skills.lock && ! -L skills.lock ]]; then
+  printf '%s\n' 'skills: skipped (no skills.lock in selected repository)'
+else
+  [[ -f skills.lock && ! -L skills.lock ]] || exit 1
+  [[ -f .claude/hooks/skills-bootstrap.sh && ! -L .claude/hooks/skills-bootstrap.sh ]] || exit 1
+  bootstrap_file=$(mktemp)
+  trap 'rm -f -- "$bootstrap_file"' EXIT
+  curl --fail --silent --show-error --location --output "$bootstrap_file" \
+    'https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/1ecea2593bcbca6b6073eedf50bb4ffa90ee77e8/.claude/hooks/skills-bootstrap.sh'
+  printf '%s  %s\n' \
+    'e1c79a80a00bad2ade61c959115bf366366c34f5f7f616dcc236ad6e95dc5d19' \
+    "$bootstrap_file" | sha256sum --check --status
+  CLAUDE_PROJECT_DIR="$PWD" CODEX_HOME="${CODEX_HOME:-/opt/codex}" \
+    bash "$bootstrap_file" --codex-cloud
+fi
+```
+
+Here `repository_name` is supplied from each environment's validated target,
+not copied from another environment. This recipe is for the rollout script;
+keep the existing environment's other setup commands when applying it.
 
 Once the hook is on the default branch, the relative command above is the
 durable configuration. Because fresh setup may run against the default branch,
@@ -136,6 +184,46 @@ captures are authenticated and stay local—do not commit them or paste private
 environment IDs or task URLs into the repo. This response shape is an observed
 internal endpoint and may change; the checker fails closed if the response is
 unavailable or its structure changes.
+
+### Verify skill discovery
+
+For a repo with a committed `skills.lock`, run the separate catalog check on
+the same saved, completed task response:
+
+```bash
+python3 scripts/check-codex-cloud-skills.py saved-task-response.json skills.lock
+```
+
+The checker derives expected names from the basenames of `skills` keys, including
+any `sources[*].skills` rows, and requires each name to appear once in the
+initial developer `### Available skills` catalog with a
+`$HOME/.agents/skills/<name>/SKILL.md` path. The catalog must be complete. An
+assistant answer, tool result, or `output_items` echo cannot satisfy this check.
+The lock records verified content digests; the catalog check establishes that
+Codex actually discovered the installed skills for this task.
+
+For an exact check of installed frontmatter names and paths, make a local
+manifest after verifying the installed files against their lock digests:
+
+```json
+{"skills": [{"name": "example-skill", "file": "/home/agent/.agents/skills/example-skill/SKILL.md"}]}
+```
+
+Pass that JSON file as the second argument instead of `skills.lock`. Each
+manifest entry requires `name`; `file` and `description` are optional. Supply
+`file` when the frontmatter name differs from its installed directory or when
+the absolute path matters; without it, the checker requires the same fleet
+path suffix as lock mode. A supplied `description` must match the catalog text
+exactly. For an environment whose repo deliberately has no lock, use
+`{"skills": []}`; this requires zero fleet skills while allowing Codex's
+built-in catalog entries.
+Keep local manifests and raw responses outside the repo when they contain
+private paths or task data.
+
+The fleet rollout covers 19 environments: 12 repos already carry a lock and
+seven deliberately do not. Live skill-discovery results remain pending until
+completed Cloud tasks from the revised setup are checked; the earlier guidance
+verification below does not establish skill discovery.
 
 ## Verification record
 
