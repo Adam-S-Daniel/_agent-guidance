@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-01 — 0.159.3 through 0.159.3
+
+- **Checked:** 2026-10-01T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.159.3](https://github.com/openai/codex/releases/tag/rust-v0.159.3), published 2026-09-30T22:57Z
+- **Window:** 0.159.3 (published 2026-09-30T22:57Z), the first stable release after 0.159.2: 1 stable release, 1 bullet (0.159.3/0: optional account security setup reminders for ChatGPT-signed-in local sessions). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.158.0`, an earlier entry's version, and `rust-v0.159.2`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` f951789, `adam-agentskills` ca1e575, `adam-agentskills-private` e488539, `adamdaniel.ai` c827165, `claude-memory-map` 52c2306, `cms-platform` fffc5db, `fastmail-actions` df3c001, `GHA-bench` 67e67ff8, `jodidaniel.com` be8eaa5, `repo-settings` 2596138, `rss-inator` f3ee6b4, `skills-evals` 4368def, `wsl-automation` f05a86a.
+
+No group met the name-the-surface bar: the one bullet is a ChatGPT sign-in UI reminder, and no fleet repo depends on it, so no issue was filed.
+
 ### 2026-09-30 — 0.159.0 through 0.159.2
 
 - **Checked:** 2026-09-30T17:08Z, [release log](https://github.com/openai/codex/releases)

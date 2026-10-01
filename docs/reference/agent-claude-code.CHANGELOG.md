@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-01 — 2.1.286 through 2.1.286
+
+- **Checked:** 2026-10-01T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.286](https://github.com/anthropics/claude-code/releases/tag/v2.1.286), published 2026-09-30T19:10Z
+- **Window:** v2.1.286 (published 2026-09-30T19:10Z), the first stable release after v2.1.285: 1 release, about 100 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.286` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time and body, which matched.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` f951789, `adam-agentskills` ca1e575, `adam-agentskills-private` e488539, `adamdaniel.ai` c827165, `claude-memory-map` 52c2306, `cms-platform` fffc5db, `fastmail-actions` df3c001, `GHA-bench` 67e67ff8, `jodidaniel.com` be8eaa5, `repo-settings` 2596138, `rss-inator` f3ee6b4, `skills-evals` 4368def, `wsl-automation` f05a86a.
+
+No group met the name-the-surface bar: a grep of the fleet for `--bare` (only `git init --bare` hits), `--fallback-model`, `verify` skills, npm plugin sources, and `awsAuthRefresh`/`gcpAuthRefresh` (only a settings-key list copied by a sync script, unaffected by the login-browser fix) found no dependence on a changed behavior, so no issue was filed.
+
 ### 2026-09-30 — 2.1.285 through 2.1.285
 
 - **Checked:** 2026-09-30T17:08Z, [release log](https://github.com/anthropics/claude-code/releases)
