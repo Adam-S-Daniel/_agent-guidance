@@ -89,8 +89,8 @@ half is under budget by construction, so an overrun is always in the repo's own
   that repo's **Notes**, explained in the report's own legend.
 
 The managed half is held clear of the budget by size tests in
-`test/run-tests.sh`: `agents-md/base.md` ≤ 24 KiB and a full-mode build with
-every section ≤ 28 KiB, so even a full-mode repo keeps ≥ 4 KiB for its own
+`test/run-tests.sh`: `agents-md/base.md` ≤ 25 KiB and a full-mode build with
+every section ≤ 29 KiB, so even a full-mode repo keeps ≥ 3 KiB for its own
 additions (a stub-mode repo — all 19 today — keeps nearly all of it).
 
 The guidance itself reaches Codex a different way. The `fleet-memory`

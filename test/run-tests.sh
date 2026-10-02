@@ -18056,16 +18056,16 @@ test_agents_md_size_budget() {
 
     # FULL mode with EVERY section — the largest managed block this build can
     # emit, i.e. what a repo that cannot receive the fleet-memory hook is
-    # handed. The ceiling here is 28672 (28 KiB) rather than Codex's 32768,
-    # so such a repo keeps at least 4 KiB for "## Repo-specific additions"
+    # handed. The ceiling here is 29696 (29 KiB) rather than Codex's 32768,
+    # so such a repo keeps at least 3 KiB for "## Repo-specific additions"
     # instead of being handed a file that is legal and unextendable.
     local full_bytes
     full_bytes=$(AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh" \
         docker dotnet go javascript python rust typescript | wc -c | tr -d ' ')
-    if [[ "$full_bytes" -le 28672 ]]; then
-        pass "size budget: full build with every section is $full_bytes bytes (<= 28672)"
+    if [[ "$full_bytes" -le 29696 ]]; then
+        pass "size budget: full build with every section is $full_bytes bytes (<= 29696)"
     else
-        fail "size budget: full build with every section is $full_bytes bytes, over 28672 — trim agents-md/base.md; Codex cuts a repo's AGENTS.md at 32768 bytes with nothing on screen to say so"
+        fail "size budget: full build with every section is $full_bytes bytes, over 29696 — trim agents-md/base.md; Codex cuts a repo's AGENTS.md at 32768 bytes with nothing on screen to say so"
     fi
 
     # STUB mode, which is what all 19 repos are on. 8192 is deliberately

@@ -157,3 +157,24 @@ Run [`scripts/register-codex-hook.sh`](../../scripts/register-codex-hook.sh)
 once per machine, then re-trust the changed definition in `/hooks`. The exact
 previous default command is replaced in place, preserving its group, order
 and metadata; hand-written variants are the operator's and stay untouched.
+
+## Addendum — size caps raised by 1 KiB (2026-10-02)
+
+Decision 1's two caps move from `agents-md/base.md` ≤ 24 KiB and a full-mode
+build ≤ 28 KiB to **≤ 25 KiB and ≤ 29 KiB**; a full-mode repo now keeps at
+least 3 KiB for its own additions. Codex's 32768 is untouched. The text above
+records the numbers as they were decided.
+
+Why: two user-level preambles that had no repo source (delegation, and one
+worktree per coding session) were folded into `base.md` and the file had about
+100 bytes of headroom. Raising the cap cost less than trimming hard-won rules.
+Evidence, measured 2026-10-02:
+
+- All 19 fleet repos' `AGENTS.md` are stub mode (none contains
+  `## Working in these repos`, read through the contents API), so full mode is
+  an unused fail-safe and the 28 KiB full-build ceiling guards no live repo.
+- `base.md` is delivered to `~/.codex/AGENTS.md` (user instructions, outside
+  `project_doc_max_bytes`, decision 3) and `~/.claude/CLAUDE.md`, not to a
+  project file.
+- The full-build test assumes all seven language sections at once, which no
+  repo has.
