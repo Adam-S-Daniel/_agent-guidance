@@ -111,10 +111,12 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
 Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 On **native Windows Codex**, run the registrar from Git Bash: Codex runs hooks
-through `cmd.exe`, where a bare `bash` is WSL's launcher, so the registrar also
-writes a `commandWindows` override that calls Git Bash explicitly (override its
-path with `CODEX_HOOK_GIT_BASH`). Re-running it upgrades an existing
-registration in place; re-trust the changed definition in `/hooks`.
+through `cmd.exe`, where a bare `bash` is WSL's launcher and single quotes are
+not quoting, so the registrar also writes a `commandWindows` override that runs
+the tracked launcher `.claude/hooks/codex-session-start.sh` under Git Bash by
+explicit path (override with `CODEX_HOOK_GIT_BASH` / `--launcher`). Re-running
+it upgrades an existing registration in place; re-trust the changed definition
+in `/hooks`.
 
 **2026-09-28 — parent-directory launches:** from a multi-repo parent, the
 registered command runs the first child hook supporting `--workspace`; that

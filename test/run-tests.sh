@@ -18604,12 +18604,13 @@ test_register_codex_hook_windows() {
     rm -rf "$d"
     mkdir -p "$d/fresh" "$d/upgrade" "$d/plain" "$d/override" "$d/nobash" "$d/stub"
     local expected_bash='C:\Program Files\Git\bin\bash.exe'
-    # What the non-Windows registrar writes; commandWindows must be this
-    # snippet exactly, under a quoted Git Bash path.
+    # The launcher is passed explicitly in Windows mixed form, as `cygpath -m`
+    # would produce, so the expected string is the same on every machine.
+    local launcher='D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh'
     local helper="$d/check.py"
     cat > "$helper" <<'PY'
 import json, sys
-# argv: file, expected git bash path or "-" for "no commandWindows"
+# argv: file, expected git bash path or "-" for "no commandWindows", launcher
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
 groups = doc["hooks"]["SessionStart"]
 assert len(groups) == 1, "expected one group, got %d" % len(groups)
@@ -18619,22 +18620,27 @@ assert cmd.startswith("bash -c '"), "command is not bash -c: %r" % cmd
 if sys.argv[2] == "-":
     assert "commandWindows" not in e, "commandWindows written off Windows"
 else:
-    want = '"%s" -c %s' % (sys.argv[2], cmd[len("bash -c "):])
-    assert e.get("commandWindows") == want, "commandWindows is %r, want %r" % (e.get("commandWindows"), want)
+    got = e.get("commandWindows")
+    # cmd.exe reads these as its own syntax, and does not treat single quotes
+    # as quoting, so none may appear anywhere in the string.
+    bad = [c for c in "&|<>^%'" if c in (got or "")]
+    assert not bad, "commandWindows contains cmd-unsafe characters %r" % bad
+    want = '"%s" "%s"' % (sys.argv[2], sys.argv[3])
+    assert got == want, "commandWindows is %r, want %r" % (got, want)
 print("OK")
 PY
 
     # 1. --windows writes the exact commandWindows string.
     rc=0
-    out=$(CODEX_HOME="$d/fresh" "$script" --windows 2>&1) || rc=$?
+    out=$(CODEX_HOME="$d/fresh" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
     if [[ $rc -eq 0 && "$out" == *'registered'* ]]; then
         pass "register windows: --windows registration exits 0"
     else
         fail "register windows: --windows registration exit $rc: $out"
     fi
-    out=$(python3 "$helper" "$d/fresh/hooks.json" "$expected_bash" 2>&1) || true
+    out=$(python3 "$helper" "$d/fresh/hooks.json" "$expected_bash" "$launcher" 2>&1) || true
     if [[ "$out" == OK ]]; then
-        pass "register windows: commandWindows is the quoted Git Bash path plus the exact command snippet"
+        pass "register windows: commandWindows is the quoted Git Bash path plus the quoted launcher, with no cmd metacharacter"
     else
         fail "register windows: commandWindows string wrong — $out"
     fi
@@ -18642,7 +18648,7 @@ PY
     # 2. Idempotent: byte-identical second run.
     cp "$d/fresh/hooks.json" "$d/fresh-before.json"
     rc=0
-    out=$(CODEX_HOME="$d/fresh" "$script" --windows 2>&1) || rc=$?
+    out=$(CODEX_HOME="$d/fresh" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
     if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
             && cmp -s "$d/fresh-before.json" "$d/fresh/hooks.json"; then
         pass "register windows: a second --windows run is already-registered and byte-identical"
@@ -18674,19 +18680,18 @@ with open(sys.argv[2], "w", encoding="utf-8") as fh:
 PY
     cp "$d/upgrade/hooks.json" "$d/upgrade-before.json"
     rc=0
-    out=$(CODEX_HOME="$d/upgrade" "$script" --windows 2>&1) || rc=$?
+    out=$(CODEX_HOME="$d/upgrade" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
     if [[ $rc -eq 0 && "$out" == *'updated'* && "$out" == *'/hooks'* ]]; then
         pass "register windows: upgrading a non-Windows registration reports updated and asks for re-trust"
     else
         fail "register windows: upgrade exit $rc or wrong verdict: $out"
     fi
-    out=$(python3 - "$d/upgrade-before.json" "$d/upgrade/hooks.json" "$expected_bash" 2>&1 <<'PY'
+    out=$(python3 - "$d/upgrade-before.json" "$d/upgrade/hooks.json" "$expected_bash" "$launcher" 2>&1 <<'PY'
 import json, sys
 before = json.load(open(sys.argv[1], encoding="utf-8"))
 after = json.load(open(sys.argv[2], encoding="utf-8"))
 entry = before["hooks"]["SessionStart"][1]["hooks"][1]
-cmd = entry["command"]
-entry["commandWindows"] = '"%s" -c %s' % (sys.argv[3], cmd[len("bash -c "):])
+entry["commandWindows"] = '"%s" "%s"' % (sys.argv[3], sys.argv[4])
 assert before == after, "upgrade changed more than adding commandWindows to our entry"
 assert len(after["hooks"]["SessionStart"]) == 3, "group count changed"
 print("OK")
@@ -18699,7 +18704,7 @@ PY
     fi
     cp "$d/upgrade/hooks.json" "$d/upgrade-after.json"
     rc=0
-    out=$(CODEX_HOME="$d/upgrade" "$script" --windows 2>&1) || rc=$?
+    out=$(CODEX_HOME="$d/upgrade" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
     if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
             && cmp -s "$d/upgrade-after.json" "$d/upgrade/hooks.json"; then
         pass "register windows: rerun after the upgrade is already-registered and byte-identical"
@@ -18716,7 +18721,7 @@ PY
         *)
             rc=0
             out=$(CODEX_HOME="$d/plain" "$script" 2>&1) || rc=$?
-            result=$(python3 "$helper" "$d/plain/hooks.json" - 2>&1) || true
+            result=$(python3 "$helper" "$d/plain/hooks.json" - - 2>&1) || true
             if [[ $rc -eq 0 && "$result" == OK ]]; then
                 pass "register windows: a non-Windows run writes no commandWindows"
             else
@@ -18734,8 +18739,8 @@ PY
 
     # 5. CODEX_HOOK_GIT_BASH is respected.
     rc=0
-    out=$(CODEX_HOOK_GIT_BASH='D:\Tools\Git\bin\bash.exe' CODEX_HOME="$d/override" "$script" --windows 2>&1) || rc=$?
-    result=$(python3 "$helper" "$d/override/hooks.json" 'D:\Tools\Git\bin\bash.exe' 2>&1) || true
+    out=$(CODEX_HOOK_GIT_BASH='D:\Tools\Git\bin\bash.exe' CODEX_HOME="$d/override" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
+    result=$(python3 "$helper" "$d/override/hooks.json" 'D:\Tools\Git\bin\bash.exe' "$launcher" 2>&1) || true
     if [[ $rc -eq 0 && "$result" == OK ]]; then
         pass "register windows: CODEX_HOOK_GIT_BASH overrides the Git Bash path"
     else
@@ -18750,12 +18755,95 @@ echo "/nonexistent/git/bin/bash.exe"
 SH
     chmod +x "$d/stub/cygpath"
     rc=0
-    out=$(PATH="$d/stub:$PATH" CODEX_HOME="$d/nobash" "$script" --windows 2>&1) || rc=$?
+    out=$(PATH="$d/stub:$PATH" CODEX_HOME="$d/nobash" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
     if [[ $rc -eq 5 && "$out" == *'refused-no-git-bash'* && ! -e "$d/nobash/hooks.json" ]]; then
         pass "register windows: an absent Git Bash is refused with exit 5 and nothing written"
     else
         fail "register windows: absent Git Bash exit $rc, file=$(ls "$d/nobash"): $out"
     fi
+
+    # 7. A foreign commandWindows is the operator's: left byte-identical.
+    mkdir -p "$d/foreign"
+    python3 - "$d/fresh/hooks.json" "$d/foreign/hooks.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+doc["hooks"]["SessionStart"][0]["hooks"][0]["commandWindows"] = "C:\\mine\\run.cmd"
+json.dump(doc, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+PY
+    cp "$d/foreign/hooks.json" "$d/foreign-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/foreign" "$script" --windows --launcher "$launcher" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/foreign-before.json" "$d/foreign/hooks.json"; then
+        pass "register windows: a commandWindows that differs from ours is left alone"
+    else
+        fail "register windows: a foreign commandWindows was changed: $out"
+    fi
+
+    # 8. A launcher path carrying a cmd metacharacter is refused, nothing written.
+    mkdir -p "$d/meta"
+    rc=0
+    out=$(CODEX_HOME="$d/meta" "$script" --windows --launcher 'D:/a&b/codex-session-start.sh' 2>&1) || rc=$?
+    if [[ $rc -eq 5 && "$out" == *'refused-no-git-bash'* && ! -e "$d/meta/hooks.json" ]]; then
+        pass "register windows: a launcher path with a cmd metacharacter is refused with exit 5"
+    else
+        fail "register windows: metacharacter path exit $rc, file=$(ls "$d/meta"): $out"
+    fi
+}
+
+# The Windows launcher is the registered `bash -c` snippet as a file, so it must
+# behave identically to it. Both are run in the same fixtures: a repo with a
+# synced hook at its git root (started from a subdirectory), a multi-repo
+# parent whose child hook supports --workspace, and a directory with neither.
+# The stub hooks print their arguments, so a wrong branch is visible.
+test_codex_session_start_launcher() {
+    echo ""
+    echo "TEST: codex-session-start.sh launcher (same behavior as the registered snippet)"
+    local launcher="$REPO_ROOT/.claude/hooks/codex-session-start.sh"
+    local script="$REPO_ROOT/scripts/register-codex-hook.sh"
+    local d="$TEST_DIR/codex-launcher"
+    local out_old out_new rc_old rc_new snippet
+    rm -rf "$d"
+    mkdir -p "$d/home" "$d/repo/.claude/hooks" "$d/repo/sub/dir" \
+        "$d/parent/child/.claude/hooks" "$d/parent/plain" "$d/empty"
+    git -C "$d/repo" init -q
+    printf '#!/usr/bin/env bash\necho "root-hook args=[$*]"\n' > "$d/repo/.claude/hooks/fleet-memory.sh"
+    printf '#!/usr/bin/env bash\n# supports --workspace\necho "child-hook args=[$*]"\n' > "$d/parent/child/.claude/hooks/fleet-memory.sh"
+
+    CODEX_HOME="$d/home" "$script" >/dev/null 2>&1 || true
+    snippet=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/home/hooks.json")
+
+    if [[ -x "$launcher" ]]; then
+        pass "launcher: codex-session-start.sh is executable"
+    else
+        fail "launcher: codex-session-start.sh is not executable"
+    fi
+
+    local where label
+    for where in repo/sub/dir parent empty; do
+        rc_old=0
+        out_old=$(cd "$d/$where" && GIT_CEILING_DIRECTORIES="$d" bash -c "$snippet" 2>&1) || rc_old=$?
+        rc_new=0
+        out_new=$(cd "$d/$where" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1) || rc_new=$?
+        label="$where"
+        if [[ "$out_old" == "$out_new" && $rc_old -eq $rc_new && $rc_new -eq 0 ]]; then
+            pass "launcher: matches the registered snippet from $label (output [$out_new])"
+        else
+            fail "launcher: differs from the registered snippet from $label — old [$out_old] rc=$rc_old, new [$out_new] rc=$rc_new"
+        fi
+    done
+    out_new=$(cd "$d/repo/sub/dir" && bash "$launcher" 2>&1)
+    [[ "$out_new" == "root-hook args=[]" ]] \
+        && pass "launcher: a git root's own hook runs with no arguments" \
+        || fail "launcher: git root hook branch wrong: $out_new"
+    out_new=$(cd "$d/parent" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1)
+    [[ "$out_new" == "child-hook args=[--workspace $d/parent]" ]] \
+        && pass "launcher: a parent dir runs the workspace-capable child hook with --workspace" \
+        || fail "launcher: workspace branch wrong: $out_new"
+    out_new=$(cd "$d/empty" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1)
+    [[ -z "$out_new" ]] \
+        && pass "launcher: with no hook anywhere it exits silently" \
+        || fail "launcher: expected silence, got: $out_new"
 }
 
 # Run the actual command the registration script wrote, so a stale hook
@@ -20649,6 +20737,7 @@ GROUP_codex=(
     test_register_codex_hook
     test_register_codex_hook_workspace_upgrade
     test_register_codex_hook_windows
+    test_codex_session_start_launcher
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness

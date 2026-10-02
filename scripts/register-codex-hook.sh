@@ -43,29 +43,41 @@ set -euo pipefail
 # NATIVE WINDOWS CODEX. On Windows, Codex runs a hook's command through
 # %COMSPEC% as `cmd.exe /C "<command>"`
 # (https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/hooks/src/engine/command_runner.rs,
-# `build_command` / `default_shell_program`). In cmd.exe, `bash` resolves to
-# C:\Windows\System32\bash.exe — WSL's launcher (measured with `where bash`) —
-# so the plain `bash -c '...'` command would run the hook INSIDE WSL and
-# update WSL's ~/.codex rather than Windows'. A handler may carry a per-handler
-# override, `commandWindows` (alias `command_windows`), used instead of
-# `command` when Codex is built for Windows
+# `build_command` / `default_shell_program`). That has two consequences:
+#
+#   1. In cmd.exe, `bash` resolves to C:\Windows\System32\bash.exe — WSL's
+#      launcher (measured with `where bash`) — so the plain `bash -c '...'`
+#      command would run the hook INSIDE WSL and update WSL's ~/.codex rather
+#      than Windows'.
+#   2. cmd.exe does not treat single quotes as quoting. The snippet's double
+#      quotes toggle cmd's quote state, so its `2>/dev/null` and `&&` land
+#      outside cmd's quotes and cmd runs them as its own redirection and
+#      command separator (measured through real cmd.exe: "The system cannot
+#      find the path specified."). Escaping per quote state is fragile.
+#
+# A handler may carry a per-handler override, `commandWindows` (alias
+# `command_windows`), used instead of `command` when Codex is built for Windows
 # (https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/config/src/hook_config.rs).
 # So when this script runs under Git Bash/MSYS/Cygwin (`uname -s` matching
 # MINGW*|MSYS*|CYGWIN*), or with `--windows` (for tests), the handler it writes
-# ALSO carries:
+# ALSO carries a `commandWindows` that holds NO shell logic at all, only two
+# quoted paths — Git Bash and a tracked launcher that holds the snippet:
 #
-#   "commandWindows": "\"C:\Program Files\Git\bin\bash.exe\" -c '<the same snippet as command>'"
+#   "commandWindows": "\"C:\Program Files\Git\bin\bash.exe\" \"D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh\""
 #
-# Measured on Windows: `cmd /C ""C:\Program Files\Git\bin\bash.exe" -c '...'"`
-# runs Git Bash correctly (the single-quoted -c argument survives, double
-# quotes inside it included; $HOME is /c/Users/<user>). The Git Bash path
-# defaults to C:\Program Files\Git\bin\bash.exe; set CODEX_HOOK_GIT_BASH
-# (a Windows-form path) to override it. Where `cygpath` exists and shows that
-# path is absent, the script refuses (exit 5) instead of writing a hook that
-# cannot run. An exact registration that lacks `commandWindows` is upgraded in
-# place on Windows (group, position and other fields preserved; the trust hash
-# changes, so re-trust it in `/hooks`); one that already carries a
-# `commandWindows` is left alone. Off Windows nothing here changes: no
+# The launcher, .claude/hooks/codex-session-start.sh, is the `command` snippet
+# as a file (same git-root lookup, same --workspace loop, same silent exit).
+# Its path is this script's OWN checkout, in Windows mixed form (`cygpath -m`
+# when available); `--launcher <path>` overrides it, like `--hook` in
+# register-memory-home-hook.sh. The Git Bash path defaults to
+# C:\Program Files\Git\bin\bash.exe; set CODEX_HOOK_GIT_BASH (a Windows-form
+# path) to override it. The script refuses (exit 5) instead of writing a hook
+# that cannot run: when `cygpath` is available and Git Bash or the launcher is
+# absent, or when either path contains a cmd metacharacter (& | < > ^ %).
+# An exact registration that lacks `commandWindows` is upgraded in place on
+# Windows (group, position and other fields preserved; the trust hash changes,
+# so re-trust it in `/hooks`); one that already carries a `commandWindows`,
+# whatever its value, is left alone. Off Windows nothing here changes: no
 # `commandWindows` is ever written.
 #
 # APPEND FOR NEW REGISTRATIONS — the same posture as
@@ -97,7 +109,7 @@ set -euo pipefail
 # probes for it, this repo's own hook included. So a missing parent directory
 # is a refusal (exit 4) naming what to do, not a `mkdir -p`.
 #
-# Usage: register-codex-hook.sh [--windows] [path-to-hooks.json]
+# Usage: register-codex-hook.sh [--windows] [--launcher <path>] [path-to-hooks.json]
 #        (default: ${CODEX_HOME:-$HOME/.codex}/hooks.json)
 #
 # Prints exactly one line, beginning with one of:
@@ -107,13 +119,15 @@ set -euo pipefail
 #   register-codex-hook: already-registered   — no write; the hook was already named
 #   register-codex-hook: refused-unparseable  — no write; the file is not a JSON object
 #   register-codex-hook: refused-no-codex-home — no write; the parent directory is absent
-#   register-codex-hook: refused-no-git-bash  — no write; Windows, but Git Bash is not at the path
+#   register-codex-hook: refused-no-git-bash  — no write; Windows, but Git Bash or the launcher cannot be used
 #
 # Exit: 0 on registered, updated, or already-registered; 2 on usage, 3 on an unparseable
 #       file, 4 when there is no Codex home to register into, 5 when a Windows
-#       registration has no Git Bash to point at.
+#       registration has no usable Git Bash or launcher to point at.
 
-USAGE="Usage: register-codex-hook.sh [--windows] [path-to-hooks.json]"
+USAGE="Usage: register-codex-hook.sh [--windows] [--launcher <path>] [path-to-hooks.json]"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER=""
 WINDOWS=0
 case "$(uname -s 2>/dev/null)" in
     MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;;
@@ -122,6 +136,15 @@ TARGET_ARG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --windows) WINDOWS=1 ;;
+        --launcher)
+            LAUNCHER="${2:-}"
+            if [[ -z "$LAUNCHER" ]]; then
+                echo "$USAGE" >&2
+                exit 2
+            fi
+            shift
+            ;;
+        --launcher=*) LAUNCHER="${1#--launcher=}" ;;
         -*)
             echo "$USAGE" >&2
             exit 2
@@ -160,20 +183,38 @@ HOOK_TIMEOUT="${CODEX_HOOK_TIMEOUT:-30}"
 HOOK_STATUS="${CODEX_HOOK_STATUS:-fleet-guidance}"
 HOOK_NEEDLE="${CODEX_HOOK_NEEDLE:-fleet-memory.sh}"
 
-# Windows: the same snippet under an explicit Git Bash, so cmd.exe cannot
-# resolve `bash` to WSL's launcher. Empty off Windows, which writes no field.
+# Windows: two quoted paths and no shell logic, so cmd.exe has no metacharacter
+# to misread and cannot resolve `bash` to WSL's launcher. The snippet lives in
+# the tracked launcher. Empty off Windows, which writes no field.
 HOOK_COMMAND_WINDOWS=""
 if [[ "$WINDOWS" -eq 1 ]]; then
     GIT_BASH="${CODEX_HOOK_GIT_BASH:-C:\\Program Files\\Git\\bin\\bash.exe}"
-    if command -v cygpath >/dev/null 2>&1 && [[ ! -f "$(cygpath -u "$GIT_BASH")" ]]; then
-        echo "register-codex-hook: refused-no-git-bash — $GIT_BASH does not exist, so a Windows hook pointing at it could not run (install Git for Windows, or set CODEX_HOOK_GIT_BASH to its bash.exe). Nothing written."
-        exit 5
+    DEFAULT_LAUNCHER=0
+    if [[ -z "$LAUNCHER" ]]; then
+        DEFAULT_LAUNCHER=1
+        LAUNCHER="$SCRIPT_DIR/../.claude/hooks/codex-session-start.sh"
+        LAUNCHER="$(cd "$(dirname "$LAUNCHER")" && pwd)/$(basename "$LAUNCHER")"
+        if command -v cygpath >/dev/null 2>&1; then
+            LAUNCHER="$(cygpath -m "$LAUNCHER")"
+        fi
     fi
-    if [[ "$HOOK_COMMAND" == "bash -c "* ]]; then
-        HOOK_COMMAND_WINDOWS="\"$GIT_BASH\" ${HOOK_COMMAND#bash }"
-    else
-        # An overridden command is not in `bash -c '...'` form: wrap it whole.
-        HOOK_COMMAND_WINDOWS="\"$GIT_BASH\" -c '${HOOK_COMMAND//\'/\'\\\'\'}'"
+    refuse_no_git_bash() {
+        echo "register-codex-hook: refused-no-git-bash — $1. Nothing written."
+        exit 5
+    }
+    if command -v cygpath >/dev/null 2>&1; then
+        [[ -f "$(cygpath -u "$GIT_BASH")" ]] \
+            || refuse_no_git_bash "$GIT_BASH does not exist, so a Windows hook pointing at it could not run (install Git for Windows, or set CODEX_HOOK_GIT_BASH to its bash.exe)"
+        [[ -f "$(cygpath -u "$LAUNCHER")" ]] \
+            || refuse_no_git_bash "the launcher $LAUNCHER does not exist (pass --launcher)"
+    elif [[ "$DEFAULT_LAUNCHER" -eq 1 && ! -f "$LAUNCHER" ]]; then
+        refuse_no_git_bash "the launcher $LAUNCHER does not exist (pass --launcher)"
+    fi
+    HOOK_COMMAND_WINDOWS="\"$GIT_BASH\" \"$LAUNCHER\""
+    # cmd.exe reads these outside its quotes' protection in some contexts, so a
+    # path carrying one is not safe to hand it.
+    if [[ "$HOOK_COMMAND_WINDOWS" == *['&|<>^%']* ]]; then
+        refuse_no_git_bash "a Git Bash or launcher path contains a cmd.exe metacharacter (& | < > ^ %), which is not safe in commandWindows"
     fi
 fi
 
