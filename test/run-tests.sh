@@ -18591,6 +18591,173 @@ PY
     fi
 }
 
+# Native Windows Codex runs hooks through cmd.exe, where `bash` is WSL's
+# launcher, so on Windows the handler also carries `commandWindows` calling Git
+# Bash explicitly. `--windows` forces that path on any machine. All structural
+# assertions parse the JSON with python3.
+test_register_codex_hook_windows() {
+    echo ""
+    echo "TEST: register-codex-hook.sh (native Windows commandWindows)"
+    local script="$REPO_ROOT/scripts/register-codex-hook.sh"
+    local d="$TEST_DIR/codexhook-windows"
+    local out rc
+    rm -rf "$d"
+    mkdir -p "$d/fresh" "$d/upgrade" "$d/plain" "$d/override" "$d/nobash" "$d/stub"
+    local expected_bash='C:\Program Files\Git\bin\bash.exe'
+    # What the non-Windows registrar writes; commandWindows must be this
+    # snippet exactly, under a quoted Git Bash path.
+    local helper="$d/check.py"
+    cat > "$helper" <<'PY'
+import json, sys
+# argv: file, expected git bash path or "-" for "no commandWindows"
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+groups = doc["hooks"]["SessionStart"]
+assert len(groups) == 1, "expected one group, got %d" % len(groups)
+e = groups[0]["hooks"][0]
+cmd = e["command"]
+assert cmd.startswith("bash -c '"), "command is not bash -c: %r" % cmd
+if sys.argv[2] == "-":
+    assert "commandWindows" not in e, "commandWindows written off Windows"
+else:
+    want = '"%s" -c %s' % (sys.argv[2], cmd[len("bash -c "):])
+    assert e.get("commandWindows") == want, "commandWindows is %r, want %r" % (e.get("commandWindows"), want)
+print("OK")
+PY
+
+    # 1. --windows writes the exact commandWindows string.
+    rc=0
+    out=$(CODEX_HOME="$d/fresh" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'registered'* ]]; then
+        pass "register windows: --windows registration exits 0"
+    else
+        fail "register windows: --windows registration exit $rc: $out"
+    fi
+    out=$(python3 "$helper" "$d/fresh/hooks.json" "$expected_bash" 2>&1) || true
+    if [[ "$out" == OK ]]; then
+        pass "register windows: commandWindows is the quoted Git Bash path plus the exact command snippet"
+    else
+        fail "register windows: commandWindows string wrong — $out"
+    fi
+
+    # 2. Idempotent: byte-identical second run.
+    cp "$d/fresh/hooks.json" "$d/fresh-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/fresh" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/fresh-before.json" "$d/fresh/hooks.json"; then
+        pass "register windows: a second --windows run is already-registered and byte-identical"
+    else
+        fail "register windows: a second --windows run changed the file: $out"
+    fi
+
+    # 3. Upgrade: a non-Windows registration gains commandWindows in place,
+    #    with its group, position and every other field preserved.
+    # The pre-existing registration is built by hand from the command the
+    # registrar wrote above, so it is a non-Windows one on every machine.
+    python3 - "$d/fresh/hooks.json" "$d/upgrade/hooks.json" <<'PY'
+import json, sys
+fresh = json.load(open(sys.argv[1], encoding="utf-8"))
+ours = fresh["hooks"]["SessionStart"][0]
+del ours["hooks"][0]["commandWindows"]
+ours["hooks"][0]["extra"] = {"preserve": [1, 2]}
+ours["hooks"].insert(0, {"type": "command", "command": "printf before"})
+doc = {
+    "other": {"keep": "all fields"},
+    "hooks": {"SessionStart": [
+        {"matcher": "first", "hooks": [{"type": "command", "command": "true"}]},
+        ours,
+        {"matcher": "last", "hooks": [{"type": "command", "command": "false"}]},
+    ]},
+}
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2)
+PY
+    cp "$d/upgrade/hooks.json" "$d/upgrade-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/upgrade" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'updated'* && "$out" == *'/hooks'* ]]; then
+        pass "register windows: upgrading a non-Windows registration reports updated and asks for re-trust"
+    else
+        fail "register windows: upgrade exit $rc or wrong verdict: $out"
+    fi
+    out=$(python3 - "$d/upgrade-before.json" "$d/upgrade/hooks.json" "$expected_bash" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+entry = before["hooks"]["SessionStart"][1]["hooks"][1]
+cmd = entry["command"]
+entry["commandWindows"] = '"%s" -c %s' % (sys.argv[3], cmd[len("bash -c "):])
+assert before == after, "upgrade changed more than adding commandWindows to our entry"
+assert len(after["hooks"]["SessionStart"]) == 3, "group count changed"
+print("OK")
+PY
+) || true
+    if [[ "$out" == OK ]]; then
+        pass "register windows: upgrade adds only commandWindows, preserving groups, order and other fields"
+    else
+        fail "register windows: upgrade changed unrelated JSON: $out"
+    fi
+    cp "$d/upgrade/hooks.json" "$d/upgrade-after.json"
+    rc=0
+    out=$(CODEX_HOME="$d/upgrade" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'already-registered'* ]] \
+            && cmp -s "$d/upgrade-after.json" "$d/upgrade/hooks.json"; then
+        pass "register windows: rerun after the upgrade is already-registered and byte-identical"
+    else
+        fail "register windows: rerun after the upgrade changed the file: $out"
+    fi
+
+    # 4. Off Windows nothing changes: no commandWindows is written. A real
+    #    Git Bash run is Windows by definition, so skip there.
+    case "$(uname -s)" in
+        MINGW* | MSYS* | CYGWIN*)
+            pass "register windows: (skipped) the non-Windows run is not meaningful under Git Bash"
+            ;;
+        *)
+            rc=0
+            out=$(CODEX_HOME="$d/plain" "$script" 2>&1) || rc=$?
+            result=$(python3 "$helper" "$d/plain/hooks.json" - 2>&1) || true
+            if [[ $rc -eq 0 && "$result" == OK ]]; then
+                pass "register windows: a non-Windows run writes no commandWindows"
+            else
+                fail "register windows: non-Windows run exit $rc — $result"
+            fi
+            cp "$d/plain/hooks.json" "$d/plain-before.json"
+            CODEX_HOME="$d/plain" "$script" >/dev/null 2>&1 || true
+            if cmp -s "$d/plain-before.json" "$d/plain/hooks.json"; then
+                pass "register windows: a non-Windows rerun leaves the file untouched"
+            else
+                fail "register windows: a non-Windows rerun rewrote the file"
+            fi
+            ;;
+    esac
+
+    # 5. CODEX_HOOK_GIT_BASH is respected.
+    rc=0
+    out=$(CODEX_HOOK_GIT_BASH='D:\Tools\Git\bin\bash.exe' CODEX_HOME="$d/override" "$script" --windows 2>&1) || rc=$?
+    result=$(python3 "$helper" "$d/override/hooks.json" 'D:\Tools\Git\bin\bash.exe' 2>&1) || true
+    if [[ $rc -eq 0 && "$result" == OK ]]; then
+        pass "register windows: CODEX_HOOK_GIT_BASH overrides the Git Bash path"
+    else
+        fail "register windows: override exit $rc — $result $out"
+    fi
+
+    # 6. A Git Bash path that cygpath shows is absent is refused (exit 5), and
+    #    nothing is written. cygpath is stubbed so this runs on any machine.
+    cat > "$d/stub/cygpath" <<'SH'
+#!/usr/bin/env bash
+echo "/nonexistent/git/bin/bash.exe"
+SH
+    chmod +x "$d/stub/cygpath"
+    rc=0
+    out=$(PATH="$d/stub:$PATH" CODEX_HOME="$d/nobash" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 5 && "$out" == *'refused-no-git-bash'* && ! -e "$d/nobash/hooks.json" ]]; then
+        pass "register windows: an absent Git Bash is refused with exit 5 and nothing written"
+    else
+        fail "register windows: absent Git Bash exit $rc, file=$(ls "$d/nobash"): $out"
+    fi
+}
+
 # Run the actual command the registration script wrote, so a stale hook
 # definition cannot hide behind tests that invoke fleet-memory.sh directly.
 # Fixture repos are fresh git init repositories with no remote and fixed commit
@@ -20481,6 +20648,7 @@ GROUP_codex=(
     test_drift_report_codex_budget
     test_register_codex_hook
     test_register_codex_hook_workspace_upgrade
+    test_register_codex_hook_windows
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness
