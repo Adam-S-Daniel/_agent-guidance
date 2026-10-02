@@ -40,6 +40,46 @@ set -euo pipefail
 # upgraded in place on re-registration; the changed definition needs one new
 # trust action in `/hooks`.
 #
+# NATIVE WINDOWS CODEX. On Windows, Codex runs a hook's command through
+# %COMSPEC% as `cmd.exe /C "<command>"`
+# (https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/hooks/src/engine/command_runner.rs,
+# `build_command` / `default_shell_program`). That has two consequences:
+#
+#   1. In cmd.exe, `bash` resolves to C:\Windows\System32\bash.exe — WSL's
+#      launcher (measured with `where bash`) — so the plain `bash -c '...'`
+#      command would run the hook INSIDE WSL and update WSL's ~/.codex rather
+#      than Windows'.
+#   2. cmd.exe does not treat single quotes as quoting. The snippet's double
+#      quotes toggle cmd's quote state, so its `2>/dev/null` and `&&` land
+#      outside cmd's quotes and cmd runs them as its own redirection and
+#      command separator (measured through real cmd.exe: "The system cannot
+#      find the path specified."). Escaping per quote state is fragile.
+#
+# A handler may carry a per-handler override, `commandWindows` (alias
+# `command_windows`), used instead of `command` when Codex is built for Windows
+# (https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/config/src/hook_config.rs).
+# So when this script runs under Git Bash/MSYS/Cygwin (`uname -s` matching
+# MINGW*|MSYS*|CYGWIN*), or with `--windows` (for tests), the handler it writes
+# ALSO carries a `commandWindows` that holds NO shell logic at all, only two
+# quoted paths — Git Bash and a tracked launcher that holds the snippet:
+#
+#   "commandWindows": "\"C:\Program Files\Git\bin\bash.exe\" \"D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh\""
+#
+# The launcher, .claude/hooks/codex-session-start.sh, is the `command` snippet
+# as a file (same git-root lookup, same --workspace loop, same silent exit).
+# Its path is this script's OWN checkout, in Windows mixed form (`cygpath -m`
+# when available); `--launcher <path>` overrides it, like `--hook` in
+# register-memory-home-hook.sh. The Git Bash path defaults to
+# C:\Program Files\Git\bin\bash.exe; set CODEX_HOOK_GIT_BASH (a Windows-form
+# path) to override it. The script refuses (exit 5) instead of writing a hook
+# that cannot run: when `cygpath` is available and Git Bash or the launcher is
+# absent, or when either path contains a cmd metacharacter (& | < > ^ %).
+# An exact registration that lacks `commandWindows` is upgraded in place on
+# Windows (group, position and other fields preserved; the trust hash changes,
+# so re-trust it in `/hooks`); one that already carries a `commandWindows`,
+# whatever its value, is left alone. Off Windows nothing here changes: no
+# `commandWindows` is ever written.
+#
 # APPEND FOR NEW REGISTRATIONS — the same posture as
 # register-bootstrap-hook.sh, for the same reason. A machine's
 # ~/.codex/hooks.json may already carry the operator's own hooks; a new
@@ -54,7 +94,8 @@ set -euo pipefail
 #
 # The safety proof is a semantic guard, not a promise. After building the new
 # text we re-parse it and require it to equal, exactly, the ORIGINAL parsed
-# document with our one group appended or one exact legacy command changed.
+# document with our one group appended, one exact legacy command changed, or
+# one `commandWindows` field added.
 # If that comparison fails the file is left untouched. No key is dropped, no
 # value coerced, and no group reordered.
 #
@@ -68,22 +109,59 @@ set -euo pipefail
 # probes for it, this repo's own hook included. So a missing parent directory
 # is a refusal (exit 4) naming what to do, not a `mkdir -p`.
 #
-# Usage: register-codex-hook.sh [path-to-hooks.json]
+# Usage: register-codex-hook.sh [--windows] [--launcher <path>] [path-to-hooks.json]
 #        (default: ${CODEX_HOME:-$HOME/.codex}/hooks.json)
 #
 # Prints exactly one line, beginning with one of:
 #   register-codex-hook: registered           — the file was created or appended to
 #   register-codex-hook: updated              — exact legacy command replaced in place
+#   register-codex-hook: updated-windows      — commandWindows added to an exact registration
 #   register-codex-hook: already-registered   — no write; the hook was already named
 #   register-codex-hook: refused-unparseable  — no write; the file is not a JSON object
 #   register-codex-hook: refused-no-codex-home — no write; the parent directory is absent
+#   register-codex-hook: refused-no-git-bash  — no write; Windows, but Git Bash or the launcher cannot be used
 #
 # Exit: 0 on registered, updated, or already-registered; 2 on usage, 3 on an unparseable
-#       file, 4 when there is no Codex home to register into.
+#       file, 4 when there is no Codex home to register into, 5 when a Windows
+#       registration has no usable Git Bash or launcher to point at.
 
-TARGET="${1:-${CODEX_HOME:-$HOME/.codex}/hooks.json}"
+USAGE="Usage: register-codex-hook.sh [--windows] [--launcher <path>] [path-to-hooks.json]"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER=""
+WINDOWS=0
+case "$(uname -s 2>/dev/null)" in
+    MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;;
+esac
+TARGET_ARG=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --windows) WINDOWS=1 ;;
+        --launcher)
+            LAUNCHER="${2:-}"
+            if [[ -z "$LAUNCHER" ]]; then
+                echo "$USAGE" >&2
+                exit 2
+            fi
+            shift
+            ;;
+        --launcher=*) LAUNCHER="${1#--launcher=}" ;;
+        -*)
+            echo "$USAGE" >&2
+            exit 2
+            ;;
+        *)
+            if [[ -n "$TARGET_ARG" ]]; then
+                echo "$USAGE" >&2
+                exit 2
+            fi
+            TARGET_ARG="$1"
+            ;;
+    esac
+    shift
+done
+TARGET="${TARGET_ARG:-${CODEX_HOME:-$HOME/.codex}/hooks.json}"
 if [[ -z "$TARGET" ]]; then
-    echo "Usage: register-codex-hook.sh [path-to-hooks.json]" >&2
+    echo "$USAGE" >&2
     exit 2
 fi
 
@@ -105,6 +183,41 @@ HOOK_TIMEOUT="${CODEX_HOOK_TIMEOUT:-30}"
 HOOK_STATUS="${CODEX_HOOK_STATUS:-fleet-guidance}"
 HOOK_NEEDLE="${CODEX_HOOK_NEEDLE:-fleet-memory.sh}"
 
+# Windows: two quoted paths and no shell logic, so cmd.exe has no metacharacter
+# to misread and cannot resolve `bash` to WSL's launcher. The snippet lives in
+# the tracked launcher. Empty off Windows, which writes no field.
+HOOK_COMMAND_WINDOWS=""
+if [[ "$WINDOWS" -eq 1 ]]; then
+    GIT_BASH="${CODEX_HOOK_GIT_BASH:-C:\\Program Files\\Git\\bin\\bash.exe}"
+    DEFAULT_LAUNCHER=0
+    if [[ -z "$LAUNCHER" ]]; then
+        DEFAULT_LAUNCHER=1
+        LAUNCHER="$SCRIPT_DIR/../.claude/hooks/codex-session-start.sh"
+        LAUNCHER="$(cd "$(dirname "$LAUNCHER")" && pwd)/$(basename "$LAUNCHER")"
+        if command -v cygpath >/dev/null 2>&1; then
+            LAUNCHER="$(cygpath -m "$LAUNCHER")"
+        fi
+    fi
+    refuse_no_git_bash() {
+        echo "register-codex-hook: refused-no-git-bash — $1. Nothing written."
+        exit 5
+    }
+    if command -v cygpath >/dev/null 2>&1; then
+        [[ -f "$(cygpath -u "$GIT_BASH")" ]] \
+            || refuse_no_git_bash "$GIT_BASH does not exist, so a Windows hook pointing at it could not run (install Git for Windows, or set CODEX_HOOK_GIT_BASH to its bash.exe)"
+        [[ -f "$(cygpath -u "$LAUNCHER")" ]] \
+            || refuse_no_git_bash "the launcher $LAUNCHER does not exist (pass --launcher)"
+    elif [[ "$DEFAULT_LAUNCHER" -eq 1 && ! -f "$LAUNCHER" ]]; then
+        refuse_no_git_bash "the launcher $LAUNCHER does not exist (pass --launcher)"
+    fi
+    HOOK_COMMAND_WINDOWS="\"$GIT_BASH\" \"$LAUNCHER\""
+    # cmd.exe reads these outside its quotes' protection in some contexts, so a
+    # path carrying one is not safe to hand it.
+    if [[ "$HOOK_COMMAND_WINDOWS" == *['&|<>^%']* ]]; then
+        refuse_no_git_bash "a Git Bash or launcher path contains a cmd.exe metacharacter (& | < > ^ %), which is not safe in commandWindows"
+    fi
+fi
+
 result=$(python3 -c '
 import copy, json, os, sys
 
@@ -115,6 +228,7 @@ timeout  = int(sys.argv[4])
 status   = sys.argv[5]
 needle   = sys.argv[6]
 legacy   = sys.argv[7]
+command_windows = sys.argv[8]  # "" off Windows: no field is written
 
 group = {
     "matcher": matcher,
@@ -125,6 +239,8 @@ group = {
         "statusMessage": status,
     }],
 }
+if command_windows:
+    group["hooks"][0]["commandWindows"] = command_windows
 
 if os.path.exists(target) and os.path.getsize(target) > 0:
     with open(target, encoding="utf-8") as fh:
@@ -151,6 +267,7 @@ else:
 hooks = doc.get("hooks")
 existing = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
 legacy_location = None
+windows_location = None
 manual_found = False
 if isinstance(existing, list):
     for group_index, g in enumerate(existing):
@@ -164,6 +281,14 @@ if isinstance(existing, list):
                 continue
             existing_command = e.get("command", "")
             if existing_command == command:
+                # On Windows an exact registration without commandWindows
+                # would run in WSL, so it is upgraded; one that already has
+                # a commandWindows (ours or the operators) is left alone.
+                if command_windows and "commandWindows" not in e \
+                        and "command_windows" not in e:
+                    if windows_location is None:
+                        windows_location = (group_index, entry_index)
+                    continue
                 print("already-registered")
                 sys.exit(0)
             if needle in str(existing_command):
@@ -172,7 +297,7 @@ if isinstance(existing, list):
                 else:
                     manual_found = True
 
-if legacy_location is None and manual_found:
+if windows_location is None and legacy_location is None and manual_found:
     print("already-registered")
     sys.exit(0)
 
@@ -187,12 +312,19 @@ if isinstance(hooks, dict) and "SessionStart" in hooks \
     sys.exit(3)
 
 want = copy.deepcopy(doc)
-if legacy_location is None:
+if windows_location is not None:
+    group_index, entry_index = windows_location
+    want["hooks"]["SessionStart"][group_index]["hooks"][entry_index]["commandWindows"] = command_windows
+    outcome = "updated-windows"
+elif legacy_location is None:
     want.setdefault("hooks", {}).setdefault("SessionStart", []).append(group)
     outcome = "registered"
 else:
     group_index, entry_index = legacy_location
-    want["hooks"]["SessionStart"][group_index]["hooks"][entry_index]["command"] = command
+    legacy_entry = want["hooks"]["SessionStart"][group_index]["hooks"][entry_index]
+    legacy_entry["command"] = command
+    if command_windows:
+        legacy_entry["commandWindows"] = command_windows
     outcome = "updated"
 
 candidate = json.dumps(want, indent=2) + "\n"
@@ -208,7 +340,7 @@ if json.loads(candidate) != want:
 with open(target, "w", encoding="utf-8") as fh:
     fh.write(candidate)
 print(outcome)
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_STATUS" "$HOOK_NEEDLE" "$LEGACY_HOOK_COMMAND") || {
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_STATUS" "$HOOK_NEEDLE" "$LEGACY_HOOK_COMMAND" "$HOOK_COMMAND_WINDOWS") || {
     status=$?
     if [[ "$result" == "refused-unparseable" ]]; then
         echo "register-codex-hook: refused-unparseable — $TARGET is not a JSON object. Nothing written; fix or move that file and re-run."
@@ -227,6 +359,9 @@ case "$result" in
         ;;
     updated)
         echo "register-codex-hook: updated — replaced the legacy SessionStart command in $TARGET. Re-trust the changed definition once in the Codex TUI with \`/hooks\`."
+        ;;
+    updated-windows)
+        echo "register-codex-hook: updated-windows — added commandWindows (Git Bash) to the existing SessionStart hook in $TARGET. Re-trust the changed definition once in the Codex TUI with \`/hooks\`."
         ;;
     *)
         echo "register-codex-hook: $result"
