@@ -131,7 +131,7 @@
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
   status: gap
-  bytes: 2561
+  bytes: 2675
 
 - id: skills-ecosystem
   heading: Skills ecosystem
@@ -149,7 +149,7 @@
   heading: Git practices
   file: agents-md/base.md
   status: gap
-  bytes: 1148
+  bytes: 1518
 
 - id: section-docker
   heading: Docker

@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-02 — subagent-delegation — edit
+- Motivation: the owner's user-level delegation preamble (`~/.claude/CLAUDE.md`) had no repo source and was Claude-only; the fleet section named model families and Claude-specific mechanics.
+- Change: made the delegation bullet vendor-neutral (cheapest capable tier, mid tier, orchestrator, child session), folded in the spec contents and test/CI-proof gate, kept the Claude Code `settingSources: []` trap as a labeled example (PR #231).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02 (PR #231)
+
+## 2026-10-02 — git-practices — edit
+- Motivation: the owner's user-level "Separate workspaces" preamble (`~/.codex/AGENTS.md`) had no repo source and reached Codex only.
+- Change: added the one-worktree-per-independent-coding-session rule, vendor-neutral (PR #231).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02 (PR #231)
+
 ## 2026-09-29 — dependency-updates — edit
 - Motivation: cms-platform, fastmail-actions, adam-agentskills, repo-settings, and claude-memory-map already exclude their own cms-platform releases from cooldown because required checks gate the release tag; scheduled-run-health callers fell 20 releases behind in [cms-platform#424](https://github.com/Adam-S-Daniel/cms-platform/issues/424), closed 2026-09-22.
 - Change: Records cms-platform's cooldown exclusion (#424) (PR #214).
