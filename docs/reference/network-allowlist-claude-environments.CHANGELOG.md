@@ -470,3 +470,37 @@ additions independently and found two things the entries above do not say:
   of every client behind it; when a fetch tool still refuses a host that
   `curl` reaches, the list is right and the tool is stale. Probe with `curl`
   before concluding otherwise, and expect a fresh session for the tool.
+
+---
+
+## 2026-10-02 — `substack.com` added for the Cross-post watcher
+
+**Environment:** `My Whitelist` (added in the environment dialog by the owner
+on 2026-10-02; this file updated the same day)
+**Checkbox "Also include default list of common package managers":** not
+re-checked by this change
+**Change:** one domain ADDED. Nothing removed, nothing rewritten.
+
+```
++ substack.com
+```
+
+### Per-domain justification
+
+- **`substack.com`** — the Cross-post watcher routine
+  ([`trig_013iDZwBZ5mY5zcAayas6ASW`](https://claude.ai/code/routines/trig_013iDZwBZ5mY5zcAayas6ASW),
+  described in cms-platform's `docs/CROSS-POSTING.md`) runs in this
+  environment and now verifies the hand-pasted Substack leg itself. It reads
+  the owner's public profile feed,
+  `https://substack.com/api/v1/reader/feed/profile/311451833`, ticks the
+  ledger issue's Substack box with the matching note's
+  `https://substack.com/@<handle>/note/c-<id>` link, and closes the ledger.
+  Both URLs are on the apex, so no `*.substack.com` wildcard was added; a
+  publication subdomain such as `adamdanielai.substack.com` appears only as a
+  link the routine copies, never one it fetches.
+
+**Not yet measured from inside the environment.** The feed was probed from a
+workstation (`200`, JSON), not from a `My Whitelist` session. The routine
+tries `curl` first and falls back to `WebFetch`; per the fourth 2026-09-04
+entry above, `WebFetch` may lag the edit, so a `curl` result is the one to
+trust.
