@@ -765,7 +765,7 @@ is reading this file's prose instead of computing the sets at all.
 
 ## 1. Do not trust the drift report
 
-Read `drift-report.md` off the `drift-report-latest` branch for orientation,
+Read `drift-report.md` off the `persistent/drift-report` branch for orientation,
 then **verify every load-bearing claim against the repo itself.** Two measured
 reasons, both current as of 2026-08-28:
 
