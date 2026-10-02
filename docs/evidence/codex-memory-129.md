@@ -2,8 +2,9 @@
 
 Recorded 2026-09-21 against the installed `codex-cli 0.154.0` and the public
 [`rust-v0.154.0` source](https://github.com/openai/codex/tree/rust-v0.154.0).
-This is evidence for [ADR 0015](../decisions/0015-audit-codex-memories-after-generation-not-at-stop.md),
-not a shipped hook or memory adapter.
+This is evidence for [ADR 0015](../decisions/0015-audit-codex-memories-after-generation-not-at-stop.md).
+The September investigation below predates the operator-run auditor; the
+October implementation evidence follows it.
 
 ## Source findings
 
@@ -150,3 +151,203 @@ sandbox with temporary Codex, Claude, and Git config homes after
 `npm ci --ignore-scripts`: `./test/run-tests.sh` reported
 `1391 passed, 0 failed` and exited 0. No repository code existed in this
 research change for that baseline to exercise.
+
+## 2026-10-02: implementation re-pin to 0.160.0
+
+The worktree started clean on `codex/memory-home-audit-129` at
+`90107512f2232f176254daa6dd083015074a08ea`; `git log origin/main..HEAD` was
+empty. The installed binary reported `codex-cli 0.160.0` with a temporary
+`CODEX_HOME` and `CLAUDE_CONFIG_DIR`. No production memory, settings, or
+credentials were inspected. The issue's supplied summary was used offline;
+there was no GitHub API request.
+
+Both supplied sparse source trees were inspected read-only:
+[`rust-v0.154.0`](https://github.com/openai/codex/tree/rust-v0.154.0)
+at `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`, and
+[`rust-v0.160.0`](https://github.com/openai/codex/tree/rust-v0.160.0)
+at `a956835d020762cb2b570053af06f643a11c0ecc`. Each listed path was compared
+with `git diff --no-index -- <154-path> <160-path>`; exit 1 means a difference,
+not a failed comparison. Source links in this section pin the new baseline.
+
+| Compared surface | Delta and effect on the auditor |
+| --- | --- |
+| `state/memory_migrations` | Migration 0001 is unchanged. New [0002](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/memory_migrations/0002_consolidation_progress.sql#L1-L6) adds `consolidation_progress(singleton, max_thread_count)` and its initial singleton row. Both migrations define the accepted schema, rather than accepting any file named `memories_1.sqlite`. |
+| `state/src/runtime/memories.rs` | Source-selection queries add [creator user/account fields](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/runtime/memories.rs#L177-L185); the Phase 1 record identity remains `thread_id` plus `source_updated_at`. Successful Phase 2 [updates the maximum selected count](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/runtime/memories.rs#L1305-L1311), and [reset clears it](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/runtime/memories.rs#L1434-L1438). This readiness aggregate is not a per-fact completion ledger. Selection still [excludes the current thread and has no cwd/project filter](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/runtime/memories.rs#L224-L244). |
+| `memories/write/src/storage.rs` | Byte-identical. Existing [raw-memory serialization](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/storage.rs#L44-L77) and rollout filenames remain; namespace and content changes come from the callers. |
+| `memories/write/src/phase1.rs` | The writer now selects version-specific input serialization and prompts, and moves parsing to `phase1_output.rs`. V2 [omits raw memory and caps the redacted summary at 9,000 bytes](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/phase1_output.rs#L33-L56). It [stores empty `raw_memory` with the summary and slug](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/phase1.rs#L243-L251). The auditor must review a summary-only row, not skip it as empty. V2 also receives [git-branch context and tiered rollout input](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/phase1.rs#L265-L310); changed model output changes the digest. |
+| `memories/write/src/phase2.rs` | Roots and stores are version-specific. [Both versions materialize rollouts, but only v1 rebuilds `raw_memories.md`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/phase2.rs#L194-L207). V2's [consolidation template](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/templates/memories/consolidation_v2.md#L23-L38) organizes `memory_summary.md` into profile/preferences/tips and project/date retrieval pointers. Rollout files are an audit surface in their own right, particularly in v2. |
+| `memories/write/src/workspace.rs` | V2 [does not require `MEMORY.md`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/workspace.rs#L86-L112). Its [summary still starts with `v1`, is under 10,000 bytes, and requires four headings](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/workspace.rs#L117-L129). That first line is not a namespace detector. New [storage-size accounting](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/workspace.rs#L51-L68) excludes `.git` and symlinks; it adds no home metadata. |
+| `memories/write/src/start.rs` | [Dual write spawns a pipeline for each version, each using its own directory](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/start.rs#L40-L73). Work remains asynchronously spawned; a root Stop is still not the write-completion boundary. |
+| `ext/memories` | Reads, injected context, and dedicated tools now use the selected namespace. [V2 injection splits rendered instructions into bounded fragments](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/ext/memories/src/extension.rs#L70-L101); [tools use the same version-specific root](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/ext/memories/src/extension.rs#L150-L158). The relative [ad hoc note path and create-new byte write](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/ext/memories/src/local/ad_hoc_note.rs#L12-L37) are unchanged: `extensions/ad_hoc/notes/` beneath either root. The auditor scans both, irrespective of the active retrieval version. |
+| `hooks/src/events/stop.rs` | Byte-identical. Consolidation [still excludes ordinary user/project/session/plugin hooks](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/hooks/src/events/stop.rs#L68-L89). No new completion trigger is justified. |
+| `config/src/types.rs` | New [version and dual-write configuration](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/config/src/types.rs#L298-L302) defaults to [v1 and false](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/config/src/types.rs#L352-L360). Previous [numeric defaults](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/config/src/types.rs#L54-L59), generation/use defaults, and dedicated-tools default are unchanged. The stable [`memories` feature remains off](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/features/src/lib.rs#L1158-L1163). |
+
+Following the new namespace calls also established the second database:
+[`state/src/sqlite.rs`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/sqlite.rs#L81-L95)
+names `memories_1.sqlite` and `memories_v2_1.sqlite`, using the same migrations.
+The [v2 store is opened on demand](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/runtime/memory_versions.rs#L10-L25).
+Configured [`sqlite_home` or `CODEX_SQLITE_HOME`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/core/src/config/mod.rs#L4081-L4093)
+can relocate those databases; the auditor refuses a detected relocation
+instead of silently auditing only files at the wrong root. The supplied
+sparse archive did not contain `protocol/src/memory_version.rs`; its missing
+blob could not be retrieved offline. Namespace names are independently
+established by the [available writer tests](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/startup_dual_write_tests.rs#L26-L32)
+and real database filename code,
+rather than attributed to an unread source file.
+
+### Synthetic findings, attestation, and invalidation
+
+The [fixture builder](../../test/fixtures/build-codex-memory.py) creates both
+pinned migrations and deterministic SQLx metadata. A fresh temporary home
+was built with `--seed phase1`. The following operations used
+`python3 scripts/audit-codex-memory.py`, with `CODEX_HOME` and
+`CLAUDE_CONFIG_DIR` set to temporary directories; only the fixture's raw
+memory was mutated with a parameterized SQLite update. The store was removed
+after the run. Default auditor output did not print its memory content.
+
+```text
+codex_version: codex-cli 0.160.0
+roots: <TEMP_CODEX_HOME>/memories, <TEMP_CODEX_HOME>/memories_v2
+audit:
+  phase1 identity={namespace: memories, thread_id: fixture-thread}, revision=100
+  digest=10eaab01be5cd0875c61a214cc8b52362f5780b4e7b2668d3fdcd8703b9c21e9
+  id=0fa0ef901b822d3e96177f0636c5bfb2382a82f124a0fa74ddd96a1cc23ed530
+  verdict=unattested; records=1, findings=1; exit=1
+attest --record <id-above> --home Adam-S-Daniel/_agent-guidance:docs/decisions/0015-audit-codex-memories-after-generation-not-at-stop.md:
+  event=attested; exit=0
+audit:
+  same identity, revision, digest, and id
+  verdict=homed; records=1, findings=0; exit=0
+UPDATE stage1_outputs SET raw_memory = ?  [synthetic replacement]
+audit:
+  same identity and revision
+  digest=9dee36bd8976950d0667e7aae27a9e81bad721c835941baa97633b3447f7dd87
+  id=85afc719ddc30169bff7d33a9aa3118e6414e764a30c76ce37fd03fafc19fd97
+  verdict=unattested; records=1, findings=1; exit=1
+synthetic lifecycle checks: 4 passed
+```
+
+This is a normalized rendering of actual JSON-lines output; temporary paths
+are replaced with placeholders. No actual extracted user memory is claimed.
+The persistent sidecar changed only at the attestation step.
+
+### Native schema without credentials or a model request
+
+The installed binary ran `codex app-server --listen stdio://` in an environment
+rebuilt with temporary `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and XDG paths,
+and no credentials. A Linux seccomp filter rejected all `socket()` calls.
+The config used an unauthenticated synthetic provider, ephemeral credential
+storage, disabled analytics/update checks, and disabled memory generation/use.
+Only an `initialize` request and `initialized` notification were sent over
+stdio. Startup itself created the databases; neither `thread/start` nor a
+model turn was needed. The app server exited normally with code 0 and was
+reaped, with kill/wait cleanup available on every failure path.
+
+This matches [eager SQLite startup](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/app-server/src/lib.rs#L655-L664)
+and [memory migration initialization](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/runtime.rs#L172-L180).
+After exit, inspection used `mode=ro` and `query_only=ON`, without immutable:
+
+```text
+app-server exit: 0
+created memory database: True
+migration versions: [(1,), (2,)]
+consolidation_progress: [(1, 0)]
+stage1_outputs rows: 0
+DDL matches supplied 0.160.0 migrations: True
+```
+
+Every memory table and index SQL matched an in-memory database created from
+the supplied migrations. The portable fixture's migration strings also matched
+those source files byte-for-byte (2 of 2). The shipped auditor then inspected
+that native store:
+
+```text
+codex_version: codex-cli 0.160.0
+roots: <NATIVE_PROBE_ROOT>/codex/memories, <NATIVE_PROBE_ROOT>/codex/memories_v2
+audit-codex-memory: no memory store (absent or empty supported surfaces)
+records=0, findings=0
+exit=0
+```
+
+This proves compatibility with the real v1 database migrations, not native
+extraction, v2 generation, or per-fact attribution. V2 is covered by the same
+pinned migration fixture and namespace-specific audit tests.
+
+### Read-only WAL discovery
+
+A live SQLite writer fixture showed that opening its original database with
+`mode=ro`, even with `query_only=ON`, changed original `-shm` bytes as SQLite
+coordinated the reader. Its database and WAL content remained unchanged.
+The implementation therefore queries a private DB/WAL copy and compares the
+original DB/WAL/SHM bytes and identity/stat metadata again afterward. The
+regression lane keeps a committed row in the live WAL, verifies it is visible,
+and requires all three original MD5 digests to remain unchanged. The auditor
+never uses `immutable=1`, which would risk missing that committed WAL content.
+Capture checks reject observed movement; they do not establish an atomic
+snapshot across all memory surfaces.
+
+### Verifier results and fail-first proof
+
+The independent integration group in [`test/run-tests.sh`](../../test/run-tests.sh)
+ran against temporary fixture homes, with a deterministic fake version command:
+
+```text
+TEST_GROUP=codex_memory_audit ./test/run-tests.sh
+  Results: 85 passed, 0 failed
+exit=0
+```
+
+For the negative control, only the auditor, test runner, and fixture builder
+were copied into a Git-free temporary tree. No `.git`, inherited remote, Git
+config, or credentials were copied; `git rev-parse --show-toplevel` refused
+the scratch location, and no push was attempted. The mutation removed `digest`
+from `record_id`'s canonical tuple. The same group then reported:
+
+```text
+FAIL: changed content invalidates attestation — expected exit 1, got 0
+FAIL: changed Phase 1 rollout summary invalidates attestation — expected exit 1, got 0
+FAIL: mutating one heading section produces a finding — expected exit 1, got 0
+FAIL: only changed section loses attestation — got 0
+FAIL: sibling attestations remain valid — got 4
+FAIL: changed binary skill resource bytes invalidate its attestation — expected exit 1, got 0
+  Results: 79 passed, 6 failed
+exit=1
+```
+
+Restoring the original auditor in that scratch tree returned
+`Results: 85 passed, 0 failed`, exit 0. Worktree input MD5 digests matched
+before and after both runs; the scratch tree was removed. This proves that
+the verifier rejects lost digest invalidation, not merely that an unchanged
+implementation happens to return zero.
+
+The whole existing suite was run without a pipe, with isolated outer Codex,
+Claude, and HOME directories; the child command was exactly
+`./test/run-tests.sh; echo "exit=$?"`:
+
+```text
+  Results: 1637 passed, 3 failed
+exit=1
+```
+
+Only `self_hosted` failed (236 passed, 3 failed); the auditor group within that
+run was 85/0, exit 0, and all other shell groups passed. The separate Codex
+Cloud unittest group ran 43 tests successfully, though its shell assertion
+counter reports 0/0. The three failures are existing Node runner lanes under
+Node v20.20.2 in the sandbox:
+
+| Existing lane | Observed runner result | Required count |
+| --- | --- | --- |
+| `dependabot-config-health` | One file subtest; exit 0, pass=1, fail=0 | At least 30 individual tests |
+| `discrepancy-alert` | One file subtest; exit 1, pass=0, fail=1, `ERR_TEST_FAILURE` | At least 20 individual tests |
+| `routine-merge-gate` | One file subtest; exit 1, pass=0, fail=1, `ERR_TEST_FAILURE` | At least 58 individual tests |
+
+Direct reruns of those three `node --test --test-reporter=tap` commands
+reproduced the one-file reports without exposing individual assertions.
+The complete suite therefore remains unverified outside the sandbox; no
+claim of a green full suite is made. The orchestrator must rerun it there.
+
+`shellcheck test/run-tests.sh` exited 1 with 142 diagnostics. Running the same
+ShellCheck against `git show HEAD:test/run-tests.sh` and comparing diagnostic
+code/level/message multisets found the same 142 baseline diagnostics and
+**zero introduced diagnostics**. `git diff --check` passed. No workflow,
+hook registration, real-memory inspection, push, or PR creation was performed.
