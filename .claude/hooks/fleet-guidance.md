@@ -46,7 +46,7 @@ changelog" — no links).
 - **A link is not a description** — one clause of identification travels with
   it. A bare `repo#123` autolinks only inside that repo; elsewhere, full URL.
 - **No URL? Say so** — "No link — local task `abc123`, output at `/tmp/…`".
-- **Stop naming it once it stops blocking** — cancel the check-in.
+- **Stop naming it once it stops blocking** — cancel the check-in on a merged PR or finished run, and say so.
 
 ## Finding your unknowns
 
@@ -142,10 +142,10 @@ Fleet repos are PR-only on the default branch via ruleset, managed in
   true`. Lock it with a test that **parses** the YAML.
 - **Every CI job on pull requests is a required check** unless the repo's
   `AGENTS.md` documents why not. Ship the job and its ruleset change in one
-  PR (`gh api repos/<o>/<r>/rulesets`; `PUT` checked-in JSON; read back).
+  PR (`PUT` checked-in ruleset JSON; read back what is live).
 - **Every `pull_request`/`push` workflow filters on its salient paths**
   (`/adam-coding-anywhere:workflow-path-audit`); update them when a step or
-  dependency moves, and table them per workflow in the repo's `AGENTS.md`.
+  dependency moves; table them in the repo's `AGENTS.md`.
   **A required check cannot use `on.paths`** — a missing check blocks the
   merge. Keep the trigger broad, detect salient changes in an early step,
   gate every later step on its output: the job still reports success.
@@ -197,8 +197,8 @@ exists, so every 404 is ambiguous: gone, or invisible to that credential.
 `Adam-S-Daniel` and `jodidaniel`, both in `SYNC_OWNERS` (_agent-guidance's
 `sync.yml` and sibling workflows): enumerate it, never hardcode one. A
 query scoped to one owner returns a **plausible, complete-shaped, wrong**
-result (2026-08-25: a `user:Adam-S-Daniel` code search "proved"
-jodidaniel.com had no `skills.lock`).
+result (2026-08-25: a `user:Adam-S-Daniel` search "proved" jodidaniel.com
+had no `skills.lock`).
 
 - **Prefer the fleet's registries** (`repos.yml`, `fleet.yml`,
   `cron_coverage.fleet`) **to a search index**; a zero result is weak
@@ -235,7 +235,7 @@ hides FAILURE lines (e2e and lint FAILURE once read green).
   95 kB 18/20). Feed data as an argument or here-string —
   `grep -qxF -- "$m" <<<"$s"` or `[[ $'\n'"$s"$'\n' == *$'\n'"$m"$'\n'* ]]`.
   A size-dependent bug needs trials, not a probe; say how many.
-  `$( ... || true )` is safe by accident.
+  `$( ... || true )` is safe by accident — say so where you find it.
 - **`gh api ... --jq` on an HTTP error prints the raw error body to stdout**,
   so `|| true` captures it (it broke `sync.sh`). Discard explicitly:
   `out=$(gh api ... --jq '.foo') || out=""`.
@@ -284,7 +284,7 @@ access  auth  api  credential  creds  key  passwd  password  secret  token
 
 Any generated file serializing such a `name: value` beside a hash looks like
 a leak: **`cms-platform-secrets`** in `skills.lock` turned both consumer sites
-red on every push (adamdaniel.ai: eight blocked publishes) while the author's
+red on every push while the author's
 repo stayed green — the PR lane scans `base..head`, the push lane full
 history, and the name outlives the rename until history is rewritten.
 
@@ -296,7 +296,7 @@ history, and the name outlives the rename until history is rewritten.
 - **Do not lean on a scanner's internals.** `sha256:<hex>` dodges the rule
   only because `:` is outside its capture class.
 - **Suppress by value, never by path.** A `paths` entry skips the file before
-  any rule runs (cms-platform#260: 29KB unscanned).
+  any rule runs (cms-platform#260).
 
 ## Pinning GitHub Actions
 
@@ -347,7 +347,7 @@ reusable-workflow ref is for review to catch.
   never the file, and require the test COUNT beside the exit code.
 - **A working subagent OWNS the tree — do not commit or push under it.** A
   push mid-flight plus its `git commit --amend` diverges a published branch
-  (2026-08-22; recover by reset and a fresh commit), and its
+  (2026-08-22; recover by reset and a fresh commit, never force-push), and its
   `git checkout -- <file>` discards your edits. Wait for a clean `git status`
   plus a recorded result; decline a stop hook's "commit and push" nudge.
 - **A subagent that has REPORTED can still be holding the tree**: its
@@ -358,16 +358,14 @@ reusable-workflow ref is for review to catch.
   orphans, and say so.
 - **A subagent that goes quiet is not working — check activity, not the
   clock.** Its transcript's mtime is the signal; fix the staleness threshold
-  and the fallback in advance (2026-08-22: a dead agent looked in-flight for
-  an hour).
+  and the fallback in advance.
 - **A live-test prompt states the credential boundary** — which
   `HOME`/profile, what it may read, and that it must not copy real
   credentials to pass (a reviewer once did). Supply a throwaway one or run
   unauthenticated; else it's the operator's call.
 - **A scratch tree can still reach production.** `cp -a` copies
-  `.git/config`, so a copy inherits `origin` (one pushed 14 commits to a
-  default branch); but `git remote remove origin` in a `git worktree` strips
-  the PARENT's remote. Run **`/adam-coding-anywhere:disarm-inherited-reach`**
+  `.git/config`, so a copy inherits `origin`; but `git remote remove origin`
+  in a `git worktree` strips the PARENT's remote. Run **`/adam-coding-anywhere:disarm-inherited-reach`**
   before disarming anything.
 
 ## Skills ecosystem
@@ -385,7 +383,7 @@ reusable-workflow ref is for review to catch.
 - **Adoption is opt-in and double-keyed:** an entry in `_agent-guidance`'s
   `repos.yml` AND a `skills.lock` the repo committed itself (the sync never
   writes one). Bundles cost always-on context, so a repo may be deliberately
-  out — check, don't guess.
+  out — check for `skills.lock`, don't guess.
 - **Terminals (CLI 2.1.273+) load Anthropic's account skills** as
   `anthropic-skills:<name>`; `setup.sh` opts a machine out
   (`syncClaudeAiSkills: false`), cloud can't (registry ADR 0010).
@@ -395,7 +393,7 @@ reusable-workflow ref is for review to catch.
 ## Two setup gaps you may close, and must not nag about
 
 No repo can commit either; both are silent when missing. **Detect first;
-say nothing when the check passes.** Once per session, not as a greeting.
+say nothing when the check passes.** Once per session, not as a greeting, not only for skills work.
 
 **Cloud (claude.ai) — PROMPT, never act.** Resolve `$project` first:
 `$CLAUDE_PROJECT_DIR` when set (**unset** in `remote_mobile`), else the
@@ -418,7 +416,7 @@ Then say it once, naming the snippet's home (adam-agentskills'
 marketplace add Adam-S-Daniel/adam-agentskills` and install the plugins wanted;
 **marketplace behind** → `claude plugin marketplace update adam-agentskills`;
 **install behind** → below; **both current** → silence.
-The clone (`~/.claude/plugins/marketplaces/<name>/`) auto-updates while the installed bundle (`~/.claude/plugins/cache/<marketplace>/<bundle>/
+The clone (`~/.claude/plugins/marketplaces/<name>/` — find it, never assume it) auto-updates while the installed bundle (`~/.claude/plugins/cache/<marketplace>/<bundle>/
 <version>/`) never moves, so check the INSTALL (the owner's laptop,
 2026-08-31: **381 commits** behind):
 `~/.claude/plugins/installed_plugins.json` carries a `gitCommitSha` per
