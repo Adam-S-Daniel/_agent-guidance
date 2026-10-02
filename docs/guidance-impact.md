@@ -354,3 +354,123 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: the results-branch example now names `persistent/eval-results`; +11 bytes.
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — working-in-these-repos — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: one bullet routing writing under Adam's name to the `adam-writing-style` skill; test and tests-for-interface bullets tightened; +75 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — git-practices — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: new bullet: before a PR, `git log origin/<base>..HEAD` lists only this task's commits (stale worktree WIP trap); +295 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — automation-vs-branch-protection — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: two bullets: every PR CI job is a required check with its ruleset change in the same PR; workflows filter on salient paths, required checks use always-run + early-skip; +667 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — anything-you-name-gets-its-link — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -65 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — finding-your-unknowns — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -14 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — workstation-layout — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: clone-location list collapsed to one sentence, no rule change; -117 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — security — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -4 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — data-exposure-in-ci — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -42 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — network-allowlists — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -26 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — two-github-connectors — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -11 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — github-404-means-not-authorized — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -20 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — fleet-spans-two-owners — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: two bullets merged and wording condensed, no rule change; -55 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — watch-finished-is-not-ci-passed — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -53 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — git-push-does-not-mean-commit-exists — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -39 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — dependency-updates — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -3 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — name-becomes-scanner-data — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -52 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — subagent-delegation — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -76 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — skills-ecosystem — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -28 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — two-setup-gaps — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: wording condensed, no rule change; -71 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — pinning-github-actions — edit
+- Motivation: Fold the Claude-only user-level rules (~/.claude/AGENTS.md) into the fleet block so Codex receives them too; the block had 520 bytes of headroom under 24 KiB, so every section was condensed.
+- Change: one punctuation tweak, no rule change; 0 bytes net.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
