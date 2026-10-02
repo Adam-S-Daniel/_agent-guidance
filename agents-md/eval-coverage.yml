@@ -77,7 +77,7 @@
   heading: Automation vs branch protection
   file: agents-md/base.md
   status: gap
-  bytes: 1243
+  bytes: 1521
 
 - id: two-github-connectors
   heading: Two GitHub connectors, and which one you are holding
