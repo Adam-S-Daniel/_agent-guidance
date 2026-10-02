@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-02 — 2.1.287 through 2.1.287
+
+- **Checked:** 2026-10-02T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.287](https://github.com/anthropics/claude-code/releases/tag/v2.1.287), published 2026-10-01T18:00Z
+- **Window:** v2.1.287 (published 2026-10-01T18:00Z), the first stable release after v2.1.286: 1 release, about 110 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; the section for v2.1.287 is the top one); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` d4ed931, `adam-agentskills` ca1e575, `adam-agentskills-private` e488539, `adamdaniel.ai` 7a54558, `claude-memory-map` 52c2306, `cms-platform` 5f1bcd3, `fastmail-actions` df3c001, `GHA-bench` 67e67ff8, `jodidaniel.com` c203ff2, `repo-settings` 2596138, `rss-inator` f3ee6b4, `skills-evals` 4368def, `wsl-automation` f05a86a.
+
+No group met the name-the-surface bar: a grep of the fleet for `asyncRewake`, `alwaysLoad`, `availableModels`, `opusplan`, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, `git-subdir`, `--sparse` and the `CLAUDE_CODE_SKIP_*_AUTH` variables found no dependence on a changed behavior. The fix for SessionStart hooks from synced plugins in new cloud sessions concerns claude.ai-synced plugins, not the repo-declared settings the fleet's "no plugins from repo-declared settings" claim covers, so that claim is unchanged. No issue was filed.
+
 ### 2026-10-01 — 2.1.286 through 2.1.286
 
 - **Checked:** 2026-10-01T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)

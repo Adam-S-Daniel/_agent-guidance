@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-02 — 0.160.0 through 0.160.0
+
+- **Checked:** 2026-10-02T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.160.0](https://github.com/openai/codex/releases/tag/rust-v0.160.0), published 2026-10-01T20:19Z
+- **Window:** 0.160.0 (published 2026-10-01T20:19Z), the first stable release after 0.159.3: 1 stable release, 13 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.159.3`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` d4ed931, `adam-agentskills` ca1e575, `adam-agentskills-private` e488539, `adamdaniel.ai` 7a54558, `claude-memory-map` 52c2306, `cms-platform` 5f1bcd3, `fastmail-actions` df3c001, `GHA-bench` 67e67ff8, `jodidaniel.com` c203ff2, `repo-settings` 2596138, `rss-inator` f3ee6b4, `skills-evals` 4368def, `wsl-automation` f05a86a.
+
+No group met the name-the-surface bar: the highlights are TUI, Windows sandbox, Guardian review, SQLite and plugin-manifest caching changes, and no fleet repo depends on any of them, so no issue was filed.
+
 ### 2026-10-01 — 0.159.3 through 0.159.3
 
 - **Checked:** 2026-10-01T01:20Z, [release log](https://github.com/openai/codex/releases)
