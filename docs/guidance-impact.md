@@ -348,3 +348,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: one bullet naming `persistent/<purpose>` for branches that outlive their PRs, guarded by a per-repo deletion-only `extra_rulesets` entry in `fleet.yml`, never deleted and skipped by stale-branch cleanups; +278 bytes.
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-10-02
+
+## 2026-10-02 — automation-vs-branch-protection — edit
+- Motivation: skills-evals' results branch was renamed `eval-results` → `persistent/eval-results` (repo-settings ADR 0007), so the section's example named a branch about to be deleted.
+- Change: the results-branch example now names `persistent/eval-results`; +11 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
