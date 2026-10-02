@@ -342,3 +342,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: the every-repo push-failure bullet now names a missing `sync-skills` hook script and `setup.sh --owner-machine` (which unregisters it); the terminal bullet says terminals still load Anthropic's own account skills; net small byte change.
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-28
+
+## 2026-10-02 — automation-vs-branch-protection — edit
+- Motivation: the vendor changelog routine now accumulates on a branch that outlives its PRs, and nothing in such a branch's name told a person, an agent or delete-on-merge to leave it alone (repo-settings ADR 0007).
+- Change: one bullet naming `persistent/<purpose>` for branches that outlive their PRs, guarded by a per-repo deletion-only `extra_rulesets` entry in `fleet.yml`, never deleted and skipped by stale-branch cleanups; +278 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-02
