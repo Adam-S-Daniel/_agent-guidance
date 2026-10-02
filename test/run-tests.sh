@@ -19282,6 +19282,358 @@ test_fleet_memory_freshness() {
     fi
 }
 
+# Codex's generated records are audited after generation; all memory, sidecar,
+# and CLI configuration paths in this group are synthetic and isolated.
+test_codex_memory_audit() {
+    echo ""
+    echo "TEST: audit-codex-memory.py (read-only post-generation attestations)"
+    local d="$TEST_DIR/codex-memory-audit" CMA_RC=0 CMA_HOME
+    local auditor="$REPO_ROOT/scripts/audit-codex-memory.py"
+    local builder="$SCRIPT_DIR/fixtures/build-codex-memory.py"
+    local out="$d/output" db id before after count
+    mkdir -p "$d/claude-config" "$d/bin"
+    # Version detection is deterministic and cannot inspect a real profile.
+    cat > "$d/bin/codex" <<'EOF_VERSION'
+#!/usr/bin/env bash
+printf '%s\n' 'codex-cli 0.160.0'
+EOF_VERSION
+    chmod +x "$d/bin/codex"
+
+    cma_run() {
+        CMA_RC=0
+        env -u CODEX_SQLITE_HOME PATH="$d/bin:$PATH" CODEX_HOME="$CMA_HOME" CLAUDE_CONFIG_DIR="$d/claude-config" \
+            python3 "$auditor" "$@" > "$out" 2>&1 || CMA_RC=$?
+    }
+    cma_status() {
+        if [[ "$CMA_RC" == "$1" ]]; then pass "codex-memory-audit: $2";
+        else fail "codex-memory-audit: $2 — expected exit $1, got $CMA_RC"; fi
+    }
+    cma_fixture() {
+        CMA_HOME="$d/$1"
+        python3 "$builder" "$CMA_HOME" --seed "${2:-empty}" --namespace "${3:-memories}"
+    }
+    # Parse JSON records rather than scraping the rendered locator or JSON text.
+    cma_ids() {
+        python3 - "$out" "${1:-}" "${2:-}" "${3:-}" <<'PY'
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        record = json.loads(line)
+    except ValueError:
+        continue
+    if not isinstance(record, dict) or "id" not in record:
+        continue
+    if sys.argv[2] and record.get("surface") != sys.argv[2]:
+        continue
+    if sys.argv[3] and record.get("identity", {}).get("path") != sys.argv[3]:
+        continue
+    if sys.argv[4] and record.get("verdict") != sys.argv[4]:
+        continue
+    print(record["id"])
+PY
+    }
+    cma_first_id() { local ids; ids=$(cma_ids "${1:-}" "${2:-}"); printf '%s' "${ids%%$'\n'*}"; }
+    cma_count() { local ids; ids=$(cma_ids "$@"); if [[ -z "$ids" ]]; then printf 0; else printf '%s\n' "$ids" | wc -l; fi; }
+    cma_sql() {
+        python3 - "$CMA_HOME/memories_1.sqlite" "$1" <<'PY'
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as connection:
+    connection.execute(sys.argv[2])
+PY
+    }
+
+    cma_fixture absent
+    rm "$CMA_HOME/memories_1.sqlite"
+    rmdir "$CMA_HOME/memories" "$CMA_HOME"
+    cma_run
+    cma_status 0 "absent store is clean"
+    if [[ ! -e "$CMA_HOME" ]]; then pass "codex-memory-audit: version probe never creates the absent requested home";
+    else fail "codex-memory-audit: version probe never creates the absent requested home"; fi
+    assert_contains "$out" "no memory store" "codex-memory-audit: absent store is explicitly identified"
+    cma_fixture empty
+    cma_run audit
+    cma_status 0 "empty known-schema store is clean"
+    assert_contains "$out" "no memory store" "codex-memory-audit: empty store is explicitly identified"
+
+    if python3 - "$out" "$CMA_HOME" <<'PY_HEADER'
+import json, sys
+header = json.loads(open(sys.argv[1], encoding="utf-8").readline())
+assert header["event"] == "store"
+assert header["codex_version"] == "codex-cli 0.160.0"
+assert header["codex_home"] == sys.argv[2]
+assert header["roots"] == [sys.argv[2] + "/memories", sys.argv[2] + "/memories_v2"]
+PY_HEADER
+    then pass "codex-memory-audit: JSON header names exact detected version and both inspected roots";
+    else fail "codex-memory-audit: JSON header names exact detected version and both inspected roots"; fi
+
+    cma_fixture phase1 phase1
+    cma_run --codex-home "$d/empty" audit
+    cma_status 0 "explicit codex-home overrides the environment"
+    db="$CMA_HOME/memories_1.sqlite"
+    before=$(md5sum "$db")
+    cma_run
+    cma_status 1 "unattested Phase 1 row produces a finding"
+    assert_not_contains "$out" "PRIVATE_FIXTURE" "codex-memory-audit: default output omits all memory content"
+    after=$(md5sum "$db")
+    if [[ "$before" == "$after" ]]; then pass "codex-memory-audit: audit leaves DB bytes unchanged";
+    else fail "codex-memory-audit: audit leaves DB bytes unchanged"; fi
+    id=$(cma_first_id phase1)
+    cma_run attest --record "$id" --home "Adam-S-Daniel/_agent-guidance:docs/decisions/0015-audit-codex-memories-after-generation-not-at-stop.md" \
+        --home "https://github.com/Adam-S-Daniel/_agent-guidance/blob/9010751/README.md"
+    cma_status 0 "attest accepts both home vocabulary forms and multiple homes"
+    if [[ -f "$CMA_HOME/memory-homes.json" && ! -e "$CMA_HOME/memories/memory-homes.json" ]]; then
+        pass "codex-memory-audit: default sidecar lives outside managed memory root"
+    else fail "codex-memory-audit: default sidecar lives outside managed memory root"; fi
+    cma_run
+    cma_status 0 "attestation makes the same Phase 1 record clean"
+    cma_sql "UPDATE stage1_outputs SET raw_memory = 'PRIVATE_FIXTURE_CHANGED'"
+    cma_run
+    cma_status 1 "changed content invalidates attestation"
+    cma_sql "UPDATE stage1_outputs SET raw_memory = 'PRIVATE_FIXTURE_RAW_CONTENT'"
+    cma_run
+    cma_status 0 "restoring exact reviewed content restores the attestation"
+    cma_sql "UPDATE stage1_outputs SET rollout_summary = 'PRIVATE_FIXTURE_CHANGED_SUMMARY'"
+    cma_run
+    cma_status 1 "changed Phase 1 rollout summary invalidates attestation"
+    cma_sql "UPDATE stage1_outputs SET rollout_summary = 'PRIVATE_FIXTURE_ROLLOUT_CONTENT', source_updated_at = 102"
+    cma_run
+    cma_status 1 "changed source_updated_at invalidates attestation"
+    cma_sql "UPDATE stage1_outputs SET source_updated_at = 100, thread_id = 'replacement-thread'"
+    cma_run
+    cma_status 1 "changed thread_id invalidates attestation"
+    cma_run --show
+    cma_status 1 "explicit show preserves findings exit status"
+    assert_contains "$out" "PRIVATE_FIXTURE_RAW_CONTENT" "codex-memory-audit: explicit show displays reviewed content"
+
+    cma_fixture note ad-hoc
+    before=$(md5sum "$CMA_HOME/memories/extensions/ad_hoc/notes/fixture.md")
+    cma_run
+    cma_status 1 "ad hoc note is enumerated"
+    count=$(cma_count ad-hoc)
+    if [[ "$count" == 1 ]]; then pass "codex-memory-audit: an ad hoc note is one whole-file record";
+    else fail "codex-memory-audit: an ad hoc note is one whole-file record — got $count"; fi
+    id=$(cma_first_id ad-hoc)
+    cma_run attest --record "$id" --exempt-user
+    cma_status 0 "whole-record user exemption can be attested"
+    after=$(md5sum "$CMA_HOME/memories/extensions/ad_hoc/notes/fixture.md")
+    if [[ "$before" == "$after" ]]; then pass "codex-memory-audit: attest leaves memory file bytes unchanged";
+    else fail "codex-memory-audit: attest leaves memory file bytes unchanged"; fi
+    cma_run
+    cma_status 0 "user-exempt record is clean"
+    mv "$CMA_HOME/memories/extensions/ad_hoc/notes/fixture.md" "$CMA_HOME/memories/extensions/ad_hoc/notes/renamed.md"
+    cma_run
+    cma_status 1 "changed ad hoc path invalidates attestation"
+    id=$(cma_first_id ad-hoc)
+    cma_run attest --record "$id" --home "not-a-home"
+    cma_status 2 "bad home is rejected"
+    cma_run --sidecar "$d/note-homes.json" attest --record "$id" --exempt-user
+    cma_status 0 "explicit sidecar outside the managed roots accepts attestation"
+    cma_run audit --sidecar "$d/note-homes.json"
+    cma_status 0 "audit accepts global sidecar option after the command"
+    cma_run
+    cma_status 1 "custom sidecar does not change the default sidecar's attestations"
+    printf '{broken-json\n' > "$CMA_HOME/memory-homes.json"
+    before=$(md5sum "$CMA_HOME/memory-homes.json")
+    cma_run attest --record "$id" --exempt-user
+    cma_status 3 "unparseable sidecar refuses attest"
+    after=$(md5sum "$CMA_HOME/memory-homes.json")
+    if [[ "$before" == "$after" ]]; then pass "codex-memory-audit: corrupt sidecar md5 remains unchanged";
+    else fail "codex-memory-audit: corrupt sidecar md5 remains unchanged"; fi
+    cma_run
+    cma_status 2 "unparseable sidecar cannot be reported clean"
+    printf '{"version":99,"entries":{}}\n' > "$CMA_HOME/memory-homes.json"
+    cma_run
+    cma_status 2 "unknown sidecar schema cannot be reported clean"
+    rm "$CMA_HOME/memory-homes.json"
+    cma_run --sidecar "$CMA_HOME/memories/forbidden.json" attest --record "$id" --exempt-user
+    cma_status 2 "sidecar inside managed memory root is refused"
+    if [[ ! -e "$CMA_HOME/memories/forbidden.json" ]]; then pass "codex-memory-audit: forbidden sidecar is never written";
+    else fail "codex-memory-audit: forbidden sidecar is never written"; fi
+    ln -s "$CMA_HOME/memories" "$d/sidecar-alias"
+    cma_run --sidecar "$d/sidecar-alias/forbidden.json" attest --record "$id" --exempt-user
+    cma_status 2 "sidecar symlink alias into managed root is refused"
+
+    cma_fixture sections consolidated
+    before=$(md5sum "$CMA_HOME/memories/MEMORY.md")
+    cma_run
+    cma_status 1 "consolidated Markdown and skills are enumerated"
+    count=$(cma_count consolidated memories/MEMORY.md)
+    if [[ "$count" == 4 ]]; then pass "codex-memory-audit: preamble and three heading bodies are independent records; fences do not add headings";
+    else fail "codex-memory-audit: Markdown section granularity — expected 4, got $count"; fi
+    count=$(cma_count consolidated memories/memory_summary.md)
+    if [[ "$count" == 1 ]]; then pass "codex-memory-audit: memory_summary.md is section-audited";
+    else fail "codex-memory-audit: memory_summary.md is section-audited — got $count"; fi
+    count=$(cma_count skill memories/skills/example/SKILL.md)
+    if [[ "$count" == 1 ]]; then pass "codex-memory-audit: skills Markdown is section-audited";
+    else fail "codex-memory-audit: skills Markdown is section-audited — got $count"; fi
+    assert_not_contains "$out" "PRIVATE_FIXTURE" "codex-memory-audit: default output omits sensitive headings and preamble"
+    cma_ids > "$d/section-ids"
+    while IFS= read -r id; do
+        cma_run attest --record "$id" --home "Adam-S-Daniel/_agent-guidance:README.md"
+        cma_status 0 "section $id accepts its own attestation"
+    done < "$d/section-ids"
+    cma_run
+    cma_status 0 "all separately reviewed sections are clean"
+    after=$(md5sum "$CMA_HOME/memories/MEMORY.md")
+    if [[ "$before" == "$after" ]]; then pass "codex-memory-audit: section audits and attestations preserve exact file bytes";
+    else fail "codex-memory-audit: section audits and attestations preserve exact file bytes"; fi
+    python3 - "$CMA_HOME/memories/MEMORY.md" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_bytes(path.read_bytes().replace(b"PRIVATE_FIXTURE_FIRST", b"PRIVATE_FIXTURE_MUTATED_FIRST"))
+PY
+    cma_run
+    cma_status 1 "mutating one heading section produces a finding"
+    count=$(cma_count consolidated memories/MEMORY.md unattested)
+    if [[ "$count" == 1 ]]; then pass "codex-memory-audit: only the changed duplicate-heading section loses its attestation";
+    else fail "codex-memory-audit: only changed section loses attestation — got $count"; fi
+    count=$(cma_count consolidated memories/MEMORY.md homed)
+    if [[ "$count" == 3 ]]; then pass "codex-memory-audit: parent, preamble, and sibling attestations remain valid";
+    else fail "codex-memory-audit: sibling attestations remain valid — got $count"; fi
+
+    python3 - "$CMA_HOME/memories/MEMORY.md" <<'PY_SCOPE'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_bytes(path.read_bytes().replace(b"PRIVATE_FIXTURE_HEADING", b"PRIVATE_FIXTURE_CHANGED_PARENT_SCOPE"))
+PY_SCOPE
+    cma_run
+    cma_status 1 "renaming a parent scope invalidates descendant attestations"
+    count=$(cma_count consolidated memories/MEMORY.md unattested)
+    if [[ "$count" == 3 ]]; then pass "codex-memory-audit: changed heading ancestry invalidates parent and both descendants";
+    else fail "codex-memory-audit: changed heading ancestry invalidates descendants — got $count"; fi
+    count=$(cma_count consolidated memories/MEMORY.md homed)
+    if [[ "$count" == 1 ]]; then pass "codex-memory-audit: heading scope rename preserves independent preamble attestation";
+    else fail "codex-memory-audit: heading scope rename preserves preamble — got $count"; fi
+
+    cma_fixture unknown
+    cma_sql "PRAGMA user_version = 99"
+    cma_run
+    cma_status 2 "unknown SQLite user_version is unsupported"
+    assert_contains "$out" "$CMA_HOME" "codex-memory-audit: schema failure still identifies inspected root"
+    assert_contains "$out" 'codex-cli 0.160.0' "codex-memory-audit: schema failure still identifies detected version"
+    cma_fixture orphan-wal
+    rm "$CMA_HOME/memories_1.sqlite"
+    printf 'orphaned WAL bytes\n' > "$CMA_HOME/memories_1.sqlite-wal"
+    cma_run
+    cma_status 2 "orphan WAL without its database cannot be reported clean"
+    cma_fixture future-namespace
+    mkdir "$CMA_HOME/memories_v3"
+    cma_run
+    cma_status 2 "unknown memories_v3 namespace cannot be reported clean"
+    cma_fixture missing-table
+    cma_sql "DROP TABLE stage1_outputs"
+    cma_run
+    cma_status 2 "missing expected table is unsupported"
+    cma_fixture missing-column
+    cma_sql "ALTER TABLE stage1_outputs DROP COLUMN raw_memory"
+    cma_run
+    cma_status 2 "missing expected column is unsupported"
+    cma_fixture future-migration
+    cma_sql "INSERT INTO _sqlx_migrations VALUES (3, 'future', '2026-10-02 00:00:00', 1, X'00', 0)"
+    cma_run
+    cma_status 2 "unknown SQLx migration version is unsupported"
+    cma_fixture unreadable
+    printf 'not sqlite\n' > "$CMA_HOME/memories_1.sqlite"
+    cma_run
+    cma_status 2 "unreadable SQLite bytes are distinct from absent memory"
+
+    cma_fixture fifo-database
+    rm "$CMA_HOME/memories_1.sqlite"
+    mkfifo "$CMA_HOME/memories_1.sqlite"
+    cma_run
+    cma_status 2 "FIFO database is refused without reading or blocking"
+    cma_fixture fifo-sidecar phase1
+    cma_run
+    id=$(cma_first_id phase1)
+    mkfifo "$CMA_HOME/memory-homes.json"
+    cma_run attest --record "$id" --exempt-user
+    cma_status 3 "FIFO sidecar is invalid and attest refuses it without reading or blocking"
+    if [[ -p "$CMA_HOME/memory-homes.json" ]]; then pass "codex-memory-audit: refused FIFO sidecar remains unchanged";
+    else fail "codex-memory-audit: refused FIFO sidecar remains unchanged"; fi
+    cma_run
+    cma_status 2 "FIFO sidecar cannot be reported clean"
+
+    cma_fixture v2 phase1 memories_v2
+    cma_run
+    cma_status 1 "v2 namespace Phase 1 is enumerated"
+    assert_contains "$out" 'memories_v2' "codex-memory-audit: v2 source namespace is identified"
+    id=$(cma_first_id phase1)
+    cma_run attest --record "$id" --exempt-user
+    cma_status 0 "v2 Phase 1 can be attested"
+    cma_run
+    cma_status 0 "attested v2 namespace is clean"
+    python3 "$builder" "$CMA_HOME" --seed phase1
+    # Give v1 exactly the summary-only content reviewed in v2, so this lane
+    # proves namespace identity, independently of a content difference.
+    cma_sql "UPDATE stage1_outputs SET raw_memory = '', rollout_slug = 'fixture-slug'"
+    cma_run
+    cma_status 1 "same thread/content in another namespace requires its own attestation"
+
+    cma_fixture rollout rollout
+    cma_run
+    cma_status 1 "file-backed rollout summary is enumerated"
+    count=$(cma_count "" memories/rollout_summaries/fixture-thread.md)
+    if [[ "$count" == 1 ]]; then pass "codex-memory-audit: rollout summary file is one record";
+    else fail "codex-memory-audit: rollout summary file is one record — got $count"; fi
+
+    cma_fixture binary-skill skill-binary
+    before=$(md5sum "$CMA_HOME/memories/skills/example/resource.bin")
+    cma_run
+    cma_status 1 "non-Markdown skill resource is enumerated"
+    if python3 - "$out" "$CMA_HOME/memories/skills/example/resource.bin" <<'PY_BINARY'
+import hashlib, json, pathlib, sys
+records = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        record = json.loads(line)
+    except ValueError:
+        continue
+    if record.get("surface") == "skill":
+        records.append(record)
+assert len(records) == 1
+assert records[0]["identity"] == {"path": "memories/skills/example/resource.bin"}
+assert records[0]["digest"] == hashlib.sha256(pathlib.Path(sys.argv[2]).read_bytes()).hexdigest()
+PY_BINARY
+    then pass "codex-memory-audit: binary resource digest covers every exact byte in one whole-file record";
+    else fail "codex-memory-audit: binary resource digest covers every exact byte in one whole-file record"; fi
+    after=$(md5sum "$CMA_HOME/memories/skills/example/resource.bin")
+    if [[ "$before" == "$after" ]]; then pass "codex-memory-audit: binary resource audit preserves file bytes";
+    else fail "codex-memory-audit: binary resource audit preserves file bytes"; fi
+    id=$(cma_first_id skill)
+    cma_run attest --record "$id" --home "Adam-S-Daniel/_agent-guidance:README.md"
+    cma_status 0 "binary skill resource can be attested"
+    cma_run
+    cma_status 0 "reviewed binary skill resource is clean"
+    printf 'mutation' >> "$CMA_HOME/memories/skills/example/resource.bin"
+    cma_run
+    cma_status 1 "changed binary skill resource bytes invalidate its attestation"
+
+    cma_fixture wal
+    CMA_RC=0
+    env -u CODEX_SQLITE_HOME PATH="$d/bin:$PATH" CODEX_HOME="$CMA_HOME" CLAUDE_CONFIG_DIR="$d/claude-config" python3 - "$auditor" "$CMA_HOME" "$out" <<'PY' || CMA_RC=$?
+import hashlib, os, pathlib, sqlite3, subprocess, sys
+home = pathlib.Path(sys.argv[2])
+db = home / "memories_1.sqlite"
+with sqlite3.connect(db) as connection:
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA wal_autocheckpoint = 0")
+    connection.execute("INSERT INTO stage1_outputs (thread_id, source_updated_at, raw_memory, rollout_summary, generated_at) VALUES (?, ?, ?, ?, ?)",
+                       ("live-wal-thread", 100, "PRIVATE_FIXTURE_WAL_CONTENT", "WAL summary", 101))
+    connection.commit()
+    paths = [db, pathlib.Path(str(db) + "-wal"), pathlib.Path(str(db) + "-shm")]
+    before = [hashlib.md5(path.read_bytes()).hexdigest() for path in paths]
+    result = subprocess.run([sys.executable, sys.argv[1]], env=os.environ.copy(), capture_output=True)
+    pathlib.Path(sys.argv[3]).write_bytes(result.stdout + result.stderr)
+    assert result.returncode == 1, "live WAL record must be visible"
+    assert before == [hashlib.md5(path.read_bytes()).hexdigest() for path in paths], "audit modified database, WAL, or SHM"
+PY
+    cma_status 0 "read-only connection sees committed live-WAL record without changing DB, WAL, or SHM bytes"
+    assert_contains "$out" 'live-wal-thread' "codex-memory-audit: live WAL native identity is reported"
+    assert_not_contains "$out" 'PRIVATE_FIXTURE_WAL_CONTENT' "codex-memory-audit: live WAL memory content remains private"
+}
+
 # ── memory-home.sh: a memory note names the committed copy of its fact ─────
 #
 # The subject is a hook that runs on TWO events against files that live
@@ -19871,6 +20223,7 @@ PY
 # group_codex_cloud is the one group that is not a list: it runs the Python
 # unittest modules and needs none of the shell fixtures.
 TEST_GROUPS=(
+    codex_memory_audit
     codex_cloud
     sync
     bootstrap
@@ -20092,6 +20445,13 @@ GROUP_codex=(
     test_fleet_memory_workspace
 )
 
+# The Codex auditor owns isolated SQLite and file fixtures.
+# Referenced through GROUP_${g}[@], which ShellCheck cannot resolve.
+# shellcheck disable=SC2034
+GROUP_codex_memory_audit=(
+    test_codex_memory_audit
+)
+
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.
@@ -20164,7 +20524,9 @@ run_one_group() {
     if [[ "$g" == codex_cloud ]]; then
         group_codex_cloud
     else
-        setup_fixtures
+        # This group owns its SQLite/filesystem fixtures and does not need mock
+        # repos. It also runs unchanged in a Git-free negative-control scratch.
+        if [[ "$g" != codex_memory_audit ]]; then setup_fixtures; fi
         local ref="GROUP_${g}[@]"
         for t in "${!ref}"; do
             "$t"

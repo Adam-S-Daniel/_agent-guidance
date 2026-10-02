@@ -29,7 +29,7 @@ a page.
 | [0013](0013-a-memory-note-outside-a-repo-names-its-home.md) | A memory note outside a repo names its home, and a session that wrote one without it does not stop |
 | [0014](0014-dependabot-config-health-is-swept-centrally.md) | Dependabot config health is swept centrally, from here |
 | [0015](0015-bump-prs-never-ask-for-native-auto-merge.md) | Bump pull requests never ask for native auto-merge |
-| [0016](0015-audit-codex-memories-after-generation-not-at-stop.md) | Audit Codex memories after generation, not at Stop |
+| [0016](0015-audit-codex-memories-after-generation-not-at-stop.md) | Audit Codex memories after generation, not at Stop — Accepted 2026-10-02 |
 | [0017](0016-the-freshest-delivery-wins-the-shared-global-block.md) | The freshest delivery wins the shared global block |
 
 ## Format

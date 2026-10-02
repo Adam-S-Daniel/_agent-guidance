@@ -175,14 +175,38 @@ Promotion is deliberately **not** automatic — choosing which repo owns a fact,
 and which file inside it, is judgment. Reasoning:
 [`docs/decisions/0013`](docs/decisions/0013-a-memory-note-outside-a-repo-names-its-home.md).
 
-#### Codex memory provenance is not enforced yet
+#### Codex memory has an operator-run provenance audit
 
-Codex's native memory store does not expose Claude Code's one-note-per-fact
-frontmatter contract, and its asynchronous global consolidation does not offer
-the same per-fact, same-session `Stop` contract. A read-only audit of generated
-memory plus an auditor-owned provenance sidecar is proposed; no hook, auditor
-or registrar implements it yet. Reasoning and the remaining design work:
-[`docs/decisions/0015`](docs/decisions/0015-audit-codex-memories-after-generation-not-at-stop.md).
+[`scripts/audit-codex-memory.py`](scripts/audit-codex-memory.py) reviews
+Codex 0.160.0's Phase 1 rows, ad hoc notes, generated Markdown sections,
+rollout summaries, and skills in both memory namespaces. It reads memory
+without changing it and stores operator attestations in
+`$CODEX_HOME/memory-homes.json`, outside the managed trees. It is an explicit
+audit, not a hook or Stop gate. Run it after generation has settled:
+
+```bash
+python3 scripts/audit-codex-memory.py audit --codex-home /path/to/codex-home
+python3 scripts/audit-codex-memory.py audit --codex-home /path/to/codex-home --show
+python3 scripts/audit-codex-memory.py attest --codex-home /path/to/codex-home \
+  --record '<id-from-audit>' --home 'owner/repo:docs/durable-copy.md'
+```
+
+Use Python 3.11+ for standard-library TOML configuration parsing. Omit
+`--codex-home` to use `$CODEX_HOME`, otherwise `~/.codex`; `--sidecar` selects
+another sidecar outside both managed roots. `audit` is the default command.
+Exit 0 means all observed records are attested (or an explicitly reported
+absent/empty store); 1 means findings; 2 means unsupported/unreadable state.
+Attesting an invalid sidecar exits 3 without writing it. Default output
+contains locators, digests, and verdicts; `--show` includes memory content
+and must be used privately. Locators themselves may also be sensitive.
+
+Repeat `--home` for several durable copies, or use `--exempt-user` only when
+the entire reviewed record is personal. Mixed records need their work facts
+homed or split through the native mechanism. A changed digest, source revision,
+thread, path, or heading ancestry requires renewed review. The auditor checks
+home syntax, not whether the named copy exists or owns every fact. Schema,
+section granularity, read-only WAL handling, and remaining limits are specified
+in [ADR 0015](docs/decisions/0015-audit-codex-memories-after-generation-not-at-stop.md).
 
 ### Section manifest
 

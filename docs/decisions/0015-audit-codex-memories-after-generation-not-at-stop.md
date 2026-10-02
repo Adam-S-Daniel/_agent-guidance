@@ -1,6 +1,6 @@
 # 0015 — Audit Codex memories after generation, not at Stop
 
-**Status:** Proposed (2026-09-21)
+**Status:** Accepted (2026-10-02)
 
 ## Context
 
@@ -13,8 +13,16 @@ asked whether Codex can carry the same contract. The issue reserved ADR 0014;
 the branch when this research began, so this record is 0015. Nothing already
 merged was renumbered.
 
-This investigation is pinned to the public `rust-v0.154.0` source for
-codex-cli 0.154.0. The [current hooks documentation](https://developers.openai.com/codex/hooks.md)
+The original investigation below is pinned to the public `rust-v0.154.0`
+source for codex-cli 0.154.0. The implementation targets **0.160.0**, after
+an offline comparison of the supplied tagged source trees. The
+[re-pin evidence](../evidence/codex-memory-129.md#2026-10-02-implementation-re-pin-to-01600)
+records every relevant delta. In particular, [migration 0002](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/memory_migrations/0002_consolidation_progress.sql#L1-L6)
+adds consolidation readiness state, and [dual-write startup](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/memories/write/src/start.rs#L40-L73)
+can write both `memories/` and `memories_v2/`, with
+[separate databases using the same migrations](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/src/sqlite.rs#L81-L95).
+The earlier history remains below; it must not be read as the current file
+layout specification. The [current hooks documentation](https://developers.openai.com/codex/hooks.md)
 and [current configuration reference](https://developers.openai.com/codex/config-reference)
 describe a moving product surface; source links below pin the claims on which
 this decision depends. The investigation did not inspect a production Codex
@@ -213,53 +221,115 @@ That proves hook transport, not native extraction or attribution
 
 ## Decision
 
-Do not port ADR 0013's current-session mtime marker and `Stop` gate to Codex.
-Treat the absence of an enforceable Codex memory-home contract as an explicit
-gap while this ADR is Proposed.
+Ship [`scripts/audit-codex-memory.py`](../../scripts/audit-codex-memory.py) as
+an operator-run, Python standard-library audit. It does not register a hook,
+gate Stop, edit memory, promote facts, or choose homes. `--codex-home` selects
+the store; the default is `$CODEX_HOME`, otherwise `~/.codex`. `audit` is the
+default subcommand. Its store header reports the inspected home, both managed
+roots, and the exact locally detectable `codex --version` (or `undetectable`).
+That executable version does not prove which version originally wrote a store.
 
-The proposed fallback is an explicit, read-only post-generation audit with an
-auditor-owned sidecar. The sidecar will map each reviewed fact record, its
-strongest auditable source identity and source revision, and a digest of the
-exact content reviewed to:
+Scan both `memories_1.sqlite` and `memories_v2_1.sqlite`, and both `memories/`
+and `memories_v2/`. The supported database schema is the tables and column
+types from [0001](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/memory_migrations/0001_memories.sql#L1-L35)
+and [0002](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/state/memory_migrations/0002_consolidation_progress.sql#L1-L6).
+When SQLx migration metadata is present, require successful versions 1 and 2;
+an otherwise exact hand-built schema may omit that bookkeeping. Missing or
+extra tables/columns, a nonzero SQLite `user_version`, unknown migration
+versions or database filenames, orphan WAL/SHM files, unreadable state,
+special files, symlinks in inspected paths, and detected SQLite-home
+overrides are errors, never a clean empty store. Configuration parsing uses
+Python 3.11's standard-library `tomllib`; an unavailable parser is exit 2.
 
-- one or more durable homes in ADR 0013's `<owner>/<repo>:<path>` or GitHub
-  blob form; or
-- an explicit user-only exemption when the whole reviewed record is personal.
+Read database and companion bytes into a private temporary snapshot, rejecting
+files that change during capture. Open that snapshot with a `file:...?mode=ro`
+SQLite URI and `PRAGMA query_only=ON`, in a read transaction. Do not use
+`immutable=1`: it can omit committed data still in a live WAL. Reading the
+original with `mode=ro` alone can change its shared-memory reader state; the
+private copy keeps that coordination outside the memory store. Delete the
+temporary snapshot after reading. Read filesystem artifacts twice, comparing
+exact bytes and file identity/stat metadata, and reject observed movement.
+The filesystem and separate databases do not share an atomic snapshot;
+operators should audit after the writer has settled.
 
-A Phase 1 row or consolidated section can contain several work and personal
-facts. One personal paragraph must not exempt the work facts beside it. Source
-identity must come from the strongest native provenance available: a Phase 1
-`thread_id` plus `source_updated_at`, an ad hoc note path, or a documented
-locator inside a generated artifact. The digest is part of the key. A
-consolidation rewrite, renamed ad hoc note or content change therefore
-invalidates the earlier attestation and becomes a new finding. The sidecar is
-owned by the auditor and stored outside the Codex-managed `memories/` root, not
-inside files or git state the native consolidator can replace or reset.
+Fact records have these explicit review boundaries:
 
-The eventual auditor must report findings without modifying, deleting,
-promoting or classifying memory. It must distinguish unsupported or unreadable
-state from a clean result, and it must identify the exact Codex version and
-store root it inspected. Its verifier must prove that new content, changed
-content and a changed source identity all invalidate an attestation before any
-hook or registrar is added.
+| Surface | Identity and revision | Exact content digested |
+| --- | --- | --- |
+| `phase1` | Namespace and `stage1_outputs.thread_id`; integer revision `source_updated_at` | UTF-8 JSON array `[raw_memory, rollout_summary, rollout_slug]`, serialized with `ensure_ascii=False` and separators `(',', ':')`. This framing preserves field boundaries, whitespace, and null versus empty slug. A summary-only v2 row is reviewed. |
+| `ad-hoc` | Path relative to the selected home, including namespace, beneath `extensions/ad_hoc/notes/`; no native revision | Whole file bytes. |
+| `consolidated` | Relative path plus numbered heading path and heading-ancestry fingerprints; no native revision | Exact section bytes in `MEMORY.md`, `memory_summary.md`, `raw_memories.md`, and Markdown under `rollout_summaries/`. |
+| `skill` | Relative path and the same section locator for Markdown; file path for other files; no native revision | Markdown section bytes or whole non-Markdown file bytes under `skills/**`. |
 
-This record does not implement or register that auditor. It also does not
-choose a lifecycle hook as its trigger: the reliable post-generation boundary,
-sidecar schema, fact granularity, consolidation-entry locator, preservation of
-review coverage across reorganizations and safe behavior during a rewrite
-remain implementation work. Until those are resolved, even a sidecar prototype
-must not claim full enforcement. No current README claim should imply that
-Codex memory provenance is enforced.
+Markdown granularity is a byte partition, not a claim that Codex emits one
+record per semantic fact. Recognize ATX headings with up to three leading
+spaces and one to six `#` characters followed by whitespace or end of line,
+and setext underlines outside backtick/tilde fenced code. A section starts at
+its heading, includes that heading, and ends immediately before the next
+heading at any level. Bytes before the first heading are a preamble `[0]`;
+a nonempty headingless file is one preamble record; an empty file has none.
+Number headings from 1 among siblings under the nearest preceding lower-level
+heading, so duplicate titles remain distinct. Fingerprint ancestor headings
+so changing a parent's scope also invalidates descendant review. This is a
+documented lexical partition, not a complete CommonMark renderer: other syntax
+stays in the surrounding record and is still digested. No file bytes are
+discarded. Internal `.git` data, generated diff/instruction tooling, and
+other extension/plugin persistence surfaces are outside this audit's coverage.
+
+Each record reports `surface`, `identity`, `revision`, SHA-256 `digest`, and
+`id`. The id is SHA-256 of canonical UTF-8 JSON
+`[surface, identity, revision, digest]` (sorted object keys, no extra
+separators, `ensure_ascii=False`). Default output contains locators, digests,
+and verdicts, including numeric/fingerprinted heading paths rather than
+heading text. `--show` explicitly includes reviewed content. Locators can
+themselves be sensitive; do not publish a production audit transcript.
+
+`--sidecar` defaults to `$CODEX_HOME/memory-homes.json`, outside both managed
+roots so native consolidation/reset does not own it, while it stays associated
+with the selected profile. The auditor rejects a sidecar inside either managed
+root or aliasing a memory database/companion. Its JSON schema is
+`{"version": 1, "entries": {"<id>": <entry>}}`. Each entry repeats `surface`,
+`identity`, `revision`, and `digest` and contains **either** a nonempty
+`homes` array **or** `"exempt": "user"`. Reject duplicate keys, malformed
+entries, invalid homes, key/content mismatches, and unknown sidecar versions.
+Home validation ports the `split_home` parser in
+[`memory-home.sh`](../../.claude/hooks/memory-home.sh): `<owner>/<repo>:<path>`
+or `https://github.com/<owner>/<repo>/blob/<ref>/<path>`, with the same trimming
+and empty-slash-component semantics. It validates form, not committed existence.
+
+`attest --record <id> --home <home>` (repeat `--home` for several homes), or
+`attest --record <id> --exempt-user`, rescans and requires that exact current
+record. It writes only the sidecar, preserving other entries, through a
+mode-0600 temporary file, flush/fsync, semantic reparse, and atomic replacement.
+Its parent must already exist. An invalid/unparseable existing sidecar refuses
+attestation with **exit 3 and no write**. Other unsupported/unreadable states
+and invalid arguments use **exit 2**. Run attestations serially; atomic
+replacement is not a concurrent-editor merge protocol.
+
+`audit` exits **0** when every observed record is homed or exempt, **1** for
+unattested records, and **2** for unsupported/unreadable state or invalid
+sidecar. An absent home or empty supported surfaces exits 0 with the explicit
+`no memory store (absent or empty supported surfaces)` line: there is no
+observed fact to attest. A present but unreadable or incompatible database is
+not absence. New content, digest changes, native revision changes, namespace,
+thread-id or path changes, and heading-path changes produce new findings;
+older sidecar entries remain historical and do not cover them.
+
+A user exemption covers the **whole** reviewed record. One personal paragraph
+cannot exempt neighboring work facts. The operator must split mixed material
+through the appropriate native mechanism or supply durable homes for its work
+facts and attest the record with those homes. The auditor does not classify
+facts or silently rewrite the native store to accomplish that split.
 
 ## Consequences
 
 - **The Claude contract remains stronger.** A Claude note has a stable file and
   explicit frontmatter that a same-session `Stop` hook can inspect. Codex gets
-  a documented gap until a separate verifier exists.
+  an operator-run verifier, with no automatic gate.
 - **A later audit can cover automatic and ad hoc memory without pretending the
   two have identical provenance.** Phase 1 has a source thread; ad hoc notes
   have a path but no source thread; consolidated entries may have only textual
-  lineage. The sidecar has to preserve those distinctions.
+  lineage. The record identities and sidecar preserve those distinctions.
 - **A clean audit will be a statement about exact content at one store root and
   one Codex version, not proof that every fact was attributed correctly.** A
   model can combine or omit facts during extraction and consolidation before
@@ -267,6 +337,23 @@ Codex memory provenance is enforced.
 - **Rewrites deliberately cause renewed review.** This is noisier than storing
   a free-form `home` line inside `MEMORY.md`, but it avoids treating stale
   metadata as proof after the content it described changed.
+- **Review costs increase.** Raw rows, materialized rollouts, and consolidated
+  sections can repeat the same fact and each needs review. Ordinal shifts and
+  changed ancestor headings deliberately invalidate review. Old sidecar
+  entries accumulate; there is no automatic pruning. Temporary database/WAL
+  snapshots add disk use and memory use during a scan.
+- **A home remains an operator assertion.** The auditor checks locator syntax
+  and exact reviewed content, not whether a remote file exists, was committed,
+  or actually owns every work fact. It neither resolves local clones nor
+  sends network requests. A clean empty store is not evidence that generation
+  was enabled or ever succeeded.
+- **No lifecycle trigger is recommended yet.** A future SessionStart nudge
+  could audit earlier completed writes, but a current-session Stop cannot
+  establish global post-generation completion. Keep this operator-run until
+  a reliable writer-completion boundary exists; ordinary consolidation Stop
+  hooks remain filtered in the 0.160.0 source. A mixed filesystem/SQLite
+  rewrite can also race a scan; capture checks detect observed changes but do
+  not turn the entire store into one transaction.
 - **Disabling generation is still available as an operator choice.** It closes
   the generation path but also discards the feature's benefit; it is not the
   fleet contract chosen here.
@@ -274,7 +361,8 @@ Codex memory provenance is enforced.
   development and off by default in this source version, but this source
   archive did not expose enough of its production persistence path to specify
   an audit target
-  ([`lib.rs`](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/features/src/lib.rs#L1130-L1135)).
+  ([0.154.0 `lib.rs`](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/features/src/lib.rs#L1130-L1135),
+  [0.160.0 `lib.rs`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/features/src/lib.rs#L1188-L1193)).
 
 ## Alternatives considered
 
@@ -293,9 +381,10 @@ automatic extraction and consolidation unaudited.
 
 ### Audit the worker-attributed jobs ledger
 
-Retained as an input to the proposed audit. Rejected as sufficient by itself
-because job rows are overwritten and the single global Phase 2 row aggregates
-sources; it can support partial attribution, not stable per-fact review.
+Rejected as a record-identity source because job rows are overwritten and the
+global Phase 2 row aggregates sources. The auditor checks the `jobs` schema
+but does not infer fact ownership from its mutable worker attribution; it
+reviews persisted Phase 1 records and filesystem artifacts directly.
 
 ### Install a managed consolidation `Stop` hook
 
