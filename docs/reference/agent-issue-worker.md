@@ -5,10 +5,12 @@ laptop. It takes the issues that the agent changelog routine
 ([`agent-changelog-routine.md`](agent-changelog-routine.md)) files, each
 labeled `agent-ready`, and turns each one into a ready-for-review PR in that
 issue's repo. The owner reviews and merges; the worker never does. The
-decision behind this split, a cloud routine that merges only its own PR
-through a mechanical gate and a local worker that does the repo work, is
+decision behind this split, a cloud routine that opens a PR only on a
+substantive change and a local worker that does the repo work, is
 repo-settings
-[ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md).
+[ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md)
+(since 2026-10-02 the owner merges the routine's PR; ADR 0005 described
+the earlier self-merge).
 
 ## Setup (once, by the owner)
 

@@ -14,24 +14,23 @@ review for each new batch of Claude Code and Codex releases. Each run:
 
 **Status:** enabled on 2026-09-29. The claude.ai Routine "agent changelog
 watcher" fires daily at 01:03 UTC (weekly on Mondays until 2026-09-30),
-and the owner can also start it by hand. Since 2026-09-30 a run carries an
-earlier run's open PR forward instead of stopping on it, and notifies the
-owner only when a run leaves something to act on, plus a weekly reminder
-while that PR stays open (step 8). No run has carried a PR forward live
-yet: the first one to do so records which push route (step 0, item 3)
-worked in its run-log line and in a trap issue (step 7).
+and the owner can also start it by hand. Since 2026-10-02 every run
+accumulates on one dedicated branch, `routine/vendor-changelog`, and a PR
+to `main` opens only when a run makes a substantive change (step 7). The
+owner merges it; a run never merges anything. A quiet run just pushes to
+the branch, with no PR and no notification (step 8). Pushing a branch the
+harness did not assign worked with `git push` on 2026-10-02.
 
-Since 2026-09-30 a run also merges its own PR, but only through the
-mechanical merge gate in step 7 (repo-settings
-[ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md)).
-No run has merged live yet: on 2026-10-01 and 2026-10-02 the gate passed
-but the session's permission classifier denied the merge call, and the
-owner merged [#222](https://github.com/Adam-S-Daniel/_agent-guidance/pull/222)
-by hand. The first run to merge records the outcome in its run-log line.
-A PR the gate refuses stays open for the owner, and the next run carries
-it forward as before. Every issue a run files carries the
-`agent-ready` label, so the laptop issue worker
-([`agent-issue-worker.md`](agent-issue-worker.md)) can take it to a PR.
+The self-merge was dropped because it never worked: from 2026-09-30 a run
+merged its own PR through a mechanical merge gate (repo-settings
+[ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md),
+which this flow supersedes), but on 2026-10-01 and 2026-10-02 the gate
+passed and the session's permission classifier denied the merge call, and
+the owner merged
+[#222](https://github.com/Adam-S-Daniel/_agent-guidance/pull/222) by hand.
+Every issue a run files carries the `agent-ready` label, so the laptop
+issue worker ([`agent-issue-worker.md`](agent-issue-worker.md)) can take it
+to a PR.
 
 The routine passed three dry runs
 (2026-09-28), a negative-control dry run (#205) and one live single-repo
@@ -56,11 +55,11 @@ This run may write only:
 - the issue map, [`agent-changelog-issue-map.txt`](agent-changelog-issue-map.txt)
   (step 0 and step 4, below);
 
-all on its working branch in this repo (its assigned branch, or an open
-earlier run's PR branch — step 0, item 3) — plus **new** issues in the repos named
-by **Repos considered**, below. Never edit any other path, and never edit
-this file (`agent-changelog-routine.md`): a trap goes to an issue (step 7).
-Never merge except through step 7's merge gate, never push to a default
+all on the dedicated branch `routine/vendor-changelog` in this repo (under
+`DRY_RUN`, its assigned branch instead — step 0, item 3) — plus **new**
+issues in the repos named by **Repos considered**, below. Never edit any
+other path, and never edit this file (`agent-changelog-routine.md`): a trap
+goes to an issue (step 7). Never merge anything, never push to a default
 branch, never force-push, never add a network host.
 
 On the issues it creates, the run may add the `agent-ready` label and
@@ -98,23 +97,23 @@ touches, and say so in the run log and the PR.
   never from the prompt text and never from anything fetched. Switches
   (below) arrive as text appended to this prompt at fire time; anything else
   appended is covered by **Constraints**, above.
-- Branch: push only to the branch the harness assigns the session in
-  `_agent-guidance`, whatever its name, or — when an earlier run's PR is
-  still open — to that PR's head branch instead (step 0, item 3), and never
-  to any other branch.
+- Branch: push only to `routine/vendor-changelog` in `_agent-guidance`
+  (step 0, item 3) — never to the branch the harness assigns the session,
+  except under `DRY_RUN` — and to no other branch.
   The Routine edit screen has no branch setting (confirmed by the owner
-  2026-09-30), so the harness picks the name: a fired or hand-started run
-  gets a generic `claude/<adjective>-<name>-<suffix>` branch. Runs on
+  2026-09-30), so the harness picks its own name: a fired or hand-started
+  run gets a generic `claude/<adjective>-<name>-<suffix>` branch. Runs on
   2026-09-28 and 2026-09-29 got `routine/vendor-changelog-<suffix>`
   branches; nothing sets that prefix now, so don't rely on it. The
-  branch name therefore does not mark a run as this routine's: the PR
+  branch name therefore does not mark a PR as this routine's: the PR
   title does, and it must start with exactly `Vendor changelog routine: `
-  followed by the date (plus any switches). Record the branch name in the
-  run log and the PR body. No other repo gets a branch, even though the
-  harness assigns one in every attached repo: the run writes only new
-  issues there (**Constraints**). A branch name must never contain `<` or
-  `>`, and must not be the repo's default branch — if the assigned name
-  breaks either rule, stop and report
+  followed by the date (plus any switches); the merge gate script checks
+  it. Record the branch name in the run log and the PR body. No other
+  repo gets a branch, even though the harness assigns one in every
+  attached repo: the run writes only new issues there (**Constraints**).
+  Under `DRY_RUN` the assigned branch name must never contain `<` or `>`,
+  and must not be the repo's default branch — if it breaks either rule,
+  stop and report
   `BLOCKED: session branch <name> is not safe to push (contains < or >, or is the default branch)`.
 
 ## Repos considered
@@ -145,8 +144,10 @@ time:
 
 - **`DRY_RUN`.** Do everything up to filing: build the window, triage,
   render every issue body, write the CHANGELOG entry, the run log entry and
-  the issue map to the branch, and open or update a draft PR. File **no**
-  issues in any repo.
+  the issue map, push them to its assigned branch (never to
+  `routine/vendor-changelog`) and open a draft PR from it, based on
+  `routine/vendor-changelog` when that branch exists, else `main`. File
+  **no** issues in any repo.
 - **`SCOPE=<agent>[,<repo>...]`.** Limit the run to one agent
   (`claude-code` or `codex`) and, optionally, one or more repos from
   **Repos considered**. A repo named in `SCOPE` that is not in **Repos
@@ -182,10 +183,9 @@ Only after all three pass may the pause be lifted.
 **Hard rule.** Before ANY network fetch — release pages, clones beyond what
 the harness provides, API reads of other repos — the run must (a) pass the
 date, skill and branch checks below, and (b) commit a run-log line marked
-`in progress` to its working branch, push it, and open or claim the PR
-(item 6). Reads of this repo's own branch and PR do not
-count as fetches. Every later stop — BLOCKED, freshness failure, or
-completion — replaces that line with the final result and pushes. A run
+`in progress` to `routine/vendor-changelog` and push it (item 6). Reads of
+this repo's own branch and PR do not count as fetches. Every later stop —
+BLOCKED, freshness failure, or completion — replaces that line with the final result and pushes. A run
 that stops before (b) could not have pushed at all; it must report the
 reason in its final message and its push notification.
 
@@ -199,55 +199,50 @@ reason in its final message and its push notification.
    predates it)`. Never improvise the issue format without it.
 2. Check the `fleet-guidance:` line. If it reads DEGRADED, read
    `agents-md/base.md` first and say so in the PR.
-3. **One open PR, carried forward.** An earlier run's PR is any PR in this
-   repo whose title starts with `Vendor changelog routine: `, or whose head
-   branch starts with `routine/vendor-changelog-` (runs before
-   2026-09-30); the branch name alone no longer identifies one (**The
-   trigger**, above). The owner wants one PR at a time, not a PR per run.
-   Normally a run merges its own PR through the gate (step 7), so the next
-   run finds none open and starts fresh. Carrying a PR forward, so that
-   each run adds to it until it merges, is the fallback for a PR the gate
-   refused or a run that died before it could merge, not the normal path.
-   - **More than one open:** stop and report exactly
-     `BLOCKED: more than one open routine PR (#<a>, #<b>)`.
-   - **One open, under `DRY_RUN`:** a dry run never writes to a live PR.
-     Stop and report exactly
-     `BLOCKED: DRY_RUN with earlier run's PR #<n> open`.
-   - **One open, otherwise: carry it forward.** Its head branch becomes this
-     run's working branch. This is the owner's standing permission
-     (2026-09-30) to push to that one branch in place of the assigned one.
-     Don't push the assigned branch and don't open a second PR.
-     - Check it out and base every edit on it, not on `main`: its top
-       CHANGELOG entries are where the new window starts (step 1), and its
-       [`agent-changelog-issue-map.txt`](agent-changelog-issue-map.txt)
-       lists what earlier runs already filed. If the branch still has the
-       old root `vendor-issue-map.txt` (lines of `<group> <issue number>`,
-       from before 2026-09-30), migrate it instead of ignoring it: for each
-       line, resolve the repo from that entry's **Issues** line in the
-       CHANGELOG, write it into the new file in the
-       `<agent>/<entry date>/<group> <owner>/<repo>#<n>` form, and delete
-       the old file in the same commit. The merge gate allows exactly that
-       removal (step 7).
-     - **Another run still going:** if the branch's run log has a line
-       marked `in progress` that started less than 3 hours before this
-       run's start, stop and report exactly
-       `BLOCKED: another run is in progress on PR #<n> (started <time>)`.
-       This is what keeps two overlapping fires from both filing. An older
-       `in progress` line is a run that died: change its result to
-       `abandoned (no final result by <this run's start>)`, keep what it
-       wrote, and continue.
-     - **Push route,** in this order: `git push origin HEAD:<pr-branch>`,
-       fast-forward only; if the session proxy refuses a branch the harness
-       did not assign, write the same files to that branch with the GitHub
-       MCP `push_files` tool. If both are refused, stop and report exactly
-       `BLOCKED: cannot push to PR #<n> branch <branch> (<error>)`. Never
-       force-push: if the branch moved under you, fetch it and redo the
-       change on top.
-     - Don't merge `main` into it. If the PR shows a conflict with `main`,
-       say so in the notification (step 8) and leave it to the owner.
-   - **None open:** use the assigned branch and open a new PR (item 6).
-     If the owner closed the last such PR unmerged, start fresh, but first
-     read the issue map from that PR's branch (or from `main` when a
+3. **The dedicated branch.** Every run works on `routine/vendor-changelog`
+   in this repo (the owner's design, 2026-10-02).
+   - Fetch `origin routine/vendor-changelog`. If it does not exist (the
+     owner merged the last PR and GitHub deleted the branch, or this is the
+     first run), create it from `origin/main`. If it exists and is an
+     ancestor of `origin/main` (merged but not deleted), fast-forward it to
+     `origin/main`. Otherwise check it out as is and base every edit on it,
+     not on `main`: its top CHANGELOG entries are where the window starts
+     (step 1), and its
+     [`agent-changelog-issue-map.txt`](agent-changelog-issue-map.txt) lists
+     what earlier runs already filed. Don't merge `main` into it; a
+     conflict with `main` on an open PR is reported in step 8 and left to
+     the owner.
+   - **Legacy PR:** if any open PR has a title starting
+     `Vendor changelog routine: `, a head branch other than
+     `routine/vendor-changelog` (from before 2026-10-02), and no `DRY_RUN`
+     in its title, stop and report exactly
+     `BLOCKED: legacy routine PR #<n> open on <branch>; merge or close it first`.
+   - **Under `DRY_RUN`:** read the branch (or `main`) as the base but push
+     only the assigned branch.
+   - If the branch still has the old root `vendor-issue-map.txt` (lines of
+     `<group> <issue number>`, from before 2026-09-30), migrate it instead
+     of ignoring it: for each line, resolve the repo from that entry's
+     **Issues** line in the CHANGELOG, write it into the new file in the
+     `<agent>/<entry date>/<group> <owner>/<repo>#<n>` form, and delete the
+     old file in the same commit. The merge gate allows exactly that
+     removal (step 7).
+   - **Another run still going:** if the branch's run log has a line
+     marked `in progress` that started less than 3 hours before this
+     run's start, stop and report exactly
+     `BLOCKED: another run is in progress on routine/vendor-changelog (started <time>)`.
+     This is what keeps two overlapping fires from both filing. An older
+     `in progress` line is a run that died: change its result to
+     `abandoned (no final result by <this run's start>)`, keep what it
+     wrote, and continue.
+   - **Push route,** in this order: `git push origin HEAD:routine/vendor-changelog`,
+     fast-forward only; if the session proxy refuses it, write the same
+     files to that branch with the GitHub MCP `push_files` tool. If both
+     are refused, stop and report exactly
+     `BLOCKED: cannot push to routine/vendor-changelog (<error>)`. Never
+     force-push: if the branch moved under you, fetch it and redo the
+     change on top.
+   - If the owner closed the last routine PR unmerged, start fresh, but
+     first read the issue map from that PR's branch (or from `main` when a
      merged PR carried it) for the
      `<agent>/<entry date>/<group> <owner>/<repo>#<n>` lines it already
      filed, and search the affected repos' open and closed issues, so a
@@ -255,18 +250,21 @@ reason in its final message and its push notification.
      which can collide or drift.
 4. **Check the branch and record the start.** Read the start time in UTC
    from `date -u` in the sandbox; it goes in the run log line (step 6) and
-   the PR title, and has no other use. Check that the session's assigned
-   branch has no `<` or `>` and is not the default branch (**The
-   trigger**, above); if not, stop with the `BLOCKED` message there.
+   the PR title, and has no other use. Under `DRY_RUN` only, check that the
+   session's assigned branch has no `<` or `>` and is not the default
+   branch (**The trigger**, above); if not, stop with the `BLOCKED` message
+   there.
 5. Note any switches from the trigger prompt (**Switches**, above) before
    continuing.
-6. **Open or claim the PR before any fetch.** Commit the `in progress`
-   run-log line (step 6) and push it, right away, before any fetch or
-   triage work, so an overlapping fire finds it and stops (item 3) instead
-   of duplicating it. With no PR open, push the assigned branch and open a
-   draft PR titled `Vendor changelog routine: <date>` (plus any switches).
-   Carrying a PR forward, push to its branch and retitle it
-   `Vendor changelog routine: <first run's date> to <this run's date>`.
+6. **Record the start before any fetch.** Commit the `in progress`
+   run-log line (step 6) and push it to `routine/vendor-changelog` right
+   away, before any fetch or triage work, so an overlapping fire finds it
+   and stops (item 3) instead of duplicating it. Do not open a PR here;
+   step 7 opens one only on a substantive change. If a PR from the branch
+   is already open, the push updates it; retitle it
+   `Vendor changelog routine: <first unmerged run's date> to <this run's date>`.
+   Under `DRY_RUN`, push the assigned branch and open a draft PR titled
+   `Vendor changelog routine: <date> DRY_RUN`.
    Steps 1 to 5 of this section come first because they are checks;
    nothing else does.
 
@@ -394,8 +392,8 @@ fixed before anything is filed.
 
 1. Write the groups spec: key, title, bullet IDs, affected repos — drawn
    only from repos **Repos considered** reported `reached`.
-2. Render the entry with `PENDING` issue slots. Commit and push; the draft
-   PR already exists from step 0 — update it, don't open a second one.
+2. Render the entry with `PENDING` issue slots. Commit and push to the
+   branch (step 0, item 6); no PR opens until step 7.
 3. For each group and repo, draft the issue per `agent-changelog-issues.md`.
    Include the fixed block, fenced Codex quotes, and upstream references in
    code spans.
@@ -417,9 +415,9 @@ fixed before anything is filed.
    - Is the version order right?
    - Does the fix break the target repo's `AGENTS.md` rules, such as
      one-way-door names or required gates?
-6. **Under `DRY_RUN`, stop here.** Everything above still happens — every
-   body is rendered and pushed to the branch, the draft PR is updated — but
-   file no issues, and write nothing to
+6. **Under `DRY_RUN`, stop here.** Everything above still happens — every body
+   is rendered and pushed to the assigned branch, the draft PR is updated —
+   but file no issues, and write nothing to
    [`agent-changelog-issue-map.txt`](agent-changelog-issue-map.txt).
 7. **File.** Probe first: write one issue and read it back (next step)
    before sending the rest. Then print each body just before posting it.
@@ -430,9 +428,9 @@ fixed before anything is filed.
    unlabeled half-filed issue. No other label. Record
    `<agent>/<entry date>/<group> <owner>/<repo>#<n>` in
    [`agent-changelog-issue-map.txt`](agent-changelog-issue-map.txt),
-   committed to the working branch, after each create — so after a session
-   cut off mid-run, the next run carries the PR forward and reads the file
-   (step 0, item 3) instead of duplicating work. Before filing, skip any
+   committed to `routine/vendor-changelog`, after each create — so after a
+   session cut off mid-run, the next run reads the file (step 0, item 3)
+   instead of duplicating work. Before filing, skip any
    group and repo the map already pairs with an issue. Under `DRY_RUN`
    nothing here runs: no issue, no label, no map line.
 8. **Verify from a raw REST read,** not the tool that wrote: exact title,
@@ -449,7 +447,7 @@ fixed before anything is filed.
 
 ### 5. Re-check open discrepancies
 
-Follow the last section of `agent-discrepancy-process.md`, in the same PR:
+Follow the last section of `agent-discrepancy-process.md`, on the same branch:
 
 - Did a release in the new window fix it? Set **Status** to `fixed in <version>`.
 - Has the linked vendor issue changed state? Update **Vendor issues**.
@@ -459,11 +457,12 @@ log.
 
 ### 6. Write the run log
 
-Every run has exactly one line in `agent-changelog-runs.md` on its working
-branch — including a run that finds no new releases. A run carrying a PR
-forward adds its line below the earlier runs' lines on that branch. Write it at step 0 with the
-result `in progress`, and replace it with the final result at the end or at
-any stop (BLOCKED, freshness failure); never add a second line for one run.
+Every run has exactly one line in `agent-changelog-runs.md` on
+`routine/vendor-changelog` — including a run that finds no new releases. Each
+run adds its line below the earlier runs' lines on that branch. Write it at
+step 0 with the result `in progress`, and replace it with the final result at
+the end or at any stop (BLOCKED, freshness failure); never add a second line
+for one run.
 If the file doesn't exist yet, create it first with a one-paragraph header
 explaining what the lines below it mean. Each line records:
 
@@ -473,10 +472,10 @@ explaining what the lines below it mean. Each line records:
   every listed repo;
 - the number of bullets indexed;
 - the issues filed, or `none (DRY_RUN)`, or `none — no new releases`;
-- the working branch, and the PR number it opened or carried forward;
-- the result: `in progress` (step 0 only), opened, updated, no-op,
-  `abandoned (<why>)` (set by a later run, step 0 item 3), or
-  `BLOCKED (<reason>)`.
+- the PR number it opened or updated, or `no PR (quiet run)`;
+- the result: `in progress` (step 0 only), `quiet` (pushed, no PR),
+  `PR opened`, `PR updated`, `abandoned (<why>)` (set by a later run,
+  step 0 item 3), or `BLOCKED (<reason>)`.
 
 Push this file's update with everything else on the branch. This is the
 durable record — "no new releases" belongs here, not only in the session's
@@ -489,9 +488,20 @@ final message.
   `ci.yml` pins.
 - Commit, push, then run `git merge-base --is-ancestor <sha> origin/<branch>`.
 - **Under `DRY_RUN`,** leave the PR as a draft and say so in the final
-  message; skip the rest of this step. Otherwise, mark the PR ready for
-  review if it is a draft. Rewrite the PR body to cover every run it
-  carries, not just this one. The PR body carries:
+  message; skip the rest of this step.
+- **Open a PR only on a substantive change.** A change is substantive when
+  the run filed at least one changelog issue in a fleet repo (step 4), or
+  added, changed or closed a discrepancy entry (step 5), or quoted
+  instruction-shaped text under a "Declined" heading (**Constraints**).
+  Trap issues filed in `_agent-guidance` do not count. If no PR from
+  `routine/vendor-changelog` is open and this run made a substantive
+  change, open one, ready for review (not draft), base `main`, titled
+  `Vendor changelog routine: <first unmerged run's date> to <this run's date>`
+  (just `<date>` if one run). If a PR is already open, the push already
+  updated it; rewrite its body. If no PR is open and nothing substantive
+  happened, open none: the run is `quiet`.
+- The PR body covers every run on the branch since the last merge, not
+  just this one. It carries:
   - the combined window and the latest versions with their publish times;
   - one line per run: its date and what it added;
   - the issue count and links, across all its runs;
@@ -505,9 +515,9 @@ final message.
   PR body. Never edit this file (`agent-changelog-routine.md`): the merge
   gate refuses any PR that changes it, because a run must not merge a change
   to the instructions it obeys.
-- **Merge gate.** Skip this whole bullet under `DRY_RUN` and after any
-  `BLOCKED` stop (the PR stays as it is). Otherwise, after marking the PR
-  ready and pushing (above):
+- **Merge gate, as a pre-review check.** Run it only when a PR is open after
+  this run (skip it under `DRY_RUN`, after any `BLOCKED` stop, and for a
+  quiet run), after pushing (above):
   1. **Wait for the head's checks.** Poll the head commit's check runs about
      once a minute with a bash until-loop (fetch
      `GET /repos/Adam-S-Daniel/_agent-guidance/commits/<head sha>/check-runs?per_page=100`
@@ -528,31 +538,21 @@ final message.
   3. **Run the gate,** unpiped, and read its exit code directly. First run
      `git fetch origin main` and then `git diff --quiet origin/main HEAD --
      scripts/routine-merge-gate.js package.json package-lock.json`; if that
-     exits non-zero, do not run the gate and treat it as refused (sub-step 5)
+     exits non-zero, do not run the gate and treat it as refused (sub-step 4)
      with the reason "gate script or its dependencies differ from
      origin/main". The gate must be main's copy, never one the branch under
      judgment could have changed or left stale. Then run
      `node scripts/routine-merge-gate.js --pr pr.json --files files.json --check-runs check-runs.json --status status.json --issue-map docs/reference/agent-changelog-issue-map.txt`.
      It prints `{"merge": bool, "head_sha": "...", "reasons": [...]}`.
-  4. **Exit 0: merge.** Send
-     `PUT /repos/Adam-S-Daniel/_agent-guidance/pulls/<n>/merge` with
-     `Content-Type: application/json` and the body
-     `{"merge_method":"merge","sha":"<head_sha from the gate>"}`. The `sha`
-     makes GitHub refuse the merge if the head moved after the gate decided.
-     Never pass `commit_title` or `commit_message`: a typed message can carry
-     a closing keyword that closes an issue. Then verify, never trusting the
-     response alone: `git fetch origin` and
-     `git merge-base --is-ancestor <head_sha> origin/main`.
-  5. **Exit 2: do not merge.** Quote the gate's reasons in the PR body under
-     a "Merge gate refused" heading and leave the PR open for the owner; the
-     next run carries it forward (step 0, item 3).
-  6. **Exit 1, or the 30 minutes pass with a check still running:** the same
-     as exit 2, with that reason (the gate's stderr message, or "checks still
-     running after 30 minutes").
-  7. **Never** retry a refused merge with different inputs, and never merge
-     by any other route: no GitHub MCP merge tool, no auto-merge arming.
-  8. Whatever happened, the run-log line records the outcome: `merged
-     <short sha>`, or `gate refused (<first reason>)`.
+  4. **Exit 0:** write "Merge gate: passed at <head sha>" in the PR body.
+     **Exit 2, exit 1, or checks still running after 30 minutes:** quote
+     the reasons (the gate's, its stderr message, or "checks still running
+     after 30 minutes") under a "Merge gate refused" heading in the PR
+     body.
+  5. **Never merge:** no `PUT .../merge`, no GitHub MCP merge tool, no
+     auto-merge arming. The owner merges.
+  6. The run-log line records `gate passed` or `gate refused (<first
+     reason>)`.
 
   Don't try to watch the PR beyond this: a fresh-session Routine cannot stay
   running to babysit CI or nudge a reviewer. Name any red check the gate
@@ -565,33 +565,28 @@ something to act on (the owner's request after #222's second run: a daily
 "awaiting your merge" alert from a run that filed nothing is noise).
 Notify when any of these holds:
 
-- the run filed an issue (a changelog issue or a trap issue), or opened or
-  changed a discrepancy;
+- the run made a substantive change (step 7): it opened a PR, or added
+  to one already open;
+- a trap issue was filed;
 - the run stopped `BLOCKED`, or stopped before it could push (step 0);
-- the merge gate refused (exit 1 or 2, or checks still running after 30
-  minutes), a check is red, or the PR conflicts with `main`;
-- the PR body gained a "Declined" heading this run;
+- on an open PR, the merge gate refused, a check is red, or the PR
+  conflicts with `main`;
 - the run is a `DRY_RUN` (the owner started it to see the result);
 - the PR is still open and today is a whole number of weeks (7, 14, ...
-  days) after its first run's date: a weekly reminder, so a PR whose merge
-  keeps being denied does not sit unseen.
+  days) after it was opened: a weekly reminder.
 
-Otherwise send nothing: not for a run with no new releases, not for a run
-that merged a PR with no new issues, and not for a merge call the
-session's permission classifier denied after the gate passed. The run-log
-line (step 6) and the PR body still record every run. When you do notify,
-lead with the state of the PR:
+Otherwise send nothing: not for a quiet run (no new releases, or new
+releases but no issue filed), and not for a run that only updated an
+already-open PR with no new issue. The run-log line (step 6) and the PR
+body still record every run. When you do notify, lead with the state:
 
-- **Merged:** `Vendor changelog PR #<n> merged at <sha>.` Then this run's
-  result (new versions and issues filed, or "no new releases"), and the new
-  issues with their links, each now labeled `agent-ready` for the laptop
-  issue worker ([`agent-issue-worker.md`](agent-issue-worker.md)).
-- **PR open:** `Vendor changelog PR #<n> open since <first run's date>,
+- **PR open:** `Vendor changelog PR #<n> open since <date opened>,
   awaiting your merge.` Then this run's result (new versions and issues
   filed, or "no new releases"), the PR's totals across its runs, the merge
-  gate's refusal reasons when it refused, whether the session's permission
-  classifier denied the merge call, any red check by name, any merge
+  gate's refusal reasons when it refused, any red check by name, any merge
   conflict with `main`, and the PR's link.
+- **Trap only (no PR):** the trap issue links, plus the branch link
+  https://github.com/Adam-S-Daniel/_agent-guidance/tree/routine/vendor-changelog.
 - **BLOCKED:** the exact `BLOCKED:` line, then the open PR's link if there
   is one.
 
@@ -647,3 +642,8 @@ Each was hit on 2026-09-25. The step that now prevents it is in parentheses.
   in `docs/reference/agent-changelog-issue-map.txt`, and the merge gate
   checks its format and uniqueness (4, 7). From now on a new trap goes to an
   issue, not to this list (7).
+- **Update, 2026-10-02:** the session's permission classifier denied the
+  routine's gate-approved merge call on 2026-10-01 and 2026-10-02, and a PR
+  per run made the owner merge a no-op PR daily. Runs now accumulate on
+  `routine/vendor-changelog` and open a PR only on a substantive change,
+  which the owner merges (step 0, item 3; step 7).
