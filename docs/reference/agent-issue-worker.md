@@ -10,7 +10,9 @@ substantive change and a local worker that does the repo work, is
 repo-settings
 [ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md)
 (since 2026-10-02 the owner merges the routine's PR; ADR 0005 described
-the earlier self-merge).
+the earlier self-merge, and
+[ADR 0006](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0006-changelog-routine-accumulates-on-a-persistent-branch-owner-merges.md)
+is the decision now in force).
 
 ## Setup (once, by the owner)
 
