@@ -16,17 +16,20 @@ review for each new batch of Claude Code and Codex releases. Each run:
 watcher" fires daily at 01:03 UTC (weekly on Mondays until 2026-09-30),
 and the owner can also start it by hand. Since 2026-09-30 a run carries an
 earlier run's open PR forward instead of stopping on it, and notifies the
-owner on every run while that PR is open (step 0, item 3; step 8). No run
-has carried a PR forward live yet: the first one to do so records which
-push route (step 0, item 3) worked in its run-log line and in a trap
-issue (step 7).
+owner only when a run leaves something to act on, plus a weekly reminder
+while that PR stays open (step 8). No run has carried a PR forward live
+yet: the first one to do so records which push route (step 0, item 3)
+worked in its run-log line and in a trap issue (step 7).
 
 Since 2026-09-30 a run also merges its own PR, but only through the
 mechanical merge gate in step 7 (repo-settings
 [ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md)).
-No run has merged live yet: the first one to do so records the outcome in
-its run-log line. A PR the gate refuses stays open for the owner, and the
-next run carries it forward as before. Every issue a run files carries the
+No run has merged live yet: on 2026-10-01 and 2026-10-02 the gate passed
+but the session's permission classifier denied the merge call, and the
+owner merged [#222](https://github.com/Adam-S-Daniel/_agent-guidance/pull/222)
+by hand. The first run to merge records the outcome in its run-log line.
+A PR the gate refuses stays open for the owner, and the next run carries
+it forward as before. Every issue a run files carries the
 `agent-ready` label, so the laptop issue worker
 ([`agent-issue-worker.md`](agent-issue-worker.md)) can take it to a PR.
 
@@ -557,19 +560,37 @@ final message.
 
 ### 8. Notify
 
-Every run sends one push notification at its end, including a run that
-found no new releases and a `DRY_RUN`. The owner asked to hear from the
-routine daily for as long as its PR is open, so "nothing changed" is not a
-reason to stay silent here. Lead with the state of the PR:
+Send one push notification at the end of a run only when the owner has
+something to act on (the owner's request after #222's second run: a daily
+"awaiting your merge" alert from a run that filed nothing is noise).
+Notify when any of these holds:
+
+- the run filed an issue (a changelog issue or a trap issue), or opened or
+  changed a discrepancy;
+- the run stopped `BLOCKED`, or stopped before it could push (step 0);
+- the merge gate refused (exit 1 or 2, or checks still running after 30
+  minutes), a check is red, or the PR conflicts with `main`;
+- the PR body gained a "Declined" heading this run;
+- the run is a `DRY_RUN` (the owner started it to see the result);
+- the PR is still open and today is a whole number of weeks (7, 14, ...
+  days) after its first run's date: a weekly reminder, so a PR whose merge
+  keeps being denied does not sit unseen.
+
+Otherwise send nothing: not for a run with no new releases, not for a run
+that merged a PR with no new issues, and not for a merge call the
+session's permission classifier denied after the gate passed. The run-log
+line (step 6) and the PR body still record every run. When you do notify,
+lead with the state of the PR:
 
 - **Merged:** `Vendor changelog PR #<n> merged at <sha>.` Then this run's
   result (new versions and issues filed, or "no new releases"), and the new
   issues with their links, each now labeled `agent-ready` for the laptop
   issue worker ([`agent-issue-worker.md`](agent-issue-worker.md)).
 - **PR open:** `Vendor changelog PR #<n> open since <first run's date>,
-  awaiting your review.` Then this run's result (new versions and issues
+  awaiting your merge.` Then this run's result (new versions and issues
   filed, or "no new releases"), the PR's totals across its runs, the merge
-  gate's refusal reasons when it refused, any red check by name, any merge
+  gate's refusal reasons when it refused, whether the session's permission
+  classifier denied the merge call, any red check by name, any merge
   conflict with `main`, and the PR's link.
 - **BLOCKED:** the exact `BLOCKED:` line, then the open PR's link if there
   is one.
