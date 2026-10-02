@@ -10,14 +10,16 @@
 # session, every other agent and every other person, and it versions with
 # nothing.
 #
-#   Every memory note whose `metadata.type` is NOT `user` must carry
-#   `metadata.home`: `<owner>/<repo>:<path>` (preferred), or
+#   Every memory note whose `type` is NOT `user` must carry `metadata.home`:
+#   `<owner>/<repo>:<path>` (preferred), or
 #   `https://github.com/<owner>/<repo>/blob/<ref>/<path>`. That is the
 #   COMMITTED file holding the durable copy — an ADR under `docs/decisions/`,
 #   a `docs/` page, the repo's `## Repo-specific additions`, or a skill in the
-#   registry. With a home, the note is a POINTER; the repo copy is the source
-#   of truth. A `type: user` note (who the person is, what they prefer) is
-#   EXEMPT: it is about the person, not about the work, and no repo owns it.
+#   registry. The `type` field is read from `metadata.type` (preferred) or, if
+#   absent, from a top-level `type:` key in the frontmatter. With a home, the
+#   note is a POINTER; the repo copy is the source of truth. A `type: user`
+#   note (who the person is, what they prefer) is EXEMPT: it is about the
+#   person, not about the work, and no repo owns it.
 #
 # A home is DANGLING when a local clone of `<repo>` is found but `<path>` does
 # not exist in it. Clone candidates, in order: `$CLAUDE_PROJECT_DIR/<repo>`,
@@ -191,6 +193,9 @@ def note_metadata(path):
     The label is a SHORT reason, shown in parentheses beside the note's own
     path — it names a fault in that one file, so it never carries the path
     itself and it never ends the run.
+
+    The returned metadata dict includes a 'type' field read from
+    `metadata.type` (preferred) or, if absent, from the top-level `type:` key.
     """
     try:
         with open(path, encoding="utf-8") as fh:
@@ -223,7 +228,17 @@ def note_metadata(path):
     meta = front.get("metadata")
     # A note with no `metadata:` at all is not malformed — it is simply a note
     # with no type and no home, which is exactly what this gate is for.
-    return (meta if isinstance(meta, dict) else {}), None
+    result = meta if isinstance(meta, dict) else {}
+
+    # If metadata.type is not set, check for top-level type field.
+    # metadata.type wins when both present.
+    if "type" not in result:
+        top_level_type = front.get("type")
+        if isinstance(top_level_type, str):
+            result = dict(result)  # Copy to avoid modifying the original
+            result["type"] = top_level_type
+
+    return result, None
 
 
 def split_home(value):
