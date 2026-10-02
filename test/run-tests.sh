@@ -19740,6 +19740,48 @@ EOF
     assert_not_contains "$d/out-homeless" "DEGRADED" \
         "memory-home: a scan that found something is not a degraded scan"
 
+    # 2a. TOP-LEVEL type: user AND no metadata — the note is exempt.
+    cat > "$mem/toplevel-user.md" <<'EOF'
+---
+name: toplevel-user
+description: user note with top-level type, no metadata
+type: user
+---
+body
+EOF
+    mh "$d/out-toplevel-user" "$ss"
+    assert_not_contains "$d/out-toplevel-user" "$mem/toplevel-user.md" \
+        "memory-home: a top-level type: user note is exempt (no metadata.home required)"
+
+    # 2b. TOP-LEVEL type: project AND no home — the note is flagged.
+    cat > "$mem/toplevel-project.md" <<'EOF'
+---
+name: toplevel-project
+description: project note with top-level type, no metadata
+type: project
+---
+body
+EOF
+    mh "$d/out-toplevel-project" "$ss"
+    assert_contains "$d/out-toplevel-project" "$mem/toplevel-project.md" \
+        "memory-home: a top-level type: project note without home is flagged"
+
+    # 2c. TOP-LEVEL type: user BUT metadata.type: project — metadata wins.
+    cat > "$mem/toplevel-user-meta-project.md" <<'EOF'
+---
+name: toplevel-user-meta-project
+description: conflicting types - metadata should win
+type: user
+metadata:
+  type: project
+---
+body
+EOF
+    mh "$d/out-toplevel-user-meta-project" "$ss"
+    assert_contains "$d/out-toplevel-user-meta-project" "$mem/toplevel-user-meta-project.md" \
+        "memory-home: metadata.type wins over top-level type field"
+    rm -f "$mem/toplevel-user.md" "$mem/toplevel-project.md" "$mem/toplevel-user-meta-project.md"
+
     # 3. DANGLING: the clone is present, the file it names is not. This is the
     #    promotion that was promised and never made, which a presence check on
     #    `metadata.home` alone cannot see.

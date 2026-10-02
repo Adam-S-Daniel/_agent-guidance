@@ -138,14 +138,16 @@ Claude Code's auto-memory writes one markdown file per fact under
 per cwd a session has ever run in — **22** on this machine, none of them inside
 any repo. A fact recorded there is a fact one agent on one machine can see.
 
-**The contract:** every note whose `metadata.type` is not `user` carries
+**The contract:** every note whose `type` is not `user` carries
 `metadata.home`, either `<owner>/<repo>:<path>` or
 `https://github.com/<owner>/<repo>/blob/<ref>/<path>`, naming the *committed*
 file that holds the durable copy — an ADR, a `docs/` page, that repo's
-`## Repo-specific additions`, or a skill in the registry. With a home the note
-is a **pointer**; the repo copy is the source of truth. A `type: user` note is
-exempt: it is about the person, not the work. A home is **dangling** when a
-local clone of `<repo>` is found but `<path>` is not in it.
+`## Repo-specific additions`, or a skill in the registry. The `type` field is
+read from `metadata.type` (preferred) or, if absent, from a top-level `type:`
+key in the frontmatter. With a home the note is a **pointer**; the repo copy is
+the source of truth. A `type: user` note is exempt: it is about the person, not
+the work. A home is **dangling** when a local clone of `<repo>` is found but
+`<path>` is not in it.
 
 - `.claude/hooks/memory-home.sh` runs on two events. On **SessionStart** it
   marks the session and names any homeless or dangling note (up to five, then
