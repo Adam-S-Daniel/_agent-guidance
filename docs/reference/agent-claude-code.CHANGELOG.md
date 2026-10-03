@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-03 — 2.1.288 through 2.1.288
+
+- **Checked:** 2026-10-03T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.288](https://github.com/anthropics/claude-code/releases/tag/v2.1.288), published 2026-10-02T20:19Z
+- **Window:** v2.1.288 (published 2026-10-02T20:19Z), the first stable release after v2.1.287: 1 release, about 90 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.288` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance b0065eb, `adam-agentskills` 766357e, `adam-agentskills-private` b9f3a1d, `adamdaniel.ai` 3f1070d, `claude-memory-map` 92a7314, `cms-platform` 91392c2, `fastmail-actions` 163a13c, `GHA-bench` 68f1671c, `jodidaniel.com` 08354be, `repo-settings` eecc371, `rss-inator` 43578af, `skills-evals` 7f21575, `wsl-automation` 49dbdfa`.
+
+No group met the name-the-surface bar: a grep of the fleet for `idle_prompt`, `InstructionsLoaded`, `PreToolUse`/`PermissionRequest`, `CLAUDE_CODE_RETRY_WATCHDOG`, `claude project purge`, `claude mcp serve`, `claude plugin test`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `sandbox.credentials` and `blockReadsOutsideWorkingDirectories` found no dependence on a changed behavior (the `InstructionsLoaded` hook fix concerns a hook that is not on any fleet default branch; `_agent-guidance#124` is still open). The background-command time-limit change is already tracked by `Adam-S-Daniel/cms-platform#497`, filed for the 2.1.285 entry.
+
 ### 2026-10-02 — 2.1.287 through 2.1.287
 
 - **Checked:** 2026-10-02T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
