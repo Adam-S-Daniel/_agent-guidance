@@ -182,21 +182,25 @@ Evidence, measured 2026-10-02:
 ## Addendum — trust and daemon evidence boundaries (2026-10-04)
 
 Observed CLI: `codex-cli 0.160.0`. The
-[source evidence](../evidence/codex-trust-and-daemon-0160.md) records the
-version command, dereferenced `rust-v0.160.0` tag, and files read in this run
-for [issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181)
+[evidence document](../evidence/codex-trust-and-daemon-0160.md) records the
+version command, the dereferenced `rust-v0.160.0` tag, the source files read,
+and two local experiments, for
+[issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181)
 and [issue 182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182).
-The Decision above is unchanged. Evidence collection performed no Codex
-trust/config changes, live hook execution, model turns, or daemon restarts.
+The Decision above is unchanged. The experiments ran in throwaway profiles
+with no credentials; no authenticated model request was made.
 
-**Trust, source-backed:** explicit untrusted status bypasses project
-`AGENTS.md` discovery while retaining host-provided user instructions.
-Project config and hooks require trusted status; the instruction guard and
-config-layer guard treat missing trust differently. The user-layer fleet hook
-remains eligible for discovery subject to its enabled state, definition-hash
-trust, and managed policy. Eligibility is not proof of execution or approval
-of the current checkout script. Earlier measurements in this ADR did not
-record project trust, and this run does not retroactively establish it.
+**Trust:** an explicit untrusted status bypasses project `AGENTS.md`
+discovery while retaining the global instructions, and a project with no
+trust entry still supplies its `AGENTS.md` (both observed). Project config
+and hooks require trusted status; the instruction guard and the config-layer
+guard treat missing trust differently (source). A user-level `hooks.json`
+hook did not run until its definition was trusted, and ran under
+`--dangerously-bypass-hook-trust` in an explicitly untrusted project
+(observed). The fleet hook's own script, and a hook trusted through `/hooks`,
+were not exercised, so eligibility is not proof the fleet hook runs. Earlier
+measurements in this ADR did not record project trust, and this addendum does
+not retroactively establish it.
 
 **Diagnostic correction to Consequences:** the 0.160.0 source shows
 `codex debug prompt-input` builds in-process without entering the turn path
@@ -205,15 +209,15 @@ in that command is therefore not evidence of degradation. Its managed global
 instruction block can demonstrate what the diagnostic loaded from disk;
 it cannot prove the current session's hook ran or what a daemon served.
 
-**Refresh, source-backed:** the server's global-instruction provider rereads
-disk when refreshed, preferring nonempty `AGENTS.override.md` over `AGENTS.md`.
-Refresh occurs at session initialization and step-context capture. Failed
-reads can retain the last successful copy. Core turn ordering captures its
-first context before SessionStart hooks, so a rewrite can miss that initial
-capture; this is an inference, not a measured request lag. These findings do
-not establish general config or hook-definition freshness.
+**Refresh:** the server's global-instruction provider rereads disk when
+refreshed, preferring nonempty `AGENTS.override.md` over `AGENTS.md`, and
+failed reads can retain the last successful copy (source). On a running
+managed daemon, a session opened after the global `AGENTS.md` changed loaded
+the new content (observed). Core turn ordering captures its first context
+before SessionStart hooks, so a rewrite can miss that initial capture; this
+is an inference, not a measured request lag. These findings do not establish
+general config or hook-definition freshness, or refresh of an already-open
+session.
 
-Live trusted/untrusted execution and same-daemon refresh remain unverified.
-The [owner experiment](../evidence/codex-trust-and-daemon-0160.md#owner-experiment-not-performed-planned-2026-10-04-baseline-cli-01600)
-separates disk diagnostics, actual daemon requests, config reloads, and first
-request ordering. Both issues remain partial pending that evidence.
+Both issues remain partial. Still open: the fleet hook after `/hooks` trust
+(181), and open-session refresh and the SessionStart-rewrite ordering (182).

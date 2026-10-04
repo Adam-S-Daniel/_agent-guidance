@@ -354,15 +354,15 @@ hook registration, real-memory inspection, push, or PR creation was performed.
 
 ## 2026-10-04: `/import` memory destination (source evidence; CLI 0.160.0)
 
-For [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183),
-this run observed `codex --version` reporting `codex-cli 0.160.0` (exit 0,
-with a read-only PATH-alias warning). `git ls-remote` dereferenced
+For [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183):
+on 2026-10-04 `codex --version` reported `codex-cli 0.160.0` (exit 0,
+with a read-only PATH-alias warning) and `git ls-remote` dereferenced
 `rust-v0.160.0` to `a956835d020762cb2b570053af06f643a11c0ecc` (exit 0).
 The exact command/output and source-fetch method are in the
 [observation ledger](codex-trust-and-daemon-0160.md#observation-boundary-2026-10-04-codex-cli-01600).
 All findings below are source reads on **2026-10-04**, against that tag;
-none is a live `/import` result. The importer and consolidation were not run,
-and no real Claude or Codex memory store was inspected.
+none is a live `/import` result. The importer and consolidation have not
+been run, and no real Claude or Codex memory store has been inspected.
 
 - **Selected memory import:** the
   [migration service](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/service.rs#L394-L434)
@@ -409,8 +409,8 @@ notes in each namespace. It does not scan
 already excludes other extension/plugin persistence surfaces. Derived text
 that actually reaches the supported consolidated files is reviewable there;
 raw imported notes can remain outside coverage even when no consolidation
-succeeds. We did not establish that any source note passed a Claude Stop
-hook, contained valid frontmatter, or had a committed repo home. Whether to
+succeeds. Not established: that any source note passed a Claude Stop hook,
+contained valid frontmatter, or had a committed repo home. Whether to
 extend audit coverage is an owner decision, not resolved by this addendum.
 
 **Owner verification, not performed (planned 2026-10-04; baseline CLI 0.160.0):**

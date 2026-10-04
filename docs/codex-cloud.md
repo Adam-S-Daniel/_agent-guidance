@@ -4,6 +4,12 @@ The manual environment bootstrap is verified for a fresh Codex Cloud
 container. It does not depend on user-hook registration or trust; Cloud runs
 the installer directly before assembling the agent's instructions.
 
+Local Codex sessions are different: the fleet hook there is a user-level hook
+that does not run until its definition is trusted, and project `AGENTS.md`
+is skipped in a project marked untrusted. See the
+[ADR 0012 addendum](decisions/0012-codex-gets-the-guidance-as-user-instructions.md#addendum--trust-and-daemon-evidence-boundaries-2026-10-04)
+for what was observed and what remains open.
+
 ## Configure the environment
 
 1. Select **Manual** environment setup. Merely adding setup and maintenance

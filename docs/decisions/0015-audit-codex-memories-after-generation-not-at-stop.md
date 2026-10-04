@@ -421,9 +421,9 @@ personal material; automatic deletion can erase useful context.
 Observed CLI: `codex-cli 0.160.0`. For
 [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183), the
 [source evidence](../evidence/codex-memory-129.md#2026-10-04-import-memory-destination-source-evidence-cli-01600)
-records this run's reads at the dereferenced `rust-v0.160.0` tag. `/import`
-and consolidation were not run; no real memory store was inspected. The
-Decision above is unchanged.
+records source reads at the dereferenced `rust-v0.160.0` tag. `/import`
+and consolidation have not been run, and no real memory store has been
+inspected. The Decision above is unchanged.
 
 The source copy path targets
 `$CODEX_HOME/memories/extensions/external_agent_import/resources/<project-key>/`
