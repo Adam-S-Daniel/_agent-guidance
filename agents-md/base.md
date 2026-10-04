@@ -336,8 +336,8 @@ reusable-workflow ref is for review to catch.
   ship a wrong diff on anything subtle. The orchestrator keeps root cause,
   architecture, the spec (files, exact changes, house style, test command) and
   diff review; output faces the same test/CI proof. A child that skips this
-  file (e.g. Explore/Plan agents, agents with `omitClaudeMd`, SDK harnesses
-  with `settingSources: []`) needs constraints in its prompt.
+  file (e.g. Explore/Plan or `omitClaudeMd` agents, SDK harnesses with
+  `settingSources: []`) needs constraints in its prompt.
 - Delegated work is done when a **verifier exits 0**: name the exact
   command, run LAST (after a trailing `echo $?` the tool's exit code is the
   echo's), and require its code back. "Cannot run it" is BLOCKED; a count
@@ -417,12 +417,12 @@ Then say it once, naming the snippet's home (adam-agentskills'
 marketplace add Adam-S-Daniel/adam-agentskills` and install the plugins wanted;
 **marketplace behind** → `claude plugin marketplace update adam-agentskills`;
 **install behind** → below; **both current** → silence.
-The clone (`~/.claude/plugins/marketplaces/<name>/` — find it, never assume it) auto-updates while the installed bundle (`~/.claude/plugins/cache/<marketplace>/<bundle>/
-<version>/`) never moves, so check the INSTALL (the owner's laptop,
-2026-08-31: **381 commits** behind): after the refresh, compare each
-`gitCommitSha` in `~/.claude/plugins/installed_plugins.json` with
-`git -C <clone> rev-parse HEAD` — equal is current, another sha behind, none
-unknown. The clone is `--depth 1`, so `merge-base`/`rev-list` exit 128.
+The clone (that list's `installLocation`; never assume it) auto-updates while
+the installed bundle (`installPath`) never moves, so check the INSTALL (the
+owner's laptop, 2026-08-31: **381 commits** behind): after the refresh,
+compare each `gitCommitSha` in `~/.claude/plugins/installed_plugins.json`
+with `git -C <clone> rev-parse HEAD` — equal is current, another sha behind,
+none unknown. The clone is `--depth 1`, so `merge-base`/`rev-list` exit 128.
 **`claude plugin update` may not fix it, yet says it did** (it gates on
 the `version` string alone; registry ADR 0009) — uninstall and reinstall
 instead. An update changes what loads **next** session; a marketplace
