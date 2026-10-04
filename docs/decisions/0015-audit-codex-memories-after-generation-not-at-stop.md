@@ -416,6 +416,33 @@ Rejected for the same reason as ADR 0013: choosing a repo, destination and
 user-only exemption requires judgment. Automatic promotion can publish
 personal material; automatic deletion can erase useful context.
 
+## Addendum — imported resources and audit scope (2026-10-04)
+
+Observed CLI: `codex-cli 0.160.0`. For
+[issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183), the
+[source evidence](../evidence/codex-memory-129.md#2026-10-04-import-memory-destination-source-evidence-cli-01600)
+records this run's reads at the dereferenced `rust-v0.160.0` tag. `/import`
+and consolidation were not run; no real memory store was inspected. The
+Decision above is unchanged.
+
+The source copy path targets
+`$CODEX_HOME/memories/extensions/external_agent_import/resources/<project-key>/`
+and preserves each successful copy's bytes. Existing `metadata.home`
+frontmatter should therefore survive; absent or invalid frontmatter is not
+repaired or validated. A workspace change attempts to enqueue consolidation,
+whose extension instructions ask it to retain detailed resource files and
+route scoped knowledge into `MEMORY.md` and `memory_summary.md`. Neither a
+successful consolidation nor complete propagation was observed.
+
+The auditor covers derived text only when it reaches its supported files.
+It does not cover the raw imported resource directory, which falls under the
+Decision's excluded extension/plugin persistence surfaces. Source notes
+cannot be presumed to have passed a Claude Stop hook or to name valid repo
+homes. Whether to extend coverage requires an owner decision; this evidence
+does not settle that policy or fully resolve the issue. The linked evidence
+includes a disposable-profile experiment for live destination and byte
+verification.
+
 ## References
 
 - [_agent-guidance issue 129](https://github.com/Adam-S-Daniel/_agent-guidance/issues/129)

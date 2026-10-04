@@ -351,3 +351,75 @@ ShellCheck against `git show HEAD:test/run-tests.sh` and comparing diagnostic
 code/level/message multisets found the same 142 baseline diagnostics and
 **zero introduced diagnostics**. `git diff --check` passed. No workflow,
 hook registration, real-memory inspection, push, or PR creation was performed.
+
+## 2026-10-04: `/import` memory destination (source evidence; CLI 0.160.0)
+
+For [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183),
+this run observed `codex --version` reporting `codex-cli 0.160.0` (exit 0,
+with a read-only PATH-alias warning). `git ls-remote` dereferenced
+`rust-v0.160.0` to `a956835d020762cb2b570053af06f643a11c0ecc` (exit 0).
+The exact command/output and source-fetch method are in the
+[observation ledger](codex-trust-and-daemon-0160.md#observation-boundary-2026-10-04-codex-cli-01600).
+All findings below are source reads on **2026-10-04**, against that tag;
+none is a live `/import` result. The importer and consolidation were not run,
+and no real Claude or Codex memory store was inspected.
+
+- **Selected memory import:** the
+  [migration service](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/service.rs#L394-L434)
+  calls `memory_import::import` for a selected, supported memory item.
+  [The importer](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L53-L89)
+  requires a nonempty selection and a state database before copying resources.
+- **Source and scope:** [discovery](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory.rs#L35-L155)
+  recursively selects Markdown files under
+  `<external-agent-home>/projects/<project-key>/memory/`, skipping symlinks
+  and non-Markdown files. The Claude source's
+  [config-directory constant](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/source/cla.rs#L18-L22)
+  is `.claude`. Scope lookup tries session transcripts in newest-first order,
+  accepting a recoverable absolute `cwd` that canonicalizes to an existing
+  directory; it can fall back to an older usable transcript. A selected
+  project without reliable scope is rejected, or an existing unscoped target
+  [is removed](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L130-L145).
+- **Destination:** [path construction and copying](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L281-L372)
+  place successful copies at
+  `$CODEX_HOME/memories/extensions/external_agent_import/resources/<project-key>/<relative-path>`.
+  Relative paths are preserved. Each project receives `scope.json` containing
+  its `cwd`; the extension also receives
+  [`instructions.md`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L161-L167).
+  This import path targets `memories/`, not `memories_v2/`.
+- **Frontmatter:** the copy path uses `fs::read` followed by `fs::write`
+  without parsing or rewriting note bytes. **Inference:** `metadata.home`
+  survives in a successfully copied file if it existed in the source. This
+  neither adds missing frontmatter nor validates a home. Selected projects
+  are replaced wholesale, and selecting a no-longer-discovered project
+  [removes its imported directory](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L130-L145).
+- **Consolidation is requested, not proven:** a workspace change
+  [attempts to enqueue global consolidation](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L81-L88);
+  enqueue failure is logged without failing the import. The extension's
+  [interpretation rules](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/external-agent-migration/src/memory_import.rs#L14-L33)
+  instruct consolidation to preserve resource frontmatter, keep detailed
+  notes in resources, and route scoped knowledge through `MEMORY.md` and
+  `memory_summary.md`. These are instructions, not a guarantee that a later
+  consolidation runs, succeeds, or includes every imported fact.
+
+**Audit implication (local file read 2026-10-04; CLI 0.160.0):**
+[`file_records`](../../scripts/audit-codex-memory.py) (lines 406–424) scans the three
+consolidated root files, Markdown rollout summaries, skills, and ad hoc
+notes in each namespace. It does not scan
+`extensions/external_agent_import/resources/`. [ADR 0015](../decisions/0015-audit-codex-memories-after-generation-not-at-stop.md#decision)
+already excludes other extension/plugin persistence surfaces. Derived text
+that actually reaches the supported consolidated files is reviewable there;
+raw imported notes can remain outside coverage even when no consolidation
+succeeds. We did not establish that any source note passed a Claude Stop
+hook, contained valid frontmatter, or had a committed repo home. Whether to
+extend audit coverage is an owner decision, not resolved by this addendum.
+
+**Owner verification, not performed (planned 2026-10-04; baseline CLI 0.160.0):**
+use a disposable profile and project with a synthetic Markdown memory note
+containing `metadata.home: example/repo:docs/note.md`, plus a synthetic session
+transcript naming that existing project directory. Do not copy production
+credentials or real memory. Select only that project memory in `/import`,
+then compare source and resource bytes and inspect `scope.json`. Record the
+actual versions, destination, and whether consolidation was queued/completed
+separately. Include a note lacking frontmatter to demonstrate that byte
+preservation does not enforce the home contract. This live check remains
+open; the source findings alone do not authorize closing issue 183.
