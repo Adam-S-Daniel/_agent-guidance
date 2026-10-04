@@ -7,3 +7,4 @@
 - Raise specific exceptions; never use bare `except:` or `except Exception`.
 - Use `logging` instead of `print()` for any output that is not user-facing CLI output.
 - Pin dependencies in `requirements.txt` or lock files; do not add unpinned deps.
+- `MagicMock` (3.8+) converts to the int `1`: a mock reaching `os.kill`, `os.killpg`, `os.waitpid` or `os.close` acts on `1`, and `killpg(1, sig)` is `kill(-1, sig)`. Patch them when `subprocess` is mocked, or use `spec=subprocess.Popen` with a `pid`.

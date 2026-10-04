@@ -50,6 +50,114 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — test-that-can-signal-kills-every-session — create
+- Motivation: 2026-10-04 skills-evals test (https://github.com/Adam-S-Daniel/skills-evals/pull/250) killed every process the user owned: a mocked `Popen` made cleanup run `os.killpg(1, SIGKILL)`, i.e. `kill(-1, SIGKILL)`; the kill recurred ~15 times when resumed agents re-ran the suite.
+- Change: new section: refuse any pid or group but an `int` > 1, patch every signal call when mocking a spawn, treat a sandboxed 137 with no OOM as a finding (never escalate out), a session dying mid-verifier is evidence against the verifier, run spawning/signaling suites in a PID namespace; section 1,018 bytes (new).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — working-in-these-repos — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: dropped `(email, bio, proposal)` after the writing-style rule; AST-check bullet: dropped the parenthetical `(jodidaniel host-loop gap, `cms-platform`)` and the `page.goto(...)` example, keeping `regex cannot see a template-literal variable`; section 1,376 -> 1,268 bytes (-108).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — finding-your-unknowns — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold from two words; section 794 -> 786 bytes (-8).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — workstation-layout — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold from `Windows`/`WSL`; section 157 -> 149 bytes (-8).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — data-exposure-in-ci — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold on `public` and `PRs`, dropped the undated aside `(a workflow once logged email addresses)` and the parenthetical `(objects stay fetchable by SHA until GC)`; section 1,289 -> 1,197 bytes (-92).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — network-allowlists — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: condensed the intro sentence, removed emphasis bold, shortened the quoted checkbox label to `also include default list…`; section 662 -> 618 bytes (-44).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — automation-vs-branch-protection — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: dropped the quoted `405 ... is cancelled` error text and `(e.g. the AGENTS.md sync App)`, removed emphasis bold on `parses`; section 2,170 -> 2,083 bytes (-87).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — two-github-connectors — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold on `strict subset` and `only`, dropped the `Both merge, push and delete;` clause (the bullet above already says the subset has the same writes); section 1,404 -> 1,367 bytes (-37).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — fleet-spans-two-owners — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold on `to a search index` and `plausible, complete-shaped, wrong`; section 1,061 -> 1,053 bytes (-8).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — github-404-means-not-authorized — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold on `404, not 403`; `add_repo "already attached" is session scope, not the connector's` -> `... is session scope`, `the other had just read` -> `the other had read`; section 918 -> 884 bytes (-34).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — watch-finished-is-not-ci-passed — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: dropped the undated `(e2e and lint FAILURE once read green)` and `(it broke sync.sh)` asides and the second, redundant here-string idiom for the `grep -q` fix; the first idiom and the rule stay; section 1,485 -> 1,375 bytes (-110).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — name-becomes-scanner-data — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold on `keyword`, tightened the `cms-platform-secrets` anecdote (same facts, minus `until history is rewritten`); section 1,106 -> 1,022 bytes (-84).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — pinning-github-actions — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: dropped the example `uses:` block (the sentence above states it), the closing `Nothing third-party is ever a tag.` (the lead already says never a tag), and `Resolve a version with` -> `Resolve one with`, dropped `or the Dependabot PR title`; section 1,506 -> 1,357 bytes (-149).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — subagent-delegation — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: dropped the undated `(a reviewer once did)`, shortened the `echo $?` parenthetical, dropped `output faces the same test/CI proof` (restated by the verifier bullet and Working in these repos), removed emphasis bold on two phrases, `e.g. ` before Explore/Plan, `before disarming anything` -> `before disarming`; section 2,681 -> 2,581 bytes (-100).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — skills-ecosystem — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: dropped the `(cloud-safe, default-on)` and `(machine-bound)` plugin annotations, removed emphasis bold on `into` and `no`; section 1,277 -> 1,228 bytes (-49).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — two-setup-gaps — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: removed emphasis bold on six phrases, `Neither check` -> `Neither`; section 2,184 -> 2,146 bytes (-38).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — git-practices — edit
+- Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
+- Change: condensed the worktree bullet (`other checkouts untouched`), `redo the work there` -> `redo the work`; section 1,518 -> 1,484 bytes (-34).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
+## 2026-10-04 — section-python — edit
+- Motivation: the same 2026-10-04 incident: `MagicMock` implements `__index__`/`__int__` as `1`, so a mock reaching an int-taking OS call acts on pid 1.
+- Change: added a bullet: patch `os.kill`/`os.killpg`/`os.waitpid`/`os.close` whenever `subprocess` is mocked, or use `spec=subprocess.Popen` with an explicit `pid`; section 544 -> 796 bytes (+252).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
 ## 2026-10-04 — working-in-these-repos — edit
 - Motivation: review found the new pause rule unclear about `on-hold` being a label and the owner pausing the item.
 - Change: clarified the label, prohibition, passive status, and owner control; the base grew from 25,154 to 25,251 bytes (+97 this revision; +321 total versus origin/main, including the initial +224-byte addition).
