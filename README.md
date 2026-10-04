@@ -109,6 +109,36 @@ One verdict line covers both, and `FLEET_GUIDANCE_SKIP` opts out of both.
 Normal hook runs keep the freshest delivered block per destination and report
 when a checkout is older; see [ADR 0016](docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md).
 
+The [delivery hook](.claude/hooks/fleet-memory.sh) also appends one best-effort
+JSON line to `fleet-delivery.jsonl` in the existing Claude config directory
+(`CLAUDE_CONFIG_DIR`, otherwise `~/.claude`); Cloud mode uses `CODEX_HOME`
+instead. `FLEET_GUIDANCE_RECEIPT=0` disables observation. A receipt records
+`ts`, `hook`, `mode`, `load_reason: delivery`, and a `deliveries` array with
+fixed relative `file_path` labels, `memory_type: User`, `outcome`, `bytes`, and
+full `sha256`. The digest and byte count describe the exact managed block
+successfully written, captured from the assembled temporary file before
+replacement or Cloud's in-memory block. A stamp-only refresh can record bytes
+with outcome `current`. A `current` run without replacement, `kept`, `skipped`,
+or `degraded` records null digest and zero bytes: that invocation delivered no
+guidance block. No personal content, resolved paths, or session identifiers
+are recorded. These are delivery observations, not evidence of what an agent
+loaded; [issue 123](https://github.com/Adam-S-Daniel/_agent-guidance/issues/123)
+still covers load-time verification.
+
+Each line is strictly below the opened descriptor's `PIPE_BUF` and 4 KiB,
+and uses one `O_APPEND` write with no locks, retries, read/modify/write, or
+rotation. Descriptor-based checks reject symlink parents, symlink leaves,
+FIFOs, nonregular files, foreign ownership, and hard links. The 1 MiB cap is
+an advisory prewrite size check: a file already at the cap skips quietly,
+and concurrent writers can overshoot it by their pending lines. Receipt
+failures add at most one fixed stderr warning and preserve delivery, stdout,
+and exit status. A failed metadata snapshot skips the receipt altogether.
+Normal-mode snapshots are also bounded to 4 MiB; a larger assembled
+instructions file delivers normally but skips observation with that warning.
+A failed or short append is not retried and can leave a torn trailing line;
+consumers must tolerate it. The [receipt tests](test/test_codex_cloud_receipt.py)
+exercise failure isolation, descriptor races, and concurrent whole-line writes.
+
 Codex runs that hook through a **user-level** `SessionStart` entry, registered
 once per machine with `scripts/register-codex-hook.sh` (default target
 `~/.codex/hooks.json`) and then **trusted once** in the Codex TUI with

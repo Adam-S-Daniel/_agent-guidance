@@ -105,14 +105,149 @@
 # the one that failed.
 set -uo pipefail
 
+# Observation is optional and never participates in delivery decisions. The
+# embedded helper ships with this hook; sync needs no additional artifact.
+read -r -d '' RECEIPT_PY <<'PY' || :
+import hashlib
+import json
+import os
+import stat
+import sys
+import time
+
+RECEIPT_LIMIT = 1048576
+
+
+def receipt_snapshot(path, begin, end):
+    # Called only on our assembled temporary file, BEFORE its replacement.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
+                info.st_uid != os.geteuid() or info.st_size > 4194304):
+            raise OSError("unsafe receipt snapshot")
+        remaining = info.st_size
+        pieces = []
+        while remaining:
+            piece = os.read(fd, min(remaining, 65536))
+            if not piece:
+                raise OSError("short receipt snapshot")
+            pieces.append(piece)
+            remaining -= len(piece)
+        raw = b"".join(pieces)
+    finally:
+        os.close(fd)
+    offset = 0
+    start = stop = None
+    for line in raw.splitlines(keepends=True):
+        if line.rstrip(b"\r\n") == begin.encode():
+            if start is not None:
+                raise ValueError("ambiguous receipt block")
+            start = offset
+        if line.rstrip(b"\r\n") == end.encode():
+            if start is None or stop is not None:
+                raise ValueError("ambiguous receipt block")
+            stop = offset + len(line)
+        offset += len(line)
+    if start is None or stop is None:
+        raise ValueError("missing receipt block")
+    block = raw[start:stop]
+    return hashlib.sha256(block).hexdigest(), len(block)
+
+
+def receipt_write(directory, mode, deliveries):
+    record = {"ts": int(time.time()), "hook": "fleet-memory",
+              "load_reason": "delivery", "mode": mode, "deliveries": deliveries}
+    line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+    descriptors = []
+    try:
+        # Walk every directory component by descriptor. Neither parent swaps
+        # nor a leaf swap can redirect us through a symlink or block on a FIFO.
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
+        path = directory if os.path.isabs(directory) else os.path.join(os.getcwd(), directory)
+        parent = os.open("/", flags)
+        descriptors.append(parent)
+        for component in path.split("/")[1:]:
+            if component in ("", "."):
+                continue
+            if component == "..":
+                raise OSError("unsafe receipt directory")
+            parent = os.open(component, flags, dir_fd=parent)
+            descriptors.append(parent)
+        fd = os.open("fleet-delivery.jsonl", os.O_WRONLY | os.O_APPEND |
+                     os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
+        descriptors.append(fd)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
+            raise OSError("unsafe receipt")
+        if info.st_size >= RECEIPT_LIMIT:
+            return
+        if len(line) >= min(4096, os.fpathconf(fd, "PC_PIPE_BUF")):
+            raise OSError("oversized receipt")
+        # One append syscall, no retries, read/modify/write, locks, or rotation.
+        if os.write(fd, line) != len(line):
+            raise OSError("short receipt write")
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
+
+
+def receipt_delivery(label, outcome, digest=None, count=0):
+    return {"file_path": label, "memory_type": "User", "outcome": outcome,
+            "sha256": digest, "bytes": count}
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "snapshot":
+        digest, count = receipt_snapshot(*sys.argv[2:])
+        print(digest, count)
+    else:
+        args = sys.argv[4:]
+        deliveries = [receipt_delivery(args[i], args[i + 1], args[i + 2] or None,
+                                       int(args[i + 3])) for i in range(0, len(args), 4)]
+        receipt_write(sys.argv[2], sys.argv[3], deliveries)
+PY
+RECEIPT_MODE=hook
+RECEIPT_ARGS=()
+RECEIPT_WARNED=0
+RECEIPT_CLOUD=0
+RECEIPT_BROKEN=0
+receipt_warning() {
+    if [ "$RECEIPT_WARNED" -eq 0 ]; then
+        printf 'fleet-guidance: receipt unavailable\n' >&2 2>/dev/null || :
+        RECEIPT_WARNED=1
+    fi
+}
+receipt_capture() {
+    RECEIPT_DIGEST=""; RECEIPT_BYTES=0
+    [ "${FLEET_GUIDANCE_RECEIPT:-1}" != 0 ] || return 0
+    local snapshot
+    if snapshot=$(python3 -c "$RECEIPT_PY" snapshot "$1" "$BEGIN_MARK" "$END_MARK" 2>/dev/null); then
+        read -r RECEIPT_DIGEST RECEIPT_BYTES <<< "$snapshot"
+    else RECEIPT_BROKEN=1; receipt_warning; fi
+    return 0
+}
+receipt_flush() {
+    [ "${FLEET_GUIDANCE_RECEIPT:-1}" != 0 ] || return 0
+    [ "$RECEIPT_CLOUD" -eq 0 ] || return 0
+    [ "$RECEIPT_BROKEN" -eq 0 ] || return 0
+    [ "${#RECEIPT_ARGS[@]}" -gt 0 ] || RECEIPT_ARGS=(none degraded "" 0)
+    python3 -c "$RECEIPT_PY" append "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}" \
+        "$RECEIPT_MODE" "${RECEIPT_ARGS[@]}" 2>/dev/null || receipt_warning
+    return 0
+}
+trap receipt_flush EXIT
+
 CODEX_CLOUD=0
 WORKSPACE_DIR=""
 if [ "$#" -eq 0 ]; then
     :
 elif [ "$#" -eq 1 ] && [ "$1" = --codex-cloud ]; then
     CODEX_CLOUD=1
+    RECEIPT_MODE=codex-cloud
 elif [ "$#" -eq 2 ] && [ "$1" = --workspace ] && [ -d "$2" ]; then
     WORKSPACE_DIR="$2"
+    RECEIPT_MODE=workspace
 else
     echo "fleet-guidance: DEGRADED — unknown argument or nonexistent workspace directory; expected no arguments, --codex-cloud, or --workspace <dir>"
     exit 2
@@ -153,7 +288,7 @@ if [ -n "$WORKSPACE_DIR" ]; then
 fi
 # shellcheck disable=SC2317  # reached through both EXIT traps below
 workspace_notice() { [ -z "$WORKSPACE_LINE" ] || printf '%s\n' "$WORKSPACE_LINE"; }
-trap workspace_notice EXIT
+trap 'workspace_notice; receipt_flush' EXIT
 
 BEGIN_MARK='<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->'
 END_MARK='<!-- END FLEET GUIDANCE -->'
@@ -230,13 +365,17 @@ esac
 if [ "$CODEX_CLOUD" -eq 1 ]; then
     cloud_result="$(python3 - \
         "$CODEX_DEST_DIR" "$PAYLOAD" "$BEGIN_MARK" "$END_MARK" \
-        "$FLEET_GUIDANCE_SKIP_ENABLED" 2>/dev/null <<'PY'
+        "$FLEET_GUIDANCE_SKIP_ENABLED" "$RECEIPT_PY" 2>/dev/null <<'PY'
 import hashlib
 import os
 import pathlib
 import stat
 import sys
 import tempfile
+
+receipt_outcome = "degraded"
+receipt_block = None
+receipt_label = "none"
 
 
 class Refusal(Exception):
@@ -312,6 +451,7 @@ try:
     else:
         target = agents
     label = "~/.codex/AGENTS.override.md" if target == override else "~/.codex/AGENTS.md"
+    receipt_label = "codex/AGENTS.override.md" if target == override else "codex/AGENTS.md"
 
     original = b""
     original_mode = None
@@ -374,6 +514,9 @@ try:
                 except OSError:
                     pass
 
+    receipt_outcome = "skipped" if skip else "installed" if changed else "current"
+    if changed and not skip:
+        receipt_block = block
     if skip:
         print(verdict)
     elif changed:
@@ -386,12 +529,32 @@ except Refusal as exc:
 except Exception:
     print("fleet-guidance: DEGRADED — unexpected Cloud setup failure")
     raise SystemExit(1)
+finally:
+    if os.environ.get("FLEET_GUIDANCE_RECEIPT", "1") != "0":
+        try:
+            receipt_namespace = {"__name__": "receipt"}
+            exec(sys.argv[6], receipt_namespace)
+            receipt_digest = hashlib.sha256(receipt_block).hexdigest() if receipt_block is not None else None
+            receipt_bytes = len(receipt_block) if receipt_block is not None else 0
+            receipt_namespace["receipt_write"](sys.argv[1], "codex-cloud", [
+                receipt_namespace["receipt_delivery"](receipt_label, receipt_outcome,
+                                                     receipt_digest, receipt_bytes)])
+        except Exception:
+            # This private marker is captured and removed by Bash below; a
+            # closed caller stderr cannot interfere with Cloud delivery.
+            print("fleet-receipt-unavailable")
 PY
 )"
     cloud_status=$?
+    if [[ "$cloud_result" == *$'\n'fleet-receipt-unavailable ]]; then
+        cloud_result="${cloud_result%$'\n'fleet-receipt-unavailable}"
+        receipt_warning
+    fi
     if [ -z "$cloud_result" ]; then
         cloud_result="fleet-guidance: DEGRADED — Python 3 is unavailable for Codex Cloud setup"
         cloud_status=1
+    else
+        RECEIPT_CLOUD=1
     fi
     printf '%s\n' "$cloud_result"
     exit "$cloud_status"
@@ -459,6 +622,7 @@ TMP_FILES=()
 # shellcheck disable=SC2317  # reached through the EXIT trap below, not by a call
 cleanup_tmp() {
     workspace_notice
+    receipt_flush
     [ "${#TMP_FILES[@]}" -eq 0 ] && return 0
     local t
     for t in "${TMP_FILES[@]}"; do rm -f "$t"; done
@@ -622,6 +786,8 @@ case "$FLEET_GUIDANCE_SKIP_ENABLED" in
         else
             echo "fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set)"
         fi
+        RECEIPT_ARGS=(none skipped "" 0)
+        [ -z "$FAILURES" ] || RECEIPT_ARGS=(none degraded "" 0)
         exit 0
         ;;
 esac
@@ -700,6 +866,7 @@ update_stamp_only() {
 install_to() {
     local dest="$1" label="$2" tmp dir target
     INSTALL_STATE=""
+    RECEIPT_DIGEST=""; RECEIPT_BYTES=0
 
     # The parent directory: created for Claude Code exactly as it always was,
     # and a no-op for Codex, whose directory had to exist for this destination
@@ -741,6 +908,7 @@ install_to() {
                 record_failure "could not update delivery stamp in $dest"
                 return 1
             fi
+            receipt_capture "$tmp"
             if replace_file "$tmp" "$target"; then
                 INSTALL_STATE="current"
                 return 0
@@ -781,6 +949,7 @@ install_to() {
         return 0
     fi
 
+    receipt_capture "$tmp"
     if replace_file "$tmp" "$target"; then
         INSTALL_STATE="written"
         return 0
@@ -795,7 +964,12 @@ KEPT=""
 local_labels=""
 for i in "${!DEST_PATHS[@]}"; do
     dest="${DEST_PATHS[$i]}"; label="${DEST_LABELS[$i]}"
-    install_to "$dest" "$label" || continue
+    receipt_label="${label#\~/\.}"
+    if ! install_to "$dest" "$label"; then
+        RECEIPT_ARGS+=("$receipt_label" degraded "" 0)
+        continue
+    fi
+    RECEIPT_ARGS+=("$receipt_label" "$INSTALL_STATE" "$RECEIPT_DIGEST" "$RECEIPT_BYTES")
     case "$INSTALL_STATE" in
         written)
             wrote=$((wrote + 1))
