@@ -134,7 +134,7 @@ Three properties of the surface shaped what could be built:
   belt-and-braces: neither arm alone is sufficient.
 - **The harness itself writes unparseable YAML, which is why a parse failure is
   a finding and not a degrade.** Claude Code writes `description:` values and
-  does not quote them, so an ordinary description containing `: ` — "… with
+  may not quote them, so an ordinary description containing `: ` — "… with
   delete: true + editorial_workflow" — is frontmatter PyYAML rejects outright
   with *mapping values are not allowed here*. **Four** such notes existed on
   this machine on 2026-09-14. The first draft of this hook treated any parse

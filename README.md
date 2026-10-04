@@ -174,9 +174,9 @@ the work. A home is **dangling** when a local clone of `<repo>` is found but
   continues and the note is flagged with its reason,
   `<path> (unparseable frontmatter — quote the description or fix the YAML)`.
   That case is the common one, not the exotic one — Claude Code writes
-  `description:` values unquoted, so any description containing `: ` is YAML
-  PyYAML rejects, and four such notes existed here the day the hook was
-  written.
+  `description:` values and may not quote them, so an unquoted description
+  containing `: ` can be YAML PyYAML rejects, and four such notes existed here
+  the day the hook was written.
 - `scripts/register-memory-home-hook.sh` wires both groups into
   `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` — **user level**, because
   memory is per machine, not per repo. Same posture as the two registrars
@@ -343,10 +343,17 @@ allowlisted.
 
 ### Why
 
-Claude Code reads `CLAUDE.md`, not `AGENTS.md` — there is no native
-`AGENTS.md` support (tracked upstream: anthropics/claude-code#6235, open,
-no commitment). So the sync creates a two-line bridge file in every repo it
-touches:
+Claude Code reads `CLAUDE.md` and, since
+[v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277),
+also reads `AGENTS.md` when a project has no `CLAUDE.md`. The native fallback
+was extended in
+[v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281)
+to Bedrock, Vertex, Foundry, LLM gateways, and sessions with telemetry
+disabled. The fleet keeps its bridge while the owner decides whether to change
+it: older CLI compatibility and the `/config` Project instructions choices
+need live measurement in
+[#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172). So the
+sync creates a two-line bridge file in every repo it touches:
 
 ```
 <!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
@@ -433,11 +440,14 @@ bumps.
 
 ### Watch upstream
 
-anthropics/claude-code#6235 tracks native `AGENTS.md` support. It's open
-with no commitment either way. If it ships, the bridge becomes redundant but
-harmless — nothing breaks by leaving it in place. The canary eval's
-`no-bridge` layout turning visible is the signal to simplify the fleet if
-that day comes.
+Native `AGENTS.md` fallback has shipped in
+[v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277)
+when a project has no `CLAUDE.md`, with additional environment coverage in
+[v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281).
+The fleet still has `CLAUDE.md` bridges. Keep them pending the compatibility
+and `/config` Project instructions measurements tracked in
+[#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172); do not
+assume that both files load.
 
 ## Required secrets
 
