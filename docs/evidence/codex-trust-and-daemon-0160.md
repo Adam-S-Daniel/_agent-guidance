@@ -28,9 +28,11 @@ The installed CLI version does not establish a running daemon's version.
 
 The inherited draft's scratch-home trust matrix was not rerun. Its measured
 claims and probe script were removed because this package forbids changing
-Codex configuration to conduct an experiment. This run did not invoke
-`prompt-input`, execute hooks, start a model turn, inspect credentials or
-memory stores, change Codex configuration, or contact/restart a daemon.
+Codex configuration to conduct an experiment. Evidence collection did not
+invoke `prompt-input`, execute a live Codex hook, start a model turn, inspect
+credentials or memory stores, change Codex configuration, or contact/restart
+a daemon. The required repository verifier separately exercises synthetic
+hook/config fixtures; those tests are not live trust or daemon observations.
 
 ## Trust gates (source read 2026-10-04; CLI 0.160.0; rust-v0.160.0)
 

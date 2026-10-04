@@ -186,8 +186,8 @@ Observed CLI: `codex-cli 0.160.0`. The
 version command, dereferenced `rust-v0.160.0` tag, and files read in this run
 for [issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181)
 and [issue 182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182).
-The Decision above is unchanged. No trust/config changes, hook execution,
-model turns, or daemon restarts were performed.
+The Decision above is unchanged. Evidence collection performed no Codex
+trust/config changes, live hook execution, model turns, or daemon restarts.
 
 **Trust, source-backed:** explicit untrusted status bypasses project
 `AGENTS.md` discovery while retaining host-provided user instructions.
