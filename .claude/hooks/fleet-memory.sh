@@ -108,6 +108,7 @@ set -uo pipefail
 # Observation is optional and never participates in delivery decisions. The
 # embedded helper ships with this hook; sync needs no additional artifact.
 read -r -d '' RECEIPT_PY <<'PY' || :
+import errno
 import hashlib
 import json
 import os
@@ -155,26 +156,68 @@ def receipt_snapshot(path, begin, end):
     return hashlib.sha256(block).hexdigest(), len(block)
 
 
-def receipt_write(directory, mode, deliveries):
-    record = {"ts": int(time.time()), "hook": "fleet-memory",
-              "load_reason": "delivery", "mode": mode, "deliveries": deliveries}
-    line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+class ReceiptUnsupported(Exception):
+    pass
+
+
+def receipt_capabilities():
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK", "geteuid", "fpathconf")
+    # Check platform support by name: syscall fault injectors may wrap os.open.
+    supported = {function.__name__ for function in getattr(os, "supports_dir_fd", ())}
+    if any(not hasattr(os, name) for name in required) or not {"open", "stat"} <= supported:
+        raise ReceiptUnsupported()
+    if not any(function.__name__ == "stat" for function in
+               getattr(os, "supports_follow_symlinks", ())):
+        raise ReceiptUnsupported()
+
+
+def receipt_platform(call, *args, **kwargs):
+    # Only platform syscalls get this fallback; hash, clock, and snapshot
+    # failures retain the fixed observation warning.
+    try:
+        return call(*args, **kwargs)
+    except NotImplementedError:
+        raise ReceiptUnsupported() from None
+
+
+def receipt_directory(directory):
+    receipt_capabilities()
     descriptors = []
     try:
-        # Walk every directory component by descriptor. Neither parent swaps
-        # nor a leaf swap can redirect us through a symlink or block on a FIFO.
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
         path = directory if os.path.isabs(directory) else os.path.join(os.getcwd(), directory)
-        parent = os.open("/", flags)
+        parent = receipt_platform(os.open, "/", flags)
         descriptors.append(parent)
         for component in path.split("/")[1:]:
             if component in ("", "."):
                 continue
             if component == "..":
                 raise OSError("unsafe receipt directory")
-            parent = os.open(component, flags, dir_fd=parent)
+            try:
+                parent = receipt_platform(os.open, component, flags, dir_fd=parent)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR) and stat.S_ISLNK(
+                        receipt_platform(os.stat, component, dir_fd=parent, follow_symlinks=False).st_mode):
+                    raise ReceiptUnsupported() from None
+                raise
             descriptors.append(parent)
-        fd = os.open("fleet-delivery.jsonl", os.O_WRONLY | os.O_APPEND |
+        receipt_platform(os.fpathconf, parent, "PC_PIPE_BUF")
+        return descriptors
+    except BaseException:
+        for fd in reversed(descriptors):
+            os.close(fd)
+        raise
+
+
+def receipt_write(directory, mode, deliveries):
+    # Validate support and every parent BEFORE optional clock or digest work.
+    descriptors = receipt_directory(directory)
+    try:
+        record = {"ts": int(time.time()), "hook": "fleet-memory",
+                  "load_reason": "delivery", "mode": mode, "deliveries": deliveries}
+        line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+        parent = descriptors[-1]
+        fd = receipt_platform(os.open, "fleet-delivery.jsonl", os.O_WRONLY | os.O_APPEND |
                      os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
         descriptors.append(fd)
         info = os.fstat(fd)
@@ -182,7 +225,7 @@ def receipt_write(directory, mode, deliveries):
             raise OSError("unsafe receipt")
         if info.st_size >= RECEIPT_LIMIT:
             return
-        if len(line) >= min(4096, os.fpathconf(fd, "PC_PIPE_BUF")):
+        if len(line) >= min(4096, receipt_platform(os.fpathconf, fd, "PC_PIPE_BUF")):
             raise OSError("oversized receipt")
         # One append syscall, no retries, read/modify/write, locks, or rotation.
         if os.write(fd, line) != len(line):
@@ -197,43 +240,149 @@ def receipt_delivery(label, outcome, digest=None, count=0):
             "sha256": digest, "bytes": count}
 
 
+def receipt_worker(directory, mode):
+    # This is a private coprocess pipe, never the hook event on external stdin.
+    # Requests are limited to 4096 bytes; fields and field counts are bounded
+    # independently, so malformed requests cannot grow memory forever.
+    try:
+        descriptors = receipt_directory(directory)
+        for fd in reversed(descriptors):
+            os.close(fd)
+        print("READY", flush=True)
+        while True:
+            consumed = 0
+            def field():
+                nonlocal consumed
+                raw = bytearray()
+                while consumed < 4096:
+                    byte = sys.stdin.buffer.read(1)
+                    consumed += 1
+                    if not byte:
+                        raise EOFError()
+                    if byte == b"\0":
+                        return os.fsdecode(bytes(raw))
+                    raw.extend(byte)
+                raise ValueError("oversized receipt request")
+            command = field()
+            if command == "S":
+                digest, count = receipt_snapshot(field(), field(), field())
+                print(digest, count, flush=True)
+            elif command == "A":
+                count = int(field())
+                if count not in (4, 8):
+                    raise ValueError("invalid receipt delivery count")
+                args = [field() for _ in range(count)]
+                deliveries = [receipt_delivery(args[i], args[i + 1], args[i + 2] or None,
+                                               int(args[i + 3])) for i in range(0, count, 4)]
+                receipt_write(directory, mode, deliveries)
+                print("DONE", flush=True)
+                return
+            else:
+                raise ValueError("invalid receipt command")
+    except ReceiptUnsupported:
+        print("SKIP", flush=True)
+    except Exception:
+        print("ERROR", flush=True)
+
+
 if __name__ == "__main__":
-    if sys.argv[1] == "snapshot":
-        digest, count = receipt_snapshot(*sys.argv[2:])
-        print(digest, count)
-    else:
-        args = sys.argv[4:]
-        deliveries = [receipt_delivery(args[i], args[i + 1], args[i + 2] or None,
-                                       int(args[i + 3])) for i in range(0, len(args), 4)]
-        receipt_write(sys.argv[2], sys.argv[3], deliveries)
+    receipt_worker(*sys.argv[1:])
 PY
 RECEIPT_MODE=hook
 RECEIPT_ARGS=()
 RECEIPT_WARNED=0
 RECEIPT_CLOUD=0
 RECEIPT_BROKEN=0
+RECEIPT_STARTED=0
+RECEIPT_SKIPPED=0
+RECEIPT_PID=""
+RECEIPT_READ=""
+RECEIPT_WRITE=""
 receipt_warning() {
     if [ "$RECEIPT_WARNED" -eq 0 ]; then
         printf 'fleet-guidance: receipt unavailable\n' >&2 2>/dev/null || :
         RECEIPT_WARNED=1
     fi
 }
+receipt_stop() {
+    # We own exactly this exec'd worker, not any other session's processes.
+    if [ -n "$RECEIPT_WRITE" ]; then exec {RECEIPT_WRITE}>&-; RECEIPT_WRITE=""; fi
+    if [ -n "$RECEIPT_READ" ]; then exec {RECEIPT_READ}<&-; RECEIPT_READ=""; fi
+    if [ -n "$RECEIPT_PID" ]; then
+        # A stalled response needs termination; completed workers only need reaping.
+        if [ "${1:-}" = abort ]; then kill "$RECEIPT_PID" 2>/dev/null || :; fi
+        wait "$RECEIPT_PID" 2>/dev/null || :
+        RECEIPT_PID=""
+    fi
+}
+receipt_response() {
+    if IFS= read -r -t 5 -u "$RECEIPT_READ" RECEIPT_RESPONSE; then
+        case "$RECEIPT_RESPONSE" in
+            SKIP) RECEIPT_SKIPPED=1; receipt_stop; return 1 ;;
+            ERROR) : ;;
+            *) return 0 ;;
+        esac
+    fi
+    RECEIPT_BROKEN=1; receipt_warning; receipt_stop abort
+    return 1
+}
+receipt_start() {
+    [ "$RECEIPT_SKIPPED" -eq 0 ] && [ "$RECEIPT_BROKEN" -eq 0 ] || return 1
+    [ "$RECEIPT_STARTED" -eq 0 ] || return 0
+    RECEIPT_STARTED=1
+    coproc RECEIPT_WORKER { exec python3 -c "$RECEIPT_PY" \
+        "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}" "$RECEIPT_MODE" 2>/dev/null; }
+    RECEIPT_PID=$!
+    # Bash may unset the coprocess array on an immediate startup failure.
+    # Missing or invalid descriptors are observation failures, never hook errors.
+    local pipe_read="${RECEIPT_WORKER[0]:-}" pipe_write="${RECEIPT_WORKER[1]:-}"
+    if [ -z "$pipe_read" ] || [ -z "$pipe_write" ] ||
+        ! { exec {RECEIPT_READ}<&"$pipe_read" \
+                 {RECEIPT_WRITE}>&"$pipe_write"; } 2>/dev/null; then
+        RECEIPT_BROKEN=1; receipt_warning; receipt_stop abort
+        return 1
+    fi
+    { exec {pipe_read}<&- {pipe_write}>&-; } 2>/dev/null || :
+    if receipt_response && [ "$RECEIPT_RESPONSE" = READY ]; then return 0; fi
+    if [ "$RECEIPT_SKIPPED" -eq 0 ]; then
+        RECEIPT_BROKEN=1; receipt_warning; receipt_stop abort
+    fi
+    return 1
+}
+receipt_request() {
+    local LC_ALL=C size=0 field
+    for field in "$@"; do size=$((size + ${#field} + 1)); done
+    if [ "$size" -lt 4096 ] && \
+        (printf '%s\0' "$@" >&"$RECEIPT_WRITE") 2>/dev/null && receipt_response; then
+        return 0
+    fi
+    if [ "$RECEIPT_SKIPPED" -eq 0 ]; then
+        RECEIPT_BROKEN=1; receipt_warning; receipt_stop abort
+    fi
+    return 1
+}
 receipt_capture() {
     RECEIPT_DIGEST=""; RECEIPT_BYTES=0
     [ "${FLEET_GUIDANCE_RECEIPT:-1}" != 0 ] || return 0
-    local snapshot
-    if snapshot=$(python3 -c "$RECEIPT_PY" snapshot "$1" "$BEGIN_MARK" "$END_MARK" 2>/dev/null); then
-        read -r RECEIPT_DIGEST RECEIPT_BYTES <<< "$snapshot"
-    else RECEIPT_BROKEN=1; receipt_warning; fi
+    if receipt_start && receipt_request S "$1" "$BEGIN_MARK" "$END_MARK"; then
+        if [[ "$RECEIPT_RESPONSE" =~ ^[0-9a-f]{64}\ [0-9]+$ ]]; then
+            read -r RECEIPT_DIGEST RECEIPT_BYTES <<< "$RECEIPT_RESPONSE"
+        else RECEIPT_BROKEN=1; receipt_warning; receipt_stop abort; fi
+    fi
     return 0
 }
+# shellcheck disable=SC2317  # invoked by EXIT traps, including early failures
 receipt_flush() {
     [ "${FLEET_GUIDANCE_RECEIPT:-1}" != 0 ] || return 0
     [ "$RECEIPT_CLOUD" -eq 0 ] || return 0
-    [ "$RECEIPT_BROKEN" -eq 0 ] || return 0
-    [ "${#RECEIPT_ARGS[@]}" -gt 0 ] || RECEIPT_ARGS=(none degraded "" 0)
-    python3 -c "$RECEIPT_PY" append "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}" \
-        "$RECEIPT_MODE" "${RECEIPT_ARGS[@]}" 2>/dev/null || receipt_warning
+    if receipt_start; then
+        [ "${#RECEIPT_ARGS[@]}" -gt 0 ] || RECEIPT_ARGS=(none degraded "" 0)
+        if receipt_request A "${#RECEIPT_ARGS[@]}" "${RECEIPT_ARGS[@]}" &&
+            [ "$RECEIPT_RESPONSE" != DONE ]; then
+            RECEIPT_BROKEN=1; receipt_warning; receipt_stop abort
+        fi
+    fi
+    receipt_stop
     return 0
 }
 trap receipt_flush EXIT
@@ -363,6 +512,7 @@ case "${FLEET_GUIDANCE_SKIP:-}" in
 esac
 
 if [ "$CODEX_CLOUD" -eq 1 ]; then
+    RECEIPT_CLOUD=1
     cloud_result="$(python3 - \
         "$CODEX_DEST_DIR" "$PAYLOAD" "$BEGIN_MARK" "$END_MARK" \
         "$FLEET_GUIDANCE_SKIP_ENABLED" "$RECEIPT_PY" 2>/dev/null <<'PY'
@@ -534,15 +684,22 @@ finally:
         try:
             receipt_namespace = {"__name__": "receipt"}
             exec(sys.argv[6], receipt_namespace)
+            receipt_descriptors = receipt_namespace["receipt_directory"](sys.argv[1])
+            for receipt_fd in reversed(receipt_descriptors):
+                os.close(receipt_fd)
             receipt_digest = hashlib.sha256(receipt_block).hexdigest() if receipt_block is not None else None
             receipt_bytes = len(receipt_block) if receipt_block is not None else 0
             receipt_namespace["receipt_write"](sys.argv[1], "codex-cloud", [
                 receipt_namespace["receipt_delivery"](receipt_label, receipt_outcome,
                                                      receipt_digest, receipt_bytes)])
-        except Exception:
-            # This private marker is captured and removed by Bash below; a
-            # closed caller stderr cannot interfere with Cloud delivery.
-            print("fleet-receipt-unavailable")
+        except Exception as receipt_error:
+            # Unsupported platforms and symlinked parents silently opt out.
+            if isinstance(receipt_error, receipt_namespace.get("ReceiptUnsupported", ())):
+                pass
+            else:
+                # This private marker is captured and removed by Bash below; a
+                # closed caller stderr cannot interfere with Cloud delivery.
+                print("fleet-receipt-unavailable")
 PY
 )"
     cloud_status=$?
@@ -553,8 +710,7 @@ PY
     if [ -z "$cloud_result" ]; then
         cloud_result="fleet-guidance: DEGRADED — Python 3 is unavailable for Codex Cloud setup"
         cloud_status=1
-    else
-        RECEIPT_CLOUD=1
+        [ "${FLEET_GUIDANCE_RECEIPT:-1}" = 0 ] || receipt_warning
     fi
     printf '%s\n' "$cloud_result"
     exit "$cloud_status"

@@ -127,12 +127,22 @@ still covers load-time verification.
 
 Each line is strictly below the opened descriptor's `PIPE_BUF` and 4 KiB,
 and uses one `O_APPEND` write with no locks, retries, read/modify/write, or
-rotation. Descriptor-based checks reject symlink parents, symlink leaves,
-FIFOs, nonregular files, foreign ownership, and hard links. The 1 MiB cap is
+rotation. Platforms without the required descriptor-relative operations and
+POSIX primitives silently skip observation, including native Windows Python
+under Git Bash without `O_DIRECTORY`, `O_NOFOLLOW`, or `geteuid`. A symlink
+anywhere in the receipt
+parent path (including `~/.claude`, `CLAUDE_CONFIG_DIR`, or Cloud `CODEX_HOME`)
+also skips silently; guidance delivery still follows its existing path rules.
+Descriptor-based checks reject symlink leaves, FIFOs, nonregular files,
+foreign ownership, and hard links. The 1 MiB cap is
 an advisory prewrite size check: a file already at the cap skips quietly,
 and concurrent writers can overshoot it by their pending lines. Receipt
 failures add at most one fixed stderr warning and preserve delivery, stdout,
 and exit status. A failed metadata snapshot skips the receipt altogether.
+The hook starts at most one Python process: normal and workspace modes share
+a lazy worker for snapshots and the append, while Cloud uses its delivery
+process. The worker receives bounded requests over a private pipe, never the
+external hook event on stdin, and is reaped before the hook exits.
 Normal-mode snapshots are also bounded to 4 MiB; a larger assembled
 instructions file delivers normally but skips observation with that warning.
 A failed or short append is not retried and can leave a torn trailing line;

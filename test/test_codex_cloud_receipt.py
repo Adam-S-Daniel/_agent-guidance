@@ -1,10 +1,13 @@
 """Delivery receipts are best-effort observations, independent of hook decisions."""
 import ast
-import errno
+import concurrent.futures
 import hashlib
+import io
 import json
 import os
+import signal
 import stat
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +24,23 @@ WARNING = b"fleet-guidance: receipt unavailable\n"
 def helper_source():
     # The literal heredoc delimiter is a packaging token, not a code-shape check.
     return HOOK.read_text().split("read -r -d '' RECEIPT_PY <<'PY' || :\n", 1)[1].split("\nPY\n", 1)[0]
+
+
+def timed_run(command, *, capture_output=False, check=False, **kwargs):
+    """Own the subprocess group so a timeout reaps the hook and its worker."""
+    if capture_output:
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with subprocess.Popen(command, start_new_session=True, **kwargs) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate(timeout=10)
+            raise
+    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    if check:
+        result.check_returncode()
+    return result
 
 
 class DeliveryReceiptTests(unittest.TestCase):
@@ -50,12 +70,8 @@ class DeliveryReceiptTests(unittest.TestCase):
 
     def run_hook(self, args=(), enabled=True, injection=None):
         env = dict(self.env, FLEET_GUIDANCE_RECEIPT="1" if enabled else "0")
-        if injection:
-            pythonpath = self.root / "pythonpath"
-            pythonpath.mkdir(exist_ok=True)
-            (pythonpath / "sitecustomize.py").write_text(self.clock + injection)
-            env["PYTHONPATH"] = str(pythonpath)
-        return subprocess.run(["bash", str(HOOK), *args], env=env,
+        (self.pythonpath / "sitecustomize.py").write_text(self.clock + (injection or ""))
+        return timed_run(["bash", str(HOOK), *args], env=env,
                               capture_output=True, check=False, cwd=self.root)
 
     def log(self, cloud=False):
@@ -246,7 +262,7 @@ os.open = denied
             for index, injection in enumerate(injections):
                 with self.subTest(args=args, index=index):
                     self.reset()
-                    # Normal Python -c has no explicit exec helper boundary.
+                    # Only Cloud explicitly execs the embedded helper.
                     self.assert_identity(args, injection=injection, warning=index != 2 or bool(args))
 
     def test_receipt_filesystem_refusals_preserve_delivery(self):
@@ -270,7 +286,7 @@ os.open = denied
                         moved = self.root / ("moved-codex" if args else "moved-claude")
                         target.rename(moved)
                         target.symlink_to(moved, target_is_directory=True)
-                    self.assert_identity(args, warning=True)
+                    self.assert_identity(args, warning=kind != "parent_symlink")
                     self.assertEqual(b"Untouched.\n", victim.read_bytes())
                     if kind == "parent_symlink":
                         target.unlink()
@@ -282,7 +298,7 @@ os.open = denied
             for failure in ("unwritable", "full", "short", "snapshot"):
                 with self.subTest(args=args, failure=failure):
                     self.reset()
-                    injection = '''import errno, os, sys
+                    injection = '''import errno, os
 original_open, original_write = os.open, os.write
 fds = set()
 def guarded_open(path, flags, *args, **kwargs):
@@ -297,8 +313,10 @@ def guarded_write(fd, data):
         if FAILURE == "short": return original_write(fd, data[:1])
     return original_write(fd, data)
 os.open, os.write = guarded_open, guarded_write
-if FAILURE == "snapshot" and len(sys.argv) > 1 and sys.argv[1] == "snapshot":
-    os._exit(1)
+if FAILURE == "snapshot":
+    real_read = os.read
+    def failed_read(fd, count): raise OSError("snapshot unavailable")
+    os.read = failed_read
 '''.replace("FAILURE", repr(failure))
                     # Cloud hashes its in-memory block and has no snapshot command.
                     self.assert_identity(args, injection=injection, warning=failure != "snapshot" or not args)
@@ -316,7 +334,7 @@ if FAILURE == "snapshot" and len(sys.argv) > 1 and sys.argv[1] == "snapshot":
         self.assertFalse(self.log().exists())
         env = dict(self.env)
         env.pop("FLEET_GUIDANCE_RECEIPT")
-        result = subprocess.run(["bash", str(HOOK)], env=env, cwd=self.root,
+        result = timed_run(["bash", str(HOOK)], env=env, cwd=self.root,
                                 capture_output=True, check=False)
         self.assertEqual(0, result.returncode)
         self.assertEqual(b"", result.stderr)
@@ -330,13 +348,12 @@ if FAILURE == "snapshot" and len(sys.argv) > 1 and sys.argv[1] == "snapshot":
         self.run_hook()
         self.log().unlink()
         count = 24
-        processes = [subprocess.Popen(["bash", str(HOOK)], env=self.env, cwd=self.root,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(count)]
-        for process in processes:
-            stdout, stderr = process.communicate()
-            self.assertEqual(0, process.returncode)
-            self.assertEqual(b"", stderr)
-            self.assertIn(b"fleet-guidance: current", stdout)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
+            results = list(pool.map(lambda _: self.run_hook(), range(count)))
+        for result in results:
+            self.assertEqual(0, result.returncode)
+            self.assertEqual(b"", result.stderr)
+            self.assertIn(b"fleet-guidance: current", result.stdout)
         lines = self.log().read_bytes().splitlines(keepends=True)
         self.assertEqual(count, len(lines))
         for line in lines:
@@ -474,11 +491,11 @@ os.open = denied
             env = dict(self.env, PYTHONPATH=str(pythonpath))
             # /dev/full rejects the warning itself, not the guidance write.
             with open("/dev/full", "wb") as failed_stderr:
-                result = subprocess.run(["bash", str(HOOK), *args], env=env,
+                result = timed_run(["bash", str(HOOK), *args], env=env,
                                         stdout=subprocess.PIPE, stderr=failed_stderr, cwd=self.root)
             self.assertEqual((baseline.stdout, baseline.returncode), (result.stdout, result.returncode))
             self.reset()
-            result = subprocess.run(["bash", str(HOOK), *args], env=env,
+            result = timed_run(["bash", str(HOOK), *args], env=env,
                                     stdout=subprocess.PIPE, preexec_fn=lambda: os.close(2), cwd=self.root)
             self.assertEqual((baseline.stdout, baseline.returncode), (result.stdout, result.returncode))
 
@@ -531,3 +548,212 @@ os.open = denied
                   and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
                   and node.func.value.id == "os" and node.func.attr == "write"]
         self.assertEqual(1, len(writes))
+
+    def test_unsupported_primitives_silently_skip_all_modes(self):
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            for primitive in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK", "geteuid", "fpathconf",
+                              "supports_dir_fd", "supports_follow_symlinks"):
+                with self.subTest(args=args, primitive=primitive):
+                    self.reset()
+                    injection = (f"import os\nos.{primitive} = set()\n" if primitive.startswith("supports_")
+                                 else f"import os\ndel os.{primitive}\n")
+                    self.assert_identity(args, injection=injection)
+                    self.assertFalse(self.log(bool(args and args[0] == "--codex-cloud")).exists())
+        # Windows may expose functions but lack descriptor-relative calls.
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            self.reset()
+            self.assert_identity(args, injection="import os\nos.supports_dir_fd = set()\n")
+            self.assertFalse(self.log(bool(args and args[0] == "--codex-cloud")).exists())
+
+    def test_unimplemented_platform_syscalls_silently_skip(self):
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            for primitive in ("open", "stat", "fpathconf"):
+                with self.subTest(args=args, primitive=primitive):
+                    self.reset()
+                    cloud = bool(args and args[0] == "--codex-cloud")
+                    directory = self.codex if cloud else self.claude
+                    moved = self.root / "actual-config"
+                    if primitive == "stat":
+                        directory.rename(moved)
+                        directory.symlink_to(moved, target_is_directory=True)
+                    injection = f"import os\noriginal = os.{primitive}\n" \
+                        "def unsupported(*args, **kwargs):\n" \
+                        f"    if {primitive == 'fpathconf'!r} or 'dir_fd' in kwargs: raise NotImplementedError()\n" \
+                        "    return original(*args, **kwargs)\n" \
+                        f"os.{primitive} = unsupported\n"
+                    try:
+                        self.assert_identity(args, injection=injection)
+                        self.assertFalse(self.log(cloud).exists())
+                    finally:
+                        if primitive == "stat":
+                            directory.unlink()
+                            moved.rename(directory)
+        # An unrelated optional clock failure remains visible.
+        self.reset()
+        self.assert_identity(injection="import time\ndef fail(): raise NotImplementedError()\ntime.time = fail\n",
+                             warning=True)
+
+    def test_symlinked_parent_silently_skips_before_snapshot_and_digest(self):
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            self.reset()
+            cloud = bool(args and args[0] == "--codex-cloud")
+            directory = self.codex if cloud else self.claude
+            moved = self.root / "actual-config"
+            directory.rename(moved)
+            directory.symlink_to(moved, target_is_directory=True)
+            injection = "import hashlib\nreal_hash = hashlib.sha256\n" \
+                "def fail(raw=b'', *args, **kwargs):\n" \
+                "    if raw.startswith(b'<!-- BEGIN FLEET GUIDANCE'): raise ValueError('receipt hash')\n" \
+                "    return real_hash(raw, *args, **kwargs)\nhashlib.sha256 = fail\n"
+            try:
+                self.assert_identity(args, injection=injection)
+                self.assertFalse((moved / "fleet-delivery.jsonl").exists())
+            finally:
+                directory.unlink()
+                moved.rename(directory)
+
+    def test_stamp_only_failed_snapshot_skips_entire_receipt(self):
+        self.run_hook(enabled=False)
+        for path in (self.claude / "CLAUDE.md", self.codex / "AGENTS.md"):
+            path.write_bytes(path.read_bytes().replace(
+                b"<!-- fleet-guidance-delivered: 0 -->\n", b""))
+        # A deterministic git shim supplies a later stamp without a real repo.
+        binary = self.root / "bin"
+        binary.mkdir()
+        git = binary / "git"
+        git.write_text("#!/bin/sh\ncase \"$*\" in *rev-parse*) echo true;; *log*) echo 123;; esac\n")
+        git.chmod(0o755)
+        self.env["PATH"] = str(binary) + os.pathsep + self.env["PATH"]
+        before = (self.claude / "CLAUDE.md").read_bytes()
+        self.assert_identity(injection="import os\ndef fail(*args): raise OSError('snapshot')\nos.read = fail\n",
+                             warning=True)
+        after = (self.claude / "CLAUDE.md").read_bytes()
+        self.assertNotEqual(before, after)
+        self.assertIn(b"<!-- fleet-guidance-delivered: 123 -->", after)
+        self.assertFalse(self.log().exists())
+
+    def counting_python(self, body=None):
+        binary = self.root / "count-bin"
+        binary.mkdir(exist_ok=True)
+        count = self.root / "python-count"
+        shim = binary / "python3"
+        # All paths are fixture-controlled; JSON shell quoting is not used.
+        import shlex
+        script = "#!/bin/sh\nprintf '1\\n' >> " + shlex.quote(str(count)) + "\n"
+        script += body or "exec " + shlex.quote(sys.executable) + " \"$@\"\n"
+        shim.write_text(script)
+        shim.chmod(0o755)
+        self.env["PATH"] = str(binary) + os.pathsep + self.env["PATH"]
+        return count
+
+    def test_one_python_launch_per_invocation(self):
+        count = self.counting_python()
+        git = self.root / "count-bin/git"
+        git.write_text('#!/bin/sh\ncase "$*" in *rev-parse*) echo true;; *log*) echo 123;; esac\n')
+        git.chmod(0o755)
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            for state in ("fresh", "current", "stamp", "failure", "optout"):
+                with self.subTest(args=args, state=state):
+                    self.reset()
+                    self.env["FLEET_GUIDANCE_SKIP"] = "0"
+                    if state in ("current", "stamp"):
+                        self.run_hook(args, enabled=False)
+                    if state == "stamp":
+                        for path in (self.claude / "CLAUDE.md", self.codex / "AGENTS.md"):
+                            if path.is_file():
+                                path.write_bytes(path.read_bytes().replace(
+                                    b"<!-- fleet-guidance-delivered: 123 -->\n", b""))
+                    count.unlink(missing_ok=True)
+                    result = self.run_hook(args, enabled=state != "optout",
+                                           injection="import os\nos._exit(1)\n" if state == "failure" else None)
+                    if state == "stamp" and args != ("--codex-cloud",):
+                        self.assertIn(b"<!-- fleet-guidance-delivered: 123 -->",
+                                      (self.claude / "CLAUDE.md").read_bytes())
+                        self.assertIsNotNone(self.records()[-1]["deliveries"][0]["sha256"])
+                    expected = int(state != "optout" or args == ("--codex-cloud",))
+                    self.assertEqual(expected, len(count.read_text().splitlines()) if count.exists() else 0)
+                    self.assertEqual(WARNING if state == "failure" else b"", result.stderr)
+        # Missing Python in Cloud must not fall through to a second attempt.
+        self.reset()
+        count = self.counting_python("exit 127\n")
+        count.unlink(missing_ok=True)
+        self.assert_identity(("--codex-cloud",), warning=True)
+        # assert_identity invokes a receipt-disabled baseline and enabled run.
+        self.assertEqual(2, len(count.read_text().splitlines()))
+
+    def test_worker_early_exit_and_broken_pipe_preserve_delivery(self):
+        import shlex
+        for code in ("import os; os._exit(1)",
+                     'import os, signal; os.close(0); print("READY", flush=True); signal.pause()',
+                     'import signal; print("WRONG", flush=True); signal.pause()'):
+            self.reset()
+            pid_file = self.root / "worker-pid"
+            code = f"import os; open({str(pid_file)!r}, 'w').write(str(os.getpid())); " + code
+            body = "exec " + shlex.quote(sys.executable) + " -c " + shlex.quote(code) + "\n"
+            self.counting_python(body)
+            self.assert_identity(warning=True)
+            self.assertFalse(self.log().exists())
+            pid = int(pid_file.read_text())
+            try:
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            finally:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_private_worker_rejects_invalid_and_oversized_requests(self):
+        for request in (b"unknown\0", b"A\0" + b"12\0", b"S\0" + b"x" * 4096):
+            with self.subTest(request_size=len(request)):
+                stdin = mock.Mock(buffer=io.BytesIO(request))
+                output = io.StringIO()
+                with mock.patch.object(sys, "stdin", stdin), mock.patch.object(sys, "stdout", output):
+                    self.namespace["receipt_worker"](str(self.claude), "hook")
+                self.assertEqual("READY\nERROR\n", output.getvalue())
+                self.assertLessEqual(stdin.buffer.tell(), 4096)
+                self.assertFalse(self.log().exists())
+
+    def test_oversized_private_request_aborts_and_reaps_worker(self):
+        prefix = HOOK.read_text().split("\nCODEX_CLOUD=0\n", 1)[0]
+        script = prefix + "\nreceipt_start\nreceipt_request S \"$LONG_REQUEST\" begin end || :\n"
+        result = timed_run(["bash", "-c", script], capture_output=True,
+                           env=dict(self.env, LONG_REQUEST="x" * 4096), cwd=self.root)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(b"", result.stdout)
+        self.assertEqual(WARNING, result.stderr)
+        self.assertFalse(self.log().exists())
+
+    def test_subprocess_timeout_kills_and_reaps_owned_group(self):
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.pid = 123
+        process.communicate.side_effect = [subprocess.TimeoutExpired("fixture", 10), (b"", b"")]
+        with mock.patch.object(subprocess, "Popen", return_value=process), \
+                mock.patch.object(os, "killpg") as kill:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                timed_run(["fixture"], capture_output=True)
+        kill.assert_called_once_with(123, signal.SIGKILL)
+        self.assertEqual([mock.call(timeout=10), mock.call(timeout=10)], process.communicate.call_args_list)
+
+    def test_subprocess_timeouts_and_cleanup_are_structurally_required(self):
+        tree = ast.parse(Path(__file__).read_text())
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        subprocess_calls = [node for node in calls if isinstance(node.func, ast.Attribute)
+                            and isinstance(node.func.value, ast.Name)
+                            and node.func.value.id == "subprocess" and
+                            node.func.attr in ("run", "Popen", "call", "check_call", "check_output")]
+        self.assertEqual(1, len(subprocess_calls))
+        self.assertEqual("Popen", subprocess_calls[0].func.attr)
+        self.assertTrue(any(keyword.arg == "start_new_session" and
+                            isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+                            for keyword in subprocess_calls[0].keywords))
+        communicates = [node for node in calls if isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "communicate"]
+        self.assertEqual(2, len(communicates))
+        for call in communicates:
+            self.assertTrue(any(keyword.arg == "timeout" for keyword in call.keywords))
+        runner = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "timed_run")
+        self.assertTrue(any(isinstance(node, ast.ExceptHandler) and any(
+            isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and
+            child.func.attr == "killpg" for child in ast.walk(node)) for node in ast.walk(runner)))
