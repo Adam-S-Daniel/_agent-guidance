@@ -7039,6 +7039,34 @@ PY
     ) || true
     echo "$output" > "$TEST_DIR/sync-fork-migration-2.txt"
     assert_contains "$TEST_DIR/sync-fork-migration-2.txt" "6 skipped" "fork migration: a run after migrating leaves every repo up to date"
+
+    # Only skills-bootstrap stale: its migration alone must still be staged
+    # and committed (the fleet-memory registration cannot carry it along).
+    git -C "$w" fetch -q origin main >/dev/null 2>&1 && git -C "$w" reset -q --hard FETCH_HEAD
+    python3 - "$w/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p, encoding="utf-8"))
+for g in doc["hooks"]["SessionStart"]:
+    if "skills-bootstrap.sh" in g["hooks"][0]["command"]:
+        g["matcher"] = "startup|resume"
+open(p, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+    git -C "$w" commit -qam "re-wire skills-bootstrap with the pre-fork matcher" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" >/dev/null 2>&1 || true
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+        fail "fork migration (bootstrap only): could not clone"
+        return
+    }
+    local state
+    state=$("$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
+    [[ "$state" == "registered" ]] && pass "fork migration: a skills-bootstrap-only migration is committed" || fail "fork migration: a skills-bootstrap-only migration is committed (main reads '$state')"
 }
 
 # ── Test 5e: a digest mismatch disables delivery and fails the run ────────
