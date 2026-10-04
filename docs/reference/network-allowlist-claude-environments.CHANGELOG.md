@@ -28,7 +28,7 @@ Also note anything **deliberately excluded** and why. An absent domain and a
 rejected domain look identical in the `.txt`, and only this file can tell them
 apart.
 
-### Three mechanics worth restating, because they shape every entry
+### Six mechanics worth restating, because they shape every entry
 
 - **Wildcards do not cover the apex.** `*.example.com` matches subdomains of
   `example.com`; it does not match `example.com` itself. That is why most
@@ -46,6 +46,20 @@ apart.
   direction that matters for this file, a probe result is evidence only about
   the moment it was taken. Re-probe rather than cite a measurement from earlier
   in the same session.
+- **Oversized allowed-domain lists fail when saved.** In
+  [v2.1.275](https://github.com/anthropics/claude-code/releases/tag/v2.1.275),
+  saving now reports how much to trim instead of accepting a list that then
+  fails every session start. The release gives no numeric limit; do not infer
+  one from this behavior.
+- **Custom requires at least one domain.** In
+  [v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277),
+  saving a Custom environment with no domains asks for at least one rather than
+  silently reverting to Trusted.
+- **Non-API `anthropic.com` requests follow the session proxy.** Since
+  [v2.1.239](https://github.com/anthropics/claude-code/releases/tag/v2.1.239),
+  requests from Bash and other tools to hosts such as `www.anthropic.com` and
+  `docs.anthropic.com` are subject to the session's allowed domains. This does
+  not justify adding domains without evidence from `My Whitelist`.
 
 ---
 
@@ -504,3 +518,23 @@ workstation (`200`, JSON), not from a `My Whitelist` session. The routine
 tries `curl` first and falls back to `WebFetch`; per the fourth 2026-09-04
 entry above, `WebFetch` may lag the edit, so a `curl` result is the one to
 trust.
+
+---
+
+## 2026-10-04 — save-time behavior documented; no allowlist change
+
+**Environment:** `My Whitelist` (not rechecked in this session)
+**Checkbox "Also include default list of common package managers":** not
+re-checked
+**Change to the `.txt`:** **none.** This entry records vendor behavior only;
+the local environment is not the `My Whitelist` session, and no live probe was
+run from that environment.
+
+The mechanics above record the save-time behavior from
+[v2.1.275](https://github.com/anthropics/claude-code/releases/tag/v2.1.275),
+[v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277),
+and proxy behavior from
+[v2.1.239](https://github.com/anthropics/claude-code/releases/tag/v2.1.239).
+They answer the documentation follow-up in
+[#178](https://github.com/Adam-S-Daniel/_agent-guidance/issues/178), but leave
+its live environment and checkbox probes open.
