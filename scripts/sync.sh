@@ -1122,9 +1122,10 @@ for repo_name in "${REPOS[@]}"; do
     echo "$new_agents_md" > AGENTS.md
 
     # ── CLAUDE.md bridge ────────────────────────────────────────────────
-    # Claude Code reads CLAUDE.md, not AGENTS.md — it never sees the managed
-    # guidance unless something imports it. Anthropic's documented pattern is
-    # a CLAUDE.md containing `@AGENTS.md`. Default remains never-rewrite: an
+    # Claude Code 2.1.277+ reads AGENTS.md when CLAUDE.md is absent. The fleet
+    # retains a CLAUDE.md containing `@AGENTS.md` for older CLIs pending the
+    # owner decision in https://github.com/Adam-S-Daniel/_agent-guidance/issues/172.
+    # Default remains never-rewrite: an
     # existing CLAUDE.md is left untouched even if it doesn't import
     # AGENTS.md, since we must not clobber someone's hand-written file.
     # fix_claude_md is the per-repo opt-in that lifts that default — it's
@@ -1306,9 +1307,8 @@ Claude Code never saw the managed guidance. Rewritten to the standard
     elif $agents_up_to_date; then
         commit_message="chore: add CLAUDE.md bridge for AGENTS.md sync
 
-AGENTS.md was already up to date. Adds a CLAUDE.md that imports
-@AGENTS.md so Claude Code (which reads CLAUDE.md, not AGENTS.md) sees
-the managed guidance.${bootstrap_note}"
+AGENTS.md was already up to date. Adds a CLAUDE.md importing
+@AGENTS.md for older CLIs and the retained fleet bridge policy.${bootstrap_note}"
     else
         commit_message="chore: sync AGENTS.md from _agent-guidance
 
@@ -1548,8 +1548,9 @@ Automated sync of the managed portion of \`AGENTS.md\` from the central
 Content below \`## Repo-specific additions\` has been preserved.
 
 This sync also ensures a \`CLAUDE.md\` exists that imports \`AGENTS.md\`
-via \`@AGENTS.md\` — Claude Code reads CLAUDE.md, not AGENTS.md, directly,
-so without this bridge it would never see the managed guidance. An
+via \`@AGENTS.md\`. Claude Code 2.1.277+ can read AGENTS.md when CLAUDE.md
+is absent; the fleet keeps the bridge for older CLIs pending the owner
+decision in [#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172). An
 existing CLAUDE.md is left untouched unless this repo opts in via
 \`fix_claude_md: true\`.
 

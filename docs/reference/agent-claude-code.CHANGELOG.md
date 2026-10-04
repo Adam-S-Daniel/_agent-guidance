@@ -107,6 +107,17 @@ No group met the name-the-surface bar: a grep of the fleet for `--bare` (only `g
 
 **Issues:** [_agent-guidance#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172), [claude-memory-map#47](https://github.com/Adam-S-Daniel/claude-memory-map/issues/47), [skills-evals#191](https://github.com/Adam-S-Daniel/skills-evals/issues/191)
 
+**Rechecked 2026-10-04:** [README.md](../../README.md) already describes the
+native fallback; [bridge-status.sh](../../scripts/bridge-status.sh) and the
+[sync comments and generated prose](../../scripts/sync.sh) now agree. The
+fleet retains its bridge pending the owner's migration decision in
+[_agent-guidance#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172).
+Still pending: on CLI ≥ 2.1.281, test each `/config` Project instructions
+option in bridged and unbridged temporary repos with a unique canary to
+record once, twice or missing loading. The provider-extension quote above
+is present in [CHANGELOG.md 2.1.281](https://github.com/anthropics/claude-code/blob/2bfb629dfaff0c8318047a4beb93cf1dc5b58b18/CHANGELOG.md#21281),
+although the current release body omits it. No live CLI check was performed.
+
 #### 2. SessionStart and Stop hook behavior the fleet's hooks rely on
 
 - [v2.1.214](https://github.com/anthropics/claude-code/releases/tag/v2.1.214), published 2026-07-18T01:20Z
@@ -125,6 +136,20 @@ No group met the name-the-surface bar: a grep of the fleet for `--bare` (only `g
   > Fixed sessions continued after `/clear` (restart, `--continue`, `--resume`) missing part of their first message when a SessionStart hook printed output, causing a full prompt-cache miss
 
 **Issues:** [_agent-guidance#173](https://github.com/Adam-S-Daniel/_agent-guidance/issues/173), [adam-agentskills#7](https://github.com/Adam-S-Daniel/adam-agentskills/issues/7)
+
+**Rechecked 2026-10-04:** The [memory-home registrar](../../scripts/register-memory-home-hook.sh),
+[bootstrap registrar](../../scripts/register-bootstrap-hook.sh),
+[repo settings](../../.claude/settings.json) and [tests](../../test/run-tests.sh)
+already use `startup|resume|fork`; [fleet-memory.sh](../../.claude/hooks/fleet-memory.sh)
+needs no matcher correction. Its loading-order premise remains unverified.
+Static inspection of the [memory-home](../../.claude/hooks/memory-home.sh),
+[skills-bootstrap](../../.claude/hooks/skills-bootstrap.sh) and fleet-memory
+output paths found JSON serialization or fixed prose prefixes, with no path
+deliberately emitting `{`-leading non-JSON text; this is not live parsing proof.
+[_agent-guidance#173](https://github.com/Adam-S-Daniel/_agent-guidance/issues/173)
+still needs a first-turn unique canary for startup, fork and resume on CLI
+≥ 2.1.268, beginning with user memory absent, plus cancellation checks.
+A conversation appearing early in the UI does not prove instruction-loading order.
 
 #### 3. `DirectoryAdded` hook for repos attached mid-session
 
@@ -158,6 +183,12 @@ No group met the name-the-surface bar: a grep of the fleet for `--bare` (only `g
 
 **Issues:** [_agent-guidance#174](https://github.com/Adam-S-Daniel/_agent-guidance/issues/174), [adam-agentskills#9](https://github.com/Adam-S-Daniel/adam-agentskills/issues/9), [skills-evals#196](https://github.com/Adam-S-Daniel/skills-evals/issues/196)
 
+**Rechecked 2026-10-04:** [base.md](../../agents-md/base.md) already removed
+the disputed 2.1.273 floor and describes short names with a namespace fallback.
+The quoted releases date terminal account sync to 2.1.275 and short menu names
+to 2.1.281. No further guidance edit is needed for
+[_agent-guidance#174](https://github.com/Adam-S-Daniel/_agent-guidance/issues/174).
+
 #### 5. `installed_plugins.json` commit recording and update hints
 
 - [v2.1.268](https://github.com/anthropics/claude-code/releases/tag/v2.1.268), published 2026-09-10T20:30Z
@@ -170,6 +201,18 @@ No group met the name-the-surface bar: a grep of the fleet for `--bare` (only `g
   > Fixed `installed_plugins.json` keeping the install-time commit after updating a plugin from a GitHub repository or git URL that tracks a branch or tag
 
 **Issues:** [_agent-guidance#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175), [adam-agentskills#10](https://github.com/Adam-S-Daniel/adam-agentskills/issues/10), [skills-evals#192](https://github.com/Adam-S-Daniel/skills-evals/issues/192)
+
+**Rechecked 2026-10-04:** [base.md](../../agents-md/base.md) now requires CLI
+≥ 2.1.280 for recorded commits and says to try update, recheck, then
+uninstall/reinstall only if still stale. The 2.1.277/2.1.280 metadata fixes do
+not prove bundle contents refresh or that the historical version gate is fixed;
+2.1.283 file-recovery fixes do not prove content refresh either. Keep the
+file-based check for [_agent-guidance#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175)
+until a controlled fixture on CLI ≥ 2.1.280 compares `installPath` contents
+and recorded SHA before and after `claude plugin update`: pinned commits,
+branch/tag sources, and a same-version new commit. Compare `claude plugin list
+--json` fields against `installed_plugins.json` before switching the check's
+source. No live plugin update was performed.
 
 #### 6. `claude plugin validate` checks added after the CI pin (2.1.223)
 
@@ -244,6 +287,13 @@ No group met the name-the-surface bar: a grep of the fleet for `--bare` (only `g
   > [Cloud sessions] Added attaching a repository from a different GitHub owner, such as a fork's upstream, to a running cloud session that already has one, including sessions started from Slack
 
 **Issues:** [_agent-guidance#177](https://github.com/Adam-S-Daniel/_agent-guidance/issues/177)
+
+**Rechecked 2026-10-04:** [base.md](../../agents-md/base.md) already removed
+the cross-owner refusal; its session-reach disclaimer remains valid. For
+[_agent-guidance#177](https://github.com/Adam-S-Daniel/_agent-guidance/issues/177),
+the owner still needs to attempt attaching a `jodidaniel` repo to an
+`Adam-S-Daniel` cloud session and record the result, including a Slack-started
+session if that variant is covered. No attachment was attempted.
 
 #### 12. Cloud environment network access
 
