@@ -88,10 +88,15 @@ half is under budget by construction, so an overrun is always in the repo's own
 - `scripts/drift-report.sh` adds a `codex-truncated: <bytes> > 32768` clause to
   that repo's **Notes**, explained in the report's own legend.
 
-The managed half is held clear of the budget by size tests in
-`test/run-tests.sh`: `agents-md/base.md` ≤ 25 KiB and a full-mode build with
-every section ≤ 29 KiB, so even a full-mode repo keeps ≥ 3 KiB for its own
-additions (a stub-mode repo — all 19 today — keeps nearly all of it).
+The managed half is held clear of the budget by `test_agents_md_size_budget`
+in `test/run-tests.sh`, which caps the **builds**, not `base.md` on its own: a
+full-mode build with every section ≤ 29696 bytes (29 KiB), so even a full-mode
+repo keeps ≥ 3 KiB for its own additions, and the stub build ≤ 8192 bytes (a
+stub-mode repo — all 19 today — keeps nearly all of it). No test caps
+`agents-md/base.md` itself; its "under 25 KiB" is a rule written in that file,
+held only indirectly because `base.md` is most of the full build. Measured
+2026-10-04 with `wc -c`: `base.md` 24,930 bytes, full build 29,113, stub
+build 4,859.
 
 The guidance itself reaches Codex a different way. The `fleet-memory`
 SessionStart hook (`.claude/hooks/fleet-memory.sh`) writes its marked block to
@@ -169,9 +174,9 @@ the work. A home is **dangling** when a local clone of `<repo>` is found but
   continues and the note is flagged with its reason,
   `<path> (unparseable frontmatter — quote the description or fix the YAML)`.
   That case is the common one, not the exotic one — Claude Code writes
-  `description:` values unquoted, so any description containing `: ` is YAML
-  PyYAML rejects, and four such notes existed here the day the hook was
-  written.
+  `description:` values and may not quote them, so an unquoted description
+  containing `: ` can be YAML PyYAML rejects, and four such notes existed here
+  the day the hook was written.
 - `scripts/register-memory-home-hook.sh` wires both groups into
   `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` — **user level**, because
   memory is per machine, not per repo. Same posture as the two registrars
@@ -338,10 +343,17 @@ allowlisted.
 
 ### Why
 
-Claude Code reads `CLAUDE.md`, not `AGENTS.md` — there is no native
-`AGENTS.md` support (tracked upstream: anthropics/claude-code#6235, open,
-no commitment). So the sync creates a two-line bridge file in every repo it
-touches:
+Claude Code reads `CLAUDE.md` and, since
+[v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277),
+also reads `AGENTS.md` when a project has no `CLAUDE.md`. The native fallback
+was extended in
+[v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281)
+to Bedrock, Vertex, Foundry, LLM gateways, and sessions with telemetry
+disabled. The fleet keeps its bridge while the owner decides whether to change
+it: older CLI compatibility and the `/config` Project instructions choices
+need live measurement in
+[#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172). So the
+sync creates a two-line bridge file in every repo it touches:
 
 ```
 <!-- Managed by _agent-guidance: bridges Claude Code (which reads CLAUDE.md) to AGENTS.md. -->
@@ -372,6 +384,25 @@ not just checked silently.
 - Imported files must keep the `.md` extension (anthropics/claude-code#18518).
 - The HTML-comment header in the bridge file is stripped before injection —
   it's human-only signage and costs no context budget.
+
+### Claude Code's instruction-size notice
+
+Claude Code has its own size notice, separate from Codex's budget, and nothing
+in this repo tests against it. Since
+[v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281) it
+also counts instruction files **together**, @-imports included, so the fleet
+block the `fleet-memory` hook writes into user memory and each `AGENTS.md` a
+bridge imports add up toward one total. Read from the minified 2.1.289 bundle
+(not a documented contract, so any release can move it): one file draws
+`Large <file> will impact performance` above max(40,000, 5% of the model's
+context window × 3 or 4 characters per token) characters, and the set draws
+`Instruction files will impact performance` when the files under that
+per-file limit total more than max(120,000, the per-file limit). It counts
+JavaScript string length, not bytes: measured 2026-10-04, `agents-md/base.md`
+is 24,832 characters (24,930 bytes) and this repo's `AGENTS.md` 8,281 (8,327
+bytes). Whether a multi-repo session reaches the combined notice has not been
+measured:
+[#180](https://github.com/Adam-S-Daniel/_agent-guidance/issues/180).
 
 ### Why not a symlink (decision record)
 
@@ -409,11 +440,14 @@ bumps.
 
 ### Watch upstream
 
-anthropics/claude-code#6235 tracks native `AGENTS.md` support. It's open
-with no commitment either way. If it ships, the bridge becomes redundant but
-harmless — nothing breaks by leaving it in place. The canary eval's
-`no-bridge` layout turning visible is the signal to simplify the fleet if
-that day comes.
+Native `AGENTS.md` fallback has shipped in
+[v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277)
+when a project has no `CLAUDE.md`, with additional environment coverage in
+[v2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281).
+The fleet still has `CLAUDE.md` bridges. Keep them pending the compatibility
+and `/config` Project instructions measurements tracked in
+[#172](https://github.com/Adam-S-Daniel/_agent-guidance/issues/172); do not
+assume that both files load.
 
 ## Required secrets
 
