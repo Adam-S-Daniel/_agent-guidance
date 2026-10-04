@@ -143,6 +143,11 @@ unsafe, or ambiguous delivered source skips the receipt altogether. The hook lau
 Python receipt writer after its verdict and workspace notice are complete;
 it never waits for that writer. The writer arms a five-second lifetime deadline
 before Python startup customization, so a blocked observation exits silently.
+The writer resets an inherited ignored alarm disposition and unblocks SIGALRM
+before arming that deadline. A hook file owned by another user is also refused
+silently: its embedded receipt logic cannot be trusted, and the detached
+writer's streams stay closed so it cannot change the session's verdict. No
+receipt or identifying diagnostic is emitted for that refusal.
 Normal and workspace modes launch no foreground
 Python process; Cloud retains its existing delivery process and launches the
 same detached writer afterward. Metadata travels through bounded arguments,
