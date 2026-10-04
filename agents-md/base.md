@@ -385,8 +385,8 @@ reusable-workflow ref is for review to catch.
   `repos.yml` AND a `skills.lock` the repo committed itself (the sync never
   writes one). Bundles cost always-on context, so a repo may be deliberately
   out — check for `skills.lock`, don't guess.
-- **Terminals (CLI 2.1.273+) load Anthropic's account skills** as
-  `anthropic-skills:<name>`; `setup.sh` opts a machine out
+- **Terminals load the claude.ai account's skills** as `/<name>` (or
+  `/anthropic-skills:<name>` if taken); `setup.sh` opts a machine out
   (`syncClaudeAiSkills: false`), cloud can't (registry ADR 0010).
 - New reusable skills graduate **into** the registry (sensitive ones in
   `adam-agentskills-private`); a long skill splits across files.
