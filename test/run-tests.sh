@@ -20197,7 +20197,7 @@ EOF
     # ── A note this script cannot parse is a FINDING, not a verdict ────────
     #
     # 12. The fixture is the real one: Claude Code writes `description:` itself
-    #     and does not quote it, so an ordinary description containing `: ` is
+    #     and may not quote it, so an ordinary description containing `: ` is
     #     frontmatter PyYAML rejects outright. FOUR such notes existed on this
     #     machine the day this hook was written, and an earlier draft that
     #     treated a parse failure as a run-level degrade printed their names
@@ -20238,6 +20238,81 @@ EOF
     assert_not_contains "$d/out-colon-again" '"decision": "block"' \
         "memory-home: the one-nudge loop guard covers the unparseable case too"
     rm -f "$mem/colon.md" "$mem/nofm.md"
+
+    # ── Notes as Claude Code 2.1.214+ writes them (issue #179) ─────────────
+    #
+    # 12c. The real shape, copied from a CLI-written note: `metadata: ` with a
+    #      trailing space, extra keys (`node_type`, `originSessionId`) and a
+    #      bare ISO `modified`. A homed one passes; a homeless one with the
+    #      same extra keys is still flagged, so the extra keys cannot be what
+    #      makes a note pass.
+    : > "$MH_PROJ/_agent-guidance/docs/c#-notes.md"
+    printf -- '---\nname: cli-modified\ndescription: a note the CLI stamped with modified\nmetadata: \n  node_type: memory\n  type: reference\n  home: Adam-S-Daniel/_agent-guidance:docs/decisions/0013-real.md\n  originSessionId: 7b2ce908-4845-4b48-a2c7-c76e4d6b5ab7\n  modified: 2026-09-14T23:52:52.782Z\n---\nbody\n' > "$mem/cli-modified.md"
+    printf -- '---\nname: cli-homeless-modified\ndescription: same extra keys, no home\nmetadata: \n  node_type: memory\n  type: project\n  originSessionId: 7b2ce908-4845-4b48-a2c7-c76e4d6b5ab7\n  modified: 2026-09-14T23:52:52.782Z\n---\nbody\n' > "$mem/cli-homeless-modified.md"
+    # A timestamp-shaped value that is not a date is a key this hook never
+    # reads; it must not turn a homed note "unparseable".
+    printf -- '---\nname: cli-badts\ndescription: modified is not a real date\nmetadata:\n  type: project\n  home: Adam-S-Daniel/_agent-guidance:docs/decisions/0013-real.md\n  modified: 2026-13-45T25:00:00Z\n---\nbody\n' > "$mem/cli-badts.md"
+    # `#` in values: a quoted description holding `#` and `: `, a bare one
+    # whose ` #…` YAML reads as a comment, a URL home with an anchor and
+    # `?plain=1`, and a short-form home whose filename really contains `#`.
+    printf -- '---\nname: cli-hash\ndescription: "fixes #179: keep C# and #anchors intact"\nmetadata:\n  type: project\n  home: "Adam-S-Daniel/_agent-guidance:docs/decisions/0013-real.md"\n---\nbody\n' > "$mem/cli-hash.md"
+    printf -- '---\nname: cli-hash-bare\ndescription: tracked in #179\nmetadata:\n  type: project\n  home: Adam-S-Daniel/_agent-guidance:docs/decisions/0013-real.md\n---\nbody\n' > "$mem/cli-hash-bare.md"
+    printf -- '---\nname: cli-hash-url\ndescription: "home points at a section"\nmetadata:\n  type: project\n  home: "https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0013-real.md?plain=1#L3"\n---\nbody\n' > "$mem/cli-hash-url.md"
+    printf -- '---\nname: cli-hash-literal\ndescription: "a # inside a filename"\nmetadata:\n  type: project\n  home: "Adam-S-Daniel/_agent-guidance:docs/c#-notes.md"\n---\nbody\n' > "$mem/cli-hash-literal.md"
+    # Project directories not named by the path encoder: a short name, as
+    # CLAUDE_CODE_PROJECT_DIR_NAME allows, and a >200-character one. Whether
+    # the memory folder follows that name is unmeasured; the scan must find a
+    # note under either name regardless.
+    local short_mem="$MH_CFG/projects/p/memory"
+    local long_name
+    long_name="-home-$(printf 'a%.0s' {1..210})"
+    local long_mem="$MH_CFG/projects/$long_name/memory"
+    mkdir -p "$short_mem" "$long_mem"
+    printf -- '---\nname: short-dir\nmetadata:\n  type: project\n---\nbody\n' > "$short_mem/short-dir.md"
+    printf -- '---\nname: long-dir\nmetadata:\n  type: project\n---\nbody\n' > "$long_mem/long-dir.md"
+
+    mh "$d/out-cli" "$ss"
+    # The count pins the whole set: a homed fixture flagged by mistake could
+    # otherwise hide in "+K more" and pass every assert_not_contains below.
+    # Five = homeless, dangling, cli-homeless-modified, short-dir, long-dir.
+    assert_contains "$d/out-cli" "memory-home: 5 memory note(s)" \
+        "memory-home: the 2.1.214+ fixtures flag exactly the five homeless or dangling notes"
+    assert_not_contains "$d/out-cli" "DEGRADED" \
+        "memory-home: CLI-written frontmatter does not degrade the run"
+    assert_not_contains "$d/out-cli" "$mem/cli-modified.md" \
+        "memory-home: a homed note with metadata.modified and node_type/originSessionId passes"
+    assert_contains "$d/out-cli" "$mem/cli-homeless-modified.md" \
+        "memory-home: a homeless note with the same extra metadata keys is still flagged"
+    assert_not_contains "$d/out-cli" "$mem/cli-badts.md" \
+        "memory-home: a non-date timestamp in metadata.modified does not make a homed note unparseable"
+    assert_not_contains "$d/out-cli" "$mem/cli-hash.md" \
+        "memory-home: a quoted description containing # and : parses"
+    assert_not_contains "$d/out-cli" "$mem/cli-hash-bare.md" \
+        "memory-home: a bare description with an inline # comment parses"
+    assert_not_contains "$d/out-cli" "$mem/cli-hash-url.md" \
+        "memory-home: a URL home's ?query and #anchor are not part of the path"
+    assert_not_contains "$d/out-cli" "$mem/cli-hash-literal.md" \
+        "memory-home: a short-form home keeps a literal # in the filename"
+    assert_contains "$d/out-cli" "$short_mem/short-dir.md" \
+        "memory-home: a note under a short-named project directory is scanned"
+    assert_contains "$d/out-cli" "$long_mem/long-dir.md" \
+        "memory-home: a note under a >200-character project directory is scanned"
+
+    # 12d. On Stop, a session that wrote all of them blocks only on the three
+    #      homeless ones: cli-homeless-modified, short-dir and long-dir.
+    find "$MH_CFG/projects" -name '*.md' -exec touch -d '2 days ago' {} +
+    touch "$mem"/cli-*.md "$short_mem/short-dir.md" "$long_mem/long-dir.md"
+    mh "$d/out-cli-stop" "$stop_open"
+    assert_contains "$d/out-cli-stop" '"decision": "block"' \
+        "memory-home: Stop still blocks on a homeless 2.1.214+ note this session wrote"
+    assert_contains "$d/out-cli-stop" "wrote 3 memory note(s)" \
+        "memory-home: Stop counts only the homeless ones among the 2.1.214+ notes"
+    assert_not_contains "$d/out-cli-stop" "$mem/cli-modified.md" \
+        "memory-home: Stop does not block on a homed note carrying metadata.modified"
+    assert_not_contains "$d/out-cli-stop" "$mem/cli-badts.md" \
+        "memory-home: Stop does not block on a homed note with a non-date modified"
+    rm -f "$mem"/cli-*.md "$MH_PROJ/_agent-guidance/docs/c#-notes.md"
+    rm -rf "$MH_CFG/projects/p" "$MH_CFG/projects/$long_name"
 
     # ── Degrade, never crash: RUN-LEVEL faults only ────────────────────────
     #

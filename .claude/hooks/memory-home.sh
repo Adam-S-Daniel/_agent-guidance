@@ -79,7 +79,8 @@
 #   /…/memory/feedback_decap.md (unparseable frontmatter — quote the description or fix the YAML)
 #
 # That is not a hypothetical. Claude Code writes `description:` values itself,
-# and it does not quote them, so an ordinary description containing `: ` —
+# and it may not quote them — notes on this machine carry both shapes, quoted
+# and bare — so an ordinary bare description containing `: ` —
 # "… with delete: true + editorial_workflow" — is frontmatter PyYAML rejects
 # outright ("mapping values are not allowed here"). FOUR such notes existed on
 # this machine the day this hook was written. An earlier draft treated a parse
@@ -159,6 +160,24 @@ except Exception as exc:
     degraded("PyYAML is not importable (%s), so note frontmatter cannot be "
              "parsed; nothing gated." % exc.__class__.__name__)
 
+
+class FrontmatterLoader(yaml.SafeLoader):
+    """SafeLoader that leaves timestamps as strings.
+
+    Claude Code 2.1.214+ stamps every note with a bare ISO
+    `metadata.modified: 2026-09-14T23:52:52.782Z`. SafeLoader turns anything
+    timestamp-shaped into a datetime, and a timestamp-shaped value that is not
+    a real date (month 13, day 45) raises during construction, which would
+    make the whole note "unparseable" over a key this hook never reads. A
+    string is all a field nobody here reads ever needed to be.
+    """
+
+
+FrontmatterLoader.yaml_implicit_resolvers = {
+    first: [r for r in resolvers if r[0] != "tag:yaml.org,2002:timestamp"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
 HOME = os.path.expanduser("~")
 CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
 MARKER_DIR = os.path.join(CONFIG_DIR, "memory-home")
@@ -214,7 +233,7 @@ def note_metadata(path):
     if end is None:
         return None, "unterminated frontmatter block"
     try:
-        front = yaml.safe_load("\n".join(lines[1:end]))
+        front = yaml.load("\n".join(lines[1:end]), Loader=FrontmatterLoader)
     except Exception:
         # Overwhelmingly this is an unquoted `: ` inside `description:` — see
         # the header. The remedy is named rather than the exception class,
@@ -254,6 +273,10 @@ def split_home(value):
         return None
     prefix = "https://github.com/"
     if v.startswith(prefix):
+        # A `#L10` or `#section` anchor, or GitHub's `?plain=1`, is not part of
+        # the file's path; left in, it makes a real file look dangling. The
+        # `<owner>/<repo>:<path>` form below is a literal path and keeps a `#`.
+        v = v.split("#", 1)[0].split("?", 1)[0]
         parts = [p for p in v[len(prefix):].split("/") if p]
         # <owner>/<repo>/blob/<ref>/<path…>
         if len(parts) >= 5 and parts[2] == "blob":
