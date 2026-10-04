@@ -141,7 +141,9 @@ and concurrent writers can overshoot it by their pending lines. Receipt
 failures are silent and preserve delivery, stdout, and exit status. A missing,
 unsafe, or ambiguous delivered source skips the receipt altogether. The hook launches one detached
 Python receipt writer after its verdict and workspace notice are complete;
-it never waits for that writer. Normal and workspace modes launch no foreground
+it never waits for that writer. The writer arms a five-second lifetime deadline
+before Python startup customization, so a blocked observation exits silently.
+Normal and workspace modes launch no foreground
 Python process; Cloud retains its existing delivery process and launches the
 same detached writer afterward. Metadata travels through bounded arguments,
 never prompt text or the external hook event on stdin. The hook remains compatible

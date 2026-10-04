@@ -137,6 +137,43 @@ class DeliveryReceiptTests(unittest.TestCase):
                      (result.receipt_completion.exists() and
                       len(result.receipt_completion.read_bytes().splitlines()) >= result.receipt_expected))
 
+    def assert_owned_writer_exits(self, result, pid_file):
+        """A timed-out fixture may kill only the writer PID it recorded."""
+        bounded_poll(lambda: pid_file.exists() and pid_file.read_text().isdigit())
+        pid = int(pid_file.read_text())
+        def alive():
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+        try:
+            self.wait_receipts(result)
+            bounded_poll(lambda: not alive())
+        finally:
+            if alive():
+                os.kill(pid, signal.SIGKILL)
+                bounded_poll(lambda: not alive())
+
+    def cleanup_owned_writer(self, result, pid_file):
+        if (result.receipt_completion.exists() and
+                len(result.receipt_completion.read_bytes().splitlines()) >= result.receipt_expected):
+            return
+        if pid_file.exists() and pid_file.read_text().isdigit():
+            pid = int(pid_file.read_text())
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            else:
+                def gone():
+                    try:
+                        os.kill(pid, 0)
+                        return False
+                    except ProcessLookupError:
+                        return True
+                bounded_poll(gone)
+
     def log(self, cloud=False):
         return (self.codex if cloud else self.claude) / "fleet-delivery.jsonl"
 
@@ -467,6 +504,24 @@ if FAILURE == "source":
                     with self.assertRaises(OSError):
                         self.namespace["receipt_source"](str(source), BEGIN, END)
                 source.unlink()
+
+    def test_fifo_leaves_are_refused_before_open(self):
+        source = self.root / "assembled"
+        os.mkfifo(source)
+        os.mkfifo(self.log())
+        real_open = os.open
+        attempts = []
+        def watched(path, flags, *args, **kwargs):
+            if path in (str(source), "fleet-delivery.jsonl"):
+                attempts.append(path)
+                raise AssertionError("special file reached open")
+            return real_open(path, flags, *args, **kwargs)
+        with mock.patch.object(os, "open", side_effect=watched):
+            with self.assertRaises(OSError):
+                self.namespace["receipt_source"](str(source), BEGIN, END)
+            with self.assertRaises(OSError):
+                self.namespace["receipt_write"](str(self.claude), "hook", [])
+        self.assertEqual([], attempts)
 
     def test_source_is_bounded_to_descriptor_size(self):
         source = self.root / "assembled"
@@ -855,6 +910,83 @@ os.open = denied
                         bounded_poll(release)
                         self.wait_receipts(result)
                 self.assertTrue(self.log(args == ("--codex-cloud",)).exists())
+
+    @unittest.skipUnless(hasattr(signal, "SIGALRM"), "requires POSIX alarm")
+    def test_detached_writer_exits_when_sitecustomize_blocks(self):
+        gate = self.root / "startup-fifo"
+        pid_file = self.root / "startup-pid"
+        os.mkfifo(gate)
+        injection = ("import os, sys\n"
+                     "if sys.argv[0] == '-c':\n"
+                     f"    open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                     f"    open({str(gate)!r}, 'rb').read(1)\n")
+        result = self.run_hook(injection=injection, wait=False)
+        self.assert_owned_writer_exits(result, pid_file)
+        self.assertFalse(self.log().exists())
+
+    @unittest.skipUnless(hasattr(signal, "SIGALRM"), "requires POSIX alarm")
+    def test_detached_writer_exits_for_fifo_targets_without_readers(self):
+        for target in ("receipt", "source", "helper"):
+            with self.subTest(target=target):
+                self.reset()
+                gate = self.root / (target + "-gate")
+                pid_file = self.root / (target + "-pid")
+                attempt_file = self.root / (target + "-open-attempt")
+                pid_file.unlink(missing_ok=True)
+                attempt_file.unlink(missing_ok=True)
+                if target != "receipt":
+                    os.mkfifo(gate)
+                if target == "receipt":
+                    os.mkfifo(self.log())
+                hook = HOOK
+                if target == "helper":
+                    hook = self.root / "fixture-hook.sh"
+                    hook.write_bytes(HOOK.read_bytes())
+                injection = ("import os, sys\n"
+                             "if sys.argv[0] == '-c':\n"
+                             f"    open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n")
+                if target != "receipt":
+                    injection += f"    open({str(gate)!r}, 'rb').read(1)\n"
+                watched = {"receipt": "fleet-delivery.jsonl", "source": "CLAUDE.md",
+                           "helper": str(hook)}[target]
+                injection += ("    real_open = os.open\n"
+                              "    def watched_open(path, flags, *args, **kwargs):\n"
+                              f"        if path == {watched!r}: open({str(attempt_file)!r}, 'w').close()\n"
+                              "        return real_open(path, flags, *args, **kwargs)\n"
+                              "    os.open = watched_open\n")
+                result = self.run_hook(injection=injection, wait=False, hook=hook)
+                result.receipt_expected = 1
+                finished = False
+                try:
+                    bounded_poll(lambda: pid_file.exists() and pid_file.read_text().isdigit())
+                    if target != "receipt":
+                        leaf = self.claude / "CLAUDE.md" if target == "source" else hook
+                        leaf.unlink()
+                        os.mkfifo(leaf)
+                        def release():
+                            try:
+                                fd = os.open(gate, os.O_WRONLY | os.O_NONBLOCK)
+                            except OSError as exc:
+                                if exc.errno == errno.ENXIO:
+                                    return False
+                                raise
+                            try:
+                                os.write(fd, b"1")
+                            finally:
+                                os.close(fd)
+                            return True
+                        bounded_poll(release)
+                    self.assert_owned_writer_exits(result, pid_file)
+                    finished = True
+                    self.assertFalse(attempt_file.exists(), "FIFO was opened before refusal")
+                    self.assertFalse(self.log().is_file())
+                finally:
+                    if not finished:
+                        self.cleanup_owned_writer(result, pid_file)
+                    if target != "receipt":
+                        gate.unlink()
+                    if target == "helper":
+                        hook.unlink()
 
     def test_hook_has_no_forbidden_bash4_lexical_tokens(self):
         source = HOOK.read_text()
