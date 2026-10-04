@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — subagent-delegation — edit
+- Motivation: [#176](https://github.com/Adam-S-Daniel/_agent-guidance/issues/176): since CLI 2.1.271, custom and plugin subagents with `omitClaudeMd` run without user, project and local CLAUDE.md, so they never see this guidance.
+- Change: named agents with `omitClaudeMd` among the children that skip this file; +16 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
 ## 2026-10-04 — skills-ecosystem — edit
 - Motivation: [#174](https://github.com/Adam-S-Daniel/_agent-guidance/issues/174): the "CLI 2.1.273+" floor is disputed (docs say 2.1.273, the changelog 2.1.275) and synced skills answer to their short name since 2.1.269/2.1.281.
 - Change: dropped the version floor; synced skills run as `/<name>`, or `/anthropic-skills:<name>` when the short name is taken; +14 bytes.

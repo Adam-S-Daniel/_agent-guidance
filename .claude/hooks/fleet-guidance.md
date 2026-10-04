@@ -336,8 +336,8 @@ reusable-workflow ref is for review to catch.
   ship a wrong diff on anything subtle. The orchestrator keeps root cause,
   architecture, the spec (files, exact changes, house style, test command) and
   diff review; output faces the same test/CI proof. A child that skips this
-  file (e.g. Claude Code Explore/Plan agents, SDK harnesses with
-  `settingSources: []`) needs constraints in its prompt.
+  file (e.g. Explore/Plan agents, agents with `omitClaudeMd`, SDK harnesses
+  with `settingSources: []`) needs constraints in its prompt.
 - Delegated work is done when a **verifier exits 0**: name the exact
   command, run LAST (after a trailing `echo $?` the tool's exit code is the
   echo's), and require its code back. "Cannot run it" is BLOCKED; a count
