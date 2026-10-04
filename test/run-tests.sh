@@ -7040,33 +7040,39 @@ PY
     echo "$output" > "$TEST_DIR/sync-fork-migration-2.txt"
     assert_contains "$TEST_DIR/sync-fork-migration-2.txt" "6 skipped" "fork migration: a run after migrating leaves every repo up to date"
 
-    # Only skills-bootstrap stale: its migration alone must still be staged
-    # and committed (the fleet-memory registration cannot carry it along).
-    git -C "$w" fetch -q origin main >/dev/null 2>&1 && git -C "$w" reset -q --hard FETCH_HEAD
-    python3 - "$w/.claude/settings.json" <<'PY'
+    # One hook stale at a time: each migration alone must still be staged and
+    # committed, since the other hook's registration cannot carry it along.
+    # fleet-memory alone is the common case: most fleet repos have no
+    # skills.lock, so only fleet-memory is ever registered there.
+    local hook state
+    for hook in skills-bootstrap.sh fleet-memory.sh; do
+        git -C "$w" fetch -q origin main >/dev/null 2>&1 && git -C "$w" reset -q --hard FETCH_HEAD
+        python3 - "$w/.claude/settings.json" "$hook" <<'PY'
 import json, sys
-p = sys.argv[1]
+p, hook = sys.argv[1], sys.argv[2]
 doc = json.load(open(p, encoding="utf-8"))
 for g in doc["hooks"]["SessionStart"]:
-    if "skills-bootstrap.sh" in g["hooks"][0]["command"]:
+    if hook in g["hooks"][0]["command"]:
         g["matcher"] = "startup|resume"
 open(p, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
 PY
-    git -C "$w" commit -qam "re-wire skills-bootstrap with the pre-fork matcher" >/dev/null 2>&1
-    git -C "$w" push origin HEAD:main >/dev/null 2>&1
-    GITHUB_REPOSITORY_OWNER=bootorg \
-    MOCK_BARE_DIR="$TEST_DIR/bare" \
-    REPOS_YML="$TEST_DIR/repos.yml" \
-    PATH="$TEST_DIR/bin:$PATH" \
-    "$REPO_ROOT/scripts/sync.sh" >/dev/null 2>&1 || true
-    rm -rf "$v"
-    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
-        fail "fork migration (bootstrap only): could not clone"
-        return
-    }
-    local state
-    state=$("$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
-    [[ "$state" == "registered" ]] && pass "fork migration: a skills-bootstrap-only migration is committed" || fail "fork migration: a skills-bootstrap-only migration is committed (main reads '$state')"
+        git -C "$w" commit -qam "re-wire $hook with the pre-fork matcher" >/dev/null 2>&1
+        git -C "$w" push origin HEAD:main >/dev/null 2>&1
+        state=$(BOOTSTRAP_HOOK_BASENAME="$hook" "$REPO_ROOT/scripts/bootstrap-status.sh" "$w/.claude/settings.json")
+        [[ "$state" == "stale-matcher" ]] || fail "fork migration ($hook only): the fixture is not stale ('$state') — the check below would be vacuous"
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" >/dev/null 2>&1 || true
+        rm -rf "$v"
+        git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+            fail "fork migration ($hook only): could not clone"
+            return
+        }
+        state=$(BOOTSTRAP_HOOK_BASENAME="$hook" "$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
+        [[ "$state" == "registered" ]] && pass "fork migration: a $hook-only migration is committed" || fail "fork migration: a $hook-only migration is committed (main reads '$state')"
+    done
 }
 
 # ── Test 5e: a digest mismatch disables delivery and fails the run ────────
@@ -20870,6 +20876,51 @@ PY
         pass "register-memory-home-hook: a run after migrating changes nothing"
     else
         fail "register-memory-home-hook: a run after migrating rewrote the file"
+    fi
+
+    # 4b. Shapes the operator owns are never migrated: our command sharing a
+    #     startup|resume group with another command (widening it would widen
+    #     theirs), and a hand-tuned matcher. Both stay byte-identical.
+    local f mh_cmd
+    mh_cmd=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d["hooks"]["Stop"][0]["hooks"][0]))' "$d/legacy/settings.json")
+    for f in shared custom; do
+        mkdir -p "$d/$f"
+        python3 - "$d/$f/settings.json" "$f" "$mh_cmd" <<'PY'
+import json, sys
+path, kind, ours = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+if kind == "shared":
+    ss = {"matcher": "startup|resume", "hooks": [
+        {"type": "command", "command": "bash /opt/mine.sh"}, ours]}
+else:
+    ss = {"matcher": "startup", "hooks": [ours]}
+doc = {"hooks": {"SessionStart": [ss], "Stop": [{"hooks": [ours]}]}}
+open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+        cp "$d/$f/settings.json" "$d/$f-before.json"
+        out=$(CLAUDE_CONFIG_DIR="$d/$f" "$script" 2>&1) || true
+        printf '%s\n' "$out" > "$d/out4b-$f"
+        assert_contains "$d/out4b-$f" "already-registered" \
+            "register-memory-home-hook: a $f legacy-looking group reads already-registered"
+        if cmp -s "$d/$f-before.json" "$d/$f/settings.json"; then
+            pass "register-memory-home-hook: a $f group is left byte-identical"
+        else
+            fail "register-memory-home-hook: a $f group was rewritten"
+        fi
+    done
+
+    # 4c. A file it cannot write is a clean refusal (exit 5), not a traceback.
+    if [[ $(id -u) -ne 0 ]]; then
+        mkdir -p "$d/readonly"
+        printf '{}\n' > "$d/readonly/settings.json"
+        chmod 0444 "$d/readonly/settings.json"
+        rc=0
+        out=$(CLAUDE_CONFIG_DIR="$d/readonly" "$script" 2>&1) || rc=$?
+        chmod 0644 "$d/readonly/settings.json"
+        if [[ $rc -eq 5 && "$out" == *"refused-unwritable"* && "$out" != *Traceback* ]]; then
+            pass "register-memory-home-hook: a read-only file exits 5 with refused-unwritable"
+        else
+            fail "register-memory-home-hook: a read-only file exits 5 with refused-unwritable — got $rc: $out"
+        fi
     fi
 
     # 5. Unparseable → exit 3, and NOT ONE BYTE written.

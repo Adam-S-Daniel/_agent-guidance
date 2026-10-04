@@ -82,10 +82,13 @@ set -euo pipefail
 #   register-memory-home-hook: migrated              — the legacy SessionStart matcher was widened
 #   register-memory-home-hook: already-registered    — no write; the hook was already named
 #   register-memory-home-hook: refused-unparseable   — no write; not a JSON object
+#   register-memory-home-hook: refused-guard         — no write; the re-parse guard saw more than the intended change
+#   register-memory-home-hook: refused-unwritable    — no write; the file could not be written
 #   register-memory-home-hook: refused-no-config-dir — no write; the parent directory is absent
 #
 # Exit: 0 on registered, migrated or already-registered, 2 on usage, 3 on an unparseable
-#       file, 4 when there is no Claude config directory to register into.
+#       file or a guard refusal, 4 when there is no Claude config directory to
+#       register into, 5 when the file cannot be written.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -211,6 +214,17 @@ def already(event):
     return False
 
 
+def write_or_refuse(text):
+    """A file we cannot write (read-only, wrong owner) is a refusal with a
+    status, not a traceback."""
+    try:
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        print("refused-unwritable")
+        sys.exit(5)
+
+
 def names_hook(e):
     return isinstance(e, dict) and needle in str(e.get("command", ""))
 
@@ -257,11 +271,10 @@ check = json.loads(candidate)
 for i in stale:
     check["hooks"]["SessionStart"][i]["matcher"] = legacy
 if json.loads(candidate) != want or (stale and not missing and check != doc):
-    print("refused-unparseable")
+    print("refused-guard")
     sys.exit(3)
 
-with open(target, "w", encoding="utf-8") as fh:
-    fh.write(candidate)
+write_or_refuse(candidate)
 if missing:
     print("registered " + ",".join(missing) + (" migrated" if stale else ""))
 else:
@@ -270,6 +283,8 @@ else:
     status=$?
     if [[ "$result" == "refused-unparseable" ]]; then
         echo "register-memory-home-hook: refused-unparseable — $TARGET is not a JSON object. Nothing written; fix or move that file and re-run."
+    elif [[ "$result" == "refused-unwritable" ]]; then
+        echo "register-memory-home-hook: refused-unwritable — $TARGET could not be written (permissions?). Nothing written."
     elif [[ -n "$result" ]]; then
         echo "register-memory-home-hook: $result"
     fi

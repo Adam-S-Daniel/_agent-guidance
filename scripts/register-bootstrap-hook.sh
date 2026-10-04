@@ -58,9 +58,12 @@ set -euo pipefail
 #   registered          — the file was created or appended to
 #   migrated            — the hook's legacy `startup|resume` matcher was widened
 #   refused-unparseable — no write; the existing file is not a JSON object
+#   refused-guard       — no write; the re-parse guard saw more than the
+#                         intended change
+#   refused-unwritable  — no write; the file could not be written
 #
 # Exit: 0 on registered, migrated or already-registered, 2 on usage, 3 on
-# refusal.
+# refusal (unparseable or guard), 5 when the file cannot be written.
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
@@ -110,6 +113,17 @@ if raw.strip():
 else:
     doc = {}
 
+def write_or_refuse(text):
+    """A file we cannot write (read-only, wrong owner) is a refusal with a
+    status, not a traceback."""
+    try:
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        print("refused-unwritable")
+        sys.exit(5)
+
+
 def names_hook(e):
     return isinstance(e, dict) and needle in str(e.get("command", ""))
 
@@ -148,10 +162,9 @@ if naming:
     for i in naming:
         check["hooks"]["SessionStart"][i]["matcher"] = legacy
     if json.loads(candidate) != want or check != doc:
-        print("refused-unparseable")
+        print("refused-guard")
         sys.exit(3)
-    with open(target, "w", encoding="utf-8") as fh:
-        fh.write(candidate)
+    write_or_refuse(candidate)
     print("migrated")
     sys.exit(0)
 
@@ -174,11 +187,10 @@ candidate = json.dumps(want, indent=2) + "\n"
 # "the original document plus our group" — nothing dropped, nothing coerced.
 # If it does not, write nothing.
 if json.loads(candidate) != want:
-    print("refused-unparseable")
+    print("refused-guard")
     sys.exit(3)
 
-with open(target, "w", encoding="utf-8") as fh:
-    fh.write(candidate)
+write_or_refuse(candidate)
 print("registered")
 ' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$LEGACY_MATCHER") || {
     status=$?
