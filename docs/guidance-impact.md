@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — fleet-spans-two-owners — edit
+- Motivation: [#177](https://github.com/Adam-S-Daniel/_agent-guidance/issues/177): CLI 2.1.282 added attaching a repo from a different GitHub owner to a running cloud session, so "hosted sessions refuse cross-owner attachment" is stale.
+- Change: the reach bullet now says a session's reach is per-session and may miss an owner, true with or without cross-owner attachment; -6 bytes.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
 ## 2026-10-04 — two-setup-gaps — edit
 - Motivation: [#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175): the "install behind" check failed silently. Measured on CLI 2.1.289 in a scratch config: the marketplace clone is `git clone --depth 1` (re-cloned on update), so after a refresh `merge-base --is-ancestor <gitCommitSha> HEAD` exits 128 and `rev-list --count` prints nothing; at sha == HEAD the ancestor test succeeds, reading "behind".
 - Change: compare `gitCommitSha` with the clone's `rev-parse HEAD` (equal current, other behind, missing unknown) and say why ancestry and counting fail; +24 bytes.

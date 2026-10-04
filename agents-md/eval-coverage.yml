@@ -95,7 +95,7 @@
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
   status: gap
-  bytes: 1067
+  bytes: 1061
 
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'

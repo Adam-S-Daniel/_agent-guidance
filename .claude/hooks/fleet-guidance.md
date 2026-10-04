@@ -204,8 +204,8 @@ had no `skills.lock`).
   `cron_coverage.fleet`) **to a search index**; a zero result is weak
   evidence. **To ask whether repo X has file Y, ask the repo**
   (`git ls-remote`, the contents API).
-- **Your session's reach is not the fleet's shape** — hosted sessions refuse
-  cross-owner attachment; "I cannot see it" and "it does not exist" differ.
+- **Your session's reach is not the fleet's shape** — it is per-session and
+  may miss an owner; "I cannot see it" and "it does not exist" differ.
 - **The DENOMINATOR is the part that lies.** Enumerating local checkouts
   errs both ways (2026-08-29: three DELETED repos counted, a live consumer
   missed — `ALL PROPAGATED` over 17 of 18, false GREEN; issue #37). Take it
