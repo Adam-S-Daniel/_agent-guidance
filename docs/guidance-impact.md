@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — working-in-these-repos — edit
+- Motivation: the owner requested a standard pause for issues and PRs on 2026-10-04, using the [GHA-bench cloud benchmark PR](https://github.com/Adam-S-Daniel/GHA-bench/pull/44) as the example.
+- Change: added the owner-controlled `on-hold` rule, passive status allowance, and prohibition on paused work and follow-ups; full policy and provisioning in [on-hold-label.md](reference/on-hold-label.md); +224 bytes.
+- Eval: local deterministic [test/test-on-hold-label.js](../test/test-on-hold-label.js): `node --test test/test-on-hold-label.js`, 9 tests, exit 0; all 9 guards independently reject in-memory policy or provisioning mutations (each 1 failed, 8 skipped, exit 1).
+- Outcome: pending — proposed 2026-10-04
+
 ## 2026-10-04 — fleet-spans-two-owners — edit
 - Motivation: [#177](https://github.com/Adam-S-Daniel/_agent-guidance/issues/177): CLI 2.1.282 added attaching a repo from a different GitHub owner to a running cloud session, so "hosted sessions refuse cross-owner attachment" is stale.
 - Change: the reach bullet now says a session's reach is per-session and may miss an owner, true with or without cross-owner attachment; -6 bytes.

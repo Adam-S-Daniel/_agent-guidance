@@ -16,9 +16,13 @@ the skill's hygiene rules or its title lint. The procedure around it is
 - **Name the surface or don't file.** An issue needs a file, test, doc line,
   setting or pin in the target repo that the change touches. "Might be
   relevant" with nothing named stays out of the changelog entry too.
-- **Search first.** Check the target repo's open and closed issues. If one
-  already covers the change, link it in the group's **Issues** line instead of
-  filing a duplicate.
+- **Search first.** Check the target repo's open and closed issues and PRs.
+  If an existing issue or PR carries `on-hold` and covers the change, cite it
+  as `on hold` and suppress duplicate or follow-up work, including in another
+  repo doing the same paused work. Never edit, close, or relabel it. Follow
+  the [on-hold label policy](on-hold-label.md). Otherwise, if one already
+  covers the change, link it in the group's **Issues** line instead of filing
+  a duplicate.
 
 ## Title
 
@@ -137,9 +141,13 @@ call through the session proxy keeps a footer, and it needs
   in the create call. The laptop issue worker
   ([`agent-issue-worker.md`](agent-issue-worker.md)) claims an issue by
   swapping it to `agent-working`, and sets `agent-blocked` if it stops. No
-  other label: the fleet has no vendor-change label.
+  other routine-applied label: the fleet has no vendor-change label.
+  The owner may add or remove `on-hold`; an agent may do so only when the
+  owner explicitly directs it in that session. Held items remain untouched.
 
 ## Closing
+
+First re-read labels and linked PR labels: `on-hold` forbids closing.
 
 - **Completed:** when the checks are done. Link the PR.
 - **Not planned:** when the change turned out not to matter. Give one line

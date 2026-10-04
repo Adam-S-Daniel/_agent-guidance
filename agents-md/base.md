@@ -13,6 +13,9 @@ AGENTS.md at 32 KiB.
 
 ## Working in these repos
 
+- **`on-hold` issues and PRs:** no work or follow-ups doing paused work.
+  Only the owner adds/removes it unless explicitly directing an agent this session.
+  Read/cite/list as on hold; do not ask again. Keep held PRs open.
 - Fix what was asked: no speculative features, premature abstractions or
   unused helpers. Prefer editing an existing file over creating one.
 - A public interface change updates its tests; new behavior gets a test, a
