@@ -101,7 +101,7 @@ class DeliveryReceiptTests(unittest.TestCase):
         path.write_text(script)
         path.chmod(0o755)
 
-    def run_hook(self, args=(), enabled=True, injection=None, wait=True, hook=HOOK, bash="bash", **process_options):
+    def run_hook(self, args=(), enabled=True, injection=None, wait=True, hook=HOOK, bash="bash", missing_python=False, **process_options):
         invocation = Path(tempfile.mkdtemp(prefix="invocation-", dir=self.root))
         pythonpath = invocation / "pythonpath"
         pythonpath.mkdir()
@@ -111,12 +111,21 @@ class DeliveryReceiptTests(unittest.TestCase):
                    PYTHONPATH=str(pythonpath), RECEIPT_TEST_COMPLETION=str(completion))
         if enabled is None:
             env.pop("FLEET_GUIDANCE_RECEIPT")
+        if missing_python:
+            restricted = invocation / "restricted-bin"
+            restricted.mkdir()
+            for name in ("bash", "basename", "dirname", "git", "mktemp", "awk", "cat", "cmp", "mv", "rm",
+                         "mkdir", "readlink", "sha256sum", "tr", "grep", "head", "wc"):
+                executable = shutil.which(name)
+                self.assertIsNotNone(executable, name)
+                (restricted / name).symlink_to(executable)
+            env["PATH"] = str(restricted)
         # Keep a sentinel first even when a case prepends its own executable shim.
         env["PATH"] = str(self.sentinel_bin) + os.pathsep + env["PATH"]
         result = timed_run([bash, str(hook), *args], env=env,
                           capture_output=not process_options, check=False, cwd=self.root, **process_options)
         cloud = bool(args and args[0] == "--codex-cloud")
-        expected = int(cloud) + int(enabled is not False and hook == HOOK)
+        expected = 0 if missing_python else int(cloud) + int(enabled is not False and hook == HOOK)
         result.receipt_completion = completion
         result.receipt_expected = expected
         if wait:
@@ -158,7 +167,7 @@ class DeliveryReceiptTests(unittest.TestCase):
         self.assertEqual(baseline.stderr, result.stderr)
         return result
 
-    def test_installed_snapshot_and_current_identity(self):
+    def test_installed_source_and_current_identity(self):
         for args in ((), ("--codex-cloud",)):
             with self.subTest(args=args):
                 self.reset()
@@ -194,7 +203,7 @@ class DeliveryReceiptTests(unittest.TestCase):
             self.assertIsNone(delivery["sha256"])
             self.assertEqual(0, delivery["bytes"])
 
-    def test_stamp_refresh_snapshot(self):
+    def test_stamp_refresh_source(self):
         self.run_hook()
         for file in (self.claude / "CLAUDE.md", self.codex / "AGENTS.md"):
             file.write_text(file.read_text().replace("fleet-guidance-delivered: 0 -->\n", ""))
@@ -345,7 +354,7 @@ os.open = denied
 
     def test_syscall_failures_preserve_output_exit_silently(self):
         for args in ((), ("--codex-cloud",)):
-            for failure in ("unwritable", "full", "short", "snapshot"):
+            for failure in ("unwritable", "full", "short", "source"):
                 with self.subTest(args=args, failure=failure):
                     self.reset()
                     injection = '''import errno, os
@@ -363,17 +372,17 @@ def guarded_write(fd, data):
         if FAILURE == "short": return original_write(fd, data[:1])
     return original_write(fd, data)
 os.open, os.write = guarded_open, guarded_write
-if FAILURE == "snapshot":
+if FAILURE == "source":
     real_read = os.read
-    def failed_read(fd, count): raise OSError("snapshot unavailable")
+    def failed_read(fd, count): raise OSError("source unavailable")
     os.read = failed_read
 '''.replace("FAILURE", repr(failure))
-                    # Cloud hashes its in-memory block and has no snapshot command.
+                    # Cloud hashes its in-memory block and has no source command.
                     self.assert_identity(args, injection=injection)
-                    if failure == "snapshot" and not args:
+                    if failure == "source" and not args:
                         self.assertFalse(self.log().exists())
         self.payload.unlink()
-        self.assert_identity(("--codex-cloud",), injection=injection.replace("'snapshot'", "'full'"))
+        self.assert_identity(("--codex-cloud",), injection=injection.replace("'source'", "'full'"))
 
     def test_cap_skips_without_rewriting_and_no_personal_fields(self):
         self.log().write_bytes(b"x" * self.namespace["RECEIPT_LIMIT"])
@@ -438,7 +447,7 @@ if FAILURE == "snapshot":
                 self.assertEqual(b"Untouched.\n", victim.read_bytes())
                 self.log().unlink()
 
-    def test_snapshot_refuses_replaced_symlink_fifo_and_hardlink(self):
+    def test_source_refuses_replaced_symlink_fifo_and_hardlink(self):
         source = self.root / "assembled"
         victim = self.root / "victim"
         victim.write_bytes((BEGIN + "\nPayload\n" + END + "\n").encode())
@@ -456,10 +465,10 @@ if FAILURE == "snapshot":
                     return real_open(path, flags, *args, **kwargs)
                 with mock.patch.object(os, "open", side_effect=swap):
                     with self.assertRaises(OSError):
-                        self.namespace["receipt_snapshot"](str(source), BEGIN, END)
+                        self.namespace["receipt_source"](str(source), BEGIN, END)
                 source.unlink()
 
-    def test_snapshot_is_bounded_to_descriptor_size(self):
+    def test_source_is_bounded_to_descriptor_size(self):
         source = self.root / "assembled"
         block = (BEGIN + "\nPayload\n" + END + "\n").encode()
         source.write_bytes(block)
@@ -470,14 +479,14 @@ if FAILURE == "snapshot":
                 stream.write(b"Extra personal content.\n")
             return original_read(fd, count)
         with mock.patch.object(os, "read", side_effect=grow):
-            digest, count = self.namespace["receipt_snapshot"](str(source), BEGIN, END)
+            digest, count = self.namespace["receipt_source"](str(source), BEGIN, END)
         self.assertEqual((hashlib.sha256(block).hexdigest(), len(block)), (digest, count))
 
-    def test_snapshot_descriptor_guards_run_before_read(self):
+    def test_source_descriptor_guards_run_before_read(self):
         source = self.root / "assembled"
         block = (BEGIN + "\nPayload\n" + END + "\n").encode()
         source.write_bytes(block)
-        snapshot = self.namespace["receipt_snapshot"]
+        read_source = self.namespace["receipt_source"]
         real_fstat, real_read, real_write = os.fstat, os.read, os.write
         for label, field, value in (
             ("nonregular", 0, stat.S_IFIFO | 0o600),
@@ -493,7 +502,7 @@ if FAILURE == "snapshot":
                 with mock.patch.object(os, "fstat", side_effect=changed), \
                         mock.patch.object(os, "read", wraps=real_read) as read:
                     with self.assertRaises(OSError):
-                        snapshot(str(source), BEGIN, END)
+                        read_source(str(source), BEGIN, END)
                     read.assert_not_called()
                 if label != "oversized":
                     # The writer must refuse an already-open unsafe descriptor,
@@ -507,12 +516,12 @@ if FAILURE == "snapshot":
                     self.log().unlink()
         with mock.patch.object(os, "read", return_value=b"") as read:
             with self.assertRaises(OSError):
-                snapshot(str(source), BEGIN, END)
+                read_source(str(source), BEGIN, END)
             read.assert_called_once()
         self.assertEqual((hashlib.sha256(block).hexdigest(), len(block)),
-                         snapshot(str(source), BEGIN, END))
+                         read_source(str(source), BEGIN, END))
 
-    def test_ambiguous_snapshot_skips_receipt_without_changing_delivery(self):
+    def test_ambiguous_source_skips_receipt_without_changing_delivery(self):
         for marker in (BEGIN, END):
             with self.subTest(marker=marker):
                 self.reset()
@@ -636,7 +645,7 @@ os.open = denied
         self.assert_identity(injection="import time\ndef fail(): raise NotImplementedError()\ntime.time = fail\n",
                              )
 
-    def test_symlinked_parent_silently_skips_before_snapshot_and_digest(self):
+    def test_symlinked_parent_silently_skips_before_source_and_digest(self):
         for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
             self.reset()
             cloud = bool(args and args[0] == "--codex-cloud")
@@ -655,7 +664,7 @@ os.open = denied
                 directory.unlink()
                 moved.rename(directory)
 
-    def test_stamp_only_failed_snapshot_skips_entire_receipt(self):
+    def test_stamp_only_failed_source_skips_entire_receipt(self):
         self.run_hook(enabled=False)
         for path in (self.claude / "CLAUDE.md", self.codex / "AGENTS.md"):
             path.write_bytes(path.read_bytes().replace(
@@ -668,7 +677,7 @@ os.open = denied
         git.chmod(0o755)
         self.env["PATH"] = str(binary) + os.pathsep + self.env["PATH"]
         before = (self.claude / "CLAUDE.md").read_bytes()
-        self.assert_identity(injection="import os\ndef fail(*args): raise OSError('snapshot')\nos.read = fail\n",
+        self.assert_identity(injection="import os\ndef fail(*args): raise OSError('source')\nos.read = fail\n",
                              )
         after = (self.claude / "CLAUDE.md").read_bytes()
         self.assertNotEqual(before, after)
@@ -727,7 +736,7 @@ os.open = denied
             ("hook", valid[:-1]),
             ("hook", ("example.com/operator", *valid[1:])),
             ("hook", (valid[0], "unknown", *valid[2:])),
-            ("hook", (*valid[:2], "example.net/snapshot", "", "0")),
+            ("hook", (*valid[:2], "example.net/source", "", "0")),
             ("hook", (*valid[:3], "x" * 4096, "1")),
             ("hook", (*valid[:3], "invalid", "1")),
             ("hook", (*valid[:4], "-1")),
@@ -736,90 +745,72 @@ os.open = denied
         )
         for mode, metadata in cases:
             with self.subTest(mode=mode, metadata_size=sum(map(len, metadata))):
-                self.namespace["receipt_worker"](str(self.claude), mode, BEGIN, END, "", *metadata)
+                self.namespace["receipt_worker"](str(self.claude), mode, BEGIN, END, *metadata)
                 self.assertFalse(self.log().exists())
 
-    def test_detached_snapshots_are_private_managed_only_and_removed(self):
-        for path in (self.claude / "CLAUDE.md", self.codex / "AGENTS.md"):
-            path.write_bytes(b"Operator prefix.\nOperator suffix.\n")
-        observed = self.root / "snapshot-observation"
-        injection = ("import json, os, stat, sys\n"
-                     "if sys.argv[0] == '-c':\n"
-                     "    directory = sys.argv[6]\n"
-                     "    metadata = {'directory': directory, 'mode': stat.S_IMODE(os.stat(directory).st_mode),\n"
-                     "                'files': [open(os.path.join(directory, name), 'rb').read().decode()\n"
-                     "                          for name in os.listdir(directory)]}\n"
-                     f"    with open({str(observed)!r}, 'w') as stream: json.dump(metadata, stream)\n")
-        self.run_hook(injection=injection)
-        data = json.loads(observed.read_text())
-        self.assertEqual(0o700, data["mode"])
-        self.assertEqual(2, len(data["files"]))
-        for content in data["files"]:
-            self.assertTrue(content.startswith(BEGIN + "\n"))
-            self.assertTrue(content.endswith(END + "\n"))
-            self.assertNotIn("Operator prefix", content)
-            self.assertNotIn("Operator suffix", content)
-        self.assertFalse(Path(data["directory"]).exists())
+    def test_observation_never_creates_tmpdir_entries(self):
+        private_tmp = self.root / "private-tmp"
+        private_tmp.mkdir(mode=0o700)
+        marker = private_tmp / "existing"
+        marker.write_bytes(b"Keep this entry.\n")
+        self.env["TMPDIR"] = str(private_tmp)
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            for state in ("supported", "missing_python", "exit127", "disabled", "unsupported"):
+                with self.subTest(args=args, state=state):
+                    self.reset()
+                    self.python_shim(self.bin / "python3",
+                                     body="exit 127\n" if state == "exit127" else None)
+                    self.run_hook(args, enabled=state != "disabled",
+                                  missing_python=state == "missing_python", injection="import os\nos.supports_dir_fd = set()\n"
+                                  if state == "unsupported" else None)
+                    self.assertEqual(["existing"], sorted(path.name for path in private_tmp.iterdir()))
+                    self.assertEqual(b"Keep this entry.\n", marker.read_bytes())
+                    self.assertEqual(state == "supported", self.log(args == ("--codex-cloud",)).exists())
+        self.python_shim(self.bin / "python3")
 
-    def test_snapshot_preparation_and_write_faults_preserve_delivery(self):
-        mktemp = shutil.which("mktemp")
-        self.assertIsNotNone(mktemp)
-        shim = self.bin / "mktemp"
-        for failure in ("prepare", "fresh_write", "stamp_write"):
-            with self.subTest(failure=failure):
+    def test_symlinked_tmpdir_stays_empty_and_receipts_are_written(self):
+        private_tmp = self.root / "private-tmp"
+        private_tmp.mkdir(mode=0o700)
+        linked_tmp = self.root / "linked-tmp"
+        linked_tmp.symlink_to(private_tmp, target_is_directory=True)
+        self.env["TMPDIR"] = str(linked_tmp)
+        for args in ((), ("--workspace", str(self.root)), ("--codex-cloud",)):
+            with self.subTest(args=args):
                 self.reset()
-                shim.unlink(missing_ok=True)
-                if failure == "stamp_write":
-                    self.run_hook(enabled=False)
-                    for path in (self.claude / "CLAUDE.md", self.codex / "AGENTS.md"):
-                        path.write_bytes(path.read_bytes().replace(b"<!-- fleet-guidance-delivered: 0 -->\n", b""))
-                    git = self.bin / "git"
-                    git.write_text('#!/bin/sh\ncase "$*" in *rev-parse*) echo true;; *log*) echo 123;; esac\n')
-                    git.chmod(0o755)
-                action = "exit 1\n" if failure == "prepare" else (
-                    "directory=$(" + shlex.quote(mktemp) + ' "$@") || exit 1\n'
-                    'ln -s /dev/full "$directory/0" || exit 1\n'
-                    'printf "%s\\n" "$directory"\nexit 0\n')
-                shim.write_text('#!/bin/sh\nif [ "$1" = -d ]; then\n' + action +
-                                "fi\nexec " + shlex.quote(mktemp) + ' "$@"\n')
-                shim.chmod(0o755)
-                self.assert_identity()
-                self.assertFalse(self.log().exists())
-                if failure == "stamp_write":
-                    self.assertIn(b"<!-- fleet-guidance-delivered: 123 -->", (self.claude / "CLAUDE.md").read_bytes())
+                self.run_hook(args)
+                self.assertEqual([], list(private_tmp.iterdir()))
+                self.assertTrue(self.log(args == ("--codex-cloud",)).exists())
 
-    def test_worker_refuses_unsafe_snapshot_directory_before_read(self):
-        snapshots = self.root / "private-snapshots"
-        snapshots.mkdir(mode=0o700)
-        source = snapshots / "0"
+    def test_worker_reads_only_managed_block_from_delivered_source(self):
+        source = self.claude / "CLAUDE.md"
+        block = (BEGIN + "\nPayload\n" + END + "\n").encode()
+        source.write_bytes(b"Operator prefix.\n" + block + b"Operator suffix.\n")
+        with mock.patch.object(self.namespace["time"], "time", return_value=1234):
+            self.namespace["receipt_worker"](str(self.claude), "hook", BEGIN, END,
+                                             "claude/CLAUDE.md", "written", str(source), "", "0")
+        record = self.records()[0]
+        self.assertEqual(1234, record["ts"])
+        self.assertEqual([self.namespace["receipt_delivery"](
+            "claude/CLAUDE.md", "written", hashlib.sha256(block).hexdigest(), len(block))],
+            record["deliveries"])
+        serialized = self.log().read_bytes()
+        self.assertNotIn(b"Operator", serialized)
+        self.assertNotIn(str(source).encode(), serialized)
+
+    def test_worker_refuses_source_with_symlinked_parent_before_read(self):
+        directory = self.root / "delivered"
+        directory.mkdir()
+        source = directory / "CLAUDE.md"
         source.write_bytes((BEGIN + "\nPayload\n" + END + "\n").encode())
-        for kind in ("symlink", "mode", "foreign_owner"):
-            with self.subTest(kind=kind):
-                path = snapshots
-                if kind == "symlink":
-                    path = self.root / "linked-snapshots"
-                    path.symlink_to(snapshots, target_is_directory=True)
-                if kind == "mode":
-                    snapshots.chmod(0o755)
-                real_fstat = os.fstat
-                def inspect(fd):
-                    info = real_fstat(fd)
-                    if kind == "foreign_owner" and stat.S_ISDIR(info.st_mode) and info.st_ino == snapshots.stat().st_ino:
-                        fields = list(info)
-                        fields[4] = os.geteuid() + 1
-                        return os.stat_result(fields)
-                    return info
-                reader = mock.Mock(wraps=self.namespace["receipt_snapshot"])
-                with mock.patch.dict(self.namespace, receipt_snapshot=reader), \
-                        mock.patch.object(os, "fstat", side_effect=inspect):
-                    self.namespace["receipt_worker"](str(self.claude), "hook", BEGIN, END, str(path),
-                                                     "claude/CLAUDE.md", "written", str(path / "0"), "", "0")
-                reader.assert_not_called()
-                self.assertFalse(self.log().exists())
-                self.assertTrue(source.exists())
-                if kind == "symlink":
-                    path.unlink()
-                snapshots.chmod(0o700)
+        linked = self.root / "linked-delivered"
+        linked.symlink_to(directory, target_is_directory=True)
+        reader = mock.Mock(wraps=self.namespace["receipt_source"])
+        with mock.patch.dict(self.namespace, receipt_source=reader):
+            self.namespace["receipt_worker"](str(self.claude), "hook", BEGIN, END,
+                                             "claude/CLAUDE.md", "written", str(linked / "CLAUDE.md"), "", "0")
+        reader.assert_not_called()
+        self.assertFalse(self.log().exists())
+        self.assertTrue(source.exists())
 
     def test_hook_returns_before_receipt_writer_is_released(self):
         gate = self.root / "release"
@@ -891,19 +882,27 @@ os.open = denied
         result = timed_run(["git", "show", "origin/main:.claude/hooks/fleet-memory.sh"],
                            capture_output=True, check=True, cwd=ROOT, env=self.env)
         baseline.write_bytes(result.stdout)
-        for args, enabled in (((), True), (("--codex-cloud",), True), ((), False)):
-            with self.subTest(args=args, receipt=enabled):
+        private_tmp = self.root / "bash32-tmp"
+        private_tmp.mkdir(mode=0o700)
+        self.env["TMPDIR"] = str(private_tmp)
+        for args, enabled, missing in (((), True, False), (("--codex-cloud",), True, False),
+                                       (("--workspace", str(self.root)), True, False),
+                                       ((), False, False), ((), True, True),
+                                       (("--codex-cloud",), True, True),
+                                       (("--workspace", str(self.root)), True, True)):
+            with self.subTest(args=args, receipt=enabled, missing_python=missing):
                 self.reset()
-                reference = self.run_hook(args, enabled=False, hook=baseline, bash=bash)
+                reference = self.run_hook(args, enabled=False, hook=baseline, bash=bash, missing_python=missing)
                 expected = {path.name: path.read_bytes() for directory in (self.claude, self.codex)
                             for path in directory.iterdir() if path.name != "fleet-delivery.jsonl"}
                 self.reset()
-                actual = self.run_hook(args, enabled=enabled, bash=bash)
+                actual = self.run_hook(args, enabled=enabled, bash=bash, missing_python=missing)
                 self.assertEqual((reference.stdout, reference.stderr, reference.returncode),
                                  (actual.stdout, actual.stderr, actual.returncode))
                 delivered = {path.name: path.read_bytes() for directory in (self.claude, self.codex)
                              for path in directory.iterdir() if path.name != "fleet-delivery.jsonl"}
                 self.assertEqual(expected, delivered)
+                self.assertEqual([], list(private_tmp.iterdir()))
 
     def test_subprocess_timeout_kills_and_reaps_owned_group(self):
         process = mock.MagicMock()

@@ -116,9 +116,10 @@ instead. `FLEET_GUIDANCE_RECEIPT=0` disables observation. A receipt records
 `ts`, `hook`, `mode`, `load_reason: delivery`, and a `deliveries` array with
 fixed relative `file_path` labels, `memory_type: User`, `outcome`, `bytes`, and
 full `sha256`. The digest and byte count describe the exact managed block
-successfully written, preserved in a private managed-only snapshot during
-assembly or computed from Cloud's in-memory block. A stamp-only refresh can record bytes
-with outcome `current`. A `current` run without replacement, `kept`, `skipped`,
+read from the successfully written destination or computed from Cloud's
+in-memory block. The detached read can race with later edits to that destination.
+A stamp-only refresh can record bytes with outcome `current`. A `current` run
+without replacement, `kept`, `skipped`,
 or `degraded` records null digest and zero bytes: that invocation delivered no
 guidance block. No personal content, resolved paths, or session identifiers
 are recorded. These are delivery observations, not evidence of what an agent
@@ -137,8 +138,8 @@ Descriptor-based checks reject symlink leaves, FIFOs, nonregular files,
 foreign ownership, and hard links. The 1 MiB cap is
 an advisory prewrite size check: a file already at the cap skips quietly,
 and concurrent writers can overshoot it by their pending lines. Receipt
-failures are silent and preserve delivery, stdout, and exit status. A failed
-metadata snapshot skips the receipt altogether. The hook launches one detached
+failures are silent and preserve delivery, stdout, and exit status. A missing,
+unsafe, or ambiguous delivered source skips the receipt altogether. The hook launches one detached
 Python receipt writer after its verdict and workspace notice are complete;
 it never waits for that writer. Normal and workspace modes launch no foreground
 Python process; Cloud retains its existing delivery process and launches the
@@ -146,14 +147,12 @@ same detached writer afterward. Metadata travels through bounded arguments,
 never prompt text or the external hook event on stdin. The hook remains compatible
 with Bash 3.2.
 
-Normal-mode snapshots contain only managed guidance, never instructions outside
-the managed markers. They live in one lazily created private directory with mode
-0700 and are bounded to 4 MiB per delivered block; larger blocks still deliver
-normally and skip observation. The detached writer removes only its known indexed
-snapshot files through a validated directory descriptor, then removes the empty
-directory. An unavailable or stalled interpreter, unsupported platform, or cleanup
-failure can leave those private managed-only snapshots behind; receipt creation
-and cleanup are both best-effort.
+Observation creates no temporary files or directories and does not use `TMPDIR`.
+The detached writer opens delivered files through validated parent descriptors,
+rejects files larger than 4 MiB, and hashes only the managed block. Larger files
+still deliver normally and skip observation. A missing receipt line can mean
+observation was skipped because Python was unavailable or the platform was
+unsupported, as well as that the hook never ran.
 A failed or short append is not retried and can leave a torn trailing line;
 consumers must tolerate it. The [receipt tests](test/test_codex_cloud_receipt.py)
 exercise failure isolation, descriptor races, and concurrent whole-line writes.

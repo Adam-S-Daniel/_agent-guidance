@@ -119,21 +119,21 @@ import time
 RECEIPT_LIMIT = 1048576
 
 
-def receipt_snapshot(path, begin, end, directory_fd=None):
-    # Snapshots contain only the managed bytes assembled during delivery.
+def receipt_source(path, begin, end, directory_fd=None):
+    # Read only a validated delivered file; hash its unique managed block.
     options = {} if directory_fd is None else {"dir_fd": directory_fd}
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, **options)
     try:
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
                 info.st_uid != os.geteuid() or info.st_size > 4194304):
-            raise OSError("unsafe receipt snapshot")
+            raise OSError("unsafe receipt source")
         remaining = info.st_size
         pieces = []
         while remaining:
             piece = os.read(fd, min(remaining, 65536))
             if not piece:
-                raise OSError("short receipt snapshot")
+                raise OSError("short receipt source")
             pieces.append(piece)
             remaining -= len(piece)
         raw = b"".join(pieces)
@@ -240,36 +240,7 @@ def receipt_delivery(label, outcome, digest=None, count=0):
             "sha256": digest, "bytes": count}
 
 
-def receipt_cleanup(directory):
-    # Only our private managed-block snapshots; never recurse or follow links.
-    if not directory:
-        return
-    descriptors = []
-    try:
-        descriptors = receipt_directory(directory)
-        parent = descriptors[-1]
-        info = os.fstat(parent)
-        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
-            return
-        for name in ("0", "1"):
-            try:
-                os.unlink(name, dir_fd=parent)
-            except OSError:
-                pass
-    except Exception:
-        return
-    finally:
-        for fd in reversed(descriptors):
-            os.close(fd)
-    try:
-        current = os.stat(directory, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino):
-            os.rmdir(directory)
-    except OSError:
-        pass
-
-
-def receipt_worker(directory, mode, begin, end, snapshots, *args):
+def receipt_worker(directory, mode, begin, end, *args):
     try:
         # Reject unsupported receipt paths before any optional digest work.
         descriptors = receipt_directory(directory)
@@ -281,25 +252,19 @@ def receipt_worker(directory, mode, begin, end, snapshots, *args):
             raise ValueError("invalid receipt metadata")
         deliveries = []
         for i in range(0, len(args), 5):
-            label, outcome, snapshot, digest, count = args[i:i + 5]
+            label, outcome, source, digest, count = args[i:i + 5]
             if label not in ("none", "claude/CLAUDE.md", "codex/AGENTS.md", "codex/AGENTS.override.md"):
                 raise ValueError("invalid receipt label")
             if outcome not in ("written", "installed", "current", "kept", "skipped", "degraded"):
                 raise ValueError("invalid receipt outcome")
             count = int(count)
-            if snapshot:
-                if not snapshots or snapshot not in (os.path.join(snapshots, "0"),
-                                                       os.path.join(snapshots, "1")):
-                    raise ValueError("invalid receipt snapshot")
-                snapshot_descriptors = receipt_directory(snapshots)
+            if source:
+                source_descriptors = receipt_directory(os.path.dirname(source))
                 try:
-                    snapshot_fd = snapshot_descriptors[-1]
-                    info = os.fstat(snapshot_fd)
-                    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
-                        raise OSError("unsafe receipt snapshot directory")
-                    digest, count = receipt_snapshot(os.path.basename(snapshot), begin, end, snapshot_fd)
+                    digest, count = receipt_source(os.path.basename(source), begin, end,
+                                                   source_descriptors[-1])
                 finally:
-                    for fd in reversed(snapshot_descriptors):
+                    for fd in reversed(source_descriptors):
                         os.close(fd)
             if digest and (len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)):
                 raise ValueError("invalid receipt digest")
@@ -310,8 +275,6 @@ def receipt_worker(directory, mode, begin, end, snapshots, *args):
     except Exception:
         # Observation is detached, silent, and never controls delivery.
         pass
-    finally:
-        receipt_cleanup(snapshots)
 
 
 if __name__ == "__main__":
@@ -320,28 +283,7 @@ FLEET_RECEIPT_PY
 RECEIPT_MODE=hook
 RECEIPT_ARGS=()
 RECEIPT_BROKEN=0
-RECEIPT_SNAPSHOTS=""
-RECEIPT_SNAPSHOT=""
-RECEIPT_INDEX=0
-receipt_prepare() {
-    RECEIPT_SNAPSHOT=""
-    [ "${FLEET_GUIDANCE_RECEIPT:-1}" != 0 ] && [ "$RECEIPT_BROKEN" -eq 0 ] || return 1
-    if [ -z "$RECEIPT_SNAPSHOTS" ]; then
-        RECEIPT_SNAPSHOTS="$(mktemp -d "${TMPDIR:-/tmp}/.fleet-receipt.XXXXXX" 2>/dev/null)" || {
-            RECEIPT_BROKEN=1
-            return 1
-        }
-    fi
-    RECEIPT_SNAPSHOT="$RECEIPT_SNAPSHOTS/$RECEIPT_INDEX"
-    RECEIPT_INDEX=$((RECEIPT_INDEX + 1))
-    # This newly created private directory contains only indexed snapshots.
-    if ! { exec 9> "$RECEIPT_SNAPSHOT"; } 2>/dev/null; then
-        RECEIPT_BROKEN=1
-        RECEIPT_SNAPSHOT=""
-        return 1
-    fi
-    return 0
-}
+RECEIPT_SOURCE=""
 # shellcheck disable=SC2317  # invoked by EXIT traps, including early failures
 receipt_flush() {
     [ "${FLEET_GUIDANCE_RECEIPT:-1}" != 0 ] || return 0
@@ -377,7 +319,7 @@ try:
 except Exception:
     pass
 ' "${BASH_SOURCE[0]}" "$receipt_directory" "$RECEIPT_MODE" \
-        "${BEGIN_MARK:-}" "${END_MARK:-}" "$RECEIPT_SNAPSHOTS" \
+        "${BEGIN_MARK:-}" "${END_MARK:-}" \
         "${RECEIPT_ARGS[@]}" </dev/null >/dev/null 2>&1 &) 2>/dev/null || :
     return 0
 }
@@ -981,8 +923,7 @@ read_installed_metadata() {
 # On a same-content upgrade, change only the ordering metadata. Retain the
 # block's position and its payload, including a personal suffix after it.
 update_stamp_only() {
-    local source="$1" out="$2" line ending inside=0 inserted=0 snapshot_error=0
-    local stamp_status
+    local source="$1" out="$2" line ending inside=0 inserted=0
     # shellcheck disable=SC2002  # the pipe lets pipefail detect a source read error
     cat "$source" | {
         while :; do
@@ -993,24 +934,14 @@ update_stamp_only() {
                 continue
             fi
             printf '%s%s' "$line" "$ending" || return 1
-            if [ "$inside" -eq 1 ] && [ -n "$RECEIPT_SNAPSHOT" ]; then
-                printf '%s%s' "$line" "$ending" >&9 2>/dev/null || snapshot_error=1
-            fi
             if [ "$inside" -eq 1 ] && [ "$inserted" -eq 0 ] && [[ "$line" == '<!-- fleet-guidance-version: '* ]]; then
                 printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" || return 1
-                if [ -n "$RECEIPT_SNAPSHOT" ]; then
-                    printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" >&9 2>/dev/null || snapshot_error=1
-                fi
                 inserted=1
             fi
             if [ "$line" = "$END_MARK" ]; then inside=0; fi
         done
-        [ "$inserted" -eq 1 ] || return 1
-        [ "$snapshot_error" -eq 0 ] || return 2
+        [ "$inserted" -eq 1 ]
     } > "$out"
-    stamp_status=("${PIPESTATUS[@]}")
-    [ "${stamp_status[0]}" -eq 0 ] || return 1
-    return "${stamp_status[1]}"
 }
 
 # Install the block at ONE destination. Sets INSTALL_STATE to `written`,
@@ -1018,10 +949,9 @@ update_stamp_only() {
 # the reason and returns non-zero, having
 # changed nothing at that destination.
 install_to() {
-    local dest="$1" label="$2" tmp dir target stamp_status
-    local assembly_status
+    local dest="$1" label="$2" tmp dir target
     INSTALL_STATE=""
-    RECEIPT_SNAPSHOT=""
+    RECEIPT_SOURCE=""
 
     # The parent directory: created for Claude Code exactly as it always was,
     # and a no-op for Codex, whose directory had to exist for this destination
@@ -1059,17 +989,13 @@ install_to() {
             dir="$(dirname "$target")"
             new_tmp "$dir" || { record_failure "mktemp failed for $dest"; return 1; }
             tmp="$TMP_PATH"
-            receipt_prepare || :
-            update_stamp_only "$target" "$tmp"
-            stamp_status=$?
-            [ -z "$RECEIPT_SNAPSHOT" ] || exec 9>&-
-            if [ "$stamp_status" -eq 2 ]; then RECEIPT_BROKEN=1
-            elif [ "$stamp_status" -ne 0 ]; then
+            if ! update_stamp_only "$target" "$tmp"; then
                 record_failure "could not update delivery stamp in $dest"
                 return 1
             fi
             if replace_file "$tmp" "$target"; then
                 INSTALL_STATE="current"
+                RECEIPT_SOURCE="$target"
                 return 0
             fi
             record_failure "could not write $dest"
@@ -1092,44 +1018,25 @@ install_to() {
     fi
     [ -s "$tmp" ] && printf '\n' >> "$tmp"
 
-    if receipt_prepare; then
-        # tee keeps delivery flowing when its optional snapshot output fails.
-        # cat owns the original append; producer and delivery errors stay fatal.
-        {
-            printf '%s\n' "$BEGIN_MARK" &&
-            printf '<!-- fleet-guidance-version: %s -->\n' "$version" &&
-            printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" &&
-            cat "$PAYLOAD" &&
-            printf '%s\n' "$END_MARK"
-        } | tee "$RECEIPT_SNAPSHOT" 2>/dev/null | cat >> "$tmp" 2>/dev/null
-        assembly_status=("${PIPESTATUS[@]}")
-        exec 9>&-
-        if [ "${assembly_status[1]}" -ne 0 ]; then RECEIPT_BROKEN=1; fi
-        if [ "${assembly_status[0]}" -ne 0 ] || [ "${assembly_status[2]}" -ne 0 ]; then
-            record_failure "could not assemble the guidance block for $dest"
-            return 1
-        fi
-    else
-        {
-            printf '%s\n' "$BEGIN_MARK" &&
-            printf '<!-- fleet-guidance-version: %s -->\n' "$version" &&
-            printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" &&
-            cat "$PAYLOAD" &&
-            printf '%s\n' "$END_MARK"
-        } >> "$tmp" 2>/dev/null || {
-            record_failure "could not assemble the guidance block for $dest"
-            return 1
-        }
-    fi
+    {
+        printf '%s\n' "$BEGIN_MARK" &&
+        printf '<!-- fleet-guidance-version: %s -->\n' "$version" &&
+        printf '<!-- fleet-guidance-delivered: %s -->\n' "$delivered" &&
+        cat "$PAYLOAD" &&
+        printf '%s\n' "$END_MARK"
+    } >> "$tmp" 2>/dev/null || {
+        record_failure "could not assemble the guidance block for $dest"
+        return 1
+    }
 
     if cmp -s "$tmp" "$target" 2>/dev/null; then
         INSTALL_STATE="current"
-        RECEIPT_SNAPSHOT=""
         return 0
     fi
 
     if replace_file "$tmp" "$target"; then
         INSTALL_STATE="written"
+        RECEIPT_SOURCE="$target"
         return 0
     fi
 
@@ -1147,7 +1054,7 @@ for i in "${!DEST_PATHS[@]}"; do
         RECEIPT_ARGS+=("$receipt_label" degraded "" "" 0)
         continue
     fi
-    RECEIPT_ARGS+=("$receipt_label" "$INSTALL_STATE" "$RECEIPT_SNAPSHOT" "" 0)
+    RECEIPT_ARGS+=("$receipt_label" "$INSTALL_STATE" "$RECEIPT_SOURCE" "" 0)
     case "$INSTALL_STATE" in
         written)
             wrote=$((wrote + 1))
