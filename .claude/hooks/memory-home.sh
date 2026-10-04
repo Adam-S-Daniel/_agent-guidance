@@ -43,7 +43,7 @@
 #   all events receive this field"). This script reads `session_id`,
 #   `hook_event_name` and — on Stop — `stop_hook_active`.
 # - SessionStart matchers are `startup`, `resume`, `clear`, `compact`, `fork`;
-#   the registrar wires `startup|resume`. SessionStart is one of the four
+#   the registrar wires `startup|resume|fork`. SessionStart is one of the four
 #   events where "Claude Code adds plain-text stdout as context that Claude can
 #   see and act on", which is why the nudge is a plain line and not JSON.
 # - Stop input: "In addition to the common input fields, Stop hooks receive

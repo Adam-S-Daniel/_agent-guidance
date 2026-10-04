@@ -37,14 +37,33 @@ set -euo pipefail
 # `.claude/settings.local.json` is never read or written — it is a developer's
 # personal, gitignored file.
 #
+# MIGRATION: THE ONE IN-PLACE EDIT. Until Claude Code 2.1.214 a forked
+# session reported SessionStart source `resume`; since then it reports `fork`
+# (https://github.com/anthropics/claude-code/releases/tag/v2.1.214), so a
+# group registered with the old default matcher `startup|resume` silently
+# skips every fork. A group the fleet itself wrote — matcher EXACTLY
+# `startup|resume` and holding nothing but this hook — has its matcher widened
+# to the current default and nothing else touched. Any other shape (a
+# hand-tuned matcher, no matcher, our command sharing a group with someone
+# else's) is the operator's choice and is left alone as already-registered.
+# bootstrap-status.sh reports the migratable shape as `stale-matcher`, which is
+# how sync.sh knows to call this script on an already-wired repo. The same
+# re-parse guard applies: the write must equal the original document with only
+# those matcher strings changed.
+#
 # Usage: register-bootstrap-hook.sh <path-to-settings.json>
 #
 # Prints exactly one of:
 #   already-registered  — no write; the hook was already named
 #   registered          — the file was created or appended to
+#   migrated            — the hook's legacy `startup|resume` matcher was widened
 #   refused-unparseable — no write; the existing file is not a JSON object
+#   refused-guard       — no write; the re-parse guard saw more than the
+#                         intended change
+#   refused-unwritable  — no write; the file could not be written
 #
-# Exit: 0 on either written or already-registered, 2 on usage, 3 on refusal.
+# Exit: 0 on registered, migrated or already-registered, 2 on usage, 3 on
+# refusal (unparseable or guard), 5 when the file cannot be written.
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
@@ -55,7 +74,9 @@ fi
 # The command string and timeout are the delivery contract; keep them in step
 # with bootstrap-status.sh's basename key and with the live consumer shape.
 HOOK_COMMAND="${BOOTSTRAP_HOOK_COMMAND:-bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"}"
-HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume}"
+HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume|fork}"
+# The default before Claude Code started reporting `fork`; see MIGRATION above.
+LEGACY_MATCHER="startup|resume"
 HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT:-90}"
 HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
 
@@ -67,6 +88,7 @@ command  = sys.argv[2]
 matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 needle   = sys.argv[5]
+legacy   = sys.argv[6]
 
 group = {
     "matcher": matcher,
@@ -91,22 +113,60 @@ if raw.strip():
 else:
     doc = {}
 
+def write_or_refuse(text):
+    """A file we cannot write (read-only, wrong owner) is a refusal with a
+    status, not a traceback."""
+    try:
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        print("refused-unwritable")
+        sys.exit(5)
+
+
+def names_hook(e):
+    return isinstance(e, dict) and needle in str(e.get("command", ""))
+
+
 # Idempotence: same semantic test bootstrap-status.sh applies. Anything that
-# already names the hook in a SessionStart command is left completely alone —
-# including a hand-written entry whose quoting or timeout differs from ours.
+# already names the hook in a SessionStart command is left alone — including a
+# hand-written entry whose quoting or timeout differs from ours — with the one
+# exception of the legacy-matcher migration (see MIGRATION in the header).
 hooks = doc.get("hooks")
 existing = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
+naming = []
 if isinstance(existing, list):
-    for g in existing:
+    for i, g in enumerate(existing):
         if not isinstance(g, dict):
             continue
         entries = g.get("hooks", [])
         if not isinstance(entries, list):
             continue
-        for e in entries:
-            if isinstance(e, dict) and needle in str(e.get("command", "")):
-                print("already-registered")
-                sys.exit(0)
+        if any(names_hook(e) for e in entries):
+            naming.append(i)
+if naming:
+    stale = matcher != legacy and all(
+        existing[i].get("matcher") == legacy
+        and all(names_hook(e) for e in existing[i]["hooks"])
+        for i in naming)
+    if not stale:
+        print("already-registered")
+        sys.exit(0)
+    want = copy.deepcopy(doc)
+    for i in naming:
+        want["hooks"]["SessionStart"][i]["matcher"] = matcher
+    candidate = json.dumps(want, indent=2) + "\n"
+    # The guard, migration edition: the original document with ONLY those
+    # matcher strings changed, and nothing else.
+    check = json.loads(candidate)
+    for i in naming:
+        check["hooks"]["SessionStart"][i]["matcher"] = legacy
+    if json.loads(candidate) != want or check != doc:
+        print("refused-guard")
+        sys.exit(3)
+    write_or_refuse(candidate)
+    print("migrated")
+    sys.exit(0)
 
 # A "hooks" or "SessionStart" of the wrong TYPE is not something to coerce —
 # overwriting it would destroy configuration we do not understand.
@@ -127,13 +187,12 @@ candidate = json.dumps(want, indent=2) + "\n"
 # "the original document plus our group" — nothing dropped, nothing coerced.
 # If it does not, write nothing.
 if json.loads(candidate) != want:
-    print("refused-unparseable")
+    print("refused-guard")
     sys.exit(3)
 
-with open(target, "w", encoding="utf-8") as fh:
-    fh.write(candidate)
+write_or_refuse(candidate)
 print("registered")
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME") || {
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$LEGACY_MATCHER") || {
     status=$?
     [[ -n "$result" ]] && echo "$result"
     exit "$status"

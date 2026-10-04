@@ -16,8 +16,8 @@ set -euo pipefail
 #
 # TWO SEPARATE GROUPS, one per event, never one group listing both:
 #
-#   hooks.SessionStart  matcher "startup|resume" — the nudge. Silent when every
-#                       note has a home, so it costs nothing to leave on.
+#   hooks.SessionStart  matcher "startup|resume|fork" — the nudge. Silent when
+#                       every note has a home, so it costs nothing to leave on.
 #   hooks.Stop          no matcher — the gate. Stop matchers do not filter by
 #                       anything this hook cares about, and an absent matcher
 #                       is the documented "match all".
@@ -41,6 +41,15 @@ set -euo pipefail
 # existing group's matcher, timeout, command and ORDER exactly as it found
 # them. Adding our command inside someone else's group would silently inherit
 # their matcher and timeout.
+#
+# MIGRATION: THE ONE IN-PLACE EDIT. Since Claude Code 2.1.214 a forked session
+# reports SessionStart source `fork` instead of `resume`
+# (https://github.com/anthropics/claude-code/releases/tag/v2.1.214), so a
+# machine registered with the old default `startup|resume` skips the nudge on
+# every fork. Re-running this script widens that matcher, but only on a
+# SessionStart group this script wrote: matcher EXACTLY `startup|resume`,
+# holding nothing but this hook. Any other shape is the operator's choice and
+# stays as it is. The Stop group has no matcher and is never edited.
 #
 # Refuses rather than guesses. If the file is present but not parseable as a
 # JSON object, this script writes NOTHING and exits 3.
@@ -70,12 +79,16 @@ set -euo pipefail
 #
 # Prints exactly one line, beginning with one of:
 #   register-memory-home-hook: registered            — the file was created or appended to
+#   register-memory-home-hook: migrated              — the legacy SessionStart matcher was widened
 #   register-memory-home-hook: already-registered    — no write; the hook was already named
 #   register-memory-home-hook: refused-unparseable   — no write; not a JSON object
+#   register-memory-home-hook: refused-guard         — no write; the re-parse guard saw more than the intended change
+#   register-memory-home-hook: refused-unwritable    — no write; the file could not be written
 #   register-memory-home-hook: refused-no-config-dir — no write; the parent directory is absent
 #
-# Exit: 0 on registered or already-registered, 2 on usage, 3 on an unparseable
-#       file, 4 when there is no Claude config directory to register into.
+# Exit: 0 on registered, migrated or already-registered, 2 on usage, 3 on an unparseable
+#       file or a guard refusal, 4 when there is no Claude config directory to
+#       register into, 5 when the file cannot be written.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -126,7 +139,9 @@ fi
 # default — a gate the operator waits on at every session start is a gate they
 # will turn off.
 HOOK_COMMAND="bash -c 'h=$HOOK_PATH; if [ -f \"\$h\" ]; then exec bash \"\$h\"; else echo \"memory-home: DEGRADED — no hook at \$h (pull _agent-guidance, or re-run scripts/register-memory-home-hook.sh)\"; fi'"
-HOOK_MATCHER="${MEMORY_HOME_HOOK_MATCHER:-startup|resume}"
+HOOK_MATCHER="${MEMORY_HOME_HOOK_MATCHER:-startup|resume|fork}"
+# The default before Claude Code started reporting `fork`; see MIGRATION above.
+LEGACY_MATCHER="startup|resume"
 HOOK_TIMEOUT="${MEMORY_HOME_HOOK_TIMEOUT:-15}"
 HOOK_NEEDLE="${MEMORY_HOME_HOOK_NEEDLE:-memory-home.sh}"
 
@@ -138,6 +153,7 @@ command  = sys.argv[2]
 matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 needle   = sys.argv[5]
+legacy   = sys.argv[6]
 
 handler = {"type": "command", "command": command, "timeout": timeout}
 # SessionStart filters on how the session started; Stop has nothing to filter
@@ -198,34 +214,77 @@ def already(event):
     return False
 
 
+def write_or_refuse(text):
+    """A file we cannot write (read-only, wrong owner) is a refusal with a
+    status, not a traceback."""
+    try:
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        print("refused-unwritable")
+        sys.exit(5)
+
+
+def names_hook(e):
+    return isinstance(e, dict) and needle in str(e.get("command", ""))
+
+
+def stale_groups():
+    """Indexes of the SessionStart groups to widen, or [] when there is
+    nothing to migrate. All-or-nothing, like bootstrap-status.sh: every group
+    naming the hook must be one this script wrote with the legacy matcher."""
+    groups = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
+    if matcher == legacy or not isinstance(groups, list):
+        return []
+    naming = [i for i, g in enumerate(groups)
+              if isinstance(g, dict) and isinstance(g.get("hooks"), list)
+              and any(names_hook(e) for e in g["hooks"])]
+    for i in naming:
+        g = groups[i]
+        if g.get("matcher") != legacy or not all(names_hook(e) for e in g["hooks"]):
+            return []
+    return naming
+
+
 # Per EVENT, not all-or-nothing: a settings.json carrying only one half (an
 # interrupted run, a hand edit) gets the missing half rather than a report that
 # it is already registered.
 missing = [event for event in ("SessionStart", "Stop") if not already(event)]
-if not missing:
+stale = stale_groups()
+if not missing and not stale:
     print("already-registered")
     sys.exit(0)
 
 want = copy.deepcopy(doc)
+for i in stale:
+    want["hooks"]["SessionStart"][i]["matcher"] = matcher
 for event in missing:
     want.setdefault("hooks", {}).setdefault(event, []).append(wanted[event])
 
 candidate = json.dumps(want, indent=2) + "\n"
 
 # The guard. Re-parsing the bytes we are about to write must reproduce exactly
-# "the original document plus our groups" — nothing dropped, nothing coerced.
-# If it does not, write nothing.
-if json.loads(candidate) != want:
-    print("refused-unparseable")
+# "the original document plus our groups" — nothing dropped, nothing coerced,
+# and on a migration nothing changed but those matcher strings. If it does
+# not, write nothing.
+check = json.loads(candidate)
+for i in stale:
+    check["hooks"]["SessionStart"][i]["matcher"] = legacy
+if json.loads(candidate) != want or (stale and not missing and check != doc):
+    print("refused-guard")
     sys.exit(3)
 
-with open(target, "w", encoding="utf-8") as fh:
-    fh.write(candidate)
-print("registered " + ",".join(missing))
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_NEEDLE") || {
+write_or_refuse(candidate)
+if missing:
+    print("registered " + ",".join(missing) + (" migrated" if stale else ""))
+else:
+    print("migrated")
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_NEEDLE" "$LEGACY_MATCHER") || {
     status=$?
     if [[ "$result" == "refused-unparseable" ]]; then
         echo "register-memory-home-hook: refused-unparseable — $TARGET is not a JSON object. Nothing written; fix or move that file and re-run."
+    elif [[ "$result" == "refused-unwritable" ]]; then
+        echo "register-memory-home-hook: refused-unwritable — $TARGET could not be written (permissions?). Nothing written."
     elif [[ -n "$result" ]]; then
         echo "register-memory-home-hook: $result"
     fi
@@ -236,8 +295,17 @@ case "$result" in
     already-registered)
         echo "register-memory-home-hook: already-registered — $TARGET already runs memory-home.sh on SessionStart and Stop. Nothing written."
         ;;
+    migrated)
+        echo "register-memory-home-hook: migrated — widened the SessionStart matcher in $TARGET from $LEGACY_MATCHER to $HOOK_MATCHER (nothing else changed). It takes effect in the NEXT session."
+        ;;
     registered*)
-        echo "register-memory-home-hook: registered — added ${result#registered } to $TARGET, wired to $HOOK_PATH. It takes effect in the NEXT session, and the Stop gate only scopes to sessions that have a SessionStart marker."
+        added="${result#registered }"
+        note=""
+        if [[ "$added" == *" migrated" ]]; then
+            added="${added% migrated}"
+            note=" Also widened the existing SessionStart matcher from $LEGACY_MATCHER to $HOOK_MATCHER."
+        fi
+        echo "register-memory-home-hook: registered — added $added to $TARGET, wired to $HOOK_PATH.$note It takes effect in the NEXT session, and the Stop gate only scopes to sessions that have a SessionStart marker."
         ;;
     *)
         echo "register-memory-home-hook: $result"

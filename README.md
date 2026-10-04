@@ -310,15 +310,23 @@ Mechanics:
   keeps its own matcher, timeout and position. An unparseable file is refused
   rather than rewritten. Registration is idempotent
   (`scripts/register-bootstrap-hook.sh`), and `scripts/bootstrap-status.sh` is
-  the shared classifier — `registered` / `no-entry` / `unparseable` /
-  `missing` — used by both the sync and the drift report.
+  the shared classifier — `registered` / `stale-matcher` / `no-entry` /
+  `unparseable` / `missing` — used by both the sync and the drift report.
+- The matcher is `startup|resume|fork`: since Claude Code
+  [2.1.214](https://github.com/anthropics/claude-code/releases/tag/v2.1.214) a
+  forked session reports source `fork`, not `resume`. A group the sync wrote
+  earlier with `startup|resume` and nothing but its own hook reads as
+  `stale-matcher`, and the next sync widens that one matcher in place; a
+  hand-tuned matcher or a shared group is left alone. Both `fleet-memory.sh`
+  and `skills-bootstrap.sh` migrate this way, and re-running
+  `scripts/register-memory-home-hook.sh` does the same for a machine.
 - A hook that **drifts** from the pin is overwritten (it is machinery with no
   repo-specific seam; the escape hatch is the allowlist, not a `fix_*` flag).
 - A repo that gitignores `.claude/` is **warned and skipped, never
   `git add -f`'d** — `git add` on an ignored path exits 1, which under
   `set -euo pipefail` would abort the whole fleet run.
 - The drift report gains a `skills-bootstrap` column (`ok` / `no-entry` /
-  `drifted` / `missing` / `no-lock` / `unmanaged`) and prints each lock's pins
+  `stale-matcher` / `drifted` / `missing` / `no-lock` / `unmanaged`) and prints each lock's pins
   in Notes — the only thing in the fleet that surfaces a stale lock, since a
   stale one installs cleanly and reports `OK` in-session.
 - The drift report also reads the registry in **both directions**, since it is

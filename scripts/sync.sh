@@ -1077,8 +1077,11 @@ for repo_name in "${REPOS[@]}"; do
                 missing) log "[DRY RUN] Would add $HOOK_REL_PATH (from $BOOTSTRAP_REGISTRY@${BOOTSTRAP_REF:0:7})" ;;
                 drifted) log "[DRY RUN] Would overwrite drifted $HOOK_REL_PATH with the pinned copy (${BOOTSTRAP_REF:0:7})" ;;
             esac
-            [[ "$reg_state" != "registered" ]] && \
+            if [[ "$reg_state" == "stale-matcher" ]]; then
+                log "[DRY RUN] Would widen the hook's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed)"
+            elif [[ "$reg_state" != "registered" ]]; then
                 log "[DRY RUN] Would append a SessionStart entry for the hook to $SETTINGS_REL_PATH (existing entries preserved)"
+            fi
         fi
         if $bootstrap_deliver; then
             log "[DRY RUN] Would NOT touch $LOCK_REL_PATH (present; the sync never writes it)"
@@ -1097,8 +1100,11 @@ for repo_name in "${REPOS[@]}"; do
                 missing) log "[DRY RUN] Would add $FLEET_PAYLOAD_REL_PATH (the guidance itself, $(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes, outside any memory-file path)" ;;
                 drifted) log "[DRY RUN] Would refresh drifted $FLEET_PAYLOAD_REL_PATH" ;;
             esac
-            [[ "$fleet_reg_state" != "registered" ]] && \
+            if [[ "$fleet_reg_state" == "stale-matcher" ]]; then
+                log "[DRY RUN] Would widen fleet-memory.sh's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed)"
+            elif [[ "$fleet_reg_state" != "registered" ]]; then
                 log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+            fi
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
@@ -1158,7 +1164,8 @@ for repo_name in "${REPOS[@]}"; do
     #   skills.lock — the repo's own DECLARATION. Never written, not even
     #     created. There is deliberately no code path here that writes it.
     bootstrap_hook_written=false
-    bootstrap_registered_now=false
+    bootstrap_registered_now=false   # registered OR migrated: settings.json changed
+    matcher_migrated=false           # a legacy startup|resume matcher was widened
     bootstrap_gitignored=false
 
     if $bootstrap_deliver; then
@@ -1188,7 +1195,8 @@ for repo_name in "${REPOS[@]}"; do
             if [[ "$reg_state" != "registered" ]]; then
                 mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
                 if register_result=$("$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
-                    [[ "$register_result" == "registered" ]] && bootstrap_registered_now=true
+                    [[ "$register_result" == "registered" || "$register_result" == "migrated" ]] && bootstrap_registered_now=true
+                    [[ "$register_result" == "migrated" ]] && matcher_migrated=true
                     log "skills-bootstrap: settings.json — $register_result."
                 else
                     log "WARN: could not register the hook in $SETTINGS_REL_PATH ($register_result) — leaving it untouched."
@@ -1234,7 +1242,8 @@ for repo_name in "${REPOS[@]}"; do
                     BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
                     BOOTSTRAP_HOOK_TIMEOUT="30" \
                     "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
-                [[ "$fleet_register_result" == "registered" ]] && fleet_registered_now=true
+                [[ "$fleet_register_result" == "registered" || "$fleet_register_result" == "migrated" ]] && fleet_registered_now=true
+                [[ "$fleet_register_result" == "migrated" ]] && matcher_migrated=true
                 log "fleet-memory: settings.json — $fleet_register_result."
             else
                 log "WARN: could not register fleet-memory in $SETTINGS_REL_PATH ($fleet_register_result) — leaving it untouched."
@@ -1273,6 +1282,15 @@ Also delivers the skills-bootstrap SessionStart hook, fetched from
 ${BOOTSTRAP_REGISTRY}@${BOOTSTRAP_REF:0:7} (pinned in _agent-guidance's
 repos.yml) and registered as an additional SessionStart entry. This repo's
 own skills.lock declares which bundles it installs and is not touched."
+    fi
+
+    if $matcher_migrated; then
+        bootstrap_note="${bootstrap_note}
+
+Widens the fleet's SessionStart matcher from startup|resume to
+startup|resume|fork: since Claude Code 2.1.214 a forked session reports
+source \"fork\", so the old matcher skipped every fork. Only groups the
+sync wrote, holding nothing but its own hook, are changed."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then

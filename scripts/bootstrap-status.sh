@@ -34,17 +34,25 @@ set -euo pipefail
 #
 # Prints exactly one of:
 #   registered    — a SessionStart hook command references skills-bootstrap.sh
+#   stale-matcher — registered, but only in a group the fleet itself wrote with
+#                   the pre-fork matcher `startup|resume`, so a forked session
+#                   skips the hook; register-bootstrap-hook.sh widens it
 #   no-entry      — valid JSON, but no such command (hook would never run)
 #   unparseable   — content present but not valid JSON (sync must not rewrite it)
 #   missing       — file absent or empty (or empty stdin)
 
 HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
+# Keep in step with register-bootstrap-hook.sh, which owns the migration.
+HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume|fork}"
+LEGACY_MATCHER="startup|resume"
 
 classify() {
     python3 -c '
 import json, sys
 
 needle = sys.argv[1]
+matcher = sys.argv[2]
+legacy = sys.argv[3]
 raw = sys.stdin.read()
 
 if not raw.strip():
@@ -69,19 +77,33 @@ groups = groups.get("SessionStart", []) if isinstance(groups, dict) else []
 if not isinstance(groups, list):
     groups = []
 
+def names_hook(entry):
+    return isinstance(entry, dict) and needle in str(entry.get("command", ""))
+
+# stale-matcher is reported only when EVERY group naming the hook is one the
+# fleet wrote with the legacy matcher: exactly `startup|resume`, holding
+# nothing but this hook. A hand-tuned matcher, or a group shared with another
+# command, is a choice the operator made and reads as registered.
+found = False
+stale = True
 for group in groups:
     if not isinstance(group, dict):
         continue
     entries = group.get("hooks", [])
     if not isinstance(entries, list):
         continue
-    for entry in entries:
-        if isinstance(entry, dict) and needle in str(entry.get("command", "")):
-            print("registered")
-            sys.exit(0)
+    if any(names_hook(e) for e in entries):
+        found = True
+        if not (matcher != legacy
+                and group.get("matcher") == legacy
+                and all(names_hook(e) for e in entries)):
+            stale = False
 
-print("no-entry")
-' "$HOOK_BASENAME"
+if found:
+    print("stale-matcher" if stale else "registered")
+else:
+    print("no-entry")
+' "$HOOK_BASENAME" "$HOOK_MATCHER" "$LEGACY_MATCHER"
 }
 
 # ── Dispatch on argument ─────────────────────────────────────────────────────

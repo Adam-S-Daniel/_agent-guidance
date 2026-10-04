@@ -1326,9 +1326,13 @@ for repo_name in "${REPOS[@]}"; do
                         bootstrap_status=$(echo "$current_settings" | "$BOOTSTRAP_STATUS_SCRIPT" -)
                     fi
 
-                    if [[ "$bootstrap_status" != "registered" ]]; then
+                    if [[ "$bootstrap_status" != "registered" && "$bootstrap_status" != "stale-matcher" ]]; then
                         # The silent-death case: the file is there, nothing runs it.
                         bootstrap_cell="**no-entry**"
+                    elif [[ "$bootstrap_status" == "stale-matcher" ]]; then
+                        # Runs on startup and resume, but not on a fork (Claude
+                        # Code >= 2.1.214 reports `fork`). The next sync widens it.
+                        bootstrap_cell="**stale-matcher**"
                     elif ! pinned_hook; then
                         bootstrap_cell="unverified"
                     elif [[ "$current_hook" == "$PINNED_HOOK" ]]; then
@@ -1544,6 +1548,7 @@ fi
     echo "| ok | Hook present, byte-equal to the pinned copy, and registered in \`.claude/settings.json\` |"
     echo "| **no-entry** | Hook is present but **nothing runs it** — no SessionStart entry names it. Silently dead |"
     echo "| **drifted** | Hook present but differs from the pinned copy — the next sync overwrites it |"
+    echo "| **stale-matcher** | Hook registered with the legacy SessionStart matcher \`startup\|resume\`, so a forked session skips it — the next sync widens it to \`startup\|resume\|fork\` |"
     echo "| **missing** | Allowlisted and has a lock, but no hook — the next sync delivers it (unless the pinned hook was unavailable fleet-wide that run; the sync log says \`pinned hook unavailable this run\`) |"
     echo "| **blocked** | Allowlisted and has a lock, but the repo gitignores \`.claude/\` — \`git add\` cannot stage the hook, so every sync skips it with a warning. Does **not** self-heal: change that repo's \`.gitignore\`, or drop it from the allowlist |"
     echo "| **refused** | Allowlisted and has a lock, but \`.claude/settings.json\` is not parseable JSON — the sync will not edit it, and withholds the hook rather than leave one nothing runs. Does **not** self-heal: fix that file |"

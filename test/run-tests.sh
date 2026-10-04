@@ -6403,7 +6403,7 @@ test_bootstrap_status() {
   "hooks": {
     "SessionStart": [
       {"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\""}]},
-      {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"", "timeout": 90}]}
+      {"matcher": "startup|resume|fork", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"", "timeout": 90}]}
     ]
   }
 }
@@ -6460,6 +6460,47 @@ JSON
 
     result=$(cat "$d/registered.json" | "$s" -)
     [[ "$result" == "registered" ]] && pass "stdin mode: registered" || fail "stdin mode: registered (got '$result')"
+
+    # ── The pre-fork matcher (#173). Since Claude Code 2.1.214 a forked
+    #    session reports source "fork", so a group the fleet wrote with
+    #    "startup|resume" skips forks. Only that exact shape is stale.
+    cat > "$d/legacy.json" <<'JSON'
+{"hooks": {"SessionStart": [
+  {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"", "timeout": 30}]},
+  {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"", "timeout": 90}]}
+]}}
+JSON
+    result=$("$s" "$d/legacy.json")
+    [[ "$result" == "stale-matcher" ]] && pass "legacy startup|resume group of our own -> stale-matcher" || fail "legacy startup|resume group of our own -> stale-matcher (got '$result')"
+    result=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" "$s" "$d/legacy.json")
+    [[ "$result" == "no-entry" ]] && pass "a legacy matcher on another hook is not reported as ours" || fail "a legacy matcher on another hook is not reported as ours (got '$result')"
+
+    # Shared with another command: widening it would widen theirs too.
+    cat > "$d/legacy-shared.json" <<'JSON'
+{"hooks": {"SessionStart": [{"matcher": "startup|resume", "hooks": [
+  {"type": "command", "command": "bash scripts/setup-hooks.sh"},
+  {"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}
+]}]}}
+JSON
+    result=$("$s" "$d/legacy-shared.json")
+    [[ "$result" == "registered" ]] && pass "legacy matcher in a SHARED group -> registered (the operator's group)" || fail "legacy matcher in a SHARED group -> registered (got '$result')"
+
+    # A hand-tuned matcher is the operator's choice.
+    cat > "$d/custom.json" <<'JSON'
+{"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}]}]}}
+JSON
+    result=$("$s" "$d/custom.json")
+    [[ "$result" == "registered" ]] && pass "hand-tuned matcher -> registered" || fail "hand-tuned matcher -> registered (got '$result')"
+
+    # Our hook in a legacy group AND another one: not all ours to migrate.
+    cat > "$d/legacy-plus-current.json" <<'JSON'
+{"hooks": {"SessionStart": [
+  {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}]},
+  {"matcher": "fork", "hooks": [{"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}]}
+]}}
+JSON
+    result=$("$s" "$d/legacy-plus-current.json")
+    [[ "$result" == "registered" ]] && pass "legacy group beside a non-legacy one -> registered" || fail "legacy group beside a non-legacy one -> registered (got '$result')"
 }
 
 # ── Test 5a: register-bootstrap-hook.sh (append + idempotence) ────────────
@@ -6503,6 +6544,7 @@ PY
     assert_contains "$d/shape.txt" "first_matcher=startup|resume" "append: existing group's matcher unchanged"
     assert_contains "$d/shape.txt" "last_cmd=bash \"\$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"" "append: new group's command matches the live reference"
     assert_contains "$d/shape.txt" "last_timeout=90" "append: new group's timeout is 90"
+    assert_contains "$d/shape.txt" "last_matcher=startup|resume|fork" "append: new group's matcher includes fork (#173)"
 
     # ── Idempotence: a second application must be a byte-for-byte no-op.
     cp "$d/consumer.json" "$d/consumer.after1.json"
@@ -6520,6 +6562,107 @@ PY
     assert_contains "$d/fresh.json" "skills-bootstrap.sh" "absent settings.json: hook registered in the new file"
     out=$("$r" "$d/fresh.json")
     [[ "$out" == "already-registered" ]] && pass "created file is idempotent too" || fail "created file is idempotent too (got '$out')"
+
+    # ── Migration (#173): a consumer the sync wired before `fork` existed.
+    #    Our own groups' matchers are widened in place; the operator's
+    #    startup|resume group is NOT; no group is added; a second run is a
+    #    byte-for-byte no-op.
+    cat > "$d/legacy.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-bootstrap.sh\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ]
+  }
+}
+JSON
+    cp "$d/legacy.json" "$d/legacy.orig"
+    out=$("$r" "$d/legacy.json")
+    [[ "$out" == "migrated" ]] && pass "migration: legacy skills-bootstrap group -> migrated" || fail "migration: legacy skills-bootstrap group -> migrated (got '$out')"
+    out=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" "$r" "$d/legacy.json")
+    [[ "$out" == "migrated" ]] && pass "migration: legacy fleet-memory group -> migrated" || fail "migration: legacy fleet-memory group -> migrated (got '$out')"
+    rc=0
+    out=$(python3 - "$d/legacy.orig" "$d/legacy.json" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1]))
+after = json.load(open(sys.argv[2]))
+g = after["hooks"]["SessionStart"]
+assert len(g) == 3, "group count changed: %d" % len(g)
+got = [x["matcher"] for x in g]
+assert got == ["startup|resume", "startup|resume|fork", "startup|resume|fork"], got
+# Everything except our two matcher strings is untouched.
+for i in (1, 2):
+    g[i]["matcher"] = "startup|resume"
+assert after == before, "something besides the two matchers changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$out" == "OK" ]]; then
+        pass "migration: only our two matchers widened; the operator's group, order and other keys untouched"
+    else
+        fail "migration: only our two matchers widened — $out"
+    fi
+    cp "$d/legacy.json" "$d/legacy.after1"
+    out=$("$r" "$d/legacy.json")
+    [[ "$out" == "already-registered" ]] && pass "migration: second run -> already-registered" || fail "migration: second run -> already-registered (got '$out')"
+    out=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" "$r" "$d/legacy.json")
+    [[ "$out" == "already-registered" ]] && pass "migration: second fleet-memory run -> already-registered" || fail "migration: second fleet-memory run -> already-registered (got '$out')"
+    if cmp -s "$d/legacy.after1" "$d/legacy.json"; then
+        pass "migration: idempotent, file byte-identical after a second run"
+    else
+        fail "migration: idempotent, file byte-identical after a second run"
+    fi
+    out=$("$REPO_ROOT/scripts/bootstrap-status.sh" "$d/legacy.json")
+    [[ "$out" == "registered" ]] && pass "migration: classifier reads registered afterwards, so the sync stops revisiting" || fail "migration: classifier reads registered afterwards (got '$out')"
+
+    # Shapes the operator owns are never edited: a shared group and a
+    # hand-tuned matcher both stay byte-identical.
+    printf '%s\n' '{"hooks": {"SessionStart": [{"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash scripts/setup-hooks.sh"}, {"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}]}]}}' > "$d/shared.json"
+    printf '%s\n' '{"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "bash .claude/hooks/skills-bootstrap.sh"}]}]}}' > "$d/custom.json"
+    local f
+    for f in shared custom; do
+        cp "$d/$f.json" "$d/$f.orig"
+        out=$("$r" "$d/$f.json")
+        if [[ "$out" == "already-registered" ]] && cmp -s "$d/$f.json" "$d/$f.orig"; then
+            pass "migration: $f group left byte-identical"
+        else
+            fail "migration: $f group left byte-identical (got '$out')"
+        fi
+    done
 
     # ── Unparseable: refuse, exit 3, write NOTHING.
     printf '{ not json\n' > "$d/broken.json"
@@ -6790,6 +6933,146 @@ test_sync_bootstrap_drift() {
     else
         fail "drift: skills.lock STILL byte-identical through the overwrite"
     fi
+}
+
+# ── Test 5d2: an already-wired repo with the pre-fork matcher is migrated ──
+#
+# #173: since Claude Code 2.1.214 a forked session reports SessionStart source
+# `fork`, so a consumer the sync wired with `startup|resume` skips both fleet
+# hooks on every fork. The next sync must widen exactly those two matchers in
+# place: no duplicate group, the repo's own startup|resume group untouched,
+# and a run after that is a no-op. Leaves repo-adopted fully delivered, the
+# state the drift-report tests that follow expect.
+test_sync_bootstrap_fork_migration() {
+    echo ""
+    echo "=== Test: sync.sh (legacy startup|resume matcher is widened to fork) ==="
+
+    local w="$TEST_DIR/work/fork-migration-adopted"
+    rm -rf "$w"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$w" >/dev/null 2>&1
+    git -C "$w" config commit.gpgsign false
+    python3 - "$w/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p, encoding="utf-8"))
+for g in doc["hooks"]["SessionStart"]:
+    if g.get("matcher") == "startup|resume|fork":
+        g["matcher"] = "startup|resume"
+open(p, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+    cp "$w/.claude/settings.json" "$TEST_DIR/fork-migration.before.json"
+    git -C "$w" add -A >/dev/null 2>&1
+    git -C "$w" commit -m "wire with the pre-fork matcher" >/dev/null 2>&1
+    git -C "$w" push origin HEAD:main >/dev/null 2>&1
+
+    local rpt="$TEST_DIR/drift-fork-migration.md"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+    assert_row_contains "$rpt" "repo-adopted" "**stale-matcher**" "fork migration: the drift report flags the legacy matcher"
+    assert_contains "$rpt" "| **stale-matcher** |" "fork migration: legend documents stale-matcher"
+
+    local output
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-fork-migration.txt"
+    assert_contains "$TEST_DIR/sync-fork-migration.txt" "skills-bootstrap: settings.json — migrated." "fork migration: skills-bootstrap's matcher migrated"
+    assert_contains "$TEST_DIR/sync-fork-migration.txt" "fleet-memory: settings.json — migrated." "fork migration: fleet-memory's matcher migrated"
+
+    local v="$TEST_DIR/verify-fork-migration"
+    rm -rf "$v"
+    git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+        fail "fork migration: could not clone"
+        return
+    }
+    local rc=0 shape
+    shape=$(python3 - "$TEST_DIR/fork-migration.before.json" "$v/.claude/settings.json" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+groups = after["hooks"]["SessionStart"]
+assert len(groups) == 3, "expected 3 SessionStart groups, got %d" % len(groups)
+by_hook = {}
+for g in groups:
+    cmd = g["hooks"][0]["command"]
+    for name in ("setup-hooks.sh", "skills-bootstrap.sh", "fleet-memory.sh"):
+        if name in cmd:
+            by_hook[name] = g["matcher"]
+assert by_hook == {
+    "setup-hooks.sh": "startup|resume",
+    "skills-bootstrap.sh": "startup|resume|fork",
+    "fleet-memory.sh": "startup|resume|fork",
+}, by_hook
+for g in groups:
+    if g["matcher"] == "startup|resume|fork":
+        g["matcher"] = "startup|resume"
+assert after == before, "something besides the two matchers changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "fork migration: both fleet matchers widened, the repo's own group untouched, nothing added"
+    else
+        fail "fork migration: both fleet matchers widened, the repo's own group untouched, nothing added — $shape"
+    fi
+    assert_contains "$v/.claude/settings.json" '"startup|resume|fork"' "fork migration: the committed file carries the new matcher"
+    if git -C "$v" log -1 --format=%B | grep -qF "startup|resume|fork"; then
+        pass "fork migration: the commit message explains the widened matcher"
+    else
+        fail "fork migration: the commit message explains the widened matcher"
+    fi
+
+    output=$(
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" 2>&1
+    ) || true
+    echo "$output" > "$TEST_DIR/sync-fork-migration-2.txt"
+    assert_contains "$TEST_DIR/sync-fork-migration-2.txt" "6 skipped" "fork migration: a run after migrating leaves every repo up to date"
+
+    # One hook stale at a time: each migration alone must still be staged and
+    # committed, since the other hook's registration cannot carry it along.
+    # fleet-memory alone is the common case: most fleet repos have no
+    # skills.lock, so only fleet-memory is ever registered there.
+    local hook state
+    for hook in skills-bootstrap.sh fleet-memory.sh; do
+        git -C "$w" fetch -q origin main >/dev/null 2>&1 && git -C "$w" reset -q --hard FETCH_HEAD
+        python3 - "$w/.claude/settings.json" "$hook" <<'PY'
+import json, sys
+p, hook = sys.argv[1], sys.argv[2]
+doc = json.load(open(p, encoding="utf-8"))
+for g in doc["hooks"]["SessionStart"]:
+    if hook in g["hooks"][0]["command"]:
+        g["matcher"] = "startup|resume"
+open(p, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+        git -C "$w" commit -qam "re-wire $hook with the pre-fork matcher" >/dev/null 2>&1
+        git -C "$w" push origin HEAD:main >/dev/null 2>&1
+        state=$(BOOTSTRAP_HOOK_BASENAME="$hook" "$REPO_ROOT/scripts/bootstrap-status.sh" "$w/.claude/settings.json")
+        [[ "$state" == "stale-matcher" ]] || fail "fork migration ($hook only): the fixture is not stale ('$state') — the check below would be vacuous"
+        GITHUB_REPOSITORY_OWNER=bootorg \
+        MOCK_BARE_DIR="$TEST_DIR/bare" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" >/dev/null 2>&1 || true
+        rm -rf "$v"
+        git clone "$TEST_DIR/bare/bootorg_repo-adopted" "$v" 2>/dev/null || {
+            fail "fork migration ($hook only): could not clone"
+            return
+        }
+        state=$(BOOTSTRAP_HOOK_BASENAME="$hook" "$REPO_ROOT/scripts/bootstrap-status.sh" "$v/.claude/settings.json")
+        [[ "$state" == "registered" ]] && pass "fork migration: a $hook-only migration is committed" || fail "fork migration: a $hook-only migration is committed (main reads '$state')"
+    done
 }
 
 # ── Test 5e: a digest mismatch disables delivery and fails the run ────────
@@ -20400,7 +20683,7 @@ assert set(hooks) == {"SessionStart", "Stop"}, "unexpected events: %r" % sorted(
 
 ss = hooks["SessionStart"]
 assert len(ss) == 1, "expected one SessionStart group, got %d" % len(ss)
-assert ss[0]["matcher"] == "startup|resume", "matcher is %r" % ss[0].get("matcher")
+assert ss[0]["matcher"] == "startup|resume|fork", "matcher is %r" % ss[0].get("matcher")
 
 stop = hooks["Stop"]
 assert len(stop) == 1, "expected one Stop group, got %d" % len(stop)
@@ -20538,6 +20821,108 @@ PY
         fail "register-memory-home-hook: the --hook path is embedded verbatim on both events — $shape"
     fi
 
+    # 4a. Migration (#173): a machine registered before Claude Code reported
+    #     `fork`. Re-running widens OUR SessionStart matcher in place, leaves
+    #     the operator's own startup|resume group and the Stop group alone,
+    #     adds nothing, and a third run is a byte-for-byte no-op.
+    mkdir -p "$d/legacy"
+    rc=0
+    out=$(MEMORY_HOME_HOOK_MATCHER="startup|resume" CLAUDE_CONFIG_DIR="$d/legacy" "$script" 2>&1) || rc=$?
+    python3 - "$d/legacy/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p, encoding="utf-8"))
+doc["hooks"]["SessionStart"].insert(0, {"matcher": "startup|resume", "hooks": [
+    {"type": "command", "command": "bash /opt/mine.sh"}]})
+open(p, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+    cp "$d/legacy/settings.json" "$d/legacy-before.json"
+    rc=0
+    out=$(CLAUDE_CONFIG_DIR="$d/legacy" "$script" 2>&1) || rc=$?
+    printf '%s\n' "$out" > "$d/out4a"
+    if [[ $rc -eq 0 ]]; then
+        pass "register-memory-home-hook: migrating a legacy matcher exits 0"
+    else
+        fail "register-memory-home-hook: migrating a legacy matcher exits 0 — got $rc: $out"
+    fi
+    assert_contains "$d/out4a" "register-memory-home-hook: migrated" \
+        "register-memory-home-hook: a legacy matcher run says migrated"
+    rc=0
+    shape=$(python3 - "$d/legacy-before.json" "$d/legacy/settings.json" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+ss = after["hooks"]["SessionStart"]
+assert len(ss) == 2, "expected 2 SessionStart groups, got %d" % len(ss)
+assert len(after["hooks"]["Stop"]) == 1, "the Stop group was duplicated"
+assert ss[0]["matcher"] == "startup|resume", "the operator's matcher changed: %r" % ss[0]["matcher"]
+assert ss[1]["matcher"] == "startup|resume|fork", "ours is %r" % ss[1]["matcher"]
+ss[1]["matcher"] = "startup|resume"
+assert after == before, "something besides our matcher changed"
+print("OK")
+PY
+) || rc=$?
+    if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
+        pass "register-memory-home-hook: migration widens only our matcher, adds nothing"
+    else
+        fail "register-memory-home-hook: migration widens only our matcher, adds nothing — $shape"
+    fi
+    cp "$d/legacy/settings.json" "$d/legacy-after.json"
+    out=$(CLAUDE_CONFIG_DIR="$d/legacy" "$script" 2>&1) || true
+    printf '%s\n' "$out" > "$d/out4b"
+    assert_contains "$d/out4b" "already-registered" \
+        "register-memory-home-hook: a run after migrating says already-registered"
+    if cmp -s "$d/legacy-after.json" "$d/legacy/settings.json"; then
+        pass "register-memory-home-hook: a run after migrating changes nothing"
+    else
+        fail "register-memory-home-hook: a run after migrating rewrote the file"
+    fi
+
+    # 4b. Shapes the operator owns are never migrated: our command sharing a
+    #     startup|resume group with another command (widening it would widen
+    #     theirs), and a hand-tuned matcher. Both stay byte-identical.
+    local f mh_cmd
+    mh_cmd=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d["hooks"]["Stop"][0]["hooks"][0]))' "$d/legacy/settings.json")
+    for f in shared custom; do
+        mkdir -p "$d/$f"
+        python3 - "$d/$f/settings.json" "$f" "$mh_cmd" <<'PY'
+import json, sys
+path, kind, ours = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+if kind == "shared":
+    ss = {"matcher": "startup|resume", "hooks": [
+        {"type": "command", "command": "bash /opt/mine.sh"}, ours]}
+else:
+    ss = {"matcher": "startup", "hooks": [ours]}
+doc = {"hooks": {"SessionStart": [ss], "Stop": [{"hooks": [ours]}]}}
+open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+        cp "$d/$f/settings.json" "$d/$f-before.json"
+        out=$(CLAUDE_CONFIG_DIR="$d/$f" "$script" 2>&1) || true
+        printf '%s\n' "$out" > "$d/out4b-$f"
+        assert_contains "$d/out4b-$f" "already-registered" \
+            "register-memory-home-hook: a $f legacy-looking group reads already-registered"
+        if cmp -s "$d/$f-before.json" "$d/$f/settings.json"; then
+            pass "register-memory-home-hook: a $f group is left byte-identical"
+        else
+            fail "register-memory-home-hook: a $f group was rewritten"
+        fi
+    done
+
+    # 4c. A file it cannot write is a clean refusal (exit 5), not a traceback.
+    if [[ $(id -u) -ne 0 ]]; then
+        mkdir -p "$d/readonly"
+        printf '{}\n' > "$d/readonly/settings.json"
+        chmod 0444 "$d/readonly/settings.json"
+        rc=0
+        out=$(CLAUDE_CONFIG_DIR="$d/readonly" "$script" 2>&1) || rc=$?
+        chmod 0644 "$d/readonly/settings.json"
+        if [[ $rc -eq 5 && "$out" == *"refused-unwritable"* && "$out" != *Traceback* ]]; then
+            pass "register-memory-home-hook: a read-only file exits 5 with refused-unwritable"
+        else
+            fail "register-memory-home-hook: a read-only file exits 5 with refused-unwritable — got $rc: $out"
+        fi
+    fi
+
     # 5. Unparseable → exit 3, and NOT ONE BYTE written.
     mkdir -p "$d/broken"
     local broken="$d/broken/settings.json"
@@ -20651,6 +21036,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap
     test_sync_bootstrap_idempotent
     test_sync_bootstrap_drift
+    test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
     # Immediately after the test that establishes bootorg/repo-adopted's
