@@ -41,6 +41,8 @@ chooses to provision the label, or explicitly directs an agent in that
 session. It creates or updates the repository label, never applies it to an
 issue or PR. Requires Bash, mikefarah `yq` v4, `jq`, and authenticated `gh`.
 This documentation change does not execute provisioning.
+Here, `--force` only overwrites an existing label named `on-hold`; no
+repository in the fleet had that label when this was written (2026-10-04).
 
 The denominator is the remote source, non-archived repository list for every
 owner discovered from the sync workflow's step environment, not local disk.

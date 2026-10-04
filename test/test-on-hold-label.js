@@ -17,7 +17,7 @@ function tokens(name) {
   if (!documents.has(name)) {
     let source = read(name);
     if (process.env.ON_HOLD_MUTATION === 'policy' && name === 'agents-md/base.md') {
-      source = source.replace('on-hold', 'agent-ready');
+      source = source.replace('is paused by the owner', 'is ready for agent work');
     }
     if (process.env.ON_HOLD_MUTATION === 'worker' && name.endsWith('agent-issue-worker.md')) {
       source = source.replace('before the 3-item limit', 'after the 3-item limit');
@@ -59,7 +59,7 @@ const routine = 'docs/reference/agent-changelog-routine.md';
 
 test('fleet rule protects issues and PRs, with owner control and passive status', () => {
   const body = prose(section('agents-md/base.md', 'Working in these repos'));
-  includes(body, ['`on-hold` issues and PRs', 'no work or follow-ups doing paused work', 'Only the owner adds/removes', 'this session', 'Read/cite/list as on hold', 'do not ask again', 'Keep held PRs open']);
+  includes(body, ['issue or PR labeled `on-hold` is paused by the owner', 'no commits, reviews, merges, closing or follow-ups that do it', 'read, cite and list it as on hold without asking again', 'A held PR stays open', 'Only the owner adds or removes the label', 'an agent the owner directs in that session']);
   assert.ok(Buffer.byteLength(read('agents-md/base.md')) < 25600);
   assert.equal(read('agents-md/base.md'), read('.claude/hooks/fleet-guidance.md'));
 });
@@ -137,7 +137,7 @@ if (args[0] === 'repo') {
 }
 
 test('owner-only provisioning discovers workflow owners and reads back every label', () => {
-  includes(prose(section(reference, 'Provisioning (owner only)')), ['explicitly directs an agent', 'does not execute provisioning', 'not local disk']);
+  includes(prose(section(reference, 'Provisioning (owner only)')), ['explicitly directs an agent', 'does not execute provisioning', 'not local disk', '`--force` only overwrites an existing label named `on-hold`', 'no repository in the fleet had that label when this was written (2026-10-04)']);
   includes(code(), ['.jobs[].steps[].env.SYNC_OWNERS', '--source --no-archived', '--limit 1000']);
   const result = provision();
   assert.equal(result.status, 0, result.stderr);
