@@ -12118,8 +12118,12 @@ for (const key of path.split(".")) {
   }
   cursor = cursor[actual];
 }
+if (process.argv[4] === "--nonempty-array" && (!Array.isArray(cursor) || cursor.length === 0)) {
+  console.error(`${file} ${path} must be a nonempty list`);
+  process.exit(1);
+}
 for (const v of (Array.isArray(cursor) ? cursor : [cursor])) console.log(String(v));
-' "$REPO_ROOT" "$1" "$2"
+' "$REPO_ROOT" "$1" "$2" "${3:-}"
 }
 
 # ── Test 7a: sync.yml fires on every file that decides what a run does ────
@@ -12340,7 +12344,7 @@ test_bootstrap_allowlist_disjoint() {
     local allowed_file="$TEST_DIR/repos-allowlisted.txt"
     local err_file="$TEST_DIR/repos-keys.err"
     if ! yaml_field "$REPO_ROOT/repos.yml" "exclude" > "$excluded_file" 2> "$err_file" \
-       || ! yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.repos" > "$allowed_file" 2>> "$err_file"; then
+       || ! yaml_field "$REPO_ROOT/repos.yml" "skills_bootstrap.repos" --nonempty-array > "$allowed_file" 2>> "$err_file"; then
         fail "allowlist overlap: could not read repos.yml — $(head -1 "$err_file")"
         return
     fi
@@ -20595,6 +20599,7 @@ PY
 # group_codex_cloud is the one group that is not a list: it runs the Python
 # unittest modules and needs none of the shell fixtures.
 TEST_GROUPS=(
+    runner
     codex_memory_audit
     codex_cloud
     sync
@@ -20826,6 +20831,158 @@ GROUP_codex_memory_audit=(
     test_codex_memory_audit
 )
 
+GROUP_runner=(
+    test_runner_zero_counts
+)
+
+runner_probe_no_assert() { :; }
+runner_probe_pass() { pass "runner probe"; }
+runner_probe_fail() { fail "runner probe"; }
+
+# Exercise the real group runners with local stubs. These probes never create
+# mock repositories or run a child script; the parent probe replaces bash at
+# the call site and checks the captured Results line and exit status.
+test_runner_zero_counts() {
+    echo ""
+    echo "=== Test: every runner group executes a test ==="
+    local base="$TEST_DIR/runner-probes" log rc mode expected needle
+    mkdir -p "$base"
+
+    for mode in empty no_assert pass fail; do
+        log="$base/direct-$mode.log"
+        case "$mode" in
+            empty|no_assert) expected=1; needle="group runner_probe ran zero tests" ;;
+            pass) expected=0; needle="Results: 1 passed, 0 failed" ;;
+            fail) expected=1; needle="Results: 0 passed, 1 failed" ;;
+        esac
+        if (
+            TEST_DIR="$base/direct-$mode"
+            mkdir -p "$TEST_DIR"
+            PASS=0; FAIL=0
+            setup_fixtures() { :; }
+            case "$mode" in
+                empty) GROUP_runner_probe=() ;;
+                no_assert) GROUP_runner_probe=(runner_probe_no_assert) ;;
+                pass) GROUP_runner_probe=(runner_probe_pass) ;;
+                fail) GROUP_runner_probe=(runner_probe_fail) ;;
+            esac
+            run_one_group runner_probe
+        ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+        if [[ "$rc" == "$expected" ]]; then
+            pass "runner direct $mode exits $expected"
+        else
+            fail "runner direct $mode exited $rc, expected $expected"
+        fi
+        assert_contains "$log" "$needle" "runner direct $mode reports its outcome"
+    done
+
+    for mode in no_groups zero mixed missing missing_error nonzero_report pass failed; do
+        log="$base/parent-$mode.log"
+        case "$mode" in
+            pass) expected=0; needle="Results: 1 passed, 0 failed" ;;
+            no_groups) expected=1; needle="suite ran zero tests" ;;
+            zero) expected=1; needle="+1 failed: ran zero tests" ;;
+            mixed) expected=1; needle="FAILED GROUPS: runner_probe_empty" ;;
+            *) expected=1; needle="FAILED GROUPS: runner_probe" ;;
+        esac
+        if (
+            TEST_DIR="$base/parent-$mode"
+            mkdir -p "$TEST_DIR"
+            PASS=0; FAIL=0
+            if [[ "$mode" == no_groups ]]; then
+                TEST_GROUPS=()
+            elif [[ "$mode" == mixed ]]; then
+                TEST_GROUPS=(runner_probe_good runner_probe_empty)
+            else
+                TEST_GROUPS=(runner_probe)
+            fi
+            TEST_JOBS=1
+            RUNNER_CHILD_CASE="$mode"
+            bash() {
+                case "$RUNNER_CHILD_CASE" in
+                    zero) echo "  Results: 0 passed, 0 failed" ;;
+                    mixed)
+                        if [[ "$TEST_GROUP" == runner_probe_good ]]; then
+                            echo "  Results: 1 passed, 0 failed"
+                        else
+                            echo "  Results: 0 passed, 0 failed"
+                        fi
+                        ;;
+                    missing) echo "child stopped before Results" ;;
+                    missing_error) echo "child stopped before Results"; return 7 ;;
+                    nonzero_report) echo "  Results: 1 passed, 0 failed"; return 7 ;;
+                    pass) echo "  Results: 1 passed, 0 failed" ;;
+                    failed) echo "  Results: 0 passed, 1 failed"; return 1 ;;
+                esac
+            }
+            run_groups
+        ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+        if [[ "$rc" == "$expected" ]]; then
+            pass "runner parent $mode exits $expected"
+        else
+            fail "runner parent $mode exited $rc, expected $expected"
+        fi
+        assert_contains "$log" "$needle" "runner parent $mode reports its outcome"
+    done
+
+    mkdir -p "$base/python-positive" "$base/python-empty" "$base/python-skipped"
+    cat > "$base/python-positive/test_codex_cloud_probe.py" <<'PY'
+import unittest
+
+class Probe(unittest.TestCase):
+    def test_one(self):
+        self.assertTrue(True)
+PY
+    cat > "$base/python-skipped/test_codex_cloud_probe.py" <<'PY'
+import unittest
+
+class Probe(unittest.TestCase):
+    @unittest.skip("probe")
+    def test_one(self):
+        self.assertTrue(True)
+PY
+    for mode in positive empty skipped; do
+        log="$base/python-$mode.log"
+        if [[ "$mode" == positive ]]; then
+            expected=0; needle="Results: 1 passed, 0 failed"
+        else
+            expected=1; needle="group codex_cloud ran zero tests"
+        fi
+        if (
+            TEST_DIR="$base/python-run-$mode"
+            mkdir -p "$TEST_DIR"
+            SCRIPT_DIR="$base/python-$mode"
+            PASS=0; FAIL=0
+            run_one_group codex_cloud
+        ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+        if [[ "$rc" == "$expected" ]]; then
+            pass "runner Python $mode exits $expected"
+        else
+            fail "runner Python $mode exited $rc, expected $expected"
+        fi
+        assert_contains "$log" "$needle" "runner Python $mode reports its outcome"
+    done
+
+    # The real YAML parser must reject a present but empty allowlist.
+    mkdir -p "$base/allowlist/node_modules" "$base/allowlist/scripts"
+    ln -s "$REPO_ROOT/node_modules/yaml" "$base/allowlist/node_modules/yaml"
+    printf 'exclude: []\nskills_bootstrap:\n  repos: []\n' > "$base/allowlist/repos.yml"
+    printf 'SELF_REPO="${SYNC_SELF_REPO:-Adam-S-Daniel/_agent-guidance}"\n' > "$base/allowlist/scripts/sync.sh"
+    if (
+        REPO_ROOT="$base/allowlist"
+        TEST_DIR="$base/allowlist"
+        PASS=0; FAIL=0
+        test_bootstrap_allowlist_disjoint
+        [[ "$FAIL" == 1 ]]
+    ) > "$base/allowlist.log" 2>&1; then
+        pass "runner empty bootstrap allowlist fails"
+    else
+        fail "runner empty bootstrap allowlist did not fail"
+    fi
+    assert_contains "$base/allowlist.log" "must be a nonempty list" \
+        "runner empty bootstrap allowlist reports why"
+}
+
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.
@@ -20838,9 +20995,22 @@ GROUP_memory_home=(
 # the agent starts. Keep its focused, standard-library subprocess coverage in
 # a separate module so failures propagate through this integration runner:
 # under `set -e` a failing module ends this group without a Results line,
-# which run_groups reports as a failed group.
+# which run_groups reports as a failed group. Record unittest's actual count
+# so a module pattern that discovers nothing cannot silently pass.
 group_codex_cloud() {
-    python3 -m unittest discover -s "$SCRIPT_DIR" -p 'test_codex_cloud*.py' -v
+    local count_file="$TEST_DIR/codex-cloud-count"
+    python3 - "$SCRIPT_DIR" "$count_file" <<'PY'
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_codex_cloud*.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+passed = result.testsRun - len(result.skipped) - len(result.expectedFailures)
+pathlib.Path(sys.argv[2]).write_text(str(passed), encoding="ascii")
+sys.exit(0 if result.wasSuccessful() else 1)
+PY
+    PASS=$((PASS + $(< "$count_file")))
 }
 
 setup_fixtures() {
@@ -20900,7 +21070,7 @@ run_one_group() {
     else
         # This group owns its SQLite/filesystem fixtures and does not need mock
         # repos. It also runs unchanged in a Git-free negative-control scratch.
-        if [[ "$g" != codex_memory_audit ]]; then setup_fixtures; fi
+        if [[ "$g" != codex_memory_audit && "$g" != runner ]]; then setup_fixtures; fi
         local ref="GROUP_${g}[@]"
         for t in "${!ref}"; do
             "$t"
@@ -20908,6 +21078,9 @@ run_one_group() {
     fi
     echo ""
     echo "========================================="
+    if (( PASS + FAIL == 0 )); then
+        fail "run-tests.sh: group $g ran zero tests"
+    fi
     echo "  Results: $PASS passed, $FAIL failed"
     echo "========================================="
     [[ $FAIL -eq 0 ]] && exit 0 || exit 1
@@ -20966,18 +21139,27 @@ run_groups() {
             p="-"; f="-"
         fi
         local note=""
-        if [[ "$rc" != 0 || -z "$line" ]]; then
+        if [[ "$rc" != 0 || -z "$line" || ( "$p" == 0 && "$f" == 0 ) ]]; then
             failed_groups+=" $g"
             # A group that died, or exited non-zero while claiming 0 failed,
             # still failed: count it, so the Results line below can never
             # read "0 failed" on a run that exits 1.
             if [[ -z "$line" || "$f" == 0 ]]; then
                 FAIL=$((FAIL + 1))
-                note=" (+1 failed: exited $rc without reporting a failed assertion)"
+                if [[ -n "$line" && "$p" == 0 && "$f" == 0 ]]; then
+                    note=" (+1 failed: ran zero tests)"
+                else
+                    note=" (+1 failed: exited $rc without reporting a failed assertion)"
+                fi
             fi
         fi
         summary+=$(printf '  %-14s %5s passed, %3s failed, exit %s, %ss%s' "$g" "$p" "$f" "$rc" "$secs" "$note")$'\n'
     done
+
+    if (( PASS + FAIL == 0 )); then
+        fail "run-tests.sh: suite ran zero tests"
+        failed_groups+=" (none)"
+    fi
 
     echo ""
     echo "========================================="
