@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-04 — 2.1.289 through 2.1.289
+
+- **Checked:** 2026-10-04T16:25Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.289](https://github.com/anthropics/claude-code/releases/tag/v2.1.289), published 2026-10-03T23:07Z
+- **Window:** v2.1.289 (published 2026-10-03T23:07Z), the first stable release after v2.1.288: 1 release, 27 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` c298b8b, `adam-agentskills` a70ed64, `adam-agentskills-private` b9f3a1d, `adamdaniel.ai` b827045, `claude-memory-map` 92a7314, `cms-platform` 0c3b80c, `fastmail-actions` 163a13c, `GHA-bench` 68f1671c, `jodidaniel.com` 08354be, `repo-settings` eecc371, `rss-inator` 43578af, `skills-evals` 7f21575, `wsl-automation` 49dbdfa.
+
+No group met the name-the-surface bar. Most bullets concern plugin panes and mods, Bash/Read deny and ask rules under sandbox auto-allow, and a VS Code auth change, none of which a fleet repo depends on (no fleet `settings.json` carries deny rules or sandbox auto-allow). The three `claude plugin validate` fixes do not match how the fleet calls it: `adam-agentskills` CI runs `claude plugin validate . --strict` on a root holding only a marketplace manifest, and `cms-platform`'s `plugin-validate` lane runs it on a root holding only a plugin manifest, so the "folder holds both" and `--json` fixes do not apply to either.
+
 ### 2026-10-03 — 2.1.288 through 2.1.288
 
 - **Checked:** 2026-10-03T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
