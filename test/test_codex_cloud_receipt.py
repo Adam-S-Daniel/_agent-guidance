@@ -1,4 +1,8 @@
-"""Delivery receipts are best-effort observations, independent of hook decisions."""
+"""Delivery receipts are best-effort observations, independent of hook decisions.
+
+The Bash 3.2 matrix uses BASH32=<executable> or bash3.2 on PATH. It reports a
+clear skip when neither is available; a supplied executable must be Bash 3.2.
+"""
 import ast
 import concurrent.futures
 import errno
@@ -46,6 +50,8 @@ def timed_run(command, *, capture_output=False, check=False, **kwargs):
         try:
             stdout, stderr = process.communicate(timeout=10)
         except subprocess.TimeoutExpired:
+            if not isinstance(process.pid, int) or process.pid <= 1:
+                raise ValueError("unsafe subprocess group")
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=10)
             raise
@@ -141,6 +147,8 @@ class DeliveryReceiptTests(unittest.TestCase):
         """A timed-out fixture may kill only the writer PID it recorded."""
         bounded_poll(lambda: pid_file.exists() and pid_file.read_text().isdigit())
         pid = int(pid_file.read_text())
+        if not isinstance(pid, int) or pid <= 1:
+            raise ValueError("unsafe writer PID")
         def alive():
             try:
                 os.kill(pid, 0)
@@ -161,6 +169,8 @@ class DeliveryReceiptTests(unittest.TestCase):
             return
         if pid_file.exists() and pid_file.read_text().isdigit():
             pid = int(pid_file.read_text())
+            if not isinstance(pid, int) or pid <= 1:
+                raise ValueError("unsafe writer PID")
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -924,6 +934,64 @@ os.open = denied
         self.assert_owned_writer_exits(result, pid_file)
         self.assertFalse(self.log().exists())
 
+    @unittest.skipUnless(hasattr(signal, "pthread_sigmask") and hasattr(signal, "SIGALRM"),
+                         "requires POSIX signal masks and alarm")
+    def test_detached_writer_resets_inherited_alarm_state(self):
+        for blocked, ignored in ((True, False), (False, True), (True, True)):
+            with self.subTest(blocked=blocked, ignored=ignored):
+                gate = self.root / (f"alarm-{blocked}-{ignored}-fifo")
+                pid_file = self.root / (f"alarm-{blocked}-{ignored}-pid")
+                os.mkfifo(gate)
+                parent = self.root / "alarm-parent"
+                parent.write_text(
+                    f"#!{sys.executable}\nimport os, signal, sys\n"
+                    + "if sys.argv[1:3] == ['-S', '-c']:\n"
+                    + "    pass\n"
+                    + ("    signal.signal(signal.SIGALRM, signal.SIG_IGN)\n" if ignored else "")
+                    + ("    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})\n" if blocked else "")
+                    + f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n")
+                parent.chmod(0o755)
+                # Bash may clear its inherited mask. Set the state at the
+                # interpreter exec boundary while using the real hook launch.
+                self.python_shim(self.bin / "python3", body=shlex.quote(str(parent)) + ' "$@"\n')
+                injection = ("import os, sys\n"
+                             "if sys.argv[0] == '-c':\n"
+                             f"    open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                             f"    open({str(gate)!r}, 'rb').read(1)\n")
+                result = self.run_hook(injection=injection, wait=False)
+                self.assert_owned_writer_exits(result, pid_file)
+                self.assertFalse(self.log().exists())
+
+    def test_foreign_owned_helper_is_silent_and_never_read(self):
+        helper_fd = self.root / "foreign-helper-fd"
+        helper_read = self.root / "foreign-helper-read"
+        injection = ("import os, sys\n"
+                     "if sys.argv[0] == '-c':\n"
+                     "    real_open, real_fstat, real_read = os.open, os.fstat, os.read\n"
+                     "    helper_fds = set()\n"
+                     "    def foreign_open(path, flags, *args, **kwargs):\n"
+                     "        fd = real_open(path, flags, *args, **kwargs)\n"
+                     f"        if path == {str(HOOK)!r}:\n"
+                     "            helper_fds.add(fd)\n"
+                     f"            open({str(helper_fd)!r}, 'w').close()\n"
+                     "        return fd\n"
+                     "    def foreign_fstat(fd):\n"
+                     "        info = real_fstat(fd)\n"
+                     "        if fd in helper_fds:\n"
+                     "            fields = list(info)\n"
+                     "            fields[4] = os.geteuid() + 1\n"
+                     "            return os.stat_result(fields)\n"
+                     "        return info\n"
+                     "    def foreign_read(fd, count):\n"
+                     "        if fd in helper_fds:\n"
+                     f"            open({str(helper_read)!r}, 'w').close()\n"
+                     "        return real_read(fd, count)\n"
+                     "    os.open, os.fstat, os.read = foreign_open, foreign_fstat, foreign_read\n")
+        self.assert_identity(injection=injection)
+        self.assertTrue(helper_fd.exists(), "fixture did not encounter the helper descriptor")
+        self.assertFalse(helper_read.exists(), "foreign-owned helper was read")
+        self.assertFalse(self.log().exists())
+
     @unittest.skipUnless(hasattr(signal, "SIGALRM"), "requires POSIX alarm")
     def test_detached_writer_exits_for_fifo_targets_without_readers(self):
         for target in ("receipt", "source", "helper"):
@@ -1047,6 +1115,27 @@ os.open = denied
                 timed_run(["fixture"], capture_output=True)
         kill.assert_called_once_with(123, signal.SIGKILL)
         self.assertEqual([mock.call(timeout=10), mock.call(timeout=10)], process.communicate.call_args_list)
+        for pid in (1, 0, -1, "123", mock.MagicMock()):
+            with self.subTest(pid=pid):
+                process.pid = pid
+                process.communicate.side_effect = subprocess.TimeoutExpired("fixture", 10)
+                with mock.patch.object(subprocess, "Popen", return_value=process), \
+                        mock.patch.object(os, "killpg") as kill:
+                    with self.assertRaisesRegex(ValueError, "unsafe subprocess group"):
+                        timed_run(["fixture"])
+                kill.assert_not_called()
+        for helper in (self.assert_owned_writer_exits, self.cleanup_owned_writer):
+            for pid in (1, 0):
+                with self.subTest(helper=helper.__name__, pid=pid):
+                    pid_file = self.root / "invalid-pid"
+                    pid_file.write_text(str(pid))
+                    result = subprocess.CompletedProcess(["fixture"], 0)
+                    result.receipt_completion = self.root / "missing-completion"
+                    result.receipt_expected = 1
+                    with mock.patch.object(os, "kill", side_effect=AssertionError("unsafe signal")) as kill:
+                        with self.assertRaisesRegex(ValueError, "unsafe writer PID"):
+                            helper(result, pid_file)
+                    kill.assert_not_called()
 
     def test_subprocess_timeouts_and_cleanup_are_structurally_required(self):
         tree = ast.parse(Path(__file__).read_text())

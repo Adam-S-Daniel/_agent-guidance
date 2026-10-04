@@ -10,6 +10,9 @@ set -euo pipefail
 #   TEST_JOBS=N       run at most N groups at once (default: one per CPU;
 #                     TEST_JOBS=1 runs them one after another)
 #   TEST_GROUP=<name> run just that one group, in this process
+#   BASH32=<path>     use this Bash 3.2 executable for the receipt compatibility
+#                     matrix; otherwise look for bash3.2 on PATH. The matrix
+#                     explicitly skips when neither executable is available.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
