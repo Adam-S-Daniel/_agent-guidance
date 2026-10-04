@@ -12510,6 +12510,22 @@ test_sync_workflow_trigger() {
     done < "$want_file"
 }
 
+# Markdown policy and offline provisioning regression checks.
+test_on_hold_label() {
+    echo ""
+    echo "=== Test: on-hold policy and owner-only provisioning ==="
+    local out="$TEST_DIR/on-hold-label-tap.txt" rc=0
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-on-hold-label.js" > "$out" 2>&1 || rc=$?
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    if [[ "$rc" -eq 0 && "$pass_n" == "9" && "$fail_n" == "0" ]]; then
+        pass "on-hold policy and provisioning: 9 passed"
+    else
+        fail "on-hold policy and provisioning: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=9, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 # ── The self-hosted fleet-memory payload matches agents-md/base.md ────────
 #
 # This repo is excluded from the sync (SYNC_SELF_REPO), so nothing overwrites
@@ -21168,6 +21184,7 @@ GROUP_hook_pin=(
 # This repo's own committed files, not the mock fleet — nothing syncs or
 # reports on _agent-guidance, so these are the only checks they get.
 GROUP_self_hosted=(
+    test_on_hold_label
     test_sync_workflow_trigger
     test_self_hosted_hook_pin
     test_self_hosted_fleet_payload

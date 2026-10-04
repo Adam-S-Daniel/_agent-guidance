@@ -50,6 +50,13 @@ labels (below) say where every issue stands.
 
 ## Constraints
 
+Follow the [on-hold label policy](on-hold-label.md) for issues and PRs.
+If `on-hold` appears during work, stop with a read-only `on hold` status: no
+comments, label changes, work, push, or review. A held linked PR also
+disqualifies its issue. Re-read both issue and linked PR labels before every
+mutation, including commit, push, opening or updating a PR, and progress or
+blocked comments. The on-hold stop overrides step 7 below.
+
 - Act only on **open** issues labeled `agent-ready`, in repos listed under
   `cron_coverage.fleet` in this repo's `repos.yml`, under either owner
   (`Adam-S-Daniel` or `jodidaniel`). Resolve each listed name to its owner
@@ -69,10 +76,14 @@ labels (below) say where every issue stands.
 
 1. **List candidates.** Run
    `gh search issues --label agent-ready --state open --owner Adam-S-Daniel --owner jodidaniel`,
-   keep only issues in fleet repos (above), sort oldest first, and take at
-   most 3 this run, one at a time. If there are none, say so and end.
-2. **Claim it.** Skip an issue that already carries `agent-working` or
-   `agent-blocked`. Otherwise remove `agent-ready`, add `agent-working`, and
+   keep only issues in fleet repos (above), exclude `on-hold` issues and
+   issues with a held linked PR before the 3-item limit, sort oldest first,
+   and take at most 3 this run, one at a time. If there are none, say so
+   and end.
+2. **Claim it.** Re-read issue and linked PR labels before any mutation;
+   skip if either carries `on-hold`. Skip an issue that already carries
+   `agent-working` or `agent-blocked`. Otherwise remove `agent-ready`,
+   add `agent-working`, and
    comment `Picked up by the laptop issue worker at <UTC time>.` Then re-read
    the issue's labels: if `agent-working` is not present or `agent-ready` is
    back, something else is acting on it; comment that, leave the labels as
@@ -107,3 +118,6 @@ An issue labeled `agent-working` with no linked open PR for more than 24
 hours is reported in the run's summary, never silently re-taken: a worker
 that died mid-issue may have left a branch or a half-written comment, and a
 person decides whether to reset the labels.
+
+Held issues and issues with held linked PRs stay on hold, even when a claim
+is stale. Report them read-only; never suggest resetting their labels.
