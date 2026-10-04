@@ -143,11 +143,15 @@ Reproduces the trust behavior for
 [issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181) in a
 throwaway profile. It takes about three minutes (six `codex exec` runs, each
 ending in a `401` after Codex's reconnect attempts) and needs no credentials.
-It leaves nothing behind and does not touch `~/.codex`; the subshell keeps
-`CODEX_HOME` out of your terminal.
+The script unsets the three variables Codex reads for credentials
+(`CODEX_API_KEY`, `OPENAI_API_KEY`, `CODEX_ACCESS_TOKEN`, per
+[`login/src/auth/manager.rs`](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/login/src/auth/manager.rs#L953-L969)),
+so it cannot send an authenticated request. It leaves nothing behind and does
+not touch `~/.codex`; the subshell keeps `CODEX_HOME` out of your terminal.
 
 ```bash
 (
+unset CODEX_API_KEY OPENAI_API_KEY CODEX_ACCESS_TOKEN   # the three variables Codex reads for credentials
 EXP=$(mktemp -d) && export CODEX_HOME="$EXP/home" && mkdir -p "$CODEX_HOME" "$EXP/proj" && cd "$EXP/proj" && git init -q
 printf 'GLOBAL_MARKER_181\n' > "$CODEX_HOME/AGENTS.md"
 printf 'PROJECT_MARKER_181\n' > AGENTS.md
@@ -192,10 +196,11 @@ What it shows:
 - An explicit `trust_level = "untrusted"` drops the project `AGENTS.md`; the
   global `AGENTS.md` still loads. A project with no trust entry still
   supplies its `AGENTS.md`, matching the source read above.
-- A user-level `hooks.json` hook is not run until its definition is trusted
-  (the rows marked `flag: none`), and runs with `--dangerously-bypass-hook-trust`
-  even in an explicitly untrusted project. Project trust does not gate the
-  user-layer hook; hook-definition trust does.
+- A user-level `hooks.json` hook did not run without the bypass flag (the
+  rows marked `flag: none`) and ran with `--dangerously-bypass-hook-trust`,
+  including in an explicitly untrusted project. The experiment never trusted
+  the definition, so it does not show that a trusted hook runs; the source
+  read above is what ties the no-run result to hook-definition trust.
 
 What it does not show: a hook whose definition was trusted through `/hooks`
 (interactive, so not scripted here), the fleet's own
@@ -209,7 +214,8 @@ long-lived session holds.
 Reproduces the refresh behavior for
 [issue 182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182)
 against the managed background server, in a throwaway profile with no
-credentials. It starts a daemon under that profile, opens two sessions through
+credentials (it unsets the same three credential variables as the issue 181
+script). It starts a daemon under that profile, opens two sessions through
 its control socket (a WebSocket on a Unix socket, speaking the app-server
 JSON-RPC protocol), rewrites the global `AGENTS.md` between them, and reads
 each session's rollout file, which records the instructions the session
@@ -219,6 +225,7 @@ takes about 30 seconds. Requires `python3`.
 
 ```bash
 (
+unset CODEX_API_KEY OPENAI_API_KEY CODEX_ACCESS_TOKEN   # the three variables Codex reads for credentials
 EXP=$(mktemp -d) && export CODEX_HOME="$EXP/home" && mkdir -p "$CODEX_HOME" "$EXP/proj"
 printf 'MARKER_ONE_182\n' > "$CODEX_HOME/AGENTS.md"
 codex app-server daemon start >/dev/null 2>&1
@@ -283,18 +290,21 @@ call(3, "turn/start", {"threadId": thread, "input": [{"type": "text", "text": te
 time.sleep(10)   # the model request fails with 401; the rollout file is written first
 print(thread)
 EOF
-daemon_pid() { pgrep -f "$CODEX_HOME/packages/app-server-daemon/releases/.*app-server --listen" | head -n1; }
+# The daemon records its own pid files; read those, never search by process name.
+pid_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$CODEX_HOME/app-server-daemon/$1.pid" 2>/dev/null; }
+# Kill a recorded pid only if its command line names this scratch profile.
+kill_scratch() { p=$(pid_of "$1"); [ -n "$p" ] && [[ "$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)" == *"$CODEX_HOME/"* ]] && kill "$p"; }
 for n in ONE TWO; do
   printf 'MARKER_%s_182\n' "$n" > "$CODEX_HOME/AGENTS.md"
   python3 "$EXP/probe.py" "$CODEX_HOME" "$EXP/proj" OK >/dev/null
-  echo "after writing MARKER_${n}_182 (daemon pid $(daemon_pid)); each rollout lists the markers it contains:"
+  echo "after writing MARKER_${n}_182 (daemon pid $(pid_of daemon)); each rollout lists the markers it contains:"
   i=0
   for f in $(ls "$CODEX_HOME"/sessions/*/*/*/rollout-*.jsonl); do
     i=$((i + 1)); echo "  session $i: $(grep -o 'MARKER_[A-Z]*_182' "$f" | sort -u | tr '\n' ' ')"
   done
 done
 codex app-server daemon stop >/dev/null 2>&1
-pgrep -f "$CODEX_HOME/packages/.* pid-update-loop" | xargs -r kill
+kill_scratch daemon; kill_scratch daemon-updater
 rm -rf "$EXP"
 )
 ```

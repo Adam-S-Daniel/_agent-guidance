@@ -195,9 +195,10 @@ discovery while retaining the global instructions, and a project with no
 trust entry still supplies its `AGENTS.md` (both observed). Project config
 and hooks require trusted status; the instruction guard and the config-layer
 guard treat missing trust differently (source). A user-level `hooks.json`
-hook did not run until its definition was trusted, and ran under
-`--dangerously-bypass-hook-trust` in an explicitly untrusted project
-(observed). The fleet hook's own script, and a hook trusted through `/hooks`,
+hook did not run without `--dangerously-bypass-hook-trust` and ran with it,
+including in an explicitly untrusted project (observed; the definition was
+never trusted in that experiment, so the link to hook-definition trust comes
+from the source read). The fleet hook's own script, and a hook trusted through `/hooks`,
 were not exercised, so eligibility is not proof the fleet hook runs. Earlier
 measurements in this ADR did not record project trust, and this addendum does
 not retroactively establish it.
