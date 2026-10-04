@@ -143,7 +143,7 @@
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
   status: gap
-  bytes: 2230
+  bytes: 2254
 
 - id: git-practices
   heading: Git practices

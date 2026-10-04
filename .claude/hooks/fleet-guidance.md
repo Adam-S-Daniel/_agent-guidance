@@ -419,10 +419,10 @@ marketplace add Adam-S-Daniel/adam-agentskills` and install the plugins wanted;
 **install behind** → below; **both current** → silence.
 The clone (`~/.claude/plugins/marketplaces/<name>/` — find it, never assume it) auto-updates while the installed bundle (`~/.claude/plugins/cache/<marketplace>/<bundle>/
 <version>/`) never moves, so check the INSTALL (the owner's laptop,
-2026-08-31: **381 commits** behind):
-`~/.claude/plugins/installed_plugins.json` carries a `gitCommitSha` per
-entry; `git -C <clone> merge-base --is-ancestor <that sha> HEAD` succeeding
-means behind; `git -C <clone> rev-list --count <sha>..HEAD` says by how far.
+2026-08-31: **381 commits** behind): after the refresh, compare each
+`gitCommitSha` in `~/.claude/plugins/installed_plugins.json` with
+`git -C <clone> rev-parse HEAD` — equal is current, another sha behind, none
+unknown. The clone is `--depth 1`, so `merge-base`/`rev-list` exit 128.
 **`claude plugin update` may not fix it, yet says it did** (it gates on
 the `version` string alone; registry ADR 0009) — uninstall and reinstall
 instead. An update changes what loads **next** session; a marketplace
