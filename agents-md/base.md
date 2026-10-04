@@ -168,7 +168,7 @@ hold before writing.
   read BOTH (#83: `get_status` `pending` while every check run was green) —
   but cannot dispatch or read a workflow RUN, and a merge under it is
   synchronous (no `enable_pr_auto_merge`).
-- **Fewer tools is not less dangerous.** The
+- **Fewer tools is not less dangerous.** Both merge, push and delete; the
   subset's reach cannot be inferred from the session's repo list (2026-08-19:
   `github-mcp` 404s on private `repo-settings`).
 
@@ -334,12 +334,12 @@ every user process died.
   call.
 - **A test that mocks a spawn patches every signal call** the code can reach.
 - **A sandboxed 137 with no OOM is a finding.** Never escalate out
-  (`require_escalated`, `dangerouslyDisableSandbox`); it was containing the
+  (`require_escalated`, `dangerouslyDisableSandbox`); it contained the
   kill. Find what sent the signal.
 - **A session that dies mid-verifier is evidence against it.** After a
   restart, find what killed it (journal, 137, `dmesg`) before re-running:
   resumed agents re-running the suite made one kill fifteen (2026-10-04).
-- **Run a suite that spawns or signals in a PID namespace:**
+- **Run spawning or signaling suites in a PID namespace:**
   `unshare --user --map-current-user --pid --fork --mount-proc -- <cmd>`.
 
 ## Subagent delegation (model routing)

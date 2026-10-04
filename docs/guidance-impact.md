@@ -52,7 +52,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-04 — test-that-can-signal-kills-every-session — create
 - Motivation: 2026-10-04 skills-evals test (https://github.com/Adam-S-Daniel/skills-evals/pull/250) killed every process the user owned: a mocked `Popen` made cleanup run `os.killpg(1, SIGKILL)`, i.e. `kill(-1, SIGKILL)`; the kill recurred ~15 times when resumed agents re-ran the suite.
-- Change: new section: refuse any pid or group but an `int` > 1, patch every signal call when mocking a spawn, treat a sandboxed 137 with no OOM as a finding (never escalate out), a session dying mid-verifier is evidence against the verifier, run spawning/signaling suites in a PID namespace; section 1,018 bytes (new).
+- Change: new section: refuse any pid or group but an `int` > 1, patch every signal call when mocking a spawn, treat a sandboxed 137 with no OOM as a finding (never escalate out), a session dying mid-verifier is evidence against the verifier, run spawning/signaling suites in a PID namespace; section 1,011 bytes (new).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-10-04
 
@@ -94,7 +94,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-04 — two-github-connectors — edit
 - Motivation: Making room under the 25,600-byte cap for the new kill-minus-one section (skills-evals#250 incident); wording-only trim, no rule, date or link dropped.
-- Change: removed emphasis bold on `strict subset` and `only`, dropped the `Both merge, push and delete;` clause (the bullet above already says the subset has the same writes); section 1,404 -> 1,367 bytes (-37).
+- Change: removed emphasis bold on `strict subset` and `only`; section 1,404 -> 1,396 bytes (-8).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-10-04
 
@@ -154,7 +154,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-04 — section-python — edit
 - Motivation: the same 2026-10-04 incident: `MagicMock` implements `__index__`/`__int__` as `1`, so a mock reaching an int-taking OS call acts on pid 1.
-- Change: added a bullet: patch `os.kill`/`os.killpg`/`os.waitpid`/`os.close` whenever `subprocess` is mocked, or use `spec=subprocess.Popen` with an explicit `pid`; section 544 -> 796 bytes (+252).
+- Change: added a bullet: patch `os.kill`/`os.killpg`/`os.waitpid`/`os.close` whenever `subprocess` is mocked, or use `spec=subprocess.Popen` with an explicit `pid`; section 544 -> 786 bytes (+242).
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-10-04
 

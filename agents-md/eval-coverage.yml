@@ -83,7 +83,7 @@
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
   status: gap
-  bytes: 1367
+  bytes: 1396
 
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
@@ -131,7 +131,7 @@
   heading: A test that can signal can kill every session
   file: agents-md/base.md
   status: gap
-  bytes: 1018
+  bytes: 1011
 
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
@@ -185,7 +185,7 @@
   heading: Python
   file: agents-md/sections/python.md
   status: gap
-  bytes: 796
+  bytes: 786
 
 - id: section-rust
   heading: Rust
