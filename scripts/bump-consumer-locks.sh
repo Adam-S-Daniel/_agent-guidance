@@ -708,8 +708,8 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 # there. Every caller that JUDGED a branch (its shape, its PRs) judged one
 # commit, and a push that lands after that judgment must not be deleted on the
 # strength of it. So the ref is re-read immediately before the DELETE: moved,
-# or unreadable, is a WARN and a 1 — never a delete — and absent is
-# already-gone, as below. A residual window remains between that re-read and
+# unreadable, or present with a tip that does not parse as a sha, is a WARN
+# and a 1 — never a delete — and absent is already-gone, as below. A residual window remains between that re-read and
 # the DELETE, because `DELETE /repos/{o}/{r}/git/refs/{ref}` takes no
 # expected sha: GitHub's REST ref delete has no compare-and-swap. GraphQL's
 # `updateRefs` mutation does take one (`RefUpdate.beforeOid`, with an all-zero
@@ -774,13 +774,18 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 #     error JSON to STDOUT on an HTTP error with the filter unapplied, so
 #     `out=$(...) || true` would capture that body and go on to search it.
 delete_bump_branch() {
-    local repo_name="$1" branch="$2" expected="${3:-}" delete_out refs_out refs_exit now
+    local repo_name="$1" branch="$2" expected="${3:-}" delete_out refs_out refs_exit now now_rc=0
     if [[ "$DRY_RUN" == "true" ]]; then
         log "[DRY RUN] Would delete $repo_name's $branch."
         return 0
     fi
     if [[ -n "$expected" ]]; then
-        if ! now=$(bump_branch_tip "$repo_name" "$branch"); then
+        now=$(bump_branch_tip "$repo_name" "$branch") || now_rc=$?
+        if [[ $now_rc -eq 2 ]]; then
+            log "$repo_name: WARN did not delete $branch — re-read just before the delete, it is still there but its tip did not read back as a commit sha, so it cannot be shown to still be at ${expected:0:7}, the commit that was judged safe to delete."
+            return 1
+        fi
+        if [[ $now_rc -ne 0 ]]; then
             log "$repo_name: WARN did not delete $branch — re-reading it just before the delete failed, so it cannot be shown to still be at ${expected:0:7}, the commit that was judged safe to delete."
             return 1
         fi
@@ -1003,19 +1008,25 @@ sys.exit(1)
 
 # bump_branch_tip <repo> <branch> — prints the commit <branch> points at, or
 # nothing when the repo has no such branch; returns 1 when the question could
-# not be asked. matching-refs, for the reason delete_bump_branch gives: absence
+# not be asked, and 2 when the branch IS there but its sha did not read back
+# as one. matching-refs, for the reason delete_bump_branch gives: absence
 # is a 200 with an empty array, never a 404 that could also mean "this
 # credential cannot see the repo". It is a PREFIX match, so the exact ref is
 # picked out here, in bash, rather than spliced into a jq program.
+#
+# Present-but-unparseable is not absent. Read as absent, the re-read right
+# before a delete called a branch that was still there "already gone", and
+# the sweep logged "Deleted it" and marked the repo freed without deleting
+# anything. So it gets its own code, and every caller refuses on it.
 bump_branch_tip() {
     local repo_name="$1" branch="$2" refs_out line
     refs_out=$(gh api --paginate "repos/$repo_name/git/matching-refs/heads/$branch" \
         --jq '.[] | .ref + " " + .object.sha' 2>/dev/null) || return 1
     while IFS= read -r line; do
-        if [[ "${line%% *}" == "refs/heads/$branch" && "${line#* }" =~ ^[0-9a-f]{40}$ ]]; then
-            printf '%s\n' "${line#* }"
-            return 0
-        fi
+        [[ "${line%% *}" == "refs/heads/$branch" ]] || continue
+        [[ "$line" == *" "* && "${line#* }" =~ ^[0-9a-f]{40}$ ]] || return 2
+        printf '%s\n' "${line#* }"
+        return 0
     done <<< "$refs_out"
     return 0
 }
@@ -1042,8 +1053,15 @@ bump_branch_tip() {
 # counted as a failure, so the run goes red and names the branch. A deleted
 # name is marked in BRANCH_FREED_THIS_RUN and re-proposed on the next run.
 sweep_branch_without_pr() {
-    local repo_name="$1" tip stranded_pr done_verb
-    if ! tip=$(bump_branch_tip "$repo_name" "$BRANCH_NAME"); then
+    local repo_name="$1" tip stranded_pr done_verb tip_rc=0
+    tip=$(bump_branch_tip "$repo_name" "$BRANCH_NAME") || tip_rc=$?
+    if [[ $tip_rc -eq 2 ]]; then
+        fail "$repo_name: $BRANCH_NAME exists, but its tip did not read back as a commit sha, so it cannot be judged — refusing to delete it, and it still blocks this repo's re-pins."
+        ((FAIL_COUNT++)) || true
+        BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
+        return 0
+    fi
+    if [[ $tip_rc -ne 0 ]]; then
         fail "$repo_name: could not read whether $BRANCH_NAME exists — the matching-refs query failed, so a branch that blocks this repo's re-pins cannot be ruled out."
         ((FAIL_COUNT++)) || true
         BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
@@ -1353,8 +1371,26 @@ sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", o
                 # can take the merge's exit code with it, turning a landed
                 # merge into a reported failure and a wrong MERGE_COUNT.
                 # Separate call, separate consequence: the merge already
-                # counted, and a failed delete warns without unwinding it.
-                delete_bump_branch "$repo_name" "$BRANCH_NAME" || true
+                # counted, and a failed delete does not unwind it.
+                #
+                # Pinned to the head that was judged and merged, never the
+                # branch NAME: a push that lands after the merge is a commit
+                # nothing checked, and deleting by name would throw it away.
+                # delete_bump_branch re-reads the tip immediately before the
+                # DELETE and refuses if it moved (REST's DELETE takes no
+                # expected sha, so a two-call window remains — see there). No
+                # readable head, as on a gh without --match-head-commit whose
+                # head oid did not parse, is nothing to pin to, and refused.
+                # Either refusal, or a delete that failed, leaves a branch a
+                # person must look at, so it is counted and the run goes red;
+                # MERGE_COUNT is untouched.
+                if [[ -z "$head_oid" ]]; then
+                    fail "$repo_name#$number: merged, but its head commit did not read back as a sha, so $BRANCH_NAME was not deleted — there is no judged commit to pin the delete to."
+                    ((FAIL_COUNT++)) || true
+                elif ! delete_bump_branch "$repo_name" "$BRANCH_NAME" "$head_oid"; then
+                    fail "$repo_name#$number: merged, but $BRANCH_NAME was not deleted (see the WARN above), so it is left for a person to check."
+                    ((FAIL_COUNT++)) || true
+                fi
             else
                 fail "$repo_name#$number: merge was refused — $(head -1 <<< "$merge_out")"
                 ((FAIL_COUNT++)) || true
