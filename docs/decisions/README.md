@@ -32,6 +32,7 @@ a page.
 | [0015](0015-audit-codex-memories-after-generation-not-at-stop.md) | Audit Codex memories after generation, not at Stop — Accepted 2026-10-02 |
 | [0016](0016-the-freshest-delivery-wins-the-shared-global-block.md) | The freshest delivery wins the shared global block |
 | [0017](0017-prompt-audit-runs-as-an-event-triggered-sweep.md) | Prompt-audit runs as an event-triggered sweep, never as a check or a schedule |
+| [0018](0018-incident-narratives-live-in-docs-evidence.md) | Incident narratives live in `docs/evidence/`, and the guidance keeps a pointer |
 
 ## Format
 
