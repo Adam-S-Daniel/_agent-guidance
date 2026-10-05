@@ -113,6 +113,13 @@ skills_bootstrap:
     # and its registration already in place. Listed so the sync keeps the hook
     # current against the pin above.
     - adamdaniel.ai
+    # lock: committed — Adam-S-Daniel/ai-usage-dashboard#7 re-pinned it to
+    # adam-agentskills b0a1b0d (2026-10-05). Added on the owner's decision of
+    # 2026-10-05; `.claude/` is not gitignored there (its .gitignore is
+    # `*.log`), so the hook is deliverable. The repo has no
+    # `.claude/hooks/skills-bootstrap.sh` yet — the sync writes it on its next
+    # run, and `.claude/settings.json` already registers fleet-memory only.
+    - ai-usage-dashboard
     # lock: committed — PR #19 merged 2026-08-19.
     - claude-memory-map
     # cms-platform and GHA-bench both gitignore `.claude/` — cms-platform with
@@ -269,6 +276,7 @@ cron_coverage:
     - adam-agentskills
     - adam-agentskills-private
     - adamdaniel.ai
+    - ai-usage-dashboard
     - claude-memory-map
     - cms-platform
     - fastmail-actions

@@ -7552,6 +7552,39 @@ PY
     assert_cap noprompt 2 "no prompt text" \
         "routine: an empty prompt is a refusal, not an empty snapshot"
 
+    # The REST shape (`GET /v1/code/triggers/<id>`) carries a `session_request`
+    # mirror plus personal and token-hint fields the list tool never had. It must
+    # render, withhold the personal values, and still refuse on a disagreeing
+    # mirror or a populated environment-variable map.
+    local rest_mut='
+r["api_token_hint"] = "TOKENHINTfixture0000"
+r["creator"]["display_name"] = "DISPLAYNAMEfixture0000"
+r["session_request"] = {"environment_id": "ENVIRONMENTfixture0000",
+    "environment_variables": {}, "metadata": {}, "tags": [],
+    "config": {"allowed_tools": ["Bash"], "worktree": False},
+    "events": [{"ephemeral": False, "payload": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
+        "session_id": "", "message": {"role": "user", "content": prompt}}}]}'
+    write_fixture rest "$rest_mut"
+    assert_cap rest 0 "wrote" "routine: the REST shape (session_request mirror) renders a snapshot"
+    local lit2 rest_leaked=0
+    for lit2 in TOKENHINTfixture0000 DISPLAYNAMEfixture0000 ENVIRONMENTfixture0000 MESSAGEUUIDfixture0000; do
+        if grep -qF -- "$lit2" "$dir/rest.md"; then
+            fail "routine: $lit2 leaked from the REST shape into the snapshot"
+            rest_leaked=1
+        fi
+    done
+    [[ $rest_leaked -eq 0 ]] && pass "routine: REST-only personal and token-hint values are withheld"
+
+    write_fixture restskew "$rest_mut"'
+r["session_request"]["events"][0]["payload"]["message"]["content"] += "drifted"'
+    assert_cap restskew 2 "session_request" \
+        "routine: a session_request prompt disagreeing with the seed event is a refusal"
+
+    write_fixture restenv "$rest_mut"'
+r["session_request"]["environment_variables"] = {"FIXTURE_VAR": "x"}'
+    assert_cap restenv 2 "environment_variables.FIXTURE_VAR" \
+        "routine: a populated environment_variables map refuses by its keys"
+
     printf '{"data":[]}' > "$dir/empty.json"
     assert_cap empty 2 "zero routines" \
         "routine: zero routines refuses — an empty list and an unauthorised one look alike"

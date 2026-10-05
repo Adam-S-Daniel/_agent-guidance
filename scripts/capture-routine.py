@@ -31,6 +31,12 @@ WHERE THE INPUT COMES FROM
         "No MCP server named ...". The server is injected by the host and
         carries no URL any committed script could dial.
 
+    Measured 2026-10-05: `GET /v1/code/triggers/<id>` with a claude.ai session
+    credential does answer, with `{"trigger": {...}}`. This script still parses
+    the `list_triggers` envelope, so wrap that response as `{"data": [trigger]}`
+    first; the record inside carries extra fields (`session_request` and
+    others), which FIELD_POLICY classifies.
+
     So the fetch is left to the caller, in whichever of the two shapes fits:
 
       # (a) an agent session that holds the tool: call it, save the response
@@ -139,6 +145,59 @@ FIELD_POLICY = {
     "derived_state.prompt":                   ("exclude", "duplicate of the event's message content; equality is asserted below"),
     "job_config.ccr.events[*].data.parent_tool_use_id": ("exclude", "always null for a routine's seed message"),
 }
+
+# --- the REST shape -------------------------------------------------------
+# `GET /v1/code/triggers/<id>` (measured 2026-10-05) returns the same record as
+# `list_triggers` plus fields the list tool never carried. Most are a
+# `session_request` mirror of what `job_config.ccr` already holds, so they are
+# excluded with that reason, and the mirror's text is checked against the
+# captured prompt in collect() instead of trusted. Anything that can name a
+# person or an identifier is redacted. An empty `{}` is a leaf, so a populated
+# `environment_variables` / `metadata` map surfaces its keys as unclassified
+# leaves and REFUSES, which is the point: a value there could be a secret.
+_MIRROR = "REST-only mirror of job_config.ccr"
+_EMPTY = "empty when classified 2026-10-05; not rendered"
+FIELD_POLICY.update({
+    "api_token_hint":                         ("redact", "API token fragment"),
+    "created_surface":                        ("exclude", "REST-only; created_via is the captured surface"),
+    "creator.display_name":                   ("redact", "person's name"),
+    "derived_state.files[*]":                 ("exclude", _EMPTY),
+    "derived_state.folders[*]":               ("exclude", _EMPTY),
+    "enabled_plugins[*]":                     ("exclude", _EMPTY),
+    "extra_marketplaces[*]":                  ("exclude", _EMPTY),
+    "last_run.failure_reason":                ("exclude", "runtime state: changes on every fire"),
+    "mcp_connections[*].clear_tool_policy_overrides": ("exclude", _EMPTY),
+    "mcp_connections[*].permitted_tools[*]":  ("exclude", _EMPTY),
+    "mcp_connections[*].tool_policy_overrides[*]": ("exclude", _EMPTY),
+    "session_request.environment_id":         ("redact", "cloud environment identifier"),
+    "session_request.environment_variables":  ("exclude", "empty map; a populated one refuses by its keys"),
+    "session_request.metadata":               ("exclude", "empty map; a populated one refuses by its keys"),
+    "session_request.config.metadata":        ("exclude", "empty map; a populated one refuses by its keys"),
+    "session_request.tags[*]":                ("exclude", _EMPTY),
+    "session_request.events[*].payload.session_id": ("redact", "session identifier"),
+    "session_request.events[*].payload.uuid": ("redact", "message identifier"),
+    "session_request.events[*].payload.message.content": ("exclude", "duplicate of the captured prompt; equality is asserted"),
+})
+for _leaf in (
+    "account_plugins[*]", "account_skills[*]", "active_mount_paths[*]",
+    "allowed_tools[*]", "auto_mode_allow[*]", "auto_mode_environment[*]",
+    "auto_mode_soft_deny[*]", "autofix_on_pr_create", "builtin_tools[*]",
+    "disallowed_tools[*]", "file_mounts[*]", "mcp_servers[*]",
+    "otel_content_capture[*]", "outcomes[*].git_info.branches[*]",
+    "outcomes[*].git_info.host", "outcomes[*].git_info.ref",
+    "outcomes[*].git_info.repo", "outcomes[*].git_info.type", "outcomes[*].type",
+    "owner_tagged_mcp_servers[*]", "prompt_cache_relay_enabled",
+    "sources[*].sparse_checkout_exclude_patterns[*]",
+    "sources[*].sparse_checkout_paths[*]", "sources[*].type", "sources[*].url",
+    "subagents[*]", "worktree",
+):
+    FIELD_POLICY["session_request.config." + _leaf] = ("exclude", _MIRROR)
+for _leaf in (
+    "ephemeral", "historical", "mentioned_account_ids[*]",
+    "payload.message.role", "payload.parent_tool_use_id", "payload.type",
+    "user_declared_urls[*]",
+):
+    FIELD_POLICY["session_request.events[*]." + _leaf] = ("exclude", _MIRROR)
 
 REDACTED = "<redacted: %s>"
 
@@ -271,6 +330,16 @@ def collect(record):
             "this needs a decision rather than a silent pick."
             % (len(derived), len(prompt))
         )
+
+    for ev in get(record, "session_request.events") or []:
+        mirrored = get(ev, "payload.message.content")
+        if mirrored is not None and mirrored != prompt:
+            raise Refusal(
+                "`session_request` and the seed event's message content "
+                "disagree (%d vs %d bytes). Which one a fired session actually "
+                "receives is an open question, so this needs a decision rather "
+                "than a silent pick." % (len(mirrored), len(prompt))
+            )
 
     ctx = get(record, "job_config.ccr.session_context") or {}
     sources = [
