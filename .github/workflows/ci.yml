@@ -133,6 +133,16 @@ jobs:
       - name: Install the workflow parser
         run: npm ci
 
+      # ADVISORY, by owner decision D5 ("Warn"): British spellings and dangling
+      # "see X above/below" references in the Markdown agents read. The script
+      # exits 0 whatever it finds (annotations only; `--strict` is for its
+      # tests), so this step cannot fail the required `test` job and needs no
+      # `continue-on-error`. Placed first among the checks so its annotations
+      # print even when a later step fails, and kept unconditional with no
+      # `paths:` filter, like the rest of this job.
+      - name: Agent Markdown warnings (spelling, dangling references)
+        run: node scripts/check-agent-markdown.js
+
       # This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a
       # hand-made byte-identical copy of agents-md/base.md that nothing syncs
       # (SYNC_SELF_REPO) and no drift report names; the same step proves every
