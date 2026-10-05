@@ -142,6 +142,11 @@ PR_AUTHOR="${BUMP_PR_AUTHOR:-agents-md-sync[bot]}"
 # stranded_bump_pr requires on every commit of a branch it may delete.
 COMMIT_NAME="agents-md-sync[bot]"
 COMMIT_EMAIL="agents-md-sync[bot]@users.noreply.github.com"
+# How many pull requests stranded_bump_pr asks for on one bump branch. gh's
+# default is 30, newest first; the branch name is reused night after night,
+# so a consumer's history passes that. A listing that comes back this full is
+# treated as possibly truncated and refused, never read as complete.
+PR_LIST_LIMIT=1000
 DRY_RUN=false
 WORK_DIR=$(mktemp -d)
 
@@ -695,8 +700,23 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 #
 # One repo's failure is counted and the loop continues, exactly as the propose
 # pass does. Nothing here aborts the fleet.
-# delete_bump_branch <repo> <branch> — remove a bump branch that is fully
-# merged. Returns 0 when the branch is gone afterwards, 1 otherwise.
+# delete_bump_branch <repo> <branch> [<expected tip sha>] — remove a bump
+# branch that is fully merged. Returns 0 when the branch is gone afterwards, 1
+# otherwise.
+#
+# WITH <expected tip sha>, the branch is deleted only if it still points
+# there. Every caller that JUDGED a branch (its shape, its PRs) judged one
+# commit, and a push that lands after that judgment must not be deleted on the
+# strength of it. So the ref is re-read immediately before the DELETE: moved,
+# or unreadable, is a WARN and a 1 — never a delete — and absent is
+# already-gone, as below. A residual window remains between that re-read and
+# the DELETE, because `DELETE /repos/{o}/{r}/git/refs/{ref}` takes no
+# expected sha: GitHub's REST ref delete has no compare-and-swap. GraphQL's
+# `updateRefs` mutation does take one (`RefUpdate.beforeOid`, with an all-zero
+# `afterOid` meaning delete; confirmed in the live schema by introspection
+# 2026-10-05), but nothing here has exercised it against a real ref or an App
+# installation token, so it is not adopted on the strength of a schema alone.
+# The window shrinks from "the whole judgment" to two back-to-back API calls.
 #
 # WHY THIS EXISTS AT ALL. The proposer refuses to force-push a branch whose
 # content it did not write, which is right — that rule is what stops it
@@ -754,10 +774,24 @@ verdict("READY", "all %d check(s) concluded green" % len(rollup))
 #     error JSON to STDOUT on an HTTP error with the filter unapplied, so
 #     `out=$(...) || true` would capture that body and go on to search it.
 delete_bump_branch() {
-    local repo_name="$1" branch="$2" delete_out refs_out refs_exit
+    local repo_name="$1" branch="$2" expected="${3:-}" delete_out refs_out refs_exit now
     if [[ "$DRY_RUN" == "true" ]]; then
         log "[DRY RUN] Would delete $repo_name's $branch."
         return 0
+    fi
+    if [[ -n "$expected" ]]; then
+        if ! now=$(bump_branch_tip "$repo_name" "$branch"); then
+            log "$repo_name: WARN did not delete $branch — re-reading it just before the delete failed, so it cannot be shown to still be at ${expected:0:7}, the commit that was judged safe to delete."
+            return 1
+        fi
+        if [[ -z "$now" ]]; then
+            log "$repo_name: $branch was already gone."
+            return 0
+        fi
+        if [[ "$now" != "$expected" ]]; then
+            log "$repo_name: WARN did not delete $branch — it moved from ${expected:0:7} to ${now:0:7} after it was judged safe to delete, and nothing has judged the new commit."
+            return 1
+        fi
     fi
     if delete_out=$(gh api -X DELETE "repos/$repo_name/git/refs/heads/$branch" 2>&1); then
         log "$repo_name: deleted $branch."
@@ -800,8 +834,10 @@ delete_bump_branch() {
     return 1
 }
 
-# branch_adds_nothing_to_base <repo> <branch> — true when every commit on
-# <branch> is already contained in the repo's default branch.
+# branch_adds_nothing_to_base <repo> <branch or tip sha> — true when every
+# commit on it is already contained in the repo's default branch. The sweep
+# passes the tip sha it read, so the answer describes the commit a later
+# delete is pinned to, not whatever the name points at by then.
 #
 # Asked of GitHub rather than of git, because the propose pass clones with
 # `--depth 1`: there is no history locally for `merge-base --is-ancestor` to
@@ -822,10 +858,15 @@ branch_adds_nothing_to_base() {
 }
 
 # stranded_bump_pr <repo> <branch> <tip sha> — prints the number of the
-# closed-unmerged pull request that leaves <branch> stranded, or `none` when
-# no pull request was ever opened at its current tip, and returns 0, when ALL
-# of these hold; returns 1, printing nothing, otherwise:
+# closed-unmerged pull request that leaves <branch> stranded, `merged:<number>`
+# when that pull request was MERGED at the tip (see the third case), or `none`
+# when no pull request was ever opened at its current tip, and returns 0, when
+# ALL of these hold; returns 1, printing nothing, otherwise:
 #
+#   * the listing of pull requests on <branch> is complete: it is asked for up
+#     to $PR_LIST_LIMIT and refused when that many come back, since gh's
+#     default (30, newest first) silently drops the OLDEST, and a dropped PR
+#     at this tip would read as "never proposed";
 #   * no pull request on <branch> is open;
 #   * EITHER no pull request on it has <tip sha> as its head, and the most
 #     recent one (if any) was MERGED — a run that pushed the branch and died
@@ -838,6 +879,17 @@ branch_adds_nothing_to_base() {
 #     CLOSED without being merged, and has <tip sha> as its head commit, the
 #     commit the branch carries now — so nothing reached the branch after the
 #     bot's PR was closed;
+#   * OR the most recent one was opened by this bumper, was MERGED with
+#     <tip sha> as its head, and its merge commit is contained in the default
+#     branch (compare status behind or identical). That is a squash- or
+#     rebase-merged bump PR whose branch was never deleted: the merge put a
+#     NEW commit on the default branch, so branch_adds_nothing_to_base says
+#     no, and before this case the sweep refused it and failed the run every
+#     night. Deleting it loses nothing: a merged PR's head is frozen at the
+#     merge, so a head equal to the tip means nothing reached the branch
+#     after it, the merge commit carrying that tip's change is on the default
+#     branch, and refs/pull/<n>/head still holds the commit. A merge commit
+#     that does not read back, or is not on the default branch, is a 1;
 #   * the branch's diff against the default branch is $LOCK_REL_PATH alone;
 #   * every commit the branch carries beyond the default branch is both
 #     authored AND committed under $COMMIT_EMAIL, the identity this script
@@ -855,24 +907,33 @@ branch_adds_nothing_to_base() {
 # on it, a second file, an open PR, a PR closed by somebody's merge — is still
 # refused, and every unreadable answer is a 1.
 stranded_bump_pr() {
-    local repo_name="$1" branch="$2" tip="$3" base shape prs_json
+    local repo_name="$1" branch="$2" tip="$3" base shape prs_json verdict rc
+    local merged_number merged_oid merged_status
     [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || return 1
     base=$(gh api "repos/$repo_name" --jq '.default_branch' 2>/dev/null) || return 1
     [[ -n "$base" ]] || return 1
     # One call, so the file list and the commit identities describe the same
     # snapshot of the branch: "<files>|<distinct author and committer
     # emails>". An empty commit list yields "<files>|", which matches nothing
-    # below.
-    shape=$(gh api "repos/$repo_name/compare/$base...$branch" \
+    # below. Asked of <tip sha>, NOT of the branch name: the name may have
+    # moved since the tip was read, and every other test here (a PR's head
+    # equal to the tip, the delete pinned to it) is about that one commit.
+    shape=$(gh api "repos/$repo_name/compare/$base...$tip" \
         --jq '([.files[].filename] | join(",")) + "|" + ([.commits[].commit | .author.email, .committer.email] | unique | join(","))' \
         2>/dev/null) || return 1
     [[ "$shape" == "$LOCK_REL_PATH|$COMMIT_EMAIL" ]] || return 1
     prs_json=$(gh pr list --repo "$repo_name" --head "$branch" --state all \
-        --json number,state,headRefName,headRefOid,author 2>/dev/null) || return 1
-    python3 -c '
-import json, sys
+        --limit "$PR_LIST_LIMIT" \
+        --json number,state,headRefName,headRefOid,author,mergeCommit 2>/dev/null) || return 1
+    rc=0
+    verdict=$(python3 -c '
+import json, re, sys
 
-raw, branch, author, tip = sys.argv[1:5]
+# The listing arrives on stdin, not as an argument: a long history is more
+# than the 128 KiB Linux allows a single argv string, and exec would fail
+# before any of this ran.
+branch, author, tip, limit = sys.argv[1:5]
+raw = sys.stdin.read()
 
 
 def normalize(login):
@@ -888,6 +949,10 @@ def normalize(login):
 prs = json.loads(raw)
 if not isinstance(prs, list):
     sys.exit(1)
+if len(prs) >= int(limit):
+    # As many as were asked for: the listing may be cut short, and what it
+    # drops is the OLDEST pull requests. Not an answer.
+    sys.exit(3)
 # Filtered here, not trusted to --head: a listing filter is a query, not a
 # guarantee (see the sweep).
 ours = [pr for pr in prs if isinstance(pr, dict) and pr.get("headRefName") == branch]
@@ -902,13 +967,38 @@ if ((latest is None or latest.get("state") == "MERGED")
     # this one ours to replace.
     print("none")
     sys.exit(0)
-if (latest.get("state") != "CLOSED"
-        or not normalize(author)
+if (not normalize(author)
         or normalize((latest.get("author") or {}).get("login")) != normalize(author)
         or latest.get("headRefOid") != tip):
     sys.exit(1)
-print(latest["number"])
-' "$prs_json" "$branch" "$PR_AUTHOR" "$tip" 2>/dev/null
+if latest.get("state") == "CLOSED":
+    print(latest["number"])
+    sys.exit(0)
+if latest.get("state") == "MERGED":
+    # Merged AT the tip. Whether its merge commit is on the default branch is
+    # asked of the API below.
+    oid = (latest.get("mergeCommit") or {}).get("oid")
+    if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", oid):
+        print("merged %d %s" % (latest["number"], oid))
+        sys.exit(0)
+sys.exit(1)
+' "$branch" "$PR_AUTHOR" "$tip" "$PR_LIST_LIMIT" 2>/dev/null <<< "$prs_json") || rc=$?
+    if [[ $rc -eq 3 ]]; then
+        # To stderr: stdout is this function's answer. The caller counts the
+        # refusal as a failure; this line says why.
+        log "$repo_name: WARN the pull requests on $branch filled the listing limit ($PR_LIST_LIMIT), so the list may be incomplete and cannot show that none was opened at ${tip:0:7}." >&2
+        return 1
+    fi
+    [[ $rc -eq 0 && -n "$verdict" ]] || return 1
+    if [[ "$verdict" == merged\ * ]]; then
+        read -r _ merged_number merged_oid <<< "$verdict"
+        merged_status=$(gh api "repos/$repo_name/compare/$base...$merged_oid" \
+            --jq '.status' 2>/dev/null) || return 1
+        [[ "$merged_status" == "behind" || "$merged_status" == "identical" ]] || return 1
+        printf 'merged:%s\n' "$merged_number"
+        return 0
+    fi
+    printf '%s\n' "$verdict"
 }
 
 # bump_branch_tip <repo> <branch> — prints the commit <branch> points at, or
@@ -946,7 +1036,8 @@ bump_branch_tip() {
 # Deleted only when that is provably lossless, by the two existing tests and
 # nothing looser: branch_adds_nothing_to_base (a merged leftover) or
 # stranded_bump_pr (this bumper's lock-only commits, its PR closed unmerged at
-# this tip, or none ever opened at this tip). Anything else — a person's commit, a second
+# this tip, merged at this tip with the merge commit on the default branch, or
+# none ever opened at this tip). Anything else — a person's commit, a second
 # file, a PR closed by someone's merge, an unreadable answer — is REFUSED and
 # counted as a failure, so the run goes red and names the branch. A deleted
 # name is marked in BRANCH_FREED_THIS_RUN and re-proposed on the next run.
@@ -964,8 +1055,11 @@ sweep_branch_without_pr() {
     done_verb="Deleted it"
     $DRY_RUN && done_verb="[DRY RUN] It would be deleted"
 
-    if branch_adds_nothing_to_base "$repo_name" "$BRANCH_NAME"; then
-        if delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
+    # Every test below is asked of <tip>, and every delete is pinned to it:
+    # what was judged is the commit that may be deleted, and a branch that
+    # moved since is refused (see delete_bump_branch).
+    if branch_adds_nothing_to_base "$repo_name" "$tip"; then
+        if delete_bump_branch "$repo_name" "$BRANCH_NAME" "$tip"; then
             log "$repo_name: $BRANCH_NAME was a merged leftover and carried nothing the default branch lacks. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
             BRANCH_FREED_THIS_RUN["$repo_name"]=1
             return 0
@@ -978,9 +1072,11 @@ sweep_branch_without_pr() {
 
     if stranded_pr=$(stranded_bump_pr "$repo_name" "$BRANCH_NAME" "$tip") \
        && [[ -n "$stranded_pr" ]]; then
-        if delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
+        if delete_bump_branch "$repo_name" "$BRANCH_NAME" "$tip"; then
             if [[ "$stranded_pr" == "none" ]]; then
                 log "$repo_name: $BRANCH_NAME was stranded: no pull request was ever opened at its tip, and it held only this bumper's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+            elif [[ "$stranded_pr" == merged:* ]]; then
+                log "$repo_name: $BRANCH_NAME was a merged leftover: its pull request #${stranded_pr#merged:} was merged at its tip ${tip:0:7} (squash or rebase, so the default branch carries a new commit rather than this one), that merge commit is on the default branch, and the branch held only this bumper's own $LOCK_REL_PATH re-pin. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
             else
                 log "$repo_name: $BRANCH_NAME was stranded: its pull request #$stranded_pr was closed unmerged, and the branch still held only that PR's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
             fi
@@ -993,7 +1089,7 @@ sweep_branch_without_pr() {
         return 0
     fi
 
-    fail "$repo_name: $BRANCH_NAME is at ${tip:0:7} with no open pull request, and it is not provably this bumper's own lock-only re-pin (a merged leftover, or a bot PR closed unmerged at this tip, or none ever opened at this tip) — refusing to delete it. No re-pin can be proposed here until a person merges, reopens or deletes it."
+    fail "$repo_name: $BRANCH_NAME is at ${tip:0:7} with no open pull request, and it is not provably this bumper's own lock-only re-pin (a merged leftover, or a bot PR closed unmerged or merged at this tip, or none ever opened at this tip) — refusing to delete it. No re-pin can be proposed here until a person merges, reopens or deletes it."
     ((FAIL_COUNT++)) || true
     BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
     return 0

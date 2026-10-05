@@ -177,7 +177,19 @@ PR was closed unmerged with this tip as its head, or which never had a PR at
 this tip, its only PRs, if any, merged at older heads (re-proposed next run).
 The name is reused nightly, so the last case is what an interrupted run leaves
 on a consumer with bump history; requiring no PR at all would refuse every
-such repo. Anything else is refused and counted as a
+such repo. A latest bot PR *merged* at this tip is freed too when its merge
+commit is on the default branch: on a squash- or rebase-merge repo the merge
+lands a new commit, so the branch never reads as a merged leftover, and it used
+to be refused and fail the run every night although its change had landed and
+a merged PR's head, frozen at the merge, shows nothing reached the branch since.
+Every check is asked of the tip sha the sweep read, never the branch name, and
+the ref is re-read immediately before the delete: a branch that moved since it
+was judged is refused and counted. GitHub's REST ref delete takes no expected
+sha, so a window of two back-to-back API calls remains; GraphQL's `updateRefs`
+(`beforeOid`) would close it but has not been exercised against a real ref. The
+PR listing is asked for 1000 and refused when that many come back, since gh's
+default of 30 drops the oldest, and a dropped PR at the tip would read as
+"never proposed". Anything else is refused and counted as a
 failure, so the run goes red and names the branch. A
 PR the propose pass finds closed when it reads the new PR back is reopened with
 a comment saying it was not a review decision. The deferral covers only the

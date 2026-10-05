@@ -2241,6 +2241,29 @@ mock_open_pr_42() {
     printf '%s' '{"number":42,"state":"OPEN","headRefName":"skills-lock-bump/update","author":{"login":"agents-md-sync[bot]"},"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","reviewDecision":"","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":null}]}'
 }
 
+# mock_push_foreign_commit <bare repo path> <trigger> — the race a judged
+# branch can lose: someone pushes to skills-lock-bump/update between the
+# bumper reading it and deleting it. MOCK_REF_PUSH_ON names
+# "<owner_repo>:<trigger>" pairs, a trigger being the API call after whose
+# answer the push lands (`matching-refs` or `compare`). Once per repo, marked
+# inside the bare repo, so the bumper's later re-read sees the moved ref
+# rather than another push. The commit is a
+# person's, on top of the tip, changing nothing: what is lost if it is
+# deleted is the commit itself.
+mock_push_foreign_commit() {
+    local bare="$1" trigger="$2" slug tip tree new
+    slug=$(basename "$bare")
+    [[ " ${MOCK_REF_PUSH_ON:-} " == *" $slug:$trigger "* ]] || return 0
+    [[ -e "$bare/mock-foreign-push-done" ]] && return 0
+    tip=$(git -C "$bare" rev-parse --verify -q refs/heads/skills-lock-bump/update) || return 0
+    tree=$(git -C "$bare" rev-parse "$tip^{tree}")
+    new=$(GIT_AUTHOR_NAME="A Human" GIT_AUTHOR_EMAIL="human@example.com" \
+          GIT_COMMITTER_NAME="A Human" GIT_COMMITTER_EMAIL="human@example.com" \
+          git -C "$bare" commit-tree "$tree" -p "$tip" -m "a person's push") || return 0
+    git -C "$bare" update-ref refs/heads/skills-lock-bump/update "$new" "$tip"
+    : > "$bare/mock-foreign-push-done"
+}
+
 case "$1" in
     repo)
         case "$2" in
@@ -2543,6 +2566,7 @@ case "$1" in
                 json=$(echo "$json" | jq --arg r "$one_ref" --arg s "$one_sha" \
                     '. + [{"ref": $r, "object": {"sha": $s, "type": "commit"}}]')
             done < <(git -C "$bare_path" for-each-ref --format='%(refname) %(objectname)' refs/heads/ 2>/dev/null)
+            mock_push_foreign_commit "$bare_path" matching-refs
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -2583,6 +2607,7 @@ case "$1" in
             cmp_commits=$(git -C "$bare_path" log --format='%ae %ce' "$base_sha..$head_sha" 2>/dev/null \
                 | jq -R 'split(" ") | {commit: {author: {email: .[0]}, committer: {email: .[1]}}}' | jq -s -c .)
             json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}, \"commits\": ${cmp_commits:-[]}}"
+            mock_push_foreign_commit "$bare_path" compare
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -2842,6 +2867,18 @@ case "$1" in
                         open)   json=$(jq -c 'map(select((.state // "OPEN") == "OPEN"))' <<< "$json") ;;
                         closed) json=$(jq -c 'map(select((.state // "OPEN") != "OPEN"))' <<< "$json") ;;
                     esac
+                    # --limit IS honoured too, with gh's own default of 30:
+                    # past it, real gh returns only the NEWEST pull requests
+                    # and says nothing about the rest. Kept in fixture order,
+                    # so only membership changes. Without it a caller that
+                    # forgot --limit read a complete list here and a truncated
+                    # one on GitHub.
+                    limit_arg=$(parse_flag_value --limit "$@")
+                    json=$(jq -c --argjson n "${limit_arg:-30}" '
+                        if length > $n
+                        then (sort_by(-(.number // 0)) | .[:$n] | map(.number)) as $keep
+                             | map(select(.number as $x | $keep | index($x)))
+                        else . end' <<< "$json")
                 else
                     # No --repo: the propose pass asking about the clone it is
                     # standing in. Unchanged — an "open" PR #42 for repos whose
@@ -8374,6 +8411,7 @@ run_bump() {   # <output file> [script args...]
     MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
+    MOCK_REF_PUSH_ON="${BUMP_REF_PUSH_ON_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
@@ -12720,8 +12758,9 @@ setup_race_repos() {
     printf '[{"number":135,"state":"OPEN","headRefName":"%s","headRefOid":"%s",%s,"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","reviewDecision":"","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]},{"number":136,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
         "$branch" "$tip" "$bot" "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-near-open-pr.json"
 
-    # The latest PR was MERGED, not closed: a merge is a review decision, and
-    # whatever the branch still holds is not a stranded re-pin.
+    # The latest PR was MERGED at the tip, but no merge commit reads back to
+    # show the merge on the default branch: whatever the branch still holds
+    # is not provably landed (repo-squashed, below, is the case that is).
     make_race_repo repo-near-merged fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
     tip=$(git -C "$SWEEP_BARE/bumporg_repo-near-merged" rev-parse "refs/heads/$branch")
     printf '[{"number":137,"state":"MERGED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
@@ -12781,6 +12820,78 @@ setup_no_pr_repos() {
     # No branch, but the question cannot be asked: counted, never read as "no
     # branch".
     make_race_repo repo-refs-blind fill "$BUMP_REF_CONTENT" none none
+
+    # ── Follow-ups to #269's review.
+    #
+    # The listing must be COMPLETE. gh returns the newest 30 by default, and
+    # what it drops is the oldest: here a person's PR, closed unmerged AT the
+    # tip, sits behind 31 merged bump PRs at older heads. Read whole, a PR was
+    # opened at this tip and it was not the bumper's: refused. Truncated, the
+    # branch reads as never proposed and is deleted.
+    make_race_repo repo-orphan-long-history fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-orphan-long-history" rev-parse "refs/heads/$branch")
+    jq -n -c --arg b "$branch" --arg t "$tip" '
+        [{number: 160, state: "CLOSED", headRefName: $b, headRefOid: $t, author: {login: "a-human"}}]
+        + [range(161; 192) | {number: ., state: "MERGED", headRefName: $b,
+              headRefOid: ("1" * 40), author: {login: "agents-md-sync[bot]"}}]' \
+        > "$SWEEP_PR_DIR/bumporg_repo-orphan-long-history.json"
+    # A listing as long as the bumper's own limit may be cut short and is
+    # refused, though every PR in it is a merged bot PR at an older head.
+    make_race_repo repo-orphan-full-listing fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    jq -n -c --arg b "$branch" '
+        [range(1; 1001) | {number: ., state: "MERGED", headRefName: $b,
+              headRefOid: ("2" * 40), author: {login: "agents-md-sync[bot]"}}]' \
+        > "$SWEEP_PR_DIR/bumporg_repo-orphan-full-listing.json"
+
+    # The branch moves after it is read: a person pushes between the tip read
+    # and the shape check (matching-refs), or between the checks and the
+    # delete (compare). Both are otherwise freed orphans; both must survive,
+    # refused and counted.
+    make_race_repo repo-orphan-moved-early fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    make_race_repo repo-orphan-moved-late fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+
+    # A bot PR MERGED at the tip on a squash-merge repo: the default branch
+    # got a new commit carrying the branch's lock, not the branch's commit, so
+    # branch_adds_nothing_to_base says no. Its merge commit is on main: freed,
+    # not a failure.
+    make_squashed_repo repo-squashed on-main bot 170
+    # Same, but the PR's merge commit is not on the default branch: refused.
+    make_squashed_repo repo-squashed-off-main off-main bot 171
+    # Same, but a person opened the merged PR: refused.
+    make_squashed_repo repo-squashed-human-pr on-main human 172
+}
+
+# make_squashed_repo <name> <merge commit: on-main|off-main> <PR author:
+#                    bot|human> <PR number> — a bump branch whose PR was
+# squash-merged at its tip and never deleted. The squash commit (the
+# branch's lock, committed afresh) lands on main for `on-main`, or on an
+# unrelated branch for `off-main`, and the PR fixture names it as the merge
+# commit.
+make_squashed_repo() {
+    local name="$1" where="$2" who="$3" number="$4"
+    local branch="skills-lock-bump/update" bare tip squash work login
+    make_race_repo "$name" fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
+    bare="$SWEEP_BARE/bumporg_$name"
+    work="$TEST_DIR/work/race-$name"
+    tip=$(git -C "$bare" rev-parse "refs/heads/$branch")
+    (
+        cd "$work"
+        [[ "$where" == "off-main" ]] && git checkout -q -b elsewhere
+        git show "$tip:skills.lock" > skills.lock
+        git add skills.lock
+        git -c user.name="A Maintainer" -c user.email="maintainer@example.com" \
+            commit -q -m "chore: re-pin skills.lock (#$number)"
+        if [[ "$where" == "off-main" ]]; then
+            git push -q origin HEAD:refs/heads/elsewhere
+        else
+            git push -q origin HEAD:main
+        fi
+    ) >/dev/null 2>&1
+    squash=$(git -C "$work" rev-parse HEAD)
+    login="agents-md-sync[bot]"
+    [[ "$who" == "human" ]] && login="a-human"
+    printf '[{"number":%s,"state":"MERGED","headRefName":"%s","headRefOid":"%s","mergeCommit":{"oid":"%s"},"author":{"login":"%s"}}]\n' \
+        "$number" "$branch" "$tip" "$squash" "$login" > "$SWEEP_PR_DIR/bumporg_$name.json"
 }
 
 # The near-miss fixtures, named once for the setup and the assertions to share.
@@ -12797,7 +12908,10 @@ test_bump_branch_reuse_race() {
     moved_tip=$(sweep_bump_branch_sha repo-stranded-moved)
     extra_tip=$(sweep_bump_branch_sha repo-stranded-extra)
     for near in $NEAR_REPOS repo-orphan-human repo-orphan-extra repo-orphan-amended \
-                repo-orphan-history-human repo-stranded-current repo-orphan; do
+                repo-orphan-history-human repo-stranded-current repo-orphan \
+                repo-orphan-long-history repo-orphan-full-listing \
+                repo-orphan-moved-early repo-orphan-moved-late \
+                repo-squashed-off-main repo-squashed-human-pr; do
         near_tip[$near]=$(sweep_bump_branch_sha "$near")
     done
     : > "$BUMP_PR_LOG"
@@ -12826,11 +12940,12 @@ test_bump_branch_reuse_race() {
     BUMP_CLOSED_ON_CREATE_FOR_RUN="bumporg_repo-plain-stale" \
     BUMP_DELETE_REF_FAIL_FOR_RUN="bumporg_repo-stranded-undeletable" \
     BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-refs-blind" \
+    BUMP_REF_PUSH_ON_FOR_RUN="bumporg_repo-orphan-moved-early:matching-refs bumporg_repo-orphan-moved-late:compare" \
     BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
     BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
         run_bump "$TEST_DIR/race.txt"
     unset BUMP_CLOSED_ON_CREATE_FOR_RUN BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN \
-          BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN
+          BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN BUMP_REF_PUSH_ON_FOR_RUN
     log="$TEST_DIR/race.txt"
 
     # ── #263. A bump branch with no open PR is settled by the sweep.
@@ -12883,9 +12998,71 @@ test_bump_branch_reuse_race() {
     # than tonight's re-pin: the propose pass's refusal is a failure too.
     assert_contains "$log" "ERROR: bumporg/repo-near-open-pr: skills-lock-bump/update already exists with different content — refusing to force-push" \
         "blocked: a refused force-push is a counted failure"
+    # ── Follow-ups to #269's review.
+    #
+    # A complete listing: the person's PR at the tip, 31 PRs back, is seen.
+    if [[ -n "${near_tip[repo-orphan-long-history]}" \
+          && "$(sweep_bump_branch_sha repo-orphan-long-history)" == "${near_tip[repo-orphan-long-history]}" ]]; then
+        pass "listing: a PR at the tip older than gh's default 30 still refuses the delete"
+    else
+        fail "listing: a PR at the tip older than gh's default 30 still refuses the delete"
+    fi
+    assert_contains "$log" "ERROR: bumporg/repo-orphan-long-history: skills-lock-bump/update is at" \
+        "listing: and that branch is a counted failure"
+    # A listing that fills the limit is not read as complete.
+    if [[ -n "${near_tip[repo-orphan-full-listing]}" \
+          && "$(sweep_bump_branch_sha repo-orphan-full-listing)" == "${near_tip[repo-orphan-full-listing]}" ]]; then
+        pass "listing: a listing as long as the limit is refused, not read as complete"
+    else
+        fail "listing: a listing as long as the limit is refused, not read as complete"
+    fi
+    assert_contains "$log" "bumporg/repo-orphan-full-listing: WARN the pull requests on skills-lock-bump/update filled the listing limit (1000)" \
+        "listing: the refusal says the listing may be incomplete"
+    assert_contains "$log" "ERROR: bumporg/repo-orphan-full-listing: skills-lock-bump/update is at" \
+        "listing: and it is a counted failure"
+    # A branch that moved after it was read is never deleted on the old
+    # judgment, whichever side of the checks the push landed on.
+    local moved
+    for moved in repo-orphan-moved-early repo-orphan-moved-late; do
+        if [[ -n "${near_tip[$moved]}" \
+              && "$(git -C "$SWEEP_BARE/bumporg_$moved" rev-parse --verify -q \
+                    "refs/heads/skills-lock-bump/update^" 2>/dev/null)" == "${near_tip[$moved]}" ]]; then
+            pass "moved: $moved's branch keeps the person's push"
+        else
+            fail "moved: $moved's branch keeps the person's push"
+        fi
+        assert_contains "$log" "bumporg/$moved: WARN did not delete skills-lock-bump/update — it moved from ${near_tip[$moved]:0:7} to" \
+            "moved: $moved is refused because the ref moved since the commit that was judged"
+        assert_contains "$log" "ERROR: bumporg/$moved: skills-lock-bump/update is stranded but could not be deleted" \
+            "moved: $moved is a counted failure"
+    done
+    # A bot PR squash-merged at the tip, its merge commit on main: freed, and
+    # not a failure.
+    assert_contains "$log" "bumporg/repo-squashed: skills-lock-bump/update was a merged leftover: its pull request #170 was merged at its tip" \
+        "squashed: a bot PR merged at the tip, its merge commit on main, is freed"
+    assert_not_contains "$log" "ERROR: bumporg/repo-squashed:" \
+        "squashed: and freeing it is not a failure"
+    if [[ -z "$(sweep_bump_branch_sha repo-squashed)" ]]; then
+        pass "squashed: and the branch is really deleted"
+    else
+        fail "squashed: and the branch is really deleted"
+    fi
+    local squash_near
+    for squash_near in repo-squashed-off-main repo-squashed-human-pr; do
+        if [[ -n "${near_tip[$squash_near]}" \
+              && "$(sweep_bump_branch_sha "$squash_near")" == "${near_tip[$squash_near]}" ]]; then
+            pass "squashed: $squash_near's branch is left untouched"
+        else
+            fail "squashed: $squash_near's branch is left untouched"
+        fi
+        assert_contains "$log" "ERROR: bumporg/$squash_near: skills-lock-bump/update is at" \
+            "squashed: $squash_near is a counted failure"
+    done
+
     # Nine refused branches, one undeletable, one unreadable, one refused
-    # force-push: twelve, each counted once.
-    assert_contains "$log" " 12 failed ===" "blocked: each blocked consumer is counted exactly once"
+    # force-push, and the six follow-up refusals above (two listings, two
+    # moved branches, two squashed near misses): eighteen, each counted once.
+    assert_contains "$log" " 18 failed ===" "blocked: each blocked consumer is counted exactly once"
     if [[ $BUMP_EXIT -ne 0 ]]; then
         pass "blocked: the run exits non-zero, so the scheduled run goes red"
     else
