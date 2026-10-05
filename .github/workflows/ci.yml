@@ -172,6 +172,14 @@ jobs:
       - name: AGENTS.md structure is sound
         run: ./scripts/check-agents-md.sh AGENTS.md
 
+      # This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a
+      # hand-made byte-identical copy of agents-md/base.md that nothing syncs
+      # (SYNC_SELF_REPO) and no drift report names; the same step proves every
+      # docs/evidence/ file that base.md and stub.md point at still exists.
+      # Unconditional and not path-filtered, like the rest of this required job.
+      - name: Fleet payload mirrors base.md
+        run: node scripts/check-fleet-guidance-mirror.js
+
       # The graduation gate (_agent-guidance#119): every `##` heading in
       # agents-md/base.md and agents-md/sections/*.md must have exactly one
       # row in agents-md/eval-coverage.yml, and a `covered` row's fixture must

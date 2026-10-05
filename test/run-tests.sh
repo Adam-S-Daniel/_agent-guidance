@@ -18103,6 +18103,43 @@ test_routine_merge_gate() {
 }
 
 
+test_fleet_guidance_mirror() {
+    echo ""
+    echo "=== Test: check-fleet-guidance-mirror.js (payload mirror + evidence pointers) ==="
+
+    # Same non-silent-skip rule as the other node suites: never skip on a
+    # missing dependency (the CI wiring check below needs the yaml package).
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "fleet guidance mirror: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/fleet-guidance-mirror-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-fleet-guidance-mirror.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 12 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 12 ]]; then
+        pass "fleet guidance mirror: node:test suite is green ($pass_n passed)"
+    else
+        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=12): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+
+    # The checker only protects anything if CI runs it. Unconditional (no
+    # `if:`): it must report on every push and pull request.
+    local facts="$TEST_DIR/fleet-guidance-mirror-step.txt"
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-fleet-guidance-mirror.js" test > "$facts" 2>/dev/null \
+            && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
+        pass "fleet guidance mirror: ci.yml's test job runs the checker unconditionally"
+    else
+        fail "fleet guidance mirror: ci.yml's test job should run node scripts/check-fleet-guidance-mirror.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
+    fi
+}
+
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
 #
 # The hook that replaced the per-repo managed block with a single user-memory
@@ -21281,6 +21318,7 @@ GROUP_self_hosted=(
     test_dependabot_config_health
     test_discrepancy_alert
     test_routine_merge_gate
+    test_fleet_guidance_mirror
 )
 
 # The Codex lane. The three size/gate tests read only this repo's own files;
