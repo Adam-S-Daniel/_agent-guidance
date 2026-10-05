@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — two-setup-gaps — edit
+- Motivation: [_agent-guidance#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175) rechecks plugin commit-recording fixes without treating metadata changes as proof that installed contents refresh.
+- Change: require CLI ≥ 2.1.280 for recorded SHAs, inspect differing commits, locate bundle contents via `installPath`, try update and recheck before conditional reinstall; retain the historical version-gate distinction and next-session loading rule; section 2,146 -> 2,029 bytes (-117).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
 ## 2026-10-04 — test-that-can-signal-kills-every-session — create
 - Motivation: 2026-10-04 skills-evals test (https://github.com/Adam-S-Daniel/skills-evals/pull/250) killed every process the user owned: a mocked `Popen` made cleanup run `os.killpg(1, SIGKILL)`, i.e. `kill(-1, SIGKILL)`; the kill recurred ~15 times when resumed agents re-ran the suite.
 - Change: new section: refuse any pid or group but an `int` > 1, patch every signal call when mocking a spawn, treat a sandboxed 137 with no OOM as a finding (never escalate out), a session dying mid-verifier is evidence against the verifier, run spawning/signaling suites in a PID namespace; section 1,011 bytes (new).

@@ -3,9 +3,9 @@ set -euo pipefail
 #
 # bridge-status.sh — Classify whether a CLAUDE.md bridges to AGENTS.md.
 #
-# Claude Code reads CLAUDE.md, not AGENTS.md — the managed guidance is only
-# visible if CLAUDE.md imports it via a line containing `@AGENTS.md`. This
-# script is the single shared classifier: scripts/sync.sh and
+# Claude Code 2.1.277+ reads AGENTS.md when CLAUDE.md is absent. The fleet
+# retains its CLAUDE.md bridge contract for older CLIs; this script is the
+# single shared classifier of that contract: scripts/sync.sh and
 # scripts/drift-report.sh both call it so "does this CLAUDE.md bridge?" is
 # decided in exactly one place.
 #

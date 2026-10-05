@@ -5361,6 +5361,10 @@ test_sync_protected_fallback() {
     # and the fix_claude_md opt-in note now surface here.
     assert_contains "$pr_body_dir/protorg_repo-protected.body" "does not import" "protected: PR body warns about the non-bridging CLAUDE.md"
     assert_contains "$pr_body_dir/protorg_repo-protected-fix.body" "fix_claude_md" "protected: PR body notes the fix_claude_md opt-in"
+    assert_prose_contains "$pr_body_dir/protorg_repo-protected.body" "Claude Code 2.1.277+ can read AGENTS.md when CLAUDE.md is absent" "protected: PR body explains native AGENTS.md fallback"
+    assert_prose_contains "$pr_body_dir/protorg_repo-protected.body" "bridge for older CLIs" "protected: PR body explains older CLI compatibility"
+    assert_prose_contains "$pr_body_dir/protorg_repo-protected.body" "https://github.com/Adam-S-Daniel/_agent-guidance/issues/172" "protected: PR body links the owner bridge decision"
+    assert_prose_omits "$pr_body_dir/protorg_repo-protected.body" "Claude Code reads CLAUDE.md, not AGENTS.md" "protected: PR body omits the obsolete loading claim"
 
     assert_contains "$TEST_DIR/sync-protected-output.txt" "2 synced" "protected: both repos synced via fallback"
     assert_contains "$TEST_DIR/sync-protected-output.txt" "0 failed" "protected: no repo failures on the fallback path"
