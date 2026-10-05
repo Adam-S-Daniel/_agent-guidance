@@ -36,7 +36,8 @@ the owner merged
 [#222](https://github.com/Adam-S-Daniel/_agent-guidance/pull/222) by hand.
 Every issue a run files carries the `agent-ready` label, so the laptop
 issue worker ([`agent-issue-worker.md`](agent-issue-worker.md)) can take it
-to a PR.
+to a PR. The one exception is the prompt-audit sweep trigger issue
+(step 4a), which carries no label.
 
 The routine passed three dry runs
 (2026-09-28), a negative-control dry run (#205) and one live single-repo
@@ -94,9 +95,14 @@ touches, and say so in the run log and the PR.
 
 ## The trigger
 
-- Fresh session per fire, daily, in the `My Whitelist` Claude Code cloud
-  environment (`docs/reference/network-allowlist-claude-environments.txt` is
-  the reference copy of what it allows). If any host this run needs fails to
+- Fresh session per fire, daily, in the dedicated `Changelog Routine`
+  Claude Code cloud environment, which only this routine uses (the owner's
+  decision, 2026-10-05). Its allowed domains are `My Whitelist`'s
+  (`docs/reference/network-allowlist-claude-environments.txt` is the
+  reference copy) plus `api.anthropic.com`, with the default list checked;
+  see that file's CHANGELOG. It is the only environment that holds the
+  prompt-audit sweep's fire variables (step 4a), because every session in an
+  environment can read its variables. If any host this run needs fails to
   resolve, stop and report — never fall back to WebFetch for a release body
   without cross-checking it against a raw source first (step 2).
 - The environment must have the repos in **Repos considered** attached,
@@ -509,13 +515,15 @@ The sweep's own spec is
    line), with three differences:
    - **Title:** `Prompt-audit sweep trigger: Claude Code <version or range> <what changed>`.
    - **No label.** It is not `agent-ready`: the laptop issue worker must
-     never claim it. The sweep comments on it and closes it.
+     never claim it. The sweep comments on it and closes it. Step 4's
+     read-back checks that the issue has **no** labels, in place of the
+     `agent-ready` check.
    - **`## To check`** has one box: the sweep fired for this issue logged a
      result in
      [`prompt-audit-runs.md`](prompt-audit-runs.md).
 4. **Fire.** Not under `DRY_RUN`, not with `SCOPE=codex`, and only after
-   the issue reads back correctly. The environment provides
-   `PROMPT_AUDIT_SWEEP_FIRE_URL` (the sweep routine's
+   the issue reads back correctly. The `Changelog Routine` environment
+   provides `PROMPT_AUDIT_SWEEP_FIRE_URL` (the sweep routine's
    `https://api.anthropic.com/v1/claude_code/routines/<trig_id>/fire` URL)
    and `PROMPT_AUDIT_SWEEP_FIRE_BEARER`. If either is unset, do not fire:
    log `sweep: not fired (fire URL not configured)` and notify with the
@@ -523,9 +531,10 @@ The sweep's own spec is
 
    ```bash
    body=$(jq -n --arg t "$TRIGGER_ISSUE_URL" '{text: $t}')
-   code=$(curl -sS -o /tmp/sweep-fire.json -w '%{http_code}' -X POST \
+   code=$(printf 'header = "Authorization: Bearer %s"\n' \
+       "$PROMPT_AUDIT_SWEEP_FIRE_BEARER" |
+     curl -sS --config - -o /tmp/sweep-fire.json -w '%{http_code}' -X POST \
      "$PROMPT_AUDIT_SWEEP_FIRE_URL" \
-     -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" \
      -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
      -H "anthropic-version: 2023-06-01" \
      -H "Content-Type: application/json" \
@@ -533,7 +542,9 @@ The sweep's own spec is
    ```
 
    The payload is the trigger issue's URL and nothing else: no switches, no
-   prose. Never echo the bearer value or print `/tmp/sweep-fire.json` on
+   prose. The bearer reaches curl on stdin through `--config -` (`printf`
+   is a shell builtin), so it never appears in a process's arguments. Never
+   echo it, `set -x` around it, or print `/tmp/sweep-fire.json` on
    failure. On `200`, read only `.claude_code_session_url` from the
    response and log `sweep: fired <that URL> for <issue link>`. On anything
    else, log `sweep: fire failed (HTTP <code>)` and notify; never retry in

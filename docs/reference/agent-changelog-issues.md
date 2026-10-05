@@ -138,7 +138,9 @@ call through the session proxy keeps a footer, and it needs
   whose message contains them lands there. Backticks and fences don't
   neutralize them. Never write one unless closing is intended.
 - **Labels:** every issue the routine files carries `agent-ready`, applied
-  in the create call. The laptop issue worker
+  in the create call, except the prompt-audit sweep trigger issue
+  (`agent-changelog-routine.md`, step 4a), which carries no label and is
+  read back as having none. The laptop issue worker
   ([`agent-issue-worker.md`](agent-issue-worker.md)) claims an issue by
   swapping it to `agent-working`, and sets `agent-blocked` if it stops. No
   other routine-applied label: the fleet has no vendor-change label.

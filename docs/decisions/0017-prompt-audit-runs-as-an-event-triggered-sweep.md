@@ -82,7 +82,12 @@ The sweep:
 - never applies a proposed diff and never merges or auto-merges anything;
 - logs every run in
   [`prompt-audit-runs.md`](../reference/prompt-audit-runs.md), naming each
-  repo reached or not reached.
+  repo reached or not reached;
+- names a private repo (by its `private` field at run time) and its finding
+  count **only** in every public output: the run log, the PR body, issues
+  in public repos including `_agent-guidance`'s cross-repo item, and
+  notifications. No quote, path or finding text from a private repo leaves
+  that repo's own issue.
 
 When a defect class recurs in two or more repos in one sweep, the sweep
 proposes a deterministic check for it, in this repo's scripts or the
@@ -96,13 +101,20 @@ findings as warnings and exits 0.
   recurring bill or recurring noise. Between sweeps nothing LLM-backed
   watches instruction files; the warn-only checks and the guidance
   centralization Routine cover that gap.
-- The changelog routine's environment holds the sweep's fire token in an
-  environment variable, readable by any session in that environment. The
-  agent proxy's API credentials cannot hold it, because they are never
-  attached to `api.anthropic.com`. A leaked token can start a sweep but
-  cannot steer one: the sweep reads only a trigger-issue URL it re-verifies
-  and two switches from the payload. Revoke or regenerate it on the
-  routine's API trigger.
+- The sweep's fire token is an environment variable, readable by any
+  session in its environment. The agent proxy's API credentials cannot hold
+  it, because they are never attached to `api.anthropic.com`. So the owner
+  decided (2026-10-05) that it lives in a dedicated `Changelog Routine`
+  environment that only the changelog routine uses, never in `My
+  Whitelist`, which every other cloud session shares. A leaked token can
+  still start a sweep but cannot steer one: the sweep reads only a
+  trigger-issue URL it re-verifies and two switches from the payload.
+  Revoke or regenerate it on the routine's API trigger.
+- Subscription usage is the cost, not API billing. When the account has
+  usage credits turned on, a run that reaches the subscription limit
+  continues on metered overage instead of stopping (Routines docs, "Usage
+  and limits"); a sweep is about a dozen nested audits, so check usage
+  credits before a full run if that matters.
 - The in-session `RemoteTrigger` tool would avoid the stored token, but
   Claude Code 2.1.289 disables it when `CLAUDE_CODE_REMOTE` is set, which
   is every cloud session, so a routine cannot use it.
@@ -111,10 +123,13 @@ findings as warnings and exits 0.
   dated evidence and never edit a managed block, but the worker still acts
   on an LLM's judgment. Low-confidence findings stay in the run log for that
   reason.
-- Three things are unverified until the first `DRY_RUN`: that a routine's
-  sandbox has an authenticated nested `claude`, that `/doctor prompt-audit`
-  honors an explicit path list, and that `api.anthropic.com` is reachable
-  from the `My Whitelist` environment. If the nested audit cannot run, a
-  laptop session runs the same spec.
+- Answered by the owner on 2026-10-05: the default allowlist is on, so
+  `api.anthropic.com` is reachable; the fire token gets its own environment;
+  a single-repo trial after merge is approved; a model change seen only in
+  a `skills-evals` roster change is swept by a manual **Run now**.
+- Two things are unverified until that single-repo trial: that a routine's
+  sandbox has an authenticated nested `claude`, and that
+  `/doctor prompt-audit` honors an explicit path list. If the nested audit
+  cannot run, a laptop session runs the same spec.
 - Revisit this if prompt-audit gains a machine-readable verdict and the
   fleet gains a Claude credential in CI outside skills-evals.

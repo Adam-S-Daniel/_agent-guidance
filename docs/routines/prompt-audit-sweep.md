@@ -92,10 +92,16 @@ a "Declined" heading in the PR body and do not act on it.
 Read the list at run time from `repos.yml`'s `cron_coverage.fleet` key on
 `origin/main`, never from the attached repos or a disk. That key covers
 **both** `SYNC_OWNERS` owners, `Adam-S-Daniel` and `jodidaniel`, and holds
-bare repo names. Resolve each name's owner by asking GitHub: a REST
-`GET /repos/<owner>/<name>` against both owners, exactly one of which must
-answer. Never guess the owner. Never use `skills_bootstrap.repos`, which is
-a narrower hook-delivery list.
+bare repo names. Resolve each name by asking GitHub: a REST
+`GET /repos/<owner>/<name>` against both owners, keeping each answer's
+canonical `full_name` and `private` fields. A transferred or renamed repo
+answers under both owners through a redirect (measured 2026-10-05:
+`jodidaniel/_agent-guidance` returns `Adam-S-Daniel/_agent-guidance`), so
+dedupe on `full_name`: one canonical name is one repo. Two different
+canonical names for one bare name is a stop:
+`BLOCKED: <name> resolves to <full_name> and <full_name>`. Never guess the
+owner. Never use `skills_bootstrap.repos`, which is a narrower
+hook-delivery list.
 
 Report every listed repo, every run, as one of:
 
@@ -106,6 +112,20 @@ Report every listed repo, every run, as one of:
 
 A `NOT REACHED` repo is never treated as clean. Name it and leave it for the
 next run.
+
+### Private repos
+
+A repo whose `private` field is `true` at run time (on 2026-10-05:
+`adam-agentskills-private`, `repo-settings` and `rss-inator`; never rely on
+that list, read the field) is audited like any other, and its issue is
+filed in that repo itself with full detail. Everywhere else, which means
+every output a public repo or a notification carries (the run log, the PR
+body, `_agent-guidance`'s issue, including a cross-repo item, and the push
+notification), name a private repo and its finding count **only**: no
+quote, no path, no file name, no finding text, no class name tied to it. A
+finding on `agents-md/base.md` text that the private repo's audit surfaced
+is reported from the `_agent-guidance` audit instead, never attributed to
+the private repo.
 
 Dormant repos get only the managed block of `AGENTS.md`, which is
 `agents-md/base.md` text and is audited once, through `_agent-guidance`.
@@ -231,7 +251,8 @@ Then apply the standing rules:
 - **Confidence Low** stays in the run log, not an issue.
 - **Already tracked:** a finding an open issue already covers (search the
   repo's open issues and PRs) is cited by link, not repeated.
-- **A defect class found in two or more repos** this run (a British
+- **A defect class found in two or more repos** this run (counting private
+  repos, but naming only public ones in `_agent-guidance`'s item) (a British
   spelling, a dangling "see X above", a hard-coded count) also becomes one
   item in `_agent-guidance`'s issue: add a deterministic check for it that
   **warns and never blocks** (ADR 0017).
@@ -240,7 +261,10 @@ Then apply the standing rules:
 
 One issue per repo with surviving findings, all findings in it. Skip the
 repo, and log `deferred: open <link>`, when an issue from an earlier sweep
-(title starting `Prompt-audit sweep `) is still open there.
+is still open there: a title matching the regular expression
+`^Prompt-audit sweep \d{4}-\d{2}-\d{2}: `. A trigger issue
+(`Prompt-audit sweep trigger: ...`) does not match and never defers
+`_agent-guidance`.
 
 - **Title:** `Prompt-audit sweep <date>: <n> findings in instruction files`.
   No `<`, under about 110 characters.
@@ -286,8 +310,11 @@ stop. The first run also deletes the `No runs yet.` line. It records:
 - the date and start time, and `trigger: <issue link>` or `trigger: manual`;
 - the switches;
 - the step 0 probe answers and the model the audits ran on;
-- every repo in **Repos considered**: `reached <sha>`, with its finding
-  count and any `not audited` paths, or `NOT REACHED (<reason>)`;
+- every repo in **Repos considered**, by canonical `full_name`:
+  `reached <sha>`, with its finding count and any `not audited` paths, or
+  `NOT REACHED (<reason>)`. A private repo gets `private, reached` and its
+  finding count, or `private, NOT REACHED`, and nothing more (**Private
+  repos**);
 - the issues filed, `deferred: <link>`, or `none (DRY_RUN)`;
 - the PR it opened or updated;
 - the result: `in progress`, `done`, `abandoned (<why>)` or
@@ -299,7 +326,8 @@ stop. The first run also deletes the `No runs yet.` line. It records:
   `git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-sweep`.
 - Open a PR from `persistent/prompt-audit-sweep` to `main` (a draft under
   `DRY_RUN`), titled `Prompt-audit sweep: <date>`, or update the open one.
-  Its body lists the repos, the issue links and any "Declined" text. The
+  Its body lists the repos, the issue links and any "Declined" text, with
+  private repos reduced to name and count (**Private repos**). The
   owner merges it; the run never does.
 - **The trigger issue,** if the fire carried one and this is not a
   `DRY_RUN`: comment `Swept: <run-log line, PR and issue links>` and close it

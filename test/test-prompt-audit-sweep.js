@@ -32,6 +32,10 @@ const mutations = {
   warn: [adr, '**warns and never blocks**', '**blocks**'],
   payload: [routine, "'{text: $t}'", "'{text: ($t + \" DRY_RUN\")}'"],
   index: [index, '| [0016](0016-the-freshest', '| [0017](0016-the-freshest'],
+  dedupe: [spec, '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', '`^Prompt-audit sweep `'],
+  canonical: [spec, 'dedupe on `full_name`', 'take the first that answers'],
+  private: [spec, 'name a private repo and its finding count **only**', 'name a private repo with its findings'],
+  argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
 const read = name => {
@@ -63,7 +67,7 @@ const links = list => list.flatMap(t => t.children || []).filter(c => c.type ===
 
 test('sweep covers the declared fleet across both owners', () => {
   const body = prose(section(spec, 'Repos considered'));
-  includes(body, ["`cron_coverage.fleet` key on `origin/main`", '`Adam-S-Daniel` and `jodidaniel`', 'Never guess the owner', 'never treated as clean']);
+  includes(body, ["`cron_coverage.fleet` key on `origin/main`", '`Adam-S-Daniel` and `jodidaniel`', 'Never guess the owner', 'never treated as clean', 'dedupe on `full_name`', 'one canonical name is one repo']);
   const fleet = YAML.parse(read('repos.yml')).cron_coverage.fleet;
   assert.ok(Array.isArray(fleet) && fleet.includes('_agent-guidance') && fleet.length >= 10);
   const owners = Object.values(YAML.parse(read('.github/workflows/sync.yml')).jobs)
@@ -77,6 +81,25 @@ test('sweep is read-only, never merges, and files one labeled issue per repo', (
   includes(prose(section(spec, '5. File and verify')), ['`"labels": ["agent-ready"]` in the create call itself', 'raw REST `GET`']);
   includes(prose(section(spec, '3. Route every finding')), ['routes to `_agent-guidance`', '**warns and never blocks**', 'Confidence Low** stays in the run log']);
   includes(prose(section(spec, '0. Before anything else')), ['prints `claude.ai`', 'Never imitate the audit']);
+});
+
+test('earlier-sweep dedupe matches sweep issues but never the trigger issue', () => {
+  const text = prose(section(spec, '4. Render one issue per repo'));
+  const pattern = text.match(/regular expression `([^`]+)`/);
+  assert.ok(pattern, 'no dedupe pattern');
+  const re = new RegExp(pattern[1]);
+  const title = text.match(/\*\*Title:\*\* `Prompt-audit sweep <date>: ([^`]+)`/);
+  assert.ok(title, 'no sweep issue title');
+  assert.ok(re.test(`Prompt-audit sweep 2026-10-05: ${title[1].replace('<n>', '3')}`), 'pattern misses a sweep issue');
+  const trigger = prose(section(routine, '4a. Fire the prompt-audit sweep')).match(/\*\*Title:\*\* `([^`]+)`/)[1];
+  assert.ok(!re.test(trigger.replace('<version or range>', '2.1.290').replace('<what changed>', 'adds a model')), 'pattern defers on the trigger issue');
+});
+
+test('private repos appear in public outputs as name and count only', () => {
+  const text = prose(section(spec, 'Private repos'));
+  includes(text, ['`private` field is `true` at run time', 'never rely on that list, read the field', 'name a private repo and its finding count **only**', 'the run log, the PR body', 'including a cross-repo item', 'push notification', 'no quote, no path']);
+  includes(prose(section(spec, '6. Write the run log')), ['A private repo gets `private, reached` and its finding count']);
+  includes(prose(section(adr, 'Decision')), ['names a private repo', 'finding count **only** in every public output']);
 });
 
 test('trigger issue prefix and payload agree between the routine and the sweep', () => {
@@ -99,7 +122,8 @@ test('the documented fire call sends only the issue URL and never prints the bea
     fs.writeFileSync(path.join(temp, 'curl'), `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-fs.writeFileSync(process.env.TEST_LOG, JSON.stringify(args));
+const config = args[args.indexOf('--config') + 1] === '-' ? fs.readFileSync(0, 'utf8') : '';
+fs.writeFileSync(process.env.TEST_LOG, JSON.stringify({ args, config }));
 fs.writeFileSync(args[args.indexOf('-o') + 1], '{"claude_code_session_url":"https://claude.ai/code/session_x"}');
 process.stdout.write('200');
 `, { mode: 0o755 });
@@ -109,9 +133,11 @@ process.stdout.write('200');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, '200');
     assert.ok(!result.stdout.includes('placeholder-value') && !result.stderr.includes('placeholder-value'));
-    const args = JSON.parse(fs.readFileSync(log, 'utf8'));
+    const { args, config } = JSON.parse(fs.readFileSync(log, 'utf8'));
     assert.deepEqual(JSON.parse(args[args.indexOf('-d') + 1]), { text: issue });
-    for (const header of ['Authorization: Bearer placeholder-value', 'anthropic-beta: experimental-cc-routine-2026-04-01', 'anthropic-version: 2023-06-01', 'Content-Type: application/json']) {
+    assert.ok(!args.some(a => a.includes('placeholder-value')), 'bearer must not be in curl argv');
+    assert.equal(config, 'header = "Authorization: Bearer placeholder-value"\n');
+    for (const header of ['anthropic-beta: experimental-cc-routine-2026-04-01', 'anthropic-version: 2023-06-01', 'Content-Type: application/json']) {
       assert.ok(args.includes(header), `missing header ${header}`);
     }
     assert.equal(args[args.indexOf('-X') + 1], 'POST');
@@ -121,7 +147,8 @@ process.stdout.write('200');
 
 test('ADR 0017 records the trigger, subscription usage and warn-only checks', () => {
   includes(prose(section(adr, 'Decision')), ['**no schedule**', 'The changelog routine fires it', 'The owner starts it by hand', 'subscription', '`agent-ready`', '**warns and never blocks**', 'never merges or auto-merges']);
-  includes(prose(section(adr, 'Consequences')), ['`CLAUDE_CODE_REMOTE`', 'never attached to `api.anthropic.com`']);
+  includes(prose(section(adr, 'Consequences')), ['`CLAUDE_CODE_REMOTE`', 'never attached to `api.anthropic.com`', 'dedicated `Changelog Routine`', 'metered overage']);
+  includes(prose(section(routine, 'The trigger')), ['dedicated `Changelog Routine`', 'plus `api.anthropic.com`', 'only environment that holds']);
   for (const doc of [adr, spec]) {
     for (const href of links(tokens(doc)).filter(h => !/^[a-z]+:/.test(h))) {
       assert.ok(fs.existsSync(path.join(root, path.dirname(doc), href.split('#')[0])), `${doc}: dangling link ${href}`);
