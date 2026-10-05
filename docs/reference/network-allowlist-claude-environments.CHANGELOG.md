@@ -541,12 +541,14 @@ its live environment and checkbox probes open.
 
 ---
 
-## 2026-10-05 — new environment `Changelog Routine` (decided; not yet created)
+## 2026-10-05 — new environment `Changelog Routine` (created)
 
 **Environment:** `Changelog Routine`, a new environment used only by the
-claude.ai Routine "agent changelog watcher". **Not yet created:** whoever
-creates it replaces this line with the date it was applied, per rule 1
-above. `My Whitelist` is unchanged.
+claude.ai Routine "agent changelog watcher". **Created** by the owner on
+2026-10-04 US Eastern (2026-10-05 UTC, about 03:30Z), confirmed by the owner.
+A network probe from a cloud session returned an Anthropic 401 for the
+routines fire endpoint, so `api.anthropic.com` is reachable through the
+proxy. `My Whitelist` is unchanged.
 **Checkbox "Also include default list of common package managers":**
 checked, matching `My Whitelist` (the owner confirmed on 2026-10-05 that
 `My Whitelist` has the default list on).
