@@ -405,6 +405,20 @@ SKIP_COUNT=0
 # not", one line per repo, and the same repo can be swept AND proposed in one
 # run. Folding would make the summary's numbers stop adding up to the fleet.
 MERGE_COUNT=0
+# Repos whose bump branch this run deleted (or, in a dry run, would have).
+# The propose pass will not recreate that branch name for them in the same run:
+# GitHub closes the open pull requests whose head a deleted ref named, and it
+# does so asynchronously, so a PR opened on a branch of the same name seconds
+# later can be closed by the processing of the earlier delete. Run 37017699823
+# (2026-10-02) merged jodidaniel.com#295, deleted skills-lock-bump/update at
+# 14:10:25, recreated it at 14:10:42 and opened #301 at 14:10:44; GitHub
+# closed #301 unmerged at 14:11:55, attributed to this App, and left the re-pin
+# stranded on a branch with no PR
+# (https://github.com/Adam-S-Daniel/_agent-guidance/issues/227). The same
+# sequence survived on other nights, so the race is intermittent, and the only
+# fix that does not depend on GitHub's timing is not to run it at all: the
+# re-pin waits for the next run, when the delete is a day old.
+declare -A BRANCH_FREED_THIS_RUN=()
 
 # lock_plan <file> — the registries a lock names, one per line:
 #
@@ -793,6 +807,68 @@ branch_adds_nothing_to_base() {
     [[ "$status" == "behind" || "$status" == "identical" ]]
 }
 
+# stranded_bump_pr <repo> <branch> <tip sha> — prints the number of the
+# closed-unmerged pull request that leaves <branch> stranded, and returns 0,
+# when ALL of these hold; returns 1, printing nothing, otherwise:
+#
+#   * no pull request on <branch> is open;
+#   * the most recent one on it was opened by this bumper ($PR_AUTHOR) and is
+#     CLOSED without being merged;
+#   * its head commit is <tip sha>, the commit the branch carries now — so
+#     nothing reached the branch after the bot's PR was closed;
+#   * the branch's diff against the default branch is $LOCK_REL_PATH alone.
+#
+# That is the shape run 37017699823 left on jodidaniel.com (#301 closed by
+# GitHub seconds after it was opened, its branch kept): content this bot wrote
+# and nobody else touched, a lock re-pin the current run regenerates anyway.
+# Replacing it loses nothing, which is the same bar branch_adds_nothing_to_base
+# sets for a merged leftover. A branch that fails ANY test — someone's commit
+# on it, a second file, an open PR, a PR closed by somebody's merge — is still
+# refused, and every unreadable answer is a 1.
+stranded_bump_pr() {
+    local repo_name="$1" branch="$2" tip="$3" base files prs_json
+    [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || return 1
+    base=$(gh api "repos/$repo_name" --jq '.default_branch' 2>/dev/null) || return 1
+    [[ -n "$base" ]] || return 1
+    files=$(gh api "repos/$repo_name/compare/$base...$branch" \
+        --jq '[.files[].filename] | join(",")' 2>/dev/null) || return 1
+    [[ "$files" == "$LOCK_REL_PATH" ]] || return 1
+    prs_json=$(gh pr list --repo "$repo_name" --head "$branch" --state all \
+        --json number,state,headRefName,headRefOid,author 2>/dev/null) || return 1
+    python3 -c '
+import json, sys
+
+raw, branch, author, tip = sys.argv[1:5]
+
+
+def normalize(login):
+    # The same normalization pr_merge_verdict applies, for the same reason.
+    login = (login or "").strip().lower()
+    if login.startswith("app/"):
+        login = login[4:]
+    if login.endswith("[bot]"):
+        login = login[: -len("[bot]")]
+    return login
+
+
+prs = json.loads(raw)
+if not isinstance(prs, list):
+    sys.exit(1)
+# Filtered here, not trusted to --head: a listing filter is a query, not a
+# guarantee (see the sweep).
+ours = [pr for pr in prs if isinstance(pr, dict) and pr.get("headRefName") == branch]
+if not ours or any(pr.get("state") == "OPEN" for pr in ours):
+    sys.exit(1)
+latest = max(ours, key=lambda pr: pr.get("number") or 0)
+if (latest.get("state") != "CLOSED"
+        or not normalize(author)
+        or normalize((latest.get("author") or {}).get("login")) != normalize(author)
+        or latest.get("headRefOid") != tip):
+    sys.exit(1)
+print(latest["number"])
+' "$prs_json" "$branch" "$PR_AUTHOR" "$tip" 2>/dev/null
+}
+
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
@@ -1000,6 +1076,9 @@ sweep_bump_prs() {
 
             if $DRY_RUN; then
                 log "[DRY RUN] Would merge $repo_name#$number with a merge commit — $detail"
+                # Marked here too, so a dry run reports the deferral a live
+                # run would make rather than a proposal it would not.
+                BRANCH_FREED_THIS_RUN["$repo_name"]=1
                 continue
             fi
 
@@ -1033,6 +1112,10 @@ sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", o
                 ${match_args[@]+"${match_args[@]}"} 2>&1); then
                 log "$repo_name#$number: MERGED with a merge commit — $detail"
                 ((MERGE_COUNT++)) || true
+                # Marked before the delete and whatever its outcome: a repo
+                # with "automatically delete head branches" on deletes it at
+                # the merge, which starts the same asynchronous closing.
+                BRANCH_FREED_THIS_RUN["$repo_name"]=1
                 # The branch this bot created is the bot's to clean up. Left
                 # behind, it is what makes the NEXT run refuse to propose here
                 # — see delete_bump_branch. Deliberately not folded into
@@ -2042,6 +2125,12 @@ for repo_name in "${REPOS[@]}"; do
         log "federated sources whose pins this re-pin advances: ${fed_drifted_regs[*]}"
     fi
 
+    if [[ -n "${BRANCH_FREED_THIS_RUN[$repo_name]:-}" ]]; then
+        log "deferring this re-pin to the next run: this run merged $repo_name's bump PR and freed $BRANCH_NAME, and a PR opened on a branch name deleted seconds earlier can be closed by GitHub's delayed processing of that delete (https://github.com/Adam-S-Daniel/_agent-guidance/issues/227)."
+        ((SKIP_COUNT++)) || true
+        continue
+    fi
+
     if $DRY_RUN; then
         # Branched because the pin only moves for a content re-pin. The
         # unconditional wording claimed an advance onto the registry's current
@@ -2350,16 +2439,32 @@ with open(sys.argv[1], encoding="utf-8") as handle:
         # Gated on `branch_adds_nothing_to_base`, which returns false on any
         # unreadable answer, so the refusal still stands whenever the question
         # cannot be settled.
+        #
+        # Either way the re-pin itself waits for the next run: the delete
+        # starts GitHub's asynchronous closing of PRs on that head, and a PR
+        # opened on the recreated name now can be caught by it — see
+        # BRANCH_FREED_THIS_RUN.
         if branch_adds_nothing_to_base "$repo_name" "$BRANCH_NAME" \
            && delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
-            log "$BRANCH_NAME was a merged leftover and carried nothing the default branch lacks — deleted it, and proposing the re-pin now."
-            branch_exists=false
-            git fetch --prune origin >/dev/null 2>&1 || true
-        else
-            log "WARN: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
+            log "$BRANCH_NAME was a merged leftover and carried nothing the default branch lacks — deleted it; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
             ((SKIP_COUNT++)) || true
             cd "$REPO_ROOT"; continue
         fi
+        # The stranded case: a bot PR on this branch was closed unmerged and
+        # the branch kept, holding a lock re-pin and nothing else. The branch
+        # tip is read from the remote, never assumed, so the check below
+        # compares the PR's head with what is actually there.
+        stranded_tip=$(git ls-remote --heads origin "refs/heads/$BRANCH_NAME" 2>/dev/null | cut -f1) || stranded_tip=""
+        if stranded_pr=$(stranded_bump_pr "$repo_name" "$BRANCH_NAME" "$stranded_tip") \
+           && [[ -n "$stranded_pr" ]] \
+           && delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
+            log "$BRANCH_NAME was stranded: its pull request #$stranded_pr was closed unmerged, and the branch still held only that PR's own $LOCK_REL_PATH re-pin at ${stranded_tip:0:7}. Deleted it; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+            ((SKIP_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        log "WARN: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
+        ((SKIP_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
     fi
 
     if $branch_exists; then
@@ -2508,8 +2613,44 @@ $COMMIT_BODY" 2>&1); then
         --head "$BRANCH_NAME" \
         --title "$PR_TITLE" \
         --body "$PR_BODY"); then
-        log "PR created: $(tail -1 <<< "$pr_create_out")"
+        pr_url=$(tail -1 <<< "$pr_create_out")
+        log "PR created: $pr_url"
         ((OK_COUNT++)) || true
+
+        # Read the new PR back once. GitHub closes a PR whose head a recently
+        # deleted ref named, asynchronously (#301 on jodidaniel.com was closed
+        # 71 seconds after it was opened), and nothing else would notice: the
+        # next run's sweep lists OPEN pull requests only. A PR found closed
+        # unmerged while its branch is still there is reopened, with a comment
+        # saying why, because a PR that disappears without a reason reads as a
+        # review decision. https://github.com/Adam-S-Daniel/_agent-guidance/issues/227
+        pr_number="${pr_url##*/}"
+        pr_state=""
+        if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+            pr_state=$(gh pr view "$pr_number" --repo "$repo_name" --json state \
+                --jq '.state' 2>/dev/null) || pr_state=""
+        fi
+        if [[ -z "$pr_state" ]]; then
+            log "WARN: could not read back the state of the PR just opened ($pr_url)."
+        elif [[ "$pr_state" == "CLOSED" ]]; then
+            if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1 \
+               && gh pr reopen "$pr_number" --repo "$repo_name" >/dev/null 2>&1; then
+                if [[ -n "${GITHUB_RUN_ID:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+                    run_ref="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+                else
+                    run_ref="a run outside GitHub Actions (no run URL)"
+                fi
+                reopen_note="Closed automatically: GitHub closed this PR when a prior bump PR's branch ($BRANCH_NAME) was deleted after merge. This was not a review decision. Re-opened by run $run_ref."
+                if gh pr comment "$pr_number" --repo "$repo_name" --body "$reopen_note" >/dev/null 2>&1; then
+                    log "$repo_name#$pr_number was closed unmerged moments after it was opened — reopened it and said why."
+                else
+                    log "WARN: $repo_name#$pr_number was closed unmerged moments after it was opened and has been reopened, but the comment saying why could not be posted."
+                fi
+            else
+                fail "$repo_name#$pr_number was closed unmerged moments after it was opened, and could not be reopened — its branch is gone or GitHub refused the reopen."
+                ((FAIL_COUNT++)) || true
+            fi
+        fi
 
         # No merge is attempted here, of any kind. gh only ARMS auto-merge
         # when a PR is not already mergeable (isImmediatelyMergeable, cli/cli

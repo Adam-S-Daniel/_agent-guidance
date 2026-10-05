@@ -2565,7 +2565,10 @@ case "$1" in
             else
                 cmp_status="diverged"
             fi
-            json="{\"status\": \"$cmp_status\"}"
+            # `files` as GitHub computes it: the three-dot diff, base...head.
+            cmp_files=$(git -C "$bare_path" diff --name-only "$base_sha...$head_sha" 2>/dev/null \
+                | jq -R '{filename: .}' | jq -s -c .)
+            json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}}"
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -2805,6 +2808,17 @@ case "$1" in
                     json='[]'
                     pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_arg//\//_}.json"
                     [[ -f "$pr_file" ]] && json=$(cat "$pr_file")
+                    # --state IS honoured, unlike --head: a fixture object with
+                    # no `state` is an OPEN pull request, so every fixture
+                    # written before states existed answers as it always did,
+                    # and a CLOSED one (the stranded-branch fixture) stays out
+                    # of the sweep's `--state open` listing exactly as on
+                    # GitHub. `closed` matches CLOSED and MERGED, as gh's does.
+                    state_arg=$(parse_flag_value --state "$@")
+                    case "$state_arg" in
+                        open)   json=$(jq -c 'map(select((.state // "OPEN") == "OPEN"))' <<< "$json") ;;
+                        closed) json=$(jq -c 'map(select((.state // "OPEN") != "OPEN"))' <<< "$json") ;;
+                    esac
                 else
                     # No --repo: the propose pass asking about the clone it is
                     # standing in. Unchanged — an "open" PR #42 for repos whose
@@ -2847,6 +2861,20 @@ case "$1" in
                 pr_obj=""
                 [[ -f "$pr_file" ]] && pr_obj=$(jq -c --argjson n "$pr_number" \
                     '.[] | select(.number == $n)' "$pr_file")
+                # PR #1 is the one `gh pr create` below always answers with, so
+                # the propose pass's read-back of the PR it just opened is
+                # answered here: OPEN, or CLOSED for repos named in
+                # MOCK_PR_CLOSED_ON_CREATE — GitHub closing a fresh PR on its
+                # own, the shape of jodidaniel.com#301 (issue #227).
+                if [[ -z "$pr_obj" && "$pr_number" == "1" ]]; then
+                    created_state=OPEN
+                    if [[ " ${MOCK_PR_CLOSED_ON_CREATE:-} " == *" $repo_slug "* ]]; then
+                        created_state=CLOSED
+                    fi
+                    json="{\"number\":1,\"state\":\"$created_state\"}"
+                    if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
+                    exit 0
+                fi
                 if [[ -z "$pr_obj" ]]; then
                     echo "could not resolve to a PullRequest with the number of ${pr_number}" >&2
                     exit 1
@@ -2930,6 +2958,20 @@ case "$1" in
             close)
                 # gh pr close <number> --comment ... — log the closed number.
                 echo "pr-closed $3" >> "${MOCK_PR_LOG:-/dev/null}"
+                ;;
+            reopen)
+                # gh pr reopen <number> --repo <owner/repo>
+                echo "pr-reopened $3 $(parse_flag_value --repo "$@")" >> "${MOCK_PR_LOG:-/dev/null}"
+                ;;
+            comment)
+                # gh pr comment <number> --repo <owner/repo> --body <text>.
+                # The body goes to MOCK_PR_BODY_DIR/<owner_repo>.comment.
+                comment_repo=$(parse_flag_value --repo "$@")
+                echo "pr-commented $3 $comment_repo" >> "${MOCK_PR_LOG:-/dev/null}"
+                if [[ -n "${MOCK_PR_BODY_DIR:-}" ]]; then
+                    mkdir -p "$MOCK_PR_BODY_DIR"
+                    parse_flag_value --body "$@" > "$MOCK_PR_BODY_DIR/${comment_repo//\//_}.comment"
+                fi
                 ;;
             merge)
                 # gh pr merge <number|url> [--auto] --merge|--squash — every
@@ -8201,6 +8243,7 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_UNKNOWN_ONCE="${BUMP_UNKNOWN_ONCE_FOR_RUN:-}" \
     MOCK_PR_UNKNOWN_ALWAYS="${BUMP_UNKNOWN_ALWAYS_FOR_RUN:-}" \
     MOCK_PR_VIEW_COUNT_DIR="${BUMP_VIEW_COUNT_DIR_FOR_RUN:-}" \
+    MOCK_PR_CLOSED_ON_CREATE="${BUMP_CLOSED_ON_CREATE_FOR_RUN:-}" \
     BUMP_UNKNOWN_RETRIES="${BUMP_UNKNOWN_RETRIES_FOR_RUN:-}" \
     BUMP_UNKNOWN_RETRY_DELAY="${BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
@@ -8545,12 +8588,23 @@ test_bump_consumer_locks() {
     # stale bundle. Five repos sat in exactly that state for four days.
     assert_contains "$log" "was a merged leftover and carried nothing the default branch lacks" \
         "leftover: a fully-merged bump branch is deleted rather than refused"
+    # ...and NOT recreated in the same run. GitHub closes PRs whose head a
+    # deleted ref named asynchronously, so a PR opened on the same name
+    # seconds later can be closed by it (issue #227, jodidaniel.com#301).
+    assert_no_bump_branch repo-leftover \
+        "leftover: the freed branch name is not reused in the run that deleted it (#227)"
+    assert_contains "$log" "the re-pin is proposed on the next run" \
+        "leftover: the log says the re-pin waits for the next run"
+    # The next run is what proposes it. The four PRs this run opened are
+    # supplied as open, so this run touches repo-leftover alone.
+    MOCK_OPEN_PR_REPOS="bumporg_repo-stale bumporg_repo-federated bumporg_repo-fed-current bumporg_repo-fed-stale" \
+        run_bump "$TEST_DIR/bump-leftover-next.txt"
+    assert_contains "$TEST_DIR/bump-leftover-next.txt" "1 proposed" \
+        "leftover: the next run proposes the re-pin the delete deferred"
     if [[ -n "$(bump_branch_sha repo-leftover)" ]]; then
-        # Re-pushed by this same run after the delete, which is the point: the
-        # branch is not merely gone, the re-pin it was blocking got proposed.
         pass "leftover: the re-pin was proposed after the branch was freed"
     else
-        fail "leftover: expected a fresh bump branch after the leftover was deleted, found none"
+        fail "leftover: expected a fresh bump branch on the run after the leftover was deleted, found none"
     fi
     local leftover_lock="$TEST_DIR/leftover-branch.lock"
     git -C "$TEST_DIR/bare/bumporg_repo-leftover" show \
@@ -8567,10 +8621,10 @@ test_bump_consumer_locks() {
     fi
 
     # ── The stale consumer: ref advanced, digests re-derived.
-    # Five, not four, since repo-leftover joined the fixture set: its bump
-    # branch is a merged leftover, so the self-heal frees the name and the
-    # re-pin it was blocking is proposed in the same run.
-    assert_contains "$log" "5 proposed" "bump: exactly the five consumers needing a re-pin were proposed"
+    # Four, not five: repo-leftover also needs a re-pin, but its bump branch
+    # is a merged leftover, so this run frees the name and its re-pin waits
+    # for the next run (asserted above).
+    assert_contains "$log" "4 proposed" "bump: exactly the four consumers needing a re-pin on a branch this run did not delete were proposed"
     local stale_new="$TEST_DIR/bump-stale-new.lock"
     bump_lock_at repo-stale "refs/heads/skills-lock-bump/update" > "$stale_new"
     if [[ -s "$stale_new" ]]; then
@@ -12366,6 +12420,205 @@ test_bump_sweep_branch_cleanup() {
         "branch cleanup: a same-prefix sibling is not our branch — the reaped ref still reads as gone"
     assert_not_contains "$log" "WARN could not delete skills-lock-bump/update" \
         "branch cleanup: and nothing warns about a branch that a sibling merely resembles"
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
+}
+
+# ── Test 8i6: a bump branch name is never reused in the run that freed it ─
+#
+# Issue #227. Run 37017699823 (2026-10-02) merged jodidaniel.com#295, deleted
+# skills-lock-bump/update, recreated the SAME name 17 seconds later and opened
+# #301 on it; GitHub's delayed processing of the delete closed #301 unmerged a
+# minute later, and the re-pin was left on a branch with no PR. Three
+# properties, each with a fixture that reaches it:
+#
+#   * a repo whose bump PR the sweep merges, and which still needs a re-pin
+#     afterwards, gets NO `gh pr create` and no recreated branch in that run —
+#     and gets its proposal on the next run;
+#   * a PR found CLOSED when the propose pass reads it back is reopened, with
+#     a comment saying it was not a review decision and naming the run;
+#   * a branch stranded the way #301's was — its bot PR closed unmerged, the
+#     tip still that PR's head, the diff the lock alone — is replaced rather
+#     than refused forever, while a stranded-looking branch someone pushed to
+#     after the close, or that carries a second file, is still refused.
+
+# make_race_repo <name> <main lock mode: fill|nofill> <main ref> <branch lock
+#                ref|none> <extra file on the branch|none>
+make_race_repo() {
+    local name="$1" main_mode="$2" main_ref="$3" branch_ref="$4" extra="$5"
+    local bare="$SWEEP_BARE/bumporg_$name"
+    local work="$TEST_DIR/work/race-$name"
+
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# $name" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$main_ref" "" "$main_mode"
+    git add -A
+    git commit -m "init" >/dev/null 2>&1
+    git push origin HEAD:main >/dev/null 2>&1
+
+    if [[ "$branch_ref" != "none" ]]; then
+        git checkout -q -b skills-lock-bump/update
+        seed_bump_lock skills.lock "bumporg/agentskills" "$branch_ref"
+        [[ "$extra" != "none" ]] && echo "someone else's work" > "$extra"
+        git add -A
+        git commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
+        git push origin "HEAD:refs/heads/skills-lock-bump/update" >/dev/null 2>&1
+        git checkout -q main
+    fi
+    cd "$REPO_ROOT"
+}
+
+setup_race_repos() {
+    local branch="skills-lock-bump/update"
+    local bot='"author":{"login":"agents-md-sync[bot]"}'
+    local clean='"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"","statusCheckRollup":[]'
+    local tip
+
+    rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
+    mkdir -p "$SWEEP_BARE" "$SWEEP_PR_DIR"
+
+    # The registry, which every lock names; nothing is swept or proposed on it.
+    make_race_repo agentskills fill "$BUMP_REF_CONTENT" none none
+
+    # The #295 shape: a ready bump PR whose merge leaves the lock still stale
+    # (its branch pins the OLD ref), so the propose pass wants a re-pin on the
+    # very name the sweep just deleted.
+    make_race_repo repo-merged-stale nofill "$BUMP_REF_OLD" "$BUMP_REF_OLD" none
+    printf '[{"number":130,"headRefName":"%s",%s,%s}]\n' "$branch" "$bot" "$clean" \
+        > "$SWEEP_PR_DIR/bumporg_repo-merged-stale.json"
+
+    # An ordinary stale consumer with no branch: the propose pass opens a PR.
+    make_race_repo repo-plain-stale fill "$BUMP_REF_OLD" none none
+
+    # The #301 shape: the bot's PR closed unmerged, the branch left at its head.
+    make_race_repo repo-stranded fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-stranded" rev-parse "refs/heads/$branch")
+    printf '[{"number":131,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-stranded.json"
+
+    # Same, but someone pushed after the close: the PR's head is not the tip.
+    make_race_repo repo-stranded-moved fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
+    printf '[{"number":132,"state":"CLOSED","headRefName":"%s","headRefOid":"0123456789abcdef0123456789abcdef01234567",%s}]\n' \
+        "$branch" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-stranded-moved.json"
+
+    # Same, but the branch carries a second file.
+    make_race_repo repo-stranded-extra fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" NOTES.md
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-stranded-extra" rev-parse "refs/heads/$branch")
+    printf '[{"number":133,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-stranded-extra.json"
+}
+
+test_bump_branch_reuse_race() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a freed bump branch name is not reused in the same run, #227) ==="
+
+    setup_race_repos
+    local moved_tip extra_tip log next
+    moved_tip=$(sweep_bump_branch_sha repo-stranded-moved)
+    extra_tip=$(sweep_bump_branch_sha repo-stranded-extra)
+    : > "$BUMP_PR_LOG"
+    rm -rf "$BUMP_PR_BODY_DIR"
+
+    GITHUB_SERVER_URL="https://github.example.com" \
+    GITHUB_REPOSITORY="bumporg/_agent-guidance" \
+    GITHUB_RUN_ID="4242" \
+    BUMP_CLOSED_ON_CREATE_FOR_RUN="bumporg_repo-plain-stale" \
+    BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
+    BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
+        run_bump "$TEST_DIR/race.txt"
+    unset BUMP_CLOSED_ON_CREATE_FOR_RUN BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN
+    log="$TEST_DIR/race.txt"
+
+    # ── 1. The merged repo: swept, then deferred, never re-proposed.
+    assert_contains "$log" "bumporg/repo-merged-stale#130: MERGED with a merge commit" \
+        "race: the fixture's bump PR is merged by the sweep"
+    assert_contains "$log" "bumporg/repo-merged-stale: deleted skills-lock-bump/update" \
+        "race: and its branch is deleted"
+    assert_contains "$log" "deferring this re-pin to the next run: this run merged bumporg/repo-merged-stale's bump PR" \
+        "race: the propose pass defers the repo whose branch the sweep just deleted"
+    if [[ -e "$BUMP_PR_BODY_DIR/bumporg_repo-merged-stale.body" ]]; then
+        fail "race: gh pr create was never called on the just-deleted name"
+    else
+        pass "race: gh pr create was never called on the just-deleted name"
+    fi
+    if [[ -z "$(sweep_bump_branch_sha repo-merged-stale)" ]]; then
+        pass "race: the deleted branch name was not recreated in the same run"
+    else
+        fail "race: the deleted branch name was not recreated in the same run"
+    fi
+    # Control: the propose pass did run, and did open a PR elsewhere.
+    if [[ -e "$BUMP_PR_BODY_DIR/bumporg_repo-plain-stale.body" ]]; then
+        pass "race (control): a repo whose branch was not freed is still proposed in the same run"
+    else
+        fail "race (control): a repo whose branch was not freed is still proposed in the same run"
+    fi
+
+    # ── 2. A PR closed right after it was opened is reopened, with the reason.
+    assert_contains "$BUMP_PR_LOG" "pr-reopened 1 bumporg/repo-plain-stale" \
+        "race: a PR read back as CLOSED is reopened"
+    assert_contains "$BUMP_PR_LOG" "pr-commented 1 bumporg/repo-plain-stale" \
+        "race: and a comment is posted on it"
+    local comment="$BUMP_PR_BODY_DIR/bumporg_repo-plain-stale.comment"
+    assert_contains "$comment" "Closed automatically: GitHub closed this PR when a prior bump PR's branch (skills-lock-bump/update) was deleted after merge. This was not a review decision." \
+        "race: the comment says it was not a review decision"
+    assert_contains "$comment" "Re-opened by run https://github.example.com/bumporg/_agent-guidance/actions/runs/4242." \
+        "race: the comment links the run that reopened it"
+
+    # ── 3. The stranded branch is replaced; the two look-alikes are not.
+    assert_contains "$log" "skills-lock-bump/update was stranded: its pull request #131 was closed unmerged" \
+        "stranded: a branch whose bot PR closed unmerged at this tip, lock-only, is recognized"
+    if [[ -z "$(sweep_bump_branch_sha repo-stranded)" ]]; then
+        pass "stranded: the stranded branch is deleted so the re-pin can be proposed"
+    else
+        fail "stranded: the stranded branch is deleted so the re-pin can be proposed"
+    fi
+    if [[ -e "$BUMP_PR_BODY_DIR/bumporg_repo-stranded.body" ]]; then
+        fail "stranded: and its name is not reused in the run that deleted it"
+    else
+        pass "stranded: and its name is not reused in the run that deleted it"
+    fi
+    if [[ "$(sweep_bump_branch_sha repo-stranded-moved)" == "$moved_tip" && -n "$moved_tip" ]]; then
+        pass "stranded: a branch pushed to after its PR closed is left alone"
+    else
+        fail "stranded: a branch pushed to after its PR closed is left alone"
+    fi
+    if [[ "$(sweep_bump_branch_sha repo-stranded-extra)" == "$extra_tip" && -n "$extra_tip" ]]; then
+        pass "stranded: a branch carrying a second file is left alone"
+    else
+        fail "stranded: a branch carrying a second file is left alone"
+    fi
+    assert_not_contains "$log" "#132 was closed unmerged" "stranded: the moved branch is not called stranded"
+    assert_not_contains "$log" "#133 was closed unmerged" "stranded: the two-file branch is not called stranded"
+    assert_not_contains "$BUMP_PR_LOG" "pr-reopened 1 bumporg/repo-merged-stale" \
+        "race (control): nothing is reopened where nothing was closed"
+
+    # ── The next run proposes both deferred re-pins on fresh branches.
+    : > "$BUMP_PR_LOG"
+    rm -rf "$BUMP_PR_BODY_DIR"
+    BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
+    BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
+        run_bump "$TEST_DIR/race-next.txt"
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN
+    next="$TEST_DIR/race-next.txt"
+    if [[ -e "$BUMP_PR_BODY_DIR/bumporg_repo-merged-stale.body" \
+          && -n "$(sweep_bump_branch_sha repo-merged-stale)" ]]; then
+        pass "race: the next run proposes the deferred re-pin"
+    else
+        fail "race: the next run proposes the deferred re-pin"
+    fi
+    if [[ -e "$BUMP_PR_BODY_DIR/bumporg_repo-stranded.body" \
+          && -n "$(sweep_bump_branch_sha repo-stranded)" ]]; then
+        pass "stranded: the next run proposes the re-pin the stranded branch was holding up"
+    else
+        fail "stranded: the next run proposes the re-pin the stranded branch was holding up"
+    fi
+    assert_not_contains "$next" "deferring this re-pin" "race: the next run defers nothing"
 
     rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
 }
@@ -21167,6 +21420,7 @@ GROUP_sweep_retry=(
 )
 GROUP_sweep_cleanup=(
     test_bump_sweep_branch_cleanup
+    test_bump_branch_reuse_race
 )
 
 # The hook-pin lane, in a fixture dir of its own. Ordered: unchanged (nothing
