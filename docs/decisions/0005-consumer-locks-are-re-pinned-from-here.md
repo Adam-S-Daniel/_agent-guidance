@@ -154,6 +154,25 @@ through to the PR step, because a run interrupted between the push and
 `gh pr create` otherwise strands that branch forever — every later run would find
 the same match and stop.
 
+A bump branch name this run deleted is not reused by this run. GitHub closes
+the open PRs whose head a deleted ref named, and does it asynchronously, so a PR
+opened on the recreated name seconds later can be closed by that processing:
+run 37017699823 merged jodidaniel.com#295, deleted the branch, reopened the name
+17 seconds later, and GitHub closed the new #301 unmerged a minute after that
+([#227](https://github.com/Adam-S-Daniel/_agent-guidance/issues/227)). So a repo
+whose bump PR the sweep merged, or whose leftover branch the propose pass
+deleted, gets its re-pin on the next run. The same branch is also the one
+*different content* this script may replace: a branch whose latest bot PR was
+closed unmerged, whose tip is still that PR's head, whose diff is the lock
+alone, and whose every commit beyond the default branch is authored under the
+bumper's own identity is deleted (and re-proposed next run); anything else is
+still refused. A
+PR the propose pass finds closed when it reads the new PR back is reopened with
+a comment saying it was not a review decision. The deferral covers only the
+deletes this run makes itself: a person merging a bump PR with the repository's
+delete-on-merge setting on, or dispatching a run right after another one, can
+still hit the same window, and the read-back is what catches that.
+
 ## Consequences
 
 **Good.** ADR 0001's hold is lifted by the specific thing it named, and ADR
