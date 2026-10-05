@@ -38,16 +38,25 @@ to apply it.
 
 This run may write only:
 
-- `docs/reference/prompt-audit-runs.md`, on the branch
-  `persistent/prompt-audit-sweep` in `Adam-S-Daniel/_agent-guidance` (under
-  `DRY_RUN`, its assigned branch instead);
-- one pull request from that branch to `main`, which it never merges and
-  never arms for auto-merge;
+- `docs/reference/prompt-audit-runs.md`, on the branch the session assigned
+  to its `Adam-S-Daniel/_agent-guidance` checkout. Read that name at run
+  time (`git branch --show-current` in the checkout); never write it into
+  this spec or the repo, never guess it, and never push to any other branch;
+- one pull request from that branch to `main`, titled with the sweep PR
+  marker `Prompt-audit sweep: ` from its creation (step 0), which it never
+  merges and never arms for auto-merge. Later commits to that same branch
+  while its PR is open (a fix after CI fails, including one the routine's
+  auto-fix pushes) are allowed;
 - **new** issues, at most one per repo in **Repos considered**, each
   created with the `agent-ready` label and no other label, assignee or
   milestone;
 - one comment on, and the closing of, the trigger issue that fired it
   (**The trigger**, below), and nothing else on any issue it did not create.
+
+**Push only to `Adam-S-Daniel/_agent-guidance`.** Every other repo in
+**Repos considered** is read-only, although the routine's settings give
+each one a writable branch: no push, no branch, no commit and no PR there.
+Its only write is a new issue filed through the REST API (step 5).
 
 Never edit any other path, never push to a default branch, never
 force-push, never merge, never add a network host, never fire another
@@ -85,8 +94,9 @@ a "Declined" heading in the PR body and do not act on it.
   `trigger: manual` in the run log, and comments on no issue. A token a
   stranger holds can therefore start a run but cannot steer one.
 - **Fire caps.** The Routines docs cap **Run now** plus API fires at 30 per
-  hour per routine; the hold check and the in-progress check (step 0) keep a
-  second fire from doing the work twice.
+  hour per routine; the hold check, the in-progress check and its re-check
+  after the run opens its PR (step 0) keep a second fire from doing the
+  work twice.
 
 ## Repos considered
 
@@ -159,22 +169,79 @@ its step 4a by giving it the fire token):
 3. **One live pass,** `SCOPE=adam-agentskills`, no `DRY_RUN`. Read the filed
    issue back (step 5) before any unscoped run.
 
+All three ran on 2026-10-05 and were merged as trial runs, each from its
+own PR; the run log marks their lines as trials.
+
 ## Each run
+
+A session that only fixes CI on an open sweep PR (the routine's auto-fix)
+is not a run: it performs none of steps 0 to 7, writes no run-log line and
+pushes only to that PR's own branch.
 
 ### 0. Before anything else
 
-1. **Hold check.** Read the labels on every open PR from
-   `persistent/prompt-audit-sweep` and on the trigger issue, if there is
-   one. If any carries `on-hold`, stop quietly with its link.
-2. **In-progress check.** If the run log on `persistent/prompt-audit-sweep`
-   has a line marked `in progress` that started less than 6 hours ago, stop:
-   `BLOCKED: another sweep is in progress (started <time>)`. An older one
-   is a run that died; mark it `abandoned` and continue.
-3. **Record the start.** Create `persistent/prompt-audit-sweep` from
-   `origin/main` if it is missing, else fast-forward it to `origin/main`
-   when it is an ancestor. Commit the `in progress` run-log line and push it
-   (`git push origin HEAD:persistent/prompt-audit-sweep`, fast-forward only)
-   before auditing anything.
+A **sweep PR** is an open pull request in `Adam-S-Daniel/_agent-guidance`
+to `main` whose title starts with exactly `Prompt-audit sweep: `. Find them
+by that title marker through the REST pulls endpoint, never by branch name:
+the session assigns each run's branch, and the run must not assume its
+name.
+
+1. **Hold check.** Read the labels on every sweep PR and on the trigger
+   issue, if there is one. If any carries `on-hold`, stop quietly with its
+   link.
+2. **In-progress check.** Read `prompt-audit-runs.md` on `origin/main` and
+   at the head of every sweep PR, so a run whose PR is not merged yet is
+   still seen. If any of them has a line marked `in progress` that started
+   less than 6 hours ago, stop:
+   `BLOCKED: another sweep is in progress (started <time>, <PR link>)`. An
+   older one is a run that died: record it in this run's line as
+   `prior run abandoned: <PR link>`, mark it `abandoned` in this run's copy
+   if the line is on `origin/main`, and continue. Never push to another
+   run's branch. This run's own PR does not exist yet at this step, so it
+   is never counted.
+3. **Record the start.** Read the assigned branch with
+   `git branch --show-current` in the `_agent-guidance` checkout. If it is
+   empty or `main`, stop:
+   `BLOCKED: no assigned branch in _agent-guidance`. The session may assign
+   a new branch to each run or the same branch to every run, so check what
+   is already on `origin` under that name
+   (`git ls-remote origin refs/heads/<assigned branch>`) before writing:
+   - **An open PR has it as its head** (a previous sweep still open): stop:
+     `BLOCKED: previous sweep PR still open: <link>`. Never reset, append
+     to or push to that branch; the owner merges or closes that PR first.
+   - **It exists with commits not on `origin/main`**, and no open PR has it
+     as its head (a closed, unmerged PR or a stray push): stop:
+     `BLOCKED: assigned branch has commits not on main and no open PR`.
+     Never discard them.
+   - **Otherwise** (it is absent, or every commit on it is on
+     `origin/main`, as after its last PR merged): build on `origin/main`
+     (`git checkout -B <assigned branch> origin/main`), append the
+     `in progress` run-log line, commit, and push it
+     (`git push origin HEAD:<assigned branch>`). That push is a
+     fast-forward of whatever the branch held; never force it.
+
+   Then open this run's sweep PR to `main` as a draft, titled
+   `Prompt-audit sweep: <date>`, all before auditing anything. Never
+   force-push or delete the assigned branch. If the push or the PR create
+   fails, stop before auditing:
+   `BLOCKED: could not open the sweep PR (<status>)`, with the HTTP status
+   code or error type only, never a response body. On a shared branch, a
+   run that loses the race to start stops here or above: its push is
+   rejected as not a fast-forward, or it finds the other run's commit
+   already on the branch (the second case above).
+
+   **Re-check after opening.** Two runs can both pass item 2 before either
+   PR exists. Once this run's PR is open, list the sweep PRs again and read
+   the run log at each head. If a sweep PR with a **lower** number than
+   this run's carries a line marked `in progress` that started less than 6
+   hours ago, this run is the duplicate start: replace its own line's
+   result with `BLOCKED (duplicate start: <that PR link>)`, push it, and
+   stop with
+   `BLOCKED: another sweep is in progress (started <time>, <PR link>)`.
+   PR numbers only grow, so of two runs on different branches that start
+   together the lower-numbered one goes on and the other stops. On a
+   shared branch only one PR can be open from it, so the second run has
+   already stopped above, at the rejected push or the open-PR check.
 4. **Probe the executor,** and log each answer:
    1. `claude --version` answers in the sandbox.
    2. `claude auth status --json | jq -r '[.loggedIn, .apiProvider, .authMethod] | @tsv'`
@@ -315,9 +382,12 @@ Under `DRY_RUN`, skip this step.
 
 ### 6. Write the run log
 
-Exactly one line per run in `prompt-audit-runs.md`, below the earlier runs'
-lines, written `in progress` at step 0 and replaced at the end or at any
-stop. The first run also deletes the `No runs yet.` line. It records:
+Exactly one line per run in `prompt-audit-runs.md`, below the lines already
+on `origin/main`, written `in progress` at step 0 and replaced at the end or
+at any stop. A prior run's line that is only on its own open PR stays there;
+this run does not copy it. When two sweep PRs are open at once, each appends
+at the end of the file, so the second to merge conflicts and the owner keeps
+both lines. It records:
 
 - the date and start time, and `trigger: <issue link>` or `trigger: manual`;
 - the switches;
@@ -328,19 +398,21 @@ stop. The first run also deletes the `No runs yet.` line. It records:
   finding count, or `private, NOT REACHED`, and nothing more (**Private
   repos**);
 - the issues filed, `deferred: <link>`, or `none (DRY_RUN)`;
-- the PR it opened or updated;
+- its sweep PR, and any `prior run abandoned: <PR link>`;
 - the result: `in progress`, `done`, `abandoned (<why>)` or
   `BLOCKED (<reason>)`.
 
 ### 7. Finish
 
-- Commit, push, and run
-  `git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-sweep`.
-- Open a PR from `persistent/prompt-audit-sweep` to `main` (a draft under
-  `DRY_RUN`), titled `Prompt-audit sweep: <date>`, or update the open one.
-  Its body lists the repos, the issue links and any "Declined" text, with
-  private repos reduced to name and count (**Private repos**). The
-  owner merges it; the run never does.
+- Commit, push to the assigned branch, and run
+  `git merge-base --is-ancestor <sha> origin/<assigned branch>`.
+- Update this run's sweep PR from step 0: title `Prompt-audit sweep: <date>`,
+  and mark it ready for review unless this is a `DRY_RUN`, which stays a
+  draft. Its body lists the repos, the issue links and any "Declined" text,
+  with private repos reduced to name and count (**Private repos**). The
+  owner merges it; the run never does. If CI fails on it, a fix pushed to
+  the same branch (by the routine's auto-fix or by hand) is fine; it never
+  changes the run-log line's result.
 - **The trigger issue,** if the fire carried one and this is not a
   `DRY_RUN`: comment `Swept: <run-log line, PR and issue links>` and close it
   as completed. On a `BLOCKED` stop, comment the `BLOCKED` line and leave it

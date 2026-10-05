@@ -35,6 +35,16 @@ const mutations = {
   dedupe: [spec, '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', '`^Prompt-audit sweep `'],
   canonical: [spec, 'dedupe on `full_name`', 'take the first that answers'],
   private: [spec, 'name a private repo and its finding count **only**', 'name a private repo with its findings'],
+  pushonly: [spec, '**Push only to `Adam-S-Daniel/_agent-guidance`.**', '**Push to any reached repo.**'],
+  marker: [spec, 'Find them\nby that title marker', 'Find them\nby branch name'],
+  fixed: [spec, '`git merge-base --is-ancestor <sha> origin/<assigned branch>`', '`git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-sweep`'],
+  openfail: [spec, 'fails, stop before auditing:\n   `BLOCKED: could not open the sweep PR (<status>)`', 'fails, continue auditing anyway'],
+  reuseopen: [spec, 'stop:\n     `BLOCKED: previous sweep PR still open: <link>`. Never reset, append\n     to or push to that branch;', 'reset it to\n     `origin/main` and force-push;'],
+  reusestray: [spec, 'stop:\n     `BLOCKED: assigned branch has commits not on main and no open PR`.\n     Never discard them.', 'reset it to `origin/main`, discarding them.'],
+  reuseff: [spec, 'That push is a\n     fast-forward of whatever the branch held; never force it.', 'Force it if the\n     branch held anything.'],
+  recheck: [spec, 'If a sweep PR with a **lower** number than', 'If a sweep PR with a higher number than'],
+  autofix: [spec, 'is not a run: it performs none of steps 0 to 7', 'is a run: it performs steps 0 to 7'],
+  starttitle: [spec, 'as a draft, titled\n   `Prompt-audit sweep: <date>`, all before', 'as a draft, titled\n   `Sweep <date>`, all before'],
   argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
@@ -81,6 +91,30 @@ test('sweep is read-only, never merges, and files one labeled issue per repo', (
   includes(prose(section(spec, '5. File and verify')), ['`"labels": ["agent-ready"]` in the create call itself', 'raw REST `GET`']);
   includes(prose(section(spec, '3. Route every finding')), ['routes to `_agent-guidance`', '**warns and never blocks**', 'Confidence Low** stays in the run log']);
   includes(prose(section(spec, '0. Before anything else')), ['prints `true`, `firstParty` and either `claude.ai` or `oauth_token`', '`oauth_token` means an OAuth token supplied through the environment', 'BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)', '`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset', 'is **not verified**', 'Never imitate the audit']);
+});
+
+test('each run logs on its assigned branch in its own PR, found by title marker', () => {
+  includes(prose(section(spec, 'Constraints')), ['**Push only to `Adam-S-Daniel/_agent-guidance`.**', 'is read-only', 'no push, no branch, no commit and no PR there', '`git branch --show-current` in the checkout', 'never write it into this spec or the repo', 'auto-fix pushes) are allowed']);
+  const start = prose(section(spec, '0. Before anything else'));
+  includes(start, ['Find them by that title marker', 'never by branch name', 'must not assume its name', 'on `origin/main` and at the head of every sweep PR', 'Never push to another run\'s branch', 'This run\'s own PR does not exist yet']);
+  const intro = all => { const i = all.findIndex(t => t.type === 'heading_open'); return prose(i < 0 ? all : all.slice(0, i)); };
+  includes(intro(section(spec, 'Each run')), ['is not a run: it performs none of steps 0 to 7']);
+  const items = section(spec, '0. Before anything else');
+  const third = items.findIndex(t => t.type === 'list_item_open' && t.info === '3');
+  assert.notEqual(third, -1, 'no step 0.3');
+  const record = prose(items.slice(third, items.findIndex((t, i) => i > third && t.type === 'list_item_open' && t.level === items[third].level)));
+  includes(record, ['If the push or the PR create fails, stop before auditing: `BLOCKED: could not open the sweep PR (<status>)`', 'never a response body', '**Re-check after opening.**', 'If a sweep PR with a **lower** number than this run\'s', 'BLOCKED (duplicate start: <that PR link>)', '`git ls-remote origin refs/heads/<assigned branch>`', 'the same branch to every run']);
+  const cases = items.slice(third).filter(t => t.type === 'list_item_open' && t.level > items[third].level);
+  assert.ok(cases.length >= 3, 'step 0.3 lists no reused-branch cases');
+  includes(record, ['**An open PR has it as its head** (a previous sweep still open): stop: `BLOCKED: previous sweep PR still open: <link>`. Never reset, append to or push to that branch;', '**It exists with commits not on `origin/main`**, and no open PR has it as its head', '`BLOCKED: assigned branch has commits not on main and no open PR`. Never discard them.', 'That push is a fast-forward of whatever the branch held; never force it.', 'Never force-push or delete the assigned branch', 'On a shared branch only one PR can be open from it']);
+  const marker = start.match(/whose title starts with exactly `([^`]+)`/);
+  assert.ok(marker, 'no sweep PR marker');
+  for (const [where, text] of [['step 0.3', record], ['step 7', prose(section(spec, '7. Finish'))]]) {
+    const title = text.match(/titled? `(Prompt-audit sweep[^`]*)`/);
+    assert.ok(title && title[1].startsWith(marker[1]), `${where} PR title lacks the sweep PR marker`);
+  }
+  const code = tokens(spec).flatMap(t => [t, ...(t.children || [])]).filter(t => t.type === 'code_inline' || t.type === 'fence').map(t => t.content);
+  assert.deepEqual(code.filter(c => /persistent\//.test(c)), [], 'spec names a fixed branch');
 });
 
 test('earlier-sweep dedupe matches sweep issues but never the trigger issue', () => {
