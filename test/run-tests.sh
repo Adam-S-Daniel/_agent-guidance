@@ -18138,6 +18138,22 @@ test_fleet_guidance_mirror() {
     else
         fail "fleet guidance mirror: ci.yml's test job should run node scripts/check-fleet-guidance-mirror.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
     fi
+
+    # Order matters: a failed step skips every later one that lacks
+    # `if: always()`, and the integration suite compares the same files, so the
+    # checker must run first for its fix-naming message to be the one shown.
+    local names="$TEST_DIR/fleet-guidance-mirror-step-names.txt" mirror_line suite_line
+    if workflow_step_names "$REPO_ROOT/.github/workflows/ci.yml" test > "$names" 2>/dev/null; then
+        mirror_line=$(grep -nxF -- "Fleet payload mirrors base.md" "$names" | head -1 | cut -d: -f1) || mirror_line=""
+        suite_line=$(grep -nxF -- "Run integration tests" "$names" | head -1 | cut -d: -f1) || suite_line=""
+        if [[ -n "$mirror_line" && -n "$suite_line" && "$mirror_line" -lt "$suite_line" ]]; then
+            pass "fleet guidance mirror: the checker step runs before 'Run integration tests'"
+        else
+            fail "fleet guidance mirror: expected 'Fleet payload mirrors base.md' before 'Run integration tests' — got mirror at ${mirror_line:-missing}, suite at ${suite_line:-missing}"
+        fi
+    else
+        fail "fleet guidance mirror: could not read the test job's step names"
+    fi
 }
 
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
