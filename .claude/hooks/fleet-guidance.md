@@ -158,8 +158,8 @@ hold before writing.
 - **`mcp__github__*` — session-provisioned**, not in `ListConnectors`. The
   only one with Actions tools (`actions_*`), job logs (`get_job_logs`),
   auto-merge and review-thread resolution. Reach: the attached repos.
-- **`mcp__github-mcp__*` — the claude.ai org connector `github-mcp`**, listed
-  by `ListConnectors`. A strict subset: same reads and
+- **`github-mcp` — the claude.ai org connector**, listed by
+  `ListConnectors`; its tool prefix varies by surface. A strict subset: same reads and
   PR/issue/merge/push/delete writes; no Actions, job logs, auto-merge or
   review threads. Reach: a GitHub App allowlist INDEPENDENT of the
   attached repos. **Probe for it by connector NAME, never a remembered
