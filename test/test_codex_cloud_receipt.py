@@ -962,6 +962,40 @@ os.open = denied
                 self.assert_owned_writer_exits(result, pid_file)
                 self.assertFalse(self.log().exists())
 
+    @unittest.skipUnless(hasattr(signal, "SIGALRM"), "requires POSIX alarm")
+    def test_writer_without_signal_masks_keeps_alarm_and_receipt(self):
+        """A Python with alarm but no pthread_sigmask still writes, under a deadline."""
+        parent = self.root / "maskless-python"
+        parent.write_text(
+            f"#!{sys.executable} -S\nimport os, sys\n"
+            "if sys.argv[1:3] == ['-S', '-c']:\n"
+            "    import _signal\n"
+            "    del _signal.pthread_sigmask\n"
+            "    code, sys.argv = sys.argv[3], ['-c', *sys.argv[4:]]\n"
+            "    exec(compile(code, '<string>', 'exec'), {'__name__': '__main__'})\n"
+            "else:\n"
+            f"    os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n")
+        parent.chmod(0o755)
+        self.python_shim(self.bin / "python3", body=shlex.quote(str(parent)) + ' "$@"\n')
+        mask_probe = self.root / "maskless-probe"
+        probe = ("import _signal, sys\n"
+                 "if sys.argv[0] == '-c':\n"
+                 f"    open({str(mask_probe)!r}, 'w').write(str(hasattr(_signal, 'pthread_sigmask')))\n")
+        self.run_hook(injection=probe)
+        self.assertEqual("False", mask_probe.read_text(), "fixture did not remove pthread_sigmask")
+        self.assertEqual(1, len(self.records()))
+        self.reset()
+        gate = self.root / "maskless-fifo"
+        pid_file = self.root / "maskless-pid"
+        os.mkfifo(gate)
+        injection = ("import os, sys\n"
+                     "if sys.argv[0] == '-c':\n"
+                     f"    open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                     f"    open({str(gate)!r}, 'rb').read(1)\n")
+        result = self.run_hook(injection=injection, wait=False)
+        self.assert_owned_writer_exits(result, pid_file)
+        self.assertFalse(self.log().exists())
+
     def test_foreign_owned_helper_is_silent_and_never_read(self):
         helper_fd = self.root / "foreign-helper-fd"
         helper_read = self.root / "foreign-helper-read"
