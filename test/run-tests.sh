@@ -19156,10 +19156,6 @@ test_codex_session_start_launcher() {
         || fail "launcher: expected silence, got: $out_new"
 }
 
-# Run the actual command the registration script wrote, so a stale hook
-# definition cannot hide behind tests that invoke fleet-memory.sh directly.
-# Fixture repos are fresh git init repositories with no remote and fixed commit
-# dates; their payload stamps do not depend on the machine's clock.
 # base.md opens with a repo-file header ("# AGENTS.md" plus "Edit only below
 # the `## Repo-specific additions` header"), true in a full-mode repo file and
 # false in user memory. The hook drops exactly that prefix when it delivers;
@@ -19210,6 +19206,10 @@ test_fleet_memory_repo_header() {
     assert_not_contains "$d/codex/AGENTS.md" "Edit only below" "repo header: Codex Cloud drops the repo-only notice"
 }
 
+# Run the actual command the registration script wrote, so a stale hook
+# definition cannot hide behind tests that invoke fleet-memory.sh directly.
+# Fixture repos are fresh git init repositories with no remote and fixed commit
+# dates; their payload stamps do not depend on the machine's clock.
 test_fleet_memory_workspace() {
     echo ""
     echo "TEST: registered Codex hook (multi-repo workspace)"

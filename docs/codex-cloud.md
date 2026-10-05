@@ -187,8 +187,10 @@ python3 scripts/check-codex-cloud-context.py \
   AGENTS.md
 ```
 
-The checker fails closed unless that envelope contains one byte-exact payload
-inside one complete managed block, its one persisted installed verdict, and
+The checker fails closed unless that envelope contains the payload exactly
+as the hook delivers it (byte-exact after dropping the repo-only `# AGENTS.md`
+header that the hook's `PAYLOAD_REPO_HEADER` names) inside one complete
+managed block, its one persisted installed verdict, and
 the expected repo-specific additions through end of file. It prints only a
 non-identifying result; it does not fetch authenticated task data. Raw task
 captures are authenticated and stay local—do not commit them or paste private

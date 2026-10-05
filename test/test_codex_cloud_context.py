@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = REPO_ROOT / "scripts" / "check-codex-cloud-context.py"
+HOOK = REPO_ROOT / ".claude" / "hooks" / "fleet-memory.sh"
 BEGIN = "<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->"
 END = "<!-- END FLEET GUIDANCE -->"
 
@@ -44,6 +45,28 @@ class CodexCloudContextCheckTests(unittest.TestCase):
             f"{payload}"
             f"{END}\n"
         )
+
+    def hook_block(self, payload):
+        """The managed block the real hook writes for this payload in Codex Cloud mode."""
+        codex_home = self.root / "codex-home"
+        env = os.environ.copy()
+        env.update(
+            HOME=str(self.root / "home"),
+            CODEX_HOME=str(codex_home),
+            FLEET_GUIDANCE_PAYLOAD=str(payload),
+            FLEET_GUIDANCE_RECEIPT="0",
+        )
+        env.pop("FLEET_GUIDANCE_SKIP", None)
+        result = subprocess.run(
+            ["bash", str(HOOK), "--codex-cloud"],
+            cwd=self.root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        return (codex_home / "AGENTS.md").read_bytes().decode("utf-8")
 
     def envelope(self, body=None):
         body = body if body is not None else self.cloud_block() + "\n" + self.repo_text
@@ -132,13 +155,33 @@ class CodexCloudContextCheckTests(unittest.TestCase):
     def test_accepts_real_tracked_payload_and_repo_heading_shape(self):
         payload = REPO_ROOT / "agents-md" / "base.md"
         repo_agents = REPO_ROOT / "AGENTS.md"
-        payload_text = payload.read_bytes().decode("utf-8")
         repo_text = repo_agents.read_bytes().decode("utf-8")
-        envelope = self.envelope(self.cloud_block(payload_text) + "\n" + repo_text)
+        envelope = self.envelope(self.hook_block(payload) + "\n" + repo_text)
 
         result = self.run_check(self.response(envelope), payload=payload, repo_agents=repo_agents)
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_matches_hook_delivery_that_drops_the_repo_only_header(self):
+        payload = self.root / "headed-payload.md"
+        payload.write_text(
+            "# AGENTS.md\n\n"
+            "> **Managed by [`_agent-guidance`].**\n"
+            "> Edit only below the `## Repo-specific additions` header.\n"
+            "> Everything above it will be overwritten on the next sync.\n\n"
+            "Synthetic canary: SILVER-FINCH-131.\n",
+            encoding="utf-8",
+        )
+        block = self.hook_block(payload)
+        self.assertNotIn("Edit only below", block)
+
+        result = self.run_check(self.response(self.envelope(block + "\n" + self.repo_text)), payload=payload)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+        # The block with the header still inside is not what the hook delivers.
+        stale = self.cloud_block(payload.read_text(encoding="utf-8"))
+        result = self.run_check(self.response(self.envelope(stale + "\n" + self.repo_text)), payload=payload)
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
 
     def test_payload_digest_uses_exact_crlf_bytes(self):
         payload = self.root / "crlf-payload.md"

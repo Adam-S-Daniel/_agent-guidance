@@ -12,6 +12,8 @@ BEGIN = "<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT 
 END = "<!-- END FLEET GUIDANCE -->"
 REPO_ADDITIONS = "## Repo-specific additions"
 RAW_COMPLETED = "rawResponseItem/completed"
+HOOK = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "fleet-memory.sh"
+HEADER_ASSIGNMENT = "PAYLOAD_REPO_HEADER=$'"
 
 
 def read_text(path, label):
@@ -90,10 +92,34 @@ def initial_instruction_envelope(turn):
     return envelopes[0]
 
 
+def repo_header():
+    """The repo-only header the hook drops on delivery, read from the hook itself."""
+    lines = [
+        line
+        for line in read_text(HOOK, "fleet-memory hook").splitlines()
+        if line.startswith(HEADER_ASSIGNMENT)
+    ]
+    if len(lines) != 1 or not lines[0].endswith("'"):
+        raise CheckFailure("fleet-memory hook does not define PAYLOAD_REPO_HEADER exactly once")
+    quoted = lines[0][len(HEADER_ASSIGNMENT):-1]
+    if "'" in quoted or "\\" in quoted.replace("\\n", ""):
+        raise CheckFailure("fleet-memory hook's PAYLOAD_REPO_HEADER uses an unsupported escape")
+    return quoted.replace("\\n", "\n")
+
+
+def delivered_payload(payload):
+    header = repo_header()
+    delivered = payload[len(header):] if payload.startswith(header) else payload
+    if not delivered:
+        raise CheckFailure("expected payload has no guidance after its repo-only header")
+    return delivered
+
+
 def expected_cloud_block(payload):
     raw = payload.encode("utf-8")
     version = hashlib.sha256(raw).hexdigest()[:8]
-    payload_with_newline = payload if payload.endswith("\n") else payload + "\n"
+    delivered = delivered_payload(payload)
+    payload_with_newline = delivered if delivered.endswith("\n") else delivered + "\n"
     verdict = (
         f"fleet-guidance: installed (v{version}, {len(raw)} bytes) "
         "— Codex Cloud setup and maintenance"
@@ -136,7 +162,7 @@ def check(response_path, payload_path, repo_agents_path):
     block = expected_cloud_block(payload)
     if envelope.count(BEGIN) != 1 or envelope.count(END) != 1:
         raise CheckFailure("instruction envelope does not contain exactly one managed fleet block")
-    if envelope.count(payload) != 1:
+    if envelope.count(delivered_payload(payload)) != 1:
         raise CheckFailure("expected payload is missing, truncated, or duplicated")
     if envelope.count(block) != 1:
         raise CheckFailure("managed fleet block is incomplete or does not match the expected payload")
