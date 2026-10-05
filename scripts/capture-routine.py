@@ -332,6 +332,28 @@ def select(payload, trigger_id):
     )
 
 
+def _string_multiset(path, value):
+    """`value` as a sorted list of strings, for an order-free comparison.
+
+    Anything else is a refusal that names the path and a count, never a value.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise Refusal(
+            "`%s` is not a list, so it cannot be compared; this needs a "
+            "decision rather than a silent pick." % path
+        )
+    bad = sum(1 for v in value if not isinstance(v, str))
+    if bad:
+        raise Refusal(
+            "`%s` holds %d non-string %s out of %d, so it cannot be compared; "
+            "this needs a decision rather than a silent pick."
+            % (path, bad, "entry" if bad == 1 else "entries", len(value))
+        )
+    return sorted(value)
+
+
 def collect(record):
     """Pull the captured values out of the record, asserting what must hold."""
     events = get(record, "job_config.ccr.events") or []
@@ -379,14 +401,18 @@ def collect(record):
     # The REST shape repeats these four under `session_request.config`. The
     # snapshot renders the `job_config.ccr` copy, so a mirror that disagrees is
     # the same open question as a disagreeing prompt: refuse, never pick one.
-    # Lists compare as multisets, because only their contents are configuration.
+    # Lists compare as multisets, because only their contents are configuration:
+    # tool names, source urls and each outcome's branches are sorted before they
+    # are compared. A list that cannot be sorted (a non-string entry) refuses.
     # Counts only in the message: a mirror can name a repo the snapshot omits.
     cfg = get(record, "session_request.config")
     if isinstance(cfg, dict):
         mirrored = {}
         if "allowed_tools" in cfg:
             mirrored["allowed_tools"] = (
-                sorted(cfg["allowed_tools"] or []), sorted(allowed_tools))
+                _string_multiset("session_request.config.allowed_tools",
+                                 cfg["allowed_tools"]),
+                _string_multiset(_CTX + "allowed_tools", allowed_tools))
         if "autofix_on_pr_create" in cfg:
             mirrored["autofix_on_pr_create"] = (cfg["autofix_on_pr_create"], autofix)
         if "sources" in cfg:
@@ -395,12 +421,15 @@ def collect(record):
                 sorted(str(u) for u in sources))
         if "outcomes" in cfg:
             mirrored["outcomes"] = (
-                {get(o, "git_info.repo"): get(o, "git_info.branches") or []
+                {get(o, "git_info.repo"): _string_multiset(
+                    "session_request.config.outcomes[*].git_info.branches",
+                    get(o, "git_info.branches"))
                  for o in cfg["outcomes"] or []},
-                outcomes)
+                {repo: _string_multiset(_CTX + "outcomes[*].git_info.branches", b)
+                 for repo, b in outcomes.items()})
         for field, (rest, ccr) in mirrored.items():
             if rest != ccr:
-                size = (lambda v: "%d entries" % len(v)
+                size = (lambda v: "%d %s" % (len(v), "entry" if len(v) == 1 else "entries")
                         if isinstance(v, (list, dict)) else "a scalar")
                 raise Refusal(
                     "`session_request.config.%s` and `%s%s` disagree (%s vs "

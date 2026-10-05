@@ -7624,6 +7624,27 @@ r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude
     assert_cap restout 2 "session_request.config.outcomes" \
         "routine: session_request outcomes disagreeing with session_context is a refusal"
 
+    write_fixture restoutrepo "$rest_mut"'
+r["session_request"]["config"]["outcomes"][0]["git_info"]["repo"] = "testorg/repo-drifted"'
+    assert_cap restoutrepo 2 "session_request.config.outcomes" \
+        "routine: session_request outcome repo disagreeing with session_context is a refusal"
+
+    write_fixture restoutorder "$rest_mut"'
+r["job_config"]["ccr"]["session_context"]["outcomes"][0]["git_repository"]["git_info"]["branches"] = ["claude/a", "claude/b"]
+r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude/b", "claude/a"]'
+    assert_cap restoutorder 0 "wrote" \
+        "routine: reordered outcome branches are not a disagreement"
+
+    write_fixture restmixed "$rest_mut"'
+r["session_request"]["config"]["allowed_tools"] = ["Bash", 7]'
+    assert_cap restmixed 2 "1 non-string entry out of 2" \
+        "routine: a non-string in a mirrored list is a clean refusal, not a traceback"
+
+    write_fixture restone "$rest_mut"'
+r["session_request"]["config"]["allowed_tools"] = ["Bash"]'
+    assert_cap restone 2 "(1 entry vs" \
+        "routine: a one-entry disagreement says 1 entry, not 1 entries"
+
     write_fixture resttools "$rest_mut"'
 r["session_request"]["config"]["allowed_tools"].append("Edit")'
     assert_cap resttools 2 "session_request.config.allowed_tools" \
