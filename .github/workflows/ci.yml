@@ -133,6 +133,19 @@ jobs:
       - name: Install the workflow parser
         run: npm ci
 
+      # This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a
+      # hand-made byte-identical copy of agents-md/base.md that nothing syncs
+      # (SYNC_SELF_REPO) and no drift report names; the same step proves every
+      # docs/evidence/ file that base.md and stub.md point at still exists.
+      # Unconditional and not path-filtered, like the rest of this required job.
+      # It runs BEFORE the integration suite on purpose: that step fails first on
+      # a real drift (the suite compares the same two files), and a later step
+      # without `if: always()` would be skipped, hiding this one's message that
+      # names the one-line fix. It needs only node, so it sits right after
+      # `npm ci`.
+      - name: Fleet payload mirrors base.md
+        run: node scripts/check-fleet-guidance-mirror.js
+
       - name: Run integration tests
         run: |
           chmod +x scripts/build-agents-md.sh scripts/sync.sh scripts/drift-report.sh

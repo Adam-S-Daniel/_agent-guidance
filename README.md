@@ -324,6 +324,17 @@ It never approximates: a row the exact match cannot resolve is exit 2 naming
 that row and the remedy — merge or rebase onto the base branch, after which
 the manifest exists at both shas and no fallback runs at all.
 
+### Payload mirror
+
+This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
+byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
+nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
+(CI: the "Fleet payload mirrors base.md" step in
+[`ci.yml`](.github/workflows/ci.yml), every push and pull request) fails when
+the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
+pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
+exist.
+
 ## The skills-bootstrap hook
 
 The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a
