@@ -2568,7 +2568,11 @@ case "$1" in
             # `files` as GitHub computes it: the three-dot diff, base...head.
             cmp_files=$(git -C "$bare_path" diff --name-only "$base_sha...$head_sha" 2>/dev/null \
                 | jq -R '{filename: .}' | jq -s -c .)
-            json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}}"
+            # `commits` likewise: the commits base..head adds, as the author
+            # emails GitHub reports under .commit.author.email.
+            cmp_commits=$(git -C "$bare_path" log --format='%ae' "$base_sha..$head_sha" 2>/dev/null \
+                | jq -R '{commit: {author: {email: .}}}' | jq -s -c .)
+            json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}, \"commits\": ${cmp_commits:-[]}}"
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -12443,9 +12447,17 @@ test_bump_sweep_branch_cleanup() {
 #     after the close, or that carries a second file, is still refused.
 
 # make_race_repo <name> <main lock mode: fill|nofill> <main ref> <branch lock
-#                ref|none> <extra file on the branch|none>
+#                ref|none> <extra file on the branch|none> [branch commit
+#                author: bot (default)|human]
 make_race_repo() {
     local name="$1" main_mode="$2" main_ref="$3" branch_ref="$4" extra="$5"
+    local author="${6:-bot}" author_name author_email
+    if [[ "$author" == "human" ]]; then
+        author_name="A Human"; author_email="human@example.com"
+    else
+        author_name="agents-md-sync[bot]"
+        author_email="agents-md-sync[bot]@users.noreply.github.com"
+    fi
     local bare="$SWEEP_BARE/bumporg_$name"
     local work="$TEST_DIR/work/race-$name"
 
@@ -12467,7 +12479,8 @@ make_race_repo() {
         seed_bump_lock skills.lock "bumporg/agentskills" "$branch_ref"
         [[ "$extra" != "none" ]] && echo "someone else's work" > "$extra"
         git add -A
-        git commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
+        git -c user.name="$author_name" -c user.email="$author_email" \
+            commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
         git push origin "HEAD:refs/heads/skills-lock-bump/update" >/dev/null 2>&1
         git checkout -q main
     fi
@@ -12512,16 +12525,52 @@ setup_race_repos() {
     tip=$(git -C "$SWEEP_BARE/bumporg_repo-stranded-extra" rev-parse "refs/heads/$branch")
     printf '[{"number":133,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
         "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-stranded-extra.json"
+
+    # Near misses for the delete-safety guards. Each is lock-only with a head
+    # equal to the tip, so it differs from the stranded fixture in exactly ONE
+    # respect and only that guard can refuse it.
+    #
+    # The PR was opened by a person, not by this bumper.
+    make_race_repo repo-near-human-pr fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-near-human-pr" rev-parse "refs/heads/$branch")
+    printf '[{"number":134,"state":"CLOSED","headRefName":"%s","headRefOid":"%s","author":{"login":"a-human"}}]\n' \
+        "$branch" "$tip" > "$SWEEP_PR_DIR/bumporg_repo-near-human-pr.json"
+
+    # A newer CLOSED bot PR, but an OLDER one is still OPEN (failing, so the
+    # sweep leaves it): the branch is somebody's live work.
+    make_race_repo repo-near-open-pr fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-near-open-pr" rev-parse "refs/heads/$branch")
+    printf '[{"number":135,"state":"OPEN","headRefName":"%s","headRefOid":"%s",%s,"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","reviewDecision":"","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]},{"number":136,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-near-open-pr.json"
+
+    # The latest PR was MERGED, not closed: a merge is a review decision, and
+    # whatever the branch still holds is not a stranded re-pin.
+    make_race_repo repo-near-merged fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-near-merged" rev-parse "refs/heads/$branch")
+    printf '[{"number":137,"state":"MERGED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-near-merged.json"
+
+    # Everything else matches the stranded shape, but the branch's commit was
+    # authored by a person (pushed to the bot's PR before it closed).
+    make_race_repo repo-near-human-commit fill "$BUMP_REF_OLD" "$BUMP_REF_CONTENT" none human
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-near-human-commit" rev-parse "refs/heads/$branch")
+    printf '[{"number":138,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-near-human-commit.json"
 }
+
+# The near-miss fixtures, named once for the setup and the assertions to share.
+NEAR_REPOS="repo-near-human-pr repo-near-open-pr repo-near-merged repo-near-human-commit"
 
 test_bump_branch_reuse_race() {
     echo ""
     echo "=== Test: bump-consumer-locks.sh (a freed bump branch name is not reused in the same run, #227) ==="
 
     setup_race_repos
-    local moved_tip extra_tip log next
+    local moved_tip extra_tip log next near
+    local -A near_tip
     moved_tip=$(sweep_bump_branch_sha repo-stranded-moved)
     extra_tip=$(sweep_bump_branch_sha repo-stranded-extra)
+    for near in $NEAR_REPOS; do near_tip[$near]=$(sweep_bump_branch_sha "$near"); done
     : > "$BUMP_PR_LOG"
     rm -rf "$BUMP_PR_BODY_DIR"
 
@@ -12595,6 +12644,27 @@ test_bump_branch_reuse_race() {
     fi
     assert_not_contains "$log" "#132 was closed unmerged" "stranded: the moved branch is not called stranded"
     assert_not_contains "$log" "#133 was closed unmerged" "stranded: the two-file branch is not called stranded"
+    # Each near miss keeps its branch tip exactly (so no delete and no force
+    # push), is refused by name, and is never called stranded.
+    local near_label
+    for near in $NEAR_REPOS; do
+        case "$near" in
+            repo-near-human-pr)     near_label="a closed PR opened by a person" ;;
+            repo-near-open-pr)      near_label="a branch with an OPEN PR beside a newer closed bot PR" ;;
+            repo-near-merged)       near_label="a branch whose latest PR was MERGED" ;;
+            repo-near-human-commit) near_label="a bot PR's branch carrying a person's commit" ;;
+        esac
+        if [[ -n "${near_tip[$near]}" && "$(sweep_bump_branch_sha "$near")" == "${near_tip[$near]}" ]]; then
+            pass "stranded: $near_label is left untouched"
+        else
+            fail "stranded: $near_label is left untouched"
+        fi
+    done
+    assert_not_contains "$log" "#134 was closed unmerged" "stranded: a person's PR is not called stranded"
+    assert_not_contains "$log" "#135 was closed unmerged" "stranded: an open PR's branch is not called stranded"
+    assert_not_contains "$log" "#136 was closed unmerged" "stranded: the closed PR beside an open one is not called stranded"
+    assert_not_contains "$log" "#137 was closed unmerged" "stranded: a merged PR's branch is not called stranded"
+    assert_not_contains "$log" "#138 was closed unmerged" "stranded: a branch with a person's commit is not called stranded"
     assert_not_contains "$BUMP_PR_LOG" "pr-reopened 1 bumporg/repo-merged-stale" \
         "race (control): nothing is reopened where nothing was closed"
 

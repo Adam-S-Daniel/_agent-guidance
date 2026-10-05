@@ -133,6 +133,10 @@ LOCK_REL_PATH="skills.lock"
 LOCK_DIGEST_SHAPE='sha256:<64 hex>'
 BRANCH_NAME="${BUMP_BRANCH:-skills-lock-bump/update}"
 PR_AUTHOR="${BUMP_PR_AUTHOR:-agents-md-sync[bot]}"
+# The identity this script commits under (set per clone below), and the one
+# stranded_bump_pr requires on every commit of a branch it may delete.
+COMMIT_NAME="agents-md-sync[bot]"
+COMMIT_EMAIL="agents-md-sync[bot]@users.noreply.github.com"
 DRY_RUN=false
 WORK_DIR=$(mktemp -d)
 
@@ -816,7 +820,12 @@ branch_adds_nothing_to_base() {
 #     CLOSED without being merged;
 #   * its head commit is <tip sha>, the commit the branch carries now — so
 #     nothing reached the branch after the bot's PR was closed;
-#   * the branch's diff against the default branch is $LOCK_REL_PATH alone.
+#   * the branch's diff against the default branch is $LOCK_REL_PATH alone;
+#   * every commit the branch carries beyond the default branch is authored
+#     under $COMMIT_EMAIL, the identity this script commits as. The PR author
+#     check above is about who OPENED the PR; a person's commit pushed to it
+#     before the close would otherwise be deleted with it (still recoverable
+#     from refs/pull/<n>/head, but the branch is the thing nobody looks at).
 #
 # That is the shape run 37017699823 left on jodidaniel.com (#301 closed by
 # GitHub seconds after it was opened, its branch kept): content this bot wrote
@@ -826,13 +835,17 @@ branch_adds_nothing_to_base() {
 # on it, a second file, an open PR, a PR closed by somebody's merge — is still
 # refused, and every unreadable answer is a 1.
 stranded_bump_pr() {
-    local repo_name="$1" branch="$2" tip="$3" base files prs_json
+    local repo_name="$1" branch="$2" tip="$3" base shape prs_json
     [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || return 1
     base=$(gh api "repos/$repo_name" --jq '.default_branch' 2>/dev/null) || return 1
     [[ -n "$base" ]] || return 1
-    files=$(gh api "repos/$repo_name/compare/$base...$branch" \
-        --jq '[.files[].filename] | join(",")' 2>/dev/null) || return 1
-    [[ "$files" == "$LOCK_REL_PATH" ]] || return 1
+    # One call, so the file list and the commit authors describe the same
+    # snapshot of the branch: "<files>|<distinct commit author emails>". An
+    # empty commit list yields "<files>|", which matches nothing below.
+    shape=$(gh api "repos/$repo_name/compare/$base...$branch" \
+        --jq '([.files[].filename] | join(",")) + "|" + ([.commits[].commit.author.email] | unique | join(","))' \
+        2>/dev/null) || return 1
+    [[ "$shape" == "$LOCK_REL_PATH|$COMMIT_EMAIL" ]] || return 1
     prs_json=$(gh pr list --repo "$repo_name" --head "$branch" --state all \
         --json number,state,headRefName,headRefOid,author 2>/dev/null) || return 1
     python3 -c '
@@ -2157,8 +2170,8 @@ for repo_name in "${REPOS[@]}"; do
     # Configure git identity for commits (not inherited in fresh clones), and
     # commit under the App's noreply address so no real email is baked into
     # commit metadata on a public repo.
-    git config user.name "agents-md-sync[bot]"
-    git config user.email "agents-md-sync[bot]@users.noreply.github.com"
+    git config user.name "$COMMIT_NAME"
+    git config user.email "$COMMIT_EMAIL"
 
     # Embed token in remote URL so git push can authenticate in CI (no TTY).
     if [[ -n "${GH_TOKEN:-}" ]]; then
