@@ -184,7 +184,11 @@ to be refused and fail the run every night although its change had landed and
 a merged PR's head, frozen at the merge, shows nothing reached the branch since.
 Every check is asked of the tip sha the sweep read, never the branch name, and
 the ref is re-read immediately before the delete: a branch that moved since it
-was judged is refused and counted. GitHub's REST ref delete takes no expected
+was judged, or whose re-read fails or names it with a tip that is not a sha, is
+refused and counted — only a ref the re-read does not list is already gone. The
+branch the sweep deletes after merging its PR is pinned the same way, to the
+head it merged, so a push landing after the merge is refused and counted rather
+than deleted by name. GitHub's REST ref delete takes no expected
 sha, so a window of two back-to-back API calls remains; GraphQL's `updateRefs`
 (`beforeOid`) would close it but has not been exercised against a real ref. The
 PR listing is asked for 1000 and refused when that many come back, since gh's

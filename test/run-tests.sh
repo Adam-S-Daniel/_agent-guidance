@@ -2245,7 +2245,7 @@ mock_open_pr_42() {
 # branch can lose: someone pushes to skills-lock-bump/update between the
 # bumper reading it and deleting it. MOCK_REF_PUSH_ON names
 # "<owner_repo>:<trigger>" pairs, a trigger being the API call after whose
-# answer the push lands (`matching-refs` or `compare`). Once per repo, marked
+# answer the push lands (`matching-refs`, `compare` or `merge`). Once per repo, marked
 # inside the bare repo, so the bumper's later re-read sees the moved ref
 # rather than another push. The commit is a
 # person's, on top of the tip, changing nothing: what is lost if it is
@@ -2262,6 +2262,19 @@ mock_push_foreign_commit() {
           git -C "$bare" commit-tree "$tree" -p "$tip" -m "a person's push") || return 0
     git -C "$bare" update-ref refs/heads/skills-lock-bump/update "$new" "$tip"
     : > "$bare/mock-foreign-push-done"
+}
+
+# mock_garble_ref <bare repo path> <trigger> — a matching-refs answer that
+# names skills-lock-bump/update but whose `object.sha` is not a sha. The ref
+# is never touched: the branch stays exactly where it was, which is the
+# point — "present but unreadable" must not be read as "absent".
+# MOCK_REF_GARBLE_ON names "<owner_repo>:<trigger>" pairs, `always` garbling
+# every answer and `compare` every answer after the first compare call.
+mock_garble_ref() {
+    local bare="$1" trigger="$2" slug
+    slug=$(basename "$bare")
+    [[ " ${MOCK_REF_GARBLE_ON:-} " == *" $slug:$trigger "* ]] || return 0
+    : > "$bare/mock-ref-garbled"
 }
 
 case "$1" in
@@ -2503,6 +2516,7 @@ case "$1" in
             # The ref is deliberately left in place: the whole assertion is
             # that the branch survives while the caller is told it is gone.
             # MOCK_DELETE_REF_HTTP_FAIL names repos (owner_repo) that get it.
+            [[ -d "$bare_path" ]] && : > "$bare_path/mock-delete-attempted"
             if [[ " ${MOCK_DELETE_REF_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
@@ -2549,8 +2563,13 @@ case "$1" in
             # left in place, exactly as with the DELETE above: the assertion is
             # that a branch which still exists is not reported as deleted just
             # because the question about it could not be asked.
-            # MOCK_MATCHING_REFS_HTTP_FAIL names repos (owner_repo) that get it.
-            if [[ " ${MOCK_MATCHING_REFS_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
+            # MOCK_MATCHING_REFS_HTTP_FAIL names repos (owner_repo) that get it,
+            # on every call; `<owner_repo>:after-delete` only once a DELETE has
+            # been attempted there, so the question that fails is the one
+            # asked AFTER the delete, not the re-read before it.
+            if [[ " ${MOCK_MATCHING_REFS_HTTP_FAIL:-} " == *" $repo_slug "* ]] \
+               || [[ " ${MOCK_MATCHING_REFS_HTTP_FAIL:-} " == *" $repo_slug:after-delete "* \
+                     && -e "$bare_path/mock-delete-attempted" ]]; then
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
@@ -2561,8 +2580,11 @@ case "$1" in
             # Each entry carries `object.sha` as GitHub's does: the sweep reads
             # a bump branch's tip from it.
             json="[]"
+            mock_garble_ref "$bare_path" always
             while IFS=' ' read -r one_ref one_sha; do
                 [[ -n "$one_ref" && "$one_ref" == "$ref_prefix"* ]] || continue
+                [[ -e "$bare_path/mock-ref-garbled" \
+                   && "$one_ref" == refs/heads/skills-lock-bump/update ]] && one_sha="not-a-sha"
                 json=$(echo "$json" | jq --arg r "$one_ref" --arg s "$one_sha" \
                     '. + [{"ref": $r, "object": {"sha": $s, "type": "commit"}}]')
             done < <(git -C "$bare_path" for-each-ref --format='%(refname) %(objectname)' refs/heads/ 2>/dev/null)
@@ -2608,6 +2630,7 @@ case "$1" in
                 | jq -R 'split(" ") | {commit: {author: {email: .[0]}, committer: {email: .[1]}}}' | jq -s -c .)
             json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}, \"commits\": ${cmp_commits:-[]}}"
             mock_push_foreign_commit "$bare_path" compare
+            mock_garble_ref "$bare_path" compare
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -2867,7 +2890,7 @@ case "$1" in
                         open)   json=$(jq -c 'map(select((.state // "OPEN") == "OPEN"))' <<< "$json") ;;
                         closed) json=$(jq -c 'map(select((.state // "OPEN") != "OPEN"))' <<< "$json") ;;
                     esac
-                    # --limit IS honoured too, with gh's own default of 30:
+                    # --limit IS honored too, with gh's own default of 30:
                     # past it, real gh returns only the NEWEST pull requests
                     # and says nothing about the rest. Kept in fixture order,
                     # so only membership changes. Without it a caller that
@@ -3112,6 +3135,9 @@ case "$1" in
                     if [[ -n "$tip" ]]; then
                         git -C "${MOCK_BARE_DIR}/${repo_slug}" update-ref refs/heads/main "$tip"
                     fi
+                    # A person's push landing on the head branch right after
+                    # the merge: the cleanup must not delete it by name.
+                    mock_push_foreign_commit "${MOCK_BARE_DIR}/${repo_slug}" merge
                     # A repo with "automatically delete head branches" enabled,
                     # which is a setting the bot does not control and cannot
                     # see. The head ref is gone before delete_bump_branch ever
@@ -8412,6 +8438,7 @@ run_bump() {   # <output file> [script args...]
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
     MOCK_REF_PUSH_ON="${BUMP_REF_PUSH_ON_FOR_RUN:-}" \
+    MOCK_REF_GARBLE_ON="${BUMP_REF_GARBLE_ON_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
     MOCK_PR_HEAD_GARBLED="${BUMP_HEAD_GARBLED_FOR_RUN:-}" \
     MOCK_PR_VIEW_FAILS="${BUMP_VIEW_FAILS_FOR_RUN:-}" \
@@ -12513,6 +12540,9 @@ test_bump_sweep_branch_cleanup() {
     assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" \
         "branch cleanup: the merge still stands when the cleanup after it fails"
     assert_contains "$log" "2 merged" "branch cleanup: and is still counted in the summary"
+    # But the branch it left behind is a counted failure, not just a WARN.
+    assert_contains "$log" "ERROR: bumporg/repo-nochecks#106: merged, but skills-lock-bump/update was not deleted" \
+        "branch cleanup: a branch the cleanup left behind is a counted failure"
 
     # ── CONTROL, from the same run: a delete that works.
     assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
@@ -12557,8 +12587,10 @@ test_bump_sweep_branch_cleanup() {
     # is green in every one of them.
     setup_sweep_repos
     nochecks_tip=$(sweep_bump_branch_sha repo-nochecks)
+    # `:after-delete`: the re-read BEFORE the delete still answers, so the
+    # DELETE is attempted; only the question asked after it goes blind.
     BUMP_DELETE_REF_FAIL_FOR_RUN="bumporg_repo-nochecks" \
-    BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-nochecks" \
+    BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-nochecks:after-delete" \
         run_sweep "$TEST_DIR/sweep-delete-blind.txt"
     unset BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN
     log="$TEST_DIR/sweep-delete-blind.txt"
@@ -12628,6 +12660,72 @@ test_bump_sweep_branch_cleanup() {
         "branch cleanup: a same-prefix sibling is not our branch — the reaped ref still reads as gone"
     assert_not_contains "$log" "WARN could not delete skills-lock-bump/update" \
         "branch cleanup: and nothing warns about a branch that a sibling merely resembles"
+
+    # ── BY SHA, NOT BY NAME. A person pushes to the head branch right after
+    # the merge. The delete is pinned to the head that was merged, so the
+    # moved branch is refused and counted, and the person's commit survives.
+    setup_sweep_repos
+    local merged_tip
+    merged_tip=$(sweep_bump_branch_sha repo-nochecks)
+    BUMP_REF_PUSH_ON_FOR_RUN="bumporg_repo-nochecks:merge" \
+        run_sweep "$TEST_DIR/sweep-delete-moved.txt"
+    unset BUMP_REF_PUSH_ON_FOR_RUN
+    log="$TEST_DIR/sweep-delete-moved.txt"
+    assert_contains "$log" "bumporg/repo-nochecks#106: MERGED with a merge commit" \
+        "branch cleanup (by sha): the merge itself lands"
+    assert_contains "$log" "bumporg/repo-nochecks: WARN did not delete skills-lock-bump/update — it moved from ${merged_tip:0:7} to" \
+        "branch cleanup (by sha): a branch that moved after the merge is refused, naming the merged head"
+    assert_contains "$log" "ERROR: bumporg/repo-nochecks#106: merged, but skills-lock-bump/update was not deleted" \
+        "branch cleanup (by sha): and the refusal is a counted failure"
+    if [[ -n "$merged_tip" \
+          && "$(git -C "$SWEEP_BARE/bumporg_repo-nochecks" rev-parse --verify -q \
+                "refs/heads/skills-lock-bump/update^" 2>/dev/null)" == "$merged_tip" ]]; then
+        pass "branch cleanup (by sha): the branch keeps the person's push"
+    else
+        fail "branch cleanup (by sha): the branch keeps the person's push"
+    fi
+    # Control from the same run: an unmoved branch is still deleted.
+    assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
+        "branch cleanup (by sha, control): an unmoved merged branch is still deleted"
+
+    # ── The re-read before the delete cannot be asked: no DELETE at all.
+    setup_sweep_repos
+    merged_tip=$(sweep_bump_branch_sha repo-nochecks)
+    BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-nochecks" \
+        run_sweep "$TEST_DIR/sweep-delete-reread-blind.txt"
+    unset BUMP_MATCHING_REFS_FAIL_FOR_RUN
+    log="$TEST_DIR/sweep-delete-reread-blind.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: WARN did not delete skills-lock-bump/update — re-reading it just before the delete failed" \
+        "branch cleanup (by sha): an unreadable re-read refuses the delete"
+    assert_contains "$log" "ERROR: bumporg/repo-nochecks#106: merged, but skills-lock-bump/update was not deleted" \
+        "branch cleanup (by sha): and is a counted failure"
+    if [[ ! -e "$SWEEP_BARE/bumporg_repo-nochecks/mock-delete-attempted" \
+          && "$(sweep_bump_branch_sha repo-nochecks)" == "$merged_tip" ]]; then
+        pass "branch cleanup (by sha): no DELETE was sent, and the branch is still there"
+    else
+        fail "branch cleanup (by sha): no DELETE was sent, and the branch is still there"
+    fi
+
+    # ── PRESENT BUT UNPARSEABLE. The re-read names our ref, with a sha that
+    # is not one. That is not "already gone": refused, counted, never
+    # deleted, and never reported as deleted.
+    setup_sweep_repos
+    merged_tip=$(sweep_bump_branch_sha repo-nochecks)
+    BUMP_REF_GARBLE_ON_FOR_RUN="bumporg_repo-nochecks:always" \
+        run_sweep "$TEST_DIR/sweep-delete-garbled.txt"
+    unset BUMP_REF_GARBLE_ON_FOR_RUN
+    log="$TEST_DIR/sweep-delete-garbled.txt"
+    assert_not_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone" \
+        "branch cleanup (garbled): a ref whose sha does not parse is not read as already gone"
+    assert_contains "$log" "bumporg/repo-nochecks: WARN did not delete skills-lock-bump/update — re-read just before the delete, it is still there but its tip did not read back as a commit sha" \
+        "branch cleanup (garbled): the refusal says the branch is there and unreadable"
+    assert_contains "$log" "ERROR: bumporg/repo-nochecks#106: merged, but skills-lock-bump/update was not deleted" \
+        "branch cleanup (garbled): and is a counted failure"
+    if [[ "$(sweep_bump_branch_sha repo-nochecks)" == "$merged_tip" ]]; then
+        pass "branch cleanup (garbled): the branch is still there"
+    else
+        fail "branch cleanup (garbled): the branch is still there"
+    fi
 
     rm -rf "$SWEEP_BARE" "$SWEEP_PR_DIR"
 }
@@ -12859,6 +12957,14 @@ setup_no_pr_repos() {
     make_squashed_repo repo-squashed-off-main off-main bot 171
     # Same, but a person opened the merged PR: refused.
     make_squashed_repo repo-squashed-human-pr on-main human 172
+
+    # The branch is there, but matching-refs names it with a sha that does
+    # not parse: on the first read (garbled), or only on the re-read right
+    # before the delete (garbled-late, after the compare). Both are otherwise
+    # freed orphans; read as absent, the late one logged "Deleted it" over a
+    # branch nothing deleted. Both must be refused and counted.
+    make_race_repo repo-orphan-garbled fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    make_race_repo repo-orphan-garbled-late fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
 }
 
 # make_squashed_repo <name> <merge commit: on-main|off-main> <PR author:
@@ -12911,7 +13017,8 @@ test_bump_branch_reuse_race() {
                 repo-orphan-history-human repo-stranded-current repo-orphan \
                 repo-orphan-long-history repo-orphan-full-listing \
                 repo-orphan-moved-early repo-orphan-moved-late \
-                repo-squashed-off-main repo-squashed-human-pr; do
+                repo-squashed-off-main repo-squashed-human-pr \
+                repo-orphan-garbled repo-orphan-garbled-late; do
         near_tip[$near]=$(sweep_bump_branch_sha "$near")
     done
     : > "$BUMP_PR_LOG"
@@ -12941,11 +13048,13 @@ test_bump_branch_reuse_race() {
     BUMP_DELETE_REF_FAIL_FOR_RUN="bumporg_repo-stranded-undeletable" \
     BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-refs-blind" \
     BUMP_REF_PUSH_ON_FOR_RUN="bumporg_repo-orphan-moved-early:matching-refs bumporg_repo-orphan-moved-late:compare" \
+    BUMP_REF_GARBLE_ON_FOR_RUN="bumporg_repo-orphan-garbled:always bumporg_repo-orphan-garbled-late:compare" \
     BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
     BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
         run_bump "$TEST_DIR/race.txt"
     unset BUMP_CLOSED_ON_CREATE_FOR_RUN BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN \
-          BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN BUMP_REF_PUSH_ON_FOR_RUN
+          BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN BUMP_REF_PUSH_ON_FOR_RUN \
+          BUMP_REF_GARBLE_ON_FOR_RUN
     log="$TEST_DIR/race.txt"
 
     # ── #263. A bump branch with no open PR is settled by the sweep.
@@ -13059,10 +13168,32 @@ test_bump_branch_reuse_race() {
             "squashed: $squash_near is a counted failure"
     done
 
+    # Present but unparseable: never read as absent, never reported deleted.
+    local garbled
+    for garbled in repo-orphan-garbled repo-orphan-garbled-late; do
+        if [[ -n "${near_tip[$garbled]}" \
+              && "$(sweep_bump_branch_sha "$garbled")" == "${near_tip[$garbled]}" ]]; then
+            pass "garbled: $garbled's branch is left untouched"
+        else
+            fail "garbled: $garbled's branch is left untouched"
+        fi
+        assert_not_contains "$log" "bumporg/$garbled: skills-lock-bump/update was already gone" \
+            "garbled: $garbled is not read as already gone"
+        assert_not_contains "$log" "bumporg/$garbled: skills-lock-bump/update was stranded" \
+            "garbled: $garbled is not reported as freed"
+    done
+    assert_contains "$log" "ERROR: bumporg/repo-orphan-garbled: skills-lock-bump/update exists, but its tip did not read back as a commit sha" \
+        "garbled: a first read that does not parse is a counted failure, not a missing branch"
+    assert_contains "$log" "bumporg/repo-orphan-garbled-late: WARN did not delete skills-lock-bump/update — re-read just before the delete, it is still there but its tip did not read back as a commit sha" \
+        "garbled: a re-read that does not parse refuses the delete and says why"
+    assert_contains "$log" "ERROR: bumporg/repo-orphan-garbled-late: skills-lock-bump/update is stranded but could not be deleted" \
+        "garbled: and that refusal is a counted failure"
+
     # Nine refused branches, one undeletable, one unreadable, one refused
-    # force-push, and the six follow-up refusals above (two listings, two
-    # moved branches, two squashed near misses): eighteen, each counted once.
-    assert_contains "$log" " 18 failed ===" "blocked: each blocked consumer is counted exactly once"
+    # force-push, the six follow-up refusals above (two listings, two moved
+    # branches, two squashed near misses) and two garbled tips: twenty, each
+    # counted once.
+    assert_contains "$log" " 20 failed ===" "blocked: each blocked consumer is counted exactly once"
     if [[ $BUMP_EXIT -ne 0 ]]; then
         pass "blocked: the run exits non-zero, so the scheduled run goes red"
     else
