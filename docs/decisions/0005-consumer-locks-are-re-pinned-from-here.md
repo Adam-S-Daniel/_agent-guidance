@@ -139,9 +139,13 @@ rather than from anyone's working tree, that federated sources keep their pins,
 and that the whole change is `--repin` output and was never hand-edited.
 
 **Nothing is force-pushed, and `--dry-run` fails closed.** A bump branch that
-already exists with different content is a warning and a skip, with the recovery
-this repo's `AGENTS.md` already records for a stale bot branch: merge or close
-its PR to free the name. A *rejected push* is classified on git's own
+already exists with different content is refused, with the recovery this repo's
+`AGENTS.md` already records for a stale bot branch: merge or close its PR to
+free the name. The refusal is a counted failure, not a skip: as a skip it ended
+two nightly runs "0 failed" while jodidaniel.com sat behind the fleet
+([#263](https://github.com/Adam-S-Daniel/_agent-guidance/issues/263)), and a
+consumer that receives no re-pin until a person acts is exactly what a red run
+is for. A *rejected push* is classified on git's own
 non-fast-forward wording rather than on the word "rejected", which the server
 also prints for a ruleset restricting ref creation (GH013) — diagnosed as a
 stale branch, that prints a remedy for a branch nobody created, counts a stale
@@ -152,7 +156,9 @@ holds installation tokens across two owners.
 A branch that exists carrying *this exact lock* is not re-pushed but still falls
 through to the PR step, because a run interrupted between the push and
 `gh pr create` otherwise strands that branch forever — every later run would find
-the same match and stop.
+the same match and stop. Since #263 the sweep frees such a branch first when it
+is provably the bumper's own (below), so the re-pin follows a night later; the
+fall-through remains for one the sweep did not free.
 
 A bump branch name this run deleted is not reused by this run. GitHub closes
 the open PRs whose head a deleted ref named, and does it asynchronously, so a PR
@@ -160,13 +166,15 @@ opened on the recreated name seconds later can be closed by that processing:
 run 37017699823 merged jodidaniel.com#295, deleted the branch, reopened the name
 17 seconds later, and GitHub closed the new #301 unmerged a minute after that
 ([#227](https://github.com/Adam-S-Daniel/_agent-guidance/issues/227)). So a repo
-whose bump PR the sweep merged, or whose leftover branch the propose pass
-deleted, gets its re-pin on the next run. The same branch is also the one
-*different content* this script may replace: a branch whose latest bot PR was
-closed unmerged, whose tip is still that PR's head, whose diff is the lock
-alone, and whose every commit beyond the default branch is authored under the
-bumper's own identity is deleted (and re-proposed next run); anything else is
-still refused. A
+whose bump PR the sweep merged, or whose leftover branch the sweep deleted,
+gets its re-pin on the next run. The sweep settles every bump branch with no
+open PR, every night, whether or not that consumer needs a re-pin: a merged
+leftover is deleted, and so is the one kind of *different content* this script
+may replace — a branch whose diff is the lock alone, whose every commit beyond
+the default branch is authored under the bumper's own identity, and whose
+latest bot PR was closed unmerged with this tip as its head, or which never had
+a PR at all (re-proposed next run). Anything else is refused and counted as a
+failure, so the run goes red and names the branch. A
 PR the propose pass finds closed when it reads the new PR back is reopened with
 a comment saying it was not a review decision. The deferral covers only the
 deletes this run makes itself: a person merging a bump PR with the repository's
@@ -230,8 +238,8 @@ on every commit.
   auto-merge by choice. The drift report prints the pin on each repo's **default**
   branch, so an unmerged bump PR is invisible there; ten adopters make an
   accumulating pile more likely than two did.
-- **Closing a bump PR is not a way to say no.** The next run re-proposes the same
-  change — re-opening the PR if the branch survives, re-pushing it if not. The
+- **Closing a bump PR is not a way to say no.** The next run's sweep deletes
+  the closed PR's branch, and the run after re-proposes the same change. The
   only "no" is removing the repo's lock or taking the repo out of scope, and
   nothing in `repos.yml` expresses "bump-exempt" today. If that is ever wanted it
   should be a key there, not a closed PR anyone can mistake for a decision.

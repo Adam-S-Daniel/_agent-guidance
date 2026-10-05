@@ -16,6 +16,11 @@ set -euo pipefail
 # nothing is required gh merges an already-mergeable PR on the spot instead of
 # arming it, and where something is required it waits only for the required
 # contexts, which this sweep does not — see docs/decisions/0015.
+# Where the bump branch has NO open PR, the sweep frees it instead when that is
+# provably lossless (a merged leftover, or this bumper's own lock-only re-pin
+# whose PR was closed unmerged or never opened) and otherwise counts the repo
+# as a FAILURE, because a branch it may neither merge nor delete blocks every
+# later re-pin there — see sweep_branch_without_pr().
 #
 # PASS 2 — PROPOSE. For each repo the script:
 #   1. Fetches skills.lock from the default branch (absent → nothing to do)
@@ -423,6 +428,11 @@ MERGE_COUNT=0
 # fix that does not depend on GitHub's timing is not to run it at all: the
 # re-pin waits for the next run, when the delete is a day old.
 declare -A BRANCH_FREED_THIS_RUN=()
+# Repos whose bump branch the sweep already counted as a FAILURE: one it found
+# with no open PR and could neither prove disposable nor delete, or could not
+# read at all. The propose pass reports that repo's refusal again but does not
+# count it twice, so "N failed" stays one per blocked consumer.
+declare -A BRANCH_BLOCKED_THIS_RUN=()
 
 # lock_plan <file> — the registries a lock names, one per line:
 #
@@ -812,14 +822,17 @@ branch_adds_nothing_to_base() {
 }
 
 # stranded_bump_pr <repo> <branch> <tip sha> — prints the number of the
-# closed-unmerged pull request that leaves <branch> stranded, and returns 0,
-# when ALL of these hold; returns 1, printing nothing, otherwise:
+# closed-unmerged pull request that leaves <branch> stranded, or `none` when
+# no pull request was ever opened on it, and returns 0, when ALL of these
+# hold; returns 1, printing nothing, otherwise:
 #
 #   * no pull request on <branch> is open;
-#   * the most recent one on it was opened by this bumper ($PR_AUTHOR) and is
-#     CLOSED without being merged;
-#   * its head commit is <tip sha>, the commit the branch carries now — so
-#     nothing reached the branch after the bot's PR was closed;
+#   * EITHER no pull request on it exists at all — a run that pushed the
+#     branch and died before `gh pr create`, or one whose PR was opened from
+#     another head — OR the most recent one on it was opened by this bumper
+#     ($PR_AUTHOR), is CLOSED without being merged, and has <tip sha> as its
+#     head commit, the commit the branch carries now — so nothing reached the
+#     branch after the bot's PR was closed;
 #   * the branch's diff against the default branch is $LOCK_REL_PATH alone;
 #   * every commit the branch carries beyond the default branch is authored
 #     under $COMMIT_EMAIL, the identity this script commits as. The PR author
@@ -870,8 +883,14 @@ if not isinstance(prs, list):
 # Filtered here, not trusted to --head: a listing filter is a query, not a
 # guarantee (see the sweep).
 ours = [pr for pr in prs if isinstance(pr, dict) and pr.get("headRefName") == branch]
-if not ours or any(pr.get("state") == "OPEN" for pr in ours):
+if any(pr.get("state") == "OPEN" for pr in ours):
     sys.exit(1)
+if not ours:
+    # Never proposed. The compare guards above (the lock alone, every commit
+    # under the identity this script commits as) are what make this one ours to replace;
+    # there is no PR head to compare the tip with.
+    print("none")
+    sys.exit(0)
 latest = max(ours, key=lambda pr: pr.get("number") or 0)
 if (latest.get("state") != "CLOSED"
         or not normalize(author)
@@ -880,6 +899,94 @@ if (latest.get("state") != "CLOSED"
     sys.exit(1)
 print(latest["number"])
 ' "$prs_json" "$branch" "$PR_AUTHOR" "$tip" 2>/dev/null
+}
+
+# bump_branch_tip <repo> <branch> — prints the commit <branch> points at, or
+# nothing when the repo has no such branch; returns 1 when the question could
+# not be asked. matching-refs, for the reason delete_bump_branch gives: absence
+# is a 200 with an empty array, never a 404 that could also mean "this
+# credential cannot see the repo". It is a PREFIX match, so the exact ref is
+# picked out here, in bash, rather than spliced into a jq program.
+bump_branch_tip() {
+    local repo_name="$1" branch="$2" refs_out line
+    refs_out=$(gh api --paginate "repos/$repo_name/git/matching-refs/heads/$branch" \
+        --jq '.[] | .ref + " " + .object.sha' 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        if [[ "${line%% *}" == "refs/heads/$branch" && "${line#* }" =~ ^[0-9a-f]{40}$ ]]; then
+            printf '%s\n' "${line#* }"
+            return 0
+        fi
+    done <<< "$refs_out"
+    return 0
+}
+
+# sweep_branch_without_pr <repo> — what the sweep does where no bump PR is
+# open: free a bump branch that would otherwise block this repo's re-pins for
+# good, or count the repo as a failure.
+#
+# Why here and not only in the propose pass. The propose pass reaches a stale
+# branch only on a night the bundle has moved, so a branch stranded on any
+# other night sat there silently, and when it did reach one it refused with a
+# WARN and a skip: jodidaniel.com's #301, closed unmerged 71 seconds after it
+# opened, left skills-lock-bump/update behind, and runs 37123773705 and
+# 37205684874 each logged "refusing to force-push" and ended "0 failed" while
+# that consumer stayed pinned behind the fleet
+# (https://github.com/Adam-S-Daniel/_agent-guidance/issues/263).
+#
+# Deleted only when that is provably lossless, by the two existing tests and
+# nothing looser: branch_adds_nothing_to_base (a merged leftover) or
+# stranded_bump_pr (this bumper's lock-only commits, its PR closed unmerged at
+# this tip, or never opened). Anything else — a person's commit, a second
+# file, a PR closed by someone's merge, an unreadable answer — is REFUSED and
+# counted as a failure, so the run goes red and names the branch. A deleted
+# name is marked in BRANCH_FREED_THIS_RUN and re-proposed on the next run.
+sweep_branch_without_pr() {
+    local repo_name="$1" tip stranded_pr done_verb
+    if ! tip=$(bump_branch_tip "$repo_name" "$BRANCH_NAME"); then
+        fail "$repo_name: could not read whether $BRANCH_NAME exists — the matching-refs query failed, so a branch that blocks this repo's re-pins cannot be ruled out."
+        ((FAIL_COUNT++)) || true
+        BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
+        return 0
+    fi
+    # No line at all for the commonest case, as for "no open PR".
+    [[ -n "$tip" ]] || return 0
+
+    done_verb="Deleted it"
+    $DRY_RUN && done_verb="[DRY RUN] It would be deleted"
+
+    if branch_adds_nothing_to_base "$repo_name" "$BRANCH_NAME"; then
+        if delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
+            log "$repo_name: $BRANCH_NAME was a merged leftover and carried nothing the default branch lacks. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+            BRANCH_FREED_THIS_RUN["$repo_name"]=1
+            return 0
+        fi
+        fail "$repo_name: $BRANCH_NAME is a merged leftover but could not be deleted, so it still blocks this repo's re-pins."
+        ((FAIL_COUNT++)) || true
+        BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
+        return 0
+    fi
+
+    if stranded_pr=$(stranded_bump_pr "$repo_name" "$BRANCH_NAME" "$tip") \
+       && [[ -n "$stranded_pr" ]]; then
+        if delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
+            if [[ "$stranded_pr" == "none" ]]; then
+                log "$repo_name: $BRANCH_NAME was stranded: no pull request was ever opened on it, and it held only this bumper's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+            else
+                log "$repo_name: $BRANCH_NAME was stranded: its pull request #$stranded_pr was closed unmerged, and the branch still held only that PR's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+            fi
+            BRANCH_FREED_THIS_RUN["$repo_name"]=1
+            return 0
+        fi
+        fail "$repo_name: $BRANCH_NAME is stranded but could not be deleted, so it still blocks this repo's re-pins."
+        ((FAIL_COUNT++)) || true
+        BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
+        return 0
+    fi
+
+    fail "$repo_name: $BRANCH_NAME is at ${tip:0:7} with no open pull request, and it is not provably this bumper's own lock-only re-pin (a merged leftover, or a bot PR closed unmerged at this tip, or one never opened) — refusing to delete it. No re-pin can be proposed here until a person merges, reopens or deletes it."
+    ((FAIL_COUNT++)) || true
+    BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
+    return 0
 }
 
 sweep_bump_prs() {
@@ -950,8 +1057,12 @@ sweep_bump_prs() {
         mapfile -t numbers < <(sed '/^$/d' <<< "$numbers_raw")
         # No line at all for the commonest case. Most repos in the fleet have
         # no bump PR on any given night, and twenty "nothing to merge" lines
-        # would bury the ones that say something.
-        [[ ${#numbers[@]} -eq 0 ]] && continue
+        # would bury the ones that say something. A bump BRANCH with no open
+        # PR is not that case, and is settled here.
+        if [[ ${#numbers[@]} -eq 0 ]]; then
+            sweep_branch_without_pr "$repo_name"
+            continue
+        fi
 
         for number in "${numbers[@]}"; do
             # The gate below judges a SNAPSHOT read by `gh pr view`, and
@@ -2438,45 +2549,21 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     fi
 
     if $branch_exists && ! $branch_matches; then
-        # Before refusing, ask whether there is anything left to protect.
-        #
-        # The refusal below is about UNKNOWN content — work someone pushed
-        # that a force-push would destroy. A branch whose every commit is
-        # already in the default branch is not that: it is the leftover of a
-        # bump PR that merged and was never cleaned up, and it carries
-        # nothing. Deleting it there is provably lossless, and it is the
-        # difference between a repo that recovers on its own and one that is
-        # stuck until a human notices — which, measured 2026-08-25, took four
-        # days across five repos precisely because nothing ever went red.
-        #
-        # Gated on `branch_adds_nothing_to_base`, which returns false on any
-        # unreadable answer, so the refusal still stands whenever the question
-        # cannot be settled.
-        #
-        # Either way the re-pin itself waits for the next run: the delete
-        # starts GitHub's asynchronous closing of PRs on that head, and a PR
-        # opened on the recreated name now can be caught by it — see
-        # BRANCH_FREED_THIS_RUN.
-        if branch_adds_nothing_to_base "$repo_name" "$BRANCH_NAME" \
-           && delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
-            log "$BRANCH_NAME was a merged leftover and carried nothing the default branch lacks — deleted it; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+        # A branch this run would have to force-push over. The sweep has
+        # already freed every one that is provably disposable (a merged
+        # leftover, or this bumper's own stranded re-pin) where no PR was
+        # open, so what reaches here is an open PR the sweep could not merge,
+        # or a branch it refused. Either way this consumer is BLOCKED: it
+        # receives no re-pin until a person acts, and that is a failure, not a
+        # skip. Counted as a skip, it ended runs 37123773705 and 37205684874
+        # "0 failed" while jodidaniel.com sat behind the fleet (#263).
+        if [[ -n "${BRANCH_BLOCKED_THIS_RUN[$repo_name]:-}" ]]; then
+            log "$BRANCH_NAME already exists with different content — refusing to force-push; the sweep above already counted this repo's blocked branch as a failure."
             ((SKIP_COUNT++)) || true
             cd "$REPO_ROOT"; continue
         fi
-        # The stranded case: a bot PR on this branch was closed unmerged and
-        # the branch kept, holding a lock re-pin and nothing else. The branch
-        # tip is read from the remote, never assumed, so the check below
-        # compares the PR's head with what is actually there.
-        stranded_tip=$(git ls-remote --heads origin "refs/heads/$BRANCH_NAME" 2>/dev/null | cut -f1) || stranded_tip=""
-        if stranded_pr=$(stranded_bump_pr "$repo_name" "$BRANCH_NAME" "$stranded_tip") \
-           && [[ -n "$stranded_pr" ]] \
-           && delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
-            log "$BRANCH_NAME was stranded: its pull request #$stranded_pr was closed unmerged, and the branch still held only that PR's own $LOCK_REL_PATH re-pin at ${stranded_tip:0:7}. Deleted it; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
-            ((SKIP_COUNT++)) || true
-            cd "$REPO_ROOT"; continue
-        fi
-        log "WARN: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
-        ((SKIP_COUNT++)) || true
+        fail "$repo_name: $BRANCH_NAME already exists with different content — refusing to force-push. Merge or close its PR to free the branch, then re-run."
+        ((FAIL_COUNT++)) || true
         cd "$REPO_ROOT"; continue
     fi
 
