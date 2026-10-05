@@ -46,6 +46,23 @@ class CodexCloudDeliveryTests(unittest.TestCase):
 
         return demote
 
+    def hook_env(self, payload=None):
+        env = os.environ.copy()
+        env.update(
+            HOME=str(self.home),
+            CLAUDE_CONFIG_DIR=str(self.claude_config),
+            FLEET_GUIDANCE_PAYLOAD=str(payload or self.payload),
+            TMPDIR=str(self.tmpdir_path),
+            # The hook's delivery receipt is written by a detached process the
+            # hook never waits on, so it can create fleet-delivery.jsonl in
+            # the fixture after subprocess.run returns and race tearDown's
+            # rmtree (issue #267: ENOTEMPTY on 'codex'). This suite asserts
+            # delivery only; test_codex_cloud_receipt.py owns receipts and
+            # waits for its writers.
+            FLEET_GUIDANCE_RECEIPT="0",
+        )
+        return env
+
     def run_cloud(
         self,
         *,
@@ -56,13 +73,7 @@ class CodexCloudDeliveryTests(unittest.TestCase):
         preexec_fn=None,
         set_codex_home=True,
     ):
-        env = os.environ.copy()
-        env.update(
-            HOME=str(self.home),
-            CLAUDE_CONFIG_DIR=str(self.claude_config),
-            FLEET_GUIDANCE_PAYLOAD=str(payload or self.payload),
-            TMPDIR=str(self.tmpdir_path),
-        )
+        env = self.hook_env(payload)
         if set_codex_home:
             env["CODEX_HOME"] = str(codex_home or self.codex_home)
         else:
@@ -108,6 +119,17 @@ class CodexCloudDeliveryTests(unittest.TestCase):
         lines = result.stdout.splitlines()
         self.assertEqual(1, len(lines), result.stdout)
         self.assertTrue(lines[0].startswith("fleet-guidance: DEGRADED — "), lines[0])
+
+    def test_fixture_hook_runs_launch_no_detached_receipt_writer(self):
+        # Regression for #267. A receipt writer outlives the hook, so a run
+        # that leaves it enabled makes the fixture directory a moving target
+        # for tearDown. The writer cannot be waited on from here, so the
+        # guard is the environment every hook run in this class receives.
+        self.assertEqual("0", self.hook_env()["FLEET_GUIDANCE_RECEIPT"])
+        result = self.run_cloud()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(["AGENTS.md"], sorted(p.name for p in self.codex_home.iterdir()))
 
     def test_fresh_cloud_install_creates_only_codex_global_instructions(self):
         result = self.run_cloud()
