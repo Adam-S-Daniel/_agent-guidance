@@ -169,8 +169,8 @@ its step 4a by giving it the fire token):
 3. **One live pass,** `SCOPE=adam-agentskills`, no `DRY_RUN`. Read the filed
    issue back (step 5) before any unscoped run.
 
-All three ran on 2026-10-05, before each run took its own PR; their lines
-are in the run log, marked `trial`.
+All three ran on 2026-10-05 and were merged as trial runs, each from its
+own PR; the run log marks their lines as trials.
 
 ## Each run
 
@@ -201,15 +201,34 @@ name.
    is never counted.
 3. **Record the start.** Read the assigned branch with
    `git branch --show-current` in the `_agent-guidance` checkout. If it is
-   empty, `main`, or has commits not on `origin/main`, stop:
-   `BLOCKED: no fresh assigned branch in _agent-guidance`. Otherwise move it
-   to `origin/main` (`git checkout -B <assigned branch> origin/main`),
-   append the `in progress` run-log line, commit, push it
-   (`git push origin HEAD:<assigned branch>`, never forced), and open this
-   run's sweep PR to `main` as a draft, titled `Prompt-audit sweep: <date>`,
-   all before auditing anything. If the push or the PR create fails, stop
-   before auditing: `BLOCKED: could not open the sweep PR (<status>)`, with
-   the HTTP status code or error type only, never a response body.
+   empty or `main`, stop:
+   `BLOCKED: no assigned branch in _agent-guidance`. The session may assign
+   a new branch to each run or the same branch to every run, so check what
+   is already on `origin` under that name
+   (`git ls-remote origin refs/heads/<assigned branch>`) before writing:
+   - **An open PR has it as its head** (a previous sweep still open): stop:
+     `BLOCKED: previous sweep PR still open: <link>`. Never reset, append
+     to or push to that branch; the owner merges or closes that PR first.
+   - **It exists with commits not on `origin/main`**, and no open PR has it
+     as its head (a closed, unmerged PR or a stray push): stop:
+     `BLOCKED: assigned branch has commits not on main and no open PR`.
+     Never discard them.
+   - **Otherwise** (it is absent, or every commit on it is on
+     `origin/main`, as after its last PR merged): build on `origin/main`
+     (`git checkout -B <assigned branch> origin/main`), append the
+     `in progress` run-log line, commit, and push it
+     (`git push origin HEAD:<assigned branch>`). That push is a
+     fast-forward of whatever the branch held; never force it.
+
+   Then open this run's sweep PR to `main` as a draft, titled
+   `Prompt-audit sweep: <date>`, all before auditing anything. Never
+   force-push or delete the assigned branch. If the push or the PR create
+   fails, stop before auditing:
+   `BLOCKED: could not open the sweep PR (<status>)`, with the HTTP status
+   code or error type only, never a response body. On a shared branch, a
+   run that loses the race to start stops here or above: its push is
+   rejected as not a fast-forward, or it finds the other run's commit
+   already on the branch (the second case above).
 
    **Re-check after opening.** Two runs can both pass item 2 before either
    PR exists. Once this run's PR is open, list the sweep PRs again and read
@@ -219,8 +238,10 @@ name.
    result with `BLOCKED (duplicate start: <that PR link>)`, push it, and
    stop with
    `BLOCKED: another sweep is in progress (started <time>, <PR link>)`.
-   PR numbers only grow, so of two runs that start together the
-   lower-numbered one goes on and the other stops.
+   PR numbers only grow, so of two runs on different branches that start
+   together the lower-numbered one goes on and the other stops. On a
+   shared branch only one PR can be open from it, so the second run has
+   already stopped above, at the rejected push or the open-PR check.
 4. **Probe the executor,** and log each answer:
    1. `claude --version` answers in the sandbox.
    2. `claude auth status --json | jq -r '[.loggedIn, .apiProvider, .authMethod] | @tsv'`
