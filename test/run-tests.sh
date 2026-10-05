@@ -7555,13 +7555,20 @@ PY
     # The REST shape (`GET /v1/code/triggers/<id>`) carries a `session_request`
     # mirror plus personal and token-hint fields the list tool never had. It must
     # render, withhold the personal values, and still refuse on a disagreeing
-    # mirror or a populated environment-variable map.
+    # mirror or a populated environment-variable map. The config mirror below
+    # matches `session_context` exactly (sources and tools reordered, which is
+    # not a disagreement), so each skew fixture differs from it in one field.
     local rest_mut='
 r["api_token_hint"] = "TOKENHINTfixture0000"
 r["creator"]["display_name"] = "DISPLAYNAMEfixture0000"
 r["session_request"] = {"environment_id": "ENVIRONMENTfixture0000",
     "environment_variables": {}, "metadata": {}, "tags": [],
-    "config": {"allowed_tools": ["Bash"], "worktree": False},
+    "config": {"allowed_tools": ["Bash", "preset:default"], "autofix_on_pr_create": True,
+        "sources": [{"type": "git_repository", "url": "https://github.com/testorg/repo-two"},
+                    {"type": "git_repository", "url": "https://github.com/testorg/repo-one"}],
+        "outcomes": [{"type": "git_repository", "git_info": {"type": "github",
+            "repo": "testorg/repo-one", "branches": ["claude/fixture"]}}],
+        "worktree": False},
     "events": [{"ephemeral": False, "payload": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
         "session_id": "", "message": {"role": "user", "content": prompt}}}]}'
     write_fixture rest "$rest_mut"
@@ -7579,6 +7586,30 @@ r["session_request"] = {"environment_id": "ENVIRONMENTfixture0000",
 r["session_request"]["events"][0]["payload"]["message"]["content"] += "drifted"'
     assert_cap restskew 2 "session_request" \
         "routine: a session_request prompt disagreeing with the seed event is a refusal"
+
+    # The four `session_request.config` mirrors of `session_context`: the
+    # snapshot renders the ccr copy, so a mirror that disagrees must refuse
+    # rather than lose silently. Measured: with the check in collect() removed,
+    # all four of these exit 0.
+    write_fixture restsrc "$rest_mut"'
+r["session_request"]["config"]["sources"][0]["url"] = "https://github.com/testorg/repo-drifted"'
+    assert_cap restsrc 2 "session_request.config.sources" \
+        "routine: session_request sources disagreeing with session_context is a refusal"
+
+    write_fixture restout "$rest_mut"'
+r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude/drifted"]'
+    assert_cap restout 2 "session_request.config.outcomes" \
+        "routine: session_request outcomes disagreeing with session_context is a refusal"
+
+    write_fixture resttools "$rest_mut"'
+r["session_request"]["config"]["allowed_tools"].append("Edit")'
+    assert_cap resttools 2 "session_request.config.allowed_tools" \
+        "routine: session_request allowed_tools disagreeing with session_context is a refusal"
+
+    write_fixture restfix "$rest_mut"'
+r["session_request"]["config"]["autofix_on_pr_create"] = False'
+    assert_cap restfix 2 "session_request.config.autofix_on_pr_create" \
+        "routine: session_request autofix disagreeing with session_context is a refusal"
 
     write_fixture restenv "$rest_mut"'
 r["session_request"]["environment_variables"] = {"FIXTURE_VAR": "x"}'
