@@ -38,6 +38,10 @@ const mutations = {
   pushonly: [spec, '**Push only to `Adam-S-Daniel/_agent-guidance`.**', '**Push to any reached repo.**'],
   marker: [spec, 'Find them\nby that title marker', 'Find them\nby branch name'],
   fixed: [spec, '`git merge-base --is-ancestor <sha> origin/<assigned branch>`', '`git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-sweep`'],
+  openfail: [spec, 'stop\n   before auditing: `BLOCKED: could not open the sweep PR (<status>)`', 'continue\n   auditing anyway'],
+  recheck: [spec, 'If a sweep PR with a **lower** number than', 'If a sweep PR with a higher number than'],
+  autofix: [spec, 'is not a run: it performs none of steps 0 to 7', 'is a run: it performs steps 0 to 7'],
+  starttitle: [spec, 'as a draft, titled `Prompt-audit sweep: <date>`,', 'as a draft, titled `Sweep <date>`,'],
   argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
@@ -89,11 +93,20 @@ test('sweep is read-only, never merges, and files one labeled issue per repo', (
 test('each run logs on its assigned branch in its own PR, found by title marker', () => {
   includes(prose(section(spec, 'Constraints')), ['**Push only to `Adam-S-Daniel/_agent-guidance`.**', 'is read-only', 'no push, no branch, no commit and no PR there', '`git branch --show-current` in the checkout', 'never write it into this spec or the repo', 'auto-fix pushes) are allowed']);
   const start = prose(section(spec, '0. Before anything else'));
-  includes(start, ['Find them by that title marker', 'never by branch name', 'on `origin/main` and at the head of every sweep PR', 'Never push to another run\'s branch', 'This run\'s own PR does not exist yet', 'is not a run and does not perform steps 0 to 7']);
+  includes(start, ['Find them by that title marker', 'never by branch name', 'must not assume its name', 'on `origin/main` and at the head of every sweep PR', 'Never push to another run\'s branch', 'This run\'s own PR does not exist yet']);
+  const intro = all => { const i = all.findIndex(t => t.type === 'heading_open'); return prose(i < 0 ? all : all.slice(0, i)); };
+  includes(intro(section(spec, 'Each run')), ['is not a run: it performs none of steps 0 to 7']);
+  const items = section(spec, '0. Before anything else');
+  const third = items.findIndex(t => t.type === 'list_item_open' && t.info === '3');
+  assert.notEqual(third, -1, 'no step 0.3');
+  const record = prose(items.slice(third, items.findIndex((t, i) => i > third && t.type === 'list_item_open' && t.level === items[third].level)));
+  includes(record, ['If the push or the PR create fails, stop before auditing: `BLOCKED: could not open the sweep PR (<status>)`', 'never a response body', '**Re-check after opening.**', 'If a sweep PR with a **lower** number than this run\'s', 'BLOCKED (duplicate start: <that PR link>)']);
   const marker = start.match(/whose title starts with exactly `([^`]+)`/);
   assert.ok(marker, 'no sweep PR marker');
-  const title = prose(section(spec, '7. Finish')).match(/title `([^`]+)`/);
-  assert.ok(title && title[1].startsWith(marker[1]), 'step 7 PR title lacks the sweep PR marker');
+  for (const [where, text] of [['step 0.3', record], ['step 7', prose(section(spec, '7. Finish'))]]) {
+    const title = text.match(/titled? `(Prompt-audit sweep[^`]*)`/);
+    assert.ok(title && title[1].startsWith(marker[1]), `${where} PR title lacks the sweep PR marker`);
+  }
   const code = tokens(spec).flatMap(t => [t, ...(t.children || [])]).filter(t => t.type === 'code_inline' || t.type === 'fence').map(t => t.content);
   assert.deepEqual(code.filter(c => /persistent\//.test(c)), [], 'spec names a fixed branch');
 });

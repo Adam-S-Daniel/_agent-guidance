@@ -44,9 +44,9 @@ This run may write only:
   this spec or the repo, never guess it, and never push to any other branch;
 - one pull request from that branch to `main`, titled with the sweep PR
   marker `Prompt-audit sweep: ` from its creation (step 0), which it never
-  merges and never arms for auto-merge. Later commits to that same branch while its PR is
-  open (a fix after CI fails, including one the routine's auto-fix pushes)
-  are allowed;
+  merges and never arms for auto-merge. Later commits to that same branch
+  while its PR is open (a fix after CI fails, including one the routine's
+  auto-fix pushes) are allowed;
 - **new** issues, at most one per repo in **Repos considered**, each
   created with the `agent-ready` label and no other label, assignee or
   milestone;
@@ -94,8 +94,9 @@ a "Declined" heading in the PR body and do not act on it.
   `trigger: manual` in the run log, and comments on no issue. A token a
   stranger holds can therefore start a run but cannot steer one.
 - **Fire caps.** The Routines docs cap **Run now** plus API fires at 30 per
-  hour per routine; the hold check and the in-progress check (step 0) keep a
-  second fire from doing the work twice.
+  hour per routine; the hold check, the in-progress check and its re-check
+  after the run opens its PR (step 0) keep a second fire from doing the
+  work twice.
 
 ## Repos considered
 
@@ -173,12 +174,17 @@ are in the run log, marked `trial`.
 
 ## Each run
 
+A session that only fixes CI on an open sweep PR (the routine's auto-fix)
+is not a run: it performs none of steps 0 to 7, writes no run-log line and
+pushes only to that PR's own branch.
+
 ### 0. Before anything else
 
 A **sweep PR** is an open pull request in `Adam-S-Daniel/_agent-guidance`
 to `main` whose title starts with exactly `Prompt-audit sweep: `. Find them
 by that title marker through the REST pulls endpoint, never by branch name:
-each run's branch is assigned by the session and follows no pattern.
+the session assigns each run's branch, and the run must not assume its
+name.
 
 1. **Hold check.** Read the labels on every sweep PR and on the trigger
    issue, if there is one. If any carries `on-hold`, stop quietly with its
@@ -192,17 +198,29 @@ each run's branch is assigned by the session and follows no pattern.
    `prior run abandoned: <PR link>`, mark it `abandoned` in this run's copy
    if the line is on `origin/main`, and continue. Never push to another
    run's branch. This run's own PR does not exist yet at this step, so it
-   is never counted; a session that only fixes CI on an open sweep PR (the
-   routine's auto-fix) is not a run and does not perform steps 0 to 7.
+   is never counted.
 3. **Record the start.** Read the assigned branch with
    `git branch --show-current` in the `_agent-guidance` checkout. If it is
    empty, `main`, or has commits not on `origin/main`, stop:
    `BLOCKED: no fresh assigned branch in _agent-guidance`. Otherwise move it
-   to `origin/main` (`git checkout -B <assigned branch> origin/main`), append
-   the `in progress` run-log line, commit,
-   push it (`git push origin HEAD:<assigned branch>`, never forced), and
-   open this run's sweep PR to `main` as a draft, titled
-   `Prompt-audit sweep: <date>`, all before auditing anything.
+   to `origin/main` (`git checkout -B <assigned branch> origin/main`),
+   append the `in progress` run-log line, commit, push it
+   (`git push origin HEAD:<assigned branch>`, never forced), and open this
+   run's sweep PR to `main` as a draft, titled `Prompt-audit sweep: <date>`,
+   all before auditing anything. If the push or the PR create fails, stop
+   before auditing: `BLOCKED: could not open the sweep PR (<status>)`, with
+   the HTTP status code or error type only, never a response body.
+
+   **Re-check after opening.** Two runs can both pass item 2 before either
+   PR exists. Once this run's PR is open, list the sweep PRs again and read
+   the run log at each head. If a sweep PR with a **lower** number than
+   this run's carries a line marked `in progress` that started less than 6
+   hours ago, this run is the duplicate start: replace its own line's
+   result with `BLOCKED (duplicate start: <that PR link>)`, push it, and
+   stop with
+   `BLOCKED: another sweep is in progress (started <time>, <PR link>)`.
+   PR numbers only grow, so of two runs that start together the
+   lower-numbered one goes on and the other stops.
 4. **Probe the executor,** and log each answer:
    1. `claude --version` answers in the sandbox.
    2. `claude auth status --json | jq -r '[.loggedIn, .apiProvider, .authMethod] | @tsv'`
