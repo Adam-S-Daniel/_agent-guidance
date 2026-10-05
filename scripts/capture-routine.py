@@ -12,15 +12,17 @@ WHY THIS EXISTS
 WHERE THE INPUT COMES FROM
     The claude.ai Routines API. Inside an agent session it is reached through
     the `claude-code-remote` MCP server's `list_triggers` tool, whose response
-    is this script's input. Two things about that, both measured 2026-08-29 in
-    a hosted Claude Code session, so nobody re-derives them:
+    is this script's input. Three things about that, all measured 2026-08-29
+    in a hosted Claude Code session, so nobody re-derives them:
 
-      - There is no public REST endpoint to curl. `api.anthropic.com` answers
-        a structured 404 for every routines-shaped path tried, and
+      - No REST endpoint turned up then. `api.anthropic.com` answered a
+        structured 404 for every routines-shaped path tried, and
         `mcp-proxy.anthropic.com` is outside this environment's egress
-        allowlist. Do not add a hardcoded URL here on a guess; an unverified
-        endpoint in a committed script is worse than no fetcher, because it
-        looks like one.
+        allowlist. One has since been measured (2026-10-05, below), with a
+        claude.ai session credential rather than an API key, so this script
+        still reads the record from its caller instead of fetching it. Do not
+        add a hardcoded URL here on a guess; an unverified endpoint in a
+        committed script is worse than no fetcher, because it looks like one.
       - A nested `claude -p` does NOT inherit the server. The MCP server is
         provisioned per session by the host, so a subprocess Claude Code
         reports "no MCP server named claude-code-remote is connected" and
@@ -30,6 +32,12 @@ WHERE THE INPUT COMES FROM
         servers configured" and `claude mcp get claude-code-remote` answers
         "No MCP server named ...". The server is injected by the host and
         carries no URL any committed script could dial.
+
+    Measured 2026-10-05: `GET /v1/code/triggers/<id>` with a claude.ai session
+    credential does answer, with `{"trigger": {...}}`. This script still parses
+    the `list_triggers` envelope, so wrap that response as `{"data": [trigger]}`
+    first; the record inside carries extra fields (`session_request` and
+    others), which FIELD_POLICY classifies.
 
     So the fetch is left to the caller, in whichever of the two shapes fits:
 
@@ -139,6 +147,80 @@ FIELD_POLICY = {
     "derived_state.prompt":                   ("exclude", "duplicate of the event's message content; equality is asserted below"),
     "job_config.ccr.events[*].data.parent_tool_use_id": ("exclude", "always null for a routine's seed message"),
 }
+
+# --- the REST shape -------------------------------------------------------
+# `GET /v1/code/triggers/<id>` (measured 2026-10-05) returns the same record as
+# `list_triggers` plus fields the list tool never carried. A few of them, under
+# `session_request`, repeat values `job_config.ccr` already holds and this
+# script captures: the prompt, allowed tools, autofix, sources and outcomes.
+# Each of those is excluded as a mirror of its captured path and checked for
+# equality in collect(), so a disagreement refuses instead of one copy winning
+# silently. The rest of `session_request` has no `job_config.ccr` counterpart
+# and is excluded as REST-only. Anything that can name a person or an
+# identifier is redacted. An empty `{}` is a leaf, so a populated
+# `environment_variables` / `metadata` map surfaces its keys as unclassified
+# leaves and REFUSES, which is the point: a value there could be a secret.
+_CTX = "job_config.ccr.session_context."
+_MIRRORS = "mirror of %s, which is captured; equality is asserted"
+_REST_ONLY = "REST-only session setting with no job_config.ccr counterpart"
+_EMPTY = "empty when classified 2026-10-05; not rendered"
+FIELD_POLICY.update({
+    "api_token_hint":                         ("redact", "API token fragment"),
+    "created_surface":                        ("exclude", "REST-only; created_via is the captured surface"),
+    "creator.display_name":                   ("redact", "person's name"),
+    "derived_state.files[*]":                 ("exclude", _EMPTY),
+    "derived_state.folders[*]":               ("exclude", _EMPTY),
+    "enabled_plugins[*]":                     ("exclude", _EMPTY),
+    "extra_marketplaces[*]":                  ("exclude", _EMPTY),
+    "last_run.failure_reason":                ("exclude", "runtime state: changes on every fire"),
+    "mcp_connections[*].clear_tool_policy_overrides": ("exclude", _EMPTY),
+    "mcp_connections[*].permitted_tools[*]":  ("exclude", _EMPTY),
+    "mcp_connections[*].tool_policy_overrides[*]": ("exclude", _EMPTY),
+    "session_request.environment_id":         ("redact", "cloud environment identifier"),
+    "session_request.environment_variables":  ("exclude", "empty map; a populated one refuses by its keys"),
+    "session_request.metadata":               ("exclude", "empty map; a populated one refuses by its keys"),
+    "session_request.config.metadata":        ("exclude", "empty map; a populated one refuses by its keys"),
+    "session_request.tags[*]":                ("exclude", _EMPTY),
+    "session_request.events[*].payload.session_id": ("redact", "session identifier"),
+    "session_request.events[*].payload.uuid": ("redact", "message identifier"),
+    "session_request.events[*].payload.message.content": ("exclude", _MIRRORS % "the seed event's message content"),
+    "session_request.config.allowed_tools[*]": ("exclude", _MIRRORS % (_CTX + "allowed_tools")),
+    "session_request.config.autofix_on_pr_create": ("exclude", _MIRRORS % (_CTX + "autofix_on_pr_create")),
+    "session_request.config.sources[*].url":  ("exclude", _MIRRORS % (_CTX + "sources[*].git_repository.url")),
+    "session_request.config.outcomes[*].git_info.repo": ("exclude", _MIRRORS % (_CTX + "outcomes[*].git_repository.git_info.repo")),
+    "session_request.config.outcomes[*].git_info.branches[*]": ("exclude", _MIRRORS % (_CTX + "outcomes[*].git_repository.git_info.branches")),
+    "session_request.config.prompt_cache_relay_enabled": ("exclude", _REST_ONLY),
+    "session_request.config.worktree":        ("exclude", _REST_ONLY),
+    "session_request.events[*].payload.message.role": ("exclude", "mirror of job_config.ccr.events[*].data.message.role, which is captured"),
+    "session_request.events[*].payload.type": ("exclude", "mirror of job_config.ccr.events[*].data.type, which is captured"),
+    "session_request.events[*].payload.parent_tool_use_id": ("exclude", "mirror of job_config.ccr.events[*].data.parent_tool_use_id, itself excluded"),
+})
+for _leaf in (
+    "account_plugins[*]", "account_skills[*]", "active_mount_paths[*]",
+    "auto_mode_allow[*]", "auto_mode_environment[*]", "auto_mode_soft_deny[*]",
+    "builtin_tools[*]", "disallowed_tools[*]", "file_mounts[*]",
+    "mcp_servers[*]", "otel_content_capture[*]", "owner_tagged_mcp_servers[*]",
+    "subagents[*]",
+):
+    FIELD_POLICY["session_request.config." + _leaf] = (
+        "exclude", _REST_ONLY + "; " + _EMPTY)
+for _leaf in (
+    "sources[*].sparse_checkout_exclude_patterns[*]",
+    "sources[*].sparse_checkout_paths[*]", "sources[*].type",
+):
+    FIELD_POLICY["session_request.config." + _leaf] = (
+        "exclude", "REST-only detail of a mirrored source; job_config.ccr carries only its url")
+for _leaf in (
+    "outcomes[*].git_info.host", "outcomes[*].git_info.ref",
+    "outcomes[*].git_info.type", "outcomes[*].type",
+):
+    FIELD_POLICY["session_request.config." + _leaf] = (
+        "exclude", "REST-only detail of a mirrored outcome; job_config.ccr carries only its repo and branches")
+for _leaf in (
+    "ephemeral", "historical", "mentioned_account_ids[*]", "user_declared_urls[*]",
+):
+    FIELD_POLICY["session_request.events[*]." + _leaf] = (
+        "exclude", "REST-only event metadata with no job_config.ccr counterpart")
 
 REDACTED = "<redacted: %s>"
 
@@ -272,6 +354,16 @@ def collect(record):
             % (len(derived), len(prompt))
         )
 
+    for ev in get(record, "session_request.events") or []:
+        mirrored = get(ev, "payload.message.content")
+        if mirrored is not None and mirrored != prompt:
+            raise Refusal(
+                "`session_request` and the seed event's message content "
+                "disagree (%d vs %d bytes). Which one a fired session actually "
+                "receives is an open question, so this needs a decision rather "
+                "than a silent pick." % (len(mirrored), len(prompt))
+            )
+
     ctx = get(record, "job_config.ccr.session_context") or {}
     sources = [
         get(s, "git_repository.url") for s in (ctx.get("sources") or [])
@@ -281,12 +373,48 @@ def collect(record):
         repo = get(o, "git_repository.git_info.repo")
         outcomes[repo] = get(o, "git_repository.git_info.branches") or []
 
+    allowed_tools = ctx.get("allowed_tools") or []
+    autofix = ctx.get("autofix_on_pr_create")
+
+    # The REST shape repeats these four under `session_request.config`. The
+    # snapshot renders the `job_config.ccr` copy, so a mirror that disagrees is
+    # the same open question as a disagreeing prompt: refuse, never pick one.
+    # Lists compare as multisets, because only their contents are configuration.
+    # Counts only in the message: a mirror can name a repo the snapshot omits.
+    cfg = get(record, "session_request.config")
+    if isinstance(cfg, dict):
+        mirrored = {}
+        if "allowed_tools" in cfg:
+            mirrored["allowed_tools"] = (
+                sorted(cfg["allowed_tools"] or []), sorted(allowed_tools))
+        if "autofix_on_pr_create" in cfg:
+            mirrored["autofix_on_pr_create"] = (cfg["autofix_on_pr_create"], autofix)
+        if "sources" in cfg:
+            mirrored["sources"] = (
+                sorted(str(get(s, "url")) for s in cfg["sources"] or []),
+                sorted(str(u) for u in sources))
+        if "outcomes" in cfg:
+            mirrored["outcomes"] = (
+                {get(o, "git_info.repo"): get(o, "git_info.branches") or []
+                 for o in cfg["outcomes"] or []},
+                outcomes)
+        for field, (rest, ccr) in mirrored.items():
+            if rest != ccr:
+                size = (lambda v: "%d entries" % len(v)
+                        if isinstance(v, (list, dict)) else "a scalar")
+                raise Refusal(
+                    "`session_request.config.%s` and `%s%s` disagree (%s vs "
+                    "%s). Which one a fired session actually receives is an "
+                    "open question, so this needs a decision rather than a "
+                    "silent pick." % (field, _CTX, field, size(rest), size(ccr))
+                )
+
     return {
         "prompt": prompt,
         "sources": sources,
         "outcomes": outcomes,
-        "allowed_tools": ctx.get("allowed_tools") or [],
-        "autofix_on_pr_create": ctx.get("autofix_on_pr_create"),
+        "allowed_tools": allowed_tools,
+        "autofix_on_pr_create": autofix,
         "connectors": record.get("mcp_connections") or [],
     }
 
