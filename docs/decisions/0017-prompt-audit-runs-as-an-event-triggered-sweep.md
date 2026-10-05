@@ -72,11 +72,13 @@ The sweep:
   and `jodidaniel`, read at run time;
 - is read-only, and runs on the account's default model, which is the model
   it should judge for;
-- runs only on the claude.ai subscription: the routine draws subscription
-  usage, and it refuses to run a nested audit unless `claude auth status`
-  reports `loggedIn` true, `apiProvider` `firstParty` and an `authMethod` of
-  `claude.ai` or `oauth_token` (a cloud container's injected OAuth token
-  reports `oauth_token`; 2026-10-05 probe);
+- is meant to run on the claude.ai subscription: the routine draws
+  subscription usage, and it refuses to run a nested audit unless
+  `claude auth status` reports `loggedIn` true, `apiProvider` `firstParty` and
+  an `authMethod` of `claude.ai` or `oauth_token` (a cloud container's
+  environment-supplied OAuth token reports `oauth_token`; 2026-10-05 probe).
+  The probe accepts `oauth_token` as first-party OAuth; that it bills against
+  the subscription is unverified;
 - routes findings on user-level or managed-block text to
   `agents-md/base.md`, from the `_agent-guidance` run only;
 - files at most one issue per repo, labeled `agent-ready`, deduplicated
@@ -132,7 +134,8 @@ findings as warnings and exits 0.
 - A 2026-10-05 probe in a cloud session found the nested `claude` logged in
   with `authMethod` `oauth_token`, not `claude.ai`, and `api.anthropic.com`
   answering with an Anthropic 401 (not a proxy 403), so the step 0 auth probe
-  accepts both values.
+  accepts both values as first-party OAuth. Whether `oauth_token` bills against
+  the subscription was not checked.
 - Two things are unverified until that single-repo trial: that a routine's
   sandbox has an authenticated nested `claude` that can run a nested audit, and that
   `/doctor prompt-audit` honors an explicit path list. If the nested audit

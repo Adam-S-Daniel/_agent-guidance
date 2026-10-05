@@ -545,7 +545,7 @@ its live environment and checkbox probes open.
 
 **Environment:** `Changelog Routine`, a new environment used only by the
 claude.ai Routine "agent changelog watcher". **Created** by the owner on
-2026-10-04 US Eastern (2026-10-05 UTC, about 03:30Z), confirmed by the owner.
+2026-10-04 US Eastern (2026-10-05 UTC), confirmed by the owner.
 A network probe from a cloud session returned an Anthropic 401 for the
 routines fire endpoint, so `api.anthropic.com` is reachable through the
 proxy. `My Whitelist` is unchanged.
