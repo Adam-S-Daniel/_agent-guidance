@@ -171,9 +171,13 @@ gets its re-pin on the next run. The sweep settles every bump branch with no
 open PR, every night, whether or not that consumer needs a re-pin: a merged
 leftover is deleted, and so is the one kind of *different content* this script
 may replace — a branch whose diff is the lock alone, whose every commit beyond
-the default branch is authored under the bumper's own identity, and whose
-latest bot PR was closed unmerged with this tip as its head, or which never had
-a PR at all (re-proposed next run). Anything else is refused and counted as a
+the default branch is both authored and committed under the bumper's own
+identity (an amended bot commit keeps the bot as author), and whose latest bot
+PR was closed unmerged with this tip as its head, or which never had a PR at
+this tip, its only PRs, if any, merged at older heads (re-proposed next run).
+The name is reused nightly, so the last case is what an interrupted run leaves
+on a consumer with bump history; requiring no PR at all would refuse every
+such repo. Anything else is refused and counted as a
 failure, so the run goes red and names the branch. A
 PR the propose pass finds closed when it reads the new PR back is reopened with
 a comment saying it was not a review decision. The deferral covers only the

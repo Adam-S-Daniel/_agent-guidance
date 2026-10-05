@@ -2577,10 +2577,11 @@ case "$1" in
             # `files` as GitHub computes it: the three-dot diff, base...head.
             cmp_files=$(git -C "$bare_path" diff --name-only "$base_sha...$head_sha" 2>/dev/null \
                 | jq -R '{filename: .}' | jq -s -c .)
-            # `commits` likewise: the commits base..head adds, as the author
-            # emails GitHub reports under .commit.author.email.
-            cmp_commits=$(git -C "$bare_path" log --format='%ae' "$base_sha..$head_sha" 2>/dev/null \
-                | jq -R '{commit: {author: {email: .}}}' | jq -s -c .)
+            # `commits` likewise: the commits base..head adds, with the author
+            # and committer emails GitHub reports under .commit.author.email
+            # and .commit.committer.email.
+            cmp_commits=$(git -C "$bare_path" log --format='%ae %ce' "$base_sha..$head_sha" 2>/dev/null \
+                | jq -R 'split(" ") | {commit: {author: {email: .[0]}, committer: {email: .[1]}}}' | jq -s -c .)
             json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}, \"commits\": ${cmp_commits:-[]}}"
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
@@ -8824,7 +8825,7 @@ test_bump_idempotent() {
     # deleted seconds earlier (#227, #263).
     run_bump "$TEST_DIR/bump-strand.txt"
     assert_contains "$TEST_DIR/bump-strand.txt" \
-        "bumporg/repo-stale: skills-lock-bump/update was stranded: no pull request was ever opened on it" \
+        "bumporg/repo-stale: skills-lock-bump/update was stranded: no pull request was ever opened at its tip" \
         "never proposed: the sweep recognizes a bump branch no PR was ever opened on"
     if [[ -z "$(bump_branch_sha repo-stale)" && -z "$(bump_branch_sha repo-federated)" \
           && -z "$(bump_branch_sha repo-fed-current)" && -z "$(bump_branch_sha repo-fed-stale)" ]]; then
@@ -12500,15 +12501,21 @@ test_bump_sweep_branch_cleanup() {
 
 # make_race_repo <name> <main lock mode: fill|nofill> <main ref> <branch lock
 #                ref|none> <extra file on the branch|none> [branch commit
-#                author: bot (default)|human]
+#                author: bot (default)|human|amended — the bot as author,
+#                a person as committer]
 make_race_repo() {
     local name="$1" main_mode="$2" main_ref="$3" branch_ref="$4" extra="$5"
     local author="${6:-bot}" author_name author_email
+    local committer_name committer_email
     if [[ "$author" == "human" ]]; then
         author_name="A Human"; author_email="human@example.com"
     else
         author_name="agents-md-sync[bot]"
         author_email="agents-md-sync[bot]@users.noreply.github.com"
+    fi
+    committer_name="$author_name"; committer_email="$author_email"
+    if [[ "$author" == "amended" ]]; then
+        committer_name="A Human"; committer_email="human@example.com"
     fi
     local bare="$SWEEP_BARE/bumporg_$name"
     local work="$TEST_DIR/work/race-$name"
@@ -12531,8 +12538,9 @@ make_race_repo() {
         seed_bump_lock skills.lock "bumporg/agentskills" "$branch_ref"
         [[ "$extra" != "none" ]] && echo "someone else's work" > "$extra"
         git add -A
-        git -c user.name="$author_name" -c user.email="$author_email" \
-            commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
+        GIT_AUTHOR_NAME="$author_name" GIT_AUTHOR_EMAIL="$author_email" \
+        GIT_COMMITTER_NAME="$committer_name" GIT_COMMITTER_EMAIL="$committer_email" \
+            git commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
         git push origin "HEAD:refs/heads/skills-lock-bump/update" >/dev/null 2>&1
         git checkout -q main
     fi
@@ -12638,6 +12646,20 @@ setup_no_pr_repos() {
     make_race_repo repo-orphan-human fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none human
     # The bumper's commit, but a second file: refused, counted.
     make_race_repo repo-orphan-extra fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" NOTES.md
+    # The bot as author, a person as committer (an amended or rebased bot
+    # commit): refused, counted.
+    make_race_repo repo-orphan-amended fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none amended
+
+    # The real fleet's shape: the name is reused, so the branch carries a
+    # history of MERGED bump PRs at older heads, and none at this tip. The
+    # bumper's own lock-only commit: freed.
+    make_race_repo repo-orphan-history fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    printf '[{"number":150,"state":"MERGED","headRefName":"%s","headRefOid":"1111111111111111111111111111111111111111",%s},{"number":151,"state":"MERGED","headRefName":"%s","headRefOid":"2222222222222222222222222222222222222222",%s}]\n' \
+        "$branch" "$bot" "$branch" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-orphan-history.json"
+    # Same history, but a person's commit: refused, counted.
+    make_race_repo repo-orphan-history-human fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none human
+    printf '[{"number":152,"state":"MERGED","headRefName":"%s","headRefOid":"3333333333333333333333333333333333333333",%s}]\n' \
+        "$branch" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-orphan-history-human.json"
 
     # No branch, but the question cannot be asked: counted, never read as "no
     # branch".
@@ -12657,7 +12679,8 @@ test_bump_branch_reuse_race() {
     local -A near_tip
     moved_tip=$(sweep_bump_branch_sha repo-stranded-moved)
     extra_tip=$(sweep_bump_branch_sha repo-stranded-extra)
-    for near in $NEAR_REPOS repo-orphan-human repo-orphan-extra repo-stranded-current repo-orphan; do
+    for near in $NEAR_REPOS repo-orphan-human repo-orphan-extra repo-orphan-amended \
+                repo-orphan-history-human repo-stranded-current repo-orphan; do
         near_tip[$near]=$(sweep_bump_branch_sha "$near")
     done
     : > "$BUMP_PR_LOG"
@@ -12701,7 +12724,7 @@ test_bump_branch_reuse_race() {
     else
         fail "no open PR: and it is really deleted"
     fi
-    assert_contains "$log" "bumporg/repo-orphan: skills-lock-bump/update was stranded: no pull request was ever opened on it" \
+    assert_contains "$log" "bumporg/repo-orphan: skills-lock-bump/update was stranded: no pull request was ever opened at its tip" \
         "no open PR: a lock-only bot branch no PR was ever opened on is freed"
     if [[ -z "$(sweep_bump_branch_sha repo-orphan)" ]]; then
         pass "no open PR: and that branch is really deleted"
@@ -12713,7 +12736,14 @@ test_bump_branch_reuse_race() {
     else
         pass "no open PR: its name is not reused in the run that deleted it"
     fi
-    for near in repo-orphan-human repo-orphan-extra; do
+    assert_contains "$log" "bumporg/repo-orphan-history: skills-lock-bump/update was stranded: no pull request was ever opened at its tip" \
+        "no open PR: a lock-only bot branch whose only PRs merged at older heads is freed"
+    if [[ -z "$(sweep_bump_branch_sha repo-orphan-history)" ]]; then
+        pass "no open PR: and that branch, with merged history, is really deleted"
+    else
+        fail "no open PR: and that branch, with merged history, is really deleted"
+    fi
+    for near in repo-orphan-human repo-orphan-extra repo-orphan-amended repo-orphan-history-human; do
         if [[ -n "${near_tip[$near]}" && "$(sweep_bump_branch_sha "$near")" == "${near_tip[$near]}" ]]; then
             pass "no open PR: $near's branch, never proposed but not provably ours, is left untouched"
         else
@@ -12722,7 +12752,8 @@ test_bump_branch_reuse_race() {
     done
     # Every branch the sweep may neither merge nor delete is a counted
     # FAILURE, named, so the run goes red instead of "0 failed".
-    for near in repo-orphan-human repo-orphan-extra repo-stranded-moved repo-stranded-extra \
+    for near in repo-orphan-human repo-orphan-extra repo-orphan-amended repo-orphan-history-human \
+                repo-stranded-moved repo-stranded-extra \
                 repo-near-human-pr repo-near-merged repo-near-human-commit; do
         assert_contains "$log" "ERROR: bumporg/$near: skills-lock-bump/update is at" \
             "no open PR: $near's blocked branch is a counted failure"
@@ -12735,9 +12766,9 @@ test_bump_branch_reuse_race() {
     # than tonight's re-pin: the propose pass's refusal is a failure too.
     assert_contains "$log" "ERROR: bumporg/repo-near-open-pr: skills-lock-bump/update already exists with different content — refusing to force-push" \
         "blocked: a refused force-push is a counted failure"
-    # Seven refused branches, one undeletable, one unreadable, one refused
-    # force-push: ten, each counted once.
-    assert_contains "$log" " 10 failed ===" "blocked: each blocked consumer is counted exactly once"
+    # Nine refused branches, one undeletable, one unreadable, one refused
+    # force-push: twelve, each counted once.
+    assert_contains "$log" " 12 failed ===" "blocked: each blocked consumer is counted exactly once"
     if [[ $BUMP_EXIT -ne 0 ]]; then
         pass "blocked: the run exits non-zero, so the scheduled run goes red"
     else

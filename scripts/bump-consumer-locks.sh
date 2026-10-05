@@ -823,22 +823,29 @@ branch_adds_nothing_to_base() {
 
 # stranded_bump_pr <repo> <branch> <tip sha> — prints the number of the
 # closed-unmerged pull request that leaves <branch> stranded, or `none` when
-# no pull request was ever opened on it, and returns 0, when ALL of these
-# hold; returns 1, printing nothing, otherwise:
+# no pull request was ever opened at its current tip, and returns 0, when ALL
+# of these hold; returns 1, printing nothing, otherwise:
 #
 #   * no pull request on <branch> is open;
-#   * EITHER no pull request on it exists at all — a run that pushed the
-#     branch and died before `gh pr create`, or one whose PR was opened from
-#     another head — OR the most recent one on it was opened by this bumper
-#     ($PR_AUTHOR), is CLOSED without being merged, and has <tip sha> as its
-#     head commit, the commit the branch carries now — so nothing reached the
-#     branch after the bot's PR was closed;
+#   * EITHER no pull request on it has <tip sha> as its head, and the most
+#     recent one (if any) was MERGED — a run that pushed the branch and died
+#     before `gh pr create`. The name is reused night after night, so a real
+#     consumer's branch carries a history of merged bump PRs at older heads
+#     (jodidaniel.com has sixteen); requiring NO PR at all would refuse every
+#     such repo. A latest PR CLOSED unmerged at another head is not this case:
+#     something reached the branch after that close, and it is refused.
+#   * OR the most recent one was opened by this bumper ($PR_AUTHOR), is
+#     CLOSED without being merged, and has <tip sha> as its head commit, the
+#     commit the branch carries now — so nothing reached the branch after the
+#     bot's PR was closed;
 #   * the branch's diff against the default branch is $LOCK_REL_PATH alone;
-#   * every commit the branch carries beyond the default branch is authored
-#     under $COMMIT_EMAIL, the identity this script commits as. The PR author
-#     check above is about who OPENED the PR; a person's commit pushed to it
-#     before the close would otherwise be deleted with it (still recoverable
-#     from refs/pull/<n>/head, but the branch is the thing nobody looks at).
+#   * every commit the branch carries beyond the default branch is both
+#     authored AND committed under $COMMIT_EMAIL, the identity this script
+#     commits as. The PR author check above is about who OPENED the PR; a
+#     person's commit pushed to it before the close would otherwise be deleted
+#     with it (still recoverable from refs/pull/<n>/head, but the branch is the
+#     thing nobody looks at). The committer is checked too because amending or
+#     rebasing the bot's commit keeps the bot as its author.
 #
 # That is the shape run 37017699823 left on jodidaniel.com (#301 closed by
 # GitHub seconds after it was opened, its branch kept): content this bot wrote
@@ -852,11 +859,12 @@ stranded_bump_pr() {
     [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || return 1
     base=$(gh api "repos/$repo_name" --jq '.default_branch' 2>/dev/null) || return 1
     [[ -n "$base" ]] || return 1
-    # One call, so the file list and the commit authors describe the same
-    # snapshot of the branch: "<files>|<distinct commit author emails>". An
-    # empty commit list yields "<files>|", which matches nothing below.
+    # One call, so the file list and the commit identities describe the same
+    # snapshot of the branch: "<files>|<distinct author and committer
+    # emails>". An empty commit list yields "<files>|", which matches nothing
+    # below.
     shape=$(gh api "repos/$repo_name/compare/$base...$branch" \
-        --jq '([.files[].filename] | join(",")) + "|" + ([.commits[].commit.author.email] | unique | join(","))' \
+        --jq '([.files[].filename] | join(",")) + "|" + ([.commits[].commit | .author.email, .committer.email] | unique | join(","))' \
         2>/dev/null) || return 1
     [[ "$shape" == "$LOCK_REL_PATH|$COMMIT_EMAIL" ]] || return 1
     prs_json=$(gh pr list --repo "$repo_name" --head "$branch" --state all \
@@ -885,13 +893,15 @@ if not isinstance(prs, list):
 ours = [pr for pr in prs if isinstance(pr, dict) and pr.get("headRefName") == branch]
 if any(pr.get("state") == "OPEN" for pr in ours):
     sys.exit(1)
-if not ours:
-    # Never proposed. The compare guards above (the lock alone, every commit
-    # under the identity this script commits as) are what make this one ours to replace;
-    # there is no PR head to compare the tip with.
+latest = max(ours, key=lambda pr: pr.get("number") or 0) if ours else None
+if ((latest is None or latest.get("state") == "MERGED")
+        and not any(pr.get("headRefOid") == tip for pr in ours)):
+    # Never proposed at this tip: no PR at all, or only merged ones at older
+    # heads. The compare guards above (the lock alone, every commit authored
+    # and committed under the identity this script commits as) are what make
+    # this one ours to replace.
     print("none")
     sys.exit(0)
-latest = max(ours, key=lambda pr: pr.get("number") or 0)
 if (latest.get("state") != "CLOSED"
         or not normalize(author)
         or normalize((latest.get("author") or {}).get("login")) != normalize(author)
@@ -936,7 +946,7 @@ bump_branch_tip() {
 # Deleted only when that is provably lossless, by the two existing tests and
 # nothing looser: branch_adds_nothing_to_base (a merged leftover) or
 # stranded_bump_pr (this bumper's lock-only commits, its PR closed unmerged at
-# this tip, or never opened). Anything else — a person's commit, a second
+# this tip, or none ever opened at this tip). Anything else — a person's commit, a second
 # file, a PR closed by someone's merge, an unreadable answer — is REFUSED and
 # counted as a failure, so the run goes red and names the branch. A deleted
 # name is marked in BRANCH_FREED_THIS_RUN and re-proposed on the next run.
@@ -970,7 +980,7 @@ sweep_branch_without_pr() {
        && [[ -n "$stranded_pr" ]]; then
         if delete_bump_branch "$repo_name" "$BRANCH_NAME"; then
             if [[ "$stranded_pr" == "none" ]]; then
-                log "$repo_name: $BRANCH_NAME was stranded: no pull request was ever opened on it, and it held only this bumper's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
+                log "$repo_name: $BRANCH_NAME was stranded: no pull request was ever opened at its tip, and it held only this bumper's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
             else
                 log "$repo_name: $BRANCH_NAME was stranded: its pull request #$stranded_pr was closed unmerged, and the branch still held only that PR's own $LOCK_REL_PATH re-pin at ${tip:0:7}. $done_verb; the re-pin is proposed on the next run, not on a branch name deleted seconds ago."
             fi
@@ -983,7 +993,7 @@ sweep_branch_without_pr() {
         return 0
     fi
 
-    fail "$repo_name: $BRANCH_NAME is at ${tip:0:7} with no open pull request, and it is not provably this bumper's own lock-only re-pin (a merged leftover, or a bot PR closed unmerged at this tip, or one never opened) — refusing to delete it. No re-pin can be proposed here until a person merges, reopens or deletes it."
+    fail "$repo_name: $BRANCH_NAME is at ${tip:0:7} with no open pull request, and it is not provably this bumper's own lock-only re-pin (a merged leftover, or a bot PR closed unmerged at this tip, or none ever opened at this tip) — refusing to delete it. No re-pin can be proposed here until a person merges, reopens or deletes it."
     ((FAIL_COUNT++)) || true
     BRANCH_BLOCKED_THIS_RUN["$repo_name"]=1
     return 0
