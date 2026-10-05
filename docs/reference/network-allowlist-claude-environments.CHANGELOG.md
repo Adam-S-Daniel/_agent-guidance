@@ -538,3 +538,39 @@ and proxy behavior from
 They answer the documentation follow-up in
 [#178](https://github.com/Adam-S-Daniel/_agent-guidance/issues/178), but leave
 its live environment and checkbox probes open.
+
+---
+
+## 2026-10-05 — new environment `Changelog Routine` (decided; not yet created)
+
+**Environment:** `Changelog Routine`, a new environment used only by the
+claude.ai Routine "agent changelog watcher". **Not yet created:** whoever
+creates it replaces this line with the date it was applied, per rule 1
+above. `My Whitelist` is unchanged.
+**Checkbox "Also include default list of common package managers":**
+checked, matching `My Whitelist` (the owner confirmed on 2026-10-05 that
+`My Whitelist` has the default list on).
+**Change to the `.txt`:** **none.** The new environment's allowed domains
+are the `.txt` verbatim plus one domain:
+
+```
++ api.anthropic.com
+```
+
+### Why a separate environment
+
+The changelog routine fires the prompt-audit sweep routine (ADR 0017;
+`agent-changelog-routine.md`, step 4a) with a bearer token held in an
+environment variable. Every session in an environment can read its
+variables, and the agent proxy's API credentials never attach to
+`api.anthropic.com`, so the owner decided on 2026-10-05 that the token
+lives in an environment no other session uses.
+
+### Per-domain justification
+
+- **`api.anthropic.com`** — the routines `/fire` endpoint,
+  `https://api.anthropic.com/v1/claude_code/routines/<trig_id>/fire`
+  (https://code.claude.com/docs/en/routines, "Trigger a routine"). The
+  default list already covers it; it is listed explicitly so the fire keeps
+  working if the checkbox is ever unchecked. Not yet probed from inside the
+  environment.

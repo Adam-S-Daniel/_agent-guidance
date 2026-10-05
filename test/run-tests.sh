@@ -12533,6 +12533,24 @@ test_on_hold_label() {
     fi
 }
 
+# Prompt-audit sweep policy (ADR 0017): the sweep spec, the changelog
+# routine's step 4a that fires it, and the ADR index. Never piped: the count
+# and exit code are read from a file.
+test_prompt_audit_sweep() {
+    echo ""
+    echo "=== Test: prompt-audit sweep policy and fire call ==="
+    local out="$TEST_DIR/prompt-audit-sweep-tap.txt" rc=0
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-prompt-audit-sweep.js" > "$out" 2>&1 || rc=$?
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    if [[ "$rc" -eq 0 && "$pass_n" == "8" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 8 passed"
+    else
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=8, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 # ── The self-hosted fleet-memory payload matches agents-md/base.md ────────
 #
 # This repo is excluded from the sync (SYNC_SELF_REPO), so nothing overwrites
@@ -21242,6 +21260,7 @@ GROUP_hook_pin=(
 # reports on _agent-guidance, so these are the only checks they get.
 GROUP_self_hosted=(
     test_on_hold_label
+    test_prompt_audit_sweep
     test_sync_workflow_trigger
     test_self_hosted_hook_pin
     test_self_hosted_fleet_payload
