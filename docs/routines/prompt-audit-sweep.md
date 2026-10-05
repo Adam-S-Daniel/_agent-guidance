@@ -176,11 +176,17 @@ its step 4a by giving it the fire token):
    before auditing anything.
 4. **Probe the executor,** and log each answer:
    1. `claude --version` answers in the sandbox.
-   2. `claude auth status --json | jq -r .authMethod` prints `claude.ai`.
-      Read only that field; the full output names the account. Any other
-      value (an API key, a cloud provider) would bill outside the
-      subscription: stop with
-      `BLOCKED: nested claude is not on the claude.ai subscription (<authMethod>)`.
+   2. `claude auth status --json | jq -r '[.loggedIn, .apiProvider, .authMethod] | @tsv'`
+      prints `true`, `firstParty` and either `claude.ai` or `oauth_token`.
+      Read only those three fields; the full output names the account.
+      A cloud container has the subscription's OAuth token injected, so it
+      reports `oauth_token`; `claude.ai` appears only after an interactive
+      `claude auth login`. Both are the subscription. Evidence: on
+      2026-10-05 a cloud session (`CLAUDE_CODE_ENTRYPOINT=remote`) printed
+      `authMethod` `oauth_token` with `loggedIn` true and `apiProvider`
+      `firstParty`. Anything else (not logged in, an API key, a cloud
+      provider) would bill outside the subscription: stop with
+      `BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)`.
       `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset.
    3. A nested `/doctor prompt-audit` (step 2's command) against the
       smallest reached repo exits 0 with a report.
@@ -221,7 +227,8 @@ If `unshare` is refused in the sandbox, run the same command without it and
 log that. No `--model`: the nested run uses the account default, like the
 routine. Record from the JSON the model it ran on, the exit code and the
 turn count. Its `total_cost_usd` is an API-equivalent figure; on
-`authMethod: claude.ai` it is subscription usage, and the log says so.
+`authMethod` `claude.ai` or `oauth_token` it is subscription usage, and the log
+says so.
 
 Coverage: every step 1 path the report neither cites nor lists as read is
 `not audited` in the run log. Never call a repo clean when a path went
