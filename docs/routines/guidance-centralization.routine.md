@@ -27,7 +27,7 @@ request rather than as an untracked edit to a trigger nobody can diff.
 | One-shot fire time | — |
 | Schedule kind | recurring |
 | Created | 2026-08-31T18:58:30.909810Z |
-| Created kind | — |
+| Created kind | `ROUTINE_CREATED_KIND_UNSPECIFIED` |
 | Created via | `http_api` |
 | Session binding | fresh session per fire |
 | Model override | — (account default) |
@@ -41,31 +41,32 @@ request rather than as an untracked edit to a trigger nobody can diff.
 
 ## Attached repositories
 
-19 source(s); 19 of them carry an outcome branch. A fired session sees
+20 source(s); 20 of them carry an outcome branch. A fired session sees
 these without `add_repo`; anything else in the account it must attach
 itself, which is the coverage question the spec's §0.5 is about.
 
 | Repository | Outcome branch |
 |------------|----------------|
-| [`Adam-S-Daniel/_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | `claude/gifted-dirac` |
-| [`Adam-S-Daniel/agentskills`](https://github.com/Adam-S-Daniel/agentskills) | `claude/nifty-bell` |
-| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | `claude/upbeat-pasteur` |
-| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | `claude/vigilant-heisenberg` |
-| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | `claude/intelligent-curie` |
-| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | `claude/loving-meitner` |
-| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | `claude/awesome-davinci` |
-| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | `claude/cool-pascal` |
-| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | `claude/magical-euler` |
-| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | `claude/cool-babbage` |
-| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | `claude/adoring-shannon` |
-| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | `claude/quirky-pasteur` |
-| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | `claude/eloquent-cori` |
-| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | `claude/optimistic-darwin` |
-| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | `claude/loving-bardeen` |
-| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | `claude/awesome-faraday` |
-| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | `claude/vibrant-dirac` |
-| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | `claude/gallant-edison` |
-| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | `claude/jolly-darwin` |
+| [`Adam-S-Daniel/_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | `claude/epic-bell` |
+| [`Adam-S-Daniel/adamdaniel.ai`](https://github.com/Adam-S-Daniel/adamdaniel.ai) | `claude/determined-thompson` |
+| [`jodidaniel/jodidaniel.com`](https://github.com/jodidaniel/jodidaniel.com) | `claude/tender-brahmagupta` |
+| [`Adam-S-Daniel/cms-platform`](https://github.com/Adam-S-Daniel/cms-platform) | `claude/keen-johnson` |
+| [`jodidaniel/scratch-claude-002`](https://github.com/jodidaniel/scratch-claude-002) | `claude/exciting-ptolemy` |
+| [`Adam-S-Daniel/wsl-automation`](https://github.com/Adam-S-Daniel/wsl-automation) | `claude/magical-hawking` |
+| [`Adam-S-Daniel/skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | `claude/zealous-hopper` |
+| [`Adam-S-Daniel/scratch-jules-001`](https://github.com/Adam-S-Daniel/scratch-jules-001) | `claude/focused-bohr` |
+| [`Adam-S-Daniel/scratch-claude-001`](https://github.com/Adam-S-Daniel/scratch-claude-001) | `claude/fervent-cannon` |
+| [`Adam-S-Daniel/rss-inator`](https://github.com/Adam-S-Daniel/rss-inator) | `claude/clever-mccarthy` |
+| [`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings) | `claude/focused-franklin` |
+| [`Adam-S-Daniel/jc`](https://github.com/Adam-S-Daniel/jc) | `claude/sleepy-bardeen` |
+| [`Adam-S-Daniel/fastmail-actions`](https://github.com/Adam-S-Daniel/fastmail-actions) | `claude/sleepy-noether` |
+| [`Adam-S-Daniel/claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | `claude/zen-faraday` |
+| [`Adam-S-Daniel/agentskills-private`](https://github.com/Adam-S-Daniel/agentskills-private) | `claude/magical-gates` |
+| [`Adam-S-Daniel/GHA-bench`](https://github.com/Adam-S-Daniel/GHA-bench) | `claude/magical-pasteur` |
+| [`Adam-S-Daniel/4A`](https://github.com/Adam-S-Daniel/4A) | `claude/dreamy-dijkstra` |
+| [`jodidaniel/squarespacetemp`](https://github.com/jodidaniel/squarespacetemp) | `claude/kind-brown` |
+| [`Adam-S-Daniel/adam-agentskills-private`](https://github.com/Adam-S-Daniel/adam-agentskills-private) | `claude/youthful-carson` |
+| [`Adam-S-Daniel/adam-agentskills`](https://github.com/Adam-S-Daniel/adam-agentskills) | `claude/nifty-hypatia` |
 
 ## Pre-approved tools
 
@@ -97,14 +98,74 @@ as complete.
 
 | Field | Why |
 |-------|-----|
+| `api_token_hint` | API token fragment (value withheld) |
+| `created_surface` | REST-only; created_via is the captured surface (excluded) |
 | `creator.account_uuid` | account identifier (value withheld) |
+| `creator.display_name` | person's name (value withheld) |
+| `derived_state.files[*]` | empty when classified 2026-10-05; not rendered (excluded) |
+| `derived_state.folders[*]` | empty when classified 2026-10-05; not rendered (excluded) |
 | `derived_state.prompt` | duplicate of the event's message content; equality is asserted below (excluded) |
+| `enabled_plugins[*]` | empty when classified 2026-10-05; not rendered (excluded) |
+| `ended_reason` | runtime state: set when the routine auto-disables (excluded) |
+| `extra_marketplaces[*]` | empty when classified 2026-10-05; not rendered (excluded) |
 | `job_config.ccr.environment_id` | cloud environment identifier (value withheld) |
 | `job_config.ccr.events[*].data.parent_tool_use_id` | always null for a routine's seed message (excluded) |
 | `job_config.ccr.events[*].data.session_id` | session identifier (value withheld) |
 | `job_config.ccr.events[*].data.uuid` | message identifier (value withheld) |
+| `last_fired_at` | runtime state: changes on every fire (excluded) |
+| `last_run.failure_reason` | runtime state: changes on every fire (excluded) |
+| `last_run.finished_at` | runtime state: changes on every fire (excluded) |
+| `last_run.fired_at` | runtime state: changes on every fire (excluded) |
+| `last_run.session_id` | session identifier (value withheld) |
+| `last_run.status` | runtime state: changes on every fire (excluded) |
+| `mcp_connections[*].clear_tool_policy_overrides` | empty when classified 2026-10-05; not rendered (excluded) |
 | `mcp_connections[*].connector_uuid` | connector identifier (value withheld) |
+| `mcp_connections[*].permitted_tools[*]` | empty when classified 2026-10-05; not rendered (excluded) |
+| `mcp_connections[*].tool_policy_overrides[*]` | empty when classified 2026-10-05; not rendered (excluded) |
 | `next_run_at` | runtime state: recomputed after every fire (excluded) |
+| `session_request.config.account_plugins[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.account_skills[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.active_mount_paths[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.allowed_tools[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.auto_mode_allow[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.auto_mode_environment[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.auto_mode_soft_deny[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.autofix_on_pr_create` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.builtin_tools[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.disallowed_tools[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.file_mounts[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.mcp_servers[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.metadata` | empty map; a populated one refuses by its keys (excluded) |
+| `session_request.config.otel_content_capture[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.outcomes[*].git_info.branches[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.outcomes[*].git_info.host` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.outcomes[*].git_info.ref` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.outcomes[*].git_info.repo` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.outcomes[*].git_info.type` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.outcomes[*].type` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.owner_tagged_mcp_servers[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.prompt_cache_relay_enabled` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.sources[*].sparse_checkout_exclude_patterns[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.sources[*].sparse_checkout_paths[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.sources[*].type` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.sources[*].url` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.subagents[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.worktree` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.environment_id` | cloud environment identifier (value withheld) |
+| `session_request.environment_variables` | empty map; a populated one refuses by its keys (excluded) |
+| `session_request.events[*].ephemeral` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].historical` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].mentioned_account_ids[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].payload.message.content` | duplicate of the captured prompt; equality is asserted (excluded) |
+| `session_request.events[*].payload.message.role` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].payload.parent_tool_use_id` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].payload.session_id` | session identifier (value withheld) |
+| `session_request.events[*].payload.type` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].payload.uuid` | message identifier (value withheld) |
+| `session_request.events[*].user_declared_urls[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.metadata` | empty map; a populated one refuses by its keys (excluded) |
+| `session_request.tags[*]` | empty when classified 2026-10-05; not rendered (excluded) |
+| `suspension_reason` | runtime state: set while the subscription is paused (excluded) |
 | `updated_at` | runtime state: server-side touch, not only operator edits (excluded) |
 
 ## Stored prompt
