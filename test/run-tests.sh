@@ -12333,6 +12333,24 @@ test_bump_sweep_head_match() {
     assert_contains "$log" "this gh has no 'gh pr merge --match-head-commit'" "head match: an older gh is reported, not assumed"
     assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "head match: an older gh still merges — the guard is hardening, not a dependency"
     assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
+
+    # ── An older gh AND a head oid that does not parse: the merge still
+    # lands unpinned, but the cleanup has no judged commit to pin its delete
+    # to, so it deletes nothing and counts the failure — never by name.
+    setup_sweep_repos
+    local zz_tip
+    zz_tip=$(sweep_bump_branch_sha repo-zz-ready)
+    BUMP_NO_MATCH_FLAG_FOR_RUN=1 BUMP_HEAD_GARBLED_FOR_RUN="bumporg_repo-zz-ready" \
+        run_sweep "$TEST_DIR/sweep-noflag-garbled.txt"
+    unset BUMP_NO_MATCH_FLAG_FOR_RUN BUMP_HEAD_GARBLED_FOR_RUN
+    log="$TEST_DIR/sweep-noflag-garbled.txt"
+    assert_contains "$log" "ERROR: bumporg/repo-zz-ready#111: merged, but its head commit did not read back as a sha" \
+        "head match: with no pin and no readable head, the cleanup refuses and counts"
+    if [[ -n "$zz_tip" && "$(sweep_bump_branch_sha repo-zz-ready)" == "$zz_tip" ]]; then
+        pass "head match: and the branch is not deleted by name"
+    else
+        fail "head match: and the branch is not deleted by name"
+    fi
 }
 
 # ── Test 8i3b: mergeable=UNKNOWN is retried, bounded, before the sweep skips
