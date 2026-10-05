@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — test-that-can-signal-kills-every-session — edit
+- Motivation: owner decision on the session-7 prompt audit's "History narratives" findings: move incident narratives longer than about two lines to `docs/evidence/` and leave a pointer (ADR 0018).
+- Change: the four-line `kill(-1)` story moved verbatim to `docs/evidence/2026-10-04-killpg-on-a-mocked-pid.md`, replaced by a one-clause dated pointer with its full URL; the five rules are unchanged; section 1,011 -> 943 bytes (-68).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
 ## 2026-10-04 — two-github-connectors — edit
 - Motivation: the section says to probe the org connector by NAME, never a remembered prefix, yet labeled it `mcp__github-mcp__*`; a 2026-10-04 terminal session exposed it as `mcp__claude_ai_github-mcp__*` (flagged by 6 of the session-7 prompt audits).
 - Change: label the bullet by connector name `github-mcp` and say its tool prefix varies by surface; the dated `mcp__b26ebb34-…__*` history stays; section 1,396 -> 1,410 bytes (+14).

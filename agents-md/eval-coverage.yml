@@ -131,7 +131,7 @@
   heading: A test that can signal can kill every session
   file: agents-md/base.md
   status: gap
-  bytes: 1011
+  bytes: 943
 
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
