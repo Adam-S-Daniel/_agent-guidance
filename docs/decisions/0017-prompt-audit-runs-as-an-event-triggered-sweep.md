@@ -73,8 +73,10 @@ The sweep:
 - is read-only, and runs on the account's default model, which is the model
   it should judge for;
 - runs only on the claude.ai subscription: the routine draws subscription
-  usage, and it refuses to run a nested audit whose `claude auth status` is
-  not `claude.ai`;
+  usage, and it refuses to run a nested audit unless `claude auth status`
+  reports `loggedIn` true, `apiProvider` `firstParty` and an `authMethod` of
+  `claude.ai` or `oauth_token` (a cloud container's injected OAuth token
+  reports `oauth_token`; 2026-10-05 probe);
 - routes findings on user-level or managed-block text to
   `agents-md/base.md`, from the `_agent-guidance` run only;
 - files at most one issue per repo, labeled `agent-ready`, deduplicated
@@ -127,8 +129,12 @@ findings as warnings and exits 0.
   `api.anthropic.com` is reachable; the fire token gets its own environment;
   a single-repo trial after merge is approved; a model change seen only in
   a `skills-evals` roster change is swept by a manual **Run now**.
+- A 2026-10-05 probe in a cloud session found the nested `claude` logged in
+  with `authMethod` `oauth_token`, not `claude.ai`, and `api.anthropic.com`
+  answering with an Anthropic 401 (not a proxy 403), so the step 0 auth probe
+  accepts both values.
 - Two things are unverified until that single-repo trial: that a routine's
-  sandbox has an authenticated nested `claude`, and that
+  sandbox has an authenticated nested `claude` that can run a nested audit, and that
   `/doctor prompt-audit` honors an explicit path list. If the nested audit
   cannot run, a laptop session runs the same spec.
 - Revisit this if prompt-audit gains a machine-readable verdict and the
