@@ -179,13 +179,17 @@ its step 4a by giving it the fire token):
    2. `claude auth status --json | jq -r '[.loggedIn, .apiProvider, .authMethod] | @tsv'`
       prints `true`, `firstParty` and either `claude.ai` or `oauth_token`.
       Read only those three fields; the full output names the account.
-      A cloud container has the subscription's OAuth token injected, so it
-      reports `oauth_token`; `claude.ai` appears only after an interactive
-      `claude auth login`. Both are the subscription. Evidence: on
+      `oauth_token` means an OAuth token supplied through the environment,
+      which a cloud container injects; `claude.ai` appears only after an
+      interactive `claude auth login`. The probe accepts both as first-party
+      OAuth. That `oauth_token` bills against the claude.ai subscription is
+      **not verified**: nothing in the probe output says so, and no billing
+      page has been checked against a run. Evidence for the value itself: on
       2026-10-05 a cloud session (`CLAUDE_CODE_ENTRYPOINT=remote`) printed
       `authMethod` `oauth_token` with `loggedIn` true and `apiProvider`
       `firstParty`. Anything else (not logged in, an API key, a cloud
-      provider) would bill outside the subscription: stop with
+      provider) is not first-party OAuth and may bill outside the
+      subscription: stop with
       `BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)`.
       `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset.
    3. A nested `/doctor prompt-audit` (step 2's command) against the
@@ -226,9 +230,9 @@ unshare --user --map-current-user --pid --fork --mount-proc -- \
 If `unshare` is refused in the sandbox, run the same command without it and
 log that. No `--model`: the nested run uses the account default, like the
 routine. Record from the JSON the model it ran on, the exit code and the
-turn count. Its `total_cost_usd` is an API-equivalent figure; on
-`authMethod` `claude.ai` or `oauth_token` it is subscription usage, and the log
-says so.
+turn count. Its `total_cost_usd` is an API-equivalent figure. On
+`authMethod` `claude.ai` it is subscription usage; on `oauth_token` the billing
+basis is unverified (step 0, item 4), and the log says which value it ran on.
 
 Coverage: every step 1 path the report neither cites nor lists as read is
 `not audited` in the run log. Never call a repo clean when a path went

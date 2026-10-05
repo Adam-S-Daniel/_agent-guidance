@@ -80,7 +80,7 @@ test('sweep is read-only, never merges, and files one labeled issue per repo', (
   includes(prose(section(spec, '4. Render one issue per repo')), ['One issue per repo', 'still open there', 'Do not apply the audit\'s proposed diff', 'Do not delete dated incident evidence']);
   includes(prose(section(spec, '5. File and verify')), ['`"labels": ["agent-ready"]` in the create call itself', 'raw REST `GET`']);
   includes(prose(section(spec, '3. Route every finding')), ['routes to `_agent-guidance`', '**warns and never blocks**', 'Confidence Low** stays in the run log']);
-  includes(prose(section(spec, '0. Before anything else')), ['prints `true`, `firstParty` and either `claude.ai` or `oauth_token`', 'reports `oauth_token`', 'BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)', 'Never imitate the audit']);
+  includes(prose(section(spec, '0. Before anything else')), ['prints `true`, `firstParty` and either `claude.ai` or `oauth_token`', '`oauth_token` means an OAuth token supplied through the environment', 'BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)', '`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset', 'is **not verified**', 'Never imitate the audit']);
 });
 
 test('earlier-sweep dedupe matches sweep issues but never the trigger issue', () => {
