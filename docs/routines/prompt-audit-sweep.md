@@ -7,8 +7,9 @@ measures against
 step 4a), and the owner can start it by hand with **Run now**. It has **no
 schedule trigger**. Why: [ADR 0017](../decisions/0017-prompt-audit-runs-as-an-event-triggered-sweep.md).
 **Owner of the trigger:** a claude.ai Routine in Adam's account, named
-`prompt-audit sweep`. Its runs draw on the account's subscription usage, not
-API billing (step 0, item 4).
+`prompt-audit sweep`. Its runs are meant to draw on the account's subscription
+usage, not API billing; that is unverified for an `oauth_token` login (step 0,
+item 4).
 
 This file is the spec. The Routine's prompt is short and points here, so the
 procedure is reviewed as a pull request rather than as an edit to a trigger

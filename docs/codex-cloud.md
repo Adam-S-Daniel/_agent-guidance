@@ -136,7 +136,7 @@ keeps the legacy behavior: it writes Claude plus an already-existing Codex home
 and retains its exit-zero failure policy.
 
 The Claude multi-repo bootstrap in
-[agentskills' delivery guide](https://github.com/Adam-S-Daniel/agentskills/blob/main/docs/multi-repo-delivery.md)
+[agentskills' delivery guide](https://github.com/Adam-S-Daniel/adam-agentskills/blob/main/docs/multi-repo-delivery.md)
 addresses hook discovery across child repositories. The reproduction in
 [issue #130](https://github.com/Adam-S-Daniel/_agent-guidance/issues/130) uses
 one repository, so the two gaps are separate.

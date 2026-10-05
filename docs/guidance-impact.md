@@ -6,7 +6,7 @@ removals, and **rejected proposals**. The rejected ones are the reason the
 file exists: git history records what landed, but nothing records what was
 tried and turned down, so the next session re-derives and re-proposes it. An
 approach already ruled out is the expensive thing to lose. Modeled on
-agentskills' [`docs/skill-impact.md`](https://github.com/Adam-S-Daniel/agentskills/blob/main/docs/skill-impact.md),
+agentskills' [`docs/skill-impact.md`](https://github.com/Adam-S-Daniel/adam-agentskills/blob/main/docs/skill-impact.md),
 with `<section-id>` (the stable key in `agents-md/eval-coverage.yml`) in
 place of `<bundle>/<skill>` — guidance sections have no bundle to sit in.
 

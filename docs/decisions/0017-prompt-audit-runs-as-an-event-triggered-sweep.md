@@ -112,11 +112,12 @@ findings as warnings and exits 0.
   still start a sweep but cannot steer one: the sweep reads only a
   trigger-issue URL it re-verifies and two switches from the payload.
   Revoke or regenerate it on the routine's API trigger.
-- Subscription usage is the cost, not API billing. When the account has
-  usage credits turned on, a run that reaches the subscription limit
-  continues on metered overage instead of stopping (Routines docs, "Usage
-  and limits"); a sweep is about a dozen nested audits, so check usage
-  credits before a full run if that matters.
+- Subscription usage is meant to be the cost, not API billing; that is
+  unverified for a run logged in by `oauth_token` (see the 2026-10-05 probe
+  below). When the account has usage credits turned on, a run that reaches
+  the subscription limit continues on metered overage instead of stopping
+  (Routines docs, "Usage and limits"); a sweep is about a dozen nested audits,
+  so check usage credits before a full run if that matters.
 - The in-session `RemoteTrigger` tool would avoid the stored token, but
   Claude Code 2.1.289 disables it when `CLAUDE_CODE_REMOTE` is set, which
   is every cloud session, so a routine cannot use it.
