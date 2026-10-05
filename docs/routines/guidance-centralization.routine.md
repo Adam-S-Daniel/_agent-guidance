@@ -123,46 +123,46 @@ as complete.
 | `mcp_connections[*].permitted_tools[*]` | empty when classified 2026-10-05; not rendered (excluded) |
 | `mcp_connections[*].tool_policy_overrides[*]` | empty when classified 2026-10-05; not rendered (excluded) |
 | `next_run_at` | runtime state: recomputed after every fire (excluded) |
-| `session_request.config.account_plugins[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.account_skills[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.active_mount_paths[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.allowed_tools[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.auto_mode_allow[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.auto_mode_environment[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.auto_mode_soft_deny[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.autofix_on_pr_create` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.builtin_tools[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.disallowed_tools[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.file_mounts[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.mcp_servers[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.account_plugins[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.account_skills[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.active_mount_paths[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.allowed_tools[*]` | mirror of job_config.ccr.session_context.allowed_tools, which is captured; equality is asserted (excluded) |
+| `session_request.config.auto_mode_allow[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.auto_mode_environment[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.auto_mode_soft_deny[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.autofix_on_pr_create` | mirror of job_config.ccr.session_context.autofix_on_pr_create, which is captured; equality is asserted (excluded) |
+| `session_request.config.builtin_tools[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.disallowed_tools[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.file_mounts[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.mcp_servers[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
 | `session_request.config.metadata` | empty map; a populated one refuses by its keys (excluded) |
-| `session_request.config.otel_content_capture[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.outcomes[*].git_info.branches[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.outcomes[*].git_info.host` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.outcomes[*].git_info.ref` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.outcomes[*].git_info.repo` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.outcomes[*].git_info.type` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.outcomes[*].type` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.owner_tagged_mcp_servers[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.prompt_cache_relay_enabled` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.sources[*].sparse_checkout_exclude_patterns[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.sources[*].sparse_checkout_paths[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.sources[*].type` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.sources[*].url` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.subagents[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.config.worktree` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.config.otel_content_capture[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.outcomes[*].git_info.branches[*]` | mirror of job_config.ccr.session_context.outcomes[*].git_repository.git_info.branches, which is captured; equality is asserted (excluded) |
+| `session_request.config.outcomes[*].git_info.host` | REST-only detail of a mirrored outcome; job_config.ccr carries only its repo and branches (excluded) |
+| `session_request.config.outcomes[*].git_info.ref` | REST-only detail of a mirrored outcome; job_config.ccr carries only its repo and branches (excluded) |
+| `session_request.config.outcomes[*].git_info.repo` | mirror of job_config.ccr.session_context.outcomes[*].git_repository.git_info.repo, which is captured; equality is asserted (excluded) |
+| `session_request.config.outcomes[*].git_info.type` | REST-only detail of a mirrored outcome; job_config.ccr carries only its repo and branches (excluded) |
+| `session_request.config.outcomes[*].type` | REST-only detail of a mirrored outcome; job_config.ccr carries only its repo and branches (excluded) |
+| `session_request.config.owner_tagged_mcp_servers[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.prompt_cache_relay_enabled` | REST-only session setting with no job_config.ccr counterpart (excluded) |
+| `session_request.config.sources[*].sparse_checkout_exclude_patterns[*]` | REST-only detail of a mirrored source; job_config.ccr carries only its url (excluded) |
+| `session_request.config.sources[*].sparse_checkout_paths[*]` | REST-only detail of a mirrored source; job_config.ccr carries only its url (excluded) |
+| `session_request.config.sources[*].type` | REST-only detail of a mirrored source; job_config.ccr carries only its url (excluded) |
+| `session_request.config.sources[*].url` | mirror of job_config.ccr.session_context.sources[*].git_repository.url, which is captured; equality is asserted (excluded) |
+| `session_request.config.subagents[*]` | REST-only session setting with no job_config.ccr counterpart; empty when classified 2026-10-05; not rendered (excluded) |
+| `session_request.config.worktree` | REST-only session setting with no job_config.ccr counterpart (excluded) |
 | `session_request.environment_id` | cloud environment identifier (value withheld) |
 | `session_request.environment_variables` | empty map; a populated one refuses by its keys (excluded) |
-| `session_request.events[*].ephemeral` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.events[*].historical` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.events[*].mentioned_account_ids[*]` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.events[*].payload.message.content` | duplicate of the captured prompt; equality is asserted (excluded) |
-| `session_request.events[*].payload.message.role` | REST-only mirror of job_config.ccr (excluded) |
-| `session_request.events[*].payload.parent_tool_use_id` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].ephemeral` | REST-only event metadata with no job_config.ccr counterpart (excluded) |
+| `session_request.events[*].historical` | REST-only event metadata with no job_config.ccr counterpart (excluded) |
+| `session_request.events[*].mentioned_account_ids[*]` | REST-only event metadata with no job_config.ccr counterpart (excluded) |
+| `session_request.events[*].payload.message.content` | mirror of the seed event's message content, which is captured; equality is asserted (excluded) |
+| `session_request.events[*].payload.message.role` | mirror of job_config.ccr.events[*].data.message.role, which is captured (excluded) |
+| `session_request.events[*].payload.parent_tool_use_id` | mirror of job_config.ccr.events[*].data.parent_tool_use_id, itself excluded (excluded) |
 | `session_request.events[*].payload.session_id` | session identifier (value withheld) |
-| `session_request.events[*].payload.type` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].payload.type` | mirror of job_config.ccr.events[*].data.type, which is captured (excluded) |
 | `session_request.events[*].payload.uuid` | message identifier (value withheld) |
-| `session_request.events[*].user_declared_urls[*]` | REST-only mirror of job_config.ccr (excluded) |
+| `session_request.events[*].user_declared_urls[*]` | REST-only event metadata with no job_config.ccr counterpart (excluded) |
 | `session_request.metadata` | empty map; a populated one refuses by its keys (excluded) |
 | `session_request.tags[*]` | empty when classified 2026-10-05; not rendered (excluded) |
 | `suspension_reason` | runtime state: set while the subscription is paused (excluded) |
