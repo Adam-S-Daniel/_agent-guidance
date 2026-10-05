@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-04 — two-github-connectors — edit
+- Motivation: the section says to probe the org connector by NAME, never a remembered prefix, yet labeled it `mcp__github-mcp__*`; a 2026-10-04 terminal session exposed it as `mcp__claude_ai_github-mcp__*` (flagged by 6 of the session-7 prompt audits).
+- Change: label the bullet by connector name `github-mcp` and say its tool prefix varies by surface; the dated `mcp__b26ebb34-…__*` history stays; section 1,396 -> 1,410 bytes (+14).
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-04
+
 ## 2026-10-04 — two-setup-gaps — edit
 - Motivation: [_agent-guidance#175](https://github.com/Adam-S-Daniel/_agent-guidance/issues/175) rechecks plugin commit-recording fixes without treating metadata changes as proof that installed contents refresh.
 - Change: require CLI ≥ 2.1.280 for recorded SHAs, inspect differing commits, locate bundle contents via `installPath`, try update and recheck before conditional reinstall; retain the historical version-gate distinction and next-session loading rule; section 2,146 -> 2,029 bytes (-117).

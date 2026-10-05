@@ -19156,6 +19156,56 @@ test_codex_session_start_launcher() {
         || fail "launcher: expected silence, got: $out_new"
 }
 
+# base.md opens with a repo-file header ("# AGENTS.md" plus "Edit only below
+# the `## Repo-specific additions` header"), true in a full-mode repo file and
+# false in user memory. The hook drops exactly that prefix when it delivers;
+# anything else is delivered verbatim. The real payload leg is what keeps the
+# hook's copy of the header in step with base.md: if base.md's header changes
+# and the hook's does not, that leg fails.
+test_fleet_memory_repo_header() {
+    echo ""
+    echo "TEST: fleet-memory.sh drops the repo-only header from user memory"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-header"
+    mkdir -p "$d/cfg" "$d/codex"
+    local -x CODEX_HOME="$d/no-codex-in-this-lane"
+    local payload="$d/payload.md"
+    printf '%s\n' '# AGENTS.md' '' \
+        '> **Managed by [`_agent-guidance`].**' \
+        '> Edit only below the `## Repo-specific additions` header.' \
+        '> Everything above it will be overwritten on the next sync.' '' \
+        'The canary is SLATE-WREN-47.' > "$payload"
+    local dest="$d/cfg/CLAUDE.md" line
+
+    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" > "$d/out" 2>&1
+    assert_contains "$d/out" "fleet-guidance: installed" "repo header: hook reports installed"
+    assert_contains "$dest" "SLATE-WREN-47" "repo header: guidance body delivered"
+    assert_not_contains "$dest" "Repo-specific additions" "repo header: 'Edit only below' notice not delivered"
+    assert_not_contains "$dest" "Managed by [" "repo header: 'Managed by' notice not delivered"
+    line="$(grep -A1 '^<!-- fleet-guidance-delivered: ' "$dest" | tail -1)"
+    [[ "$line" == "The canary is SLATE-WREN-47." ]] \
+        && pass "repo header: block body starts at the first guidance line" \
+        || fail "repo header: block body starts with '$line'"
+
+    # A payload that merely mentions the header later is delivered verbatim.
+    printf 'The canary is SLATE-WREN-48.\n# AGENTS.md\n' > "$payload"
+    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" >/dev/null 2>&1
+    assert_contains "$dest" "# AGENTS.md" "repo header: non-prefix text is delivered verbatim"
+
+    # The real payload: its header must match the hook's copy.
+    rm -f "$dest"
+    CLAUDE_CONFIG_DIR="$d/cfg" bash "$hook" >/dev/null 2>&1
+    assert_contains "$dest" "Only what is **specific to this account" "repo header: real payload body delivered"
+    assert_not_contains "$dest" "Edit only below" "repo header: real payload's repo-only notice not delivered"
+
+    # Codex Cloud writes the same block through its own path.
+    CODEX_HOME="$d/codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --codex-cloud > "$d/out-cloud" 2>&1
+    assert_contains "$d/out-cloud" "fleet-guidance: installed" "repo header: Codex Cloud reports installed"
+    assert_contains "$d/codex/AGENTS.md" "Only what is **specific to this account" "repo header: Codex Cloud body delivered"
+    assert_not_contains "$d/codex/AGENTS.md" "Edit only below" "repo header: Codex Cloud drops the repo-only notice"
+}
+
 # Run the actual command the registration script wrote, so a stale hook
 # definition cannot hide behind tests that invoke fleet-memory.sh directly.
 # Fixture repos are fresh git init repositories with no remote and fixed commit
@@ -21231,6 +21281,7 @@ GROUP_codex=(
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness
+    test_fleet_memory_repo_header
     test_fleet_memory_workspace
 )
 

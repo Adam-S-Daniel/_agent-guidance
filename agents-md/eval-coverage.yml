@@ -83,7 +83,7 @@
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
   status: gap
-  bytes: 1396
+  bytes: 1410
 
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
