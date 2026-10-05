@@ -18479,6 +18479,33 @@ test_fleet_guidance_mirror() {
     fi
 }
 
+test_check_agent_markdown() {
+    echo ""
+    echo "=== Test: check-agent-markdown.js (warn-only spelling + dangling-reference checks) ==="
+
+    # Same non-silent-skip rule as the other node suites: the script needs
+    # markdown-it and the suite's CI-wiring test needs yaml.
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" || ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "agent markdown check: node_modules/markdown-it or yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/check-agent-markdown-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-check-agent-markdown.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 76 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 76 ]]; then
+        pass "agent markdown check: node:test suite is green ($pass_n passed)"
+    else
+        fail "agent markdown check: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=76): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
 #
 # The hook that replaced the per-repo managed block with a single user-memory
@@ -21659,6 +21686,7 @@ GROUP_self_hosted=(
     test_discrepancy_alert
     test_routine_merge_gate
     test_fleet_guidance_mirror
+    test_check_agent_markdown
 )
 
 # The Codex lane. The three size/gate tests read only this repo's own files;

@@ -2,8 +2,9 @@
   "name": "agent-guidance",
   "version": "0.0.0",
   "private": true,
-  "description": "Dev-only deps for scripts/check-cron-coverage.js, scripts/check-guidance-coverage.js and scripts/check-guidance-touch.js — see their headers.",
+  "description": "Dev-only deps for scripts/check-cron-coverage.js, scripts/check-guidance-coverage.js, scripts/check-guidance-touch.js and scripts/check-agent-markdown.js — see their headers.",
   "scripts": {
+    "check-agent-markdown": "node scripts/check-agent-markdown.js",
     "check-cron-coverage": "node scripts/check-cron-coverage.js",
     "check-guidance-coverage": "node scripts/check-guidance-coverage.js",
     "check-guidance-touch": "node scripts/check-guidance-touch.js"

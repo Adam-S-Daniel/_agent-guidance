@@ -335,6 +335,32 @@ the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
 pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
 exist.
 
+### Agent Markdown warnings
+
+[`scripts/check-agent-markdown.js`](scripts/check-agent-markdown.js) (CI: the
+"Agent Markdown warnings" step in [`ci.yml`](.github/workflows/ci.yml), every
+push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
+whatever it finds, so it cannot fail the required `test` job. It prints one
+`::warning file=...,line=...` annotation per finding over the Markdown agents
+read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
+`.claude/hooks/fleet-guidance.md`):
+
+- **British spellings**, from a fixed word list in the script (no generic
+  `-ise` pattern). Fenced and inline code, block quotes, HTML and URLs are
+  exempt; a word that is legitimate in context (a quoted vendor, a proper
+  name) goes in `docs/agent-markdown-allowlist.txt`, one lowercase word per
+  line, `#` comments allowed.
+- **Dangling `see "X" above/below` references** — the named heading must exist
+  in the same file (headings come from a real Markdown parse, so a `## ` inside
+  a code fence is not one). `X` must be delimited (quotes, backticks,
+  bold/italic or a link); an undelimited "see the rules above" is not guessed
+  at.
+
+`--strict` exits 1 on any finding and is for the tests
+([`test/test-check-agent-markdown.js`](test/test-check-agent-markdown.js));
+CI never passes it. Run `npm run check-agent-markdown` to see the same output
+locally.
+
 ## The skills-bootstrap hook
 
 The sync can also deliver `.claude/hooks/skills-bootstrap.sh` — a
