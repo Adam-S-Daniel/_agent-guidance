@@ -7640,6 +7640,38 @@ r["session_request"]["config"]["allowed_tools"] = ["Bash", 7]'
     assert_cap restmixed 2 "1 non-string entry out of 2" \
         "routine: a non-string in a mirrored list is a clean refusal, not a traceback"
 
+    # `classify()` refuses a non-list at a list path before `collect()` runs,
+    # so the "is not a list" arm is unreachable through the CLI; it is a guard
+    # for a mirror that classifies but is not a list, so call `collect()` directly.
+    local notlist_out notlist_ok=1 notlist_field
+    for notlist_field in allowed_tools sources; do
+        notlist_out=$(python3 - "$script" "$dir/rest.json" "$notlist_field" <<'PY' 2>&1
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("capture_routine", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+record = json.load(open(sys.argv[2]))["data"][0]
+record.setdefault("session_request", {}).setdefault("config", {})[sys.argv[3]] = "not-a-list"
+try:
+    mod.collect(record)
+except mod.Refusal as e:
+    print(e)
+PY
+) || notlist_ok=0
+        grep -qF -- "session_request.config.$notlist_field" <<<"$notlist_out" \
+            && grep -qF -- "is not a list" <<<"$notlist_out" || notlist_ok=0
+    done
+    if [[ $notlist_ok -eq 1 ]]; then
+        pass "routine: a mirrored list that is not a list is a clean refusal"
+    else
+        fail "routine: a mirrored list that is not a list is a clean refusal — last output: $notlist_out"
+    fi
+
+    write_fixture restsrcmixed "$rest_mut"'
+r["session_request"]["config"]["sources"][0]["url"] = 5'
+    assert_cap restsrcmixed 2 "1 non-string entry out of 2" \
+        "routine: a non-string source url is a refusal, not coerced by str()"
+
     write_fixture restone "$rest_mut"'
 r["session_request"]["config"]["allowed_tools"] = ["Bash"]'
     assert_cap restone 2 "(1 entry vs" \

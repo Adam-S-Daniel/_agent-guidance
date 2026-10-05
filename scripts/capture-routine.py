@@ -416,9 +416,18 @@ def collect(record):
         if "autofix_on_pr_create" in cfg:
             mirrored["autofix_on_pr_create"] = (cfg["autofix_on_pr_create"], autofix)
         if "sources" in cfg:
+            # A source with no url is None on either side; it compares as "".
+            # Any other non-string url refuses instead of being coerced equal.
+            rest_src = cfg["sources"] if cfg["sources"] is not None else []
+            if isinstance(rest_src, list):
+                rest_src = [get(s, "url") for s in rest_src]
+                rest_src = [u if u is not None else "" for u in rest_src]
             mirrored["sources"] = (
-                sorted(str(get(s, "url")) for s in cfg["sources"] or []),
-                sorted(str(u) for u in sources))
+                _string_multiset("session_request.config.sources[*].url",
+                                 rest_src),
+                _string_multiset(
+                    _CTX + "sources[*].git_repository.url",
+                    [u if u is not None else "" for u in sources]))
         if "outcomes" in cfg:
             mirrored["outcomes"] = (
                 {get(o, "git_info.repo"): _string_multiset(
