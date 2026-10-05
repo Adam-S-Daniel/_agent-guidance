@@ -35,6 +35,9 @@ const mutations = {
   dedupe: [spec, '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', '`^Prompt-audit sweep `'],
   canonical: [spec, 'dedupe on `full_name`', 'take the first that answers'],
   private: [spec, 'name a private repo and its finding count **only**', 'name a private repo with its findings'],
+  pushonly: [spec, '**Push only to `Adam-S-Daniel/_agent-guidance`.**', '**Push to any reached repo.**'],
+  marker: [spec, 'Find them\nby that title marker', 'Find them\nby branch name'],
+  fixed: [spec, '`git merge-base --is-ancestor <sha> origin/<assigned branch>`', '`git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-sweep`'],
   argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
@@ -81,6 +84,18 @@ test('sweep is read-only, never merges, and files one labeled issue per repo', (
   includes(prose(section(spec, '5. File and verify')), ['`"labels": ["agent-ready"]` in the create call itself', 'raw REST `GET`']);
   includes(prose(section(spec, '3. Route every finding')), ['routes to `_agent-guidance`', '**warns and never blocks**', 'Confidence Low** stays in the run log']);
   includes(prose(section(spec, '0. Before anything else')), ['prints `true`, `firstParty` and either `claude.ai` or `oauth_token`', '`oauth_token` means an OAuth token supplied through the environment', 'BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)', '`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset', 'is **not verified**', 'Never imitate the audit']);
+});
+
+test('each run logs on its assigned branch in its own PR, found by title marker', () => {
+  includes(prose(section(spec, 'Constraints')), ['**Push only to `Adam-S-Daniel/_agent-guidance`.**', 'is read-only', 'no push, no branch, no commit and no PR there', '`git branch --show-current` in the checkout', 'never write it into this spec or the repo', 'auto-fix pushes) are allowed']);
+  const start = prose(section(spec, '0. Before anything else'));
+  includes(start, ['Find them by that title marker', 'never by branch name', 'on `origin/main` and at the head of every sweep PR', 'Never push to another run\'s branch', 'This run\'s own PR does not exist yet', 'is not a run and does not perform steps 0 to 7']);
+  const marker = start.match(/whose title starts with exactly `([^`]+)`/);
+  assert.ok(marker, 'no sweep PR marker');
+  const title = prose(section(spec, '7. Finish')).match(/title `([^`]+)`/);
+  assert.ok(title && title[1].startsWith(marker[1]), 'step 7 PR title lacks the sweep PR marker');
+  const code = tokens(spec).flatMap(t => [t, ...(t.children || [])]).filter(t => t.type === 'code_inline' || t.type === 'fence').map(t => t.content);
+  assert.deepEqual(code.filter(c => /persistent\//.test(c)), [], 'spec names a fixed branch');
 });
 
 test('earlier-sweep dedupe matches sweep issues but never the trigger issue', () => {
