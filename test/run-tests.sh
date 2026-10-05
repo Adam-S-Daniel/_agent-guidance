@@ -2235,6 +2235,12 @@ parse_flag_value() {
     done
 }
 
+# The open bump PR #42 that MOCK_OPEN_PR_REPOS stands for, as the sweep reads
+# it: the bumper's own, its check still running, so the sweep leaves it open.
+mock_open_pr_42() {
+    printf '%s' '{"number":42,"state":"OPEN","headRefName":"skills-lock-bump/update","author":{"login":"agents-md-sync[bot]"},"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","reviewDecision":"","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":null}]}'
+}
+
 case "$1" in
     repo)
         case "$2" in
@@ -2529,11 +2535,14 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
+            # Each entry carries `object.sha` as GitHub's does: the sweep reads
+            # a bump branch's tip from it.
             json="[]"
-            while IFS= read -r one_ref; do
+            while IFS=' ' read -r one_ref one_sha; do
                 [[ -n "$one_ref" && "$one_ref" == "$ref_prefix"* ]] || continue
-                json=$(echo "$json" | jq --arg r "$one_ref" '. + [{"ref": $r}]')
-            done < <(git -C "$bare_path" for-each-ref --format='%(refname)' refs/heads/ 2>/dev/null)
+                json=$(echo "$json" | jq --arg r "$one_ref" --arg s "$one_sha" \
+                    '. + [{"ref": $r, "object": {"sha": $s, "type": "commit"}}]')
+            done < <(git -C "$bare_path" for-each-ref --format='%(refname) %(objectname)' refs/heads/ 2>/dev/null)
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -2568,10 +2577,11 @@ case "$1" in
             # `files` as GitHub computes it: the three-dot diff, base...head.
             cmp_files=$(git -C "$bare_path" diff --name-only "$base_sha...$head_sha" 2>/dev/null \
                 | jq -R '{filename: .}' | jq -s -c .)
-            # `commits` likewise: the commits base..head adds, as the author
-            # emails GitHub reports under .commit.author.email.
-            cmp_commits=$(git -C "$bare_path" log --format='%ae' "$base_sha..$head_sha" 2>/dev/null \
-                | jq -R '{commit: {author: {email: .}}}' | jq -s -c .)
+            # `commits` likewise: the commits base..head adds, with the author
+            # and committer emails GitHub reports under .commit.author.email
+            # and .commit.committer.email.
+            cmp_commits=$(git -C "$bare_path" log --format='%ae %ce' "$base_sha..$head_sha" 2>/dev/null \
+                | jq -R 'split(" ") | {commit: {author: {email: .[0]}, committer: {email: .[1]}}}' | jq -s -c .)
             json="{\"status\": \"$cmp_status\", \"files\": ${cmp_files:-[]}, \"commits\": ${cmp_commits:-[]}}"
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
@@ -2811,7 +2821,16 @@ case "$1" in
                     fi
                     json='[]'
                     pr_file="${MOCK_PR_DIR:-/nonexistent}/${repo_arg//\//_}.json"
-                    [[ -f "$pr_file" ]] && json=$(cat "$pr_file")
+                    if [[ -f "$pr_file" ]]; then
+                        json=$(cat "$pr_file")
+                    elif [[ " ${MOCK_OPEN_PR_REPOS:-} " == *" ${repo_arg//\//_} "* ]]; then
+                        # The SAME open PR #42 the propose pass's listing below
+                        # reports for this repo, so the sweep and the propose
+                        # pass agree on whether a bump PR is open. Without it
+                        # the sweep saw no PR on a branch the propose pass was
+                        # told had one, and freed it as never proposed.
+                        json="[$(mock_open_pr_42)]"
+                    fi
                     # --state IS honoured, unlike --head: a fixture object with
                     # no `state` is an OPEN pull request, so every fixture
                     # written before states existed answers as it always did,
@@ -2865,6 +2884,10 @@ case "$1" in
                 pr_obj=""
                 [[ -f "$pr_file" ]] && pr_obj=$(jq -c --argjson n "$pr_number" \
                     '.[] | select(.number == $n)' "$pr_file")
+                if [[ -z "$pr_obj" && "$pr_number" == "42" && ! -f "$pr_file" \
+                      && " ${MOCK_OPEN_PR_REPOS:-} " == *" $repo_slug "* ]]; then
+                    pr_obj=$(mock_open_pr_42)
+                fi
                 # PR #1 is the one `gh pr create` below always answers with, so
                 # the propose pass's read-back of the PR it just opened is
                 # answered here: OPEN, or CLOSED for repos named in
@@ -8554,10 +8577,11 @@ test_bump_consumer_locks() {
     assert_contains "$log" "could not decide whether skills.lock is current" "unassessable: reported as a failure, not as drift"
     assert_no_bump_branch repo-error "unassessable: no branch pushed on the strength of an error"
 
-    # ── Isolation: repo-error sorts THIRD of seven.
+    # ── Isolation: repo-error sorts THIRD of seven. The run's other failure
+    # is repo-diverged's blocked bump branch, asserted below.
     assert_contains "$log" "=== bumporg/repo-no-lock ===" "isolation: the run survives a per-repo failure"
     assert_contains "$log" "=== bumporg/repo-stale ===" "isolation: the last repo is still reached"
-    assert_contains "$log" "1 failed" "isolation: the failure is counted, not swallowed"
+    assert_contains "$log" "2 failed" "isolation: the failure is counted, not swallowed"
     if [[ $BUMP_EXIT -ne 0 ]]; then
         pass "isolation: the run exits non-zero"
     else
@@ -8645,6 +8669,13 @@ test_bump_consumer_locks() {
 
     # ── A bump branch that already carries someone else's commit.
     assert_contains "$log" "refusing to force-push" "diverged: an open bump branch with other content is refused"
+    # ...and the refusal is a FAILURE, counted once, so the run goes red
+    # (#263): the sweep finds no PR open on it and a commit that is not this
+    # bumper's, so it may neither merge nor delete it.
+    assert_contains "$log" "ERROR: bumporg/repo-diverged: skills-lock-bump/update is at" \
+        "diverged: the sweep counts a branch it may not delete as a failure"
+    assert_contains "$log" "the sweep above already counted this repo's blocked branch as a failure" \
+        "diverged: and the propose pass does not count it a second time"
 
     # ── The SELF-HEAL, and why it is not the same case as the one above.
     # Both branches carry content this run would not push. The difference is
@@ -8850,19 +8881,37 @@ test_bump_idempotent() {
     fi
 
     # An interrupted run leaves a correct branch and no PR (the workflow can
-    # be cancelled between the push and `gh pr create`). Returning early on a
-    # matching branch would strand it forever, because every later run finds
-    # the same match. The repair opens the PR and touches nothing else.
+    # be cancelled between the push and `gh pr create`). Left alone it would
+    # block the repo for good the moment the bundle moves again, so the sweep
+    # frees a branch no PR was ever opened on, under the same guards as a
+    # stranded one (this bumper's commits, the lock alone), and the re-pin is
+    # proposed on the next run — never by force-pushing, and never on the name
+    # deleted seconds earlier (#227, #263).
     run_bump "$TEST_DIR/bump-strand.txt"
-    assert_contains "$TEST_DIR/bump-strand.txt" "not pushing again" "stranded: the matching branch is not re-pushed"
-    assert_contains "$TEST_DIR/bump-strand.txt" "PR created" "stranded: the missing PR is opened"
-    if [[ "$(bump_branch_sha repo-stale)" == "$stale_before" \
-          && "$(bump_branch_sha repo-federated)" == "$fed_before" \
-          && "$(bump_branch_sha repo-fed-current)" == "$fedcur_before" \
-          && "$(bump_branch_sha repo-fed-stale)" == "$fedstale_before" ]]; then
-        pass "stranded: still no second commit"
+    assert_contains "$TEST_DIR/bump-strand.txt" \
+        "bumporg/repo-stale: skills-lock-bump/update was stranded: no pull request was ever opened at its tip" \
+        "never proposed: the sweep recognizes a bump branch no PR was ever opened on"
+    if [[ -z "$(bump_branch_sha repo-stale)" && -z "$(bump_branch_sha repo-federated)" \
+          && -z "$(bump_branch_sha repo-fed-current)" && -z "$(bump_branch_sha repo-fed-stale)" ]]; then
+        pass "never proposed: each such branch is deleted, not force-pushed over"
     else
-        fail "stranded: still no second commit"
+        fail "never proposed: each such branch is deleted, not force-pushed over"
+    fi
+    assert_contains "$TEST_DIR/bump-strand.txt" "0 proposed" \
+        "never proposed: and no PR is opened on a name deleted in the same run"
+    # The same two failures as every run here (repo-error's unresolvable ref,
+    # and repo-diverged's branch carrying a commit that is not this bumper's),
+    # and none for the four branches freed.
+    assert_contains "$TEST_DIR/bump-strand.txt" "2 failed" \
+        "never proposed: freeing a provably disposable branch is not a failure"
+    assert_contains "$TEST_DIR/bump-strand.txt" "ERROR: bumporg/repo-diverged: skills-lock-bump/update is at" \
+        "never proposed: the branch that is not this bumper's is still refused and counted"
+    run_bump "$TEST_DIR/bump-strand-next.txt"
+    if [[ -n "$(bump_branch_sha repo-stale)" && -n "$(bump_branch_sha repo-federated)" ]] \
+       && grep -qF -- "PR created" "$TEST_DIR/bump-strand-next.txt"; then
+        pass "never proposed: the next run proposes the re-pin on a fresh branch"
+    else
+        fail "never proposed: the next run proposes the re-pin on a fresh branch"
     fi
 }
 
@@ -12508,19 +12557,29 @@ test_bump_sweep_branch_cleanup() {
 #   * a branch stranded the way #301's was — its bot PR closed unmerged, the
 #     tip still that PR's head, the diff the lock alone — is replaced rather
 #     than refused forever, while a stranded-looking branch someone pushed to
-#     after the close, or that carries a second file, is still refused.
+#     after the close, or that carries a second file, is still refused;
+#   * (#263) the SWEEP settles every bump branch with no open PR, whether or
+#     not the consumer needs a re-pin that night, frees one no PR was ever
+#     opened on under the same guards, and counts every branch it may not
+#     delete — and every refused force-push — as a failure, once.
 
 # make_race_repo <name> <main lock mode: fill|nofill> <main ref> <branch lock
 #                ref|none> <extra file on the branch|none> [branch commit
-#                author: bot (default)|human]
+#                author: bot (default)|human|amended — the bot as author,
+#                a person as committer]
 make_race_repo() {
     local name="$1" main_mode="$2" main_ref="$3" branch_ref="$4" extra="$5"
     local author="${6:-bot}" author_name author_email
+    local committer_name committer_email
     if [[ "$author" == "human" ]]; then
         author_name="A Human"; author_email="human@example.com"
     else
         author_name="agents-md-sync[bot]"
         author_email="agents-md-sync[bot]@users.noreply.github.com"
+    fi
+    committer_name="$author_name"; committer_email="$author_email"
+    if [[ "$author" == "amended" ]]; then
+        committer_name="A Human"; committer_email="human@example.com"
     fi
     local bare="$SWEEP_BARE/bumporg_$name"
     local work="$TEST_DIR/work/race-$name"
@@ -12543,8 +12602,9 @@ make_race_repo() {
         seed_bump_lock skills.lock "bumporg/agentskills" "$branch_ref"
         [[ "$extra" != "none" ]] && echo "someone else's work" > "$extra"
         git add -A
-        git -c user.name="$author_name" -c user.email="$author_email" \
-            commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
+        GIT_AUTHOR_NAME="$author_name" GIT_AUTHOR_EMAIL="$author_email" \
+        GIT_COMMITTER_NAME="$committer_name" GIT_COMMITTER_EMAIL="$committer_email" \
+            git commit -m "chore: re-pin skills.lock" >/dev/null 2>&1
         git push origin "HEAD:refs/heads/skills-lock-bump/update" >/dev/null 2>&1
         git checkout -q main
     fi
@@ -12622,6 +12682,54 @@ setup_race_repos() {
         "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-near-human-commit.json"
 }
 
+# The #263 fixtures: a bump branch with NO open pull request is settled by the
+# sweep, every night, whether or not the bundle has moved — freed when it is
+# provably this bumper's own lock-only re-pin, otherwise refused AND counted.
+setup_no_pr_repos() {
+    local branch="skills-lock-bump/update"
+    local bot='"author":{"login":"agents-md-sync[bot]"}'
+    local tip
+
+    # Stranded like #301, but the consumer needs NO re-pin tonight: the
+    # propose pass never reaches it, so only the sweep can free it.
+    make_race_repo repo-stranded-current fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-stranded-current" rev-parse "refs/heads/$branch")
+    printf '[{"number":140,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-stranded-current.json"
+
+    # Stranded, and the DELETE is refused while the branch survives.
+    make_race_repo repo-stranded-undeletable fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    tip=$(git -C "$SWEEP_BARE/bumporg_repo-stranded-undeletable" rev-parse "refs/heads/$branch")
+    printf '[{"number":141,"state":"CLOSED","headRefName":"%s","headRefOid":"%s",%s}]\n' \
+        "$branch" "$tip" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-stranded-undeletable.json"
+
+    # No pull request was ever opened on these (no MOCK_PR_DIR file at all).
+    # The bumper's own lock-only commit: freed.
+    make_race_repo repo-orphan fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    # A person's commit: refused, counted.
+    make_race_repo repo-orphan-human fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none human
+    # The bumper's commit, but a second file: refused, counted.
+    make_race_repo repo-orphan-extra fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" NOTES.md
+    # The bot as author, a person as committer (an amended or rebased bot
+    # commit): refused, counted.
+    make_race_repo repo-orphan-amended fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none amended
+
+    # The real fleet's shape: the name is reused, so the branch carries a
+    # history of MERGED bump PRs at older heads, and none at this tip. The
+    # bumper's own lock-only commit: freed.
+    make_race_repo repo-orphan-history fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none
+    printf '[{"number":150,"state":"MERGED","headRefName":"%s","headRefOid":"1111111111111111111111111111111111111111",%s},{"number":151,"state":"MERGED","headRefName":"%s","headRefOid":"2222222222222222222222222222222222222222",%s}]\n' \
+        "$branch" "$bot" "$branch" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-orphan-history.json"
+    # Same history, but a person's commit: refused, counted.
+    make_race_repo repo-orphan-history-human fill "$BUMP_REF_CONTENT" "$BUMP_REF_OLD" none human
+    printf '[{"number":152,"state":"MERGED","headRefName":"%s","headRefOid":"3333333333333333333333333333333333333333",%s}]\n' \
+        "$branch" "$bot" > "$SWEEP_PR_DIR/bumporg_repo-orphan-history-human.json"
+
+    # No branch, but the question cannot be asked: counted, never read as "no
+    # branch".
+    make_race_repo repo-refs-blind fill "$BUMP_REF_CONTENT" none none
+}
+
 # The near-miss fixtures, named once for the setup and the assertions to share.
 NEAR_REPOS="repo-near-human-pr repo-near-open-pr repo-near-merged repo-near-human-commit"
 
@@ -12630,11 +12738,32 @@ test_bump_branch_reuse_race() {
     echo "=== Test: bump-consumer-locks.sh (a freed bump branch name is not reused in the same run, #227) ==="
 
     setup_race_repos
-    local moved_tip extra_tip log next near
+    setup_no_pr_repos
+    local moved_tip extra_tip log next near dry
     local -A near_tip
     moved_tip=$(sweep_bump_branch_sha repo-stranded-moved)
     extra_tip=$(sweep_bump_branch_sha repo-stranded-extra)
-    for near in $NEAR_REPOS; do near_tip[$near]=$(sweep_bump_branch_sha "$near"); done
+    for near in $NEAR_REPOS repo-orphan-human repo-orphan-extra repo-orphan-amended \
+                repo-orphan-history-human repo-stranded-current repo-orphan; do
+        near_tip[$near]=$(sweep_bump_branch_sha "$near")
+    done
+    : > "$BUMP_PR_LOG"
+    rm -rf "$BUMP_PR_BODY_DIR"
+
+    # ── 0. A dry run names the branches it would free and frees none.
+    BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
+    BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
+        run_bump "$TEST_DIR/race-dry.txt" --dry-run
+    unset BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN
+    dry="$TEST_DIR/race-dry.txt"
+    assert_contains "$dry" "[DRY RUN] Would delete bumporg/repo-stranded-current's skills-lock-bump/update." \
+        "no open PR (dry run): names the stranded branch it would delete"
+    if [[ "$(sweep_bump_branch_sha repo-stranded-current)" == "${near_tip[repo-stranded-current]}" \
+          && "$(sweep_bump_branch_sha repo-orphan)" == "${near_tip[repo-orphan]}" ]]; then
+        pass "no open PR (dry run): and deletes nothing"
+    else
+        fail "no open PR (dry run): and deletes nothing"
+    fi
     : > "$BUMP_PR_LOG"
     rm -rf "$BUMP_PR_BODY_DIR"
 
@@ -12642,11 +12771,73 @@ test_bump_branch_reuse_race() {
     GITHUB_REPOSITORY="bumporg/_agent-guidance" \
     GITHUB_RUN_ID="4242" \
     BUMP_CLOSED_ON_CREATE_FOR_RUN="bumporg_repo-plain-stale" \
+    BUMP_DELETE_REF_FAIL_FOR_RUN="bumporg_repo-stranded-undeletable" \
+    BUMP_MATCHING_REFS_FAIL_FOR_RUN="bumporg_repo-refs-blind" \
     BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
     BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
         run_bump "$TEST_DIR/race.txt"
-    unset BUMP_CLOSED_ON_CREATE_FOR_RUN BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN
+    unset BUMP_CLOSED_ON_CREATE_FOR_RUN BUMP_BARE_DIR_FOR_RUN BUMP_PR_DIR_FOR_RUN \
+          BUMP_DELETE_REF_FAIL_FOR_RUN BUMP_MATCHING_REFS_FAIL_FOR_RUN
     log="$TEST_DIR/race.txt"
+
+    # ── #263. A bump branch with no open PR is settled by the sweep.
+    assert_contains "$log" "bumporg/repo-stranded-current: skills-lock-bump/update was stranded: its pull request #140 was closed unmerged" \
+        "no open PR: a stranded branch is freed on a night the consumer needs no re-pin"
+    if [[ -z "$(sweep_bump_branch_sha repo-stranded-current)" ]]; then
+        pass "no open PR: and it is really deleted"
+    else
+        fail "no open PR: and it is really deleted"
+    fi
+    assert_contains "$log" "bumporg/repo-orphan: skills-lock-bump/update was stranded: no pull request was ever opened at its tip" \
+        "no open PR: a lock-only bot branch no PR was ever opened on is freed"
+    if [[ -z "$(sweep_bump_branch_sha repo-orphan)" ]]; then
+        pass "no open PR: and that branch is really deleted"
+    else
+        fail "no open PR: and that branch is really deleted"
+    fi
+    if [[ -e "$BUMP_PR_BODY_DIR/bumporg_repo-orphan.body" ]]; then
+        fail "no open PR: its name is not reused in the run that deleted it"
+    else
+        pass "no open PR: its name is not reused in the run that deleted it"
+    fi
+    assert_contains "$log" "bumporg/repo-orphan-history: skills-lock-bump/update was stranded: no pull request was ever opened at its tip" \
+        "no open PR: a lock-only bot branch whose only PRs merged at older heads is freed"
+    if [[ -z "$(sweep_bump_branch_sha repo-orphan-history)" ]]; then
+        pass "no open PR: and that branch, with merged history, is really deleted"
+    else
+        fail "no open PR: and that branch, with merged history, is really deleted"
+    fi
+    for near in repo-orphan-human repo-orphan-extra repo-orphan-amended repo-orphan-history-human; do
+        if [[ -n "${near_tip[$near]}" && "$(sweep_bump_branch_sha "$near")" == "${near_tip[$near]}" ]]; then
+            pass "no open PR: $near's branch, never proposed but not provably ours, is left untouched"
+        else
+            fail "no open PR: $near's branch, never proposed but not provably ours, is left untouched"
+        fi
+    done
+    # Every branch the sweep may neither merge nor delete is a counted
+    # FAILURE, named, so the run goes red instead of "0 failed".
+    for near in repo-orphan-human repo-orphan-extra repo-orphan-amended repo-orphan-history-human \
+                repo-stranded-moved repo-stranded-extra \
+                repo-near-human-pr repo-near-merged repo-near-human-commit; do
+        assert_contains "$log" "ERROR: bumporg/$near: skills-lock-bump/update is at" \
+            "no open PR: $near's blocked branch is a counted failure"
+    done
+    assert_contains "$log" "ERROR: bumporg/repo-stranded-undeletable: skills-lock-bump/update is stranded but could not be deleted" \
+        "no open PR: a stranded branch whose delete is refused is a counted failure"
+    assert_contains "$log" "ERROR: bumporg/repo-refs-blind: could not read whether skills-lock-bump/update exists" \
+        "no open PR: an unreadable branch listing is a counted failure, not 'no branch'"
+    # A branch with an OPEN PR the sweep would not merge, and other content
+    # than tonight's re-pin: the propose pass's refusal is a failure too.
+    assert_contains "$log" "ERROR: bumporg/repo-near-open-pr: skills-lock-bump/update already exists with different content — refusing to force-push" \
+        "blocked: a refused force-push is a counted failure"
+    # Nine refused branches, one undeletable, one unreadable, one refused
+    # force-push: twelve, each counted once.
+    assert_contains "$log" " 12 failed ===" "blocked: each blocked consumer is counted exactly once"
+    if [[ $BUMP_EXIT -ne 0 ]]; then
+        pass "blocked: the run exits non-zero, so the scheduled run goes red"
+    else
+        fail "blocked: the run exits non-zero, so the scheduled run goes red"
+    fi
 
     # ── 1. The merged repo: swept, then deferred, never re-proposed.
     assert_contains "$log" "bumporg/repo-merged-stale#130: MERGED with a merge commit" \
@@ -12733,8 +12924,11 @@ test_bump_branch_reuse_race() {
         "race (control): nothing is reopened where nothing was closed"
 
     # ── The next run proposes both deferred re-pins on fresh branches.
+    # repo-plain-stale's PR from the run above (reopened) is still open; the
+    # mock has no memory, so that is supplied here.
     : > "$BUMP_PR_LOG"
     rm -rf "$BUMP_PR_BODY_DIR"
+    MOCK_OPEN_PR_REPOS="bumporg_repo-plain-stale" \
     BUMP_BARE_DIR_FOR_RUN="$SWEEP_BARE" \
     BUMP_PR_DIR_FOR_RUN="$SWEEP_PR_DIR" \
         run_bump "$TEST_DIR/race-next.txt"
