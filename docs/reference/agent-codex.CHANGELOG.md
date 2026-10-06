@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-06 — 0.160.1 through 0.160.1
+
+- **Checked:** 2026-10-06T01:15Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.160.1](https://github.com/openai/codex/releases/tag/rust-v0.160.1), published 2026-10-05T18:29Z
+- **Window:** 0.160.1 (published 2026-10-05T18:29Z), the first stable release after 0.160.0: 1 stable release, 2 bullets (0.160.1/0: preserve `SYSTEMROOT`, `TEMP` and `TMP` when launching remote stdio MCP servers on Windows; 0.160.1/1: the backport changelog line). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.160.0`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` fe83f32, `adam-agentskills` 9c35b2e, `adam-agentskills-private` 10b02f6, `adamdaniel.ai` b9b91b3, `claude-memory-map` c9497b6, `cms-platform` c6d3125, `fastmail-actions` b268cde, `GHA-bench` 4f165b48, `jodidaniel.com` cc75080, `repo-settings` 6f1e7a6, `rss-inator` 8dce2eb, `skills-evals` a2c129e, `wsl-automation` a9e16c1.
+
+No group met the name-the-surface bar: the release is a Windows remote-MCP environment backport, and no fleet repo configures remote stdio MCP servers for Codex, so no issue was filed.
+
 ### 2026-10-02 — 0.160.0 through 0.160.0
 
 - **Checked:** 2026-10-02T01:20Z, [release log](https://github.com/openai/codex/releases)

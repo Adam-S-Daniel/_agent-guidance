@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-06 — 2.1.290 through 2.1.290
+
+- **Checked:** 2026-10-06T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.290](https://github.com/anthropics/claude-code/releases/tag/v2.1.290), published 2026-10-05T23:33Z
+- **Window:** v2.1.290 (published 2026-10-05T23:33Z), the first stable release after v2.1.289: 1 release, 190 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.290` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` fe83f32, `adam-agentskills` 9c35b2e, `adam-agentskills-private` 10b02f6, `adamdaniel.ai` b9b91b3, `claude-memory-map` c9497b6, `cms-platform` c6d3125, `fastmail-actions` b268cde, `GHA-bench` 4f165b48, `jodidaniel.com` cc75080, `repo-settings` 6f1e7a6, `rss-inator` 8dce2eb, `skills-evals` a2c129e, `wsl-automation` a9e16c1.
+
+No group met the name-the-surface bar. A grep of the fleet for `blockReadsOutsideWorkingDirectories`, `plansDirectory`, `claude attach`, `claude logs` and `managed-agents-onboard` found no dependence on a changed behavior (the `plansDirectory` hits in `claude-memory-map` and `migrate-claude-memory` concern documentation of the setting, not a backslash path). The bullet on a symlinked `CLAUDE.md`, rule or `AGENTS.md` loading under `permissions.blockReadsOutsideWorkingDirectories` or a `Read` deny rule is a permission fix; no fleet repo symlinks its instruction files or sets that option (fleet `CLAUDE.md` files import `@AGENTS.md`), so it did not mark the prompt-audit sweep (`sweep: none`). Other bullets cover mod and plugin hook types, `claude plugin validate`, scheduled-task resume, `/ultrareview` and Remote Control streaming, none of which a fleet repo depends on.
+
 ### 2026-10-04 — 2.1.289 through 2.1.289
 
 - **Checked:** 2026-10-04T16:25Z, [release log](https://github.com/anthropics/claude-code/releases)
