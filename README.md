@@ -201,9 +201,13 @@ maintenance are both verified in live Cloud sessions. Configuration and proof:
 ### Memory notes outside a repo
 
 Claude Code's auto-memory writes one markdown file per fact under
-`${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<encoded-cwd>/memory/`, one directory
-per cwd a session has ever run in — **22** on this machine, none of them inside
-any repo. A fact recorded there is a fact one agent on one machine can see.
+`${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<project-name>/memory/`. The name is
+derived by default or can be selected with `CLAUDE_CODE_PROJECT_DIR_NAME` when
+`CLAUDE_CONFIG_DIR` is set; see the official [project directory naming
+documentation](https://code.claude.com/docs/en/sessions#name-the-project-directory-yourself).
+A repository and its worktrees share an auto-memory directory by default;
+memory remains machine-local. See the official [storage location
+documentation](https://code.claude.com/docs/en/memory#storage-location).
 
 **The contract:** every note whose `type` is not `user` carries
 `metadata.home`, either `<owner>/<repo>:<path>` or

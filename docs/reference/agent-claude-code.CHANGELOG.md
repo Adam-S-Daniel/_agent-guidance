@@ -306,6 +306,16 @@ session if that variant is covered. No attachment was attempted.
 
 **Issues:** [_agent-guidance#178](https://github.com/Adam-S-Daniel/_agent-guidance/issues/178)
 
+**Rechecked 2026-10-07 (UTC):** Release quotes and dates were re-fetched from
+the GitHub release API; all three original quotes agree with the upstream
+[CHANGELOG at `765f236fe1bfcc678e0ec59af9170fb7d6771a3a`](https://github.com/anthropics/claude-code/blob/765f236fe1bfcc678e0ec59af9170fb7d6771a3a/CHANGELOG.md#21239), including [v2.1.275](https://github.com/anthropics/claude-code/blob/765f236fe1bfcc678e0ec59af9170fb7d6771a3a/CHANGELOG.md#21275) and [v2.1.277](https://github.com/anthropics/claude-code/blob/765f236fe1bfcc678e0ec59af9170fb7d6771a3a/CHANGELOG.md#21277).
+The [network allowlist changelog](network-allowlist-claude-environments.CHANGELOG.md)
+records the existing mechanics, and [merged PR #239](https://github.com/Adam-S-Daniel/_agent-guidance/pull/239)
+already fixed them. No domain changes are justified from this workstation;
+live probes of `docs.anthropic.com`, `code.claude.com` and `www.anthropic.com`
+in the actual cloud environment's My Whitelist remain pending. This
+_agent-guidance follow-up remains open; no live behavior was measured._
+
 #### 13. Auto-memory files, index limits and project directories
 
 - [v2.1.210](https://github.com/anthropics/claude-code/releases/tag/v2.1.210), published 2026-07-14T23:45Z
@@ -329,6 +339,28 @@ session if that variant is covered. No attachment was attempted.
 
 **Issues:** [_agent-guidance#179](https://github.com/Adam-S-Daniel/_agent-guidance/issues/179), [adam-agentskills#14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14), [claude-memory-map#48](https://github.com/Adam-S-Daniel/claude-memory-map/issues/48)
 
+**Rechecked 2026-10-07 (UTC):** All nine quotes and release dates match the
+fetched release bodies and the pinned upstream [CHANGELOG at
+`765f236fe1bfcc678e0ec59af9170fb7d6771a3a`](https://github.com/anthropics/claude-code/blob/765f236fe1bfcc678e0ec59af9170fb7d6771a3a/CHANGELOG.md#21214).
+[memory-home.sh](../../.claude/hooks/memory-home.sh) and
+[run-tests.sh](../../test/run-tests.sh) are covered by [merged PR #237](https://github.com/Adam-S-Daniel/_agent-guidance/pull/237),
+which already tests timestamps, quoted hashes, URL anchors, literal short-path
+hashes, and ordinary short and long project-directory fixtures. Those fixtures
+do not measure the CLI-selected directory with
+`CLAUDE_CODE_PROJECT_DIR_NAME`. The current [session documentation](https://code.claude.com/docs/en/sessions#name-the-project-directory-yourself),
+checked 2026-10-07, documents names of 1–64 letters, digits, hyphens or
+underscores, excluding Windows device names; it says the variable is ignored
+unless `CLAUDE_CONFIG_DIR` is also set, and auto-memory uses
+`projects/<name>/memory`. The [environment-variable documentation](https://code.claude.com/docs/en/env-vars)
+confirms this is a launch environment variable, not a settings `env` entry.
+The documented naming contract is unverified in a live CLI launch. This
+_agent-guidance follow-up remains open; no live behavior was measured._ No
+parser edits were made.
+The [README intro](../../README.md#memory-notes-outside-a-repo) and
+[hook header](../../.claude/hooks/memory-home.sh) now describe the documented
+project-name path. The existing `projects/*/memory/*.md` scan covers these
+names, including the existing selected-name `p` fixture.
+
 #### 14. Instruction-size warnings
 
 - [v2.1.206](https://github.com/anthropics/claude-code/releases/tag/v2.1.206), published 2026-07-10T01:45Z
@@ -337,6 +369,20 @@ session if that variant is covered. No attachment was attempted.
   > Improved the large CLAUDE.md startup notice to also count instruction files together, so many mid-sized files and @-imports are caught
 
 **Issues:** [_agent-guidance#180](https://github.com/Adam-S-Daniel/_agent-guidance/issues/180)
+
+**Rechecked 2026-10-07 (UTC):** Both quotes and dates match the fetched release
+bodies and pinned upstream [CHANGELOG sections for v2.1.206 and v2.1.281](https://github.com/anthropics/claude-code/blob/765f236fe1bfcc678e0ec59af9170fb7d6771a3a/CHANGELOG.md#21206), [including the v2.1.281 entry](https://github.com/anthropics/claude-code/blob/765f236fe1bfcc678e0ec59af9170fb7d6771a3a/CHANGELOG.md#21281).
+The [README notice](../../README.md#claude-codes-instruction-size-notice)
+and [merged PR #239](https://github.com/Adam-S-Daniel/_agent-guidance/pull/239)
+already document the aggregated notice. Current
+[memory documentation](https://code.claude.com/docs/en/memory#my-claudemd-is-too-large)
+says the combined limit counts each `CLAUDE.md`, rules and `@import` file, but
+does not establish a numeric limit. The README's bundle-derived threshold
+remains identified as a 2.1.289 observation. The owner still needs to measure
+the real multi-repo startup notice; no budget changes or real CLI runs were
+made here. This confirms the notice's scope but gives no measured threshold for
+this account's repositories. This _agent-guidance follow-up remains open; no
+live behavior was measured.
 
 #### 15. Worktree-isolated subagents can no longer reach the main checkout
 
