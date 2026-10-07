@@ -4,11 +4,12 @@
 # THE CONTRACT
 # ------------
 # Claude Code's auto-memory writes one markdown file per fact under
-# `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<encoded-cwd>/memory/<slug>.md`,
-# plus a `MEMORY.md` index. Those directories are OUTSIDE every repo — 22 of
-# them on this machine — so a fact recorded there is invisible to every other
-# session, every other agent and every other person, and it versions with
-# nothing.
+# `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<project-name>/memory/<slug>.md`,
+# where the project name is derived or set with
+# `CLAUDE_CODE_PROJECT_DIR_NAME` when `CLAUDE_CONFIG_DIR` is set. A `MEMORY.md`
+# index sits beside the notes. The default storage is machine-local, so a fact
+# recorded there does not travel to another machine or a fresh container, and
+# it versions with nothing.
 #
 #   Every memory note whose `type` is NOT `user` must carry `metadata.home`:
 #   `<owner>/<repo>:<path>` (preferred), or
