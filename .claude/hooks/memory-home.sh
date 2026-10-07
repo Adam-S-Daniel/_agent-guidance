@@ -8,8 +8,8 @@
 # where the project name is derived or set with
 # `CLAUDE_CODE_PROJECT_DIR_NAME` when `CLAUDE_CONFIG_DIR` is set. A `MEMORY.md`
 # index sits beside the notes. The default storage is machine-local, so a fact
-# recorded there is invisible to every other session, every other agent and
-# every other person, and it versions with nothing.
+# recorded there does not travel to another machine or a fresh container, and
+# it versions with nothing.
 #
 #   Every memory note whose `type` is NOT `user` must carry `metadata.home`:
 #   `<owner>/<repo>:<path>` (preferred), or

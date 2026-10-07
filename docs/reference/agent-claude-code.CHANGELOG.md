@@ -314,7 +314,7 @@ records the existing mechanics, and [merged PR #239](https://github.com/Adam-S-D
 already fixed them. No domain changes are justified from this workstation;
 live probes of `docs.anthropic.com`, `code.claude.com` and `www.anthropic.com`
 in the actual cloud environment's My Whitelist remain pending. This
-_agent-guidance follow-up remains open; no live behavior was measured._
+`_agent-guidance` follow-up remains open; no live behavior was measured.
 
 #### 13. Auto-memory files, index limits and project directories
 
@@ -354,7 +354,7 @@ unless `CLAUDE_CONFIG_DIR` is also set, and auto-memory uses
 `projects/<name>/memory`. The [environment-variable documentation](https://code.claude.com/docs/en/env-vars)
 confirms this is a launch environment variable, not a settings `env` entry.
 The documented naming contract is unverified in a live CLI launch. This
-_agent-guidance follow-up remains open; no live behavior was measured._ No
+`_agent-guidance` follow-up remains open; no live behavior was measured. No
 parser edits were made.
 The [README intro](../../README.md#memory-notes-outside-a-repo) and
 [hook header](../../.claude/hooks/memory-home.sh) now describe the documented
@@ -381,7 +381,7 @@ does not establish a numeric limit. The README's bundle-derived threshold
 remains identified as a 2.1.289 observation. The owner still needs to measure
 the real multi-repo startup notice; no budget changes or real CLI runs were
 made here. This confirms the notice's scope but gives no measured threshold for
-this account's repositories. This _agent-guidance follow-up remains open; no
+this account's repositories. This `_agent-guidance` follow-up remains open; no
 live behavior was measured.
 
 #### 15. Worktree-isolated subagents can no longer reach the main checkout
