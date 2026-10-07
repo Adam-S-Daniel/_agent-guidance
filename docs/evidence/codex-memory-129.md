@@ -423,3 +423,27 @@ actual versions, destination, and whether consolidation was queued/completed
 separately. Include a note lacking frontmatter to demonstrate that byte
 preservation does not enforce the home contract. This live check remains
 open; the source findings alone do not authorize closing issue 183.
+
+### 2026-10-06: current source and documentation recheck
+
+The latest stable release checked was
+[`rust-v0.160.1`](https://github.com/openai/codex/releases/tag/rust-v0.160.1),
+published 2026-10-05T18:29:37Z. Relevant source files were unchanged from
+0.160.0. This was a source/documentation read only: no CLI reproduction,
+`codex --version` invocation, importer execution, or real memory inspection.
+The [copy path still uses `fs::read` and `fs::write`](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/external-agent-migration/src/memory_import.rs#L281-L309),
+and [destination construction still targets the imported resources directory](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/external-agent-migration/src/memory_import.rs#L362-L372).
+The byte-preservation inference above therefore still applies to successfully
+copied raw notes; it does not establish later consolidation behavior. The
+[current import documentation](https://learn.chatgpt.com/docs/import), read
+2026-10-06, maps Claude Code project memories to Memories but gives no
+`metadata.home` preservation guarantee.
+
+The [session-availability discrepancy](../reference/agent-codex.DISCREPANCIES.md#2026-10-06--import-session-availability-docs-disagree-with-release-notes)
+records conflicting current documentation and 0.157.0 release notes, with
+0.160.1 source reads suggesting the release-note path remains implemented.
+Remote behavior has not been reproduced. Use a local TUI for the planned
+disposable-profile experiment, the common ground across those documents,
+until the discrepancy is settled. The experiment remains open in
+[issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183);
+auditor coverage and the existing owner decision above are unchanged.

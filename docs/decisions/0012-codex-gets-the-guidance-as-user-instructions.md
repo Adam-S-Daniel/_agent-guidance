@@ -97,14 +97,16 @@ repo's own additions in the process.
 
 ## Consequences
 
-- **A Codex session on a machine that never ran the registrar — or ran it and
-  never trusted the hook in `/hooks` — gets the repo stub and nothing else.**
-  That is the same degradation a Claude session gets when the hook fails, and
-  the stub says how to tell: `codex debug prompt-input` prints exactly what the
-  session loaded, and no `fleet-guidance:` line in it means DEGRADED. The
-  registrar cannot close this on the operator's behalf; trust is a human
-  action by design, and a script that could bypass it would be a worse thing to
-  ship than the gap.
+- **A missing registrar or hook trust prevents refresh through that hook;
+  previously installed global instructions can still load.**
+  `codex debug prompt-input` renders instructions loaded from disk by its own
+  diagnostic process; it does not run SessionStart hooks or inspect an
+  existing session or daemon. Verify delivery in the launched session's
+  initial instructions and verdict, as described in the
+  [2026-10-04 evidence](../evidence/codex-trust-and-daemon-0160.md#prompt-debugging-source-read-2026-10-04-cli-01600-rust-v01600)
+  and [diagnostic correction below](#addendum--trust-and-daemon-evidence-boundaries-2026-10-04).
+  The registrar cannot grant hook trust on the operator's behalf; review and
+  trust in `/hooks` remain human actions by design.
 - **Global user instructions apply to EVERY Codex project on that machine**, as
   `~/.claude/CLAUDE.md` already does for Claude Code. `FLEET_GUIDANCE_SKIP`
   therefore governs both surfaces with one flag, and removes an
