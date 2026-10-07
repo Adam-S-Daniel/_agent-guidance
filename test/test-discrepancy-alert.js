@@ -147,10 +147,16 @@ test("parseEntries: regression — the real agent-claude-code.DISCREPANCIES.md p
   assert.deepEqual(parseEntries(text), []);
 });
 
-test("parseEntries: regression — the real agent-codex.DISCREPANCIES.md parses to []", () => {
+test("parseEntries: regression — the real agent-codex.DISCREPANCIES.md contains the import session availability entry", () => {
   const p = path.join(__dirname, "..", "docs", "reference", "agent-codex.DISCREPANCIES.md");
   const text = fs.readFileSync(p, "utf8");
-  assert.deepEqual(parseEntries(text), []);
+  const entries = parseEntries(text);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].heading, "2026-10-06 — `/import` session availability: docs disagree with release notes");
+  assert.ok(entries[0].source.includes("Made `/import` available in remote sessions and local background-server sessions. (#47317)"));
+  for (const field of ["Docs say", "Evidence", "Vendor issues", "Vendor proposal"]) {
+    assert.ok(entries[0].source.includes(`**${field}:**`), `entry contains ${field}`);
+  }
 });
 
 // ── 2. newEntries ────────────────────────────────────────────────────────────
