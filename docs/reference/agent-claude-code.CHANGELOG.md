@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-07 — 2.1.291 through 2.1.292
+
+- **Checked:** 2026-10-07T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.292](https://github.com/anthropics/claude-code/releases/tag/v2.1.292), published 2026-10-06T18:59Z
+- **Window:** v2.1.291 (published 2026-10-06T03:55Z) and v2.1.292 (published 2026-10-06T18:59Z), the first stable releases after v2.1.290: 2 releases, 93 bullets (not individually indexed: no group was drafted). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.291` and `v2.1.292` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` a655590, `adam-agentskills` 9c35b2e, `adam-agentskills-private` 10b02f6, `adamdaniel.ai` 7fddbde, `claude-memory-map` 08e1701, `cms-platform` 8442e97, `fastmail-actions` 3beea0a, `GHA-bench` 982faa83, `jodidaniel.com` 22b6007, `repo-settings` 1189e72, `rss-inator` 8dce2eb, `skills-evals` 78f5a88, `wsl-automation` a9e16c1.
+
+No group met the name-the-surface bar. A grep of the fleet for `system-reminder`, `NO_PROXY`, `MCP_PROTOCOL`, `OVERLOADED_RETRY`, `claude plugin install` and `permissionMode: auto` found no dependence on a changed behavior: the `skills-bootstrap.sh` hooks mention `claude plugin install` only in a comment saying it is not a substitute for the hook, `skills-evals` passes `NO_PROXY` through as an environment variable unchanged, and `skills-evals`' `arms.py` runs `claude plugin install <bundle>@<market>`, to which the new `--marketplace` flag is additive. The 2.1.292 bullet escaping `<system-reminder>` tags in hook output touches no fleet hook, since none writes that tag. Other bullets cover mod and plugin hook types, `claude plugin validate`/`test`, stdio MCP protocol negotiation, scheduled-task and `/loop` resume, cloud-session and Remote Control fixes, vim mode and prompt-box input, and Claude Tag and Code Review, none of which a fleet repo depends on. No bullet changes models, `/doctor` or instruction-file loading in a way the sweep triggers on (the "instruction file not loaded" line fix is a display fix), so the prompt-audit sweep was not marked (`sweep: none`).
+
 ### 2026-10-06 — 2.1.290 through 2.1.290
 
 - **Checked:** 2026-10-06T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
