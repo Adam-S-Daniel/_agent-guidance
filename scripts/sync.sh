@@ -12,7 +12,9 @@ set -euo pipefail
 #   5. Delivers the skills-bootstrap SessionStart hook to ALLOWLISTED repos
 #      that already carry their own skills.lock (see repos.yml and
 #      docs/decisions/0001) — never to every repo, and never writing the lock
-#   6. Pushes the update directly to the default branch (the sync App has a
+#   6. Ensures the root .gitattributes pins .claude/hooks/*.sh to LF (one
+#      appended line; see docs/decisions/0019)
+#   7. Pushes the update directly to the default branch (the sync App has a
 #      ruleset bypass, declared in repo-settings); falls back to a PR with
 #      auto-merge for repos whose protection rejects the push
 #
@@ -46,6 +48,11 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# The one managed line in each repo's root .gitattributes that keeps the hook
+# scripts above LF in every checkout, so bash in WSL can parse them from a
+# Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
+GITATTR_REL_PATH=".gitattributes"
+GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -1039,7 +1046,28 @@ for repo_name in "${REPOS[@]}"; do
         log "skills-bootstrap: $bootstrap_reason."
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date; then
+    # ── .gitattributes: classify ───────────────────────────────────────
+    # Every synced repo, whatever its fleet-memory mode: the line costs one
+    # entry, matches nothing in a repo with no hook scripts, and keeps any hook
+    # a repo does carry parseable by bash from a Windows-autocrlf clone. Two
+    # refusals, neither a failure: a .gitattributes that is itself gitignored
+    # (`git add` would exit 1 and, under `set -e`, end the whole fleet run) and
+    # one that is not a regular file (the helper will not edit a symlink).
+    gitattr_deliver=true
+    gitattr_state=$("$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")
+    if git check-ignore -q "$GITATTR_REL_PATH" 2>/dev/null; then
+        gitattr_deliver=false
+        log "WARN: $GITATTR_REL_PATH is gitignored in $repo_name — the hook-script LF line is not delivered."
+    elif [[ -L "$GITATTR_REL_PATH" || ( -e "$GITATTR_REL_PATH" && ! -f "$GITATTR_REL_PATH" ) ]]; then
+        gitattr_deliver=false
+        log "WARN: $GITATTR_REL_PATH is not a regular file in $repo_name — refusing to edit it; the hook-script LF line is not delivered."
+    fi
+    gitattr_up_to_date=true
+    if $gitattr_deliver && [[ "$gitattr_state" != "present" ]]; then
+        gitattr_up_to_date=false
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1108,6 +1136,14 @@ for repo_name in "${REPOS[@]}"; do
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
+        fi
+
+        if ! $gitattr_up_to_date; then
+            if [[ -e "$GITATTR_REL_PATH" ]]; then
+                log "[DRY RUN] Would append the hook-script LF line to $GITATTR_REL_PATH (existing lines preserved)"
+            else
+                log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF"
+            fi
         fi
 
         ((SKIP_COUNT++)) || true
@@ -1252,7 +1288,20 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── .gitattributes: write ──────────────────────────────────────────
+    # Appended to, never rewritten (the helper's header has the byte rules).
+    gitattr_written=false
+    if ! $gitattr_up_to_date; then
+        if gitattr_result=$("$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
+            [[ "$gitattr_result" == "created" || "$gitattr_result" == "appended" ]] && gitattr_written=true
+            log "gitattributes: $GITATTR_REL_PATH — $gitattr_result."
+        else
+            log "WARN: could not add the hook-script LF line to $GITATTR_REL_PATH (${gitattr_result:-no output}) — leaving it untouched."
+        fi
+    fi
+
     add_paths=(AGENTS.md)
+    $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
@@ -1294,7 +1343,21 @@ source \"fork\", so the old matcher skipped every fork. Only groups the
 sync wrote, holding nothing but its own hook, are changed."
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
+    if $gitattr_written; then
+        bootstrap_note="${bootstrap_note}
+
+Pins .claude/hooks/*.sh to LF in .gitattributes (one appended line; nothing
+else in the file changed): a Windows autocrlf checkout gives them CRLF, which
+bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: pin the hook scripts to LF in .gitattributes
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
         commit_message="chore: deliver the skills-bootstrap SessionStart hook
 
 AGENTS.md and the CLAUDE.md bridge were already up to date.${bootstrap_note}"
@@ -1522,6 +1585,15 @@ then cost always-on context in each such session.
 It is registered as an **additional** \`hooks.SessionStart\` entry in
 \`$SETTINGS_REL_PATH\`; existing entries are preserved. \`$LOCK_REL_PATH\` is
 **not** modified by this sync — it is this repo's own declaration."
+        fi
+
+        if $gitattr_written; then
+            pr_extra="${pr_extra}
+
+This PR also adds one line to \`$GITATTR_REL_PATH\`, \`.claude/hooks/*.sh text eol=lf\`,
+with a comment above it; nothing else in that file changes. A Windows
+\`core.autocrlf=true\` checkout gives the hook scripts CRLF, which bash in WSL
+cannot parse. See [ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)."
         fi
 
         existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \

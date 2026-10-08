@@ -2392,6 +2392,18 @@ case "$1" in
                         done
                         json="[$rows]"
                         ;;
+                    gattrorg)
+                        # The .gitattributes lane's fixtures, enumerated off
+                        # disk for the same reason as bumporg: the lane stands
+                        # them up in a MOCK_BARE_DIR of its own.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/gattrorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"gattrorg/${name#gattrorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
                     failorg)
                         # An owner the CLI cannot authenticate against — the
                         # shape a missing App installation takes when the
@@ -22095,6 +22107,478 @@ PY
     fi
 }
 
+# ── The hook-script LF line in .gitattributes (docs/decisions/0019) ───────
+#
+# The sync delivers `.claude/hooks/*.sh` to every consumer, and a Windows
+# `core.autocrlf=true` checkout gives them CRLF, which bash in WSL cannot
+# parse. sync.sh appends one line to each repo's root .gitattributes to stop
+# that; scripts/hook-eol-gitattributes.sh owns the line. These tests cover the
+# helper's byte rules, real git honoring the line, the sync's delivery and
+# idempotence, the dry run and the drift-report note.
+
+GATTR_LINE_T='.claude/hooks/*.sh text eol=lf'
+GATTR_COMMENT_T='# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)'
+
+# gattr_git — git with no system config and no signing, so a test's answer
+# cannot depend on the machine running it (a system core.autocrlf, say).
+gattr_git() {
+    GIT_CONFIG_NOSYSTEM=1 git -c commit.gpgsign=false -c tag.gpgsign=false "$@"
+}
+
+# gattr_case <dir> <name> <original printf format|ABSENT> <expected result>
+#            <expected printf format> — run `ensure` on one file shape and
+# compare the result word and the file's full bytes.
+gattr_case() {
+    local d="$1" name="$2" orig="$3" want_result="$4" want_bytes="$5"
+    local f="$d/$name/.gitattributes" got rc=0
+    mkdir -p "$d/$name"
+    [[ "$orig" == ABSENT ]] || printf "$orig" > "$f"
+    got=$("$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure "$f") || rc=$?
+    if [[ $rc -eq 0 && "$got" == "$want_result" ]]; then
+        pass "gitattributes helper ($name): ensure reports $want_result"
+    else
+        fail "gitattributes helper ($name): ensure reports $want_result — got '$got', exit $rc"
+    fi
+    printf "$want_bytes" > "$d/$name.expected"
+    if cmp -s "$f" "$d/$name.expected"; then
+        pass "gitattributes helper ($name): file bytes are exactly as expected"
+    else
+        fail "gitattributes helper ($name): file bytes differ — got $(od -An -c "$f" | tr -s ' ' | tr '\n' ' ')"
+    fi
+}
+
+test_hook_eol_gitattributes_helper() {
+    echo ""
+    echo "=== Test: hook-eol-gitattributes.sh byte rules ==="
+
+    local s="$REPO_ROOT/scripts/hook-eol-gitattributes.sh"
+    local d="$TEST_DIR/gattr-helper" got rc
+    local L="$GATTR_LINE_T" C="$GATTR_COMMENT_T"
+    rm -rf "$d"; mkdir -p "$d"
+
+    gattr_case "$d" create ABSENT created "$C\n$L\n"
+    gattr_case "$d" append '*.png binary\n' appended "*.png binary\n$C\n$L\n"
+    gattr_case "$d" empty '' appended "$C\n$L\n"
+    gattr_case "$d" no-trailing-newline '*.png binary' appended "*.png binary\n$C\n$L\n"
+    gattr_case "$d" crlf '*.png binary\r\n*.jpg binary\r\n' appended \
+        "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n"
+    gattr_case "$d" crlf-no-trailing-newline '*.png binary\r\n*.jpg binary' appended \
+        "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n"
+    # Present, padded with whitespace and inside a CRLF file: identical once
+    # the surrounding whitespace is stripped, so nothing is written.
+    gattr_case "$d" present-padded "*.png binary\r\n  $L \t\r\n" present \
+        "*.png binary\r\n  $L \t\r\n"
+    # Present WITHOUT the comment: the comment is not added on its own.
+    gattr_case "$d" present-no-comment "$L\n*.png binary\n" present "$L\n*.png binary\n"
+    # The comment left behind when the line was removed by hand: only the line
+    # comes back, so the comment is not duplicated.
+    gattr_case "$d" comment-only "*.png binary\n$C\n" appended "*.png binary\n$C\n$L\n"
+    # A broader rule earlier in the file, as in adam-agentskills.
+    gattr_case "$d" star-minus-text '* -text\n' appended "* -text\n$C\n$L\n"
+
+    # Idempotence: a second ensure over the appended file writes nothing.
+    cp "$d/append/.gitattributes" "$d/append.after-first"
+    got=$("$s" ensure "$d/append/.gitattributes")
+    if [[ "$got" == present ]] && cmp -s "$d/append/.gitattributes" "$d/append.after-first"; then
+        pass "gitattributes helper: a second ensure reports present and changes no byte"
+    else
+        fail "gitattributes helper: a second ensure reports present and changes no byte — got '$got'"
+    fi
+
+    # status never writes, and answers both ways.
+    printf '*.png binary\n' > "$d/status-missing"
+    got=$("$s" status "$d/status-missing")
+    if [[ "$got" == missing ]] && [[ "$(cat "$d/status-missing")" == '*.png binary' ]]; then
+        pass "gitattributes helper: status reports missing and writes nothing"
+    else
+        fail "gitattributes helper: status reports missing and writes nothing — got '$got'"
+    fi
+    got=$("$s" status "$d/no-such-file")
+    if [[ "$got" == missing && ! -e "$d/no-such-file" ]]; then
+        pass "gitattributes helper: status on an absent file reports missing and creates nothing"
+    else
+        fail "gitattributes helper: status on an absent file reports missing and creates nothing — got '$got'"
+    fi
+    got=$("$s" status "$d/present-padded/.gitattributes")
+    if [[ "$got" == present ]]; then
+        pass "gitattributes helper: status reports present for a padded CRLF line"
+    else
+        fail "gitattributes helper: status reports present for a padded CRLF line — got '$got'"
+    fi
+
+    # A near miss is not the line.
+    printf '.claude/hooks/*.sh text\n' > "$d/near-miss"
+    got=$("$s" status "$d/near-miss")
+    if [[ "$got" == missing ]]; then
+        pass "gitattributes helper: a line without eol=lf is not the managed line"
+    else
+        fail "gitattributes helper: a line without eol=lf is not the managed line — got '$got'"
+    fi
+
+    # A symlink is refused, not followed.
+    printf '*.png binary\n' > "$d/link-target"
+    ln -s "$d/link-target" "$d/link"
+    rc=0; got=$("$s" ensure "$d/link") || rc=$?
+    if [[ $rc -eq 3 && "$got" == refused ]] && [[ "$(cat "$d/link-target")" == '*.png binary' ]]; then
+        pass "gitattributes helper: a symlinked .gitattributes is refused with exit 3 and left untouched"
+    else
+        fail "gitattributes helper: a symlinked .gitattributes is refused with exit 3 and left untouched — got '$got', exit $rc"
+    fi
+
+    # Gitattributes semantics: for each attribute the LAST matching line wins,
+    # so the appended line beats an earlier `* -text` for the hooks alone. The
+    # reversed file is the control that shows the order is what does it.
+    local r="$d/semantics"
+    gattr_git init -q -b main "$r"
+    cp "$d/star-minus-text/.gitattributes" "$r/.gitattributes"
+    got=$(gattr_git -C "$r" check-attr text eol -- .claude/hooks/x.sh README.md)
+    if [[ "$got" == *".claude/hooks/x.sh: text: set"* && "$got" == *".claude/hooks/x.sh: eol: lf"* \
+          && "$got" == *"README.md: text: unset"* && "$got" == *"README.md: eol: unspecified"* ]]; then
+        pass "gitattributes helper: appended after '* -text', the line sets text eol=lf on the hooks and nothing else"
+    else
+        fail "gitattributes helper: appended after '* -text', the line sets text eol=lf on the hooks and nothing else — got: $got"
+    fi
+    printf '%s\n* -text\n' "$L" > "$r/.gitattributes"
+    got=$(gattr_git -C "$r" check-attr text -- .claude/hooks/x.sh)
+    if [[ "$got" == *".claude/hooks/x.sh: text: unset"* ]]; then
+        pass "gitattributes helper (control): placed BEFORE '* -text' the line loses, so appending is what makes it win"
+    else
+        fail "gitattributes helper (control): placed BEFORE '* -text' the line loses — got: $got"
+    fi
+}
+
+# Real git, local only: does the line do its job? A committed LF hook checks
+# out CRLF under core.autocrlf=true without it, and LF with it — and bash
+# rejects the CRLF copy the way WSL sessions saw. Also pins down what the ADR
+# says about clones that already exist: adding the line does not rewrite their
+# working copy, and neither does `git checkout --`; removing the file and
+# checking it out again does.
+test_hook_eol_gitattributes_git_checkout() {
+    echo ""
+    echo "=== Test: real git honors the hook-script LF line under core.autocrlf=true ==="
+
+    local d="$TEST_DIR/gattr-git" src old new got
+    rm -rf "$d"; mkdir -p "$d"
+    src="$d/src"; old="$d/old-clone"; new="$d/new-clone"
+    gattr_git init -q -b main "$src"
+    mkdir -p "$src/.claude/hooks"
+    printf '#!/usr/bin/env bash\nf() {\n    echo ok\n}\nf\n' > "$src/.claude/hooks/x.sh"
+    gattr_git -C "$src" add .claude/hooks/x.sh
+    gattr_git -C "$src" commit -q -m "hook, no attributes"
+    gattr_git -C "$src" tag before-line
+
+    gattr_git -c core.autocrlf=true clone -q "$src" "$old" 2>/dev/null
+    gattr_git -C "$old" config core.autocrlf true
+    if grep -q $'\r' "$old/.claude/hooks/x.sh"; then
+        pass "real git: without the line, an autocrlf checkout gives the LF hook CRLF"
+    else
+        fail "real git: without the line, an autocrlf checkout gives the LF hook CRLF — it stayed LF, so this test proves nothing"
+    fi
+    if bash -n "$old/.claude/hooks/x.sh" 2>/dev/null; then
+        fail "real git: bash rejects the CRLF hook — it parsed"
+    else
+        pass "real git: bash rejects the CRLF hook (the WSL failure)"
+    fi
+
+    "$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure "$src/.gitattributes" >/dev/null
+    gattr_git -C "$src" add .gitattributes
+    gattr_git -C "$src" commit -q -m "pin hooks to LF"
+
+    gattr_git -c core.autocrlf=true clone -q "$src" "$new" 2>/dev/null
+    if grep -q $'\r' "$new/.claude/hooks/x.sh"; then
+        fail "real git: with the line, an autocrlf checkout keeps the hook LF — it has CR"
+    else
+        pass "real git: with the line, an autocrlf checkout keeps the hook LF"
+    fi
+    got=$(gattr_git -C "$new" ls-files --eol -- .claude/hooks/x.sh)
+    if [[ "$got" == *"i/lf"*"w/lf"*"eol=lf"* ]]; then
+        pass "real git: ls-files --eol reads i/lf w/lf with the attribute"
+    else
+        fail "real git: ls-files --eol reads i/lf w/lf with the attribute — got: $got"
+    fi
+    if bash -n "$new/.claude/hooks/x.sh" 2>/dev/null; then
+        pass "real git: bash parses the LF hook"
+    else
+        fail "real git: bash parses the LF hook"
+    fi
+
+    # The clone that already existed. Pulling the line in leaves its hook CRLF
+    # because the blob did not change; `git checkout --` does not rewrite a
+    # stat-clean file either.
+    gattr_git -C "$old" pull -q 2>/dev/null
+    gattr_git -C "$old" checkout -- .claude/hooks/
+    if grep -q $'\r' "$old/.claude/hooks/x.sh" && [[ -z "$(gattr_git -C "$old" status --porcelain)" ]]; then
+        pass "real git: an existing CRLF copy stays CRLF after the pull and after 'git checkout --', with a clean status"
+    else
+        fail "real git: an existing CRLF copy stays CRLF after the pull and after 'git checkout --', with a clean status"
+    fi
+    rm "$old/.claude/hooks/x.sh"
+    gattr_git -C "$old" checkout -- .claude/hooks/
+    if ! grep -q $'\r' "$old/.claude/hooks/x.sh" && bash -n "$old/.claude/hooks/x.sh" 2>/dev/null; then
+        pass "real git: removing the hook and checking it out again gives LF"
+    else
+        fail "real git: removing the hook and checking it out again gives LF"
+    fi
+}
+
+# setup_gattr_repos <bare dir> — the gattrorg fleet, one bare per
+# .gitattributes shape the sync has to handle.
+setup_gattr_repos() {
+    local bare_dir="$1" work="$TEST_DIR/gattr-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in repo-none repo-append repo-present repo-crlf repo-no-newline \
+                repo-star-minus-text repo-ignored repo-protected; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/gattrorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        case "$name" in
+            repo-append|repo-protected) printf '*.png binary\n' > "$work/$name/.gitattributes" ;;
+            repo-present) printf '*.png binary\n  %s  \n' "$GATTR_LINE_T" > "$work/$name/.gitattributes" ;;
+            repo-crlf) printf '*.png binary\r\n*.jpg binary\r\n' > "$work/$name/.gitattributes" ;;
+            repo-no-newline) printf '*.png binary' > "$work/$name/.gitattributes" ;;
+            repo-star-minus-text) printf '* -text\n' > "$work/$name/.gitattributes" ;;
+            repo-ignored) printf '.gitattributes\n' > "$work/$name/.gitignore" ;;
+        esac
+        [[ -f "$work/$name/.gitattributes" ]] && cp "$work/$name/.gitattributes" "$bare_dir/../gattr-orig-$name"
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/gattrorg_$name" HEAD:main 2>/dev/null
+    done
+    install_reject_main_hook "$bare_dir/gattrorg_repo-protected"
+}
+
+# gattr_section <log> <repo> — the lines sync.sh logged for one repo, so an
+# assertion about one repo cannot be satisfied by another's line.
+gattr_section() {
+    awk -v start="=== gattrorg/$2 ===" '
+        $0 == start { on = 1; print; next }
+        on && /^=== / { on = 0 }
+        on { print }
+    ' "$1"
+}
+
+# gattr_expect <repo> <expected printf format> <label> — the repo's
+# .gitattributes on main (or on <ref>) is exactly these bytes.
+gattr_expect() {
+    local repo="$1" want="$2" label="$3" ref="${4:-main}"
+    local bare="$TEST_DIR/gattr-bare/gattrorg_$repo"
+    printf "$want" > "$TEST_DIR/gattr-want"
+    if gattr_git -C "$bare" show "$ref:.gitattributes" > "$TEST_DIR/gattr-got" 2>/dev/null \
+       && cmp -s "$TEST_DIR/gattr-got" "$TEST_DIR/gattr-want"; then
+        pass "$label"
+    else
+        fail "$label — got $(od -An -c "$TEST_DIR/gattr-got" 2>/dev/null | tr -s ' ' | tr '\n' ' ')"
+    fi
+}
+
+test_sync_gitattributes() {
+    echo ""
+    echo "=== Test: sync.sh maintains the hook-script LF line in .gitattributes ==="
+
+    local bare="$TEST_DIR/gattr-bare" L="$GATTR_LINE_T" C="$GATTR_COMMENT_T"
+    local out="$TEST_DIR/gattr-sync" before after rc sec got
+    setup_gattr_repos "$bare"
+
+    run_gattr_sync() {   # <log> [--dry-run]
+        local log="$1"; shift
+        GITHUB_REPOSITORY_OWNER=gattrorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/gattr-pr-bodies" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+
+    # ── Dry run: reported like the other managed files, nothing written ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_gattr_sync "$out-dry.log" --dry-run || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "gitattributes (dry run): exits 0 and moves no ref"
+    else
+        fail "gitattributes (dry run): exits 0 and moves no ref — exit $rc"
+    fi
+    gattr_section "$out-dry.log" repo-none > "$out-dry-none"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add .gitattributes pinning .claude/hooks/*.sh to LF" \
+        "gitattributes (dry run): a repo without the file is told it would be created"
+    gattr_section "$out-dry.log" repo-append > "$out-dry-append"
+    assert_contains "$out-dry-append" "[DRY RUN] Would append the hook-script LF line to .gitattributes (existing lines preserved)" \
+        "gitattributes (dry run): a repo with the file is told the line would be appended"
+    gattr_section "$out-dry.log" repo-present > "$out-dry-present"
+    assert_not_contains "$out-dry-present" ".gitattributes" \
+        "gitattributes (dry run): a repo that already has the line is not told anything about it"
+    gattr_section "$out-dry.log" repo-ignored > "$out-dry-ignored"
+    assert_contains "$out-dry-ignored" "WARN: .gitattributes is gitignored" \
+        "gitattributes (dry run): a gitignored .gitattributes is named, not written"
+    assert_not_contains "$out-dry-ignored" "[DRY RUN] Would add .gitattributes" \
+        "gitattributes (dry run): a gitignored .gitattributes is not offered for writing"
+
+    # ── Drift report before the sync ──
+    local rpt="$TEST_DIR/gattr-drift-before.md"
+    GITHUB_REPOSITORY_OWNER=gattrorg MOCK_BARE_DIR="$bare" REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out-drift-before.log" 2>&1 || true
+    assert_row_note_contains "$rpt" "gattrorg/repo-present" "gitattr-ok" \
+        "gitattributes (drift): a repo carrying the line reads gitattr-ok"
+    assert_row_note_contains "$rpt" "gattrorg/repo-none" "gitattr-missing" \
+        "gitattributes (drift): a repo with no .gitattributes reads gitattr-missing"
+    assert_row_note_contains "$rpt" "gattrorg/repo-append" "gitattr-missing" \
+        "gitattributes (drift): a .gitattributes without the line reads gitattr-missing"
+    assert_scoped_line_lacks "$rpt" "gattrorg/repo-present" "gitattr-missing" \
+        "gitattributes (drift): the present repo is not also called missing"
+    assert_contains "$rpt" "**Hook-script line endings**" \
+        "gitattributes (drift): the legend explains the note"
+
+    # ── The real run ──
+    rc=0; run_gattr_sync "$out-1.log" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "gitattributes (sync): the run exits 0"
+    else
+        fail "gitattributes (sync): the run exits 0 — got $rc"
+    fi
+    gattr_expect repo-none "$C\n$L\n" \
+        "gitattributes (sync): created with the comment and the line"
+    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+        "gitattributes (sync): appended, every existing byte preserved"
+    gattr_expect repo-present "*.png binary\n  $L  \n" \
+        "gitattributes (sync): already present (padded) — byte-identical"
+    gattr_expect repo-crlf "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n" \
+        "gitattributes (sync): a CRLF file is appended to with CRLF"
+    gattr_expect repo-no-newline "*.png binary\n$C\n$L\n" \
+        "gitattributes (sync): a missing final newline is supplied before appending"
+    gattr_expect repo-star-minus-text "* -text\n$C\n$L\n" \
+        "gitattributes (sync): appended after '* -text'"
+
+    # Same commit as the rest of the delivery, not a second one.
+    got=$(gattr_git -C "$bare/gattrorg_repo-none" show --name-only --format= main)
+    if grep -qxF .gitattributes <<< "$got" && grep -qxF AGENTS.md <<< "$got" \
+       && [[ "$(gattr_git -C "$bare/gattrorg_repo-none" rev-list --count main)" == 2 ]]; then
+        pass "gitattributes (sync): delivered in the same single commit as AGENTS.md"
+    else
+        fail "gitattributes (sync): delivered in the same single commit as AGENTS.md — files: $(tr '\n' ' ' <<< "$got")"
+    fi
+    got=$(gattr_git -C "$bare/gattrorg_repo-present" show --name-only --format= main)
+    if grep -qxF .gitattributes <<< "$got"; then
+        fail "gitattributes (sync): a .gitattributes that already had the line is not in the commit"
+    else
+        pass "gitattributes (sync): a .gitattributes that already had the line is not in the commit"
+    fi
+
+    # `* -text` then the line: real git, on the synced repo itself.
+    local clone="$TEST_DIR/gattr-verify-star"
+    rm -rf "$clone"
+    gattr_git clone -q "$bare/gattrorg_repo-star-minus-text" "$clone" 2>/dev/null
+    got=$(gattr_git -C "$clone" check-attr text eol -- .claude/hooks/fleet-memory.sh README.md)
+    if [[ "$got" == *"fleet-memory.sh: text: set"* && "$got" == *"fleet-memory.sh: eol: lf"* \
+          && "$got" == *"README.md: text: unset"* ]]; then
+        pass "gitattributes (sync): in the '* -text' repo the hooks get text eol=lf and README.md stays -text"
+    else
+        fail "gitattributes (sync): in the '* -text' repo the hooks get text eol=lf and README.md stays -text — got: $got"
+    fi
+
+    # A gitignored .gitattributes: warned, not written, and the rest delivered.
+    if gattr_git -C "$bare/gattrorg_repo-ignored" cat-file -e main:.gitattributes 2>/dev/null; then
+        fail "gitattributes (sync): a gitignored .gitattributes is never written"
+    else
+        pass "gitattributes (sync): a gitignored .gitattributes is never written"
+    fi
+    if gattr_git -C "$bare/gattrorg_repo-ignored" cat-file -e main:AGENTS.md 2>/dev/null; then
+        pass "gitattributes (sync): the gitignored repo still gets the rest of the delivery"
+    else
+        fail "gitattributes (sync): the gitignored repo still gets the rest of the delivery"
+    fi
+
+    # The PR fallback carries it too, and says so.
+    gattr_expect repo-protected "*.png binary\n$C\n$L\n" \
+        "gitattributes (sync, PR fallback): appended on the fallback branch" agents-md-sync/update
+    got="$TEST_DIR/gattr-pr-bodies/gattrorg_repo-protected.body"
+    assert_prose_contains "$got" "This PR also adds one line to \`.gitattributes\`" \
+        "gitattributes (sync, PR fallback): the PR body names the .gitattributes change"
+
+    # ── Idempotence: a second run changes nothing and commits nothing ──
+    # repo-protected is left out: its main never receives the fallback PR in
+    # this mock, so every run re-proposes it, by design and with or without
+    # this line.
+    before=$(bare_fleet_fingerprint "$bare" | grep -v '^gattrorg_repo-protected ')
+    rc=0; run_gattr_sync "$out-2.log" || rc=$?
+    after=$(bare_fleet_fingerprint "$bare" | grep -v '^gattrorg_repo-protected ')
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "gitattributes (idempotent): a second run exits 0 and moves no ref"
+    else
+        fail "gitattributes (idempotent): a second run exits 0 and moves no ref — exit $rc"
+    fi
+    for sec in repo-none repo-append repo-present repo-crlf repo-no-newline repo-star-minus-text repo-ignored; do
+        gattr_section "$out-2.log" "$sec" > "$out-2-$sec"
+        assert_contains "$out-2-$sec" "Up to date — skipping." \
+            "gitattributes (idempotent): $sec is up to date on the second run"
+    done
+
+    # ── A repo that lacks ONLY the line still gets a commit ──
+    local w="$TEST_DIR/gattr-strip"
+    rm -rf "$w"
+    gattr_git clone -q "$bare/gattrorg_repo-append" "$w" 2>/dev/null
+    printf '*.png binary\n' > "$w/.gitattributes"
+    gattr_git -C "$w" commit -q -am "drop the line by hand"
+    gattr_git -C "$w" push -q origin HEAD:main 2>/dev/null
+    rc=0; run_gattr_sync "$out-3.log" || rc=$?
+    gattr_section "$out-3.log" repo-append > "$out-3-append"
+    assert_not_contains "$out-3-append" "Up to date — skipping." \
+        "gitattributes (only the line missing): the repo is not skipped"
+    got=$(gattr_git -C "$bare/gattrorg_repo-append" log -1 --format=%s main)
+    if [[ "$got" == "chore: pin the hook scripts to LF in .gitattributes" ]]; then
+        pass "gitattributes (only the line missing): the commit's subject names the change"
+    else
+        fail "gitattributes (only the line missing): the commit's subject names the change — got '$got'"
+    fi
+    got=$(gattr_git -C "$bare/gattrorg_repo-append" show --name-only --format= main)
+    if [[ "$got" == ".gitattributes" ]]; then
+        pass "gitattributes (only the line missing): the commit touches .gitattributes alone"
+    else
+        fail "gitattributes (only the line missing): the commit touches .gitattributes alone — got: $(tr '\n' ' ' <<< "$got")"
+    fi
+    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+        "gitattributes (only the line missing): the pair is back, every other byte preserved"
+
+    # ── Drift report after the sync ──
+    rpt="$TEST_DIR/gattr-drift-after.md"
+    GITHUB_REPOSITORY_OWNER=gattrorg MOCK_BARE_DIR="$bare" REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out-drift-after.log" 2>&1 || true
+    for sec in repo-none repo-append repo-crlf repo-no-newline repo-star-minus-text; do
+        assert_row_note_contains "$rpt" "gattrorg/$sec" "gitattr-ok" \
+            "gitattributes (drift after sync): $sec reads gitattr-ok"
+    done
+}
+
+# This repo is excluded from its own sync, so its .gitattributes is committed
+# by hand; this is what stops it drifting from what consumers receive.
+test_self_hosted_gitattributes() {
+    echo ""
+    echo "=== Test: this repo's own .gitattributes carries the hook-script LF line ==="
+
+    local f="$REPO_ROOT/.gitattributes" got hook
+    got=$("$REPO_ROOT/scripts/hook-eol-gitattributes.sh" status "$f")
+    if [[ "$got" == present ]]; then
+        pass "self-hosted .gitattributes: the managed line is present"
+    else
+        fail "self-hosted .gitattributes: the managed line is $got — nothing syncs this repo, add it by hand"
+    fi
+    if grep -qxF -- "$GATTR_COMMENT_T" "$f" 2>/dev/null; then
+        pass "self-hosted .gitattributes: the managed comment is present"
+    else
+        fail "self-hosted .gitattributes: the managed comment is present"
+    fi
+    for hook in "$REPO_ROOT"/.claude/hooks/*.sh; do
+        got=$(GIT_CONFIG_NOSYSTEM=1 git -C "$REPO_ROOT" check-attr eol -- ".claude/hooks/${hook##*/}")
+        if [[ "$got" == *": eol: lf" ]]; then
+            pass "self-hosted .gitattributes: ${hook##*/} resolves to eol=lf"
+        else
+            fail "self-hosted .gitattributes: ${hook##*/} resolves to eol=lf — got: $got"
+        fi
+    done
+}
+
 # ── Groups ─────────────────────────────────────────────────────────────────
 #
 # The suite runs as independent GROUPS, each in a fresh process of this same
@@ -22130,6 +22614,7 @@ TEST_GROUPS=(
     self_hosted
     codex
     memory_home
+    gitattr
 )
 
 GROUP_sync=(
@@ -22324,6 +22809,7 @@ GROUP_self_hosted=(
     test_routine_merge_gate
     test_fleet_guidance_mirror
     test_check_agent_markdown
+    test_self_hosted_gitattributes
 )
 
 # The Codex lane. The three size/gate tests read only this repo's own files;
@@ -22505,6 +22991,16 @@ PY
     assert_contains "$base/allowlist.log" "must be a nonempty list" \
         "runner empty bootstrap allowlist reports why"
 }
+
+# The .gitattributes lane (docs/decisions/0019). The helper and real-git tests
+# use temp dirs of their own; the sync test stands up gattrorg in a
+# MOCK_BARE_DIR of its own, and its steps run in order: dry run → drift report
+# → sync → re-run (no-op) → a line removed by hand → drift report.
+GROUP_gitattr=(
+    test_hook_eol_gitattributes_helper
+    test_hook_eol_gitattributes_git_checkout
+    test_sync_gitattributes
+)
 
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
