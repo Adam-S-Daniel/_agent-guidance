@@ -332,3 +332,181 @@ untested.
 Neither experiment closes its issue. Issue 181 still needs the fleet's own
 hook checked after `/hooks` trust; issue 182 still needs the open-session and
 SessionStart-rewrite cases above.
+
+## Live fleet-hook and open-thread requests (2026-10-08 UTC / 2026-10-07 EDT)
+
+This follow-up supplies the remaining fleet-hook observation for
+[issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181) and
+part of the remaining refresh evidence for
+[issue 182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182).
+It uses actual HTTP request bodies from one long-lived **stdio app-server**,
+not `debug prompt-input` or a managed daemon. The installed CLI reported
+`codex-cli 0.161.0`; the running server's `initialize` response independently
+reported `disposable-probe/0.161.0`, platform `unix` / `linux`.
+
+### Disposable setup and persisted hook trust
+
+One standalone Git project, initialized without a remote, was exercised with
+explicit `trusted` and `untrusted` statuses in two separate threads. Its
+[`fleet-memory.sh`](../../.claude/hooks/fleet-memory.sh) was byte-identical
+to the tracked script; the existing
+[`codex-session-start.sh`](../../.claude/hooks/codex-session-start.sh)
+launcher was copied individually too. The adjacent synthetic payload was
+exactly 29 bytes: `FLEET_ACTUAL_PAYLOAD_181_NEW` followed by a newline.
+The project instructions contained `PROJECT_CANARY_181`; the disposable
+global instructions initially contained `GLOBAL_BEFORE_HOOK_182` outside
+any managed block.
+
+The [registrar](../../scripts/register-codex-hook.sh) exited 0 using its
+documented `CODEX_HOOK_COMMAND` override to run `bash` with the copied
+launcher. The invocation shape was:
+
+```text
+CODEX_HOOK_COMMAND="bash <project>/.claude/hooks/codex-session-start.sh" bash scripts/register-codex-hook.sh
+```
+
+Angle-bracket paths here describe the disposable setup, not a runnable
+command or an exact transcript. The default inline `bash -c` registrar
+command was **not exercised**: this run prohibited those wrappers. The
+existing launcher still selected the Git root's actual fleet hook.
+
+An actual TUI session (`--no-daemon --no-alt-screen`) first selected
+**Continue without trusting** at the startup review. A submitted
+`PRE_TRUST_CONTROL` turn failed to connect to the configured local provider
+and was interrupted through the UI; the global file retained only the old
+marker. Then `/hooks` → `SessionStart` → enter displayed a new user-config
+hook, matcher `startup|resume`, synchronous execution, and a 30-second
+timeout. Pressing `t` changed its state to **Trusted**; the event list showed
+one installed and one active hook. Codex persisted this state itself:
+
+```text
+[hooks.state."<disposable-CODEX_HOME>/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:f3bf1533a7967835fe239a84116cc24320a379000f411ac94646fad1abe84394"
+```
+
+The path is sanitized; it was not entered as a literal placeholder. Neither
+a trust-bypass flag nor a hand-written trust-store entry was used. The TUI
+exited 0.
+
+### Six real requests and the latest instruction fragment
+
+A local HTTP endpoint at `127.0.0.1:4379` saved request JSON and returned
+HTTP 400 with a fabricated `invalid_request_error`; it produced no model
+response. The disposable provider configuration was:
+
+```toml
+model = "local-probe"
+model_provider = "probe"
+[model_providers.probe]
+name = "local credential-free probe"
+base_url = "http://127.0.0.1:4379/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0
+```
+
+The scratch harness launched `codex app-server --stdio`, sent `initialize`
+with client name/title `disposable-probe` and version `1`, then `initialized`.
+For each trust status it wrote that explicit project status and restored the
+old global marker before `thread/start` with the disposable project as
+`cwd`. Each `turn/start` supplied `threadId` and a synthetic text input;
+the harness waited for `turn/completed` before the next turn. The same
+app-server process (PID 3 inside its namespace) served all six requests.
+
+The following indexes are zero-based positions in each actual HTTP request's
+`input` array. Every listed item had `type: "message"`.
+
+| Project trust | Turn | Latest user instruction item | Developer item 2 | Project marker in latest instructions |
+| --- | --- | --- | --- | --- |
+| trusted | 1 | 1: old global marker; no fleet payload | installed verdict | present |
+| trusted | 2 | 4: replacement containing installed fleet payload | retained verdict | present |
+| trusted | 3 | 6: replacement containing manual new global marker | retained verdict | present |
+| untrusted | 1 | 1: old global marker; no fleet payload | installed verdict | absent |
+| untrusted | 2 | 4: replacement containing installed fleet payload | retained verdict | absent |
+| untrusted | 3 | 6: replacement containing manual new global marker | retained verdict | absent |
+
+Sanitized text excerpts from the trusted thread's real request items:
+
+```text
+Turn 1, item 1, role=user, inside <INSTRUCTIONS>:
+GLOBAL_BEFORE_HOOK_182
+--- project-doc ---
+PROJECT_CANARY_181
+
+Turn 1, item 2, role=developer:
+fleet-guidance: installed (v5cef0915, 29 bytes) -> ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md
+
+Turn 2, item 4, role=user, inside <INSTRUCTIONS>:
+These AGENTS.md instructions replace all previously provided AGENTS.md instructions.
+GLOBAL_BEFORE_HOOK_182
+<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->
+<!-- fleet-guidance-version: 5cef0915 -->
+[delivery timestamp omitted]
+FLEET_ACTUAL_PAYLOAD_181_NEW
+<!-- END FLEET GUIDANCE -->
+--- project-doc ---
+PROJECT_CANARY_181
+
+Turn 3, item 6, role=user, inside <INSTRUCTIONS>:
+These AGENTS.md instructions replace all previously provided AGENTS.md instructions.
+GLOBAL_NEXT_TURN_182
+--- project-doc ---
+PROJECT_CANARY_181
+```
+
+Blank lines and the timestamp were condensed in these excerpts. At the first
+request capture, the global file already held the fleet payload, although
+the initial user instruction item still held the prior content. Nothing
+rewrote the file between turns 1 and 2: turn 2 read the actual hook's output.
+Before turn 3, the harness replaced the global file with
+`GLOBAL_NEXT_TURN_182`. Earlier instruction items remained in request history;
+the later replacement message identifies the current fragment. Searching
+for a marker anywhere in the request would conflate history with refresh.
+
+### Execution boundary, validation, and remaining blocker
+
+Every runtime and checker ran inside
+`unshare --user --map-current-user --pid --fork --mount-proc --`.
+Subprocess environments contained only disposable `HOME`, `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`, sentinel `PATH`/log, `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null`, and `TERM`; no credentials were read or copied.
+A `claude` sentinel first on `PATH` exited 97 if called: its log recorded
+zero calls. The local endpoint and app-server were owned by the harness;
+closing app-server stdin and waiting yielded exit 0, and exiting the PID
+namespace reaped remaining descendants.
+
+The scratch checker parsed actual JSON message roles and TOML trust state:
+**exit 0, 22 assertions, six requests, two trust cases**. Removing the turn-2
+fleet replacement message from a separate receipt copy made it exit 1 at
+`next turn actual fleet payload replacement`; checking the intact receipts
+again exited 0 with 22 assertions. The scratch harness and checker are not
+committed. Their invocation shape was the namespace prefix above, followed
+by `env -i` with those disposable variables and `python3 <scratch-checker>`;
+this is an observation record, not a checked-in reproduction script.
+
+**Managed-daemon coverage is blocked.** In the same sanitized namespace,
+`codex app-server daemon start` spawned its own child but exited 1 after:
+
+```text
+app-server socket directory must be a user-owned directory with mode 0700
+failed to connect .../app-server-control.sock: No such file or directory
+```
+
+The socket directory's mode 0700 and owner were verified. A shorter profile
+with a 105-byte full socket path still failed; path length is not an
+established cause. A process-path alias canonicalized back to the original
+path, and a private bind-mount attempt failed without modifying the host.
+No test or daemon failure was escalated out of its sandbox. No successful
+managed-daemon turn was captured, and Windows-native behavior remains
+untested.
+
+For [issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181),
+the requested fleet-hook observation after actual `/hooks` trust is now
+complete within the stated launcher override. For
+[issue 182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182),
+first-context ordering and open-thread global instruction refresh are now
+observed in the core stdio app-server, but managed-daemon and Windows-native
+coverage remain partial. These observations narrow the consequence in
+[ADR 0012](../decisions/0012-codex-gets-the-guidance-as-user-instructions.md);
+they do not establish general configuration freshness.
