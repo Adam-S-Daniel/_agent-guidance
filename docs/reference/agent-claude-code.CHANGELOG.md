@@ -30,6 +30,70 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-08 — 2.1.293 through 2.1.293
+
+- **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+- **Window:** v2.1.293 (published 2026-10-07T18:10Z), the first stable release after v2.1.292: 1 release, 56 bullets (not individually indexed; the quotes below are copied from the file). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone); the tag page was fetched (HTTP 200) for its publish time and its body matches the file.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 11e53c9, `adam-agentskills` b552eb2, `adam-agentskills-private` acb07c2, `adamdaniel.ai` 6ff477d, `claude-memory-map` c4e5e1e, `cms-platform` 86ae606, `fastmail-actions` a0522c5, `GHA-bench` 21916084, `jodidaniel.com` e75f43a, `repo-settings` 7b63640, `rss-inator` f9fe3a8, `skills-evals` 9b7f610, `wsl-automation` 20f7246.
+
+#### 1. Claude Haiku 5.5 is now the default Haiku model
+
+- [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+  > Added Claude Haiku 5.5 (`claude-haiku-5-5`), now the default Haiku model on the Anthropic API — 1M context, $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100K)
+
+**Issues:** [GHA-bench#101](https://github.com/Adam-S-Daniel/GHA-bench/issues/101). `skills-evals` also names the `haiku` tier, but its roster reads vendor defaults from the installed CLI by design (ADR 0002), so no issue.
+
+#### 2. Prompt-audit sweep trigger
+
+- [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+  > Added Claude Haiku 5.5 (`claude-haiku-5-5`), now the default Haiku model on the Anthropic API — 1M context, $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100K)
+- [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+  > Fixed path-scoped rules and nested CLAUDE.md files not loading when Claude views a file with a single-file cat, head, tail, sed -n or grep command in the Bash tool instead of the Read tool
+
+**Issues:** [_agent-guidance#279](https://github.com/Adam-S-Daniel/_agent-guidance/issues/279) (no label). Sweep fired: https://claude.ai/code/cse_01CYXc6JQZ11XvyXuKdj5qRT.
+
+### 2026-10-07 — 2.1.291 through 2.1.292
+
+- **Checked:** 2026-10-07T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.292](https://github.com/anthropics/claude-code/releases/tag/v2.1.292), published 2026-10-06T18:59Z
+- **Window:** v2.1.291 (published 2026-10-06T03:55Z) and v2.1.292 (published 2026-10-06T18:59Z), the first stable releases after v2.1.290: 2 releases, 93 bullets (not individually indexed: no group was drafted). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.291` and `v2.1.292` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` a655590, `adam-agentskills` 9c35b2e, `adam-agentskills-private` 10b02f6, `adamdaniel.ai` 7fddbde, `claude-memory-map` 08e1701, `cms-platform` 8442e97, `fastmail-actions` 3beea0a, `GHA-bench` 982faa83, `jodidaniel.com` 22b6007, `repo-settings` 1189e72, `rss-inator` 8dce2eb, `skills-evals` 78f5a88, `wsl-automation` a9e16c1.
+
+No group met the name-the-surface bar. A grep of the fleet for `system-reminder`, `NO_PROXY`, `MCP_PROTOCOL`, `OVERLOADED_RETRY`, `claude plugin install` and `permissionMode: auto` found no dependence on a changed behavior: the `skills-bootstrap.sh` hooks mention `claude plugin install` only in a comment saying it is not a substitute for the hook, `skills-evals` passes `NO_PROXY` through as an environment variable unchanged, and `skills-evals`' `arms.py` runs `claude plugin install <bundle>@<market>`, to which the new `--marketplace` flag is additive. The 2.1.292 bullet escaping `<system-reminder>` tags in hook output touches no fleet hook, since none writes that tag. Other bullets cover mod and plugin hook types, `claude plugin validate`/`test`, stdio MCP protocol negotiation, scheduled-task and `/loop` resume, cloud-session and Remote Control fixes, vim mode and prompt-box input, and Claude Tag and Code Review, none of which a fleet repo depends on. No bullet changes models, `/doctor` or instruction-file loading in a way the sweep triggers on (the "instruction file not loaded" line fix is a display fix), so the prompt-audit sweep was not marked (`sweep: none`).
+
+### 2026-10-06 — 2.1.290 through 2.1.290
+
+- **Checked:** 2026-10-06T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.290](https://github.com/anthropics/claude-code/releases/tag/v2.1.290), published 2026-10-05T23:33Z
+- **Window:** v2.1.290 (published 2026-10-05T23:33Z), the first stable release after v2.1.289: 1 release, 190 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.290` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` fe83f32, `adam-agentskills` 9c35b2e, `adam-agentskills-private` 10b02f6, `adamdaniel.ai` b9b91b3, `claude-memory-map` c9497b6, `cms-platform` c6d3125, `fastmail-actions` b268cde, `GHA-bench` 4f165b48, `jodidaniel.com` cc75080, `repo-settings` 6f1e7a6, `rss-inator` 8dce2eb, `skills-evals` a2c129e, `wsl-automation` a9e16c1.
+
+No group met the name-the-surface bar. A grep of the fleet for `blockReadsOutsideWorkingDirectories`, `plansDirectory`, `claude attach`, `claude logs` and `managed-agents-onboard` found no dependence on a changed behavior (the `plansDirectory` hits in `claude-memory-map` and `migrate-claude-memory` concern documentation of the setting, not a backslash path). The bullet on a symlinked `CLAUDE.md`, rule or `AGENTS.md` loading under `permissions.blockReadsOutsideWorkingDirectories` or a `Read` deny rule is a permission fix; no fleet repo symlinks its instruction files or sets that option (fleet `CLAUDE.md` files import `@AGENTS.md`), so it did not mark the prompt-audit sweep (`sweep: none`). Other bullets cover mod and plugin hook types, `claude plugin validate`, scheduled-task resume, `/ultrareview` and Remote Control streaming, none of which a fleet repo depends on.
+
+### 2026-10-04 — 2.1.289 through 2.1.289
+
+- **Checked:** 2026-10-04T16:25Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.289](https://github.com/anthropics/claude-code/releases/tag/v2.1.289), published 2026-10-03T23:07Z
+- **Window:** v2.1.289 (published 2026-10-03T23:07Z), the first stable release after v2.1.288: 1 release, 27 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` c298b8b, `adam-agentskills` a70ed64, `adam-agentskills-private` b9f3a1d, `adamdaniel.ai` b827045, `claude-memory-map` 92a7314, `cms-platform` 0c3b80c, `fastmail-actions` 163a13c, `GHA-bench` 68f1671c, `jodidaniel.com` 08354be, `repo-settings` eecc371, `rss-inator` 43578af, `skills-evals` 7f21575, `wsl-automation` 49dbdfa.
+
+No group met the name-the-surface bar. Most bullets concern plugin panes and mods, Bash/Read deny and ask rules under sandbox auto-allow, and a VS Code auth change, none of which a fleet repo depends on (no fleet `settings.json` carries deny rules or sandbox auto-allow). The three `claude plugin validate` fixes do not match how the fleet calls it: `adam-agentskills` CI runs `claude plugin validate . --strict` on a root holding only a marketplace manifest, and `cms-platform`'s `plugin-validate` lane runs it on a root holding only a plugin manifest, so the "folder holds both" and `--json` fixes do not apply to either.
+
+### 2026-10-03 — 2.1.288 through 2.1.288
+
+- **Checked:** 2026-10-03T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.288](https://github.com/anthropics/claude-code/releases/tag/v2.1.288), published 2026-10-02T20:19Z
+- **Window:** v2.1.288 (published 2026-10-02T20:19Z), the first stable release after v2.1.287: 1 release, about 90 bullets (not individually indexed: no group was drafted). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.288` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance b0065eb, `adam-agentskills` 766357e, `adam-agentskills-private` b9f3a1d, `adamdaniel.ai` 3f1070d, `claude-memory-map` 92a7314, `cms-platform` 91392c2, `fastmail-actions` 163a13c, `GHA-bench` 68f1671c, `jodidaniel.com` 08354be, `repo-settings` eecc371, `rss-inator` 43578af, `skills-evals` 7f21575, `wsl-automation` 49dbdfa`.
+
+No group met the name-the-surface bar: a grep of the fleet for `idle_prompt`, `InstructionsLoaded`, `PreToolUse`/`PermissionRequest`, `CLAUDE_CODE_RETRY_WATCHDOG`, `claude project purge`, `claude mcp serve`, `claude plugin test`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `sandbox.credentials` and `blockReadsOutsideWorkingDirectories` found no dependence on a changed behavior (the `InstructionsLoaded` hook fix concerns a hook that is not on any fleet default branch; `_agent-guidance#124` is still open). The background-command time-limit change is already tracked by `Adam-S-Daniel/cms-platform#497`, filed for the 2.1.285 entry.
+
 ### 2026-10-02 — 2.1.287 through 2.1.287
 
 - **Checked:** 2026-10-02T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
