@@ -443,6 +443,59 @@ does not settle that policy or fully resolve the issue. The linked evidence
 includes a disposable-profile experiment for live destination and byte
 verification.
 
+## Addendum — live import and the memory-home boundary (2026-10-08 UTC / 2026-10-07 EDT)
+
+The [live fabricated import evidence](../evidence/codex-memory-129.md#2026-10-08-utc--2026-10-07-edt-live-fabricated-memory-import-cli-01610)
+for [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183)
+now establishes raw-resource byte preservation with installed
+`codex-cli 0.161.0` and its stdio app-server migration RPC backend. The
+Decision above remains unchanged. This is a disposable-profile backend
+test, with no real credentials, memories, or model turns; it does not test
+the `/import` UI or settle the session-availability documentation tracked
+by [issue 278](https://github.com/Adam-S-Daniel/_agent-guidance/issues/278).
+
+With `features.external_agent_memory_import=true`, the importer copied a
+183-byte fabricated note retaining
+`metadata.home: example/repo:docs/note.md` and a 77-byte note without
+frontmatter into
+`memories/extensions/external_agent_import/resources/fabricated-project/`,
+preserving their relative paths and bytes. Its `scope.json` matched the
+existing fabricated project. The completion notification reported one
+synchronized memory project and no failures. A default-disabled control
+detected the fabricated session but no memory item. The controls passed
+28 and 7 assertions respectively, both exit 0, inside PID and network
+namespaces with zero calls to a sentinel `claude` command. Changing the
+copied home value made the byte verifier fail at assertion 10, exit 1;
+a fresh restored import passed all 28 assertions, exit 0.
+
+The imported note's home is still a source assertion, not proof that its
+destination exists in committed repo content or that a Claude Stop hook
+reviewed it. Copying the note without frontmatter confirms that import
+does not enforce the memory-home contract established for
+[issue 129](https://github.com/Adam-S-Daniel/_agent-guidance/issues/129).
+With generation and use disabled, the native ledger retained a
+`memory_consolidate_global` / `global` job with `status=pending`,
+`finished_at=null`, and `last_success_watermark=0`. There were zero
+`stage1_outputs` rows and no generated `MEMORY.md` or `memory_summary.md`.
+Import completion and consolidation completion are separate boundaries;
+the latter was not observed. Later preservation or propagation of home
+metadata remains unverified.
+
+The shipped [auditor](../../scripts/audit-codex-memory.py) exited 0 with
+`records=0, findings=0` while both raw imported resources existed. Its
+existing generated/ad hoc coverage therefore cannot be treated as a
+clean bill for imported memory. Derived records that later reach supported
+surfaces still require content-bound attestations under the existing
+Decision; an imported home label does not substitute for those attestations.
+
+**Recommendation awaiting the owner:** add separate raw-resource coverage
+so a retained imported note without a home cannot remain invisible to the
+audit. The alternative is to retain the current generated/ad hoc scope
+and explicitly accept the unaudited raw-import surface. This addendum
+records the measured gap and recommendation; it neither chooses for the
+owner nor changes the auditor, accepted Decision, or automatic-gating
+policy.
+
 ## References
 
 - [_agent-guidance issue 129](https://github.com/Adam-S-Daniel/_agent-guidance/issues/129)
