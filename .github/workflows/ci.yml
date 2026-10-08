@@ -246,3 +246,6 @@ jobs:
             exit 1
           fi
           test "$(./scripts/bridge-status.sh CLAUDE.md)" = bridge-ok
+          # The hook-script LF line the sync appends to every consumer's
+          # .gitattributes (docs/decisions/0019); nothing delivers it here.
+          test "$(./scripts/hook-eol-gitattributes.sh status .gitattributes)" = present
