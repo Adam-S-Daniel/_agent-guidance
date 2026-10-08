@@ -30,6 +30,30 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-08 — 2.1.293 through 2.1.293
+
+- **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+- **Window:** v2.1.293 (published 2026-10-07T18:10Z), the first stable release after v2.1.292: 1 release, 56 bullets (not individually indexed; the quotes below are copied from the file). Publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone); the tag page was fetched (HTTP 200) for its publish time and its body matches the file.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 11e53c9, `adam-agentskills` b552eb2, `adam-agentskills-private` acb07c2, `adamdaniel.ai` 6ff477d, `claude-memory-map` c4e5e1e, `cms-platform` 86ae606, `fastmail-actions` a0522c5, `GHA-bench` 21916084, `jodidaniel.com` e75f43a, `repo-settings` 7b63640, `rss-inator` f9fe3a8, `skills-evals` 9b7f610, `wsl-automation` 20f7246.
+
+#### 1. Claude Haiku 5.5 is now the default Haiku model
+
+- [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+  > Added Claude Haiku 5.5 (`claude-haiku-5-5`), now the default Haiku model on the Anthropic API — 1M context, $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100K)
+
+**Issues:** [GHA-bench#101](https://github.com/Adam-S-Daniel/GHA-bench/issues/101). `skills-evals` also names the `haiku` tier, but its roster reads vendor defaults from the installed CLI by design (ADR 0002), so no issue.
+
+#### 2. Prompt-audit sweep trigger
+
+- [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+  > Added Claude Haiku 5.5 (`claude-haiku-5-5`), now the default Haiku model on the Anthropic API — 1M context, $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100K)
+- [v2.1.293](https://github.com/anthropics/claude-code/releases/tag/v2.1.293), published 2026-10-07T18:10Z
+  > Fixed path-scoped rules and nested CLAUDE.md files not loading when Claude views a file with a single-file cat, head, tail, sed -n or grep command in the Bash tool instead of the Read tool
+
+**Issues:** [_agent-guidance#279](https://github.com/Adam-S-Daniel/_agent-guidance/issues/279) (no label). Sweep fired: https://claude.ai/code/cse_01CYXc6JQZ11XvyXuKdj5qRT.
+
 ### 2026-10-07 — 2.1.291 through 2.1.292
 
 - **Checked:** 2026-10-07T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)

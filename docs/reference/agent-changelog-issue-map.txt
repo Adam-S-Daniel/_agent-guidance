@@ -22,3 +22,5 @@
 #
 # Never edit or delete a line by hand except to fix a wrong one.
 claude-code/2026-09-30/1 Adam-S-Daniel/cms-platform#497
+claude-code/2026-10-08/1 Adam-S-Daniel/GHA-bench#101
+claude-code/2026-10-08/2 Adam-S-Daniel/_agent-guidance#279
