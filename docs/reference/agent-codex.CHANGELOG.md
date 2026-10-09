@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-09 — 0.162.0 through 0.162.0
+
+- **Checked:** 2026-10-09T01:25Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.162.0](https://github.com/openai/codex/releases/tag/rust-v0.162.0), published 2026-10-08T18:55Z
+- **Window:** 0.162.0 (published 2026-10-08T18:55Z), the first stable release after 0.161.0: 1 stable release, 14 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.161.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet` (`ai-usage-dashboard` is new since the 2026-10-08 entry, which listed 13), each reached (working-tree head read): `_agent-guidance` 962a9d7, `adam-agentskills` 746881e, `adam-agentskills-private` 43e8448, `adamdaniel.ai` 3d1c2c0, `ai-usage-dashboard` 5115bdc (anonymous shallow clone, read-only), `claude-memory-map` 9873811, `cms-platform` 9dd9454, `fastmail-actions` 760ee52, `GHA-bench` bf0f987, `jodidaniel.com` 713c807, `repo-settings` c062ce2, `rss-inator` 49297d6, `skills-evals` 2fb97f8, `wsl-automation` 9303b57.
+
+No group met the name-the-surface bar. The release covers TUI, transcript and Command Center features, sandbox fixes, Windows installer packaging and model-provider options. A grep of the fleet for `codex exec`, `codex app-server`, `codex remote-control` and `apply_patch` found only `wsl-automation`, which identifies the `codex app-server ... --remote-control --managed-daemon` process by its arguments and runs `codex remote-control start`; no bullet changes those commands or flags, and the remote-control reconnect back-off appears only in the PR list, not in the highlights. `ai-usage-dashboard` reads `~/.codex/auth.json`, which no bullet touches. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is unchanged: nothing in this release's notes mentions `/import`.
+
 ### 2026-10-08 — 0.161.0 through 0.161.0
 
 - **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/openai/codex/releases)

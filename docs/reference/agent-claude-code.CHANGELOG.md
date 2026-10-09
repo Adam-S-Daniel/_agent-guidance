@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-09 — 2.1.294 through 2.1.295
+
+- **Checked:** 2026-10-09T01:25Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.295](https://github.com/anthropics/claude-code/releases/tag/v2.1.295), published 2026-10-08T19:48Z
+- **Window:** v2.1.294 (published 2026-10-08T05:03Z) and v2.1.295 (published 2026-10-08T19:48Z), the first stable releases after v2.1.293: 2 releases, 145 bullets (2 + 143; not individually indexed: no group was drafted). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.294` and `v2.1.295` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet` (`ai-usage-dashboard` is new since the 2026-10-08 entry, which listed 13), each reached (working-tree head read): `_agent-guidance` 962a9d7, `adam-agentskills` 746881e, `adam-agentskills-private` 43e8448, `adamdaniel.ai` 3d1c2c0, `ai-usage-dashboard` 5115bdc (anonymous shallow clone, read-only), `claude-memory-map` 9873811, `cms-platform` 9dd9454, `fastmail-actions` 760ee52, `GHA-bench` bf0f987, `jodidaniel.com` 713c807, `repo-settings` c062ce2, `rss-inator` 49297d6, `skills-evals` 2fb97f8, `wsl-automation` 9303b57.
+
+No group met the name-the-surface bar. A grep of the fleet for `"type": "prompt"`/`"agent"` hooks, `CLAUDE_ENV_FILE`, `FORCE_COLOR`, `CLAUDE_CODE_RETRY_WATCHDOG`, `onFailure`, `CLAUDE_AUTO_BACKGROUND_TASKS`, `seed-admin`, `forceLoginMethod`, async hooks, subagent `skills:` frontmatter and `claude -p` output formats found no dependence on a changed behavior. The only `prompt` hook type is a test fixture string in `adam-agentskills`' `test_check_consistency.py`, so the 2.1.294 fixes to instruction-style `prompt` and `agent` hooks touch no fleet hook. The `CLAUDE_ENV_FILE` hits (`setup-hooks.sh` in `adamdaniel.ai`, `cms-platform` and `jodidaniel.com`) append a `LANG` export once, which the `/resume` and `/branch` fix leaves alone. Every fleet `claude -p` call (`GHA-bench`, `skills-evals`) uses `--output-format json` or `stream-json`, not the text output the `claude -p` fix changes. No fleet repo has a `.claude/agents` directory, so the cap of 32 preloaded subagent skills changes no fleet instruction file; it did not mark the prompt-audit sweep (`sweep: none`). The `ai-usage-dashboard` collector reads `~/.claude/.credentials.json`, and no bullet changes that file. Other bullets cover the Claude apps gateway, mods and plugin hooks workers, Remote Control and cloud-session fixes, terminal rendering and vim mode, VS Code, Claude Tag and Code Review, none of which a fleet repo depends on.
+
 ### 2026-10-08 — 2.1.293 through 2.1.293
 
 - **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
