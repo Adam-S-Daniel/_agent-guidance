@@ -34,6 +34,7 @@ a page.
 | [0017](0017-prompt-audit-runs-as-an-event-triggered-sweep.md) | Prompt-audit runs as an event-triggered sweep, never as a check or a schedule |
 | [0018](0018-incident-narratives-live-in-docs-evidence.md) | Incident narratives live in `docs/evidence/`, and the guidance keeps a pointer |
 | [0019](0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md) | The sync pins the hook scripts to LF through each repo's `.gitattributes` |
+| [0020](0020-the-api-credit-lane-is-machine-local-not-fleet-guidance.md) | The API-credit lane is machine-local, delivered by plugin hooks, not by the fleet guidance |
 
 ## Format
 
