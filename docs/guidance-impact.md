@@ -51,6 +51,12 @@ Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-17 — working-in-these-repos — edit
+- Motivation: owner request to drop the spreadsheet example from the full-precision rule. Also corrects the entry below: PR #294 merged 2026-10-17, so its "Outcome: pending" is superseded.
+- Change: removed the parenthetical `=TRUNC(A2/60,2)` example from the bullet added in PR #294.
+- Eval: none — no fixture yet
+- Outcome: merged 2026-10-17 (PR #295)
+
+## 2026-10-17 — working-in-these-repos — edit
 - Motivation: owner rule, stated 2026-10-17 after a spreadsheet percent nested ROUND inside the division and a page rounded minutes before truncating a percent: never discard precision before the final output.
 - Change: one bullet added — carry full precision through intermediate steps in code and formulas; round or truncate only at the final display or write.
 - Eval: none — no fixture yet
