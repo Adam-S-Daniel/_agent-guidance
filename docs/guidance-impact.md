@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-17 — working-in-these-repos — edit
+- Motivation: owner rule, stated 2026-10-17 after a spreadsheet percent nested ROUND inside the division and a page rounded minutes before truncating a percent: never discard precision before the final output.
+- Change: one bullet added — carry full precision through intermediate steps in code and formulas; round or truncate only at the final display or write.
+- Eval: none — no fixture yet
+- Outcome: pending — opened 2026-10-17
+
 ## 2026-10-04 — test-that-can-signal-kills-every-session — edit
 - Motivation: owner decision on the session-7 prompt audit's "History narratives" findings: move incident narratives longer than about two lines to `docs/evidence/` and leave a pointer (ADR 0018).
 - Change: the four-line `kill(-1)` story moved verbatim to `docs/evidence/2026-10-04-killpg-on-a-mocked-pid.md`, replaced by a one-clause dated pointer with its full URL; the five rules are unchanged; section 1,011 -> 943 bytes (-68).
