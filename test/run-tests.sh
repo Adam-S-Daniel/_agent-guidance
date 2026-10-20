@@ -22579,6 +22579,104 @@ test_self_hosted_gitattributes() {
     done
 }
 
+# ── github-write-marker.sh: an agent's GitHub write carries the marker ─────
+#
+# A PreToolUse hook: hook JSON on stdin, exit 0 allows, exit 2 blocks. Every
+# leg feeds a literal event and checks the exit code, so nothing here touches
+# the network or a real `gh`. The `--body-file` legs point at files in this
+# test's own temp dir, passed as absolute paths, so `cwd` cannot leak in.
+# AGENT_NAME is pinned empty so the block message's footer is the Claude Code
+# one whatever the invoking shell exports. See docs/decisions/0021.
+test_github_write_marker_hook() {
+    echo ""
+    echo "TEST: github-write-marker.sh (an agent's GitHub write carries the marker)"
+
+    local d="$TEST_DIR/githubwritemarker"
+    rm -rf "$d"
+    mkdir -p "$d"
+    local GWM_HOOK="$REPO_ROOT/.claude/hooks/github-write-marker.sh"
+    local mark='<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>'
+    printf 'Body text.\n\n%s\n' "$mark" > "$d/marked.md"
+    printf 'Body text with no marker.\n' > "$d/unmarked.md"
+
+    # <expected rc> <label> <event json> — runs the hook and compares its exit
+    # code. stderr is kept per leg for the message assertions below.
+    local n=0
+    gwm() {
+        local want="$1" label="$2" event="$3" rc=0
+        n=$((n + 1))
+        printf '%s' "$event" | env AGENT_NAME= bash "$GWM_HOOK" \
+            > "$d/out-$n" 2> "$d/err-$n" || rc=$?
+        if [[ "$rc" == "$want" ]]; then
+            pass "github-write-marker: $label exits $want"
+        else
+            fail "github-write-marker: $label exits $want — got $rc: $(tr '\n' ' ' < "$d/err-$n")"
+        fi
+    }
+
+    # ── Blocked: exit 2 ──
+    gwm 2 "unmarked gh issue comment" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 5 --body \"Looks good.\""}}'
+    assert_contains "$d/err-$n" "$mark" \
+        "github-write-marker: the block message names the exact footer line"
+    assert_contains "$d/err-$n" "retry" \
+        "github-write-marker: the block message tells the agent to retry"
+    gwm 2 "unmarked gh pr create" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title T --body \"Adds a thing.\""}}'
+    gwm 2 "gh pr create whose --body-file lacks the marker" \
+        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh pr create --title T --body-file $d/unmarked.md\"}}"
+    gwm 2 "unmarked gh api POST to a comments endpoint" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh api -X POST repos/o/r/issues/5/comments -f body=hi"}}'
+    gwm 2 "unmarked MCP add_issue_comment (mcp__github__)" \
+        '{"tool_name":"mcp__github__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":5,"body":"Done."}}'
+    gwm 2 "unmarked MCP add_issue_comment (mcp__claude_ai_github-mcp__)" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":5,"body":"Done."}}'
+    gwm 2 "MCP review with event APPROVE, even marked" \
+        '{"tool_name":"mcp__github__pull_request_review_write","tool_input":{"method":"create","event":"APPROVE","body":"LGTM <sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    assert_contains "$d/err-$n" "never submits an APPROVE review" \
+        "github-write-marker: the APPROVE block says why"
+    gwm 2 "MCP review with event approve (lower case)" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__pull_request_review_write","tool_input":{"method":"submit_pending","event":"approve"}}'
+    gwm 2 "gh pr review --approve" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr review 7 --approve"}}'
+    gwm 2 "gh pr review -a" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr review 7 -a -b \"ok\""}}'
+
+    # ── Allowed: exit 0 ──
+    gwm 0 "marked gh issue comment" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 5 --body \"Looks good.\n\n<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>\""}}'
+    gwm 0 "marked gh pr create" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title T --body \"Adds a thing.\n\n<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>\""}}'
+    gwm 0 "gh pr create whose --body-file carries the marker" \
+        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh pr create --title T --body-file $d/marked.md\"}}"
+    gwm 0 "gh api POST whose body=@file carries the marker" \
+        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api -X POST repos/o/r/issues/5/comments -F body=@$d/marked.md\"}}"
+    gwm 0 "marked MCP add_issue_comment (mcp__github__)" \
+        '{"tool_name":"mcp__github__add_issue_comment","tool_input":{"body":"Done.\n\n<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm 0 "marked MCP add_issue_comment (mcp__claude_ai_github-mcp__)" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__add_issue_comment","tool_input":{"body":"Done.\n\n<sub>🤖 Written by Codex on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm 0 "marked MCP COMMENT review" \
+        '{"tool_name":"mcp__github__pull_request_review_write","tool_input":{"method":"create","event":"COMMENT","body":"Notes. <sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm 0 "MCP issue_write with labels only" \
+        '{"tool_name":"mcp__github__issue_write","tool_input":{"method":"update","owner":"o","repo":"r","issue_number":5,"labels":["agent-authored"]}}'
+    gwm 0 "gh issue edit --add-label (no body)" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue edit 5 --add-label agent-authored"}}'
+    gwm 0 "gh pr view 1" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr view 1"}}'
+    gwm 0 "a non-GitHub Bash command" \
+        '{"tool_name":"Bash","tool_input":{"command":"ls -la /tmp"}}'
+    gwm 0 "an unrelated MCP tool with an unmarked body" \
+        '{"tool_name":"mcp__github__get_issue","tool_input":{"body":"Done."}}'
+    # Malformed input carries `gh` so it gets past the fast path and reaches
+    # the JSON parse, which is the arm under test.
+    gwm 0 "malformed JSON" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 5 --body'
+    assert_contains "$d/err-$n" "WARNING" \
+        "github-write-marker: malformed input is allowed with a stderr warning"
+
+    unset -f gwm
+}
+
 # ── Groups ─────────────────────────────────────────────────────────────────
 #
 # The suite runs as independent GROUPS, each in a fresh process of this same
@@ -22614,6 +22712,7 @@ TEST_GROUPS=(
     self_hosted
     codex
     memory_home
+    github_write_marker
     gitattr
 )
 
@@ -23008,6 +23107,12 @@ GROUP_gitattr=(
 GROUP_memory_home=(
     test_memory_home_hook
     test_register_memory_home_hook
+)
+
+# The github-write-marker lane (docs/decisions/0021). It reads only literal
+# hook events and files in its own temp dir, so it can sit anywhere.
+GROUP_github_write_marker=(
+    test_github_write_marker_hook
 )
 
 # Codex Cloud setup/maintenance runs the shared guidance hook directly before
