@@ -52,7 +52,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-19 — pinning-github-actions — edit
 - Motivation: GitHub workflow lockfiles (public preview 2026-10-14) allow tags in `uses:` with an immutable pin; the ai-usage-dashboard pilot (PR https://github.com/Adam-S-Daniel/ai-usage-dashboard/pull/11) showed the runner runs whatever commit the lockfile names and that `--verify` v0.2.0 exits 0 when the API fails.
-- Change: two accepted forms (lockfile target, 40-hex SHA legacy); exact tag written by hand, local actions as `$/`, cross-repo reusable workflows stay on a full SHA (no lockfile locks them, tested); a lockfile repo must run `gh actions-lock --verify` in a required check on any workflow or local-action change that fails on any finding; ADR 0021 (tested behavior, recovery, cms-platform consumers), evidence `docs/evidence/2026-10-20-stale-lockfile.md`. Stub floor bullet updated to match.
+- Change: two accepted forms (lockfile target, 40-hex SHA legacy); exact tag written by hand, local actions as `$/`, cross-repo reusable workflows take a full SHA in both forms (no lockfile locks them, tested); a repo running actionlint or with `./` refs into a runtime checkout (cms-platform) stays legacy; a lockfile repo must run `gh actions-lock --verify` in a required check on any workflow or local-action change that fails on any finding; ADR 0021 (tested behavior, recovery, cms-platform consumers), evidence `docs/evidence/2026-10-20-stale-lockfile.md`. Stub floor bullet updated to match.
 - Eval: none — no fixture yet
 - Outcome: pending
 

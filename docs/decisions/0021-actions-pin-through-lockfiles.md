@@ -50,9 +50,17 @@ Each case was locked with `gh actions-lock --no-narrow` and then checked with
 | `./` local action with `--no-migrate-local-actions` | workflow onboarded with no entries | exit 1, `local-action` ("not supported") |
 | Same, written `$/` (the tool's default rewrite) | the composite's inner actions locked transitively | exit 0, no findings |
 | Cross-repo reusable workflow, by tag, branch or SHA (`jobs.<id>.uses`) | workflow onboarded as `[]`; no entry | exit 0, no findings |
+| Same-repo reusable workflow, `./.github/workflows/<x>.yml` | left as `./` (not rewritten); caller `[]`, the called workflow onboarded with its own actions locked | exit 0, no findings |
 | `Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.163` | `[]`; no entry | exit 0, no findings |
 | API unreachable | — | exit 0, `reachability-unknown` (warning) |
 | Pin disagreeing with its tag | — | exit 1, `unreachable-pin` |
+
+Linters, on a workflow with a `$/` action step and a `$/` workflow call:
+
+- **actionlint 1.7.7 and 1.7.12 reject both.** The step: `specifying action "$/.github/actions/x" in invalid format because ref is missing` `[action]`; the call: `reusable workflow call "$/.github/workflows/c.yml" at "uses" is not following the format "owner/repo/path/to/workflow.yml@ref" nor "./path/to/workflow.yml"` `[workflow-call]`. No upstream fix was found.
+- **zizmor 1.31.1 accepts them** (`--offline`: no findings).
+
+`cms-platform` runs actionlint as a required lane, and 41 of its 48 local refs are `./.cms-platform/.github/actions/*`, into a checkout made at runtime: `$/` cannot express that path and `--verify` rejects the `./` form as `local-action`.
 
 At runtime ([run 39359501093](https://github.com/Adam-S-Daniel/ai-usage-dashboard/actions/runs/39359501093),
 a temporary probe reverted the next commit):
@@ -82,6 +90,11 @@ tag's, and a commit that does not exist):
 Two pin forms are accepted while repos migrate; the lockfile form is the
 target.
 
+- **A repo that lints with actionlint, or has `./` refs into a runtime
+  checkout, stays in legacy form.** `cms-platform` is the named case, until
+  actionlint accepts `$/` and gh-actions-lock can lock or skip runtime-checkout
+  local refs.
+
 - **Lockfile form.** The repo commits `.github/workflows/actions.lock` with
   every workflow onboarded. Write each `uses:` by hand on the action's most
   exact tag, `vX.Y.Z` when one exists, otherwise the most specific tag it has
@@ -93,11 +106,15 @@ target.
   `sha-as-ref`, which fails the check below.
 - **Legacy form,** until a repo migrates: a full 40-character SHA with no
   trailing comment, exactly as 0007 decided.
-- **Cross-repo reusable workflows stay on a full SHA in both forms.** No
-  lockfile locks them; the caller runs the ref's live commit. The
-  `cms-platform` release-tag carve-out is the one exception, as before. A
-  workflow whose jobs are all reusable-workflow calls still needs its `[]`
-  entry, which the tool writes.
+- **Cross-repo reusable workflows take a full SHA in both forms.** No
+  lockfile locks them; the caller runs the ref's live commit. Neither
+  `--verify` nor `sha_pinning_required` flags a tag or branch there, so only
+  review or a repo's own check catches one; the pilot's is a Pester test that
+  parses every workflow and requires `@<40hex>` on each `jobs.<id>.uses` that
+  is not local or `cms-platform`. The `cms-platform` release-tag carve-out is
+  the one exception, as before. A same-repo `./.github/workflows/<x>.yml` call
+  stays `./`. A workflow whose jobs are all reusable-workflow calls still
+  needs its `[]` entry, which the tool writes.
 - **A lockfile repo runs `gh actions-lock --verify` inside a required check**
   that runs on any change under `.github/workflows/` or a local action
   directory (a new workflow not yet onboarded fails `--verify`; a composite's
@@ -111,13 +128,21 @@ target.
   ref this form forbids, and `reachability-unknown` is the outage hole. The
   check prints each finding's category and detail as an `::error::`. The
   reference implementation is `ai-usage-dashboard`'s
-  [ci.yml at 802b580](https://github.com/Adam-S-Daniel/ai-usage-dashboard/blob/802b58088f3bf682c07353abb60234cdaf495201/.github/workflows/ci.yml),
-  step "Verify action lockfile":
+  [ci.yml at 656db3d](https://github.com/Adam-S-Daniel/ai-usage-dashboard/blob/656db3d32d70254cdef6ff89c7a73a9250ac9f19/.github/workflows/ci.yml),
+  step "Verify action lockfile" (copied from it, run under `set -euo pipefail`;
+  jq escapes `%`, CR and LF so finding text cannot start a workflow command):
 
   ```bash
+  rc=0
   out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?
+  # v0.2.0 exits 0 with a reachability-unknown finding when the API fails; fail on any finding.
   if [[ "$rc" -ne 0 ]] || ! jq -e '.valid == true and (.findings | length) == 0' <<<"$out" >/dev/null; then
-    jq -r '.findings[]? | "::error::actions.lock \(.category): \(.dependency // .workflow // "-"): \(.detail)"' <<<"$out" || printf '%s\n' "$out"
+    # Escape %, CR and LF so finding text cannot start a new workflow command.
+    jq -r 'def esc: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"); .findings[]? | "::error::actions.lock \(.category | esc): \(.dependency // .workflow // "-" | esc): \(.detail | esc)"' <<<"$out" || echo '::error::gh actions-lock --verify returned no readable JSON.'
+    if jq -e 'any(.findings[]?; .category == "reachability-unknown")' <<<"$out" >/dev/null 2>&1; then
+      echo '::error::reachability-unknown means the GitHub API was unreachable; re-run once it is back.'
+    fi
+    echo "::error::gh actions-lock --verify failed (exit $rc)."
     exit 1
   fi
   ```
@@ -165,7 +190,8 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   `test/test-dependabot-config-health.js` among them) stay until that repo
   migrates its workflows; migration and its test change land together.
 - **`base.md` is at its budget.** The binding limit is `test/run-tests.sh`'s
-  29,696-byte full build: with this section it is 29,694, and `main` was
-  29,632. That is why the table, recovery, the `cms-platform` consumer rule
-  and the tool facts live here rather than in the section, and the next
+  29,696-byte full build: with this section it is 29,672, and `main` was
+  29,632. That is why the tables, recovery, the `cms-platform` consumer rule,
+  the `sha1-` prefix, the `could not verify` exit code and the linter results
+  live here rather than in the section, and the next
   `base.md` addition has to trim something first.

@@ -301,26 +301,26 @@ name outlives a rename).
 
 ## Pinning GitHub Actions
 
-**Two forms while repos migrate** ([ADR 0021](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0021-actions-pin-through-lockfiles.md):
-tests, recovery):
+**Two forms while repos migrate** ([ADR 0021](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0021-actions-pin-through-lockfiles.md)):
 
 - **Lockfile, the target:** `.github/workflows/actions.lock` covers every
-  workflow; each `uses:` names its most exact tag, written by hand, and local
-  actions are `$/<path>`. Then `gh actions-lock --no-narrow`.
+  workflow; each `uses:` on its most exact tag, by hand; local actions
+  `$/<path>`. Then `gh actions-lock --no-narrow`. A repo running actionlint
+  (rejects `$/`) or with `./` refs into a runtime checkout, like
+  `cms-platform`, stays legacy.
 - **Legacy:** a full 40-character SHA, no trailing version comment.
-  Cross-repo reusable workflows stay on it: no lockfile locks them.
-- **The runner runs whatever commit the lockfile names**, even one off its
-  tag. So a required check, run on any workflow or local-action change, runs
+- **Cross-repo reusable workflows take a full SHA in both forms.** No lockfile
+  locks them; only review or a repo check catches a tag.
+- **The runner runs whatever commit the lockfile names**, even off-tag. So a
+  required check, run on any workflow or local-action change, runs
   `gh actions-lock --verify` from a sha256-checked binary and fails on ANY
-  finding (v0.2.0 exits 0 on "could not verify"). Review `actions.lock`
-  diffs like SHA pins. Its commits read `sha1-<40hex>`; Docker images are
-  not locked.
+  finding. Review `actions.lock` diffs like SHA pins. Docker images are not
+  locked.
 - **Wait 7 days after a third-party release**, else pin the previous.
 - **Dereference annotated tags:** `git ls-remote <url> 'refs/tags/<tag>^{}'`.
 - **The one carve-out:** refs into this account's own `cms-platform` stay on
-  its release tag (`…@v0.1.88`): `check-platform-pin-consistency.js` asserts
-  each equals `platform.lock`'s `platform_ref`.
-- Local paths and `docker://` refs have nothing to pin.
+  its release tag, which `check-platform-pin-consistency.js` ties to
+  `platform.lock`.
 
 `sha_pinning_required: true` stays on; a locked tag satisfies it.
 
