@@ -301,29 +301,29 @@ name outlives a rename).
 
 ## Pinning GitHub Actions
 
-**Every `uses:` is pinned to a full 40-character commit SHA** — workflows,
-composite actions and reusable-workflow refs alike; never a tag, branch or
-abbreviated SHA.
+**Two forms while repos migrate** ([ADR 0021](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0021-actions-pin-through-lockfiles.md):
+why, recovery):
 
-- **A pin carries NO trailing version comment.** Nothing maintains it, so it
-  lies (2026-08-20: Dependabot left stale comments beside moved SHAs in
-  GHA-bench#52 and skills-evals #38/#39/#40). Resolve one with
-  `git ls-remote <url> | grep <sha>`.
+- **Lockfile, the target:** a committed `.github/workflows/actions.lock`
+  covering every workflow; each `uses:` on an exact `vX.Y.Z` tag
+  (`gh actions-lock --no-narrow --no-migrate-local-actions`).
+- **Legacy:** a full 40-character SHA, no trailing version comment (it goes
+  stale).
+- **The runner runs whatever commit the lockfile names**, even one off its
+  tag. So a required check, run on any `.github/workflows/` change, runs
+  `gh actions-lock --verify` from a sha256-checked binary and fails on ANY
+  finding (v0.2.0 exits 0 on "could not verify"). Review `actions.lock`
+  diffs like SHA pins. Its commits read `sha1-<40hex>`; Docker images are
+  not locked.
 - **Wait 7 days after a third-party release**, else pin the previous.
-- **Dereference annotated tags.** `gh api .../git/ref/tags/<tag>` with
-  `.object.type == "tag"` gives the tag object's SHA, which fails at runtime;
-  use `git ls-remote <url> 'refs/tags/<tag>^{}'`.
-- **The one carve-out: a ref into this account's own `cms-platform` stays on
-  its release tag, in both shapes** — reusable workflow
-  `Adam-S-Daniel/cms-platform/.github/workflows/<x>.yml@v0.1.88` and composite
-  action `Adam-S-Daniel/cms-platform/.github/actions/<x>@v0.1.88` —
-  because `check-platform-pin-consistency.js` asserts each equals
+- **Dereference annotated tags:** `git ls-remote <url> 'refs/tags/<tag>^{}'`.
+- **The one carve-out:** refs into this account's own `cms-platform`
+  (reusable workflows and composite actions) stay on its release tag
+  (`…@v0.1.88`): `check-platform-pin-consistency.js` asserts each equals
   `platform.lock`'s `platform_ref`.
 - `./local/path` and `docker://` refs have nothing to pin.
 
-`sha_pinning_required: true` (`repo-settings`' `fleet.yml`; `cms-platform`'s
-`repo-settings.yml`) governs actions only, so a tag in a *third-party*
-reusable-workflow ref is for review to catch.
+`sha_pinning_required: true` stays on; a locked tag satisfies it.
 
 ## A test that can signal can kill every session
 

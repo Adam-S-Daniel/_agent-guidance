@@ -60,7 +60,9 @@ session that lost the guidance must not also lose these.
 - **Branch protection is real.** Fleet repos are PR-only on their default
   branch; a direct push is rejected (GH013), even from the repo's own
   workflows. Never design a bot that pushes to a protected default branch.
-- **Every `uses:` is pinned to a full 40-character commit SHA, with no
+- **Every `uses:` is pinned: an exact tag locked in
+  `.github/workflows/actions.lock` and checked by a required
+  `gh actions-lock --verify`, or a full 40-character commit SHA with no
   trailing version comment.** The one carve-out is a ref into this account's
   own `cms-platform`, which stays on its release tag.
 - **Never commit secrets or `.env` files, and never print personal data to a
