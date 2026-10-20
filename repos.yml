@@ -154,6 +154,11 @@ skills_bootstrap:
     # it stays out for a different and still-good reason.
     # lock: committed — PR #15 merged 2026-08-19.
     - scratch-claude-002
+    # The shared lockfile-check action (ADR 0021). Agents maintain it (digest
+    # bumps, gh-actions-lock upgrades), and the bundles carry the Actions
+    # skills that work needs. Added 2026-10-20.
+    # lock: pending — its first skills.lock lands in a verify-actions-lock PR.
+    - verify-actions-lock
     # lock: committed — PR #9 merged 2026-08-19.
     - wsl-automation
 
@@ -238,11 +243,6 @@ skills_bootstrap:
     - repo: squarespacetemp
       reason: >-
         Dormant since 2026-03; no session happens there to spend the context.
-    - repo: verify-actions-lock
-      reason: >-
-        A small composite action (ADR 0021) whose own CI tests it end to end.
-        Its sessions need no skills bundle; add a skills.lock and move it to
-        `repos:` if that changes.
 
   # Forks and archived repos are NOT listed above: discovery never reaches
   # them (`gh repo list --source --no-archived`), so their absence from
