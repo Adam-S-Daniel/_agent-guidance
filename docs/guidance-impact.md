@@ -50,6 +50,48 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-20 — agent-contribution-markers — create
+- Motivation: owner decision 2026-10-20: every agent write on GitHub goes out as Adam's account and only Claude Code's default commit trailer and PR footer marked it; issue comments, reviews and replies were indistinguishable from Adam's own (ADR 0021).
+- Change: new section: the `<sub>🤖 Written by <agent> on behalf of @Adam-S-Daniel</sub>` footer, the `agent-authored` label, the `Agent:` commit trailer, a marked comment after a merge, close or label change, never an APPROVE review; enforced by the new `.claude/hooks/github-write-marker.sh`.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-20 — anything-you-name-gets-its-link — edit
+- Motivation: make room for the new agent-contribution-markers section; the full build was 1 byte under its 29696-byte budget before it.
+- Change: shortened the two incident citations to one clause each (jodidaniel.com#176, 2026-08-29); the three rules are unchanged.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-20 — two-github-connectors — edit
+- Motivation: make room for the new agent-contribution-markers section; the full build was 1 byte under its 29696-byte budget before it.
+- Change: tightened the `github-mcp` bullet's wording and dropped the obsolete example prefix `mcp__b26ebb34-…__*`; the probe-by-name rule, the #83 citation and every capability fact stay.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-20 — fleet-spans-two-owners — edit
+- Motivation: make room for the new agent-contribution-markers section; the full build was 1 byte under its 29696-byte budget before it.
+- Change: shortened the issue #37 citation to one clause; the denominator rule is unchanged.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-20 — pinning-github-actions — edit
+- Motivation: make room for the new agent-contribution-markers section; the full build was 1 byte under its 29696-byte budget before it.
+- Change: shortened the stale-comment citation to `2026-08-20, GHA-bench#52`, and stated the cms-platform carve-out once for both ref shapes instead of spelling out both full paths.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-20 — subagent-delegation — edit
+- Motivation: make room for the new agent-contribution-markers section; the full build was 1 byte under its 29696-byte budget before it.
+- Change: shortened the orphan-loop citation to `2026-08-29: a 999/0 tree read 985/14`.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-20 — two-setup-gaps — edit
+- Motivation: make room for the new agent-contribution-markers section; the full build was 1 byte under its 29696-byte budget before it.
+- Change: reworded the durable-machine paragraph in fewer words; every command, threshold and step stays.
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-10-20 — security — edit
 - Motivation: owner request after an agent recommended a fine-grained PAT for a skills-evals workflow, then switched to a read-only GitHub App; only the repo-settings skill steered toward Apps, nothing fleet-wide did.
 - Change: added one bullet, automation authenticates as a scoped GitHub App, not a PAT; merged the secrets and TLS bullets to stay inside the 29696-byte full-build budget (a longer draft overran it by 224 bytes).
