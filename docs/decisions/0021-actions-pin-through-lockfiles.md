@@ -164,6 +164,15 @@ target.
 
 - **An `actions.lock` diff is reviewed like a SHA pin.** It, not the tag in
   the workflow, decides what code runs.
+- **Anything that treats a workflow pin change as special treats
+  `.github/workflows/actions.lock` the same way.** Dependabot rewrites it in
+  its own action-bump PRs, so a Dependabot auto-merge path allowlist that
+  accepts `.github/workflows/*.yml` must also accept that exact path, or every
+  action bump stops auto-merging. A gate that holds changes to its own
+  workflow for owner approval (adam-agentskills' `plugin_runtime_gate.py`)
+  must also gate the lockfile, which now chooses the commit its checkout
+  runs. A salient-path diff runs with `--no-renames`, so moving a workflow out
+  of `.github/workflows/` still runs the verify step.
 - **A repo that references a `cms-platform` composite action stays in legacy
   form until the platform bump regenerates its `actions.lock`.** A composite
   action ref gets a lockfile entry, so a bump that only rewrites the
