@@ -119,12 +119,26 @@ target.
   the one exception, as before. A same-repo `./.github/workflows/<x>.yml` call
   stays `./`. A workflow whose jobs are all reusable-workflow calls still
   needs its `[]` entry, which the tool writes.
-- **A lockfile repo runs `gh actions-lock --verify` inside a required check**
-  that runs on any change under `.github/workflows/` or a local action
-  directory (a new workflow not yet onboarded fails `--verify`; a composite's
-  inner actions are locked). The tool is installed from its release binary,
-  checked against a sha256 written in the workflow, not by
-  `gh extension install` on a tag.
+- **A lockfile repo runs the shared action
+  [`Adam-S-Daniel/verify-actions-lock`](https://github.com/Adam-S-Daniel/verify-actions-lock)
+  in a job that is a required check and runs on every pull request.** The
+  action decides for itself whether to verify: on a pull request it runs
+  `gh actions-lock --verify` if and only if the change touches
+  `.github/workflows/**`, `.github/actions/**` or an `action.yml`/`action.yaml`
+  (a new workflow not yet onboarded fails `--verify`; a composite's inner
+  actions are locked), and runs whenever it cannot tell; on other events it
+  skips, so the required check always reports. It installs gh-actions-lock
+  from the release binary checked against a sha256 written in the action, not
+  by `gh extension install` on a tag. It is referenced by release tag
+  (`@v1.0.0`) and locked in each repo's `actions.lock` like any action: a bare
+  SHA ref would trip `sha-as-ref`.
+- **The repo also turns on GitHub's Require lockfile policy** (Settings →
+  Actions → Policies) once its migration PR merges. The policy is GitHub's
+  runtime enforcement point: it blocks a targeted workflow that is not
+  onboarded, which covers a deleted or unreadable lockfile that the runner
+  would otherwise ignore (github/gh-actions-lock#125). The Actions policies
+  REST API documents no rule type for it as of 2026-10-20, so repo-settings
+  cannot declare it yet; it is set in the UI until then.
 - **The check fails on every pin finding; the allow-list holds one category,
   `cooldown-config-ignored`.** That warning (`valid: true`) says the tool could
   not read a `cooldown.exclude` in `dependabot.yml`; it describes Dependabot
@@ -135,33 +149,15 @@ target.
   workflow, orphan dependency) produce no finding at all, `sha-as-ref` only
   arises from a ref this form forbids, and `reachability-unknown` is the outage
   hole. The check prints each other finding's category and detail as an
-  `::error::`. The reference implementation is `claude-memory-map`'s
-  [ci.yml at 96f5266](https://github.com/Adam-S-Daniel/claude-memory-map/blob/96f5266d4a3b15471cbb6ed4755966b1408ab020/.github/workflows/ci.yml),
-  step "Verify action lockfile" (copied from it, run under `set -euo pipefail`;
-  jq escapes `%`, CR and LF so finding text cannot start a workflow command).
-  `ai-usage-dashboard` has no `dependabot.yml` and runs the same step without
-  the allow-list:
-
-  ```bash
-  rc=0
-  out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?
-  # v0.2.0 exits 0 with a reachability-unknown finding when the API fails; fail on any finding
-  # except cooldown-config-ignored, which reports dependabot.yml's cooldown exclude, not a pin.
-  if [[ "$rc" -ne 0 ]] || ! jq -e '.valid == true and ([.findings[] | select(.category != "cooldown-config-ignored")] | length) == 0' <<<"$out" >/dev/null; then
-    # Escape %, CR and LF so finding text cannot start a new workflow command.
-    if jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1; then
-      jq -r 'def esc: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"); .findings[]? | select(.category != "cooldown-config-ignored") | "::error::actions.lock \(.category | esc): \(.dependency // .workflow // "-" | esc): \(.detail | esc)"' <<<"$out"
-    else
-      echo '::error::gh actions-lock --verify returned no readable JSON.'
-    fi
-    if jq -e 'any(.findings[]?; .category == "reachability-unknown")' <<<"$out" >/dev/null 2>&1; then
-      echo '::error::reachability-unknown means the GitHub API was unreachable; re-run once it is back.'
-    fi
-    echo "::error::gh actions-lock --verify failed (exit $rc)."
-    exit 1
-  fi
-  ```
-
+  `::error::`, with `%`, CR and LF escaped so finding text cannot start a
+  workflow command. All of this lives in the shared action's
+  `scripts/check.sh`; the five wave-1 repos ran the same logic inline before
+  v1.0.0 existed (for example claude-memory-map's
+  [ci.yml at 96f5266](https://github.com/Adam-S-Daniel/claude-memory-map/blob/96f5266d4a3b15471cbb6ed4755966b1408ab020/.github/workflows/ci.yml)).
+- **A GitHub API outage fails the check** (decided 2026-10-20). GitHub's own
+  `--verify` exits 0 on `reachability-unknown` and leaves the re-check to the
+  runner; this fleet re-runs instead, which is cheap because the check only
+  verifies when workflow dependencies change.
 - **An `actions.lock` diff is reviewed like a SHA pin.** It, not the tag in
   the workflow, decides what code runs.
 - **Anything that treats a workflow pin change as special treats
@@ -189,11 +185,28 @@ dereferencing, the `cms-platform` release-tag carve-out, and
 - **Readable pins without a lying label.** The tag in `uses:` is checked
   against the lockfile on every relevant PR, so unlike 0007's comment it cannot
   drift silently.
-- **The guard is a CI step, not the platform.** A repo that adopts the
-  lockfile without the verify check has a pin that only *looks* tied to its
-  tag. An API outage now fails the check; re-run it once the API is back.
+- **Three layers, each with its own job.** The runner rejects forged pins (a
+  commit outside the ref's history, a changed repo identity) but accepts any
+  locked commit in the tag's history, so a downgrade within a tag runs. The
+  Require lockfile policy blocks un-onboarded workflows at run time. The PR
+  check gives early feedback and enforces the stricter rule that each locked
+  commit is what its tag points at now. Review of the `actions.lock` diff is
+  still the control GitHub names ("A lockfile is only a security control if
+  someone reads the diff").
+- **Why the check is ours and not GitHub's.** GitHub's 2026 Actions security
+  roadmap aims for "fewer per-workflow configurations, and more centralized,
+  enforceable policy", and its enforcement guide treats the CI check as
+  author feedback beside the policy; it promises "ready-to-copy
+  implementations" in the gh-actions-lock repository, none of which existed on
+  2026-10-20. No community action was worth adopting (one installs unpinned
+  and trusts the exit code; another uses a different lockfile format). The
+  shared action is a thin wrapper meant to be replaced by an official one.
 - **Facts every check and agent must allow for:**
   - Lockfile `commit` values read `sha1-<40hex>`, not bare hex.
+  - Lockfile keys lowercase the owner/repo part
+    (`adam-s-daniel/verify-actions-lock@v1.0.0`); a check that looks a `uses:`
+    up compares the part before the last `@` case-insensitively and the ref
+    exactly.
   - Docker images (`docker://`, a Docker action's image) are not locked.
   - Dependabot regenerates the matching lockfile entry in its own version-update
     PR, but does not onboard a new workflow (GitHub's lockfile docs).
@@ -214,7 +227,7 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   `test/test-dependabot-config-health.js` among them) stay until that repo
   migrates its workflows; migration and its test change land together.
 - **`base.md` is at its budget.** The binding limit is `test/run-tests.sh`'s
-  29,696-byte full build: with this section it is 29,694, and `main` was
+  29,696-byte full build: with this section it is 29,695, and `main` was
   29,632. That is why the tables, recovery, the `cms-platform` consumer rule,
   the `sha1-` prefix, the `could not verify` exit code and the linter results
   live here rather than in the section, and the next

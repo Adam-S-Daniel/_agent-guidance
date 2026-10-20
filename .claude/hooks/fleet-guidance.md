@@ -312,9 +312,9 @@ name outlives a rename).
 - **Cross-repo reusable workflows take a full SHA in both forms.** No lockfile
   locks them; only review or a repo check catches a tag.
 - **The runner runs whatever commit the lockfile names**, even off-tag. So a
-  required check, run on any workflow or local-action change, runs
-  `gh actions-lock --verify` from a sha256-checked binary and fails on any
-  pin finding. Review `actions.lock` diffs as SHA pins. Docker images are not
+  required check runs `Adam-S-Daniel/verify-actions-lock` (verifies workflow
+  or local-action changes; fails on any pin finding) plus the Require
+  lockfile policy. Review `actions.lock` like pins. Docker images are not
   locked.
 - **Wait 7 days after a third-party release**, else pin the previous.
 - **Dereference annotated tags:** `git ls-remote <url> 'refs/tags/<tag>^{}'`.
