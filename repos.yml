@@ -122,12 +122,12 @@ skills_bootstrap:
     - ai-usage-dashboard
     # lock: committed — PR #19 merged 2026-08-19.
     - claude-memory-map
-    # cms-platform and GHA-bench both gitignore `.claude/` — cms-platform with
-    # an explanatory comment, GHA-bench as a bare `/.claude/` entry (the
-    # comment above it is about workflow files) — which is why ADR 0001 refused
-    # to list them. Each has ONE companion PR carrying BOTH remaining steps:
-    # the narrowed ignore and the repo's first skills.lock. So the drift cell
-    # for these two reads `no-lock` like the other six pending entries, not
+    # cms-platform gitignores `.claude/` (with an explanatory comment), which
+    # is why ADR 0001 refused to list it. Its ONE companion PR carries BOTH
+    # remaining steps: the narrowed ignore and the repo's first skills.lock.
+    # (GHA-bench was the second such entry; it was archived in October 2026,
+    # so discovery no longer reaches it and it is no longer listed.) So the
+    # drift cell for it reads `no-lock` like the other pending entries, not
     # `blocked`: drift-report.sh tests the lock BEFORE it probes the ignore, so
     # `blocked` is only reachable once a lock exists. The entry is INERT, not
     # wrong; what it buys is that nothing further is needed HERE once the
@@ -136,8 +136,6 @@ skills_bootstrap:
     - cms-platform
     # lock: committed — PR #8 merged 2026-08-19.
     - fastmail-actions
-    # lock + ignore: pending GHA-bench#49 — inert until that merges.
-    - GHA-bench
     # lock: committed — PR #134 merged 2026-08-16, so the lock this file used
     # to call "in flight" has been committed for three days, and the sync
     # delivered the hook on its next run (2026-08-18). The stale note said the
@@ -280,7 +278,6 @@ cron_coverage:
     - claude-memory-map
     - cms-platform
     - fastmail-actions
-    - GHA-bench
     - jodidaniel.com
     - repo-settings
     - rss-inator
