@@ -34,6 +34,11 @@ on:
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
       # a fix to it would sit here firing no run to deliver itself.
       - ".claude/hooks/fleet-memory.sh"
+      # templates/dependabot-auto-merge/ is COPIED into every synced repo that
+      # runs Dependabot with no merge path (repos.yml's dependabot_auto_merge).
+      # Only ever added, never refreshed, so an edit here reaches only repos
+      # still missing the workflow.
+      - "templates/**"
       # This file. `SYNC_OWNERS` below decides WHICH ~20 repos the run touches,
       # and the dispatch inputs decide whether it writes at all — an owner
       # added or removed here is as much a policy change as an allowlist edit,

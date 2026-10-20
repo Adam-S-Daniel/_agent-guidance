@@ -2404,6 +2404,17 @@ case "$1" in
                         done
                         json="[$rows]"
                         ;;
+                    amorg)
+                        # The Dependabot auto-merge lane's fixtures, enumerated
+                        # off disk like gattrorg's.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/amorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"amorg/${name#amorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
                     failorg)
                         # An owner the CLI cannot authenticate against — the
                         # shape a missing App installation takes when the
@@ -22598,6 +22609,187 @@ test_self_hosted_gitattributes() {
 # Each entry is a group name; GROUP_<name> lists what it runs, in order.
 # group_codex_cloud is the one group that is not a list: it runs the Python
 # unittest modules and needs none of the shell fixtures.
+# ── Dependabot auto-merge workflow delivery (repos.yml dependabot_auto_merge) ──
+# amorg in a MOCK_BARE_DIR of its own. Steps run in order: switch off → dry
+# run → real run → re-run (no-op).
+setup_am_repos() {
+    local bare_dir="$1" work="$TEST_DIR/am-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/amorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        mkdir -p "$work/$name/.github/workflows"
+        case "$name" in
+            am-yaml) echo "version: 2" > "$work/$name/.github/dependabot.yaml" ;;
+            am-noconfig) : ;;
+            *) echo "version: 2" > "$work/$name/.github/dependabot.yml" ;;
+        esac
+        case "$name" in
+            am-present) echo "name: hand-written" > "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
+            am-self) echo "name: self" > "$work/$name/.github/workflows/self-dependabot-auto-merge.yml" ;;
+            am-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
+            am-script)
+                mkdir -p "$work/$name/.github/scripts"
+                echo "# repo's own copy" > "$work/$name/.github/scripts/workflow-overlap.sh"
+                ;;
+        esac
+        echo "name: CI" > "$work/$name/.github/workflows/ci.yml"
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/amorg_$name" HEAD:main 2>/dev/null
+    done
+}
+
+# am_show <repo> <path> — the file's bytes on main, or nothing if absent.
+am_show() {
+    gattr_git -C "$TEST_DIR/am-bare/amorg_$1" show "main:$2" 2>/dev/null
+}
+
+test_sync_dependabot_auto_merge() {
+    echo ""
+    echo "=== Test: sync.sh adds the Dependabot auto-merge workflow where it is missing ==="
+
+    local bare="$TEST_DIR/am-bare" out="$TEST_DIR/am-sync" before after rc sec got
+    local tmpl="$REPO_ROOT/templates/dependabot-auto-merge"
+    local wf=".github/workflows/dependabot-auto-merge.yml" helper=".github/scripts/workflow-overlap.sh"
+    setup_am_repos "$bare"
+
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/am-repos-off.yml"
+    printf 'exclude: []\ndefault_sections: []\ndependabot_auto_merge:\n  deliver: true\n' > "$TEST_DIR/am-repos-on.yml"
+
+    run_am_sync() {   # <repos.yml> <log> [--dry-run]
+        local yml="$1" log="$2"; shift 2
+        GITHUB_REPOSITORY_OWNER=amorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/am-pr-bodies" \
+        REPOS_YML="$yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+    am_section() {    # <log> <repo>
+        awk -v start="=== amorg/$2 ===" '
+            $0 == start { on = 1; print; next }
+            on && /^=== / { on = 0 }
+            on { print }
+        ' "$1"
+    }
+
+    # ── Switch off (the default): nothing about the workflow is touched ──
+    rc=0; run_am_sync "$TEST_DIR/am-repos-off.yml" "$out-off.log" || rc=$?
+    if [[ $rc -eq 0 && -z "$(am_show am-none "$wf")" ]]; then
+        pass "auto-merge (off): with deliver unset the sync runs and adds no workflow"
+    else
+        fail "auto-merge (off): with deliver unset the sync runs and adds no workflow — exit $rc"
+    fi
+    assert_not_contains "$out-off.log" "dependabot-auto-merge" \
+        "auto-merge (off): the run does not mention the workflow at all"
+
+    # ── Dry run with the switch on: reported, nothing written ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-dry.log" --dry-run || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "auto-merge (dry run): exits 0 and moves no ref"
+    else
+        fail "auto-merge (dry run): exits 0 and moves no ref — exit $rc"
+    fi
+    am_section "$out-dry.log" am-none > "$out-dry-none"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
+        "auto-merge (dry run): a repo missing the workflow is told it would be added"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add $helper" \
+        "auto-merge (dry run): and its helper"
+    am_section "$out-dry.log" am-present > "$out-dry-present"
+    assert_not_contains "$out-dry-present" "Would add $wf" \
+        "auto-merge (dry run): a repo with the workflow is not offered another"
+
+    # ── The real run ──
+    rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-1.log" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "auto-merge (sync): the run exits 0"
+    else
+        fail "auto-merge (sync): the run exits 0 — got $rc"
+    fi
+
+    if cmp -s <(am_show am-none "$wf") "$tmpl/dependabot-auto-merge.yml" \
+       && cmp -s <(am_show am-none "$helper") "$tmpl/workflow-overlap.sh"; then
+        pass "auto-merge (sync): a repo with dependabot.yml and no merge path gets the template's workflow and helper, byte for byte"
+    else
+        fail "auto-merge (sync): a repo with dependabot.yml and no merge path gets the template's workflow and helper, byte for byte"
+    fi
+    got=$(gattr_git -C "$bare/amorg_am-none" ls-tree main -- "$helper" | awk '{print $1}')
+    if [[ "$got" == 100755 ]]; then
+        pass "auto-merge (sync): the helper is committed executable"
+    else
+        fail "auto-merge (sync): the helper is committed executable — mode $got"
+    fi
+    if cmp -s <(am_show am-yaml "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a .github/dependabot.yaml counts as a Dependabot config too"
+    else
+        fail "auto-merge (sync): a .github/dependabot.yaml counts as a Dependabot config too"
+    fi
+
+    # The switch-off run already delivered AGENTS.md, so this run's commit is
+    # the workflow alone, under its own subject rather than another lane's.
+    got=$(gattr_git -C "$bare/amorg_am-none" show --name-only --format= main | sed '/^$/d' | sort | tr '\n' ' ')
+    if [[ "$got" == "$helper $wf " ]]; then
+        pass "auto-merge (sync): the commit carries exactly the workflow and its helper"
+    else
+        fail "auto-merge (sync): the commit carries exactly the workflow and its helper — files: $got"
+    fi
+    got=$(gattr_git -C "$bare/amorg_am-none" log -1 --format=%B main)
+    if [[ "$got" == "chore: add the Dependabot auto-merge workflow"* \
+          && "$got" == *"Adds .github/workflows/dependabot-auto-merge.yml"* ]]; then
+        pass "auto-merge (sync): the commit's subject and body say why the workflow was added"
+    else
+        fail "auto-merge (sync): the commit's subject and body say why the workflow was added — got: $(head -1 <<< "$got")"
+    fi
+
+    if [[ "$(am_show am-present "$wf")" == "name: hand-written" ]]; then
+        pass "auto-merge (sync): an existing dependabot-auto-merge.yml is never overwritten"
+    else
+        fail "auto-merge (sync): an existing dependabot-auto-merge.yml is never overwritten"
+    fi
+    if [[ -z "$(am_show am-self "$wf")" ]]; then
+        pass "auto-merge (sync): cms-platform's self-dependabot-auto-merge.yml counts as a merge path"
+    else
+        fail "auto-merge (sync): cms-platform's self-dependabot-auto-merge.yml counts as a merge path"
+    fi
+    if [[ -z "$(am_show am-noconfig "$wf")" ]]; then
+        pass "auto-merge (sync): a repo with no Dependabot config gets nothing"
+    else
+        fail "auto-merge (sync): a repo with no Dependabot config gets nothing"
+    fi
+
+    if [[ -z "$(am_show am-lock "$wf")" ]]; then
+        pass "auto-merge (sync): a repo with actions.lock is not given the SHA-pinned template"
+    else
+        fail "auto-merge (sync): a repo with actions.lock is not given the SHA-pinned template"
+    fi
+    am_section "$out-1.log" am-lock > "$out-lock"
+    assert_contains "$out-lock" "WARN: amorg/am-lock locks its actions in .github/workflows/actions.lock" \
+        "auto-merge (sync): the actions.lock skip is named in the log"
+
+    if cmp -s <(am_show am-script "$wf") "$tmpl/dependabot-auto-merge.yml" \
+       && [[ "$(am_show am-script "$helper")" == "# repo's own copy" ]]; then
+        pass "auto-merge (sync): the workflow is added but a repo's existing helper is left as it is"
+    else
+        fail "auto-merge (sync): the workflow is added but a repo's existing helper is left as it is"
+    fi
+
+    # ── Re-run: nothing left to do ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-2.log" || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "auto-merge (re-run): a second run moves no ref"
+    else
+        fail "auto-merge (re-run): a second run moves no ref — exit $rc"
+    fi
+}
+
+
 TEST_GROUPS=(
     runner
     codex_memory_audit
@@ -22615,6 +22807,7 @@ TEST_GROUPS=(
     codex
     memory_home
     gitattr
+    automerge
 )
 
 GROUP_sync=(
@@ -23000,6 +23193,12 @@ GROUP_gitattr=(
     test_hook_eol_gitattributes_helper
     test_hook_eol_gitattributes_git_checkout
     test_sync_gitattributes
+)
+
+# The Dependabot auto-merge delivery lane: amorg in a MOCK_BARE_DIR of its
+# own; steps run in order (switch off → dry run → sync → re-run).
+GROUP_automerge=(
+    test_sync_dependabot_auto_merge
 )
 
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /

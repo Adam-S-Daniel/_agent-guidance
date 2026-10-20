@@ -53,6 +53,12 @@ FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 # Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
 GITATTR_REL_PATH=".gitattributes"
 GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
+# The Dependabot merge path every repo running Dependabot needs, ADDED (never
+# overwritten) when repos.yml's dependabot_auto_merge.deliver is true. See the
+# block in repos.yml for why it is off by default.
+AUTOMERGE_TEMPLATE_DIR="$REPO_ROOT/templates/dependabot-auto-merge"
+AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
+AUTOMERGE_SCRIPT_REL_PATH=".github/scripts/workflow-overlap.sh"
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -383,6 +389,19 @@ fi
 
 BOOTSTRAP_BLOB=""          # path to the fetched, verified hook; "" until fetched
 BOOTSTRAP_FETCH_WARNED=false
+
+# ── Dependabot auto-merge workflow delivery config ─────────────────────────
+# A single switch, read like every other repos.yml key. Anything but a literal
+# `true` is off: a typo must not start writing workflow files fleet-wide.
+AUTOMERGE_ENABLED=false
+if [[ "$(read_repos_yml '.dependabot_auto_merge.deliver // false')" == "true" ]]; then
+    if [[ -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" \
+          && -s "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" ]]; then
+        AUTOMERGE_ENABLED=true
+    else
+        echo "::warning::repos.yml turns on dependabot_auto_merge.deliver, but $AUTOMERGE_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
+    fi
+fi
 
 bootstrap_allowlisted() {
     local short="${1##*/}" entry
@@ -1067,7 +1086,36 @@ for repo_name in "${REPOS[@]}"; do
         gitattr_up_to_date=false
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date; then
+    # ── Dependabot auto-merge workflow: classify ───────────────────────
+    # missing  -> deliver; present / n-a -> nothing to do; skipped -> warned.
+    # "present" is any workflow named dependabot-auto-merge.yml or cms-platform's
+    # self-dependabot-auto-merge.yml, whatever its content: the sync adds a
+    # merge path where there is none, it does not police the ones that exist.
+    automerge_state="n/a"
+    if $AUTOMERGE_ENABLED && [[ -f .github/dependabot.yml || -f .github/dependabot.yaml ]]; then
+        automerge_state="missing"
+        for wf in .github/workflows/*; do
+            [[ -f "$wf" ]] || continue
+            if [[ "${wf##*/}" =~ ^(self-)?dependabot-auto-merge\.ya?ml$ ]]; then
+                automerge_state="present"
+                break
+            fi
+        done
+        if [[ "$automerge_state" == "missing" ]]; then
+            if [[ -e .github/workflows/actions.lock ]]; then
+                automerge_state="skipped"
+                log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the Dependabot auto-merge workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
+            elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null \
+                 || git check-ignore -q "$AUTOMERGE_SCRIPT_REL_PATH" 2>/dev/null; then
+                automerge_state="skipped"
+                log "WARN: the Dependabot auto-merge workflow's paths are gitignored in $repo_name — not delivered."
+            fi
+        fi
+    fi
+    automerge_up_to_date=true
+    [[ "$automerge_state" == "missing" ]] && automerge_up_to_date=false
+
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date && $automerge_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1144,6 +1192,12 @@ for repo_name in "${REPOS[@]}"; do
             else
                 log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF"
             fi
+        fi
+
+        if ! $automerge_up_to_date; then
+            log "[DRY RUN] Would add $AUTOMERGE_WF_REL_PATH (Dependabot auto-merge sweep; this repo has a Dependabot config and no merge path)"
+            [[ -e "$AUTOMERGE_SCRIPT_REL_PATH" ]] \
+                || log "[DRY RUN] Would add $AUTOMERGE_SCRIPT_REL_PATH (its helper)"
         fi
 
         ((SKIP_COUNT++)) || true
@@ -1300,7 +1354,28 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── Dependabot auto-merge workflow: write ──────────────────────────
+    # Added, never overwritten. The helper keeps whatever copy the repo
+    # already has: the workflow only calls it, and a differing copy is that
+    # repo's business.
+    automerge_written=false
+    automerge_script_written=false
+    if ! $automerge_up_to_date; then
+        mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
+        cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
+        automerge_written=true
+        if [[ ! -e "$AUTOMERGE_SCRIPT_REL_PATH" ]]; then
+            mkdir -p "$(dirname "$AUTOMERGE_SCRIPT_REL_PATH")"
+            cp "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" "$AUTOMERGE_SCRIPT_REL_PATH"
+            chmod 0755 "$AUTOMERGE_SCRIPT_REL_PATH"
+            automerge_script_written=true
+        fi
+        log "dependabot auto-merge: workflow added$($automerge_script_written && echo ' (with its helper)')."
+    fi
+
     add_paths=(AGENTS.md)
+    $automerge_written && add_paths+=("$AUTOMERGE_WF_REL_PATH")
+    $automerge_script_written && add_paths+=("$AUTOMERGE_SCRIPT_REL_PATH")
     $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
@@ -1351,7 +1426,23 @@ else in the file changed): a Windows autocrlf checkout gives them CRLF, which
 bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
     fi
 
+    if $automerge_written; then
+        bootstrap_note="${bootstrap_note}
+
+Adds .github/workflows/dependabot-auto-merge.yml: this repo has a Dependabot
+config but nothing merged its PRs. Its daily sweep merges each Dependabot PR
+once every check on the PR's head is green. Delivered once from
+_agent-guidance's templates/dependabot-auto-merge/; the sync never overwrites
+it afterwards."
+    fi
+
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: add the Dependabot auto-merge workflow
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
         commit_message="chore: pin the hook scripts to LF in .gitattributes
