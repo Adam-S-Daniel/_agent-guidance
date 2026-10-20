@@ -125,24 +125,35 @@ target.
   inner actions are locked). The tool is installed from its release binary,
   checked against a sha256 written in the workflow, not by
   `gh extension install` on a tag.
-- **The check fails on every finding; the allow-list of benign categories is
-  empty.** No category observed above is benign in a correctly locked repo:
-  the benign-looking cases (Docker, major-only tag, branch, reusable workflow,
-  orphan dependency) produce no finding at all, `sha-as-ref` only arises from a
-  ref this form forbids, and `reachability-unknown` is the outage hole. The
-  check prints each finding's category and detail as an `::error::`. The
-  reference implementation is `ai-usage-dashboard`'s
-  [ci.yml at 656db3d](https://github.com/Adam-S-Daniel/ai-usage-dashboard/blob/656db3d32d70254cdef6ff89c7a73a9250ac9f19/.github/workflows/ci.yml),
+- **The check fails on every pin finding; the allow-list holds one category,
+  `cooldown-config-ignored`.** That warning (`valid: true`) says the tool could
+  not read a `cooldown.exclude` in `dependabot.yml`; it describes Dependabot
+  config, not a pin. Fleet repos exclude `Adam-S-Daniel/cms-platform/*` from
+  the 7-day cooldown and do not `ignore` it, so the exclude is load-bearing and
+  stays. No other category observed above is benign in a correctly locked
+  repo: the benign-looking cases (Docker, major-only tag, branch, reusable
+  workflow, orphan dependency) produce no finding at all, `sha-as-ref` only
+  arises from a ref this form forbids, and `reachability-unknown` is the outage
+  hole. The check prints each other finding's category and detail as an
+  `::error::`. The reference implementation is `claude-memory-map`'s
+  [ci.yml at 96f5266](https://github.com/Adam-S-Daniel/claude-memory-map/blob/96f5266d4a3b15471cbb6ed4755966b1408ab020/.github/workflows/ci.yml),
   step "Verify action lockfile" (copied from it, run under `set -euo pipefail`;
-  jq escapes `%`, CR and LF so finding text cannot start a workflow command):
+  jq escapes `%`, CR and LF so finding text cannot start a workflow command).
+  `ai-usage-dashboard` has no `dependabot.yml` and runs the same step without
+  the allow-list:
 
   ```bash
   rc=0
   out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?
-  # v0.2.0 exits 0 with a reachability-unknown finding when the API fails; fail on any finding.
-  if [[ "$rc" -ne 0 ]] || ! jq -e '.valid == true and (.findings | length) == 0' <<<"$out" >/dev/null; then
+  # v0.2.0 exits 0 with a reachability-unknown finding when the API fails; fail on any finding
+  # except cooldown-config-ignored, which reports dependabot.yml's cooldown exclude, not a pin.
+  if [[ "$rc" -ne 0 ]] || ! jq -e '.valid == true and ([.findings[] | select(.category != "cooldown-config-ignored")] | length) == 0' <<<"$out" >/dev/null; then
     # Escape %, CR and LF so finding text cannot start a new workflow command.
-    jq -r 'def esc: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"); .findings[]? | "::error::actions.lock \(.category | esc): \(.dependency // .workflow // "-" | esc): \(.detail | esc)"' <<<"$out" || echo '::error::gh actions-lock --verify returned no readable JSON.'
+    if jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1; then
+      jq -r 'def esc: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"); .findings[]? | select(.category != "cooldown-config-ignored") | "::error::actions.lock \(.category | esc): \(.dependency // .workflow // "-" | esc): \(.detail | esc)"' <<<"$out"
+    else
+      echo '::error::gh actions-lock --verify returned no readable JSON.'
+    fi
     if jq -e 'any(.findings[]?; .category == "reachability-unknown")' <<<"$out" >/dev/null 2>&1; then
       echo '::error::reachability-unknown means the GitHub API was unreachable; re-run once it is back.'
     fi

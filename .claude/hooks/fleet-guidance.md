@@ -308,13 +308,13 @@ name outlives a rename).
   `$/<path>`. Then `gh actions-lock --no-narrow`. A repo with local actions
   that runs actionlint (rejects `$/`), or with `./` refs into a runtime
   checkout, like `cms-platform`, stays legacy.
-- **Legacy:** a full 40-character SHA, no trailing version comment.
+- **Legacy:** full 40-character SHA, no trailing version comment.
 - **Cross-repo reusable workflows take a full SHA in both forms.** No lockfile
   locks them; only review or a repo check catches a tag.
 - **The runner runs whatever commit the lockfile names**, even off-tag. So a
   required check, run on any workflow or local-action change, runs
-  `gh actions-lock --verify` from a sha256-checked binary and fails on ANY
-  finding. Review `actions.lock` diffs like SHA pins. Docker images are not
+  `gh actions-lock --verify` from a sha256-checked binary and fails on any
+  pin finding. Review `actions.lock` diffs as SHA pins. Docker images are not
   locked.
 - **Wait 7 days after a third-party release**, else pin the previous.
 - **Dereference annotated tags:** `git ls-remote <url> 'refs/tags/<tag>^{}'`.
