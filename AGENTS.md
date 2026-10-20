@@ -67,8 +67,8 @@ session that lost the guidance must not also lose these.
   workflows. Never design a bot that pushes to a protected default branch.
 - **Every `uses:` is pinned: an exact tag locked in
   `.github/workflows/actions.lock` and checked by a required
-  `gh actions-lock --verify`, or a full 40-character commit SHA with no
-  trailing version comment.** The one carve-out is a ref into this account's
+  `gh actions-lock --verify` that fails on any finding, or a full
+  40-character commit SHA with no trailing version comment.** The one carve-out is a ref into this account's
   own `cms-platform`, which stays on its release tag.
 - **Never commit secrets or `.env` files, and never print personal data to a
   CI log** — logs, artifacts and git history on a public repo are public.

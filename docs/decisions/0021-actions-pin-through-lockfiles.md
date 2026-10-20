@@ -20,17 +20,62 @@ That gives readable `uses:` lines and an immutable pin together, and
 `ai-usage-dashboard`, where the setting is on and CI on tag refs is green).
 
 The pilot on `ai-usage-dashboard`
-([PR #11](https://github.com/Adam-S-Daniel/ai-usage-dashboard/pull/11)) found two
-things the documentation does not say
-([evidence](../evidence/2026-10-20-stale-lockfile.md)):
+([PR #11](https://github.com/Adam-S-Daniel/ai-usage-dashboard/pull/11)) and the
+experiments below were run with `gh-actions-lock` v0.2.0 on 2026-10-20. Two
+results drive this decision ([evidence](../evidence/2026-10-20-stale-lockfile.md)):
 
 1. **The runner trusts the lockfile over the tag.** A lockfile pointing
    `actions/checkout@v7.0.1` at v7.0.0's commit ran that commit with no error.
-   The runner rejects an unreachable commit, not a mismatched one. Only
-   `gh actions-lock --verify` caught it.
-2. **`--verify` passes when it cannot check.** v0.2.0 exits 0, with
+   Only `gh actions-lock --verify` caught it.
+2. **`--verify` passes when it cannot check.** It exits 0, with
    `"valid": true` and `reachability-unknown` findings, when GitHub's API
    fails.
+
+### What the tool and the runner do, tested
+
+Each case was locked with `gh actions-lock --no-narrow` and then checked with
+`gh actions-lock --verify --no-interactive --json=valid,findings` (exit code,
+`valid`, finding categories).
+
+| Case | Lockfile | `--verify` |
+|---|---|---|
+| `docker://alpine:3.20` step | no entry | exit 0, valid, no findings |
+| Docker-container action (`actions/hello-world-docker-action@v2`) | action repo commit only; the image is not locked | exit 0, no findings |
+| Major-only tag (`…@v1`, no `vX.Y.Z` exists) | entry with `ref: 'v1'` | exit 0, no findings |
+| Branch ref (`actions/checkout@main`) | entry with `ref: 'main'` | exit 0, no findings |
+| Bare SHA ref in a lockfile repo | entry | exit 0, `sha-as-ref` (warning) |
+| Workflow listing an entry it no longer uses | — | exit 1, `stale` + `ref-changed` (errors) |
+| Dependency listed under no workflow | — | exit 0, no findings (ignored) |
+| Workflow with no lockfile entry | — | exit 1, `not-pinned` |
+| `./` local action with `--no-migrate-local-actions` | workflow onboarded with no entries | exit 1, `local-action` ("not supported") |
+| Same, written `$/` (the tool's default rewrite) | the composite's inner actions locked transitively | exit 0, no findings |
+| Cross-repo reusable workflow, by tag, branch or SHA (`jobs.<id>.uses`) | workflow onboarded as `[]`; no entry | exit 0, no findings |
+| `Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.163` | `[]`; no entry | exit 0, no findings |
+| API unreachable | — | exit 0, `reachability-unknown` (warning) |
+| Pin disagreeing with its tag | — | exit 1, `unreachable-pin` |
+
+At runtime ([run 39359501093](https://github.com/Adam-S-Daniel/ai-usage-dashboard/actions/runs/39359501093),
+a temporary probe reverted the next commit):
+
+- **The reusable-workflow job ran the ref's live commit**
+  (`Uses: actions/reusable-workflows/.github/workflows/check-dist.yml@refs/heads/main (d468c63…)`)
+  with no "Using locked action versions" line, and the called workflow's own
+  steps ran on the SHAs it pins itself. The caller's lockfile governs neither.
+  (The job then failed at `npm ci` for lack of a package lockfile, which is
+  unrelated.)
+- **The `$/` composite job used the lockfile**: `$/` resolved to the repository
+  at the run's commit, and the composite's inner `actions/github-script@v7.0.1`
+  downloaded its locked SHA.
+
+Recovery, tested on a hand-edited lockfile (a commit reachable but not the
+tag's, and a commit that does not exist):
+
+| Command | Mismatched pin | Unreachable pin |
+|---|---|---|
+| `gh actions-lock` (plain fix run) | still fails | still fails |
+| `--relock` | fixed | **still fails** |
+| `--accept-moved` | fixed | fixed |
+| `--relock --accept-moved` | fixed | fixed |
 
 ## Decision
 
@@ -38,30 +83,53 @@ Two pin forms are accepted while repos migrate; the lockfile form is the
 target.
 
 - **Lockfile form.** The repo commits `.github/workflows/actions.lock` with
-  every workflow onboarded, and every non-local `uses:` names an exact release
-  tag (`vX.Y.Z`). Generate with
-  `gh actions-lock --no-narrow --no-migrate-local-actions`: by default the tool
-  narrows a partial tag and rewrites `./` local actions to `$/`, and on first
-  pin it rewrites a bare SHA to a tag.
+  every workflow onboarded. Write each `uses:` by hand on the action's most
+  exact tag, `vX.Y.Z` when one exists, otherwise the most specific tag it has
+  (`v1`), and a branch only when it has no tag. Then run
+  `gh actions-lock --no-narrow`, which keeps the ref as written and locks it.
+  Local actions are written `$/<path>`: `--verify` rejects `./`, and the
+  default run rewrites `./` to `$/` (so do not pass
+  `--no-migrate-local-actions`). Never a bare SHA in this form: it trips
+  `sha-as-ref`, which fails the check below.
 - **Legacy form,** until a repo migrates: a full 40-character SHA with no
   trailing comment, exactly as 0007 decided.
+- **Cross-repo reusable workflows stay on a full SHA in both forms.** No
+  lockfile locks them; the caller runs the ref's live commit. The
+  `cms-platform` release-tag carve-out is the one exception, as before. A
+  workflow whose jobs are all reusable-workflow calls still needs its `[]`
+  entry, which the tool writes.
 - **A lockfile repo runs `gh actions-lock --verify` inside a required check**
-  that runs on any change under `.github/workflows/` (a new workflow that is not
-  onboarded fails `--verify`, so the PR that adds it must be checked). The tool
-  is installed from its release binary, checked against a sha256 written in the
-  workflow, not by `gh extension install` on a tag. The check fails on **any**
-  finding, not on the exit code alone. The reference implementation is
-  `ai-usage-dashboard`'s
-  [ci.yml at 405217a](https://github.com/Adam-S-Daniel/ai-usage-dashboard/blob/405217aaaf0a212aae8a036a2598f133694f6dfe/.github/workflows/ci.yml),
+  that runs on any change under `.github/workflows/` or a local action
+  directory (a new workflow not yet onboarded fails `--verify`; a composite's
+  inner actions are locked). The tool is installed from its release binary,
+  checked against a sha256 written in the workflow, not by
+  `gh extension install` on a tag.
+- **The check fails on every finding; the allow-list of benign categories is
+  empty.** No category observed above is benign in a correctly locked repo:
+  the benign-looking cases (Docker, major-only tag, branch, reusable workflow,
+  orphan dependency) produce no finding at all, `sha-as-ref` only arises from a
+  ref this form forbids, and `reachability-unknown` is the outage hole. The
+  check prints each finding's category and detail as an `::error::`. The
+  reference implementation is `ai-usage-dashboard`'s
+  [ci.yml at 802b580](https://github.com/Adam-S-Daniel/ai-usage-dashboard/blob/802b58088f3bf682c07353abb60234cdaf495201/.github/workflows/ci.yml),
   step "Verify action lockfile":
 
   ```bash
   out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?
-  jq -e '.valid == true and (.findings | length) == 0' <<<"$out"
+  if [[ "$rc" -ne 0 ]] || ! jq -e '.valid == true and (.findings | length) == 0' <<<"$out" >/dev/null; then
+    jq -r '.findings[]? | "::error::actions.lock \(.category): \(.dependency // .workflow // "-"): \(.detail)"' <<<"$out" || printf '%s\n' "$out"
+    exit 1
+  fi
   ```
 
 - **An `actions.lock` diff is reviewed like a SHA pin.** It, not the tag in
   the workflow, decides what code runs.
+- **A repo that references a `cms-platform` composite action stays in legacy
+  form until the platform bump regenerates its `actions.lock`.** A composite
+  action ref gets a lockfile entry, so a bump that only rewrites the
+  `@v0.1.x` tag leaves a `ref-changed`/`stale` lockfile and fails the check. A
+  repo that calls only `cms-platform` reusable workflows is unaffected: those
+  refs get no entry.
 
 Unchanged: the 7-day wait after a third-party release, annotated-tag
 dereferencing, the `cms-platform` release-tag carve-out, and
@@ -77,16 +145,17 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   tag. An API outage now fails the check; re-run it once the API is back.
 - **Facts every check and agent must allow for:**
   - Lockfile `commit` values read `sha1-<40hex>`, not bare hex.
-  - Docker images (`docker://`, a Docker action's image) get no lockfile
-    entry.
+  - Docker images (`docker://`, a Docker action's image) are not locked.
   - Dependabot regenerates the matching lockfile entry in its own version-update
-    PR, but does not onboard a new workflow.
-  - "Pinned commit not in upstream history" also fires when a pin merely
-    disagrees with its tag.
-- **Recovery** (always review the lockfile diff): a ref that legitimately moved
-  takes `gh actions-lock --relock`; a locked commit no longer reachable upstream
-  takes `gh actions-lock --relock --accept-moved` (`--relock` alone leaves
-  unreachable pins as errors).
+    PR, but does not onboard a new workflow (GitHub's lockfile docs).
+  - "Pinned commit not in upstream history" (`unreachable-pin`) also fires when
+    a pin merely disagrees with its tag.
+- **Recovery:** `gh actions-lock --accept-moved`. It re-resolves only the
+  flagged pins to the tag's current commit and fixes both a mismatched and an
+  unreachable pin. `--relock` alone leaves an unreachable pin failing and
+  advances every moved ref in the repo. GitHub's docs suggest
+  `--relock --accept-moved`, which behaved the same in these tests but is
+  broader. Always review the lockfile diff.
 - **The verify tool is pinned by digest, and the digest moves by hand.** It is
   a preview extension (v0.2.0); a new release means a new sha256 in every lockfile
   repo's workflow, in the spirit of
@@ -96,7 +165,7 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   `test/test-dependabot-config-health.js` among them) stay until that repo
   migrates its workflows; migration and its test change land together.
 - **`base.md` is at its budget.** The binding limit is `test/run-tests.sh`'s
-  29,696-byte full build: with this section it is 29,672, and `main` was
-  29,632. That is why the evidence link, recovery commands and tool facts live
-  here rather than in the section, and the next `base.md` addition has to trim
-  something first.
+  29,696-byte full build: with this section it is 29,694, and `main` was
+  29,632. That is why the table, recovery, the `cms-platform` consumer rule
+  and the tool facts live here rather than in the section, and the next
+  `base.md` addition has to trim something first.
