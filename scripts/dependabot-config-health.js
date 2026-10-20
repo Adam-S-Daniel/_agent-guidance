@@ -147,6 +147,19 @@ const ISSUE_TITLE = "Dependabot config is invalid or silent (automated sweep)";
 const DEFAULT_LABEL = "ci";
 const MAX_PAGES = 10; // pagination ceiling for every list* call below
 
+// The MERGE-PATH signal. A repo whose Dependabot config is perfectly healthy
+// can still leave every PR it opens waiting on a human: the fleet's unattended
+// merge path is a per-repo `dependabot-auto-merge.yml` workflow (canonical
+// standalone copy: fastmail-actions; cms-platform runs it as
+// self-dependabot-auto-merge.yml), and nothing adds that file to a new repo.
+// adam-agentskills ran Dependabot for weeks without one, so #68 sat green for
+// five days until someone merged it by hand. This is a separate question from
+// "invalid or silent", so it gets its own tracking issue (own marker, own
+// title) and never changes the config-health verdict above.
+const AUTO_MERGE_WORKFLOW_RE = /(^|\/)(self-)?dependabot-auto-merge\.ya?ml$/;
+const MERGE_PATH_MARKER = "<!-- dependabot-merge-path -->";
+const MERGE_PATH_ISSUE_TITLE = "Dependabot PRs have no auto-merge workflow (automated sweep)";
+
 // ── Errors ─────────────────────────────────────────────────────────────────
 
 // Thrown by the gh-backed `api` on any non-zero `gh api`/`gh repo` exit.
@@ -646,6 +659,7 @@ function logLine(assessment, { revealPrivate } = {}) {
   if (assessment.findings.length) parts.push(`kinds=${assessment.findings.map((f) => f.kind).join(",")}`);
   if (assessment.unknowns.length) parts.push(`unknowns=${assessment.unknowns.join(" | ")}`);
   if (assessment.notices && assessment.notices.length) parts.push(`notices=${assessment.notices.join(" | ")}`);
+  if (assessment.mergePath && assessment.mergePath.state === "missing") parts.push("auto-merge-workflow=missing");
   return parts.join(" ");
 }
 
@@ -708,14 +722,14 @@ function buildJobsEnvelope({ lastJobAt, lastJobUrl, configCommitAt, thresholdDay
   return { state, lastJobAt, lastJobUrl, thresholdDays, intervalBasis, reason };
 }
 
-function findOpenIssue(owner, repo, api, label) {
+function findOpenIssue(owner, repo, api, label, marker = MARKER) {
   const issues = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
     const items = api.openIssuesPage(owner, repo, label, page) || [];
     issues.push(...items);
     if (items.length < 100) break;
   }
-  return issues.find((i) => i && !i.pull_request && typeof i.body === "string" && i.body.includes(MARKER)) || null;
+  return issues.find((i) => i && !i.pull_request && typeof i.body === "string" && i.body.includes(marker)) || null;
 }
 
 function collectCommentTexts(owner, repo, number, api) {
@@ -749,6 +763,7 @@ function assessRepo(target, api, nowMs, opts) {
       notices: [],
       issueLookupFailed: false,
       config: null, check: null, jobs: null, openIssue: null,
+      mergePath: { state: "unknown", openIssue: null, issueLookupFailed: false },
     };
   }
 
@@ -777,6 +792,8 @@ function assessRepo(target, api, nowMs, opts) {
   let verdictResult;
   let check = null;
   let jobs = null;
+  // "present" | "missing" | "unknown" | "no-config" — see AUTO_MERGE_WORKFLOW_RE.
+  let mergePathState = config ? "unknown" : "no-config";
 
   if (configErrorReason) {
     verdictResult = { verdict: "unknown", findings: [], unknowns: [configErrorReason], notices: [] };
@@ -858,6 +875,8 @@ function assessRepo(target, api, nowMs, opts) {
         reason: `the workflows listing was truncated (total_count ${total}, collected ${workflows.length}) — the updates workflow could not be confirmed present or absent`,
       };
     } else {
+      mergePathState = workflows.some((w) => w && typeof w.path === "string" && AUTO_MERGE_WORKFLOW_RE.test(w.path))
+        ? "present" : "missing";
       updatesWf = workflows.find((w) => w && w.path === UPDATES_WORKFLOW_PATH) || null;
       if (!updatesWf) {
         jobs = buildJobsEnvelope({ lastJobAt: null, lastJobUrl: null, configCommitAt, thresholdDays, nowMs, intervalBasis, schedule });
@@ -925,6 +944,22 @@ function assessRepo(target, api, nowMs, opts) {
     if (verdict !== "finding") verdict = "unknown";
   }
 
+  // The merge-path issue is looked up only when it could matter: a repo with
+  // no workflow listing to judge (config read failed, listing failed) can
+  // neither file nor shut one, so it costs no extra calls.
+  let mergePathIssue = null;
+  let mergePathLookupFailed = false;
+  if (configErrorReason) mergePathState = "unknown";
+  if (mergePathState !== "unknown") {
+    try {
+      mergePathIssue = findOpenIssue(owner, repo, api, label, MERGE_PATH_MARKER);
+    } catch (e) {
+      mergePathLookupFailed = true;
+      unknowns.push(describeApiError("looking up the open merge-path issue", e));
+      if (verdict !== "finding") verdict = "unknown";
+    }
+  }
+
   return {
     owner, repo, private: isPrivate,
     verdict,
@@ -933,7 +968,68 @@ function assessRepo(target, api, nowMs, opts) {
     notices: verdictResult.notices || [],
     issueLookupFailed,
     config, check, jobs, openIssue,
+    mergePath: {
+      state: mergePathState,
+      openIssue: mergePathIssue ? { number: mergePathIssue.number, url: mergePathIssue.html_url } : null,
+      issueLookupFailed: mergePathLookupFailed,
+    },
   };
+}
+
+// planMergePathAction — files once, never comments (the finding has no
+// evidence that changes between runs), and shuts only on a positive read:
+// the workflow is now present, or the repo no longer runs Dependabot at all.
+// "unknown" never shuts, and a failed lookup never acts, for the same reasons
+// planIssueAction gives.
+function planMergePathAction(mergePath) {
+  if (!mergePath || mergePath.issueLookupFailed) return { action: "none" };
+  if (mergePath.state === "missing" && !mergePath.openIssue) return { action: "create" };
+  if ((mergePath.state === "present" || mergePath.state === "no-config") && mergePath.openIssue) {
+    return { action: "shut" };
+  }
+  return { action: "none" };
+}
+
+function renderMergePathIssueBody(assessment) {
+  return [
+    MERGE_PATH_MARKER,
+    "",
+    `Repo: ${assessment.repo}`,
+    "",
+    `This repo has a Dependabot config (\`${(assessment.config && assessment.config.path) || ".github/dependabot.yml"}\`) ` +
+      "but no `dependabot-auto-merge.yml` workflow, so every Dependabot PR waits for someone to merge it " +
+      "by hand, even after CI passes.",
+    "",
+    "**What to do:** copy `.github/workflows/dependabot-auto-merge.yml` and " +
+      "`.github/scripts/workflow-overlap.sh` from " +
+      "https://github.com/Adam-S-Daniel/fastmail-actions (the canonical standalone copy) into this repo, " +
+      "keeping its action pins in this repo's own pinning style. Its daily sweep merges each Dependabot PR " +
+      "once every check on the PR's head is green. This issue shuts itself on the first sweep after the " +
+      "workflow lands on the default branch.",
+    "",
+    FOOTER,
+  ].join("\n");
+}
+
+function renderMergePathShutComment() {
+  return [
+    MERGE_PATH_MARKER,
+    "A `dependabot-auto-merge.yml` workflow is now on the default branch (or the repo no longer has a " +
+      "Dependabot config) — shutting this issue.",
+    "",
+    FOOTER,
+  ].join("\n");
+}
+
+function performMergePathAction(plan, assessment, api, label) {
+  if (plan.action === "create") {
+    api.ensureLabel(assessment.owner, assessment.repo, label);
+    api.createIssue(assessment.owner, assessment.repo, {
+      title: MERGE_PATH_ISSUE_TITLE, body: renderMergePathIssueBody(assessment), label,
+    });
+  } else if (plan.action === "shut") {
+    api.shutIssue(assessment.owner, assessment.repo, assessment.mergePath.openIssue.number, renderMergePathShutComment());
+  }
 }
 
 // ── The write side ─────────────────────────────────────────────────────────
@@ -1014,6 +1110,7 @@ function runSweep({
         verdict: "unknown", findings: [], unknowns: [`assessment crashed: ${e.message}`], notices: [],
         issueLookupFailed: false,
         config: null, check: null, jobs: null, openIssue: null,
+        mergePath: { state: "unknown", openIssue: null, issueLookupFailed: false },
       };
     }
     assessments.push(assessment);
@@ -1036,23 +1133,27 @@ function runSweep({
       issueLookupFailed: assessment.issueLookupFailed,
     });
 
-    if (dryRun) {
-      if (plan.action !== "none") {
+    const mergePlan = planMergePathAction(assessment.mergePath);
+    const actions = [
+      { plan, perform: performAction, what: "" },
+      { plan: mergePlan, perform: performMergePathAction, what: " merge-path issue" },
+    ];
+    for (const { plan: p, perform, what } of actions) {
+      if (p.action === "none") continue;
+      if (dryRun) {
         output(assessment.private
-          ? `(dry-run) would ${plan.action} on a private repo (name withheld)`
-          : `(dry-run) would ${plan.action} on ${assessment.repo}`);
+          ? `(dry-run) would ${p.action}${what} on a private repo (name withheld)`
+          : `(dry-run) would ${p.action}${what} on ${assessment.repo}`);
+        continue;
       }
-      continue;
-    }
-
-    if (plan.action === "none") continue;
-    try {
-      performAction(plan, assessment, api, effectiveLabel);
-    } catch (e) {
-      const who = assessment.private ? "a private repo" : assessment.repo;
-      const msg = `${who}: ${plan.action} failed — ${describeApiError("write", e)}`;
-      output(`::error::${msg}`);
-      writeFailures.push({ repo: assessment.private ? null : assessment.repo, reason: msg });
+      try {
+        perform(p, assessment, api, effectiveLabel);
+      } catch (e) {
+        const who = assessment.private ? "a private repo" : assessment.repo;
+        const msg = `${who}: ${p.action}${what} failed — ${describeApiError("write", e)}`;
+        output(`::error::${msg}`);
+        writeFailures.push({ repo: assessment.private ? null : assessment.repo, reason: msg });
+      }
     }
   }
 
@@ -1070,6 +1171,8 @@ function runSweep({
   }
   output(`finding: ${counts.finding}, unknown: ${counts.unknown}, pending: ${counts.pending}, healthy: ${counts.healthy}, no-config: ${counts["no-config"]}`);
   output(`${privateCount} private repo(s): ${privateFindings} with findings, ${privateUnknown} unknown (names withheld from this public log)`);
+  const missingMergePath = assessments.filter((a) => a.mergePath && a.mergePath.state === "missing").length;
+  output(`no auto-merge workflow: ${missingMergePath} repo(s) with a Dependabot config`);
 
   // ANY assessment carrying unknowns reds the run, whatever its verdict — a
   // finding alongside an unknown (e.g. a missing check run next to a silent
@@ -1158,6 +1261,7 @@ module.exports = {
   // constants
   CONFIG_PATHS, UPDATES_WORKFLOW_PATH, CHECK_APP_SLUG, INTERVAL_DAYS,
   SILENCE_SLACK_DAYS, MARKER, ISSUE_TITLE, DEFAULT_LABEL,
+  AUTO_MERGE_WORKFLOW_RE, MERGE_PATH_MARKER, MERGE_PATH_ISSUE_TITLE,
   // errors
   ApiError,
   // pure helpers
@@ -1176,6 +1280,8 @@ module.exports = {
   renderIssueBody,
   renderComment,
   renderShutComment,
+  planMergePathAction,
+  renderMergePathIssueBody,
   logLine,
   // the assessment + sweep
   assessRepo,

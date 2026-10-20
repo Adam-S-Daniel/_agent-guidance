@@ -35,6 +35,12 @@ const {
   logLine,
   assessRepo,
   runSweep,
+  ISSUE_TITLE,
+  MERGE_PATH_ISSUE_TITLE,
+  MERGE_PATH_MARKER,
+  AUTO_MERGE_WORKFLOW_RE,
+  planMergePathAction,
+  renderMergePathIssueBody,
 } = require("../scripts/dependabot-config-health.js");
 
 // ── Shared fixture helpers ─────────────────────────────────────────────────
@@ -740,7 +746,13 @@ function buildFleetApi() {
     workflowsPage(owner, repo, page) {
       const name = repo.split("/")[1];
       if (page > 1 || BROKEN.includes(name)) return { total_count: 0, workflows: [] };
-      return { total_count: 1, workflows: [{ id: 42, path: UPDATES_WORKFLOW_PATH }] };
+      return {
+        total_count: 2,
+        workflows: [
+          { id: 42, path: UPDATES_WORKFLOW_PATH },
+          { id: 43, path: ".github/workflows/dependabot-auto-merge.yml" },
+        ],
+      };
     },
     newestWorkflowRun: () => ({ created_at: "2026-09-10T00:00:00Z", html_url: "https://x/runs/1" }),
     openIssuesPage: () => [],
@@ -776,9 +788,17 @@ test("runSweep with writes enabled creates exactly one issue per broken repo, in
     dryRun: false, revealPrivate: true, requireOwnerTokens: false, env: {},
     registryFleet: [], onlyRepos: [], out: () => {},
   });
-  assert.equal(calls.createIssue.length, 4);
-  const repos = calls.createIssue.map((c) => c.repo).sort();
+  const configIssues = calls.createIssue.filter((c) => c.payload.title === ISSUE_TITLE);
+  assert.equal(configIssues.length, 4);
+  const repos = configIssues.map((c) => c.repo).sort();
   assert.deepEqual(repos, BROKEN.map((n) => `Adam-S-Daniel/${n}`).sort());
+  // The broken fixtures list no workflows at all, so they also lack the
+  // auto-merge workflow and get the separate merge-path issue; the healthy
+  // ones carry it and get nothing.
+  const mergePathRepos = calls.createIssue
+    .filter((c) => c.payload.title === MERGE_PATH_ISSUE_TITLE).map((c) => c.repo).sort();
+  assert.deepEqual(mergePathRepos, BROKEN.map((n) => `Adam-S-Daniel/${n}`).sort());
+  assert.equal(calls.createIssue.length, 8);
 });
 
 // ── 12. runSweep exit-1 conditions + onlyRepos skipping the registry check ──
@@ -817,7 +837,9 @@ test("runSweep: a createIssue failure is a write failure and exits 1", () => {
   });
   const result = runSweep({ owners: ["Adam-S-Daniel"], api, nowMs: Date.parse("2026-02-01T00:00:00Z"), dryRun: false, requireOwnerTokens: false, env: {}, registryFleet: [], onlyRepos: [], out: () => {} });
   assert.equal(result.exitCode, 1);
-  assert.equal(result.writeFailures.length, 1);
+  // Two failed writes: the config-health issue and the merge-path issue
+  // (the fixture lists no workflows, so the auto-merge workflow is missing).
+  assert.equal(result.writeFailures.length, 2);
 });
 
 test("runSweep: --repo skips the registry cross-check even when the registry names an absent repo", () => {
@@ -926,7 +948,10 @@ test("A: a finding that ALSO carries unknowns (check missing + no job) reds runS
     newestPathCommit: () => ({ sha: "a", date: "2026-08-01T00:00:00Z" }),
     checkRuns: () => ({ total_count: 0, check_runs: [] }), // missing — an unknown, not a finding by itself
     workflowsPage: () => ({ total_count: 0, workflows: [] }), // never ran — silent, a finding
-    createIssue: (owner, repo) => { created.push(repo); return { number: 1, html_url: "https://x/1" }; },
+    createIssue: (owner, repo, payload) => {
+      if (payload.title === ISSUE_TITLE) created.push(repo);
+      return { number: 1, html_url: "https://x/1" };
+    },
   });
   const result = runSweep({
     owners: ["Adam-S-Daniel"], api, nowMs: Date.parse("2026-09-15T00:00:00Z"),
@@ -1019,4 +1044,125 @@ test("D: a workflows page short of 100 items stops pagination without an extra e
   );
   assert.equal(calls, 1, "a first page short of 100 items must not trigger a second, confirmatory fetch");
   assert.notEqual(a.jobs.state, "unknown");
+});
+
+// ── 16. Merge-path signal: a Dependabot config with no auto-merge workflow ──
+// adam-agentskills ran Dependabot with no dependabot-auto-merge.yml, so its
+// green PRs waited days for a hand merge. These pin the separate issue that
+// flags that gap.
+
+function mergePathApi({ workflows = [], openIssues = [], listError = null, issuesError = null, config = true } = {}) {
+  const calls = { createIssue: [], shutIssue: [] };
+  const api = fakeApi({
+    listRepos: (owner) => [{ repo: `${owner}/x`, private: false, defaultBranch: "main" }],
+    getContent: (o, r, p) => (config && p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "a", date: "2026-08-01T00:00:00Z" }),
+    checkRuns: () => ({
+      total_count: 1,
+      check_runs: [{ id: 1, app: { slug: "dependabot" }, name: ".github/dependabot.yml", status: "completed", conclusion: "success", head_sha: "a", completed_at: "2026-08-01T00:05:00Z" }],
+    }),
+    workflowsPage: () => {
+      if (listError) throw listError;
+      const all = [{ id: 1, path: UPDATES_WORKFLOW_PATH }, ...workflows];
+      return { total_count: all.length, workflows: all };
+    },
+    newestWorkflowRun: () => ({ created_at: "2026-09-10T00:00:00Z", html_url: "https://x" }),
+    openIssuesPage: () => { if (issuesError) throw issuesError; return openIssues; },
+    createIssue: (owner, repo, payload) => { calls.createIssue.push({ repo, payload }); return { number: 7, html_url: "https://x/7" }; },
+    shutIssue: (owner, repo, number) => { calls.shutIssue.push({ repo, number }); return {}; },
+  });
+  return { api, calls };
+}
+
+const sweepOnce = (api) => runSweep({
+  owners: ["Adam-S-Daniel"], api, nowMs: Date.parse("2026-09-15T00:00:00Z"),
+  dryRun: false, revealPrivate: true, requireOwnerTokens: false, env: {},
+  registryFleet: [], onlyRepos: [], out: () => {},
+});
+
+test("AUTO_MERGE_WORKFLOW_RE matches the standalone and cms-platform self- names, not look-alikes", () => {
+  assert.ok(AUTO_MERGE_WORKFLOW_RE.test(".github/workflows/dependabot-auto-merge.yml"));
+  assert.ok(AUTO_MERGE_WORKFLOW_RE.test(".github/workflows/dependabot-auto-merge.yaml"));
+  assert.ok(AUTO_MERGE_WORKFLOW_RE.test(".github/workflows/self-dependabot-auto-merge.yml"));
+  assert.ok(!AUTO_MERGE_WORKFLOW_RE.test(".github/workflows/dependabot-auto-merge.yml.bak"));
+  assert.ok(!AUTO_MERGE_WORKFLOW_RE.test(".github/workflows/not-dependabot-auto-merge.yml"));
+  assert.ok(!AUTO_MERGE_WORKFLOW_RE.test(UPDATES_WORKFLOW_PATH));
+});
+
+test("merge path: a healthy config with no auto-merge workflow files ONE merge-path issue, verdict stays healthy", () => {
+  const { api, calls } = mergePathApi();
+  const result = sweepOnce(api);
+  assert.equal(result.assessments[0].verdict, "healthy");
+  assert.equal(result.assessments[0].mergePath.state, "missing");
+  assert.equal(calls.createIssue.length, 1);
+  assert.equal(calls.createIssue[0].payload.title, MERGE_PATH_ISSUE_TITLE);
+  assert.ok(calls.createIssue[0].payload.body.includes(MERGE_PATH_MARKER));
+  assert.equal(result.exitCode, 0, "a missing workflow is a finding to file, not a reason to red the sweep");
+});
+
+test("merge path: an already-open merge-path issue is not filed again", () => {
+  const { api, calls } = mergePathApi({
+    openIssues: [{ number: 7, html_url: "https://x/7", body: `${MERGE_PATH_MARKER}\nRepo: x` }],
+  });
+  sweepOnce(api);
+  assert.equal(calls.createIssue.length, 0);
+  assert.equal(calls.shutIssue.length, 0);
+});
+
+test("merge path: once the workflow lands, the open merge-path issue is shut and the config issue is untouched", () => {
+  const { api, calls } = mergePathApi({
+    workflows: [{ id: 9, path: ".github/workflows/dependabot-auto-merge.yml" }],
+    openIssues: [{ number: 7, html_url: "https://x/7", body: `${MERGE_PATH_MARKER}\nRepo: x` }],
+  });
+  const result = sweepOnce(api);
+  assert.equal(result.assessments[0].mergePath.state, "present");
+  assert.deepEqual(calls.shutIssue, [{ repo: "Adam-S-Daniel/x", number: 7 }]);
+  assert.equal(calls.createIssue.length, 0);
+});
+
+test("merge path: a workflows listing failure never files or shuts (unknown is never acted on)", () => {
+  const { api, calls } = mergePathApi({
+    listError: new ApiError("Server Error", 500),
+    openIssues: [{ number: 7, html_url: "https://x/7", body: `${MERGE_PATH_MARKER}\nRepo: x` }],
+  });
+  const result = sweepOnce(api);
+  assert.equal(result.assessments[0].mergePath.state, "unknown");
+  assert.equal(calls.createIssue.length, 0);
+  assert.equal(calls.shutIssue.length, 0);
+});
+
+test("merge path: a repo with no Dependabot config gets no merge-path issue, and a stale one is shut", () => {
+  const none = mergePathApi({ config: false });
+  sweepOnce(none.api);
+  assert.equal(none.calls.createIssue.length, 0);
+  const stale = mergePathApi({
+    config: false,
+    openIssues: [{ number: 7, html_url: "https://x/7", body: `${MERGE_PATH_MARKER}\nRepo: x` }],
+  });
+  sweepOnce(stale.api);
+  assert.deepEqual(stale.calls.shutIssue, [{ repo: "Adam-S-Daniel/x", number: 7 }]);
+});
+
+test("merge path: a failed issue lookup never files (no duplicate risk) and reds the run", () => {
+  const { api, calls } = mergePathApi({ issuesError: new ApiError("Server Error", 500) });
+  const result = sweepOnce(api);
+  assert.equal(calls.createIssue.length, 0);
+  assert.equal(result.exitCode, 1);
+});
+
+test("planMergePathAction: only missing+no issue creates, only present/no-config+issue shuts", () => {
+  const issue = { number: 1 };
+  assert.deepEqual(planMergePathAction({ state: "missing", openIssue: null }), { action: "create" });
+  assert.deepEqual(planMergePathAction({ state: "missing", openIssue: issue }), { action: "none" });
+  assert.deepEqual(planMergePathAction({ state: "present", openIssue: issue }), { action: "shut" });
+  assert.deepEqual(planMergePathAction({ state: "no-config", openIssue: issue }), { action: "shut" });
+  assert.deepEqual(planMergePathAction({ state: "unknown", openIssue: issue }), { action: "none" });
+  assert.deepEqual(planMergePathAction({ state: "missing", openIssue: null, issueLookupFailed: true }), { action: "none" });
+});
+
+test("renderMergePathIssueBody names the repo once and points at the canonical copy", () => {
+  const body = renderMergePathIssueBody({ repo: "Adam-S-Daniel/x", config: { path: ".github/dependabot.yml" } });
+  assert.ok(body.includes("Repo: Adam-S-Daniel/x"));
+  assert.ok(body.includes("fastmail-actions"));
+  assert.ok(!body.includes("<!-- evidence:"), "the merge-path issue carries no evidence keys");
 });

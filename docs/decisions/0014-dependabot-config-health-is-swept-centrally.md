@@ -217,3 +217,34 @@ only have parsed THAT commit's content. The multiple-commits case is exactly
 #429's shape and is unchanged: `onlyCommit` is false, the narrow lookup is
 never even attempted (proven in `k4` by making it throw if called), and a
 missing check stays `unknown`.
+
+## Addendum (2026-10-20): flag a config with no merge path
+
+A healthy config is not the whole job. The fleet's unattended merge path is a
+per-repo `dependabot-auto-merge.yml` workflow, and nothing adds that file to a
+new repo. adam-agentskills ran Dependabot without one, so its green PRs waited
+for a hand merge (adam-agentskills#68 sat green for five days; the workflow
+landed in adam-agentskills#73).
+
+The sweep already lists every repo's workflows to find the updates workflow,
+so it now also checks for a workflow whose path ends in
+`dependabot-auto-merge.yml` (or cms-platform's `self-dependabot-auto-merge.yml`).
+A repo with a Dependabot config and no such workflow gets a **separate** `ci`
+issue, keyed on its own marker (`<!-- dependabot-merge-path -->`), that points
+at the canonical copy in fastmail-actions. It is separate on purpose: it is a
+different question from "invalid or silent", and folding it in would change
+that issue's verdict, title and shut rule.
+
+- It never changes the config-health verdict and never reds the run by itself.
+- It files once and never comments: there is no evidence that changes between
+  runs.
+- It shuts only on a positive read: the workflow is on the default branch, or
+  the repo no longer has a Dependabot config. A failed or truncated workflows
+  listing, or a failed issue lookup, files nothing and shuts nothing.
+- It needs no new App permission: the workflows listing and issue writes were
+  already in this sweep's down-scoped token.
+
+Installing the workflow automatically was considered and not done here. Any
+automation that writes `.github/workflows/*` needs the App's Workflows: write
+permission across the fleet, which would let one App rewrite every workflow,
+including ones that read repo secrets. The issue leaves that step to a person.
