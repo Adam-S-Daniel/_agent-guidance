@@ -18746,6 +18746,11 @@ test_dependabot_sweep_merge_gating() {
 case "${1:-}" in
     fetch) exit 0 ;;
     diff) echo ".github/workflows/ci.yml"; exit 0 ;;
+    rev-list)
+        # How far the PR head is behind its base: FIXTURES/behind-by, else 0.
+        if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
+        exit 0
+        ;;
     *)
         echo "mock git: unexpected call: $*" >&2
         exit 1
@@ -18797,6 +18802,10 @@ case "${1:-}" in
                 esac
                 ;;
             update-branch)
+                if [[ -n "${UPDATE_FAILS:-}" ]]; then
+                    echo "mock gh: update-branch refused" >&2
+                    exit 1
+                fi
                 exit 0
                 ;;
             *)
@@ -18827,7 +18836,7 @@ GHSTUB
     # the extracted step against that fixture set and prints the exit code.
     run_case() {
         local fx="$1" mf="$2" sw="$3" out="$4" rc=0
-        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" \
+        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" UPDATE_FAILS="${UPDATE_FAILS:-}" \
             GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
             bash "$body" > "$out" 2>&1 || rc=$?
         echo "$rc"
@@ -18969,6 +18978,64 @@ GHSTUB
         "sweep gating (g): falls through to pr update-branch"
     assert_contains "$out_g" "updated=1" \
         "sweep gating (g): summary counts it as updated"
+
+    # (h) #296 on 2026-10-20: the merge is refused and mergeStateStatus is
+    #     CLEAN (main does not require an up-to-date head), but the head is
+    #     2 commits behind main. Treat it as stale and refresh it, rather than
+    #     report "not behind".
+    local fx_h="$TEST_DIR/auto-merge-gating-case-h"
+    mkdir -p "$fx_h"
+    printf '900\n' > "$fx_h/pr-numbers.txt"
+    printf '2\n' > "$fx_h/behind-by"
+    write_pr "$fx_h/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_h="$TEST_DIR/auto-merge-gating-out-h.txt" rc_h
+    rc_h=$(run_case "$fx_h" "900" "$SELF" "$out_h")
+    if [[ "$rc_h" -eq 0 ]]; then
+        pass "sweep gating (h): a refused CLEAN merge that is behind by commit count exits 0"
+    else
+        fail "sweep gating (h): a refused CLEAN merge that is behind by commit count exits 0 — got $rc_h: $(cat "$out_h")"
+    fi
+    assert_contains "$fx_h/calls.log" "update-branch" \
+        "sweep gating (h): falls through to pr update-branch"
+    assert_not_contains "$out_h" "is not behind" \
+        "sweep gating (h): does not claim the PR is not behind"
+    assert_contains "$out_h" "updated=1" \
+        "sweep gating (h): summary counts it as updated"
+
+    # (i) same as (h), but update-branch is refused too, as GITHUB_TOKEN is
+    #     for a stale workflow-file PR. The run fails and names the remedy.
+    local fx_i="$TEST_DIR/auto-merge-gating-case-i"
+    mkdir -p "$fx_i"
+    printf '900\n' > "$fx_i/pr-numbers.txt"
+    printf '2\n' > "$fx_i/behind-by"
+    write_pr "$fx_i/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_i="$TEST_DIR/auto-merge-gating-out-i.txt" rc_i
+    rc_i=$(UPDATE_FAILS=1 run_case "$fx_i" "900" "$SELF" "$out_i")
+    if [[ "$rc_i" -ne 0 ]]; then
+        pass "sweep gating (i): a stale workflow-file PR that cannot be refreshed fails the run"
+    else
+        fail "sweep gating (i): a stale workflow-file PR that cannot be refreshed fails the run — got 0: $(cat "$out_i")"
+    fi
+    assert_contains "$out_i" "@dependabot rebase" \
+        "sweep gating (i): the error names the @dependabot rebase remedy"
+    assert_contains "$out_i" "failed=1" \
+        "sweep gating (i): summary counts it as failed"
+
+    # (j) control: refused, CLEAN and NOT behind — still the "not behind"
+    #     error, and no refresh attempt.
+    local fx_j="$TEST_DIR/auto-merge-gating-case-j"
+    mkdir -p "$fx_j"
+    printf '900\n' > "$fx_j/pr-numbers.txt"
+    write_pr "$fx_j/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_j="$TEST_DIR/auto-merge-gating-out-j.txt"
+    run_case "$fx_j" "900" "$SELF" "$out_j" >/dev/null
+    assert_not_contains "$fx_j/calls.log" "update-branch" \
+        "sweep gating (j): no pr update-branch when the head is not behind"
+    assert_contains "$out_j" "is not behind main" \
+        "sweep gating (j): reports the merge refusal as not behind"
 
     unset -f write_pr
     unset -f run_case
