@@ -305,9 +305,9 @@ name outlives a rename).
 
 - **Lockfile, the target:** `.github/workflows/actions.lock` covers every
   workflow; each `uses:` on its most exact tag, by hand; local actions
-  `$/<path>`. Then `gh actions-lock --no-narrow`. A repo running actionlint
-  (rejects `$/`) or with `./` refs into a runtime checkout, like
-  `cms-platform`, stays legacy.
+  `$/<path>`. Then `gh actions-lock --no-narrow`. A repo with local actions
+  that runs actionlint (rejects `$/`), or with `./` refs into a runtime
+  checkout, like `cms-platform`, stays legacy.
 - **Legacy:** a full 40-character SHA, no trailing version comment.
 - **Cross-repo reusable workflows take a full SHA in both forms.** No lockfile
   locks them; only review or a repo check catches a tag.

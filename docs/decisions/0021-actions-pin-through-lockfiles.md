@@ -90,10 +90,14 @@ tag's, and a commit that does not exist):
 Two pin forms are accepted while repos migrate; the lockfile form is the
 target.
 
-- **A repo that lints with actionlint, or has `./` refs into a runtime
-  checkout, stays in legacy form.** `cms-platform` is the named case, until
-  actionlint accepts `$/` and gh-actions-lock can lock or skip runtime-checkout
-  local refs.
+- **A repo that lints with actionlint and has local actions, or has `./` refs
+  into a runtime checkout, stays in legacy form.** `cms-platform` is the named
+  case, until actionlint accepts `$/` and gh-actions-lock can lock or skip
+  runtime-checkout local refs. A repo with no local actions is not blocked by
+  actionlint: a same-repo `./` workflow call stays `./`, which it accepts. The
+  carve-out below governs refs *into* `cms-platform` from any repo, which stay
+  on its release tag; `cms-platform`'s own third-party pins stay on full SHAs
+  while it is legacy.
 
 - **Lockfile form.** The repo commits `.github/workflows/actions.lock` with
   every workflow onboarded. Write each `uses:` by hand on the action's most
