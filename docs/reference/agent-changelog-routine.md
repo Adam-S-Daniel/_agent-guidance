@@ -1,7 +1,18 @@
 # Routine: the next vendor changelog entry
 
 Instructions for a scheduled Claude Code routine that repeats the 2026-09-25
-review for each new batch of Claude Code and Codex releases. Each run:
+review for each new batch of Claude Code and Codex releases.
+
+**Codex is paused (Adam, 2026-10-20: "stop having the routine that looks at
+harness change logs worry about codex for now").** Until this note is
+removed, a scheduled run covers Claude Code only: it builds no Codex
+window, fetches no Codex release pages, writes nothing to the
+`agent-codex.*` files, files no Codex issues and skips the Codex
+discrepancy re-check. Codex runs only when the owner starts a run by hand
+with `SCOPE=codex`. Where the steps below say "each agent" or "both
+agents", read "Claude Code".
+
+Each run:
 
 - adds the next entry to [`agent-claude-code.CHANGELOG.md`](agent-claude-code.CHANGELOG.md)
   and [`agent-codex.CHANGELOG.md`](agent-codex.CHANGELOG.md);
@@ -179,7 +190,8 @@ time:
   considered** is a stop-and-report, not a silent narrowing.
 
 Neither switch is inferred from anything else. Absent both, the run covers
-both agents and every repo **Repos considered** lists.
+Claude Code only (Codex is paused; see the note at the top) and every repo
+**Repos considered** lists.
 
 ## First run
 
