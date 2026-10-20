@@ -146,9 +146,10 @@ skills_bootstrap:
     # lock: committed — PR #17 merged 2026-08-19.
     - repo-settings
     # The `scratch-` prefix is a misnomer this list should not repeat: it is a
-    # live portfolio site whose `main` deploys to sprites.dev. NOT "on every
-    # push to main" — `deploy.yml` filters on `index.html` and on itself, so a
-    # sync commit deploys nothing. ADR 0001 shelved it as scratch on the
+    # portfolio site that deployed to sprites.dev. jodidaniel/scratch-claude-002#35
+    # moves `deploy.yml` out of `.github/workflows/` (to `deploy-old.yml` at the
+    # repo root), which leaves it no workflows at all; the site last deployed
+    # 2026-05-29. ADR 0001 shelved it as scratch on the
     # strength of the name alone; see `cron_coverage.out_of_scope` below, where
     # it stays out for a different and still-good reason.
     # lock: committed — PR #15 merged 2026-08-19.
@@ -237,6 +238,11 @@ skills_bootstrap:
     - repo: squarespacetemp
       reason: >-
         Dormant since 2026-03; no session happens there to spend the context.
+    - repo: verify-actions-lock
+      reason: >-
+        A small composite action (ADR 0021) whose own CI tests it end to end.
+        Its sessions need no skills bundle; add a skills.lock and move it to
+        `repos:` if that changes.
 
   # Forks and archived repos are NOT listed above: discovery never reaches
   # them (`gh repo list --source --no-archived`), so their absence from
@@ -308,10 +314,15 @@ cron_coverage:
     # NOT scratch — the skills_bootstrap block above records it as a live
     # portfolio site, and leaving it filed under "nothing here anyone is
     # operating" would make one key of this file contradict the other. It is
-    # out of scope for a narrower reason that survives that correction: its
-    # only workflow (`deploy.yml`) is push-triggered, so there is no scheduled
-    # run to cover. Give it a cron anyone depends on and it moves to `fleet:`.
+    # out of scope for a narrower reason that survives that correction: it has
+    # no scheduled run to cover (its one workflow was push-triggered, and #35
+    # moves even that out of `.github/workflows/`). Give it a cron anyone
+    # depends on and it moves to `fleet:`.
     - scratch-claude-002
+    # The shared `uses:` action behind the lockfile check (ADR 0021). Its only
+    # workflow runs on pull requests and pushes; there is no cron to watch.
+    # Give it one and it moves to `fleet:`.
+    - verify-actions-lock
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file
