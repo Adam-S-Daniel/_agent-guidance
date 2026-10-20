@@ -59,7 +59,7 @@
   heading: Security
   file: agents-md/base.md
   status: gap
-  bytes: 368
+  bytes: 431
 
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos

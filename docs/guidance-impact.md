@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-20 — security — edit
+- Motivation: owner request after an agent recommended a fine-grained PAT for a skills-evals workflow, then switched to a read-only GitHub App; only the repo-settings skill steered toward Apps, nothing fleet-wide did.
+- Change: added one bullet, automation authenticates as a scoped GitHub App, not a PAT; merged the secrets and TLS bullets to stay inside the 29696-byte full-build budget (a longer draft overran it by 224 bytes).
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-10-17 — working-in-these-repos — edit
 - Motivation: owner request to drop the spreadsheet example from the full-precision rule. Also corrects the entry below: PR #294 merged 2026-10-17, so its "Outcome: pending" is superseded.
 - Change: removed the parenthetical `=TRUNC(A2/60,2)` example from the bullet added in PR #294.
