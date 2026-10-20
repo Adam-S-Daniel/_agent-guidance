@@ -194,7 +194,7 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   `test/test-dependabot-config-health.js` among them) stay until that repo
   migrates its workflows; migration and its test change land together.
 - **`base.md` is at its budget.** The binding limit is `test/run-tests.sh`'s
-  29,696-byte full build: with this section it is 29,672, and `main` was
+  29,696-byte full build: with this section it is 29,694, and `main` was
   29,632. That is why the tables, recovery, the `cms-platform` consumer rule,
   the `sha1-` prefix, the `could not verify` exit code and the linter results
   live here rather than in the section, and the next
