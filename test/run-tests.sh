@@ -22807,7 +22807,7 @@ setup_ac_repos() {
     local bare_dir="$1" work="$TEST_DIR/ac-work" name
     rm -rf "$bare_dir" "$work"
     mkdir -p "$bare_dir" "$work"
-    for name in ac-none ac-present ac-drift ac-lock ac-ignored; do
+    for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/acorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
@@ -22823,6 +22823,7 @@ setup_ac_repos() {
                 echo "# an older runner" > "$work/$name/.githooks/agent-checks"
                 ;;
             ac-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
+            ac-platform) echo "platform_ref: v0.0.1" > "$work/$name/platform.lock" ;;
             ac-ignored) echo ".claude/" > "$work/$name/.gitignore" ;;
         esac
         gattr_git -C "$work/$name" add -A
@@ -22974,6 +22975,14 @@ for g in doc["hooks"]["PreToolUse"]:
     ac_section "$out-1.log" ac-lock > "$out-lock"
     assert_contains "$out-lock" "WARN: acorg/ac-lock locks its actions in .github/workflows/actions.lock" \
         "agent-checks (sync): the actions.lock skip is named in the log"
+    if [[ -z "$(ac_show ac-platform "$wf")" ]] && cmp -s <(ac_show ac-platform "$runner") "$tmpl/agent-checks"; then
+        pass "agent-checks (sync): a cms-platform consumer (platform.lock) gets the runner but no extra workflow"
+    else
+        fail "agent-checks (sync): a cms-platform consumer (platform.lock) gets the runner but no extra workflow"
+    fi
+    ac_section "$out-1.log" ac-platform > "$out-platform"
+    assert_contains "$out-platform" "acorg/ac-platform is a cms-platform consumer (platform.lock)" \
+        "agent-checks (sync): the platform.lock skip is named in the log"
     if [[ -z "$(ac_show ac-ignored "$guard")" ]] && cmp -s <(ac_show ac-ignored "$wf") "$tmpl/agent-checks.yml"; then
         pass "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
     else

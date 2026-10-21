@@ -32,7 +32,8 @@ its files from `templates/agent-checks/`:
    and never overwritten, so Dependabot can keep its pinned checkout current.
    It is not added where any workflow already runs `.githooks/agent-checks`
    (adam-agentskills runs it as a job in `ci.yml`), where `actions.lock` pins
-   the repo's actions as tags, or where the path is gitignored.
+   the repo's actions as tags, in a cms-platform consumer (a root
+   `platform.lock`), or where the path is gitignored.
 3. **The guard** `.claude/hooks/agent-checks-guard.sh` is a Claude Code
    PreToolUse hook (matcher `Bash|Edit|Write|MultiEdit|NotebookEdit`), managed
    like the runner and registered through the same registrar as the other
@@ -56,6 +57,11 @@ its files from `templates/agent-checks/`:
   only stop after a skipped hook.
 - The workflow template pins `actions/checkout` by SHA, so repos that lock
   actions with `actions.lock` get the runner but must add the workflow by hand.
+- A cms-platform consumer's `platform-pin-consistency` check fails on any
+  workflow the platform does not dictate (measured on adamdaniel.ai and
+  jodidaniel.com, 2026-10-21), so those sites get the runner and guard only.
+  Their CI check has to come from the platform's own
+  `examples/site/.github/workflows/`.
 - The runner's pre-push check refuses a push to the default branch. This
   sync pushes to default branches directly, so a run on an owner machine with
   the hooks installed falls back to its PR path; CI runs have no hooks and are
