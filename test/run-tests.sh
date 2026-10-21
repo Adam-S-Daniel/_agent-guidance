@@ -2415,6 +2415,17 @@ case "$1" in
                         done
                         json="[$rows]"
                         ;;
+                    acorg)
+                        # The agent-checks lane's fixtures, enumerated off
+                        # disk like gattrorg's.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/acorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"acorg/${name#acorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
                     failorg)
                         # An owner the CLI cannot authenticate against — the
                         # shape a missing App installation takes when the
@@ -22789,6 +22800,256 @@ test_sync_dependabot_auto_merge() {
     fi
 }
 
+# ── agent-checks delivery (repos.yml agent_checks, ADR 0021) ─────────────────
+# acorg in a MOCK_BARE_DIR of its own. Steps run in order: switch off → dry
+# run → real run → re-run (no-op).
+setup_ac_repos() {
+    local bare_dir="$1" work="$TEST_DIR/ac-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in ac-none ac-present ac-drift ac-lock ac-ignored; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/acorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        mkdir -p "$work/$name/.github/workflows"
+        echo "name: CI" > "$work/$name/.github/workflows/ci.yml"
+        case "$name" in
+            ac-present)
+                printf 'name: CI\njobs:\n  a:\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n' \
+                    > "$work/$name/.github/workflows/ci.yml"
+                ;;
+            ac-drift)
+                mkdir -p "$work/$name/.githooks"
+                echo "# an older runner" > "$work/$name/.githooks/agent-checks"
+                ;;
+            ac-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
+            ac-ignored) echo ".claude/" > "$work/$name/.gitignore" ;;
+        esac
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/acorg_$name" HEAD:main 2>/dev/null
+    done
+}
+
+# ac_show <repo> <path> — the file's bytes on main, or nothing if absent.
+ac_show() {
+    gattr_git -C "$TEST_DIR/ac-bare/acorg_$1" show "main:$2" 2>/dev/null
+}
+
+test_sync_agent_checks() {
+    echo ""
+    echo "=== Test: sync.sh delivers the agent-checks runner, CI check and guard ==="
+
+    local bare="$TEST_DIR/ac-bare" out="$TEST_DIR/ac-sync" before after rc got
+    local tmpl="$REPO_ROOT/templates/agent-checks"
+    local runner=".githooks/agent-checks" wf=".github/workflows/agent-checks.yml"
+    local guard=".claude/hooks/agent-checks-guard.sh"
+    setup_ac_repos "$bare"
+
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/ac-repos-off.yml"
+    printf 'exclude: []\ndefault_sections: []\nagent_checks:\n  deliver: true\n' > "$TEST_DIR/ac-repos-on.yml"
+
+    run_ac_sync() {   # <repos.yml> <log> [--dry-run]
+        local yml="$1" log="$2"; shift 2
+        GITHUB_REPOSITORY_OWNER=acorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/ac-pr-bodies" \
+        REPOS_YML="$yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+    ac_section() {    # <log> <repo>
+        awk -v start="=== acorg/$2 ===" '
+            $0 == start { on = 1; print; next }
+            on && /^=== / { on = 0 }
+            on { print }
+        ' "$1"
+    }
+
+    # ── Switch off (the default): nothing of the lane is touched ──
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-off.yml" "$out-off.log" || rc=$?
+    if [[ $rc -eq 0 && -z "$(ac_show ac-none "$runner")" && -z "$(ac_show ac-none "$wf")" \
+          && -z "$(ac_show ac-none "$guard")" ]]; then
+        pass "agent-checks (off): with deliver unset the sync runs and delivers none of the lane"
+    else
+        fail "agent-checks (off): with deliver unset the sync runs and delivers none of the lane — exit $rc"
+    fi
+    assert_not_contains "$out-off.log" "agent-checks" \
+        "agent-checks (off): the run does not mention the lane at all"
+
+    # ── Dry run with the switch on: reported, nothing written ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-dry.log" --dry-run || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "agent-checks (dry run): exits 0 and moves no ref"
+    else
+        fail "agent-checks (dry run): exits 0 and moves no ref — exit $rc"
+    fi
+    ac_section "$out-dry.log" ac-none > "$out-dry-none"
+    assert_contains "$out-dry-none" "[DRY RUN] Would write $runner (runner missing)" \
+        "agent-checks (dry run): the runner is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
+        "agent-checks (dry run): the workflow is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would register the agent-checks guard on PreToolUse" \
+        "agent-checks (dry run): the guard registration is reported"
+
+    # ── The real run ──
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-1.log" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks (sync): the run exits 0"
+    else
+        fail "agent-checks (sync): the run exits 0 — got $rc"
+    fi
+
+    if cmp -s <(ac_show ac-none "$runner") "$tmpl/agent-checks" \
+       && cmp -s <(ac_show ac-none "$wf") "$tmpl/agent-checks.yml" \
+       && cmp -s <(ac_show ac-none "$guard") "$tmpl/agent-checks-guard.sh"; then
+        pass "agent-checks (sync): runner, workflow and guard arrive byte for byte"
+    else
+        fail "agent-checks (sync): runner, workflow and guard arrive byte for byte"
+    fi
+    got=$(gattr_git -C "$bare/acorg_ac-none" ls-tree main -- "$runner" "$guard" | awk '{print $1}' | sort -u | tr '\n' ' ')
+    if [[ "$got" == "100755 " ]]; then
+        pass "agent-checks (sync): runner and guard are committed executable"
+    else
+        fail "agent-checks (sync): runner and guard are committed executable — modes $got"
+    fi
+    got=$(ac_show ac-none .claude/settings.json | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+for g in doc["hooks"]["PreToolUse"]:
+    for h in g["hooks"]:
+        if "agent-checks-guard.sh" in h["command"]:
+            print(g["matcher"], h["timeout"], h["command"])
+')
+    if [[ "$got" == 'Bash|Edit|Write|MultiEdit|NotebookEdit 10 bash "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-checks-guard.sh"' ]]; then
+        pass "agent-checks (sync): the guard is registered on PreToolUse with its matcher and timeout"
+    else
+        fail "agent-checks (sync): the guard is registered on PreToolUse with its matcher and timeout — got: $got"
+    fi
+    if ac_show ac-none .gitattributes | grep -qxF '.githooks/* text eol=lf' \
+       && ac_show ac-none .gitattributes | grep -qxF '.claude/hooks/*.sh text eol=lf'; then
+        pass "agent-checks (sync): .gitattributes pins the runner to LF beside the hook-script line"
+    else
+        fail "agent-checks (sync): .gitattributes pins the runner to LF beside the hook-script line"
+    fi
+    got=$(gattr_git -C "$bare/acorg_ac-none" log -1 --format=%B main)
+    if [[ "$got" == "chore: deliver the agent-checks git hooks and CI check"* ]]; then
+        pass "agent-checks (sync): the commit says what it delivers"
+    else
+        fail "agent-checks (sync): the commit says what it delivers — got: $(head -1 <<< "$got")"
+    fi
+
+    # The delivered runner does its job in the delivered repo: a commit adding
+    # a .env file fails the CI mode the workflow runs.
+    local clone="$TEST_DIR/ac-clone"
+    rm -rf "$clone"
+    gattr_git clone -q "$bare/acorg_ac-none" "$clone"
+    echo "TOKEN=x" > "$clone/.env"
+    gattr_git -C "$clone" add .env
+    gattr_git -C "$clone" commit -q -m "add env"
+    rc=0; (cd "$clone" && bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]] && grep -q '\.env' "$out-ci.log"; then
+        pass "agent-checks (sync): the delivered runner's ci mode refuses a committed .env"
+    else
+        fail "agent-checks (sync): the delivered runner's ci mode refuses a committed .env — exit $rc"
+    fi
+
+    if [[ -z "$(ac_show ac-present "$wf")" ]]; then
+        pass "agent-checks (sync): a repo whose own workflow already runs the runner gets no second workflow"
+    else
+        fail "agent-checks (sync): a repo whose own workflow already runs the runner gets no second workflow"
+    fi
+    if cmp -s <(ac_show ac-drift "$runner") "$tmpl/agent-checks"; then
+        pass "agent-checks (sync): a drifted runner is overwritten with the managed copy"
+    else
+        fail "agent-checks (sync): a drifted runner is overwritten with the managed copy"
+    fi
+    if [[ -z "$(ac_show ac-lock "$wf")" ]] && cmp -s <(ac_show ac-lock "$runner") "$tmpl/agent-checks"; then
+        pass "agent-checks (sync): a repo with actions.lock gets the runner but not the SHA-pinned workflow"
+    else
+        fail "agent-checks (sync): a repo with actions.lock gets the runner but not the SHA-pinned workflow"
+    fi
+    ac_section "$out-1.log" ac-lock > "$out-lock"
+    assert_contains "$out-lock" "WARN: acorg/ac-lock locks its actions in .github/workflows/actions.lock" \
+        "agent-checks (sync): the actions.lock skip is named in the log"
+    if [[ -z "$(ac_show ac-ignored "$guard")" ]] && cmp -s <(ac_show ac-ignored "$wf") "$tmpl/agent-checks.yml"; then
+        pass "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
+    else
+        fail "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
+    fi
+
+    # ── Re-run: nothing left to do ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-2.log" || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "agent-checks (re-run): a second run moves no ref"
+    else
+        fail "agent-checks (re-run): a second run moves no ref — exit $rc"
+    fi
+}
+
+# The PreToolUse guard against skipping the hooks, over the cases in
+# test/fixtures/agent-checks-guard-cases.jsonl (each line: expect block|allow,
+# then the event Claude Code sends). Exit 2 is a block; anything else allows.
+test_agent_checks_guard() {
+    echo ""
+    echo "=== Test: the agent-checks guard blocks hook skipping and nothing else ==="
+    local cases="$SCRIPT_DIR/fixtures/agent-checks-guard-cases.jsonl"
+    local guard="$REPO_ROOT/templates/agent-checks/agent-checks-guard.sh"
+    local line expect event rc got label n=0
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        n=$((n + 1))
+        expect=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["expect"])' "$line")
+        event=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d.pop("expect"); print(json.dumps(d))' "$line")
+        label=$(python3 -c 'import json,sys; t=json.loads(sys.argv[1])["tool_input"]; print((t.get("command") or t.get("file_path") or "").split("\n")[0])' "$line")
+        rc=0; bash "$guard" <<< "$event" >/dev/null 2>&1 || rc=$?
+        if [[ $rc -eq 2 ]]; then got=block; else got=allow; fi
+        if [[ "$got" == "$expect" ]]; then
+            pass "agent-checks guard: $expect: $label"
+        else
+            fail "agent-checks guard: $expect: $label — got $got (exit $rc)"
+        fi
+    done < "$cases"
+    if (( n >= 20 )); then
+        pass "agent-checks guard: the case file was read ($n cases)"
+    else
+        fail "agent-checks guard: the case file was read — only $n cases"
+    fi
+    rc=0; PATH=/nonexistent /bin/bash "$guard" <<< '{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify"}}' >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks guard: with no python3 it fails open"
+    else
+        fail "agent-checks guard: with no python3 it fails open — exit $rc"
+    fi
+}
+
+# The sync never reaches this repo (SYNC_SELF_REPO), so it carries its own
+# copies, by hand: the runner must stay byte-identical to the template the
+# fleet receives, and the guard is registered straight from the template.
+test_self_agent_checks() {
+    echo ""
+    echo "=== Test: this repo runs the same agent-checks it delivers ==="
+    if cmp -s "$REPO_ROOT/.githooks/agent-checks" "$REPO_ROOT/templates/agent-checks/agent-checks"; then
+        pass "self agent-checks: .githooks/agent-checks matches templates/agent-checks/agent-checks"
+    else
+        fail "self agent-checks: .githooks/agent-checks matches templates/agent-checks/agent-checks — copy the template over it"
+    fi
+    if grep -qF 'bash .githooks/agent-checks ci' "$REPO_ROOT/.github/workflows/agent-checks.yml" 2>/dev/null; then
+        pass "self agent-checks: a workflow runs the runner in CI"
+    else
+        fail "self agent-checks: a workflow runs the runner in CI"
+    fi
+    if grep -qF 'templates/agent-checks/agent-checks-guard.sh' "$REPO_ROOT/.claude/settings.json"; then
+        pass "self agent-checks: the guard is registered from the template"
+    else
+        fail "self agent-checks: the guard is registered from the template"
+    fi
+}
+
 
 TEST_GROUPS=(
     runner
@@ -22808,6 +23069,7 @@ TEST_GROUPS=(
     memory_home
     gitattr
     automerge
+    agent_checks
 )
 
 GROUP_sync=(
@@ -23199,6 +23461,14 @@ GROUP_gitattr=(
 # own; steps run in order (switch off → dry run → sync → re-run).
 GROUP_automerge=(
     test_sync_dependabot_auto_merge
+)
+
+# The agent-checks delivery lane (ADR 0021): acorg in a MOCK_BARE_DIR of its
+# own; steps run in order (switch off → dry run → sync → re-run).
+GROUP_agent_checks=(
+    test_agent_checks_guard
+    test_self_agent_checks
+    test_sync_agent_checks
 )
 
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /

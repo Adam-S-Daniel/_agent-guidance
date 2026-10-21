@@ -267,6 +267,18 @@ skills_bootstrap:
 dependabot_auto_merge:
   deliver: true
 
+# ── agent-checks (ADR 0021) ────────────────────────────────────────────────
+#
+# Delivers the commit-time checks from templates/agent-checks/ to every synced
+# repo: the runner `.githooks/agent-checks` (managed, overwritten on drift), the
+# `agent-checks` CI workflow (added once; skipped where any workflow already
+# runs the runner, or where actions.lock pins the actions), the Claude Code
+# PreToolUse guard against --no-verify (managed, wherever fleet-memory can be
+# delivered), and a `.githooks/* text eol=lf` line in .gitattributes. Only a
+# literal `true` turns it on.
+agent_checks:
+  deliver: true
+
 
 # ── cron-coverage scope ────────────────────────────────────────────────────
 #
