@@ -283,8 +283,15 @@ test("the fixed list holds the words the owner named, and no generic -ise", () =
 
 test("ci.yml runs the checker as an unconditional, non-strict step that cannot fail the job", () => {
   const doc = YAML.parse(fs.readFileSync(path.join(REPO, ".github", "workflows", "ci.yml"), "utf8"));
-  const steps = doc.jobs.test.steps.filter((s) => typeof s.run === "string" && s.run.includes("check-agent-markdown.js"));
-  assert.equal(steps.length, 1, "exactly one step runs the checker");
+  // Every gate but the integration suite lives in the `checks` job; `test`
+  // is the required aggregator over it and the `suite` shards.
+  const all = Object.values(doc.jobs).flatMap((j) => j.steps || [])
+    .filter((s) => typeof s.run === "string" && s.run.includes("check-agent-markdown.js"));
+  assert.equal(all.length, 1, "exactly one step in the whole workflow runs the checker");
+  const steps = doc.jobs.checks.steps.filter((s) => typeof s.run === "string" && s.run.includes("check-agent-markdown.js"));
+  assert.equal(steps.length, 1, "that step is in the checks job");
+  assert.equal(doc.jobs.checks.needs, undefined, "checks needs nothing, so no other job can skip it");
+  assert.ok([].concat(doc.jobs.test.needs).includes("checks"), "the required test aggregator needs checks");
   const [step] = steps;
   assert.equal(step.if, undefined, "no if: — it reports on every push and pull request");
   assert.ok(!/--strict/.test(step.run), "CI never passes --strict (warn-only, D5)");
@@ -295,5 +302,7 @@ test("ci.yml runs the checker as an unconditional, non-strict step that cannot f
     assert.ok(!(on[trigger] && on[trigger].paths), `${trigger} has no paths filter`);
   }
   assert.equal(doc.concurrency, undefined);
-  assert.equal(doc.jobs.test.concurrency, undefined);
+  for (const [name, job] of Object.entries(doc.jobs)) {
+    assert.equal(job.concurrency, undefined, `job ${name} has no concurrency group`);
+  }
 });

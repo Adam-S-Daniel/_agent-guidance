@@ -354,7 +354,8 @@ exist.
 [`scripts/check-agent-markdown.js`](scripts/check-agent-markdown.js) (CI: the
 "Agent Markdown warnings" step in [`ci.yml`](.github/workflows/ci.yml), every
 push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
-whatever it finds, so it cannot fail the required `test` job. It prints one
+whatever it finds, so it cannot fail the `checks` job or, through it, the
+required `test` context. It prints one
 `::warning file=...,line=...` annotation per finding over the Markdown agents
 read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
 `.claude/hooks/fleet-guidance.md`):

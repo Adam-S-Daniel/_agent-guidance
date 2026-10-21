@@ -10,6 +10,15 @@ set -euo pipefail
 #   TEST_JOBS=N       run at most N groups at once (default: one per CPU;
 #                     TEST_JOBS=1 runs them one after another)
 #   TEST_GROUP=<name> run just that one group, in this process
+#   TEST_GROUPS_ONLY="<name> <name> ..."
+#                     run only these groups (space-separated), through the
+#                     same parallel parent; unset or empty runs every group.
+#                     CI's `suite` matrix shards the suite this way.
+#   --list-groups     print the groups this invocation would run, one per
+#                     line, and exit: every group, or the TEST_GROUPS_ONLY
+#                     selection when that is set. scripts/check-ci-shards.js
+#                     reads the canonical list this way rather than parsing
+#                     this file.
 #   BASH32=<path>     use this Bash 3.2 executable for the receipt compatibility
 #                     matrix; otherwise look for bash3.2 on PATH. The matrix
 #                     explicitly skips when neither executable is available.
@@ -17123,6 +17132,12 @@ untouched body
 # `pull_request_target`, a `push` narrowed to one branch — changes which events
 # can collide on a sha, and that collision is the entire subject of the
 # argument the comment makes.
+#
+# SINCE THE SHARD SPLIT the `test` job is only an aggregator: the integration
+# suite runs in the `suite` matrix and every other gate in `checks`, so the
+# step-level assertions below that used to read the `test` job now read
+# `checks`, and the aggregator's own shape — the part that decides whether a
+# red shard can still reach a green required context — is asserted here too.
 test_ci_workflow_shape() {
     echo ""
     echo "=== Test: ci.yml's triggers, and the concurrency block it must not have ==="
@@ -17152,6 +17167,15 @@ test_ci_workflow_shape() {
         return
     fi
 
+    # The job set is exact too: `test` is the one required context and only
+    # an aggregator, so a job added beside `suite` and `checks` that `test`
+    # does not need is a job whose failure nothing required ever sees.
+    if [[ "$jobs" == "checks suite test" ]]; then
+        pass "ci workflow: its jobs are exactly suite, checks and the test aggregator"
+    else
+        fail "ci workflow: its jobs should be exactly 'checks suite test', got '$jobs' — a new job must also be a need of the required test aggregator, or its failure never blocks a merge"
+    fi
+
     if [[ "$triggers" == "pull_request push workflow_dispatch" ]]; then
         pass "ci workflow: its triggers are exactly push, pull_request and workflow_dispatch"
     else
@@ -17172,7 +17196,7 @@ test_ci_workflow_shape() {
 
     local touch_facts="$TEST_DIR/ci-workflow-touch-facts.txt"
     local touch_err="$TEST_DIR/ci-workflow-touch-facts.err"
-    if workflow_step_by_run "$wf" "check-guidance-touch.js" test > "$touch_facts" 2> "$touch_err"; then
+    if workflow_step_by_run "$wf" "check-guidance-touch.js" checks > "$touch_facts" 2> "$touch_err"; then
         if grep -qxF -- "found" "$touch_facts" \
                 && grep -qxF -- "if github.event_name == 'pull_request'" "$touch_facts"; then
             pass "ci workflow: the Guidance touch gate step runs scripts/check-guidance-touch.js only on pull_request"
@@ -17180,13 +17204,13 @@ test_ci_workflow_shape() {
             fail "ci workflow: the Guidance touch gate step should run node scripts/check-guidance-touch.js gated on if: github.event_name == 'pull_request' — got: $(tr '\n' ' ' < "$touch_facts")"
         fi
     else
-        fail "ci workflow: no step runs node scripts/check-guidance-touch.js at all"
+        fail "ci workflow: no step in the checks job runs node scripts/check-guidance-touch.js at all"
     fi
 
     local step_names="$TEST_DIR/ci-workflow-step-names.txt"
     local step_names_err="$TEST_DIR/ci-workflow-step-names.err"
-    if ! workflow_step_names "$wf" "test" > "$step_names" 2> "$step_names_err"; then
-        fail "ci workflow: could not read the test job's step names — $(head -1 "$step_names_err")"
+    if ! workflow_step_names "$wf" "checks" > "$step_names" 2> "$step_names_err"; then
+        fail "ci workflow: could not read the checks job's step names — $(head -1 "$step_names_err")"
     else
         # S3: under this script's own `set -euo pipefail`, a bare
         # `var=$(grep ... | head -1 | cut ...)` aborts the WHOLE suite the
@@ -17220,7 +17244,7 @@ test_ci_workflow_shape() {
 const fs = require("node:fs");
 const YAML = require(process.argv[1] + "/node_modules/yaml");
 const doc = YAML.parseDocument(fs.readFileSync(process.argv[2], "utf8"));
-const steps = doc.getIn(["jobs", "test", "steps"]);
+const steps = doc.getIn(["jobs", "checks", "steps"]);
 const idx = steps.items.findIndex((s) => s.get && s.get("name") === "Guidance touch gate");
 if (idx === -1) {
   console.error("no Guidance touch gate step found to delete");
@@ -17232,7 +17256,7 @@ fs.writeFileSync(process.argv[3], doc.toString());
         fail "ci workflow: S3 fixture setup could not delete the Guidance touch gate step — $(head -1 "$TEST_DIR/ci-no-touch-step.err")"
     else
         local no_touch_step_names="$TEST_DIR/ci-no-touch-step-names.txt"
-        workflow_step_names "$no_touch_step_wf" "test" > "$no_touch_step_names" 2>/dev/null
+        workflow_step_names "$no_touch_step_wf" "checks" > "$no_touch_step_names" 2>/dev/null
         local s3_out s3_rc=0
         s3_out=$(bash -c '
             set -euo pipefail
@@ -17251,21 +17275,88 @@ fs.writeFileSync(process.argv[3], doc.toString());
         fi
     fi
 
-    # S2: scoped to the "test" job specifically — an unscoped workflow_steps
-    # concatenates every job's steps in `jobs:` object-key order, so a `prep`
-    # job ahead of `test` with its OWN fetch-depth: 0 checkout would let a
-    # default-depth `test` checkout pass this assertion by sitting behind it.
-    local steps_facts="$TEST_DIR/ci-workflow-steps.txt"
-    local steps_err="$TEST_DIR/ci-workflow-steps.err"
-    if ! workflow_steps "$wf" test > "$steps_facts" 2> "$steps_err"; then
-        fail "ci workflow: could not parse its steps — $(head -1 "$steps_err")"
-    else
-        local first_checkout_depth
-        first_checkout_depth=$(awk '$1 ~ /^actions\/checkout@/ { print $3; exit }' "$steps_facts")
-        if [[ "$first_checkout_depth" == "0" ]]; then
-            pass "ci workflow: the test job's first checkout is fetch-depth: 0 (the touch gate's merge-base needs it)"
+    # S2: scoped to one job at a time — an unscoped workflow_steps
+    # concatenates every job's steps in `jobs:` object-key order, so a job
+    # ahead of the one under test with its OWN fetch-depth: 0 checkout would
+    # let a default-depth checkout pass this assertion by sitting behind it.
+    # `checks` runs the touch gate, whose merge-base needs full history;
+    # `suite` keeps the full history the integration suite always ran on.
+    local depth_job
+    for depth_job in checks suite; do
+        local steps_facts="$TEST_DIR/ci-workflow-steps-$depth_job.txt"
+        local steps_err="$TEST_DIR/ci-workflow-steps-$depth_job.err"
+        if ! workflow_steps "$wf" "$depth_job" > "$steps_facts" 2> "$steps_err"; then
+            fail "ci workflow: could not parse the $depth_job job's steps — $(head -1 "$steps_err")"
         else
-            fail "ci workflow: the test job's first checkout should be fetch-depth: 0 — got '${first_checkout_depth:-none}'"
+            local first_checkout_depth
+            first_checkout_depth=$(awk '$1 ~ /^actions\/checkout@/ { print $3; exit }' "$steps_facts")
+            if [[ "$first_checkout_depth" == "0" ]]; then
+                pass "ci workflow: the $depth_job job's first checkout is fetch-depth: 0"
+            else
+                fail "ci workflow: the $depth_job job's first checkout should be fetch-depth: 0 — got '${first_checkout_depth:-none}'"
+            fi
+        fi
+    done
+
+    # THE AGGREGATOR. `test` is the required context, so its shape is the
+    # merge gate: it must need both jobs, run under `if: always()` (a skipped
+    # required job reads as passing, and `!cancelled()` or the default would
+    # skip it on exactly the runs that must fail), check nothing out, and read
+    # the needs' results through env: rather than a `${{ }}` in run:.
+    local agg="$TEST_DIR/ci-workflow-aggregator.txt" agg_run="$TEST_DIR/ci-workflow-aggregator.sh"
+    if ! node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const job = (doc && doc.jobs && doc.jobs.test) || null;
+if (!job) { console.error("no test job"); process.exit(1); }
+const needs = [].concat(job.needs || []).map(String).sort();
+console.log("name " + String(job.name));
+console.log("needs " + needs.join(","));
+console.log("if " + (job.if === undefined ? "-" : String(job.if)));
+const steps = job.steps || [];
+console.log("steps " + steps.length);
+for (const st of steps) {
+  if (st.uses) console.log("uses " + st.uses);
+  for (const [k, v] of Object.entries(st.env || {})) console.log("env " + k + "=" + String(v));
+  if (typeof st.run === "string" && /\$\{\{/.test(st.run)) console.log("interpolates");
+}
+if (steps.length === 1 && typeof steps[0].run === "string") fs.writeFileSync(process.argv[3], steps[0].run);
+' "$REPO_ROOT" "$wf" "$agg_run" > "$agg" 2> "$TEST_DIR/ci-workflow-aggregator.err"; then
+        fail "ci workflow: no test job to aggregate the required context — $(head -1 "$TEST_DIR/ci-workflow-aggregator.err")"
+    else
+        if grep -qxF -- "name test" "$agg" && grep -qxF -- "needs checks,suite" "$agg" \
+                && grep -qxF -- "if always()" "$agg" && grep -qxF -- "steps 1" "$agg"; then
+            pass "ci workflow: the test job is named test, needs exactly suite and checks, runs if: always(), in one step"
+        else
+            fail "ci workflow: the test job should be named test, need [suite, checks], run if: always() and have one step — got: $(tr '\n' ' ' < "$agg")"
+        fi
+        if ! grep -q '^uses ' "$agg" && ! grep -qxF -- "interpolates" "$agg" \
+                && grep -qxF -- 'env SUITE_RESULT=${{ needs.suite.result }}' "$agg" \
+                && grep -qxF -- 'env CHECKS_RESULT=${{ needs.checks.result }}' "$agg"; then
+            pass "ci workflow: the aggregator checks nothing out and reads both results through env:, not run:"
+        else
+            fail "ci workflow: the aggregator should use no action and read SUITE_RESULT/CHECKS_RESULT from needs.*.result via env: only — got: $(tr '\n' ' ' < "$agg")"
+        fi
+        # Run the aggregator's own body: it must pass only on success/success
+        # and fail closed on everything else a need can conclude.
+        if [[ -s "$agg_run" ]]; then
+            local sr cr want got wrong="" tried=0
+            for sr in success failure cancelled skipped ""; do
+                for cr in success failure cancelled skipped ""; do
+                    want=1; [[ "$sr" == success && "$cr" == success ]] && want=0
+                    if SUITE_RESULT="$sr" CHECKS_RESULT="$cr" bash "$agg_run" > /dev/null 2>&1; then got=0; else got=1; fi
+                    tried=$((tried + 1))
+                    [[ "$got" == "$want" ]] || wrong+=" suite='$sr'/checks='$cr'->$got"
+                done
+            done
+            if [[ "$tried" == 25 && -z "$wrong" ]]; then
+                pass "ci workflow: the aggregator passes only when suite and checks are both success (25 combinations)"
+            else
+                fail "ci workflow: the aggregator must exit 0 only for success/success and 1 otherwise — wrong for:$wrong (tried $tried)"
+            fi
+        else
+            fail "ci workflow: could not extract the aggregator's run: body"
         fi
     fi
 
@@ -19126,27 +19217,49 @@ test_fleet_guidance_mirror() {
     # The checker only protects anything if CI runs it. Unconditional (no
     # `if:`): it must report on every push and pull request.
     local facts="$TEST_DIR/fleet-guidance-mirror-step.txt"
-    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-fleet-guidance-mirror.js" test > "$facts" 2>/dev/null \
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-fleet-guidance-mirror.js" checks > "$facts" 2>/dev/null \
             && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
-        pass "fleet guidance mirror: ci.yml's test job runs the checker unconditionally"
+        pass "fleet guidance mirror: ci.yml's checks job runs the checker unconditionally"
     else
-        fail "fleet guidance mirror: ci.yml's test job should run node scripts/check-fleet-guidance-mirror.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
+        fail "fleet guidance mirror: ci.yml's checks job should run node scripts/check-fleet-guidance-mirror.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
     fi
 
     # Order matters: a failed step skips every later one that lacks
-    # `if: always()`, and the integration suite compares the same files, so the
-    # checker must run first for its fix-naming message to be the one shown.
-    local names="$TEST_DIR/fleet-guidance-mirror-step-names.txt" mirror_line suite_line
-    if workflow_step_names "$REPO_ROOT/.github/workflows/ci.yml" test > "$names" 2>/dev/null; then
+    # `if: always()`, and the integration suite compares the same files, so
+    # nothing that can fail may run ahead of the checker, or its fix-naming
+    # message is the one hidden. Since the shard split the suite runs in the
+    # `suite` job, so that means: the suite step is not in `checks` at all,
+    # `checks` does not `needs:` the suite (a red shard would skip it), and
+    # inside `checks` only setup and the warn-only Markdown step precede it.
+    local wf="$REPO_ROOT/.github/workflows/ci.yml"
+    local names="$TEST_DIR/fleet-guidance-mirror-step-names.txt" suite_names="$TEST_DIR/fleet-guidance-mirror-suite-names.txt"
+    if workflow_step_names "$wf" checks > "$names" 2>/dev/null && workflow_step_names "$wf" suite > "$suite_names" 2>/dev/null; then
+        local mirror_line before
         mirror_line=$(grep -nxF -- "Fleet payload mirrors base.md" "$names" | head -1 | cut -d: -f1) || mirror_line=""
-        suite_line=$(grep -nxF -- "Run integration tests" "$names" | head -1 | cut -d: -f1) || suite_line=""
-        if [[ -n "$mirror_line" && -n "$suite_line" && "$mirror_line" -lt "$suite_line" ]]; then
-            pass "fleet guidance mirror: the checker step runs before 'Run integration tests'"
+        if [[ -n "$mirror_line" ]]; then
+            before=$(head -n $((mirror_line - 1)) "$names" | grep -vxF -e "-" -e "Setup Node" -e "Install the workflow parser" \
+                -e "Agent Markdown warnings (spelling, dangling references)" | tr '\n' ' ') || before=""
+        fi
+        if [[ -n "$mirror_line" && -z "$before" ]] && grep -qxF -- "Run integration tests" "$suite_names" \
+                && ! grep -qxF -- "Run integration tests" "$names"; then
+            pass "fleet guidance mirror: the checker runs in checks ahead of every step that can fail, and the suite runs in its own job"
         else
-            fail "fleet guidance mirror: expected 'Fleet payload mirrors base.md' before 'Run integration tests' — got mirror at ${mirror_line:-missing}, suite at ${suite_line:-missing}"
+            fail "fleet guidance mirror: expected 'Fleet payload mirrors base.md' in checks after only setup and the Markdown warnings, and 'Run integration tests' in suite only — got mirror at ${mirror_line:-missing}, failing steps before it: '${before:-}'"
         fi
     else
-        fail "fleet guidance mirror: could not read the test job's step names"
+        fail "fleet guidance mirror: could not read the checks and suite jobs' step names"
+    fi
+    local checks_needs
+    checks_needs=$(node -e '
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const d = YAML.parse(require("node:fs").readFileSync(process.argv[2], "utf8"));
+const j = d && d.jobs && d.jobs.checks;
+process.stdout.write(!j ? "no-job" : j.needs === undefined ? "none" : JSON.stringify(j.needs));
+' "$REPO_ROOT" "$wf" 2>/dev/null) || checks_needs="unparsed"
+    if [[ "$checks_needs" == none ]]; then
+        pass "fleet guidance mirror: the checks job needs nothing, so a red shard cannot skip the checker"
+    else
+        fail "fleet guidance mirror: the checks job should have no needs: — got $checks_needs"
     fi
 }
 
@@ -19174,6 +19287,47 @@ test_check_agent_markdown() {
         pass "agent markdown check: node:test suite is green ($pass_n passed)"
     else
         fail "agent markdown check: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=76): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+# The CI shard partition (scripts/check-ci-shards.js). The node:test suite
+# covers the checker's verdicts on fixtures, the real ci.yml, and a scratch
+# copy with a group removed; this wrapper adds that CI actually runs it, in
+# `checks`, unconditionally. Without that step a group added to TEST_GROUPS
+# but to no shard stops running in CI while every shard stays green.
+test_check_ci_shards() {
+    echo ""
+    echo "=== Test: check-ci-shards.js (every test group in exactly one CI shard) ==="
+
+    # Same non-silent-skip rule as the other node suites.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "ci shards: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/check-ci-shards-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command. Run
+    # without TEST_GROUPS_ONLY/TEST_GROUP so the checker's own child sees the
+    # same environment CI's checks job gives it (it drops both anyway).
+    env -u TEST_GROUPS_ONLY -u TEST_GROUP node --test --test-reporter=tap "$REPO_ROOT/test/test-check-ci-shards.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 16 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 16 ]]; then
+        pass "ci shards: node:test suite is green ($pass_n passed)"
+    else
+        fail "ci shards: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=16): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+
+    local facts="$TEST_DIR/check-ci-shards-step.txt"
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-ci-shards.js" checks > "$facts" 2>/dev/null \
+            && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
+        pass "ci shards: ci.yml's checks job runs the checker unconditionally"
+    else
+        fail "ci shards: ci.yml's checks job should run node scripts/check-ci-shards.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
     fi
 }
 
@@ -23273,6 +23427,7 @@ GROUP_self_hosted=(
     test_routine_merge_gate
     test_fleet_guidance_mirror
     test_check_agent_markdown
+    test_check_ci_shards
     test_self_hosted_gitattributes
 )
 
@@ -23306,6 +23461,7 @@ GROUP_codex_memory_audit=(
 
 GROUP_runner=(
     test_runner_zero_counts
+    test_runner_group_selection
 )
 
 runner_probe_no_assert() { :; }
@@ -23454,6 +23610,123 @@ PY
     fi
     assert_contains "$base/allowlist.log" "must be a nonempty list" \
         "runner empty bootstrap allowlist reports why"
+}
+
+# TEST_GROUPS_ONLY and --list-groups, the two halves CI's shards stand on:
+# the `suite` matrix runs each shard's groups through the first, and
+# scripts/check-ci-shards.js reads the canonical list through the second. The
+# selection is exercised in process, through the real select_groups and
+# run_groups with the child stubbed exactly as test_runner_zero_counts stubs
+# it, because a real child running the `runner` group would run this test
+# again. The entry point itself is exercised as a child only on paths that
+# exit before any group starts: --list-groups and a refused name.
+test_runner_group_selection() {
+    echo ""
+    echo "=== Test: TEST_GROUPS_ONLY runs only the named groups; --list-groups prints them ==="
+    # Recursion guard. Every child below carries RUNNER_SELECTION_PROBE, so if
+    # a regressed selection ever lets one run the `runner` group, that run
+    # fails here at once instead of spawning children of its own.
+    if [[ -n "${RUNNER_SELECTION_PROBE:-}" ]]; then
+        fail "runner selection: a child started by this test ran this test again — TEST_GROUPS_ONLY selected a group it should have refused"
+        return
+    fi
+    local base="$TEST_DIR/runner-selection" log rc
+    mkdir -p "$base"
+    local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
+
+    # --list-groups, unset selection: exactly TEST_GROUPS, in order, nothing
+    # else on stdout. Compared against the array, not against a copy of it.
+    if RUNNER_SELECTION_PROBE=1 env -u TEST_GROUPS_ONLY -u TEST_GROUP bash "$self" --list-groups > "$base/list.out" 2> "$base/list.err"; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 && "$(cat "$base/list.out")" == "$(printf '%s\n' "${TEST_GROUPS[@]}")" ]]; then
+        pass "runner --list-groups prints every group, one per line, in TEST_GROUPS order"
+    else
+        fail "runner --list-groups exited $rc and printed: $(tr '\n' ' ' < "$base/list.out")"
+    fi
+
+    # --list-groups under a selection: the selection, in TEST_GROUPS order
+    # rather than the order it was given in.
+    if RUNNER_SELECTION_PROBE=1 TEST_GROUPS_ONLY="  sync   runner " env -u TEST_GROUP bash "$self" --list-groups > "$base/sel.out" 2> "$base/sel.err"; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 && "$(tr '\n' ' ' < "$base/sel.out")" == "runner sync " ]]; then
+        pass "runner --list-groups under TEST_GROUPS_ONLY prints just the selection, in TEST_GROUPS order"
+    else
+        fail "runner --list-groups under TEST_GROUPS_ONLY='sync runner' exited $rc and printed: $(tr '\n' ' ' < "$base/sel.out")"
+    fi
+
+    # Refusals, through the real entry point WITHOUT --list-groups, so a
+    # refusal is shown to stop the run itself: exit 2, a message naming the
+    # problem, and no group started (no "Results:" line from anything).
+    # Every child here runs under `env -u TEST_GROUP`: this test itself runs
+    # inside a child whose TEST_GROUP is `runner`, and a grandchild that
+    # inherited it would run this group, and so this test, again — without
+    # end. For the same reason no value below names `runner`: should a
+    # refusal regress into acceptance, the child runs one small group and
+    # stops, rather than recursing.
+    local mode value needle
+    for mode in unknown duplicate blank; do
+        case "$mode" in
+            unknown) value="codex_memory_audit no_such_group"; needle="unknown group 'no_such_group' in TEST_GROUPS_ONLY" ;;
+            duplicate) value="codex_memory_audit codex_memory_audit"; needle="group 'codex_memory_audit' is named more than once in TEST_GROUPS_ONLY" ;;
+            blank) value="   "; needle="TEST_GROUPS_ONLY names no group" ;;
+        esac
+        log="$base/refuse-$mode.log"
+        if RUNNER_SELECTION_PROBE=1 TEST_GROUPS_ONLY="$value" TEST_JOBS=1 env -u TEST_GROUP bash "$self" > "$log" 2>&1; then rc=0; else rc=$?; fi
+        if [[ "$rc" == 2 ]]; then
+            pass "runner refuses a $mode TEST_GROUPS_ONLY with exit 2"
+        else
+            fail "runner $mode TEST_GROUPS_ONLY exited $rc, expected 2"
+        fi
+        assert_contains "$log" "$needle" "runner $mode TEST_GROUPS_ONLY says why"
+        assert_not_contains "$log" "Results:" "runner $mode TEST_GROUPS_ONLY starts no group"
+    done
+
+    # A subset runs only those groups: the real select_groups, then the real
+    # run_groups with its child stubbed to record which group it was asked
+    # for. Two of three selected, given out of order.
+    log="$base/subset.log"
+    if (
+        TEST_DIR="$base/subset"
+        mkdir -p "$TEST_DIR"
+        PASS=0; FAIL=0
+        TEST_GROUPS=(probe_a probe_b probe_c)
+        TEST_GROUPS_ONLY="probe_c probe_a"
+        TEST_JOBS=1
+        bash() { echo "child ran $TEST_GROUP"; echo "  Results: 1 passed, 0 failed"; }
+        select_groups
+        run_groups
+    ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 ]]; then
+        pass "runner subset run exits 0"
+    else
+        fail "runner subset run exited $rc, expected 0"
+    fi
+    assert_contains "$log" "child ran probe_a" "runner subset runs the first selected group"
+    assert_contains "$log" "child ran probe_c" "runner subset runs the second selected group"
+    assert_not_contains "$log" "child ran probe_b" "runner subset does not run an unselected group"
+    assert_contains "$log" "Results: 2 passed, 0 failed" "runner subset totals only the selected groups"
+    if grep -qE '^  probe_b ' "$log"; then
+        fail "runner subset lists the unselected group in its Groups table"
+    else
+        pass "runner subset's Groups table names only the selected groups"
+    fi
+
+    # And unset still means every group: the same stub, no selection.
+    log="$base/all.log"
+    if (
+        TEST_DIR="$base/all"
+        mkdir -p "$TEST_DIR"
+        PASS=0; FAIL=0
+        TEST_GROUPS=(probe_a probe_b probe_c)
+        unset TEST_GROUPS_ONLY
+        TEST_JOBS=1
+        bash() { echo "child ran $TEST_GROUP"; echo "  Results: 1 passed, 0 failed"; }
+        select_groups
+        run_groups
+    ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 ]] && grep -qF "Results: 3 passed, 0 failed" "$log"; then
+        pass "runner with TEST_GROUPS_ONLY unset runs every group"
+    else
+        fail "runner with TEST_GROUPS_ONLY unset exited $rc: $(tail -3 "$log" | tr '\n' ' ')"
+    fi
 }
 
 # The .gitattributes lane (docs/decisions/0019). The helper and real-git tests
@@ -23671,7 +23944,46 @@ run_groups() {
     [[ $FAIL -eq 0 && -z "$failed_groups" ]] && exit 0 || exit 1
 }
 
+# select_groups — narrow TEST_GROUPS to TEST_GROUPS_ONLY's names, kept in
+# TEST_GROUPS order so a shard's log reads like the matching slice of a full
+# run. Unset or empty leaves every group selected. A name that is not a group
+# exits 2, like an unknown TEST_GROUP: a shard list with a typo must stop the
+# shard, not quietly run fewer groups than it names. A name given twice exits
+# 2 too, since two children of one group would share its output directory.
+# Runs AFTER check_group_coverage, which judges the whole suite.
+select_groups() {
+    [[ -n "${TEST_GROUPS_ONLY:-}" ]] || return 0
+    local -a wanted=() picked=()
+    local w g seen=" "
+    read -r -a wanted <<< "$TEST_GROUPS_ONLY"
+    if (( ${#wanted[@]} == 0 )); then
+        echo "run-tests.sh: TEST_GROUPS_ONLY names no group (got '$TEST_GROUPS_ONLY'; unset it to run every group)" >&2
+        exit 2
+    fi
+    for w in "${wanted[@]}"; do
+        if [[ " ${TEST_GROUPS[*]} " != *" $w "* ]]; then
+            echo "run-tests.sh: unknown group '$w' in TEST_GROUPS_ONLY (one of: ${TEST_GROUPS[*]})" >&2
+            exit 2
+        fi
+        if [[ "$seen" == *" $w "* ]]; then
+            echo "run-tests.sh: group '$w' is named more than once in TEST_GROUPS_ONLY" >&2
+            exit 2
+        fi
+        seen+="$w "
+    done
+    for g in "${TEST_GROUPS[@]}"; do
+        [[ "$seen" == *" $g "* ]] && picked+=("$g")
+    done
+    TEST_GROUPS=("${picked[@]}")
+}
+
 check_group_coverage
+
+if [[ "${1:-}" == --list-groups ]]; then
+    select_groups
+    printf '%s\n' "${TEST_GROUPS[@]}"
+    exit 0
+fi
 
 if [[ -n "${TEST_GROUP:-}" ]]; then
     if [[ " ${TEST_GROUPS[*]} " != *" $TEST_GROUP "* ]]; then
@@ -23681,4 +23993,5 @@ if [[ -n "${TEST_GROUP:-}" ]]; then
     run_one_group "$TEST_GROUP"
 fi
 
+select_groups
 run_groups
