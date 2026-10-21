@@ -201,6 +201,31 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   2026-10-20. No community action was worth adopting (one installs unpinned
   and trusts the exit code; another uses a different lockfile format). The
   shared action is a thin wrapper meant to be replaced by an official one.
+- **Upstream status, 2026-10-21: fixed on gh-actions-lock `main`, not yet
+  released.** Four issues filed from this pilot drew same-day fixes:
+  [#199](https://github.com/github/gh-actions-lock/issues/199) →
+  [#207](https://github.com/github/gh-actions-lock/pull/207) and
+  [#209](https://github.com/github/gh-actions-lock/pull/209) (an unverifiable
+  pin is an error, exit 1, `valid: false`, `"retryable": true`; CI retries
+  bounded); [#201](https://github.com/github/gh-actions-lock/issues/201) →
+  [#204](https://github.com/github/gh-actions-lock/pull/204) (`--verify` no
+  longer reports `cooldown-config-ignored`);
+  [#202](https://github.com/github/gh-actions-lock/issues/202) →
+  [#205](https://github.com/github/gh-actions-lock/pull/205) and
+  [#208](https://github.com/github/gh-actions-lock/pull/208) (an exact tag
+  locked to an older commit in its history is now a `tag-commit-mismatch`
+  error in every mode, fixed with `--relock`).
+  [#200](https://github.com/github/gh-actions-lock/issues/200) is open; a
+  maintainer says an official template is coming to GitHub's Well-Architected
+  guidance. The latest release is still v0.2.0, which the shared action pins,
+  so none of this is in use yet. When a release ships, after the 7-day wait,
+  the shared action bumps its version and digest, drops the
+  `cooldown-config-ignored` exception, and documents `--relock` for
+  `tag-commit-mismatch`; this ADR's tables and recovery advice are re-tested
+  against it then
+  ([tracking issue](https://github.com/Adam-S-Daniel/verify-actions-lock/issues/2)).
+  The fail-on-any-finding rule stays: it is still the safe policy, and it
+  costs nothing once the tool fails on its own.
 - **Facts every check and agent must allow for:**
   - Lockfile `commit` values read `sha1-<40hex>`, not bare hex.
   - Lockfile keys lowercase the owner/repo part
