@@ -38,6 +38,8 @@ on:
       # runs Dependabot with no merge path (repos.yml's dependabot_auto_merge).
       # Only ever added, never refreshed, so an edit here reaches only repos
       # still missing the workflow.
+      # templates/agent-checks/ (ADR 0021) is different: its runner and guard
+      # are refreshed on drift, so an edit to either reaches every repo.
       - "templates/**"
       # This file. `SYNC_OWNERS` below decides WHICH ~20 repos the run touches,
       # and the dispatch inputs decide whether it writes at all — an owner
