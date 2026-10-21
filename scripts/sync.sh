@@ -1144,7 +1144,7 @@ for repo_name in "${REPOS[@]}"; do
     # ── agent-checks: classify ─────────────────────────────────────────
     # Four parts, each skipped on its own rather than failing the repo:
     #   runner    missing | current | drifted | skipped (gitignored)
-    #   workflow  missing | present | skipped (actions.lock, gitignored)
+    #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
     #             "present" is ANY workflow that runs .githooks/agent-checks:
     #             adam-agentskills runs it as a job in ci.yml.
     #   guard     the PreToolUse hook; delivered only where fleet-memory can
@@ -1171,6 +1171,9 @@ for repo_name in "${REPOS[@]}"; do
         elif [[ -e .github/workflows/actions.lock ]]; then
             ac_wf_state="skipped"
             log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the agent-checks workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
+        elif [[ -e platform.lock ]]; then
+            ac_wf_state="skipped"
+            log "agent-checks: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered; its platform-pin-consistency check rejects any workflow the platform does not dictate. The platform carries it instead."
         elif git check-ignore -q "$AC_WF_REL_PATH" 2>/dev/null; then
             ac_wf_state="skipped"
             log "WARN: $AC_WF_REL_PATH is gitignored in $repo_name — not delivered."
