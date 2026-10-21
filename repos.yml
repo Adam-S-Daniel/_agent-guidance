@@ -259,13 +259,13 @@ skills_bootstrap:
 # `uses:` lines must name tags locked by `gh actions-lock`, which the sync
 # cannot run.
 #
-# OFF until the agents-md-sync App holds "Workflows: Read and write" on both
-# installations. Without it GitHub refuses any push that adds a workflow file,
+# Needs the agents-md-sync App to hold "Workflows: Read and write" on both
+# installations: without it GitHub refuses any push that adds a workflow file,
 # and that refusal takes the whole repo's sync commit (AGENTS.md included)
-# down with it. Grant the permission, re-accept it on each installation, THEN
-# flip this to true.
+# down with it. Granted and re-accepted on both installations 2026-10-21. If
+# the permission is ever withdrawn, set this back to false first.
 dependabot_auto_merge:
-  deliver: false
+  deliver: true
 
 
 # ── cron-coverage scope ────────────────────────────────────────────────────
