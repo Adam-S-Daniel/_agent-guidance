@@ -30,6 +30,42 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-21 — 2.1.296 through 2.1.305
+
+- **Checked:** 2026-10-21T01:35Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.305](https://github.com/anthropics/claude-code/releases/tag/v2.1.305), published 2026-10-20T20:46Z
+- **Window:** eight stable releases after v2.1.295, in publish order: v2.1.296 (2026-10-09T19:28Z), v2.1.299 (2026-10-14T02:49Z), v2.1.300 (2026-10-14T18:24Z), v2.1.301 (2026-10-15T19:22Z), v2.1.302 (2026-10-16T20:53Z), v2.1.303 (2026-10-18T22:26Z), v2.1.304 (2026-10-19T21:34Z), v2.1.305 (2026-10-20T20:46Z): 586 bullets (79 + 190 + 88 + 51 + 63 + 1 + 76 + 38; not individually indexed, the quotes below are copied from the file by script). v2.1.297 and v2.1.298 have no tag or changelog section and were skipped as gaps. Publish times are the `datetime` attribute on each tag page, in UTC. The runs of 2026-10-10 through 2026-10-20 are not on this branch, so the window spans 12 days.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; the eight tags listed by `git ls-remote --tags`); all eight tag pages were fetched (HTTP 200, none flagged pre-release) for their publish times, and the bodies of v2.1.302 and v2.1.305 were spot-checked against them.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 7eb07f0 (origin/main; the checkout head `5b142c9` is this branch), `adam-agentskills` dd2852e, `adam-agentskills-private` 6b88a54, `adamdaniel.ai` 6afabe6, `ai-usage-dashboard` f6806a6, `claude-memory-map` 5f785a2, `cms-platform` 95579a3, `fastmail-actions` f4aafb1, `GHA-bench` bf0f9875, `jodidaniel.com` 815d6ba, `repo-settings` 942f203, `rss-inator` fe32eeb, `skills-evals` e97dce5, `wsl-automation` bc2862a.
+
+#### 1. `claude -p` subagent defaults changed
+
+- [v2.1.302](https://github.com/anthropics/claude-code/releases/tag/v2.1.302), published 2026-10-16T20:53Z
+  > Changed fork subagents (`subagent_type: "fork"`) to be on by default in `claude -p`, the Agent SDK, the desktop app and VS Code, as they already are in the terminal; `CLAUDE_CODE_FORK_SUBAGENT=0` turns them off, and `claude mcp serve` never offers them
+- [v2.1.302](https://github.com/anthropics/claude-code/releases/tag/v2.1.302), published 2026-10-16T20:53Z
+  > Changed the desktop app and VS Code to always run the main conversation's subagents in the background, as the terminal does, rather than let Claude choose; a subagent's own Agent calls in `claude -p`, the Agent SDK, the desktop app and VS Code now run in the foreground by default
+
+**Issues:** PENDING (GHA-bench). `adam-agentskills`' credit lane runs a `claude -p` child (ADR 0018) but pins nothing a subagent default changes, so no issue.
+
+#### 2. Prompt-audit sweep trigger
+
+- [v2.1.299](https://github.com/anthropics/claude-code/releases/tag/v2.1.299), published 2026-10-14T02:49Z
+  > Changed skill and command loading: one whose file or folder name has hidden, direction-changing or blank-like characters, `<` or `>` is no longer offered until renamed; such a `name:` is ignored
+- [v2.1.299](https://github.com/anthropics/claude-code/releases/tag/v2.1.299), published 2026-10-14T02:49Z
+  > Improved `/reload-skills` to say it re-sends the full skill list to Claude, which is how to get skills back after compaction
+- [v2.1.301](https://github.com/anthropics/claude-code/releases/tag/v2.1.301), published 2026-10-15T19:22Z
+  > Fixed the `fable` (and `best`) model alias erroring on the Anthropic API when the newest Fable model is not available to your organization: Claude Code now retries once on the previous Fable model
+- [v2.1.301](https://github.com/anthropics/claude-code/releases/tag/v2.1.301), published 2026-10-15T19:22Z
+  > Fixed skills no longer being listed to the model after using `/rewind`
+- [v2.1.304](https://github.com/anthropics/claude-code/releases/tag/v2.1.304), published 2026-10-19T21:34Z
+  > Fixed resumed and cloud sessions sending Claude the whole skill list again each time plugins reloaded at startup
+- [v2.1.304](https://github.com/anthropics/claude-code/releases/tag/v2.1.304), published 2026-10-19T21:34Z
+  > Changed compaction to send Claude the skill list again afterwards; `/reload-skills` now sends only new or changed skills
+
+**Issues:** PENDING (`_agent-guidance`, no label).
+
+No other group met the name-the-surface bar. A grep of the fleet for `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `mcp__`, `claude plugin eval`, `claude rc`, `claude agents`, `--bg`, `sessions/`, `sandbox.` and `unshare` found no dependence on a changed behavior. The credit lane's `UserPromptSubmit` hook (`adam-agentskills`, `hooks/credit-lane/on-prompt.sh`) always exits 0 and only prints context, so running before skill expansion changes nothing. `wsl-automation` pins `claude rc --spawn same-dir`, so the saved spawn mode added in v2.1.305 does not apply, and it passes neither removed flag. The `claude plugin eval` additions in v2.1.299 add no script-running grader, so the monitor-don't-wrap decision in `skills-evals`' `DESIGN.md` stands. `sandbox.allowNestedUserNamespaces` (v2.1.305) leaves the fleet's "run in a PID namespace, never escalate out of the sandbox" rule true. `GHA-bench`'s `models.py` has no Sonnet 5.5 row, so the v2.1.296 cache-read price change touches nothing there. Other bullets cover mods, VS Code, Claude Tag, Code Review, cloud-session and self-hosted-runner internals.
+
 ### 2026-10-09 — 2.1.294 through 2.1.295
 
 - **Checked:** 2026-10-09T01:25Z, [release log](https://github.com/anthropics/claude-code/releases)
