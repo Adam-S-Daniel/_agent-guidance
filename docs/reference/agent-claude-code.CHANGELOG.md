@@ -45,7 +45,7 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.302](https://github.com/anthropics/claude-code/releases/tag/v2.1.302), published 2026-10-16T20:53Z
   > Changed the desktop app and VS Code to always run the main conversation's subagents in the background, as the terminal does, rather than let Claude choose; a subagent's own Agent calls in `claude -p`, the Agent SDK, the desktop app and VS Code now run in the foreground by default
 
-**Issues:** PENDING (GHA-bench). `adam-agentskills`' credit lane runs a `claude -p` child (ADR 0018) but pins nothing a subagent default changes, so no issue.
+**Issues:** none filed: `GHA-bench` is archived (read-only; `POST /repos/Adam-S-Daniel/GHA-bench/issues` answered 403 "Repository was archived so is read-only"). The surface is `runner.py`'s `claude -p` command, where `CLAUDE_CODE_FORK_SUBAGENT` is not pinned; a future un-archive should re-check it. Trap: [_agent-guidance#307](https://github.com/Adam-S-Daniel/_agent-guidance/issues/307). `adam-agentskills`' credit lane runs a `claude -p` child (ADR 0018) but pins nothing a subagent default changes, so no issue.
 
 #### 2. Prompt-audit sweep trigger
 
@@ -62,7 +62,7 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.304](https://github.com/anthropics/claude-code/releases/tag/v2.1.304), published 2026-10-19T21:34Z
   > Changed compaction to send Claude the skill list again afterwards; `/reload-skills` now sends only new or changed skills
 
-**Issues:** PENDING (`_agent-guidance`, no label).
+**Issues:** [_agent-guidance#308](https://github.com/Adam-S-Daniel/_agent-guidance/issues/308) (no label). Sweep fired: https://claude.ai/code/cse_01KRBZ2XyLTLMHoDwU5VfwvT.
 
 No other group met the name-the-surface bar. A grep of the fleet for `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `mcp__`, `claude plugin eval`, `claude rc`, `claude agents`, `--bg`, `sessions/`, `sandbox.` and `unshare` found no dependence on a changed behavior. The credit lane's `UserPromptSubmit` hook (`adam-agentskills`, `hooks/credit-lane/on-prompt.sh`) always exits 0 and only prints context, so running before skill expansion changes nothing. `wsl-automation` pins `claude rc --spawn same-dir`, so the saved spawn mode added in v2.1.305 does not apply, and it passes neither removed flag. The `claude plugin eval` additions in v2.1.299 add no script-running grader, so the monitor-don't-wrap decision in `skills-evals`' `DESIGN.md` stands. `sandbox.allowNestedUserNamespaces` (v2.1.305) leaves the fleet's "run in a PID namespace, never escalate out of the sandbox" rule true. `GHA-bench`'s `models.py` has no Sonnet 5.5 row, so the v2.1.296 cache-read price change touches nothing there. Other bullets cover mods, VS Code, Claude Tag, Code Review, cloud-session and self-hosted-runner internals.
 
