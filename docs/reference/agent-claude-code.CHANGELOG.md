@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-22 — 2.1.306 through 2.1.307
+
+- **Checked:** 2026-10-22T01:08Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.307](https://github.com/anthropics/claude-code/releases/tag/v2.1.307), published 2026-10-21T22:17Z
+- **Window:** v2.1.306 (published 2026-10-21T03:16Z) and v2.1.307 (published 2026-10-21T22:17Z), the first stable releases after v2.1.305: 2 releases, 45 bullets (2 + 43; not individually indexed: no group was drafted). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.306` and `v2.1.307` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200, neither flagged pre-release) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 506f9d2 (the `persistent/vendor-changelog` checkout; origin/main is ahead), `adam-agentskills` 59c8c74, `adam-agentskills-private` 2465891, `adamdaniel.ai` ab557c5, `ai-usage-dashboard` 09d9845, `claude-memory-map` 676d7f9, `cms-platform` 3b0a799, `fastmail-actions` f3c799f, `GHA-bench` bf0f9875 (archived, read-only), `jodidaniel.com` 3626102, `repo-settings` a9dc5ea, `rss-inator` 346595f, `skills-evals` b644ea2, `wsl-automation` baa2d20.
+
+No group met the name-the-surface bar. A grep of the fleet for `CLAUDE_CODE_DISABLE_1M_CONTEXT`, `claude_code.safety_event`, `OTEL_EXPORTER_OTLP_HEADERS`, `CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS`, `axScreenReader`, `CLAUDE_AX_SCREEN_READER`, `prompt-caching-scope`, `/autocompact`, `@claude review` and `setModel` found no dependence on a changed behavior; the one `claude-api` hit is a skill-name list in an `adam-agentskills` experiment note. The v2.1.306 fix for `claude -p` reporting "Not logged in" inside cloud sessions and the v2.1.307 MCP and subagent fixes remove failures without changing a documented command, flag or setting. No bullet adds a model, changes what an alias resolves to, or changes `/doctor` or instruction-file loading, so the prompt-audit sweep (step 4a) was not triggered (`sweep: none`).
+
 ### 2026-10-21 — 2.1.296 through 2.1.305
 
 - **Checked:** 2026-10-21T01:35Z, [release log](https://github.com/anthropics/claude-code/releases)

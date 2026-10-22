@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-22 — 0.162.1 through 0.163.0
+
+- **Checked:** 2026-10-22T01:08Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.163.0](https://github.com/openai/codex/releases/tag/rust-v0.163.0), published 2026-10-15T21:30Z
+- **Window:** 0.162.1 (published 2026-10-09T19:44Z) and 0.163.0 (published 2026-10-15T21:30Z), the first stable releases after 0.162.0, in publish order: 2 stable releases, 18 highlight bullets (2 + 16; not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish times read from each tag page's `datetime` attribute, UTC. The 2026-10-21 run did not cover Codex, so this entry spans 13 days.
+- **Source text:** the GitHub release list pages 1-3 and both tag pages; the pages walked included `rust-v0.162.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 506f9d2 (the `persistent/vendor-changelog` checkout; origin/main is ahead), `adam-agentskills` 59c8c74, `adam-agentskills-private` 2465891, `adamdaniel.ai` ab557c5, `ai-usage-dashboard` 09d9845, `claude-memory-map` 676d7f9, `cms-platform` 3b0a799, `fastmail-actions` f3c799f, `GHA-bench` bf0f9875 (archived, read-only), `jodidaniel.com` 3626102, `repo-settings` a9dc5ea, `rss-inator` 346595f, `skills-evals` b644ea2, `wsl-automation` baa2d20.
+
+No group met the name-the-surface bar. A grep of the fleet for `zsh_path`, `shell_zsh`, `managed-daemon`, `remote-control`, `app-server`, `codex exec`, `/daemon` and `/keymap` found only `wsl-automation` (the keeper runs `codex remote-control start` and identifies the `codex app-server ... --remote-control --managed-daemon` process by its arguments) and `_agent-guidance`'s evidence notes on the daemon. The 0.162.1 startup fix (feature-settings mismatch with a running background server) and the 0.163.0 `/daemon` restart and remote-control preference changes do not alter that command line or any documented behavior; no fleet file names the retired patched-zsh shell flags. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not touched by any highlight bullet and stays open.
+
 ### 2026-10-09 — 0.162.0 through 0.162.0
 
 - **Checked:** 2026-10-09T01:25Z, [release log](https://github.com/openai/codex/releases)
