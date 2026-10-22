@@ -78,8 +78,9 @@ a new domain or subjective criteria.
   file contents.
 - Never build SQL, shell commands or HTML by concatenating untrusted data:
   parameterized queries, shell arrays, context-aware escaping.
-- Never commit secrets, credentials or `.env` files.
-- Never disable TLS verification, authentication or CSRF protection.
+- Never commit secrets, credentials or `.env` files, or disable TLS
+  verification, authentication or CSRF protection.
+- **Automation authenticates as a scoped GitHub App, not a PAT.**
 
 ## Data exposure in CI and public repos
 
@@ -301,7 +302,7 @@ name outlives a rename).
 
 ## Pinning GitHub Actions
 
-**Two forms while repos migrate** ([ADR 0021](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0021-actions-pin-through-lockfiles.md)):
+**Two forms while repos migrate** ([ADR 0023](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0023-actions-pin-through-lockfiles.md)):
 
 - **Lockfile, the target:** `.github/workflows/actions.lock` covers every
   workflow; each `uses:` on its most exact tag, by hand; local actions
@@ -312,10 +313,8 @@ name outlives a rename).
 - **Cross-repo reusable workflows take a full SHA in both forms.** No lockfile
   locks them; only review or a repo check catches a tag.
 - **The runner runs whatever commit the lockfile names**, even off-tag. So a
-  required check runs `Adam-S-Daniel/verify-actions-lock` (verifies workflow
-  or local-action changes; fails on any pin finding) plus the Require
-  lockfile policy. Review `actions.lock` like pins. Docker images are not
-  locked.
+  required check runs `Adam-S-Daniel/verify-actions-lock` (fails on any pin
+  finding) plus the Require lockfile policy. Review `actions.lock` like pins.
 - **Wait 7 days after a third-party release**, else pin the previous.
 - **Dereference annotated tags:** `git ls-remote <url> 'refs/tags/<tag>^{}'`.
 - **The one carve-out:** refs into this account's own `cms-platform` stay on

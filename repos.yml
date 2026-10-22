@@ -122,12 +122,12 @@ skills_bootstrap:
     - ai-usage-dashboard
     # lock: committed — PR #19 merged 2026-08-19.
     - claude-memory-map
-    # cms-platform and GHA-bench both gitignore `.claude/` — cms-platform with
-    # an explanatory comment, GHA-bench as a bare `/.claude/` entry (the
-    # comment above it is about workflow files) — which is why ADR 0001 refused
-    # to list them. Each has ONE companion PR carrying BOTH remaining steps:
-    # the narrowed ignore and the repo's first skills.lock. So the drift cell
-    # for these two reads `no-lock` like the other six pending entries, not
+    # cms-platform gitignores `.claude/` (with an explanatory comment), which
+    # is why ADR 0001 refused to list it. Its ONE companion PR carries BOTH
+    # remaining steps: the narrowed ignore and the repo's first skills.lock.
+    # (GHA-bench was the second such entry; it was archived in October 2026,
+    # so discovery no longer reaches it and it is no longer listed.) So the
+    # drift cell for it reads `no-lock` like the other pending entries, not
     # `blocked`: drift-report.sh tests the lock BEFORE it probes the ignore, so
     # `blocked` is only reachable once a lock exists. The entry is INERT, not
     # wrong; what it buys is that nothing further is needed HERE once the
@@ -136,8 +136,6 @@ skills_bootstrap:
     - cms-platform
     # lock: committed — PR #8 merged 2026-08-19.
     - fastmail-actions
-    # lock + ignore: pending GHA-bench#49 — inert until that merges.
-    - GHA-bench
     # lock: committed — PR #134 merged 2026-08-16, so the lock this file used
     # to call "in flight" has been committed for three days, and the sync
     # delivered the hook on its next run (2026-08-18). The stale note said the
@@ -154,7 +152,7 @@ skills_bootstrap:
     # it stays out for a different and still-good reason.
     # lock: committed — PR #15 merged 2026-08-19.
     - scratch-claude-002
-    # The shared lockfile-check action (ADR 0021). Agents maintain it (digest
+    # The shared lockfile-check action (ADR 0023). Agents maintain it (digest
     # bumps, gh-actions-lock upgrades), and the bundles carry the Actions
     # skills that work needs. Added 2026-10-20.
     # lock: pending — its first skills.lock lands in a verify-actions-lock PR.
@@ -250,6 +248,44 @@ skills_bootstrap:
   # `exclude:` above.
 
 
+# ── Dependabot auto-merge workflow delivery ──────────────────────────────
+#
+# Every repo that runs Dependabot needs its own merge path: the
+# `dependabot-auto-merge.yml` workflow whose daily sweep merges a Dependabot
+# PR once every check on its head is green. Nothing added that file to a new
+# repo, so adam-agentskills ran Dependabot without one and its green PRs
+# waited days for a hand merge (adam-agentskills#68).
+#
+# With `deliver: true`, sync.sh copies templates/dependabot-auto-merge/ into
+# any synced repo that has `.github/dependabot.yml` (or `.yaml`) and no
+# workflow named `dependabot-auto-merge.yml` / `self-dependabot-auto-merge.yml`.
+# It only ever ADDS the files: an existing workflow (or an existing
+# `.github/scripts/workflow-overlap.sh`) is never overwritten. A repo with
+# `.github/workflows/actions.lock` is skipped with a warning, because its
+# `uses:` lines must name tags locked by `gh actions-lock`, which the sync
+# cannot run.
+#
+# Needs the agents-md-sync App to hold "Workflows: Read and write" on both
+# installations: without it GitHub refuses any push that adds a workflow file,
+# and that refusal takes the whole repo's sync commit (AGENTS.md included)
+# down with it. Granted and re-accepted on both installations 2026-10-21. If
+# the permission is ever withdrawn, set this back to false first.
+dependabot_auto_merge:
+  deliver: true
+
+# ── agent-checks (ADR 0021) ────────────────────────────────────────────────
+#
+# Delivers the commit-time checks from templates/agent-checks/ to every synced
+# repo: the runner `.githooks/agent-checks` (managed, overwritten on drift), the
+# `agent-checks` CI workflow (added once; skipped where any workflow already
+# runs the runner, or where actions.lock pins the actions), the Claude Code
+# PreToolUse guard against --no-verify (managed, wherever fleet-memory can be
+# delivered), and a `.githooks/* text eol=lf` line in .gitattributes. Only a
+# literal `true` turns it on.
+agent_checks:
+  deliver: true
+
+
 # ── cron-coverage scope ────────────────────────────────────────────────────
 #
 # Which repos `scripts/check-cron-coverage.js` is answering ABOUT when it
@@ -286,7 +322,6 @@ cron_coverage:
     - claude-memory-map
     - cms-platform
     - fastmail-actions
-    - GHA-bench
     - jodidaniel.com
     - repo-settings
     - rss-inator
@@ -319,7 +354,7 @@ cron_coverage:
     # moves even that out of `.github/workflows/`). Give it a cron anyone
     # depends on and it moves to `fleet:`.
     - scratch-claude-002
-    # The shared `uses:` action behind the lockfile check (ADR 0021). Its only
+    # The shared `uses:` action behind the lockfile check (ADR 0023). Its only
     # workflow runs on pull requests and pushes; there is no cron to watch.
     # Give it one and it moves to `fleet:`.
     - verify-actions-lock

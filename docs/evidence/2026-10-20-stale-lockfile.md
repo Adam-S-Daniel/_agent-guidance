@@ -5,7 +5,7 @@ Evidence for `agents-md/base.md`,
 "the runner runs whatever commit the lockfile names". The rule stays in
 `base.md`; this file keeps the measurement, under
 [ADR 0018](../decisions/0018-incident-narratives-live-in-docs-evidence.md).
-The decision it supports is [ADR 0021](../decisions/0021-actions-pin-through-lockfiles.md).
+The decision it supports is [ADR 0023](../decisions/0023-actions-pin-through-lockfiles.md).
 
 ## What was done
 

@@ -59,7 +59,7 @@
   heading: Security
   file: agents-md/base.md
   status: gap
-  bytes: 368
+  bytes: 431
 
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos
@@ -125,7 +125,7 @@
   heading: Pinning GitHub Actions
   file: agents-md/base.md
   status: gap
-  bytes: 1420
+  bytes: 1343
 
 - id: test-that-can-signal-kills-every-session
   heading: A test that can signal can kill every session

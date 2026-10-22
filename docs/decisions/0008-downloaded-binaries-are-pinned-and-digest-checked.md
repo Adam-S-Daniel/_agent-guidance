@@ -1,6 +1,6 @@
 # 0008 — A downloaded binary is pinned by version and by digest, and the digest lives here
 
-**Status:** Accepted (2026-08-20). Extends [0007](0007-sha-pins-carry-no-version-comment.md) and the pinning rule in `agents-md/base.md` to a shape neither of them reaches. The absolute quoted below was amended by [0021](0021-actions-pin-through-lockfiles.md) (2026-10-20): a `uses:` may now name a tag locked in `.github/workflows/actions.lock`. This ADR's rule for `run:`-block downloads is unchanged.
+**Status:** Accepted (2026-08-20). Extends [0007](0007-sha-pins-carry-no-version-comment.md) and the pinning rule in `agents-md/base.md` to a shape neither of them reaches. The absolute quoted below was amended by [0023](0023-actions-pin-through-lockfiles.md) (2026-10-20): a `uses:` may now name a tag locked in `.github/workflows/actions.lock`. This ADR's rule for `run:`-block downloads is unchanged.
 
 ## Context
 
