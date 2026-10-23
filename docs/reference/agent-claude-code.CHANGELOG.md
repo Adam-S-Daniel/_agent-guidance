@@ -30,6 +30,25 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-23 — 2.1.308 through 2.1.309
+
+- **Checked:** 2026-10-23T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.309](https://github.com/anthropics/claude-code/releases/tag/v2.1.309), published 2026-10-22T22:18Z
+- **Window:** v2.1.308 (published 2026-10-22T04:34Z, "Bug fixes and reliability improvements") and v2.1.309 (published 2026-10-22T22:18Z), the first stable releases after v2.1.307: 2 releases, 82 bullets (1 + 81; only the two in group 1 are indexed). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.308` and `v2.1.309` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list below, so none is newly assessed beyond a fleet grep. Last reached: `_agent-guidance`, `adam-agentskills`, `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `claude-memory-map`, `cms-platform`, `fastmail-actions`, `GHA-bench` (archived), `jodidaniel.com`, `repo-settings`, `rss-inator`, `skills-evals`, `wsl-automation` (local checkouts present this session).
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.309](https://github.com/anthropics/claude-code/releases/tag/v2.1.309), published 2026-10-22T22:18Z
+  > Fixed sessions compacting repeatedly after reading files under a very large nested CLAUDE.md; a nested CLAUDE.md over the size limit now loads only its start
+- [v2.1.309](https://github.com/anthropics/claude-code/releases/tag/v2.1.309), published 2026-10-22T22:18Z
+  > Fixed a skill in an `--add-dir` folder being unreachable when another skill already held its name; it is now offered as `<folder>:<name>`
+
+**Issues:** [_agent-guidance#317](https://github.com/Adam-S-Daniel/_agent-guidance/issues/317) (no label). Sweep fired: https://claude.ai/code/cse_01Du2rKYDkUecMsqz1Anp17Q.
+
+No other group met the name-the-surface bar. A fleet grep for `ultrareview`, `--mcp-config`, `synced/manifest.json`, `"shell": "powershell"`, `BEDROCK_BASE_URL` and `git replace` found only `GHA-bench` `runner.py` passing an empty `--mcp-config` (unaffected by the fix about the config file being modified by sandboxed commands) and documentation of the `synced` store in `adam-agentskills` and `skills-evals`, which the 2.1.309 fix about synced plugins being removed after a disk read error does not contradict. The sandbox, permission-check, worktree, VS Code, cloud-session and Claude Tag bullets remove failures without changing a documented command, flag or setting. Codex: no stable release after 0.163.0 (pages 1 to 3 walked: page 1 holds only 0.163.0 and 0.164.0 alphas, 0.163.0 is on page 2, 0.162.0 and 0.162.1 on page 3).
+
 ### 2026-10-22 — 2.1.306 through 2.1.307
 
 - **Checked:** 2026-10-22T01:08Z, [release log](https://github.com/anthropics/claude-code/releases)
