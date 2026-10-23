@@ -50,6 +50,54 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-23 — read-before-you-start — create
+- Motivation: owner decision 2026-10-23: niche guidance that concerns few sessions should be a pointer, not always-on text; this section is the home for such pointers (base.md is copied into other repos, so the links are absolute URLs).
+- Change: new section with two bullets: settings schema design (docs/reference/settings-schema-design.md, the one-meaning-one-value rule, scope and access keys required unless their default selects nothing, JSON/GitHub terminology) and network allowlists (docs/reference/network-allowlists.md).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — network-allowlists — remove
+- Motivation: owner decision 2026-10-23: editing an egress allowlist concerns few sessions, so the section moves behind a pointer to free always-on budget.
+- Change: removed the section and its eval-coverage.yml row; every fact (the two allowlists, the changelog-sidecar rule, the `*.example.com` apex trap, the default-list checkbox) moved to docs/reference/network-allowlists.md, reached from read-before-you-start. Section 611 bytes removed.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — working-in-these-repos — edit
+- Motivation: owner decision 2026-10-23: the settings-schema rule concerns a tiny fraction of sessions and should not cost always-on context, so it moves behind a pointer and the wording trims made only to fit it are not wanted.
+- Change: reverted to main: removed the inline **One meaning, one value** bullet (and the earlier **Never two forms for one meaning** and **One meaning, one spelling** wordings); the rule now lives in docs/reference/settings-schema-design.md. Section 1,909 -> 1,376 bytes (-533).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-docker — edit
+- Motivation: owner decision 2026-10-23: the settings-schema rule concerns a tiny fraction of sessions and should not cost always-on context, so it moves behind a pointer and the wording trims made only to fit it are not wanted.
+- Change: reverted to main the wording trims made to fit the inline rule (Pin base image tags, HEALTHCHECK); no rule changed.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-dotnet — edit
+- Motivation: owner decision 2026-10-23: the settings-schema rule concerns a tiny fraction of sessions and should not cost always-on context, so it moves behind a pointer and the wording trims made only to fit it are not wanted.
+- Change: reverted to main the wording trims made to fit the inline rule (using, .NET version); no rule changed.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-go — edit
+- Motivation: owner decision 2026-10-23: the settings-schema rule concerns a tiny fraction of sessions and should not cost always-on context, so it moves behind a pointer and the wording trims made only to fit it are not wanted.
+- Change: reverted to main the wording trims made to fit the inline rule (interface); no rule changed.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-javascript — edit
+- Motivation: owner decision 2026-10-23: the settings-schema rule concerns a tiny fraction of sessions and should not cost always-on context, so it moves behind a pointer and the wording trims made only to fit it are not wanted.
+- Change: reverted to main the wording trims made to fit the inline rule (const/let/var); no rule changed.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-rust — edit
+- Motivation: owner decision 2026-10-23: the settings-schema rule concerns a tiny fraction of sessions and should not cost always-on context, so it moves behind a pointer and the wording trims made only to fit it are not wanted.
+- Change: reverted to main the wording trims made to fit the inline rule (two bullets); no rule changed.
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-10-23 — working-in-these-repos — edit
 - Motivation: owner review 2026-10-23 of the narrowed rule: its terms did not match JSON and GitHub documentation, and "a deliberate per-entry decision" is a judgment call two agents would settle differently.
 - Change: replaced **Never two forms for one meaning** with **One meaning, one value**. Terms aligned with JSON and GitHub docs: array not list, element not entry, type not shape, omitted not absent, JSON array syntax (`["none"]`). Replaced the criterion "a deliberate per-entry decision" with a testable one: a key that selects what a tool acts on or what access it grants is required unless its default selects nothing, so omitting it must not widen either; other keys may default, in one place, documented with the key. Example: repo-settings' `manage` (in progress), an array, required in each `repos` element. Section 1,930 -> 1,909 bytes (-21).
