@@ -95,11 +95,23 @@ The approach is the same everywhere: rule 1.
 
 repo-settings' `manage` key in
 [`repo-settings/fleet.yml`](https://github.com/Adam-S-Daniel/repo-settings/blob/main/repo-settings/fleet.yml),
-in GitHub's YAML terms. The redesign is in progress and has not shipped.
+in GitHub's YAML terms. It shipped in
+[repo-settings#98](https://github.com/Adam-S-Daniel/repo-settings/pull/98); the
+decision is
+[repo-settings ADR 0011](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0011-make-manage-a-required-array-of-surfaces.md)
+and the reference is
+[`repo-settings/schema.md`](https://github.com/Adam-S-Daniel/repo-settings/blob/main/repo-settings/schema.md),
+"`manage`".
 
-- Today `manage` is a boolean that defaults to `true` when omitted. Omitting
-  it widens what the tool acts on, which breaks rule 2.
-- The redesign makes it an array of strings (`["all"]`, `["labels"]`, `[]`),
-  required in each element of the `repos` array.
-- It rejects booleans, `["none"]`, `"all"` alongside other elements, and
-  string elements of `repos`.
+- Before, `manage` was a boolean that defaulted to `true` when omitted.
+  Omitting it widened what the tool acts on, which breaks rule 2.
+- Now it is an array of strings (`["all"]`, `["labels"]`, `[]`), required in
+  each element of the `repos` array. `["all"]` includes surfaces the engine
+  adds later.
+- The accepted surface names are one constant, and every error message is
+  built from it (rule 1). A list must use their canonical, alphabetical
+  order, so one selection has one spelling.
+- It rejects booleans, `[no]` (PyYAML's `[False]`), `["none"]`, `"all"`
+  alongside other elements, a list naming every surface, and string elements
+  of `repos`. Unknown keys and duplicate keys are rejected too, and a
+  rejected config exits 2.
