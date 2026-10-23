@@ -35,7 +35,7 @@
   heading: Working in these repos
   file: agents-md/base.md
   status: gap
-  bytes: 1376
+  bytes: 1765
 
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
@@ -47,13 +47,13 @@
   heading: Finding your unknowns
   file: agents-md/base.md
   status: gap
-  bytes: 786
+  bytes: 746
 
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
   status: gap
-  bytes: 149
+  bytes: 147
 
 - id: security
   heading: Security
@@ -71,19 +71,19 @@
   heading: Network allowlists live in `_agent-guidance/docs/reference/`
   file: agents-md/base.md
   status: gap
-  bytes: 618
+  bytes: 611
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
   file: agents-md/base.md
   status: gap
-  bytes: 2083
+  bytes: 2071
 
 - id: two-github-connectors
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
   status: gap
-  bytes: 1259
+  bytes: 1248
 
 - id: agent-contribution-markers
   heading: Agent-made GitHub contributions carry a marker
@@ -95,73 +95,73 @@
   heading: A GitHub 404 means "not authorized", not "not there"
   file: agents-md/base.md
   status: gap
-  bytes: 884
+  bytes: 863
 
 - id: fleet-spans-two-owners
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
   status: gap
-  bytes: 986
+  bytes: 967
 
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
   file: agents-md/base.md
   status: gap
-  bytes: 1375
+  bytes: 1363
 
 - id: git-push-does-not-mean-commit-exists
   heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
   status: gap
-  bytes: 1143
+  bytes: 1109
 
 - id: dependency-updates
   heading: Dependency updates
   file: agents-md/base.md
   status: gap
-  bytes: 546
+  bytes: 544
 
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads
   file: agents-md/base.md
   status: gap
-  bytes: 1022
+  bytes: 957
 
 - id: pinning-github-actions
   heading: Pinning GitHub Actions
   file: agents-md/base.md
   status: gap
-  bytes: 1150
+  bytes: 1139
 
 - id: test-that-can-signal-kills-every-session
   heading: A test that can signal can kill every session
   file: agents-md/base.md
   status: gap
-  bytes: 943
+  bytes: 923
 
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
   status: gap
-  bytes: 2554
+  bytes: 2535
 
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md
   status: gap
-  bytes: 1228
+  bytes: 1214
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
   status: gap
-  bytes: 1970
+  bytes: 1922
 
 - id: git-practices
   heading: Git practices
   file: agents-md/base.md
   status: gap
-  bytes: 1484
+  bytes: 1435
 
 - id: section-docker
   heading: Docker

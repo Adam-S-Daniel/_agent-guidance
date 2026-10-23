@@ -50,6 +50,114 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-23 — working-in-these-repos — edit
+- Motivation: owner request 2026-10-23: meeting two representations of one meaning sends the owner on a research expedition to prove they behave the same; spare the next reader that ambiguity.
+- Change: added the bullet **One meaning, one spelling** (a key, field, flag, CLI option or API parameter gets one representation per meaning: no default equal to an explicit value, no synonyms, no mixed shapes; require the key and reject the alternates with an error naming the accepted form; example repo-settings' `manage:`, redesign underway). To fit, tightened the on-hold bullet (work list `no commits, ... follow-ups that do it` -> `commits, ... follow-ups`; `Only the owner adds or removes the label, or an agent the owner directs in that session` -> `Only the owner, or an agent they direct that session, changes the label`), `until the final output` -> `to the final output`, `the display or write` -> `display or write`, and the writing-style bullet to one line; section 1,376 -> 1,765 bytes (+389; the new bullet is 440).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — finding-your-unknowns — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: memory-home hook clause reworded (`blocks a session that skips it`), `a type: user note about the person` -> `a type: user note`, finding-unknowns sentence tightened, `it is` -> `it's`; section 786 -> 746 bytes (-40).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — workstation-layout — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: reflowed the one bullet onto two lines; section 149 -> 147 bytes (-2).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — network-allowlists — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: `Add a changelog entry when you change one` -> `Changing one adds a changelog entry`; `the dialog at claude.ai/code is` -> `whose claude.ai/code dialog is`; section 618 -> 611 bytes (-7).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — automation-vs-branch-protection — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: bypass-actor bullet reflowed; concurrency bullet `win the context and block the merge for good` -> `take the context and block the merge`, reflowed; section 2,083 -> 2,071 bytes (-12).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — two-github-connectors — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: #83 citation shortened to `get_status` `pending`, every check run green; github-mcp bullet reflowed; section 1,259 -> 1,248 bytes (-11).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — github-404-means-not-authorized — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: 2026-08-19 citation shortened to `a reconnected MCP server was blind to a private repo the other read`; probe bullet reflowed; section 884 -> 863 bytes (-21).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — fleet-spans-two-owners — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: `sync.yml and sibling workflows` -> `sync.yml and siblings`; 2026-08-25 citation shortened to `search missed jodidaniel.com's skills.lock`; `per-session and` -> `per-session,`; section 986 -> 967 bytes (-19).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — watch-finished-is-not-ci-passed — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: issue #81 citation shortened to `0/20 trials at 48 kB, 18/20 at 95 kB` (both measurements kept); here-string example joined onto one line; section 1,375 -> 1,363 bytes (-12).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — git-push-does-not-mean-commit-exists — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: 2026-08-29 wrong-ref citation shortened to `commit on main, stale branch pushed`; section 1,143 -> 1,109 bytes (-34).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — dependency-updates — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: `semver-minor-days` / `-patch-days` -> `semver-minor-days`/`-patch-days`; section 546 -> 544 bytes (-2).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — name-becomes-scanner-data — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: cms-platform-secrets incident shortened to one parenthetical clause (`reddened both consumer sites; full-history scans outlive a rename`); check-a-name bullet reflowed; section 1,022 -> 957 bytes (-65).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — pinning-github-actions — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: `so a tag in a third-party reusable-workflow ref is for review to catch` -> `review catches a tag in a third-party reusable-workflow ref`; section 1,150 -> 1,139 bytes (-11).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — test-that-can-signal-kills-every-session — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: dropped the repeated `(2026-10-04)` on the mid-verifier bullet (the section opens with that date), `re-running the suite` -> `re-running it`; section 943 -> 923 bytes (-20).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — subagent-delegation — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: reflowed the orchestrator, verifier and live-test bullets; `that it must not copy real credentials` -> `no copying real credentials`; `fix the staleness threshold and the fallback` -> `set the staleness threshold and fallback`; section 2,554 -> 2,535 bytes (-19).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — skills-ecosystem — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: reflowed the registry and cloud-session bullets; `a repo may be deliberately out` -> `a repo may opt out`; section 1,228 -> 1,214 bytes (-14).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — two-setup-gaps — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: `not as a greeting, not only for skills work` -> `not as a greeting or only for skills work`; `nearest ancestor of the cwd holding more than one repo checkout` -> `nearest cwd ancestor holding several repo checkouts`; condition 3 `does not already register a` -> `lacks a`; snippet-home sentence tightened; section 1,970 -> 1,922 bytes (-48).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — git-practices — edit
+- Motivation: make room for the one-meaning-one-spelling rule in working-in-these-repos; the full build was 4 bytes under its 29696-byte budget before it. Wording-only: no rule, threshold or command removed.
+- Change: closing-keyword citations shortened to `cms-platform#283, _agent-guidance#136` (dropped the commit and source-PR detail); squash exception names the three repos once; stale-WIP clause tightened; section 1,484 -> 1,435 bytes (-49).
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-10-20 — agent-contribution-markers — create
 - Motivation: owner decision 2026-10-20: every agent write on GitHub goes out as Adam's account and only Claude Code's default commit trailer and PR footer marked it; issue comments, reviews and replies were indistinguishable from Adam's own (ADR 0023).
 - Change: new section: the `<sub>🤖 Written by <agent> on behalf of @Adam-S-Daniel</sub>` footer, the `agent-authored` label, the `Agent:` commit trailer, a marked comment after a merge, close or label change, never an APPROVE review; enforced by the new `.claude/hooks/github-write-marker.sh`.
