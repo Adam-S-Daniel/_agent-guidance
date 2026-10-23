@@ -676,7 +676,7 @@ git checkout -b "$BRANCH_NAME" >/dev/null 2>&1 || {
 # the pin for — it carries its own copy instead, and `test_self_hosted_hook_pin`
 # asserts that copy hashes to exactly `skills_bootstrap.sha256`. Move the pin
 # without the file and that test fails on the bump PR itself: CI here runs on
-# every push and every pull request, so the bumper would open a red PR every
+# every pull request (and every push to main), so the bumper would open a red PR every
 # time it had anything to say.
 #
 # Guarded on the file already existing rather than created unconditionally: a

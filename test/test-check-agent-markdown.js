@@ -293,7 +293,7 @@ test("ci.yml runs the checker as an unconditional, non-strict step that cannot f
   assert.equal(doc.jobs.checks.needs, undefined, "checks needs nothing, so no other job can skip it");
   assert.ok([].concat(doc.jobs.test.needs).includes("checks"), "the required test aggregator needs checks");
   const [step] = steps;
-  assert.equal(step.if, undefined, "no if: — it reports on every push and pull request");
+  assert.equal(step.if, undefined, "no if: — it reports on every pull request and push to main");
   assert.ok(!/--strict/.test(step.run), "CI never passes --strict (warn-only, D5)");
   assert.equal(step["continue-on-error"], undefined, "exit 0 makes continue-on-error unnecessary");
   // A required check may not carry paths filters or a concurrency group.

@@ -1,18 +1,26 @@
 name: CI
 
 on:
+  # `main` only. A PR branch push used to run this whole workflow twice on
+  # one head sha, once for `push` and once for `pull_request`; since the shard
+  # split that is 12 jobs per push against the account's concurrent-job cap,
+  # so runs queued whenever several agents pushed at once. The `pull_request`
+  # run is the one branch protection reads (and it also tests the merge with
+  # main), so the branch `push` run bought nothing. `push` on main stays for
+  # post-merge verification. A branch pushed with no PR gets no automatic CI;
+  # `workflow_dispatch` below covers a manual run.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   # Manual re-run, no inputs. `test` publishes a status context meant to be
   # REQUIRED on main — cms-platform#437 declares it in repo-settings'
   # fleet.yml — so this trigger's safety no longer rests on nothing here
   # being required. It rests on a narrower fact instead: this file carries NO
-  # `concurrency:` block, at workflow or job level, so a same-sha burst — a
-  # `push` on `**`, a `pull_request` event, and any manual dispatch, all
-  # landing on one head sha — leaves only runs that FINISH, never a cancelled
-  # run shadowing a success (the shape that hard-blocks a merge on a required
-  # check). Test 7g in test/run-tests.sh locks that absence and the trigger
+  # `concurrency:` block, at workflow or job level, so a same-sha burst — on a
+  # PR head sha one `pull_request` run plus any manual dispatch, on main's sha
+  # a `push` run plus any manual dispatch — leaves only runs that FINISH,
+  # never a cancelled run shadowing a success (the shape that hard-blocks a
+  # merge on a required check). Test 7g in test/run-tests.sh locks that absence and the trigger
   # set off this file. The residual that absence does not cover: a human who
   # cancels a dispatched run sitting on a PR's head sha leaves the required
   # `test` context concluded non-success on that sha (the aggregator fails
@@ -31,8 +39,9 @@ on:
   # not required" would there read as "merge it red". This repo's own
   # `skills.lock` is in that bumper's scope (see repos.yml — the allowlist
   # governs hook delivery, not lock bumping), so it opens a PR here on
-  # `skills-lock-bump/update`, and this workflow runs on every push and every
-  # pull request, that branch included.
+  # `skills-lock-bump/update`, and this workflow runs on every pull request,
+  # that branch included (a `push` run only on main, so the bump branch's
+  # conclusions come from its `pull_request` run and any dispatch).
   #
   # THE RESIDUAL, stated rather than argued away: dispatch this workflow AT
   # the bump branch and cancel it — or watch it fail — and that conclusion

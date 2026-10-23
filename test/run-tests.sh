@@ -13929,6 +13929,13 @@ if (typeof on === "string") console.log("trigger " + on);
 else for (const name of (Array.isArray(on) ? on : Object.keys(on || {}))) {
   console.log("trigger " + String(name));
 }
+// The branch filter of the push trigger, as a sorted comma list, so a test can
+// assert it exactly; "-" when the trigger has no `branches:` key at all.
+if (on && typeof on === "object" && !Array.isArray(on) && "push" in on) {
+  const push = on.push;
+  const b = push && typeof push === "object" ? push.branches : undefined;
+  console.log("push_branches " + (Array.isArray(b) ? b.slice().sort().join(",") : "-"));
+}
 if ("concurrency" in doc) console.log("concurrency workflow");
 for (const [name, spec] of Object.entries((doc && doc.jobs) || {})) {
   console.log("job " + name);
@@ -17129,7 +17136,7 @@ untouched body
 #
 # The trigger set is asserted EXACTLY rather than "contains workflow_dispatch".
 # The comment declares three; a fourth arriving unread — `schedule`,
-# `pull_request_target`, a `push` narrowed to one branch — changes which events
+# `pull_request_target`, a `push` widened past `main` — changes which events
 # can collide on a sha, and that collision is the entire subject of the
 # argument the comment makes.
 #
@@ -17180,6 +17187,27 @@ test_ci_workflow_shape() {
         pass "ci workflow: its triggers are exactly push, pull_request and workflow_dispatch"
     else
         fail "ci workflow: its triggers should be exactly 'pull_request push workflow_dispatch', got '$triggers' — the comment above workflow_dispatch argues from WHICH events can produce a run for one head sha, so re-read it before adding or removing one"
+    fi
+
+    # The push filter is exactly [main]: parsed by the same YAML reader as
+    # the trigger set, never a regex over the file. A negative case on a
+    # scratch copy with `"**"` proves the assertion can fail.
+    local push_branches
+    push_branches=$(awk '$1 == "push_branches" { print $2 }' "$shape")
+    if [[ "$push_branches" == "main" ]]; then
+        pass "ci workflow: on.push.branches is exactly [main]"
+    else
+        fail "ci workflow: on.push.branches should be exactly [main], got '${push_branches:-none}' — a wider filter runs the whole workflow twice per PR branch push (push and pull_request on one head sha) against the concurrent-job cap"
+    fi
+    local wide_wf="$TEST_DIR/ci-wide-push.yml"
+    local wide_shape="$TEST_DIR/ci-wide-push-shape.txt"
+    if sed 's/^    branches: \[main\]$/    branches: ["**"]/' "$wf" > "$wide_wf" \
+            && ! cmp -s "$wf" "$wide_wf" \
+            && workflow_shape "$wide_wf" > "$wide_shape" 2>/dev/null \
+            && [[ "$(awk '$1 == "push_branches" { print $2 }' "$wide_shape")" == "**" ]]; then
+        pass "ci workflow: a scratch copy with push branches [\"**\"] reads back as ** (the [main] assertion would fail on it)"
+    else
+        fail "ci workflow: could not build or read the scratch copy with push branches [\"**\"], so the [main] assertion is unproven"
     fi
 
     local found
@@ -19215,7 +19243,7 @@ test_fleet_guidance_mirror() {
     fi
 
     # The checker only protects anything if CI runs it. Unconditional (no
-    # `if:`): it must report on every push and pull request.
+    # `if:`): it must report on every pull request and push to main.
     local facts="$TEST_DIR/fleet-guidance-mirror-step.txt"
     if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-fleet-guidance-mirror.js" checks > "$facts" 2>/dev/null \
             && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
