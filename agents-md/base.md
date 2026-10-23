@@ -31,14 +31,14 @@ under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
   `test()` blocks exist, what sits inside what, a call's arguments) **parses
   a real AST, never a regex or line scan** — regex cannot see a template-literal
   variable. Use `acorn`/`acorn-walk` for JS, `yaml` for YAML; regex only for a lexical token.
-- **Never two forms for one meaning:** no key takes two types, shapes or
-  synonyms for one value (`false`/`[]`, `true`/`[all]`, `[]`/`[none]`, string
-  vs mapping); reject the alternates with an error naming the accepted form.
-  A per-entry decision (scope, inclusion, ownership, permissions) is required,
-  no default: absence can't tell "decided" from "never considered". Other
-  keys may default, in one place, documented beside the key. Two spellings
-  make a reader prove they match (underway: repo-settings' `manage:`, lists
-  only, required per `fleet.yml` entry).
+- **One meaning, one value:** a key never accepts two values that mean the
+  same thing, of different types (`false`/`[]`, a string/an object) or the
+  same type (`[]`/`["none"]`); reject the others with an error naming the
+  accepted value. A key that selects what a tool acts on or what access it
+  grants is required unless its default selects nothing: omitting it must not
+  widen either. Other keys may default, in one place, documented with the
+  key. Example: repo-settings' `manage` (in progress), an array, required in
+  each `repos` element.
 - Writing that goes out under Adam's name: invoke `adam-writing-style`.
 
 ## Anything you name gets its link

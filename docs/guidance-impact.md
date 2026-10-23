@@ -51,6 +51,12 @@ Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-23 — working-in-these-repos — edit
+- Motivation: owner review 2026-10-23 of the narrowed rule: its terms did not match JSON and GitHub documentation, and "a deliberate per-entry decision" is a judgment call two agents would settle differently.
+- Change: replaced **Never two forms for one meaning** with **One meaning, one value**. Terms aligned with JSON and GitHub docs: array not list, element not entry, type not shape, omitted not absent, JSON array syntax (`["none"]`). Replaced the criterion "a deliberate per-entry decision" with a testable one: a key that selects what a tool acts on or what access it grants is required unless its default selects nothing, so omitting it must not widen either; other keys may default, in one place, documented with the key. Example: repo-settings' `manage` (in progress), an array, required in each `repos` element. Section 1,930 -> 1,909 bytes (-21).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — working-in-these-repos — edit
 - Motivation: owner narrowed the rule 2026-10-23: the first version (same PR) banned defaults on every setting, and ordinary tunables with a documented default are fine. Corrects the 2026-10-23 working-in-these-repos entry below.
 - Change: replaced the **One meaning, one spelling** bullet with **Never two forms for one meaning** (no two types, shapes or synonyms for one value of a key, alternates rejected with an error naming the accepted form; a per-entry decision such as scope, inclusion, ownership or permissions is a required key with no default; other keys may default, in one place, documented beside the key; example repo-settings' `manage:`, redesign underway). Restored the on-hold bullet's original wording, which `test/test-on-hold-label.js` pins. Section 1,376 -> 1,930 bytes on main (+554; the bullet is 573).
 - Eval: none — no fixture yet
