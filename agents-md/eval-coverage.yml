@@ -67,11 +67,11 @@
   status: gap
   bytes: 1197
 
-- id: network-allowlists
-  heading: Network allowlists live in `_agent-guidance/docs/reference/`
+- id: read-before-you-start
+  heading: Read before you start
   file: agents-md/base.md
   status: gap
-  bytes: 618
+  bytes: 342
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
