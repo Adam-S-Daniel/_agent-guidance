@@ -13,7 +13,7 @@
 # marker and reads as Adam's own sign-off. This PreToolUse hook blocks the
 # write that breaks either rule and tells the agent what to append, so the
 # agent corrects it and retries. It never rewrites the body itself. See
-# docs/decisions/0021-mark-agent-contributions.md and the "Agent-made GitHub
+# docs/decisions/0023-mark-agent-contributions.md and the "Agent-made GitHub
 # contributions carry a marker" section of agents-md/base.md.
 #
 # WHAT IT CHECKS
@@ -106,7 +106,7 @@ def block(what):
         "github-write-marker: blocked — %s goes out as @Adam-S-Daniel with no "
         "agent marker. End the body with this line, on its own, then retry:\n"
         "%s\n"
-        "(ADR 0021: docs/decisions/0021-mark-agent-contributions.md in "
+        "(ADR 0023: docs/decisions/0023-mark-agent-contributions.md in "
         "Adam-S-Daniel/_agent-guidance.)\n" % (what, FOOTER))
     sys.exit(2)
 

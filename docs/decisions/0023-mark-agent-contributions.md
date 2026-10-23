@@ -1,4 +1,4 @@
-# 0021 — Mark every agent-made GitHub contribution, on Adam's account for now
+# 0023 — Mark every agent-made GitHub contribution, on Adam's account for now
 
 **Status:** Accepted (2026-10-20)
 

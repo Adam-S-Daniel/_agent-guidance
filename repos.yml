@@ -242,6 +242,44 @@ skills_bootstrap:
   # `exclude:` above.
 
 
+# ── Dependabot auto-merge workflow delivery ──────────────────────────────
+#
+# Every repo that runs Dependabot needs its own merge path: the
+# `dependabot-auto-merge.yml` workflow whose daily sweep merges a Dependabot
+# PR once every check on its head is green. Nothing added that file to a new
+# repo, so adam-agentskills ran Dependabot without one and its green PRs
+# waited days for a hand merge (adam-agentskills#68).
+#
+# With `deliver: true`, sync.sh copies templates/dependabot-auto-merge/ into
+# any synced repo that has `.github/dependabot.yml` (or `.yaml`) and no
+# workflow named `dependabot-auto-merge.yml` / `self-dependabot-auto-merge.yml`.
+# It only ever ADDS the files: an existing workflow (or an existing
+# `.github/scripts/workflow-overlap.sh`) is never overwritten. A repo with
+# `.github/workflows/actions.lock` is skipped with a warning, because its
+# `uses:` lines must name tags locked by `gh actions-lock`, which the sync
+# cannot run.
+#
+# Needs the agents-md-sync App to hold "Workflows: Read and write" on both
+# installations: without it GitHub refuses any push that adds a workflow file,
+# and that refusal takes the whole repo's sync commit (AGENTS.md included)
+# down with it. Granted and re-accepted on both installations 2026-10-21. If
+# the permission is ever withdrawn, set this back to false first.
+dependabot_auto_merge:
+  deliver: true
+
+# ── agent-checks (ADR 0021) ────────────────────────────────────────────────
+#
+# Delivers the commit-time checks from templates/agent-checks/ to every synced
+# repo: the runner `.githooks/agent-checks` (managed, overwritten on drift), the
+# `agent-checks` CI workflow (added once; skipped where any workflow already
+# runs the runner, or where actions.lock pins the actions), the Claude Code
+# PreToolUse guard against --no-verify (managed, wherever fleet-memory can be
+# delivered), and a `.githooks/* text eol=lf` line in .gitattributes. Only a
+# literal `true` turns it on.
+agent_checks:
+  deliver: true
+
+
 # ── cron-coverage scope ────────────────────────────────────────────────────
 #
 # Which repos `scripts/check-cron-coverage.js` is answering ABOUT when it

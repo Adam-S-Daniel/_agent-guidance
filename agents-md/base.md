@@ -177,7 +177,7 @@ repo, say so, and name the connector in each verification.
 ## Agent-made GitHub contributions carry a marker
 
 They post as Adam
-([ADR 0021](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0021-mark-agent-contributions.md)),
+([ADR 0023](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0023-mark-agent-contributions.md)),
 so each PR or issue body, comment, review or reply ends with
 `<sub>🤖 Written by <agent> on behalf of @Adam-S-Daniel</sub>`
 (`Claude Code`/`Codex`); a PR or issue you open gets `agent-authored`;

@@ -33,8 +33,11 @@ set -euo pipefail
 # attribute, git takes the LAST matching line in the file, so the managed line
 # at the end wins for the hook scripts and changes nothing else.
 
-LINE='.claude/hooks/*.sh text eol=lf'
-COMMENT='# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)'
+# HOOK_EOL_LINE / HOOK_EOL_COMMENT name a second managed line the same way:
+# the sync uses them for `.githooks/* text eol=lf`, the agent-checks runner
+# that git hooks run with bash (ADR 0021).
+LINE="${HOOK_EOL_LINE:-.claude/hooks/*.sh text eol=lf}"
+COMMENT="${HOOK_EOL_COMMENT:-# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)}"
 
 usage() {
     echo "Usage: $(basename "${BASH_SOURCE[0]}") status|ensure <path>" >&2

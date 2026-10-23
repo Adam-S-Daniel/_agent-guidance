@@ -51,7 +51,7 @@ Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-20 — agent-contribution-markers — create
-- Motivation: owner decision 2026-10-20: every agent write on GitHub goes out as Adam's account and only Claude Code's default commit trailer and PR footer marked it; issue comments, reviews and replies were indistinguishable from Adam's own (ADR 0021).
+- Motivation: owner decision 2026-10-20: every agent write on GitHub goes out as Adam's account and only Claude Code's default commit trailer and PR footer marked it; issue comments, reviews and replies were indistinguishable from Adam's own (ADR 0023).
 - Change: new section: the `<sub>🤖 Written by <agent> on behalf of @Adam-S-Daniel</sub>` footer, the `agent-authored` label, the `Agent:` commit trailer, a marked comment after a merge, close or label change, never an APPROVE review; enforced by the new `.claude/hooks/github-write-marker.sh`.
 - Eval: none — no fixture yet
 - Outcome: pending
