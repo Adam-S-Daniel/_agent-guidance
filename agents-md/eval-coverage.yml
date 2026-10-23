@@ -131,7 +131,7 @@
   heading: Pinning GitHub Actions
   file: agents-md/base.md
   status: gap
-  bytes: 1150
+  bytes: 1153
 
 - id: test-that-can-signal-kills-every-session
   heading: A test that can signal can kill every session

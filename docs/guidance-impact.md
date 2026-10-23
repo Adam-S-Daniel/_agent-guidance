@@ -296,6 +296,12 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: none — no fixture yet
 - Outcome: pending
 
+## 2026-10-19 — pinning-github-actions — edit
+- Motivation: GitHub workflow lockfiles (public preview 2026-10-14) allow tags in `uses:` with an immutable pin; the ai-usage-dashboard pilot (PR https://github.com/Adam-S-Daniel/ai-usage-dashboard/pull/11) showed the runner runs whatever commit the lockfile names and that `--verify` v0.2.0 exits 0 when the API fails.
+- Change: two accepted forms (lockfile target, 40-hex SHA legacy); exact tag written by hand, local actions as `$/`, cross-repo reusable workflows take a full SHA in both forms (no lockfile locks them, tested); a repo with local actions that runs actionlint, or with `./` refs into a runtime checkout (cms-platform), stays legacy; a lockfile repo runs the shared action `Adam-S-Daniel/verify-actions-lock` (gh-actions-lock `--verify`, sha256-checked, verifying only on workflow or local-action changes, failing on any pin finding but the Dependabot-config warning `cooldown-config-ignored`) in a required check, and turns on GitHub's Require lockfile policy; ADR 0024 (tested behavior, recovery, cms-platform consumers), evidence `docs/evidence/2026-10-20-stale-lockfile.md`. Stub floor bullet updated to match.
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-10-17 — working-in-these-repos — edit
 - Motivation: owner request to drop the spreadsheet example from the full-precision rule. Also corrects the entry below: PR #294 merged 2026-10-17, so its "Outcome: pending" is superseded.
 - Change: removed the parenthetical `=TRUNC(A2/60,2)` example from the bullet added in PR #294.
