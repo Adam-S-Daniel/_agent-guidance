@@ -22696,7 +22696,82 @@ test_github_write_marker_hook() {
     assert_contains "$d/err-$n" "WARNING" \
         "github-write-marker: malformed input is allowed with a stderr warning"
 
-    unset -f gwm
+    # ── Tokenized Bash checks ──
+    # <expected rc> <label> <command> [cwd] — the same as gwm, but the event
+    # JSON is built by json.dumps, so a command can carry quotes, `$` and
+    # newlines verbatim.
+    gwmc() {
+        local want="$1" label="$2" command="$3" cwd="${4:-}" event
+        event="$(python3 -c 'import json, sys
+ev = {"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}
+if sys.argv[2]:
+    ev["cwd"] = sys.argv[2]
+print(json.dumps(ev))' "$command" "$cwd")"
+        gwm "$want" "$label" "$event"
+    }
+    printf 'Body text.\n\n%s\n' "$mark" > "$HOME/gwm-marked.md"
+    local nl=$'\n'
+
+    # A body-file path built from a variable is expanded before it is read.
+    gwmc 0 "--body-file \"\$S/...\" with S assigned earlier in the command" \
+        'S='"$d"'; gh pr edit 320 --body-file "$S/marked.md"' "$d"
+    gwmc 0 "--body-file \"\${S}/...\" with S as a prefix assignment" \
+        'S='"$d"' gh pr edit 320 --body-file "${S}/marked.md"'
+    gwmc 0 "--body-file with an exported variable" \
+        'export S='"$d"' && gh pr edit 320 --body-file "$S/marked.md"'
+    gwmc 0 "--body-file \"\$HOME/...\"" \
+        'gh pr edit 320 --body-file "$HOME/gwm-marked.md"'
+    gwmc 0 "--body-file ~/..." \
+        'gh pr edit 320 --body-file ~/gwm-marked.md'
+    gwmc 2 "--body-file under an unset variable" \
+        'gh pr edit 320 --body-file "$UNSET_GWM_VAR/b.md"'
+    assert_contains "$d/err-$n" '$UNSET_GWM_VAR/b.md' \
+        "github-write-marker: the unresolved-variable block names the path"
+    assert_contains "$d/err-$n" "literal path" \
+        "github-write-marker: the unresolved-variable block asks for a literal path"
+    gwmc 2 "--body-file naming a missing file" \
+        "gh pr edit 320 --body-file $d/missing.md"
+    assert_contains "$d/err-$n" "$d/missing.md" \
+        "github-write-marker: the unreadable-file block names the path"
+
+    # gh text inside an argument is not a GitHub write.
+    gwmc 0 "python3 -c with a gh string argument" \
+        "python3 -c 'import json,sys; print(sys.argv[1])' \"gh pr edit 320 --body-file x\""
+    gwmc 0 "echo of a gh issue comment string" \
+        'echo "gh issue comment 5 --body hi"'
+    gwmc 0 "grep for a gh pr create string" \
+        'grep -n "gh pr create" file'
+
+    # gh in command position after an operator, prefix or wrapper still is.
+    gwmc 2 "gh pr comment after &&" \
+        'cd x && gh pr comment 1 --body hi'
+    gwmc 2 "gh issue comment after an assignment prefix" \
+        'FOO=1 gh issue comment 1 --body hi'
+    gwmc 2 "gh pr review --approve after ;" \
+        'true; gh pr review 3 --approve'
+    assert_contains "$d/err-$n" "never submits an APPROVE review" \
+        "github-write-marker: an approve after ; is blocked as an approval"
+    gwmc 2 "gh pr create inside an unquoted \$(...)" \
+        'url=$(gh pr create --title T --body hi)'
+    gwmc 2 "gh pr create inside a quoted \$(...)" \
+        'echo "$(gh pr create --title T --body hi)"'
+    gwmc 2 "gh pr comment inside bash -c" \
+        'bash -c "gh pr comment 1 --body hi"'
+    gwmc 2 "unbalanced quote falls back to the regex check" \
+        "gh issue comment 5 --body it's broken"
+
+    # Heredocs: the body is cut out before tokenizing, and the gh segment
+    # around or after it is still seen.
+    gwmc 0 "heredoc gh pr create carrying the marker" \
+        "gh pr create --title T --body-file - <<'EOF'${nl}It's a body.${nl}${nl}${mark}${nl}EOF"
+    gwmc 2 "heredoc gh pr create without the marker" \
+        "gh pr create --title T --body-file - <<'EOF'${nl}It's a body.${nl}EOF"
+    assert_contains "$d/err-$n" "stdin" \
+        "github-write-marker: the heredoc block says the body comes from stdin"
+    gwmc 2 "unmarked gh pr comment after a heredoc" \
+        "cat <<'EOF' > notes.txt${nl}It's a note; gh is mentioned.${nl}EOF${nl}gh pr comment 1 --body hi"
+
+    unset -f gwm gwmc
 }
 
 # ── Groups ─────────────────────────────────────────────────────────────────

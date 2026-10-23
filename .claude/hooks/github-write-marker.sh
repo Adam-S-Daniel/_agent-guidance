@@ -18,8 +18,10 @@
 #
 # WHAT IT CHECKS
 # --------------
-# The check is the LEXICAL token `on behalf of @Adam-S-Daniel`, which the
-# fleet's AST rule permits for a lexical token. It does not parse shell.
+# The marker check is the LEXICAL token `on behalf of @Adam-S-Daniel`, which
+# the fleet's AST rule permits for a lexical token. Deciding WHETHER a Bash
+# command is a GitHub write is a question of shape, so that part tokenizes
+# the command with Python's `shlex` instead of matching a regex over its text.
 #
 # - MCP tools, matched by a regex on the tool NAME, never by a remembered
 #   connector prefix (the claude.ai connector's prefix varies by surface):
@@ -29,16 +31,44 @@
 #       update_issue_comment)$
 #   `event: APPROVE` (any case) is blocked. A non-empty `body` without the
 #   token is blocked. No `body` at all (labels or state only) is allowed.
-# - Bash, on `tool_input.command`. A GitHub write is `gh issue
-#   create|comment|edit`, `gh pr create|comment|edit|review`, or `gh api`
-#   with `-X`/`--method` POST|PATCH|PUT or a `-f`/`-F body=` field, to a path
-#   containing `/issues`, `/pulls` or `/comments`. `gh pr review --approve`
-#   (or `-a`) is blocked. Any other write is allowed when the command text
-#   holds the token, or when a `--body-file`/`-F <path>` or `body=@<path>`
-#   file exists and holds it; a write with no body flag at all
-#   (`gh issue edit --add-label x`) is allowed; the rest is blocked.
-#   A command that holds the token anywhere passes as a whole, so a chain of
-#   two writes with one marked passes too: the limit of a lexical check.
+# - Bash, on `tool_input.command`. Heredoc bodies are cut out, then the rest
+#   is split into words and control operators by
+#   `shlex.shlex(posix=True, punctuation_chars=True)` with
+#   `whitespace_split`. A word is in COMMAND POSITION at the start or after
+#   `;`, `&&`, `||`, `|`, `&`, a newline or `(` (so an unquoted `$(...)`
+#   counts), past any `NAME=value` prefixes and simple wrappers (`env`,
+#   `command`, `exec`, `sudo`, `nohup`, `time`, `xargs`, `!`, `{`, `if`,
+#   `then`, `do`, ...) and their dash options. `bash|sh|zsh|dash -c '<cmd>'`,
+#   `eval`, a `$(...)` inside a word and a backtick span are checked as
+#   commands of their own. A GitHub write is a command-position `gh` (or a
+#   path ending in `/gh`) running `issue create|comment|edit`,
+#   `pr create|comment|edit|review`, or `api` with `-X`/`--method`
+#   POST|PATCH|PUT or a `-f`/`-F body=` field, to a path containing
+#   `/issues`, `/pulls` or `/comments`. `gh` text inside an argument
+#   (`echo "gh issue comment ..."`, `grep "gh pr create" f`) is not a write.
+#   The flags below are read from that command's own words.
+#   `gh pr review --approve` (or `-a`) is blocked. Any other write is allowed
+#   when the command text holds the token, or when a `--body-file`/`-F
+#   <path>` or `body=@<path>` file exists and holds it; a write with no body
+#   flag at all (`gh issue edit --add-label x`) is allowed; the rest is
+#   blocked. A body-file path is expanded first: `$NAME`/`${NAME}` from
+#   `NAME=value` assignments (standalone, `export`ed, or a prefix) earlier in
+#   the same command, then from the hook's own environment, then `~`. A path
+#   that still holds `$`, cannot be read, or is `-` (stdin) is named in the
+#   block message.
+#   If `shlex` cannot tokenize the command (an unbalanced quote), the hook
+#   falls back to the old regex over the whole text, which errs toward
+#   checking.
+#
+# KNOWN GAPS: a command that holds the token anywhere passes as a whole, so a
+# chain of two writes with one marked passes too. Quote context is lost after
+# tokenizing, so a single-quoted `'$(gh pr comment ...)'` or backtick span is
+# still checked as a write, and a single-quoted `'$VAR'` path is expanded. A
+# body-file path is resolved against the hook's `cwd`, not a `cd` earlier in
+# the command, and a prefix assignment is applied to its own command's path
+# although bash would not. A `gh` reached through anything the wrapper list
+# does not name (`ssh host gh ...`, `find -exec gh ...`, a function or alias)
+# is not seen.
 #
 # EXIT CODES (Claude Code PreToolUse): 0 allows the call; 2 blocks it and
 # shows stderr to the agent. Anything this hook cannot read is ALLOWED with a
@@ -70,6 +100,7 @@ GITHUB_WRITE_MARKER_EVENT="$EVENT" python3 - <<'PY' || rc=$?
 import json
 import os
 import re
+import shlex
 import sys
 
 TOKEN = "on behalf of @Adam-S-Daniel"
@@ -81,7 +112,8 @@ MCP_TOOL = re.compile(
     r"update_pull_request|pull_request_review_write|add_comment_to_pending_review|"
     r"add_reply_to_pull_request_comment|update_issue_comment)$")
 
-# Bash: a gh subcommand that writes a body-bearing object.
+# Bash, REGEX FALLBACK: used only when shlex cannot tokenize the command.
+# A gh subcommand that writes a body-bearing object.
 GH_WRITE = re.compile(r"\bgh\s+(?:issue\s+(?:create|comment|edit)|pr\s+(?:create|comment|edit|review))\b")
 GH_PR_REVIEW = re.compile(r"\bgh\s+pr\s+review\b")
 APPROVE_FLAG = re.compile(r"(?:^|\s)(?:--approve|-a)(?=\s|=|$|[;&|)])")
@@ -95,6 +127,20 @@ BODY_FLAG = re.compile(r"(?:^|\s)(?:--body|--body-file|-b|-F)(?=\s|=)")
 # Files that may carry the body.
 BODY_FILE = re.compile(r"(?:^|\s)(?:--body-file|-F)(?:\s+|=)(['\"]?)([^\s'\"]+)\1")
 API_BODY_FILE = re.compile(r"(?:^|\s)(?:-F|--field)(?:\s+|=)['\"]?body=@([^\s'\"]+)")
+
+# Bash, TOKENIZED: the characters shlex splits out as operators. A newline is
+# one too, so it separates commands the way `;` does.
+PUNCT = "();<>|&\n"
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# `<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"`, `<<\WORD` (not `<<<`).
+HEREDOC_OP = re.compile(
+    r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s;&|()<>'\"]+))")
+# Words that run the command after them; their dash options are skipped.
+WRAPPERS = {"env", "command", "exec", "sudo", "nohup", "time", "nice", "xargs",
+            "!", "{", "if", "then", "else", "elif", "do", "while", "until"}
+SHELLS = {"bash", "sh", "zsh", "dash"}
+WRITE_METHODS = {"POST", "PATCH", "PUT"}
 
 
 def allow():
@@ -118,6 +164,263 @@ def block_approve():
         "as his own sign-off. Submit a COMMENT review instead, its body ending "
         "with this line, and leave the approval to Adam:\n%s\n" % FOOTER)
     sys.exit(2)
+
+
+def block_unreadable(unreadable):
+    lines = "".join("  %s — %s\n" % pr for pr in unreadable)
+    sys.stderr.write(
+        "github-write-marker: blocked — this GitHub write takes its body from a "
+        "file the hook could not read, so it cannot see whether the body "
+        "carries the agent marker:\n%s"
+        "Pass a literal path to a file that exists, or put the marker in the "
+        "command text itself, then retry. The body must end with this line, "
+        "on its own:\n%s\n"
+        "(ADR 0023: docs/decisions/0023-mark-agent-contributions.md in "
+        "Adam-S-Daniel/_agent-guidance.)\n" % (lines, FOOTER))
+    sys.exit(2)
+
+
+# ── Bash: deciding what is a GitHub write ──────────────────────────────────
+# Each write found is a record: {"approve": bool, "has_body": bool,
+# "paths": [body-file paths, expanded]}.
+
+def expand(text, shell_vars):
+    """$NAME/${NAME} from inline assignments, then the environment, then ~."""
+    text = VAR_REF.sub(
+        lambda m: shell_vars.get(m.group(1) or m.group(2), m.group(0)), text)
+    return os.path.expanduser(os.path.expandvars(text))
+
+
+def regex_records(text):
+    """The pre-tokenizer check over raw text; it errs toward checking."""
+    is_gh_write = bool(GH_WRITE.search(text))
+    is_api_write = bool(GH_API.search(text) and API_PATH.search(text)
+                        and (API_METHOD.search(text) or API_BODY_FIELD.search(text)))
+    if not (is_gh_write or is_api_write):
+        return []
+    return [{
+        "approve": bool(GH_PR_REVIEW.search(text) and APPROVE_FLAG.search(text)),
+        "has_body": bool((is_gh_write and BODY_FLAG.search(text))
+                         or (is_api_write and API_BODY_FIELD.search(text))),
+        "paths": [expand(p, {}) for _, p in BODY_FILE.findall(text)]
+                 + [expand(p, {}) for p in API_BODY_FILE.findall(text)],
+    }]
+
+
+def strip_heredocs(text):
+    """Drop heredoc bodies (and backslash-newlines) outside quotes, so body
+    prose is never tokenized as shell. Returns None when a heredoc has no
+    closing delimiter line; the caller then tokenizes the text as it is."""
+    out, pending, quote = [], [], None
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            out.append(c)
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            if text[i + 1] != "\n":
+                out.append(text[i:i + 2])
+            i += 2
+            continue
+        if quote == '"':
+            out.append(c)
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+        if c in "'\"":
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if text.startswith("<<", i) and not text.startswith("<<<", i):
+            m = HEREDOC_OP.match(text, i)
+            if m:
+                delim = next(g for g in m.group(2, 3, 4) if g is not None)
+                pending.append((delim, m.group(1) == "-"))
+                out.append(text[i:m.end()])
+                i = m.end()
+                continue
+        if c == "\n" and pending:
+            out.append(c)
+            j = i + 1
+            for delim, strip_tabs in pending:
+                while True:
+                    k = text.find("\n", j)
+                    line = text[j:] if k == -1 else text[j:k]
+                    if (line.lstrip("\t") if strip_tabs else line) == delim:
+                        j = n if k == -1 else k + 1
+                        break
+                    if k == -1:
+                        return None
+                    j = k + 1
+            pending = []
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def tokenize(text):
+    lex = shlex.shlex(text, posix=True, punctuation_chars=PUNCT)
+    lex.whitespace_split = True
+    lex.whitespace = " \t\r"
+    lex.commenters = ""
+    return list(lex)
+
+
+def is_op(tok):
+    return tok != "" and all(ch in PUNCT for ch in tok)
+
+
+def is_redirect(tok):
+    # `>`, `>>`, `2>&1`'s `>&`, `<<`, `&>`; but `<(` and `>(` open a command.
+    return (is_op(tok) and (tok[0] in "<>" or tok.startswith("&>"))
+            and not tok.endswith("("))
+
+
+def split_commands(tokens):
+    """Words grouped per simple command, redirections and targets removed."""
+    cmds, skip = [[]], False
+    for t in tokens:
+        if skip:
+            skip = False
+            continue
+        if is_op(t):
+            if is_redirect(t):
+                skip = True
+            else:
+                cmds.append([])
+            continue
+        cmds[-1].append(t)
+    return [c for c in cmds if c]
+
+
+def substitutions(word):
+    """The text of each `$(...)` inside one word (a quoted one stays one)."""
+    found, start = [], 0
+    while True:
+        i = word.find("$(", start)
+        if i == -1:
+            return found
+        depth, j = 1, i + 2
+        while j < len(word) and depth:
+            depth += {"(": 1, ")": -1}.get(word[j], 0)
+            j += 1
+        found.append(word[i + 2:j - 1] if depth == 0 else word[i + 2:])
+        start = i + 2
+
+
+def gh_record(args, shell_vars):
+    """A record when `gh <args>` is a GitHub write, else None."""
+    if not args:
+        return None
+    sub, act = args[0], (args[1] if len(args) > 1 else "")
+    if (sub == "issue" and act in ("create", "comment", "edit")) or \
+            (sub == "pr" and act in ("create", "comment", "edit", "review")):
+        rest = args[2:]
+        has_body, paths = False, []
+        for j, a in enumerate(rest):
+            if a in ("--body", "-b") or a.startswith(("--body=", "-b=")):
+                has_body = True
+            elif a in ("--body-file", "-F"):
+                has_body = True
+                if j + 1 < len(rest):
+                    paths.append(rest[j + 1])
+            elif a.startswith(("--body-file=", "-F=")):
+                has_body = True
+                paths.append(a.split("=", 1)[1])
+        approve = (sub == "pr" and act == "review"
+                   and any(a in ("--approve", "-a") or a.startswith("--approve=")
+                           for a in rest))
+    elif sub == "api":
+        rest = args[1:]
+        method = body_field = False
+        paths = []
+        for j, a in enumerate(rest):
+            nxt = rest[j + 1] if j + 1 < len(rest) else ""
+            if a in ("-X", "--method"):
+                method = method or nxt.upper() in WRITE_METHODS
+            elif a.startswith("--method="):
+                method = method or a.split("=", 1)[1].upper() in WRITE_METHODS
+            elif a.startswith("-X") and not a.startswith("--"):
+                method = method or a[2:].lstrip("=").upper() in WRITE_METHODS
+            elif a in ("-f", "-F", "--field", "--raw-field"):
+                if nxt.startswith("body="):
+                    body_field = True
+                    if a in ("-F", "--field") and nxt.startswith("body=@"):
+                        paths.append(nxt[len("body=@"):])
+            else:
+                for flag in ("--field=", "--raw-field=", "-f=", "-F="):
+                    if a.startswith(flag + "body="):
+                        body_field = True
+                        if flag in ("--field=", "-F=") and a.startswith(flag + "body=@"):
+                            paths.append(a[len(flag + "body=@"):])
+        if not (any(API_PATH.search(a) for a in rest) and (method or body_field)):
+            return None
+        has_body, approve = body_field, False
+    else:
+        return None
+    return {"approve": approve, "has_body": has_body,
+            "paths": [expand(p, shell_vars) for p in paths]}
+
+
+def analyze(text, shell_vars, depth=0):
+    """Every GitHub write in a shell command, as records."""
+    if depth > 4:
+        return regex_records(text)
+    stripped = strip_heredocs(text)
+    try:
+        tokens = tokenize(text if stripped is None else stripped)
+    except ValueError:
+        return regex_records(text)
+    records = []
+    # A backtick span may cross words, so it is cut from the text, not a word.
+    if "`" in text:
+        for span in text.split("`")[1::2]:
+            records += analyze(span, shell_vars, depth + 1)
+    for words in split_commands(tokens):
+        for w in words:
+            for inner in substitutions(w):
+                records += analyze(inner, shell_vars, depth + 1)
+        i = 0
+        while True:
+            while i < len(words) and ASSIGN.match(words[i]):
+                name, _, value = words[i].partition("=")
+                shell_vars[name] = expand(value, shell_vars)
+                i += 1
+            if i < len(words) and words[i] in WRAPPERS:
+                i += 1
+                while i < len(words) and words[i].startswith("-"):
+                    i += 1
+                continue
+            break
+        if i >= len(words):
+            continue
+        cmd0, args = words[i], words[i + 1:]
+        base = cmd0.rsplit("/", 1)[-1]
+        if cmd0 == "export":
+            for a in args:
+                if ASSIGN.match(a):
+                    name, _, value = a.partition("=")
+                    shell_vars[name] = expand(value, shell_vars)
+        elif base in SHELLS:
+            for j, a in enumerate(args):
+                if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a) and j + 1 < len(args):
+                    records += analyze(args[j + 1], shell_vars, depth + 1)
+                    break
+        elif cmd0 == "eval":
+            records += analyze(" ".join(args), shell_vars, depth + 1)
+        elif base == "gh":
+            rec = gh_record(args, shell_vars)
+            if rec:
+                records.append(rec)
+    return records
 
 
 raw = os.environ.get("GITHUB_WRITE_MARKER_EVENT", "")
@@ -154,35 +457,46 @@ cmd = tool_input.get("command")
 if not isinstance(cmd, str):
     allow()
 
-is_gh_write = bool(GH_WRITE.search(cmd))
-is_api_write = bool(GH_API.search(cmd) and API_PATH.search(cmd)
-                    and (API_METHOD.search(cmd) or API_BODY_FIELD.search(cmd)))
-if not (is_gh_write or is_api_write):
+try:
+    records = analyze(cmd, {})
+except Exception:
+    records = regex_records(cmd)  # a tokenizer fault fails toward checking
+if not records:
     allow()
 
-if GH_PR_REVIEW.search(cmd) and APPROVE_FLAG.search(cmd):
+if any(r["approve"] for r in records):
     block_approve()
 
 if TOKEN in cmd:
     allow()
 
 cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else ""
-paths = [p for _, p in BODY_FILE.findall(cmd)] + API_BODY_FILE.findall(cmd)
-for path in paths:
-    path = os.path.expanduser(path)
-    if cwd and not os.path.isabs(path):
-        path = os.path.join(cwd, path)
+unreadable = []
+for path in [p for r in records for p in r["paths"]]:
+    if path == "-":
+        unreadable.append((path, "the body comes from stdin, which the hook "
+                           "cannot read; put the marker in the command text "
+                           "(the heredoc)"))
+        continue
+    if "$" in path:
+        unreadable.append((path, "it holds a shell variable the hook could "
+                           "not resolve"))
+        continue
+    full = path
+    if cwd and not os.path.isabs(full):
+        full = os.path.join(cwd, full)
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(full, encoding="utf-8", errors="replace") as fh:
             if TOKEN in fh.read():
                 allow()
-    except Exception:
-        pass  # a missing or unreadable file is no evidence of a marker
+    except Exception as exc:
+        unreadable.append((full, "it could not be read (%s)" % exc.__class__.__name__))
 
-has_body = (is_gh_write and BODY_FLAG.search(cmd)) or (is_api_write and API_BODY_FIELD.search(cmd))
-if not has_body:
+if not any(r["has_body"] for r in records):
     allow()
 
+if unreadable:
+    block_unreadable(unreadable)
 block("this GitHub write")
 PY
 
