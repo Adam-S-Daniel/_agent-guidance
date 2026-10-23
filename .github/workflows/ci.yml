@@ -95,7 +95,7 @@ jobs:
           - shard: 3
             groups: bootstrap self_hosted sweep_merge automerge codex_memory_audit
           - shard: 4
-            groups: codex_cloud sweep_retry sync gitattr agent_checks
+            groups: codex_cloud sweep_retry sync gitattr agent_checks github_write_marker
     steps:
       # The same full-history checkout the suite ran on before the split, so
       # no test that reads this repo's own git history sees a different
