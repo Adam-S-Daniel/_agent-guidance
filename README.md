@@ -344,7 +344,7 @@ This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
 byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
 nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
 (CI: the "Fleet payload mirrors base.md" step in
-[`ci.yml`](.github/workflows/ci.yml), every push and pull request) fails when
+[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails when
 the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
 pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
 exist.
@@ -354,7 +354,8 @@ exist.
 [`scripts/check-agent-markdown.js`](scripts/check-agent-markdown.js) (CI: the
 "Agent Markdown warnings" step in [`ci.yml`](.github/workflows/ci.yml), every
 push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
-whatever it finds, so it cannot fail the required `test` job. It prints one
+whatever it finds, so it cannot fail the `checks` job or, through it, the
+required `test` context. It prints one
 `::warning file=...,line=...` annotation per finding over the Markdown agents
 read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
 `.claude/hooks/fleet-guidance.md`):
