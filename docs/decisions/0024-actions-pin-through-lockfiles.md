@@ -139,25 +139,24 @@ target.
   would otherwise ignore (github/gh-actions-lock#125). The Actions policies
   REST API documents no rule type for it as of 2026-10-20, so repo-settings
   cannot declare it yet; it is set in the UI until then.
-- **The check fails on every pin finding; the allow-list holds one category,
-  `cooldown-config-ignored`.** That warning (`valid: true`) says the tool could
-  not read a `cooldown.exclude` in `dependabot.yml`; it describes Dependabot
-  config, not a pin. Fleet repos exclude `Adam-S-Daniel/cms-platform/*` from
-  the 7-day cooldown and do not `ignore` it, so the exclude is load-bearing and
-  stays. No other category observed above is benign in a correctly locked
-  repo: the benign-looking cases (Docker, major-only tag, branch, reusable
-  workflow, orphan dependency) produce no finding at all, `sha-as-ref` only
-  arises from a ref this form forbids, and `reachability-unknown` is the outage
-  hole. The check prints each other finding's category and detail as an
-  `::error::`, with `%`, CR and LF escaped so finding text cannot start a
+- **The check fails when the tool fails or reports an error; warnings stay
+  warnings** (as of verify-actions-lock v1.1.0, which runs gh-actions-lock
+  v0.3.0). It fails when `--verify` exits non-zero, reports `valid` other than
+  `true`, or reports any finding whose severity is not `warning`. Warnings —
+  v0.3.0's `container-image` (images it cannot lock), `ref-moved` and
+  fresh-tag notices — are printed as `::warning::` and do not fail. Every
+  finding is printed with `%`, CR and LF escaped so its text cannot start a
   workflow command. All of this lives in the shared action's
-  `scripts/check.sh`; the five wave-1 repos ran the same logic inline before
-  v1.0.0 existed (for example claude-memory-map's
+  `scripts/check.sh`. Before v0.3.0 the check failed on every finding but
+  `cooldown-config-ignored` (a Dependabot-config warning v0.2.0 raised in every
+  repo with a cooldown `exclude`), because v0.2.0 exited 0 on unverifiable pins;
+  the five wave-1 repos ran that logic inline before the shared action existed
+  (for example claude-memory-map's
   [ci.yml at 96f5266](https://github.com/Adam-S-Daniel/claude-memory-map/blob/96f5266d4a3b15471cbb6ed4755966b1408ab020/.github/workflows/ci.yml)).
-- **A GitHub API outage fails the check** (decided 2026-10-20). GitHub's own
-  `--verify` exits 0 on `reachability-unknown` and leaves the re-check to the
-  runner; this fleet re-runs instead, which is cheap because the check only
-  verifies when workflow dependencies change.
+- **A GitHub API outage fails the check** (decided 2026-10-20). From v0.3.0
+  the tool does this itself: a pin GitHub did not answer for is an error with
+  `"retryable": true`. Re-run once the API is back; it is cheap because the
+  check only verifies when workflow dependencies change (and on `schedule`).
 - **An `actions.lock` diff is reviewed like a SHA pin.** It, not the tag in
   the workflow, decides what code runs.
 - **Anything that treats a workflow pin change as special treats
@@ -201,31 +200,32 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   2026-10-20. No community action was worth adopting (one installs unpinned
   and trusts the exit code; another uses a different lockfile format). The
   shared action is a thin wrapper meant to be replaced by an official one.
-- **Upstream status, 2026-10-21: fixed on gh-actions-lock `main`, not yet
-  released.** Four issues filed from this pilot drew same-day fixes:
+- **Upstream status: fixed and released in gh-actions-lock
+  [v0.3.0](https://github.com/github/gh-actions-lock/releases/tag/v0.3.0)
+  (2026-10-22).** Four issues filed from this pilot drew same-day fixes:
   [#199](https://github.com/github/gh-actions-lock/issues/199) →
   [#207](https://github.com/github/gh-actions-lock/pull/207) and
   [#209](https://github.com/github/gh-actions-lock/pull/209) (an unverifiable
-  pin is an error, exit 1, `valid: false`, `"retryable": true`; CI retries
-  bounded); [#201](https://github.com/github/gh-actions-lock/issues/201) →
+  pin is an error, exit 1, `valid: false`, `"retryable": true`);
+  [#201](https://github.com/github/gh-actions-lock/issues/201) →
   [#204](https://github.com/github/gh-actions-lock/pull/204) (`--verify` no
   longer reports `cooldown-config-ignored`);
   [#202](https://github.com/github/gh-actions-lock/issues/202) →
   [#205](https://github.com/github/gh-actions-lock/pull/205) and
   [#208](https://github.com/github/gh-actions-lock/pull/208) (an exact tag
-  locked to an older commit in its history is now a `tag-commit-mismatch`
-  error in every mode, fixed with `--relock`).
-  [#200](https://github.com/github/gh-actions-lock/issues/200) is open; a
-  maintainer says an official template is coming to GitHub's Well-Architected
-  guidance. The latest release is still v0.2.0, which the shared action pins,
-  so none of this is in use yet. When a release ships, after the 7-day wait,
-  the shared action bumps its version and digest, drops the
-  `cooldown-config-ignored` exception, and documents `--relock` for
-  `tag-commit-mismatch`; this ADR's tables and recovery advice are re-tested
-  against it then
-  ([tracking issue](https://github.com/Adam-S-Daniel/verify-actions-lock/issues/2)).
-  The fail-on-any-finding rule stays: it is still the safe policy, and it
-  costs nothing once the tool fails on its own.
+  locked to an older commit in its history is a `tag-commit-mismatch` error,
+  fixed with `--relock`); and
+  [#200](https://github.com/github/gh-actions-lock/issues/200) →
+  [#233](https://github.com/github/gh-actions-lock/pull/233), an official
+  sample workflow. The shared action adopted v0.3.0 in v1.1.0, inside the
+  7-day wait on the owner's decision after a review of the v0.2.0..v0.3.0
+  diff and a verified build attestation (release workflow at the `v0.3.0`
+  tag); every lockfile repo passed v0.3.0 `--verify` with no findings first.
+  It keeps two differences from the official sample: a checksum-verified
+  install and verifying only when workflow dependencies change (plus on
+  `schedule`, which the sample does weekly). Whether those justify keeping
+  the action is tracked in
+  [verify-actions-lock#2](https://github.com/Adam-S-Daniel/verify-actions-lock/issues/2).
 - **Facts every check and agent must allow for:**
   - Lockfile `commit` values read `sha1-<40hex>`, not bare hex.
   - Lockfile keys lowercase the owner/repo part
