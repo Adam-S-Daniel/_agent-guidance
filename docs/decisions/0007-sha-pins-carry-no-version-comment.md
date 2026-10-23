@@ -1,6 +1,6 @@
 # 0007 — A SHA pin carries no version comment
 
-**Status:** Accepted (2026-08-20). Supersedes, in part only, [0002](0002-unconditional-rules-live-in-the-guidance-not-a-skill.md) — exactly one item of the policy it moved into `base.md`, "the dated version comment". Everything else 0002 decided stands, including the conditionality split that put the pinning rule in the managed guidance in the first place. Amended by [0023](0023-actions-pin-through-lockfiles.md) (2026-10-20): a full SHA is now the legacy form, accepted until a repo moves to a workflow lockfile; the no-comment rule still governs that form.
+**Status:** Accepted (2026-08-20). Supersedes, in part only, [0002](0002-unconditional-rules-live-in-the-guidance-not-a-skill.md) — exactly one item of the policy it moved into `base.md`, "the dated version comment". Everything else 0002 decided stands, including the conditionality split that put the pinning rule in the managed guidance in the first place. Amended by [0024](0024-actions-pin-through-lockfiles.md) (2026-10-20): a full SHA is now the legacy form, accepted until a repo moves to a workflow lockfile; the no-comment rule still governs that form.
 
 ## Context
 

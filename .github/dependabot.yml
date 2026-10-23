@@ -2,7 +2,7 @@
 #
 # Previously this repo pinned third-party GitHub Actions to commit SHAs (per
 # the account-wide pinning convention: a full SHA, or a tag locked in
-# .github/workflows/actions.lock, ADR 0023) but had no dependabot.yml at all,
+# .github/workflows/actions.lock, ADR 0024) but had no dependabot.yml at all,
 # so those pins had no bump path — they'd sit until someone noticed. This
 # onboards the github-actions ecosystem so pins get proposed weekly, landed
 # unattended by .github/workflows/dependabot-auto-merge.yml once CI is
@@ -22,7 +22,7 @@ updates:
     # a floor from zero — it mechanises this account's standing 7-day
     # cooling-off convention for third-party action releases, whether pinned
     # by SHA or locked by tag (see cms-platform/AGENTS.md, "SHA-pin every
-    # workflow `uses:`", and ADR 0023), matching
+    # workflow `uses:`", and ADR 0024), matching
     # cms-platform's own .github/dependabot.yml.
     #
     # NO semver-major-days (and no semver-minor-days / semver-patch-days

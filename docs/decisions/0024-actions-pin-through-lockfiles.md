@@ -1,4 +1,4 @@
-# 0023 — Actions are pinned through workflow lockfiles, and the lockfile is verified in a required check
+# 0024 — Actions are pinned through workflow lockfiles, and the lockfile is verified in a required check
 
 **Status:** Accepted (2026-10-20). Amends [0007](0007-sha-pins-carry-no-version-comment.md):
 its no-comment rule still governs the legacy SHA form, but a SHA is no longer

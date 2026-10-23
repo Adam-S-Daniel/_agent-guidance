@@ -152,7 +152,7 @@ skills_bootstrap:
     # it stays out for a different and still-good reason.
     # lock: committed — PR #15 merged 2026-08-19.
     - scratch-claude-002
-    # The shared lockfile-check action (ADR 0023). Agents maintain it (digest
+    # The shared lockfile-check action (ADR 0024). Agents maintain it (digest
     # bumps, gh-actions-lock upgrades), and the bundles carry the Actions
     # skills that work needs. Added 2026-10-20.
     # lock: pending — its first skills.lock lands in a verify-actions-lock PR.
@@ -354,7 +354,7 @@ cron_coverage:
     # moves even that out of `.github/workflows/`). Give it a cron anyone
     # depends on and it moves to `fleet:`.
     - scratch-claude-002
-    # The shared `uses:` action behind the lockfile check (ADR 0023). Its only
+    # The shared `uses:` action behind the lockfile check (ADR 0024). Its only
     # workflow runs on pull requests and pushes; there is no cron to watch.
     # Give it one and it moves to `fleet:`.
     - verify-actions-lock
