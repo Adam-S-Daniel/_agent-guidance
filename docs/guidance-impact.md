@@ -51,6 +51,42 @@ Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-23 — working-in-these-repos — edit
+- Motivation: owner narrowed the rule 2026-10-23: the first version (same PR) banned defaults on every setting, and ordinary tunables with a documented default are fine. Corrects the 2026-10-23 working-in-these-repos entry below.
+- Change: replaced the **One meaning, one spelling** bullet with **Never two forms for one meaning** (no two types, shapes or synonyms for one value of a key, alternates rejected with an error naming the accepted form; a per-entry decision such as scope, inclusion, ownership or permissions is a required key with no default; other keys may default, in one place, documented beside the key; example repo-settings' `manage:`, redesign underway). Restored the on-hold bullet's original wording, which `test/test-on-hold-label.js` pins. Section 1,376 -> 1,930 bytes on main (+554; the bullet is 573).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-docker — edit
+- Motivation: make room for the narrowed one-form-per-meaning rule in working-in-these-repos (base.md's full build would otherwise be 164 bytes over its 29696-byte budget). Wording-only: no rule removed.
+- Change: `Pin base image tags to a specific digest or version; never use latest` -> `Pin base images to a digest or version; never latest`; `HEALTHCHECK instructions for services that run as long-lived processes` -> `HEALTHCHECK for long-lived services`; section 604 -> 552 bytes (-52).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-dotnet — edit
+- Motivation: make room for the narrowed one-form-per-meaning rule in working-in-these-repos (base.md's full build would otherwise be 164 bytes over its 29696-byte budget). Wording-only: no rule removed.
+- Change: `using statements or using declarations` -> `using`; `Target the .NET version already in use in the project —` -> `Keep the project's .NET version;`; section 662 -> 602 bytes (-60).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-go — edit
+- Motivation: make room for the narrowed one-form-per-meaning rule in working-in-these-repos (base.md's full build would otherwise be 164 bytes over its 29696-byte budget). Wording-only: no rule removed.
+- Change: `at the point of use, not at the point of implementation` -> `where used, not where implemented`; section 553 -> 531 bytes (-22).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-javascript — edit
+- Motivation: make room for the narrowed one-form-per-meaning rule in working-in-these-repos (base.md's full build would otherwise be 164 bytes over its 29696-byte budget). Wording-only: no rule removed.
+- Change: `use let only when reassignment is necessary; never use var` -> `let only when reassigning, never var`; section 495 -> 473 bytes (-22).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — section-rust — edit
+- Motivation: make room for the narrowed one-form-per-meaning rule in working-in-these-repos (base.md's full build would otherwise be 164 bytes over its 29696-byte budget). Wording-only: no rule removed.
+- Change: `only when they are meaningful` -> `only when meaningful`, `acceptable only in tests` -> `fine only in tests`; section 555 -> 539 bytes (-16).
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-10-23 — working-in-these-repos — edit
 - Motivation: owner request 2026-10-23: meeting two representations of one meaning sends the owner on a research expedition to prove they behave the same; spare the next reader that ambiguity.
 - Change: added the bullet **One meaning, one spelling** (a key, field, flag, CLI option or API parameter gets one representation per meaning: no default equal to an explicit value, no synonyms, no mixed shapes; require the key and reject the alternates with an error naming the accepted form; example repo-settings' `manage:`, redesign underway). To fit, tightened the on-hold bullet (work list `no commits, ... follow-ups that do it` -> `commits, ... follow-ups`; `Only the owner adds or removes the label, or an agent the owner directs in that session` -> `Only the owner, or an agent they direct that session, changes the label`), `until the final output` -> `to the final output`, `the display or write` -> `display or write`, and the writing-style bullet to one line; section 1,376 -> 1,765 bytes (+389; the new bullet is 440).
 - Eval: none — no fixture yet

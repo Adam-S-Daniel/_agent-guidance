@@ -13,9 +13,10 @@ under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
 ## Working in these repos
 
 - **An issue or PR labeled `on-hold` is paused by the owner.** Do not work on
-  it (commits, reviews, merges, closing or follow-ups); read, cite and list
-  it as on hold without asking again. A held PR stays open. Only the owner,
-  or an agent they direct that session, changes the label.
+  it (no commits, reviews, merges, closing or follow-ups that do it); read,
+  cite and list it as on hold without asking again. A held PR stays open.
+  Only the owner adds or removes the label, or an agent the owner directs in
+  that session.
 - Fix what was asked: no speculative features, premature abstractions or
   unused helpers. Prefer editing an existing file over creating one.
 - A public interface change updates its tests; new behavior gets a test, a
@@ -30,12 +31,14 @@ under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
   `test()` blocks exist, what sits inside what, a call's arguments) **parses
   a real AST, never a regex or line scan** — regex cannot see a template-literal
   variable. Use `acorn`/`acorn-walk` for JS, `yaml` for YAML; regex only for a lexical token.
-- **One meaning, one spelling** in a config key, schema field, flag, CLI
-  option or API parameter you design: no default equal to an explicit value
-  (absent ≡ `[all]`), synonym (`true`/`[all]`, `[]`/`[none]`) or mixed shape
-  (string vs mapping). Require it; reject others, naming the one accepted
-  form. Two spellings make a reader prove they match before trusting either
-  (underway: repo-settings' `manage:`, required, lists only).
+- **Never two forms for one meaning:** no key takes two types, shapes or
+  synonyms for one value (`false`/`[]`, `true`/`[all]`, `[]`/`[none]`, string
+  vs mapping); reject the alternates with an error naming the accepted form.
+  A per-entry decision (scope, inclusion, ownership, permissions) is required,
+  no default: absence can't tell "decided" from "never considered". Other
+  keys may default, in one place, documented beside the key. Two spellings
+  make a reader prove they match (underway: repo-settings' `manage:`, lists
+  only, required per `fleet.yml` entry).
 - Writing that goes out under Adam's name: invoke `adam-writing-style`.
 
 ## Anything you name gets its link

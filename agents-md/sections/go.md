@@ -5,5 +5,5 @@
 - Prefer returning errors over panicking; reserve `panic` for truly unrecoverable situations.
 - Run `go vet` and `golangci-lint` before considering a change complete.
 - Use table-driven tests.
-- Keep interfaces small (1–3 methods) and define them at the point of use, not at the point of implementation.
+- Keep interfaces small (1–3 methods) and define them where used, not where implemented.
 - Use `defer` for cleanup to guarantee execution on all code paths.

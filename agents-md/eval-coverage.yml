@@ -35,7 +35,7 @@
   heading: Working in these repos
   file: agents-md/base.md
   status: gap
-  bytes: 1765
+  bytes: 1930
 
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
@@ -167,25 +167,25 @@
   heading: Docker
   file: agents-md/sections/docker.md
   status: gap
-  bytes: 604
+  bytes: 552
 
 - id: section-dotnet
   heading: .NET / C#
   file: agents-md/sections/dotnet.md
   status: gap
-  bytes: 662
+  bytes: 602
 
 - id: section-go
   heading: Go
   file: agents-md/sections/go.md
   status: gap
-  bytes: 553
+  bytes: 531
 
 - id: section-javascript
   heading: JavaScript
   file: agents-md/sections/javascript.md
   status: gap
-  bytes: 495
+  bytes: 473
 
 - id: section-python
   heading: Python
@@ -197,7 +197,7 @@
   heading: Rust
   file: agents-md/sections/rust.md
   status: gap
-  bytes: 555
+  bytes: 539
 
 - id: section-typescript
   heading: TypeScript
