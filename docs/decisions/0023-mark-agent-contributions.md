@@ -48,9 +48,16 @@ It blocks (exit 2) a GitHub write whose body lacks the token
 the exact footer to append. It does not rewrite the body itself: the agent
 corrects the write and retries. MCP tools are matched by a regex on the tool
 name, never by a connector prefix, because the claude.ai connector's prefix
-varies by surface. The check is lexical, which the fleet's AST rule permits
-for a token. Its tests are `test_github_write_marker_hook` in
-`test/run-tests.sh`.
+varies by surface. The marker check is lexical, which the fleet's AST rule
+permits for a token. Whether a Bash command is a GitHub write is a question of
+shape, so the hook decides it by tokenizing the command with Python's `shlex`
+(heredoc bodies cut out first) and treating only a `gh` in command position as
+a write: `echo "gh issue comment ..."` or a `gh` string passed to a script is
+not one. A `--body-file` path is expanded (inline `NAME=value` assignments,
+the environment, `~`) before it is read, and a path the hook still cannot read
+is named in the block message. A command `shlex` cannot tokenize falls back to
+the earlier regex over the whole text. Its tests are
+`test_github_write_marker_hook` in `test/run-tests.sh`.
 
 ### What cannot be marked
 
@@ -96,10 +103,17 @@ delivery block in `sync.sh`. Until then:
 - A write that forgot the footer now fails once and is retried, which costs
   one extra tool call. A body-less write (`gh issue edit --add-label x`, an
   `issue_write` with labels only) passes untouched.
-- The check is lexical, so it can be fooled: a command that holds the token
-  anywhere passes as a whole, and `--body-file -` (stdin) is only checked
-  through the command text. It is a guard against forgetting, not against an
-  agent working around it.
+- The marker check is lexical, so it can be fooled: a command that holds the
+  token anywhere passes as a whole, and `--body-file -` (stdin) is only
+  checked through the command text. It is a guard against forgetting, not
+  against an agent working around it.
+- The write detection has known gaps. Quote context is lost after
+  tokenizing, so a single-quoted `'$(gh pr comment ...)'` or backtick span is
+  still checked as a write (an extra block, not a miss), and a single-quoted
+  `'$VAR'` body-file path is expanded. A body-file path is resolved against
+  the hook's `cwd`, not a `cd` earlier in the command. A `gh` reached through
+  anything the hook's short wrapper list does not name (`ssh host gh ...`,
+  `find -exec gh ...`, a shell function or alias) is not seen.
 - The merge, label and close actors still read as Adam; only the follow-up
   comment says otherwise.
 - Adam cannot get a second reviewer from an agent: approval stays his alone
