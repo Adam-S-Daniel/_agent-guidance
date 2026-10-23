@@ -449,7 +449,26 @@ jobs:
               continue
             fi
 
-            if [ "$merge_state" = "BEHIND" ]; then
+            # mergeStateStatus says BEHIND only when the base branch REQUIRES
+            # an up-to-date head. This repo's main does not, so a stale PR
+            # reads CLEAN and used to land in the "not behind" branch below:
+            # #296 on 2026-10-20 was CLEAN, 2 commits behind main, and its
+            # merge was refused because main had changed the same workflow
+            # file. Count the distance from the refs fetched above instead.
+            # Anything unreadable counts as 0, which keeps the old behaviour.
+            behind_by=0
+            if behind_raw=$(git rev-list --count "dependabot-sweep/pr-${num}..origin/${base}" 2>/dev/null) \
+              && [ -n "$behind_raw" ] && [ -z "${behind_raw//[0-9]/}" ]; then
+              behind_by=$behind_raw
+            fi
+            touches_workflows=false
+            for f in "${CHANGED[@]}"; do
+              case "$f" in
+                .github/workflows/*) touches_workflows=true ;;
+              esac
+            done
+
+            if [ "$merge_state" = "BEHIND" ] || [ "$behind_by" -gt 0 ]; then
               # A stale branch is genuinely un-mergeable, and nothing short
               # of updating it can fix that — this is the exact
               # cms-platform #118-122 batch-strand shape: every merge
@@ -461,12 +480,21 @@ jobs:
               # BY DESIGN. The next sweep (once the fresh checks go green)
               # finishes it. That's a SUCCESS outcome (UPDATED), not a
               # failure.
-              echo "#${num} — merge refused and the PR is behind ${base}; refreshing it instead of retrying"
+              echo "#${num} — merge refused and the PR is behind ${base} (behind_by=${behind_by}, mergeStateStatus=${merge_state}); refreshing it instead of retrying"
               if gh pr update-branch "$num"; then
                 echo "refreshed #${num} against ${base} — its checks now re-run; the next sweep merges it"
                 UPDATED=$((UPDATED + 1))
               else
-                echo "::error::#${num} — merge was refused (behind ${base}) and \`gh pr update-branch\` also failed; needs a human"
+                if [ "$touches_workflows" = "true" ]; then
+                  # Merging or refreshing a stale workflow-file PR writes
+                  # workflow content Dependabot never pushed, and GitHub
+                  # refuses that to any identity without `workflows`
+                  # permission. GITHUB_TOKEN can never hold it. Dependabot
+                  # can, so a rebase it pushes itself is the fix.
+                  echo "::error::#${num} — merge was refused (behind ${base}) and \`gh pr update-branch\` also failed. It changes .github/workflows/, and GITHUB_TOKEN cannot write workflow content Dependabot never pushed. Needs a human: comment \`@dependabot rebase\` on the PR; the next sweep merges it once its checks are green."
+                else
+                  echo "::error::#${num} — merge was refused (behind ${base}) and \`gh pr update-branch\` also failed; needs a human"
+                fi
                 FAILED=$((FAILED + 1))
               fi
             else
