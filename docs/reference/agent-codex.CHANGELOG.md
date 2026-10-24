@@ -30,6 +30,36 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-24 — 0.164.0 through 0.164.0
+
+- **Checked:** 2026-10-24T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.164.0](https://github.com/openai/codex/releases/tag/rust-v0.164.0), published 2026-10-23T04:48Z
+- **Window:** 0.164.0 (published 2026-10-23T04:48Z), the first stable release after 0.163.0: 1 stable release, 14 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.163.0`, the previous entry's last version.
+- **Repos considered:** same 14 as the Claude Code entry of this date, relying on the 2026-10-22 reach list.
+
+No group met the name-the-surface bar. The highlights (`/presets`, inline `/model` and `/permissions` arguments, enterprise MCP sign-in, credential masking, Bedrock wizard, compaction and resume fixes, daemon log bounding and install pruning) touch no command line or documented behavior in the fleet; `wsl-automation`'s keeper still identifies the `codex app-server ... --remote-control ... --managed-daemon` process by its arguments, which no bullet changes. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not touched by any highlight bullet and stays open.
+
+### 2026-10-22 — 0.162.1 through 0.163.0
+
+- **Checked:** 2026-10-22T01:08Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.163.0](https://github.com/openai/codex/releases/tag/rust-v0.163.0), published 2026-10-15T21:30Z
+- **Window:** 0.162.1 (published 2026-10-09T19:44Z) and 0.163.0 (published 2026-10-15T21:30Z), the first stable releases after 0.162.0, in publish order: 2 stable releases, 18 highlight bullets (2 + 16; not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish times read from each tag page's `datetime` attribute, UTC. The 2026-10-21 run did not cover Codex, so this entry spans 13 days.
+- **Source text:** the GitHub release list pages 1-3 and both tag pages; the pages walked included `rust-v0.162.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 506f9d2 (the `persistent/vendor-changelog` checkout; origin/main is ahead), `adam-agentskills` 59c8c74, `adam-agentskills-private` 2465891, `adamdaniel.ai` ab557c5, `ai-usage-dashboard` 09d9845, `claude-memory-map` 676d7f9, `cms-platform` 3b0a799, `fastmail-actions` f3c799f, `GHA-bench` bf0f9875 (archived, read-only), `jodidaniel.com` 3626102, `repo-settings` a9dc5ea, `rss-inator` 346595f, `skills-evals` b644ea2, `wsl-automation` baa2d20.
+
+No group met the name-the-surface bar. A grep of the fleet for `zsh_path`, `shell_zsh`, `managed-daemon`, `remote-control`, `app-server`, `codex exec`, `/daemon` and `/keymap` found only `wsl-automation` (the keeper runs `codex remote-control start` and identifies the `codex app-server ... --remote-control --managed-daemon` process by its arguments) and `_agent-guidance`'s evidence notes on the daemon. The 0.162.1 startup fix (feature-settings mismatch with a running background server) and the 0.163.0 `/daemon` restart and remote-control preference changes do not alter that command line or any documented behavior; no fleet file names the retired patched-zsh shell flags. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not touched by any highlight bullet and stays open.
+
+### 2026-10-09 — 0.162.0 through 0.162.0
+
+- **Checked:** 2026-10-09T01:25Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.162.0](https://github.com/openai/codex/releases/tag/rust-v0.162.0), published 2026-10-08T18:55Z
+- **Window:** 0.162.0 (published 2026-10-08T18:55Z), the first stable release after 0.161.0: 1 stable release, 14 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.161.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet` (`ai-usage-dashboard` is new since the 2026-10-08 entry, which listed 13), each reached (working-tree head read): `_agent-guidance` 962a9d7, `adam-agentskills` 746881e, `adam-agentskills-private` 43e8448, `adamdaniel.ai` 3d1c2c0, `ai-usage-dashboard` 5115bdc (anonymous shallow clone, read-only), `claude-memory-map` 9873811, `cms-platform` 9dd9454, `fastmail-actions` 760ee52, `GHA-bench` bf0f987, `jodidaniel.com` 713c807, `repo-settings` c062ce2, `rss-inator` 49297d6, `skills-evals` 2fb97f8, `wsl-automation` 9303b57.
+
+No group met the name-the-surface bar. The release covers TUI, transcript and Command Center features, sandbox fixes, Windows installer packaging and model-provider options. A grep of the fleet for `codex exec`, `codex app-server`, `codex remote-control` and `apply_patch` found only `wsl-automation`, which identifies the `codex app-server ... --remote-control --managed-daemon` process by its arguments and runs `codex remote-control start`; no bullet changes those commands or flags, and the remote-control reconnect back-off appears only in the PR list, not in the highlights. `ai-usage-dashboard` reads `~/.codex/auth.json`, which no bullet touches. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is unchanged: nothing in this release's notes mentions `/import`.
+
 ### 2026-10-08 — 0.161.0 through 0.161.0
 
 - **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/openai/codex/releases)
