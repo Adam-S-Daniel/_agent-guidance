@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-24 — 2.1.310 through 2.1.310
+
+- **Checked:** 2026-10-24T01:12Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.310](https://github.com/anthropics/claude-code/releases/tag/v2.1.310), published 2026-10-23T23:39Z
+- **Window:** v2.1.310 (published 2026-10-23T23:39Z), the first stable release after v2.1.309: 1 release, 26 bullets (not individually indexed: no group was drafted). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.310` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep. Last reached: `_agent-guidance`, `adam-agentskills`, `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `claude-memory-map`, `cms-platform`, `fastmail-actions`, `GHA-bench` (archived), `jodidaniel.com`, `repo-settings`, `rss-inator`, `skills-evals`, `wsl-automation` (local checkouts present this session).
+
+No group met the name-the-surface bar, and no bullet changes models, `/doctor` or instruction-file loading, so the prompt-audit sweep is not triggered. A grep of the fleet for `cleanupPeriodDays`, `PreToolUse` and `PermissionRequest` found only `adam-agentskills` ADR 0010, which cites `cleanupPeriodDays` for the earlier trash behavior (the 2.1.310 fix, about background cleanup deleting recent files at very large values, changes nothing it documents), and no fleet hook registered on either Windows-affected event.
+
 ### 2026-10-23 — 2.1.308 through 2.1.309
 
 - **Checked:** 2026-10-23T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)

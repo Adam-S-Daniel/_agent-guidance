@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-24 — 0.164.0 through 0.164.0
+
+- **Checked:** 2026-10-24T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.164.0](https://github.com/openai/codex/releases/tag/rust-v0.164.0), published 2026-10-23T04:48Z
+- **Window:** 0.164.0 (published 2026-10-23T04:48Z), the first stable release after 0.163.0: 1 stable release, 14 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.163.0`, the previous entry's last version.
+- **Repos considered:** same 14 as the Claude Code entry of this date, relying on the 2026-10-22 reach list.
+
+No group met the name-the-surface bar. The highlights (`/presets`, inline `/model` and `/permissions` arguments, enterprise MCP sign-in, credential masking, Bedrock wizard, compaction and resume fixes, daemon log bounding and install pruning) touch no command line or documented behavior in the fleet; `wsl-automation`'s keeper still identifies the `codex app-server ... --remote-control ... --managed-daemon` process by its arguments, which no bullet changes. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not touched by any highlight bullet and stays open.
+
 ### 2026-10-22 — 0.162.1 through 0.163.0
 
 - **Checked:** 2026-10-22T01:08Z, [release log](https://github.com/openai/codex/releases)
