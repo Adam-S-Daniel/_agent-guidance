@@ -447,3 +447,213 @@ disposable-profile experiment, the common ground across those documents,
 until the discrepancy is settled. The experiment remains open in
 [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183);
 auditor coverage and the existing owner decision above are unchanged.
+
+## 2026-10-08 UTC / 2026-10-07 EDT: live fabricated memory import (CLI 0.161.0)
+
+For [issue 183](https://github.com/Adam-S-Daniel/_agent-guidance/issues/183),
+the installed binary reported `codex-cli 0.161.0`, and its
+`codex app-server --listen stdio://` process performed the import. This is
+runtime evidence from the external-agent migration RPC backend, which also
+serves the import flow; it is not a `/import` slash-command UI test or a
+remote-session availability test. The documentation disagreement remains
+separate in [issue 278](https://github.com/Adam-S-Daniel/_agent-guidance/issues/278).
+This extends the source-only observations above and the memory-home design
+established for [issue 129](https://github.com/Adam-S-Daniel/_agent-guidance/issues/129)
+in [ADR 0015](../decisions/0015-audit-codex-memories-after-generation-not-at-stop.md#addendum--live-import-and-the-memory-home-boundary-2026-10-08-utc--2026-10-07-edt).
+
+### Isolation and reproducible inputs
+
+The probe used fabricated files in disposable `HOME`, `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`, and XDG directories. Its outer environment and the
+app-server child environment were rebuilt without inherited credentials.
+No real memory, credential, or authentication file was copied or supplied;
+no model turn was requested. Every harness run used a PID namespace and an
+isolated network namespace. A `claude` sentinel came first on `PATH`, would
+record an invocation and exit 97, and recorded **zero calls**. The app server
+and all harness children were reaped. Codex initialized its own memory Git
+workspace; that workspace had **zero remotes**.
+
+The invocation shape was:
+
+```bash
+unshare --user --map-current-user --pid --fork --mount-proc --net -- \
+  env -i HOME=<DISPOSABLE_HOME> \
+  PATH=<SENTINEL_BIN>:/usr/bin:/bin \
+  CLAUDE_SENTINEL_LOG=<SENTINEL_LOG> \
+  /usr/bin/python3 <IMPORT_PROBE>
+```
+
+The probe started the absolute installed Codex binary with the same sentinel
+`PATH`, disposable homes, XDG paths, `TERM=dumb`, and a
+`GIT_CEILING_DIRECTORIES` boundary above the fabricated profile. The config
+was:
+
+```toml
+model = "fixture-model"
+model_provider = "fixture"
+cli_auth_credentials_store = "ephemeral"
+check_for_update_on_startup = false
+[analytics]
+enabled = false
+[feedback]
+enabled = false
+[features]
+external_agent_memory_import = true
+[memories]
+generate_memories = false
+use_memories = false
+[model_providers.fixture]
+name = "fabricated provider"
+base_url = "http://127.0.0.1:9/v1"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+```
+
+The feature opt-in matters. A separate fresh-profile control omitted the
+`[features]` table, retained the other config and fabricated inputs, and ran
+the same detection RPC. It detected **zero memory items** and **one session
+item containing one synthetic session**, with the session's cwd matching the
+existing fabricated project. The app server exited 0; the control passed
+**7 assertions**, exit 0, with zero sentinel calls. This agrees with the
+[0.161.0 feature default](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/features/src/lib.rs#L1193-L1198)
+and the [RPC feature gate](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/app-server/src/external_agent_migration/processor.rs#L358-L374).
+
+The fabricated source root was
+`$HOME/.claude/projects/fabricated-project/memory/`. Its `note.md` contained
+exactly the following UTF-8 bytes, with LF line endings and a final newline:
+
+```markdown
+---
+name: fabricated import note
+description: Synthetic note for byte comparison.
+type: project
+metadata:
+  home: example/repo:docs/note.md
+---
+
+Use the example.com fixture endpoint.
+```
+
+The second resource, `nested/no-frontmatter.md`, also used LF line endings
+and a final newline:
+
+```markdown
+# Fabricated note without frontmatter
+
+Use the example.net fixture endpoint.
+```
+
+The project directory containing `memory/` also held `synthetic.jsonl` with
+one line: `{"type":"user","cwd":"<FABRICATED_EXISTING_PROJECT>","timestamp":"2026-10-07T12:00:00Z","message":{"content":"Fabricated importer receipt."}}`.
+The cwd placeholder was replaced with the canonical absolute path of an
+existing disposable directory. No session was imported; the transcript
+provided scope for the selected memory project.
+
+### RPC sequence and copied bytes
+
+The probe sent `initialize` with
+`{"clientInfo":{"name":"fabricated-import-receipt","version":"1.0.0"},"capabilities":{"experimentalApi":true}}`,
+then an `initialized` notification. It called `externalAgentConfig/detect`
+with `{"includeHome":true,"cwds":[],"migrationSource":"claude"}`. It selected
+only the returned `MEMORY` item whose `details.memory` was
+`["fabricated-project"]`, then called `externalAgentConfig/import` with
+`{"migrationSource":"claude","migrationItems":[<DETECTED_MEMORY_ITEM>]}`.
+The empty cwd list avoided project-ancestor configuration discovery. The
+probe awaited the matching `externalAgentConfig/import/completed`
+notification before closing stdin and reaping the app server, which exited 0.
+
+The sanitized completion receipt was:
+
+```json
+{
+  "importId": "<FABRICATED_IMPORT_ID>",
+  "itemTypeResults": [{
+    "itemType": "MEMORY",
+    "successes": [{
+      "itemType": "MEMORY",
+      "cwd": null,
+      "source": "fabricated-project",
+      "target": "$CODEX_HOME/memories/extensions/external_agent_import/resources",
+      "title": null
+    }],
+    "failures": []
+  }]
+}
+```
+
+The notification reports one synchronized project, not a note count. Both
+notes existed at
+`$CODEX_HOME/memories/extensions/external_agent_import/resources/fabricated-project/`,
+with their relative paths preserved. Source and destination bytes were equal:
+
+| Relative resource path | Bytes | Source and destination SHA-256 |
+| --- | ---: | --- |
+| `note.md` | 183 | `97f9ffc834f4e70eec2935d5e203fae8e0d76a2a5b8b338189fe5d99152db4bc` |
+| `nested/no-frontmatter.md` | 77 | `0a7bd4480b4d8cf586c74ecb9f7b5f30a3ec390cadb643061046b15dde050ef0` |
+
+The literal `metadata.home` value survived in the imported `note.md`.
+The second note gained no frontmatter. This establishes byte preservation
+for these successful raw-resource copies, not home validation or committed
+existence. Both source files remained unchanged. The project's `scope.json`
+contained `{"cwd":"<FABRICATED_EXISTING_PROJECT>"}`, matching the canonical
+existing project directory. The extension's `instructions.md` existed;
+there was no corresponding imported extension under `memories_v2/`.
+
+### Pending consolidation and the observed audit boundary
+
+After the app server exited, read-only inspection of `memories_1.sqlite`
+with `mode=ro` and `PRAGMA query_only=ON` found one job:
+
+```json
+{
+  "kind": "memory_consolidate_global",
+  "job_key": "global",
+  "status": "pending",
+  "finished_at": null,
+  "last_success_watermark": 0
+}
+```
+
+`stage1_outputs` had **zero rows**; `MEMORY.md` and `memory_summary.md` were
+absent. Generation and use were disabled deliberately, and no model turn
+was started. The completed import notification establishes the resource
+operation; the pending job establishes an enqueued consolidation request.
+**Consolidation did not complete in this probe.** Nothing here demonstrates
+that later consolidation preserves `metadata.home` or includes every
+imported fact.
+
+The shipped [auditor](../../scripts/audit-codex-memory.py), invoked as
+`python3 scripts/audit-codex-memory.py audit` against this disposable profile
+inside the same namespaces, exited **0** and reported:
+
+```text
+audit-codex-memory: no memory store (absent or empty supported surfaces)
+{"event":"result","findings":0,"records":0}
+```
+
+The two imported notes still existed, including the one with no home. A clean
+audit therefore describes the supported generated/ad hoc surfaces; it does
+not validate raw imported resources. This runtime result confirms the
+coverage gap previously identified by reading `file_records` in the linked
+auditor. Whether to extend that scope remains an owner decision recorded in
+the [ADR addendum](../decisions/0015-audit-codex-memories-after-generation-not-at-stop.md#addendum--live-import-and-the-memory-home-boundary-2026-10-08-utc--2026-10-07-edt).
+
+### Verifier and mutation receipt
+
+The credential-free import harness passed **28 assertions**, exit **0**.
+Its checks covered CLI version, normal app-server exit, zero sentinel calls,
+selected project and completion identity, one project success with no
+failures, both copies and unchanged sources, preserved home, absent added
+frontmatter, scope, namespace, extension instructions, queue state, absent
+generated output, zero workspace remotes, and the auditor's zero-record
+result.
+
+For the negative control, the harness changed only the imported `note.md`
+resource's home from `example/repo:docs/note.md` to
+`example/repo:docs/changed.md`, leaving the source unchanged. The same byte
+comparison failed at **assertion 10**, `imported bytes changed: note.md`,
+exit **1**. A fresh restored import passed **28 assertions**, exit **0**.
+The separate default-disabled detection control passed **7 assertions**,
+exit **0**. Every run used the namespace and sentinel boundary above, and
+all children were reaped; no consolidation or real memory was evaluated.

@@ -27,11 +27,20 @@ on:
       - "scripts/bridge-status.sh"
       - "scripts/bootstrap-status.sh"
       - "scripts/register-bootstrap-hook.sh"
+      # And what each consumer's .gitattributes gets (docs/decisions/0019).
+      - "scripts/hook-eol-gitattributes.sh"
       # COPIED verbatim into every synced repo, and the payload it installs is
       # agents-md/base.md (covered by `agents-md/**` above). Editing this hook
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
       # a fix to it would sit here firing no run to deliver itself.
       - ".claude/hooks/fleet-memory.sh"
+      # templates/dependabot-auto-merge/ is COPIED into every synced repo that
+      # runs Dependabot with no merge path (repos.yml's dependabot_auto_merge).
+      # Only ever added, never refreshed, so an edit here reaches only repos
+      # still missing the workflow.
+      # templates/agent-checks/ (ADR 0021) is different: its runner and guard
+      # are refreshed on drift, so an edit to either reaches every repo.
+      - "templates/**"
       # This file. `SYNC_OWNERS` below decides WHICH ~20 repos the run touches,
       # and the dispatch inputs decide whether it writes at all — an owner
       # added or removed here is as much a policy change as an allowlist edit,
@@ -98,7 +107,7 @@ jobs:
       - name: Mint installation token for Adam-S-Daniel
         id: token_adam_s_daniel
         continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -107,7 +116,7 @@ jobs:
       - name: Mint installation token for jodidaniel
         id: token_jodidaniel
         continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}

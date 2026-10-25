@@ -35,13 +35,13 @@
   heading: Working in these repos
   file: agents-md/base.md
   status: gap
-  bytes: 1268
+  bytes: 1376
 
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
   file: agents-md/base.md
   status: gap
-  bytes: 1034
+  bytes: 920
 
 - id: finding-your-unknowns
   heading: Finding your unknowns
@@ -59,7 +59,7 @@
   heading: Security
   file: agents-md/base.md
   status: gap
-  bytes: 368
+  bytes: 431
 
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos
@@ -67,11 +67,11 @@
   status: gap
   bytes: 1197
 
-- id: network-allowlists
-  heading: Network allowlists live in `_agent-guidance/docs/reference/`
+- id: read-before-you-start
+  heading: Read before you start
   file: agents-md/base.md
   status: gap
-  bytes: 618
+  bytes: 342
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
@@ -83,7 +83,13 @@
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
   status: gap
-  bytes: 1410
+  bytes: 1259
+
+- id: agent-contribution-markers
+  heading: Agent-made GitHub contributions carry a marker
+  file: agents-md/base.md
+  status: gap
+  bytes: 622
 
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
@@ -95,7 +101,7 @@
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
   status: gap
-  bytes: 1053
+  bytes: 986
 
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
@@ -125,7 +131,7 @@
   heading: Pinning GitHub Actions
   file: agents-md/base.md
   status: gap
-  bytes: 1357
+  bytes: 1153
 
 - id: test-that-can-signal-kills-every-session
   heading: A test that can signal can kill every session
@@ -137,7 +143,7 @@
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
   status: gap
-  bytes: 2581
+  bytes: 2554
 
 - id: skills-ecosystem
   heading: Skills ecosystem
@@ -149,7 +155,7 @@
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
   status: gap
-  bytes: 2029
+  bytes: 1970
 
 - id: git-practices
   heading: Git practices

@@ -12,7 +12,9 @@ set -euo pipefail
 #   5. Delivers the skills-bootstrap SessionStart hook to ALLOWLISTED repos
 #      that already carry their own skills.lock (see repos.yml and
 #      docs/decisions/0001) — never to every repo, and never writing the lock
-#   6. Pushes the update directly to the default branch (the sync App has a
+#   6. Ensures the root .gitattributes pins .claude/hooks/*.sh to LF (one
+#      appended line; see docs/decisions/0019)
+#   7. Pushes the update directly to the default branch (the sync App has a
 #      ruleset bypass, declared in repo-settings); falls back to a PR with
 #      auto-merge for repos whose protection rejects the push
 #
@@ -46,6 +48,30 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# The one managed line in each repo's root .gitattributes that keeps the hook
+# scripts above LF in every checkout, so bash in WSL can parse them from a
+# Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
+GITATTR_REL_PATH=".gitattributes"
+GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
+# The Dependabot merge path every repo running Dependabot needs, ADDED (never
+# overwritten) when repos.yml's dependabot_auto_merge.deliver is true. See the
+# block in repos.yml for why it is off by default.
+AUTOMERGE_TEMPLATE_DIR="$REPO_ROOT/templates/dependabot-auto-merge"
+AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
+AUTOMERGE_SCRIPT_REL_PATH=".github/scripts/workflow-overlap.sh"
+# The agent-checks lane (ADR 0021), on when repos.yml's agent_checks.deliver is
+# true. The runner and the Claude Code guard are MANAGED (overwritten whenever
+# they drift, like fleet-memory.sh); the CI workflow is ADDED once and never
+# overwritten, like the Dependabot one, so Dependabot can keep its pin current.
+AGENT_CHECKS_TEMPLATE_DIR="$REPO_ROOT/templates/agent-checks"
+AC_RUNNER_REL_PATH=".githooks/agent-checks"
+AC_WF_REL_PATH=".github/workflows/agent-checks.yml"
+AC_GUARD_REL_PATH=".claude/hooks/agent-checks-guard.sh"
+AC_GUARD_MATCHER="Bash|Edit|Write|MultiEdit|NotebookEdit"
+# The runner is run by bash from git hooks, so a CRLF checkout breaks it the
+# same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
+AC_EOL_LINE='.githooks/* text eol=lf'
+AC_EOL_COMMENT='# managed by _agent-guidance: the agent-checks runner must stay LF for bash (see ADR 0021)'
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -376,6 +402,32 @@ fi
 
 BOOTSTRAP_BLOB=""          # path to the fetched, verified hook; "" until fetched
 BOOTSTRAP_FETCH_WARNED=false
+
+# ── Dependabot auto-merge workflow delivery config ─────────────────────────
+# A single switch, read like every other repos.yml key. Anything but a literal
+# `true` is off: a typo must not start writing workflow files fleet-wide.
+AUTOMERGE_ENABLED=false
+if [[ "$(read_repos_yml '.dependabot_auto_merge.deliver // false')" == "true" ]]; then
+    if [[ -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" \
+          && -s "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" ]]; then
+        AUTOMERGE_ENABLED=true
+    else
+        echo "::warning::repos.yml turns on dependabot_auto_merge.deliver, but $AUTOMERGE_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
+    fi
+fi
+
+# ── agent-checks delivery config ──────────────────────────────────────────
+# Same posture as the switch above: only a literal `true` turns it on.
+AGENT_CHECKS_ENABLED=false
+if [[ "$(read_repos_yml '.agent_checks.deliver // false')" == "true" ]]; then
+    if [[ -s "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks" \
+          && -s "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks.yml" \
+          && -s "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks-guard.sh" ]]; then
+        AGENT_CHECKS_ENABLED=true
+    else
+        echo "::warning::repos.yml turns on agent_checks.deliver, but $AGENT_CHECKS_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
+    fi
+fi
 
 bootstrap_allowlisted() {
     local short="${1##*/}" entry
@@ -1039,7 +1091,123 @@ for repo_name in "${REPOS[@]}"; do
         log "skills-bootstrap: $bootstrap_reason."
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date; then
+    # ── .gitattributes: classify ───────────────────────────────────────
+    # Every synced repo, whatever its fleet-memory mode: the line costs one
+    # entry, matches nothing in a repo with no hook scripts, and keeps any hook
+    # a repo does carry parseable by bash from a Windows-autocrlf clone. Two
+    # refusals, neither a failure: a .gitattributes that is itself gitignored
+    # (`git add` would exit 1 and, under `set -e`, end the whole fleet run) and
+    # one that is not a regular file (the helper will not edit a symlink).
+    gitattr_deliver=true
+    gitattr_state=$("$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")
+    if git check-ignore -q "$GITATTR_REL_PATH" 2>/dev/null; then
+        gitattr_deliver=false
+        log "WARN: $GITATTR_REL_PATH is gitignored in $repo_name — the hook-script LF line is not delivered."
+    elif [[ -L "$GITATTR_REL_PATH" || ( -e "$GITATTR_REL_PATH" && ! -f "$GITATTR_REL_PATH" ) ]]; then
+        gitattr_deliver=false
+        log "WARN: $GITATTR_REL_PATH is not a regular file in $repo_name — refusing to edit it; the hook-script LF line is not delivered."
+    fi
+    gitattr_up_to_date=true
+    if $gitattr_deliver && [[ "$gitattr_state" != "present" ]]; then
+        gitattr_up_to_date=false
+    fi
+
+    # ── Dependabot auto-merge workflow: classify ───────────────────────
+    # missing  -> deliver; present / n-a -> nothing to do; skipped -> warned.
+    # "present" is any workflow named dependabot-auto-merge.yml or cms-platform's
+    # self-dependabot-auto-merge.yml, whatever its content: the sync adds a
+    # merge path where there is none, it does not police the ones that exist.
+    automerge_state="n/a"
+    if $AUTOMERGE_ENABLED && [[ -f .github/dependabot.yml || -f .github/dependabot.yaml ]]; then
+        automerge_state="missing"
+        for wf in .github/workflows/*; do
+            [[ -f "$wf" ]] || continue
+            if [[ "${wf##*/}" =~ ^(self-)?dependabot-auto-merge\.ya?ml$ ]]; then
+                automerge_state="present"
+                break
+            fi
+        done
+        if [[ "$automerge_state" == "missing" ]]; then
+            if [[ -e .github/workflows/actions.lock ]]; then
+                automerge_state="skipped"
+                log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the Dependabot auto-merge workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
+            elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null \
+                 || git check-ignore -q "$AUTOMERGE_SCRIPT_REL_PATH" 2>/dev/null; then
+                automerge_state="skipped"
+                log "WARN: the Dependabot auto-merge workflow's paths are gitignored in $repo_name — not delivered."
+            fi
+        fi
+    fi
+    automerge_up_to_date=true
+    [[ "$automerge_state" == "missing" ]] && automerge_up_to_date=false
+
+    # ── agent-checks: classify ─────────────────────────────────────────
+    # Four parts, each skipped on its own rather than failing the repo:
+    #   runner    missing | current | drifted | skipped (gitignored)
+    #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
+    #             "present" is ANY workflow that runs .githooks/agent-checks:
+    #             adam-agentskills runs it as a job in ci.yml.
+    #   guard     the PreToolUse hook; delivered only where fleet-memory can
+    #             be (same .claude/ and settings.json refusals).
+    #   eol       the `.githooks/* text eol=lf` line in .gitattributes.
+    ac_runner_state="n/a"; ac_wf_state="n/a"; ac_guard_state="n/a"
+    ac_reg_state="n/a"; ac_eol_state="n/a"; ac_guard_deliver=false
+    if $AGENT_CHECKS_ENABLED; then
+        if git check-ignore -q "$AC_RUNNER_REL_PATH" 2>/dev/null; then
+            ac_runner_state="skipped"
+            log "WARN: $AC_RUNNER_REL_PATH is gitignored in $repo_name — the agent-checks runner is not delivered."
+        elif [[ -f "$AC_RUNNER_REL_PATH" ]]; then
+            cmp -s "$AC_RUNNER_REL_PATH" "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks" \
+                && ac_runner_state="current" || ac_runner_state="drifted"
+        else
+            ac_runner_state="missing"
+        fi
+
+        ac_wf_state="missing"
+        if grep -lqsF "$AC_RUNNER_REL_PATH" .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null; then
+            ac_wf_state="present"
+        elif [[ "$ac_runner_state" == "skipped" ]]; then
+            ac_wf_state="skipped"
+        elif [[ -e .github/workflows/actions.lock ]]; then
+            ac_wf_state="skipped"
+            log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the agent-checks workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
+        elif [[ -e platform.lock ]]; then
+            ac_wf_state="skipped"
+            log "agent-checks: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered; its platform-pin-consistency check rejects any workflow the platform does not dictate. The platform carries it instead."
+        elif git check-ignore -q "$AC_WF_REL_PATH" 2>/dev/null; then
+            ac_wf_state="skipped"
+            log "WARN: $AC_WF_REL_PATH is gitignored in $repo_name — not delivered."
+        fi
+
+        if $fleet_deliver && ! git check-ignore -q "$AC_GUARD_REL_PATH" 2>/dev/null; then
+            ac_guard_deliver=true
+            ac_guard_state="missing"
+            if [[ -f "$AC_GUARD_REL_PATH" ]]; then
+                cmp -s "$AC_GUARD_REL_PATH" "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks-guard.sh" \
+                    && ac_guard_state="current" || ac_guard_state="drifted"
+            fi
+            ac_reg_state=$(BOOTSTRAP_HOOK_EVENT="PreToolUse" \
+                           BOOTSTRAP_HOOK_BASENAME="agent-checks-guard.sh" \
+                           BOOTSTRAP_HOOK_MATCHER="$AC_GUARD_MATCHER" \
+                           "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+        fi
+
+        if $gitattr_deliver && [[ "$ac_runner_state" != "skipped" ]]; then
+            ac_eol_state=$(HOOK_EOL_LINE="$AC_EOL_LINE" HOOK_EOL_COMMENT="$AC_EOL_COMMENT" \
+                           "$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")
+        fi
+        log "agent-checks: runner=$ac_runner_state workflow=$ac_wf_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state"
+    fi
+    ac_up_to_date=true
+    if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" \
+          || "$ac_wf_state" == "missing" || "$ac_eol_state" == "missing" ]]; then
+        ac_up_to_date=false
+    fi
+    if $ac_guard_deliver && { [[ "$ac_guard_state" != "current" ]] || [[ "$ac_reg_state" != "registered" ]]; }; then
+        ac_up_to_date=false
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1108,6 +1276,35 @@ for repo_name in "${REPOS[@]}"; do
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
+        fi
+
+        if ! $gitattr_up_to_date; then
+            if [[ -e "$GITATTR_REL_PATH" ]]; then
+                log "[DRY RUN] Would append the hook-script LF line to $GITATTR_REL_PATH (existing lines preserved)"
+            else
+                log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF"
+            fi
+        fi
+
+        if ! $automerge_up_to_date; then
+            log "[DRY RUN] Would add $AUTOMERGE_WF_REL_PATH (Dependabot auto-merge sweep; this repo has a Dependabot config and no merge path)"
+            [[ -e "$AUTOMERGE_SCRIPT_REL_PATH" ]] \
+                || log "[DRY RUN] Would add $AUTOMERGE_SCRIPT_REL_PATH (its helper)"
+        fi
+
+        if ! $ac_up_to_date; then
+            [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]] \
+                && log "[DRY RUN] Would write $AC_RUNNER_REL_PATH (runner $ac_runner_state)"
+            [[ "$ac_wf_state" == "missing" ]] \
+                && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check)"
+            [[ "$ac_eol_state" == "missing" ]] \
+                && log "[DRY RUN] Would append the agent-checks LF line to $GITATTR_REL_PATH"
+            if $ac_guard_deliver; then
+                [[ "$ac_guard_state" != "current" ]] \
+                    && log "[DRY RUN] Would write $AC_GUARD_REL_PATH (guard $ac_guard_state)"
+                [[ "$ac_reg_state" != "registered" ]] \
+                    && log "[DRY RUN] Would register the agent-checks guard on PreToolUse in $SETTINGS_REL_PATH (currently: $ac_reg_state)"
+            fi
         fi
 
         ((SKIP_COUNT++)) || true
@@ -1252,7 +1449,101 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── .gitattributes: write ──────────────────────────────────────────
+    # Appended to, never rewritten (the helper's header has the byte rules).
+    gitattr_written=false
+    if ! $gitattr_up_to_date; then
+        if gitattr_result=$("$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
+            [[ "$gitattr_result" == "created" || "$gitattr_result" == "appended" ]] && gitattr_written=true
+            log "gitattributes: $GITATTR_REL_PATH — $gitattr_result."
+        else
+            log "WARN: could not add the hook-script LF line to $GITATTR_REL_PATH (${gitattr_result:-no output}) — leaving it untouched."
+        fi
+    fi
+
+    # ── Dependabot auto-merge workflow: write ──────────────────────────
+    # Added, never overwritten. The helper keeps whatever copy the repo
+    # already has: the workflow only calls it, and a differing copy is that
+    # repo's business.
+    automerge_written=false
+    automerge_script_written=false
+    if ! $automerge_up_to_date; then
+        mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
+        cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
+        automerge_written=true
+        if [[ ! -e "$AUTOMERGE_SCRIPT_REL_PATH" ]]; then
+            mkdir -p "$(dirname "$AUTOMERGE_SCRIPT_REL_PATH")"
+            cp "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" "$AUTOMERGE_SCRIPT_REL_PATH"
+            chmod 0755 "$AUTOMERGE_SCRIPT_REL_PATH"
+            automerge_script_written=true
+        fi
+        log "dependabot auto-merge: workflow added$($automerge_script_written && echo ' (with its helper)')."
+    fi
+
+    # ── agent-checks: write ────────────────────────────────────────────
+    ac_runner_written=false; ac_wf_written=false; ac_eol_written=false
+    ac_guard_written=false; ac_registered_now=false
+    if ! $ac_up_to_date; then
+        if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]]; then
+            mkdir -p "$(dirname "$AC_RUNNER_REL_PATH")"
+            cp "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks" "$AC_RUNNER_REL_PATH"
+            chmod 0755 "$AC_RUNNER_REL_PATH"
+            ac_runner_written=true
+        fi
+        if [[ "$ac_wf_state" == "missing" ]]; then
+            mkdir -p "$(dirname "$AC_WF_REL_PATH")"
+            cp "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks.yml" "$AC_WF_REL_PATH"
+            ac_wf_written=true
+        fi
+        if [[ "$ac_eol_state" == "missing" ]]; then
+            if ac_eol_result=$(HOOK_EOL_LINE="$AC_EOL_LINE" HOOK_EOL_COMMENT="$AC_EOL_COMMENT" \
+                               "$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
+                [[ "$ac_eol_result" == "created" || "$ac_eol_result" == "appended" ]] && ac_eol_written=true
+            else
+                log "WARN: could not add the agent-checks LF line to $GITATTR_REL_PATH (${ac_eol_result:-no output}) — leaving it untouched."
+            fi
+        fi
+        if $ac_guard_deliver; then
+            if [[ "$ac_guard_state" != "current" ]]; then
+                mkdir -p "$(dirname "$AC_GUARD_REL_PATH")"
+                cp "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks-guard.sh" "$AC_GUARD_REL_PATH"
+                chmod 0755 "$AC_GUARD_REL_PATH"
+                ac_guard_written=true
+            fi
+            if [[ "$ac_reg_state" != "registered" ]]; then
+                mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+                if ac_register_result=$(
+                        BOOTSTRAP_HOOK_EVENT="PreToolUse" \
+                        BOOTSTRAP_HOOK_MATCHER="$AC_GUARD_MATCHER" \
+                        BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-checks-guard.sh"' \
+                        BOOTSTRAP_HOOK_BASENAME="agent-checks-guard.sh" \
+                        BOOTSTRAP_HOOK_TIMEOUT="10" \
+                        "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
+                    [[ "$ac_register_result" == "registered" || "$ac_register_result" == "migrated" ]] && ac_registered_now=true
+                    log "agent-checks: settings.json — $ac_register_result."
+                else
+                    log "WARN: could not register the agent-checks guard in $SETTINGS_REL_PATH ($ac_register_result) — leaving it untouched."
+                fi
+            fi
+        fi
+        log "agent-checks: runner=$ac_runner_written workflow=$ac_wf_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
+    fi
+    ac_any_written=false
+    if $ac_runner_written || $ac_wf_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
+        ac_any_written=true
+    fi
+
     add_paths=(AGENTS.md)
+    $ac_runner_written && add_paths+=("$AC_RUNNER_REL_PATH")
+    $ac_wf_written && add_paths+=("$AC_WF_REL_PATH")
+    $ac_guard_written && add_paths+=("$AC_GUARD_REL_PATH")
+    # git add takes a path twice without complaint, so the files the other
+    # lanes may also have touched need no once-only bookkeeping here.
+    $ac_eol_written && add_paths+=("$GITATTR_REL_PATH")
+    $ac_registered_now && add_paths+=("$SETTINGS_REL_PATH")
+    $automerge_written && add_paths+=("$AUTOMERGE_WF_REL_PATH")
+    $automerge_script_written && add_paths+=("$AUTOMERGE_SCRIPT_REL_PATH")
+    $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
@@ -1294,7 +1585,54 @@ source \"fork\", so the old matcher skipped every fork. Only groups the
 sync wrote, holding nothing but its own hook, are changed."
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
+    if $gitattr_written; then
+        bootstrap_note="${bootstrap_note}
+
+Pins .claude/hooks/*.sh to LF in .gitattributes (one appended line; nothing
+else in the file changed): a Windows autocrlf checkout gives them CRLF, which
+bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
+    fi
+
+    if $automerge_written; then
+        bootstrap_note="${bootstrap_note}
+
+Adds .github/workflows/dependabot-auto-merge.yml: this repo has a Dependabot
+config but nothing merged its PRs. Its daily sweep merges each Dependabot PR
+once every check on the PR's head is green. Delivered once from
+_agent-guidance's templates/dependabot-auto-merge/; the sync never overwrites
+it afterwards."
+    fi
+
+    if $ac_any_written; then
+        bootstrap_note="${bootstrap_note}
+
+Delivers the agent-checks git hook runner (.githooks/agent-checks), the CI
+check that runs it over every change, and a Claude Code PreToolUse guard
+against --no-verify. Owner machines run the runner from config-based git
+hooks; CI is the enforcement. Managed by _agent-guidance's
+templates/agent-checks/; see its docs/decisions/0021."
+    fi
+
+    if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $ac_any_written && ! $automerge_written && ! $gitattr_written \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: deliver the agent-checks git hooks and CI check
+
+AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: add the Dependabot auto-merge workflow
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: pin the hook scripts to LF in .gitattributes
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
         commit_message="chore: deliver the skills-bootstrap SessionStart hook
 
 AGENTS.md and the CLAUDE.md bridge were already up to date.${bootstrap_note}"
@@ -1522,6 +1860,15 @@ then cost always-on context in each such session.
 It is registered as an **additional** \`hooks.SessionStart\` entry in
 \`$SETTINGS_REL_PATH\`; existing entries are preserved. \`$LOCK_REL_PATH\` is
 **not** modified by this sync — it is this repo's own declaration."
+        fi
+
+        if $gitattr_written; then
+            pr_extra="${pr_extra}
+
+This PR also adds one line to \`$GITATTR_REL_PATH\`, \`.claude/hooks/*.sh text eol=lf\`,
+with a comment above it; nothing else in that file changes. A Windows
+\`core.autocrlf=true\` checkout gives the hook scripts CRLF, which bash in WSL
+cannot parse. See [ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)."
         fi
 
         existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \

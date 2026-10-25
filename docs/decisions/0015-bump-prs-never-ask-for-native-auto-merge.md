@@ -1,5 +1,7 @@
 # 0015 — Bump pull requests never ask for native auto-merge
 
+> Note: ADR 0015 is also used by [0015-audit-codex-memories-after-generation-not-at-stop.md](0015-audit-codex-memories-after-generation-not-at-stop.md) (auditing Codex memories after generation); the two are distinct decisions, numbered in parallel by mistake.
+
 **Status:** Accepted (2026-09-22). Supersedes one decision in
 [0006](0006-bump-prs-land-on-a-sweep.md) — "A newly opened PR still asks for
 native auto-merge" — and corrects that ADR's Context claim that GitHub "does

@@ -34,6 +34,14 @@ The skills that used to live here (`debug-github-workflows`,
   and in the fallback PR's body) when an existing `CLAUDE.md` doesn't
   import `@AGENTS.md`, and can rewrite such a file when the repo opts in
   via `fix_claude_md: true` — see [The CLAUDE.md bridge](#the-claudemd-bridge).
+  It also keeps one line, `.claude/hooks/*.sh text eol=lf`, with a comment
+  above it, in each repo's root `.gitattributes`. It creates the file if it
+  is absent and otherwise appends to it, preserving every other byte. A
+  Windows `core.autocrlf=true` checkout would otherwise give the hook scripts
+  CRLF, which bash in WSL cannot parse. `scripts/hook-eol-gitattributes.sh`
+  owns the line; see
+  [`docs/decisions/0019`](docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md),
+  including how to fix a clone that already has CRLF copies.
 - `scripts/drift-report.sh` (CI: nightly `drift-report.yml`) writes
   `drift-report.md`, a dashboard of which repos are missing or out of date,
   including a "CLAUDE.md bridge" column (`bridge-ok` / `no-import` /
@@ -42,6 +50,8 @@ The skills that used to live here (`debug-github-workflows`,
   decision: a stub-mode repo needs both files, while a full-mode repo keeps
   guidance inline. Without a recognized mode, missing files stay unverified;
   a present payload's expected and found SHA-256 prefixes appear in Notes.
+  Notes also says `gitattr-ok` or `gitattr-missing` for the `.gitattributes`
+  line above.
   This tracks **guidance delivery drift** — it is the guidance layer
   working as designed, not the skill-copy drift that the strategy
   consolidation removed. Per repo-settings' ADR 0001, this generated data
@@ -334,7 +344,7 @@ This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
 byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
 nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
 (CI: the "Fleet payload mirrors base.md" step in
-[`ci.yml`](.github/workflows/ci.yml), every push and pull request) fails when
+[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails when
 the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
 pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
 exist.
@@ -344,7 +354,8 @@ exist.
 [`scripts/check-agent-markdown.js`](scripts/check-agent-markdown.js) (CI: the
 "Agent Markdown warnings" step in [`ci.yml`](.github/workflows/ci.yml), every
 push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
-whatever it finds, so it cannot fail the required `test` job. It prints one
+whatever it finds, so it cannot fail the `checks` job or, through it, the
+required `test` context. It prints one
 `::warning file=...,line=...` annotation per finding over the Markdown agents
 read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
 `.claude/hooks/fleet-guidance.md`):
@@ -756,6 +767,8 @@ repos.yml               # exclusions, default sections, skills-bootstrap pin,
                         #   cron-coverage fleet + out-of-scope
 AGENTS.md               # GENERATED from agents-md/ — this repo's own copy
 CLAUDE.md               # the bridge that makes AGENTS.md load here too
+.gitattributes          # the hook-script LF line the sync appends everywhere
+                        #   else (ADR 0019): nothing syncs this repo
 .claude/                # self-hosted skills-bootstrap hook + its registration:
                         #   the sync skips this repo, so nothing delivers here
 skills.lock             # which bundles THIS repo installs (never written by

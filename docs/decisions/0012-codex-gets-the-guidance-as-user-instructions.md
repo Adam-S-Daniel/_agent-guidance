@@ -224,3 +224,36 @@ session.
 
 Both issues remain partial. Still open: the fleet hook after `/hooks` trust
 (181), and open-session refresh and the SessionStart-rewrite ordering (182).
+
+## Addendum — live fleet-hook ordering (2026-10-08 UTC / 2026-10-07 EDT)
+
+The [live request evidence](../evidence/codex-trust-and-daemon-0160.md#live-fleet-hook-and-open-thread-requests-2026-10-08-utc--2026-10-07-edt)
+now exercises the byte-identical
+[`fleet-memory.sh`](../../.claude/hooks/fleet-memory.sh) after actual
+`/hooks` review persisted trust, without a bypass or a forged trust entry.
+The [registrar](../../scripts/register-codex-hook.sh) used its documented
+command override with the existing
+[`codex-session-start.sh`](../../.claude/hooks/codex-session-start.sh)
+launcher; its default inline command was not exercised. A synthetic 29-byte
+payload was delivered in both trusted and explicitly untrusted project
+states. The latter omitted project instructions while retaining the global
+instructions and running the trusted user-level hook. This supplies the
+remaining factual hook observation for
+[issue 181](https://github.com/Adam-S-Daniel/_agent-guidance/issues/181).
+
+**Consequence:** an `installed` verdict proves the hook wrote the file; it
+does not guarantee that the first request includes the new payload. In six
+actual requests served by one stdio app-server reporting 0.161.0, the first
+user instruction item retained the old global content while the developer
+item reported successful installation. The next turn in the same thread
+added replacement instructions containing the installed payload. A third
+turn after an external file rewrite added another replacement; the earlier
+items remained historical context.
+
+This observes core app-server ordering and open-thread global instruction
+refresh. It does not establish general configuration freshness. Managed
+daemon startup was blocked by its socket-directory guard, and Windows-native
+behavior remains untested; therefore
+[issue 182](https://github.com/Adam-S-Daniel/_agent-guidance/issues/182)
+remains partial. The earlier experiments above retain their original
+observation boundaries.

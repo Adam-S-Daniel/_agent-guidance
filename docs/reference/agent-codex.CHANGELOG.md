@@ -30,6 +30,26 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-08 — 0.161.0 through 0.161.0
+
+- **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.161.0](https://github.com/openai/codex/releases/tag/rust-v0.161.0), published 2026-10-07T15:58Z
+- **Window:** 0.161.0 (published 2026-10-07T15:58Z), the first stable release after 0.160.1: 1 stable release (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list page 1 and the tag page; the page walked included `rust-v0.160.1`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 11e53c9, `adam-agentskills` b552eb2, `adam-agentskills-private` acb07c2, `adamdaniel.ai` 6ff477d, `claude-memory-map` c4e5e1e, `cms-platform` 86ae606, `fastmail-actions` a0522c5, `GHA-bench` 21916084, `jodidaniel.com` e75f43a, `repo-settings` 7b63640, `rss-inator` f9fe3a8, `skills-evals` 9b7f610, `wsl-automation` 20f7246.
+
+No group met the name-the-surface bar. A grep of the fleet for `gpt-`, `cyber`, `daybreak`, `/mcp login`, `auth.json` and keyring found only `wsl-automation`'s `sync-codex-cloud-environments.sh`, which reads `auth.json`; the release's keyring line is a documentation change ("Authentication guidance now accounts for keyring storage"), not a changed behavior, so no issue was filed.
+
+### 2026-10-06 — 0.160.1 through 0.160.1
+
+- **Checked:** 2026-10-06T01:15Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.160.1](https://github.com/openai/codex/releases/tag/rust-v0.160.1), published 2026-10-05T18:29Z
+- **Window:** 0.160.1 (published 2026-10-05T18:29Z), the first stable release after 0.160.0: 1 stable release, 2 bullets (0.160.1/0: preserve `SYSTEMROOT`, `TEMP` and `TMP` when launching remote stdio MCP servers on Windows; 0.160.1/1: the backport changelog line). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.160.0`, the previous entry's last version.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` fe83f32, `adam-agentskills` 9c35b2e, `adam-agentskills-private` 10b02f6, `adamdaniel.ai` b9b91b3, `claude-memory-map` c9497b6, `cms-platform` c6d3125, `fastmail-actions` b268cde, `GHA-bench` 4f165b48, `jodidaniel.com` cc75080, `repo-settings` 6f1e7a6, `rss-inator` 8dce2eb, `skills-evals` a2c129e, `wsl-automation` a9e16c1.
+
+No group met the name-the-surface bar: the release is a Windows remote-MCP environment backport, and no fleet repo configures remote stdio MCP servers for Codex, so no issue was filed.
+
 ### 2026-10-02 — 0.160.0 through 0.160.0
 
 - **Checked:** 2026-10-02T01:20Z, [release log](https://github.com/openai/codex/releases)

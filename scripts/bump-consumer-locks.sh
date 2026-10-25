@@ -15,7 +15,7 @@ set -euo pipefail
 # consumer's CI gets. Native auto-merge is deliberately not used at all: where
 # nothing is required gh merges an already-mergeable PR on the spot instead of
 # arming it, and where something is required it waits only for the required
-# contexts, which this sweep does not — see docs/decisions/0015.
+# contexts, which this sweep does not — see docs/decisions/0015-bump-prs-never-ask-for-native-auto-merge.md.
 # Where the bump branch has NO open PR, the sweep frees it instead when that is
 # provably lossless (a merged leftover, or this bumper's own lock-only re-pin
 # whose PR was closed unmerged or never opened) and otherwise counts the repo
@@ -2906,7 +2906,7 @@ $COMMIT_BODY" 2>&1); then
         # script's own sweep (sweep_bump_prs, pr_merge_verdict, above) waits
         # for every check the PR reports. So the PR is left exactly as
         # opened, and the next run's sweep is the only merge path — see
-        # docs/decisions/0015.
+        # docs/decisions/0015-bump-prs-never-ask-for-native-auto-merge.md.
     else
         fail "PR creation failed for $repo_name"
         ((FAIL_COUNT++)) || true
