@@ -65,9 +65,12 @@ session that lost the guidance must not also lose these.
 - **Branch protection is real.** Fleet repos are PR-only on their default
   branch; a direct push is rejected (GH013), even from the repo's own
   workflows. Never design a bot that pushes to a protected default branch.
-- **Every `uses:` is pinned to a full 40-character commit SHA, with no
-  trailing version comment.** The one carve-out is a ref into this account's
-  own `cms-platform`, which stays on its release tag.
+- **Every `uses:` is pinned: an exact tag locked in
+  `.github/workflows/actions.lock` and checked by a required
+  `gh actions-lock --verify` failing on any pin finding, or a full
+  40-character commit SHA with no trailing version comment.** Cross-repo
+  reusable workflows take a full SHA either way. The one carve-out is a ref
+  into this account's own `cms-platform`, which stays on its release tag.
 - **Never commit secrets or `.env` files, and never print personal data to a
   CI log** — logs, artifacts and git history on a public repo are public.
 - **A successful `git push` does not mean your commit exists.** A refused
@@ -141,3 +144,17 @@ rename (the heading text changes, updated in `agents-md/eval-coverage.yml`,
 body untouched) needs no entry; a body edit does, and a removed section
 needs one typed `remove`. See that file's own header for the entry format
 and what counts as a sufficient `Eval:` line.
+
+**CI's one required context is `test`, and it is an aggregator.** `ci.yml`
+runs the integration suite as `suite`, a matrix of four shards that each pass
+their groups to `./test/run-tests.sh` through `TEST_GROUPS_ONLY`, and every
+other gate in `checks`; the `test` job (id and name both `test`, the context
+branch protection names) needs both, runs under `if: always()`, and fails
+unless both concluded `success`. That is why neither `suite` nor `checks` is
+required on its own: a red, cancelled or skipped shard or check already fails
+`test`, and `if: always()` keeps `test` from being skipped, which would read
+as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
+`suite` matrix, in the same PR: the "CI shards cover every test group" step
+(`scripts/check-ci-shards.js`) fails unless the shards' lists name every group
+from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
+per-group seconds in the suite's `Groups` table, not by count.

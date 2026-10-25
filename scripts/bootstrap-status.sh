@@ -45,6 +45,9 @@ HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
 # Keep in step with register-bootstrap-hook.sh, which owns the migration.
 HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume|fork}"
 LEGACY_MATCHER="startup|resume"
+# The hook event to look under. The agent-checks guard registers on PreToolUse
+# (ADR 0021); every other caller keeps the default.
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
 
 classify() {
     python3 -c '
@@ -53,6 +56,7 @@ import json, sys
 needle = sys.argv[1]
 matcher = sys.argv[2]
 legacy = sys.argv[3]
+event = sys.argv[4]
 raw = sys.stdin.read()
 
 if not raw.strip():
@@ -73,7 +77,7 @@ if not isinstance(doc, dict):
     sys.exit(0)
 
 groups = doc.get("hooks", {})
-groups = groups.get("SessionStart", []) if isinstance(groups, dict) else []
+groups = groups.get(event, []) if isinstance(groups, dict) else []
 if not isinstance(groups, list):
     groups = []
 
@@ -103,7 +107,7 @@ if found:
     print("stale-matcher" if stale else "registered")
 else:
     print("no-entry")
-' "$HOOK_BASENAME" "$HOOK_MATCHER" "$LEGACY_MATCHER"
+' "$HOOK_BASENAME" "$HOOK_MATCHER" "$LEGACY_MATCHER" "$HOOK_EVENT"
 }
 
 # ── Dispatch on argument ─────────────────────────────────────────────────────

@@ -41,6 +41,10 @@ FLEET_HOOK_SOURCE="$REPO_ROOT/$FLEET_HOOK_REL_PATH"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
+# The hook-script LF line sync.sh keeps in each root .gitattributes, judged by
+# the same helper that writes it (docs/decisions/0019).
+GITATTR_REL_PATH=".gitattributes"
+GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
 # Every other input this script takes is parameterized — REPOS_YML just below,
 # SYNC_OWNERS, GITHUB_REPOSITORY_OWNER, SYNC_SELF_REPO, and the PATH the mocks
 # ride in on — and the one OUTPUT was not, so two runs pointed at different
@@ -1199,6 +1203,23 @@ for repo_name in "${REPOS[@]}"; do
         status="**drift-detected**"
     fi
 
+    # ── Check the hook-script LF line in .gitattributes ─────────────────
+    # A Notes clause, not a status: the line's absence breaks only WSL
+    # sessions in a Windows-autocrlf clone, and the next sync appends it.
+    # Read to a file for the same reason as the fleet-memory pair above; a
+    # failed read joins the ledger rather than reading as `gitattr-missing`.
+    gitattr_file="$WORK_DIR/gitattributes"
+    gitattr_rc=0
+    fetch_file_content "$repo_name" "$GITATTR_REL_PATH" >"$gitattr_file" || gitattr_rc=$?
+    if [[ "$gitattr_rc" -ne 0 ]]; then
+        fetch_failed_paths+=("$GITATTR_REL_PATH")
+    elif [[ "$FETCH_FILE_PRESENT" == "yes" \
+            && "$("$GITATTR_SCRIPT" status "$gitattr_file")" == "present" ]]; then
+        notes="${notes:+$notes; }gitattr-ok"
+    else
+        notes="${notes:+$notes; }gitattr-missing"
+    fi
+
     # ── Check CLAUDE.md bridge status ───────────────────────────────────
 
     claude_rc=0
@@ -1527,6 +1548,15 @@ fi
     echo "this repo's tests, the overflow is in \`## Repo-specific additions\`, and"
     echo "only that repo can trim it. The sync warns and syncs anyway. See"
     echo "\`docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md\`."
+    echo ""
+    echo "**Hook-script line endings**"
+    echo ""
+    echo "Every row's **Notes** says \`gitattr-ok\` when the repo's root \`.gitattributes\`"
+    echo "carries \`.claude/hooks/*.sh text eol=lf\`, and \`gitattr-missing\` when it does"
+    echo "not; the next sync appends it. Without it, a Windows \`core.autocrlf=true\`"
+    echo "checkout gives the hook scripts CRLF and bash in WSL cannot parse them. A"
+    echo "note, never a status. See"
+    echo "\`docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md\`."
     echo ""
     echo "**CLAUDE.md bridge legend**"
     echo ""

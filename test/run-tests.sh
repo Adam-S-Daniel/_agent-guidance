@@ -10,6 +10,15 @@ set -euo pipefail
 #   TEST_JOBS=N       run at most N groups at once (default: one per CPU;
 #                     TEST_JOBS=1 runs them one after another)
 #   TEST_GROUP=<name> run just that one group, in this process
+#   TEST_GROUPS_ONLY="<name> <name> ..."
+#                     run only these groups (space-separated), through the
+#                     same parallel parent; unset or empty runs every group.
+#                     CI's `suite` matrix shards the suite this way.
+#   --list-groups     print the groups this invocation would run, one per
+#                     line, and exit: every group, or the TEST_GROUPS_ONLY
+#                     selection when that is set. scripts/check-ci-shards.js
+#                     reads the canonical list this way rather than parsing
+#                     this file.
 #   BASH32=<path>     use this Bash 3.2 executable for the receipt compatibility
 #                     matrix; otherwise look for bash3.2 on PATH. The matrix
 #                     explicitly skips when neither executable is available.
@@ -2389,6 +2398,40 @@ case "$1" in
                             [[ -d "$bare_dir" ]] || continue
                             name=$(basename "$bare_dir")
                             rows="${rows}${rows:+,}{\"nameWithOwner\":\"bumporg/${name#bumporg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
+                    gattrorg)
+                        # The .gitattributes lane's fixtures, enumerated off
+                        # disk for the same reason as bumporg: the lane stands
+                        # them up in a MOCK_BARE_DIR of its own.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/gattrorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"gattrorg/${name#gattrorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
+                    amorg)
+                        # The Dependabot auto-merge lane's fixtures, enumerated
+                        # off disk like gattrorg's.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/amorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"amorg/${name#amorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
+                    acorg)
+                        # The agent-checks lane's fixtures, enumerated off
+                        # disk like gattrorg's.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/acorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"acorg/${name#acorg_}\"}"
                         done
                         json="[$rows]"
                         ;;
@@ -13886,6 +13929,13 @@ if (typeof on === "string") console.log("trigger " + on);
 else for (const name of (Array.isArray(on) ? on : Object.keys(on || {}))) {
   console.log("trigger " + String(name));
 }
+// The branch filter of the push trigger, as a sorted comma list, so a test can
+// assert it exactly; "-" when the trigger has no `branches:` key at all.
+if (on && typeof on === "object" && !Array.isArray(on) && "push" in on) {
+  const push = on.push;
+  const b = push && typeof push === "object" ? push.branches : undefined;
+  console.log("push_branches " + (Array.isArray(b) ? b.slice().sort().join(",") : "-"));
+}
 if ("concurrency" in doc) console.log("concurrency workflow");
 for (const [name, spec] of Object.entries((doc && doc.jobs) || {})) {
   console.log("job " + name);
@@ -17086,9 +17136,15 @@ untouched body
 #
 # The trigger set is asserted EXACTLY rather than "contains workflow_dispatch".
 # The comment declares three; a fourth arriving unread — `schedule`,
-# `pull_request_target`, a `push` narrowed to one branch — changes which events
+# `pull_request_target`, a `push` widened past `main` — changes which events
 # can collide on a sha, and that collision is the entire subject of the
 # argument the comment makes.
+#
+# SINCE THE SHARD SPLIT the `test` job is only an aggregator: the integration
+# suite runs in the `suite` matrix and every other gate in `checks`, so the
+# step-level assertions below that used to read the `test` job now read
+# `checks`, and the aggregator's own shape — the part that decides whether a
+# red shard can still reach a green required context — is asserted here too.
 test_ci_workflow_shape() {
     echo ""
     echo "=== Test: ci.yml's triggers, and the concurrency block it must not have ==="
@@ -17118,10 +17174,40 @@ test_ci_workflow_shape() {
         return
     fi
 
+    # The job set is exact too: `test` is the one required context and only
+    # an aggregator, so a job added beside `suite` and `checks` that `test`
+    # does not need is a job whose failure nothing required ever sees.
+    if [[ "$jobs" == "checks suite test" ]]; then
+        pass "ci workflow: its jobs are exactly suite, checks and the test aggregator"
+    else
+        fail "ci workflow: its jobs should be exactly 'checks suite test', got '$jobs' — a new job must also be a need of the required test aggregator, or its failure never blocks a merge"
+    fi
+
     if [[ "$triggers" == "pull_request push workflow_dispatch" ]]; then
         pass "ci workflow: its triggers are exactly push, pull_request and workflow_dispatch"
     else
         fail "ci workflow: its triggers should be exactly 'pull_request push workflow_dispatch', got '$triggers' — the comment above workflow_dispatch argues from WHICH events can produce a run for one head sha, so re-read it before adding or removing one"
+    fi
+
+    # The push filter is exactly [main]: parsed by the same YAML reader as
+    # the trigger set, never a regex over the file. A negative case on a
+    # scratch copy with `"**"` proves the assertion can fail.
+    local push_branches
+    push_branches=$(awk '$1 == "push_branches" { print $2 }' "$shape")
+    if [[ "$push_branches" == "main" ]]; then
+        pass "ci workflow: on.push.branches is exactly [main]"
+    else
+        fail "ci workflow: on.push.branches should be exactly [main], got '${push_branches:-none}' — a wider filter runs the whole workflow twice per PR branch push (push and pull_request on one head sha) against the concurrent-job cap"
+    fi
+    local wide_wf="$TEST_DIR/ci-wide-push.yml"
+    local wide_shape="$TEST_DIR/ci-wide-push-shape.txt"
+    if sed 's/^    branches: \[main\]$/    branches: ["**"]/' "$wf" > "$wide_wf" \
+            && ! cmp -s "$wf" "$wide_wf" \
+            && workflow_shape "$wide_wf" > "$wide_shape" 2>/dev/null \
+            && [[ "$(awk '$1 == "push_branches" { print $2 }' "$wide_shape")" == "**" ]]; then
+        pass "ci workflow: a scratch copy with push branches [\"**\"] reads back as ** (the [main] assertion would fail on it)"
+    else
+        fail "ci workflow: could not build or read the scratch copy with push branches [\"**\"], so the [main] assertion is unproven"
     fi
 
     local found
@@ -17138,7 +17224,7 @@ test_ci_workflow_shape() {
 
     local touch_facts="$TEST_DIR/ci-workflow-touch-facts.txt"
     local touch_err="$TEST_DIR/ci-workflow-touch-facts.err"
-    if workflow_step_by_run "$wf" "check-guidance-touch.js" test > "$touch_facts" 2> "$touch_err"; then
+    if workflow_step_by_run "$wf" "check-guidance-touch.js" checks > "$touch_facts" 2> "$touch_err"; then
         if grep -qxF -- "found" "$touch_facts" \
                 && grep -qxF -- "if github.event_name == 'pull_request'" "$touch_facts"; then
             pass "ci workflow: the Guidance touch gate step runs scripts/check-guidance-touch.js only on pull_request"
@@ -17146,13 +17232,13 @@ test_ci_workflow_shape() {
             fail "ci workflow: the Guidance touch gate step should run node scripts/check-guidance-touch.js gated on if: github.event_name == 'pull_request' — got: $(tr '\n' ' ' < "$touch_facts")"
         fi
     else
-        fail "ci workflow: no step runs node scripts/check-guidance-touch.js at all"
+        fail "ci workflow: no step in the checks job runs node scripts/check-guidance-touch.js at all"
     fi
 
     local step_names="$TEST_DIR/ci-workflow-step-names.txt"
     local step_names_err="$TEST_DIR/ci-workflow-step-names.err"
-    if ! workflow_step_names "$wf" "test" > "$step_names" 2> "$step_names_err"; then
-        fail "ci workflow: could not read the test job's step names — $(head -1 "$step_names_err")"
+    if ! workflow_step_names "$wf" "checks" > "$step_names" 2> "$step_names_err"; then
+        fail "ci workflow: could not read the checks job's step names — $(head -1 "$step_names_err")"
     else
         # S3: under this script's own `set -euo pipefail`, a bare
         # `var=$(grep ... | head -1 | cut ...)` aborts the WHOLE suite the
@@ -17186,7 +17272,7 @@ test_ci_workflow_shape() {
 const fs = require("node:fs");
 const YAML = require(process.argv[1] + "/node_modules/yaml");
 const doc = YAML.parseDocument(fs.readFileSync(process.argv[2], "utf8"));
-const steps = doc.getIn(["jobs", "test", "steps"]);
+const steps = doc.getIn(["jobs", "checks", "steps"]);
 const idx = steps.items.findIndex((s) => s.get && s.get("name") === "Guidance touch gate");
 if (idx === -1) {
   console.error("no Guidance touch gate step found to delete");
@@ -17198,7 +17284,7 @@ fs.writeFileSync(process.argv[3], doc.toString());
         fail "ci workflow: S3 fixture setup could not delete the Guidance touch gate step — $(head -1 "$TEST_DIR/ci-no-touch-step.err")"
     else
         local no_touch_step_names="$TEST_DIR/ci-no-touch-step-names.txt"
-        workflow_step_names "$no_touch_step_wf" "test" > "$no_touch_step_names" 2>/dev/null
+        workflow_step_names "$no_touch_step_wf" "checks" > "$no_touch_step_names" 2>/dev/null
         local s3_out s3_rc=0
         s3_out=$(bash -c '
             set -euo pipefail
@@ -17217,21 +17303,88 @@ fs.writeFileSync(process.argv[3], doc.toString());
         fi
     fi
 
-    # S2: scoped to the "test" job specifically — an unscoped workflow_steps
-    # concatenates every job's steps in `jobs:` object-key order, so a `prep`
-    # job ahead of `test` with its OWN fetch-depth: 0 checkout would let a
-    # default-depth `test` checkout pass this assertion by sitting behind it.
-    local steps_facts="$TEST_DIR/ci-workflow-steps.txt"
-    local steps_err="$TEST_DIR/ci-workflow-steps.err"
-    if ! workflow_steps "$wf" test > "$steps_facts" 2> "$steps_err"; then
-        fail "ci workflow: could not parse its steps — $(head -1 "$steps_err")"
-    else
-        local first_checkout_depth
-        first_checkout_depth=$(awk '$1 ~ /^actions\/checkout@/ { print $3; exit }' "$steps_facts")
-        if [[ "$first_checkout_depth" == "0" ]]; then
-            pass "ci workflow: the test job's first checkout is fetch-depth: 0 (the touch gate's merge-base needs it)"
+    # S2: scoped to one job at a time — an unscoped workflow_steps
+    # concatenates every job's steps in `jobs:` object-key order, so a job
+    # ahead of the one under test with its OWN fetch-depth: 0 checkout would
+    # let a default-depth checkout pass this assertion by sitting behind it.
+    # `checks` runs the touch gate, whose merge-base needs full history;
+    # `suite` keeps the full history the integration suite always ran on.
+    local depth_job
+    for depth_job in checks suite; do
+        local steps_facts="$TEST_DIR/ci-workflow-steps-$depth_job.txt"
+        local steps_err="$TEST_DIR/ci-workflow-steps-$depth_job.err"
+        if ! workflow_steps "$wf" "$depth_job" > "$steps_facts" 2> "$steps_err"; then
+            fail "ci workflow: could not parse the $depth_job job's steps — $(head -1 "$steps_err")"
         else
-            fail "ci workflow: the test job's first checkout should be fetch-depth: 0 — got '${first_checkout_depth:-none}'"
+            local first_checkout_depth
+            first_checkout_depth=$(awk '$1 ~ /^actions\/checkout@/ { print $3; exit }' "$steps_facts")
+            if [[ "$first_checkout_depth" == "0" ]]; then
+                pass "ci workflow: the $depth_job job's first checkout is fetch-depth: 0"
+            else
+                fail "ci workflow: the $depth_job job's first checkout should be fetch-depth: 0 — got '${first_checkout_depth:-none}'"
+            fi
+        fi
+    done
+
+    # THE AGGREGATOR. `test` is the required context, so its shape is the
+    # merge gate: it must need both jobs, run under `if: always()` (a skipped
+    # required job reads as passing, and `!cancelled()` or the default would
+    # skip it on exactly the runs that must fail), check nothing out, and read
+    # the needs' results through env: rather than a `${{ }}` in run:.
+    local agg="$TEST_DIR/ci-workflow-aggregator.txt" agg_run="$TEST_DIR/ci-workflow-aggregator.sh"
+    if ! node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const job = (doc && doc.jobs && doc.jobs.test) || null;
+if (!job) { console.error("no test job"); process.exit(1); }
+const needs = [].concat(job.needs || []).map(String).sort();
+console.log("name " + String(job.name));
+console.log("needs " + needs.join(","));
+console.log("if " + (job.if === undefined ? "-" : String(job.if)));
+const steps = job.steps || [];
+console.log("steps " + steps.length);
+for (const st of steps) {
+  if (st.uses) console.log("uses " + st.uses);
+  for (const [k, v] of Object.entries(st.env || {})) console.log("env " + k + "=" + String(v));
+  if (typeof st.run === "string" && /\$\{\{/.test(st.run)) console.log("interpolates");
+}
+if (steps.length === 1 && typeof steps[0].run === "string") fs.writeFileSync(process.argv[3], steps[0].run);
+' "$REPO_ROOT" "$wf" "$agg_run" > "$agg" 2> "$TEST_DIR/ci-workflow-aggregator.err"; then
+        fail "ci workflow: no test job to aggregate the required context — $(head -1 "$TEST_DIR/ci-workflow-aggregator.err")"
+    else
+        if grep -qxF -- "name test" "$agg" && grep -qxF -- "needs checks,suite" "$agg" \
+                && grep -qxF -- "if always()" "$agg" && grep -qxF -- "steps 1" "$agg"; then
+            pass "ci workflow: the test job is named test, needs exactly suite and checks, runs if: always(), in one step"
+        else
+            fail "ci workflow: the test job should be named test, need [suite, checks], run if: always() and have one step — got: $(tr '\n' ' ' < "$agg")"
+        fi
+        if ! grep -q '^uses ' "$agg" && ! grep -qxF -- "interpolates" "$agg" \
+                && grep -qxF -- 'env SUITE_RESULT=${{ needs.suite.result }}' "$agg" \
+                && grep -qxF -- 'env CHECKS_RESULT=${{ needs.checks.result }}' "$agg"; then
+            pass "ci workflow: the aggregator checks nothing out and reads both results through env:, not run:"
+        else
+            fail "ci workflow: the aggregator should use no action and read SUITE_RESULT/CHECKS_RESULT from needs.*.result via env: only — got: $(tr '\n' ' ' < "$agg")"
+        fi
+        # Run the aggregator's own body: it must pass only on success/success
+        # and fail closed on everything else a need can conclude.
+        if [[ -s "$agg_run" ]]; then
+            local sr cr want got wrong="" tried=0
+            for sr in success failure cancelled skipped ""; do
+                for cr in success failure cancelled skipped ""; do
+                    want=1; [[ "$sr" == success && "$cr" == success ]] && want=0
+                    if SUITE_RESULT="$sr" CHECKS_RESULT="$cr" bash "$agg_run" > /dev/null 2>&1; then got=0; else got=1; fi
+                    tried=$((tried + 1))
+                    [[ "$got" == "$want" ]] || wrong+=" suite='$sr'/checks='$cr'->$got"
+                done
+            done
+            if [[ "$tried" == 25 && -z "$wrong" ]]; then
+                pass "ci workflow: the aggregator passes only when suite and checks are both success (25 combinations)"
+            else
+                fail "ci workflow: the aggregator must exit 0 only for success/success and 1 otherwise — wrong for:$wrong (tried $tried)"
+            fi
+        else
+            fail "ci workflow: could not extract the aggregator's run: body"
         fi
     fi
 
@@ -19090,29 +19243,51 @@ test_fleet_guidance_mirror() {
     fi
 
     # The checker only protects anything if CI runs it. Unconditional (no
-    # `if:`): it must report on every push and pull request.
+    # `if:`): it must report on every pull request and push to main.
     local facts="$TEST_DIR/fleet-guidance-mirror-step.txt"
-    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-fleet-guidance-mirror.js" test > "$facts" 2>/dev/null \
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-fleet-guidance-mirror.js" checks > "$facts" 2>/dev/null \
             && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
-        pass "fleet guidance mirror: ci.yml's test job runs the checker unconditionally"
+        pass "fleet guidance mirror: ci.yml's checks job runs the checker unconditionally"
     else
-        fail "fleet guidance mirror: ci.yml's test job should run node scripts/check-fleet-guidance-mirror.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
+        fail "fleet guidance mirror: ci.yml's checks job should run node scripts/check-fleet-guidance-mirror.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
     fi
 
     # Order matters: a failed step skips every later one that lacks
-    # `if: always()`, and the integration suite compares the same files, so the
-    # checker must run first for its fix-naming message to be the one shown.
-    local names="$TEST_DIR/fleet-guidance-mirror-step-names.txt" mirror_line suite_line
-    if workflow_step_names "$REPO_ROOT/.github/workflows/ci.yml" test > "$names" 2>/dev/null; then
+    # `if: always()`, and the integration suite compares the same files, so
+    # nothing that can fail may run ahead of the checker, or its fix-naming
+    # message is the one hidden. Since the shard split the suite runs in the
+    # `suite` job, so that means: the suite step is not in `checks` at all,
+    # `checks` does not `needs:` the suite (a red shard would skip it), and
+    # inside `checks` only setup and the warn-only Markdown step precede it.
+    local wf="$REPO_ROOT/.github/workflows/ci.yml"
+    local names="$TEST_DIR/fleet-guidance-mirror-step-names.txt" suite_names="$TEST_DIR/fleet-guidance-mirror-suite-names.txt"
+    if workflow_step_names "$wf" checks > "$names" 2>/dev/null && workflow_step_names "$wf" suite > "$suite_names" 2>/dev/null; then
+        local mirror_line before
         mirror_line=$(grep -nxF -- "Fleet payload mirrors base.md" "$names" | head -1 | cut -d: -f1) || mirror_line=""
-        suite_line=$(grep -nxF -- "Run integration tests" "$names" | head -1 | cut -d: -f1) || suite_line=""
-        if [[ -n "$mirror_line" && -n "$suite_line" && "$mirror_line" -lt "$suite_line" ]]; then
-            pass "fleet guidance mirror: the checker step runs before 'Run integration tests'"
+        if [[ -n "$mirror_line" ]]; then
+            before=$(head -n $((mirror_line - 1)) "$names" | grep -vxF -e "-" -e "Setup Node" -e "Install the workflow parser" \
+                -e "Agent Markdown warnings (spelling, dangling references)" | tr '\n' ' ') || before=""
+        fi
+        if [[ -n "$mirror_line" && -z "$before" ]] && grep -qxF -- "Run integration tests" "$suite_names" \
+                && ! grep -qxF -- "Run integration tests" "$names"; then
+            pass "fleet guidance mirror: the checker runs in checks ahead of every step that can fail, and the suite runs in its own job"
         else
-            fail "fleet guidance mirror: expected 'Fleet payload mirrors base.md' before 'Run integration tests' — got mirror at ${mirror_line:-missing}, suite at ${suite_line:-missing}"
+            fail "fleet guidance mirror: expected 'Fleet payload mirrors base.md' in checks after only setup and the Markdown warnings, and 'Run integration tests' in suite only — got mirror at ${mirror_line:-missing}, failing steps before it: '${before:-}'"
         fi
     else
-        fail "fleet guidance mirror: could not read the test job's step names"
+        fail "fleet guidance mirror: could not read the checks and suite jobs' step names"
+    fi
+    local checks_needs
+    checks_needs=$(node -e '
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const d = YAML.parse(require("node:fs").readFileSync(process.argv[2], "utf8"));
+const j = d && d.jobs && d.jobs.checks;
+process.stdout.write(!j ? "no-job" : j.needs === undefined ? "none" : JSON.stringify(j.needs));
+' "$REPO_ROOT" "$wf" 2>/dev/null) || checks_needs="unparsed"
+    if [[ "$checks_needs" == none ]]; then
+        pass "fleet guidance mirror: the checks job needs nothing, so a red shard cannot skip the checker"
+    else
+        fail "fleet guidance mirror: the checks job should have no needs: — got $checks_needs"
     fi
 }
 
@@ -19140,6 +19315,47 @@ test_check_agent_markdown() {
         pass "agent markdown check: node:test suite is green ($pass_n passed)"
     else
         fail "agent markdown check: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=76): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+# The CI shard partition (scripts/check-ci-shards.js). The node:test suite
+# covers the checker's verdicts on fixtures, the real ci.yml, and a scratch
+# copy with a group removed; this wrapper adds that CI actually runs it, in
+# `checks`, unconditionally. Without that step a group added to TEST_GROUPS
+# but to no shard stops running in CI while every shard stays green.
+test_check_ci_shards() {
+    echo ""
+    echo "=== Test: check-ci-shards.js (every test group in exactly one CI shard) ==="
+
+    # Same non-silent-skip rule as the other node suites.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "ci shards: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/check-ci-shards-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command. Run
+    # without TEST_GROUPS_ONLY/TEST_GROUP so the checker's own child sees the
+    # same environment CI's checks job gives it (it drops both anyway).
+    env -u TEST_GROUPS_ONLY -u TEST_GROUP node --test --test-reporter=tap "$REPO_ROOT/test/test-check-ci-shards.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 16 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 16 ]]; then
+        pass "ci shards: node:test suite is green ($pass_n passed)"
+    else
+        fail "ci shards: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=16): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+
+    local facts="$TEST_DIR/check-ci-shards-step.txt"
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "check-ci-shards.js" checks > "$facts" 2>/dev/null \
+            && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
+        pass "ci shards: ci.yml's checks job runs the checker unconditionally"
+    else
+        fail "ci shards: ci.yml's checks job should run node scripts/check-ci-shards.js with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
     fi
 }
 
@@ -22095,6 +22311,651 @@ PY
     fi
 }
 
+# ── The hook-script LF line in .gitattributes (docs/decisions/0019) ───────
+#
+# The sync delivers `.claude/hooks/*.sh` to every consumer, and a Windows
+# `core.autocrlf=true` checkout gives them CRLF, which bash in WSL cannot
+# parse. sync.sh appends one line to each repo's root .gitattributes to stop
+# that; scripts/hook-eol-gitattributes.sh owns the line. These tests cover the
+# helper's byte rules, real git honoring the line, the sync's delivery and
+# idempotence, the dry run and the drift-report note.
+
+GATTR_LINE_T='.claude/hooks/*.sh text eol=lf'
+GATTR_COMMENT_T='# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)'
+
+# gattr_git — git with no system config and no signing, so a test's answer
+# cannot depend on the machine running it (a system core.autocrlf, say).
+gattr_git() {
+    GIT_CONFIG_NOSYSTEM=1 git -c commit.gpgsign=false -c tag.gpgsign=false "$@"
+}
+
+# gattr_case <dir> <name> <original printf format|ABSENT> <expected result>
+#            <expected printf format> — run `ensure` on one file shape and
+# compare the result word and the file's full bytes.
+gattr_case() {
+    local d="$1" name="$2" orig="$3" want_result="$4" want_bytes="$5"
+    local f="$d/$name/.gitattributes" got rc=0
+    mkdir -p "$d/$name"
+    [[ "$orig" == ABSENT ]] || printf "$orig" > "$f"
+    got=$("$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure "$f") || rc=$?
+    if [[ $rc -eq 0 && "$got" == "$want_result" ]]; then
+        pass "gitattributes helper ($name): ensure reports $want_result"
+    else
+        fail "gitattributes helper ($name): ensure reports $want_result — got '$got', exit $rc"
+    fi
+    printf "$want_bytes" > "$d/$name.expected"
+    if cmp -s "$f" "$d/$name.expected"; then
+        pass "gitattributes helper ($name): file bytes are exactly as expected"
+    else
+        fail "gitattributes helper ($name): file bytes differ — got $(od -An -c "$f" | tr -s ' ' | tr '\n' ' ')"
+    fi
+}
+
+test_hook_eol_gitattributes_helper() {
+    echo ""
+    echo "=== Test: hook-eol-gitattributes.sh byte rules ==="
+
+    local s="$REPO_ROOT/scripts/hook-eol-gitattributes.sh"
+    local d="$TEST_DIR/gattr-helper" got rc
+    local L="$GATTR_LINE_T" C="$GATTR_COMMENT_T"
+    rm -rf "$d"; mkdir -p "$d"
+
+    gattr_case "$d" create ABSENT created "$C\n$L\n"
+    gattr_case "$d" append '*.png binary\n' appended "*.png binary\n$C\n$L\n"
+    gattr_case "$d" empty '' appended "$C\n$L\n"
+    gattr_case "$d" no-trailing-newline '*.png binary' appended "*.png binary\n$C\n$L\n"
+    gattr_case "$d" crlf '*.png binary\r\n*.jpg binary\r\n' appended \
+        "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n"
+    gattr_case "$d" crlf-no-trailing-newline '*.png binary\r\n*.jpg binary' appended \
+        "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n"
+    # Present, padded with whitespace and inside a CRLF file: identical once
+    # the surrounding whitespace is stripped, so nothing is written.
+    gattr_case "$d" present-padded "*.png binary\r\n  $L \t\r\n" present \
+        "*.png binary\r\n  $L \t\r\n"
+    # Present WITHOUT the comment: the comment is not added on its own.
+    gattr_case "$d" present-no-comment "$L\n*.png binary\n" present "$L\n*.png binary\n"
+    # The comment left behind when the line was removed by hand: only the line
+    # comes back, so the comment is not duplicated.
+    gattr_case "$d" comment-only "*.png binary\n$C\n" appended "*.png binary\n$C\n$L\n"
+    # A broader rule earlier in the file, as in adam-agentskills.
+    gattr_case "$d" star-minus-text '* -text\n' appended "* -text\n$C\n$L\n"
+
+    # Idempotence: a second ensure over the appended file writes nothing.
+    cp "$d/append/.gitattributes" "$d/append.after-first"
+    got=$("$s" ensure "$d/append/.gitattributes")
+    if [[ "$got" == present ]] && cmp -s "$d/append/.gitattributes" "$d/append.after-first"; then
+        pass "gitattributes helper: a second ensure reports present and changes no byte"
+    else
+        fail "gitattributes helper: a second ensure reports present and changes no byte — got '$got'"
+    fi
+
+    # status never writes, and answers both ways.
+    printf '*.png binary\n' > "$d/status-missing"
+    got=$("$s" status "$d/status-missing")
+    if [[ "$got" == missing ]] && [[ "$(cat "$d/status-missing")" == '*.png binary' ]]; then
+        pass "gitattributes helper: status reports missing and writes nothing"
+    else
+        fail "gitattributes helper: status reports missing and writes nothing — got '$got'"
+    fi
+    got=$("$s" status "$d/no-such-file")
+    if [[ "$got" == missing && ! -e "$d/no-such-file" ]]; then
+        pass "gitattributes helper: status on an absent file reports missing and creates nothing"
+    else
+        fail "gitattributes helper: status on an absent file reports missing and creates nothing — got '$got'"
+    fi
+    got=$("$s" status "$d/present-padded/.gitattributes")
+    if [[ "$got" == present ]]; then
+        pass "gitattributes helper: status reports present for a padded CRLF line"
+    else
+        fail "gitattributes helper: status reports present for a padded CRLF line — got '$got'"
+    fi
+
+    # A near miss is not the line.
+    printf '.claude/hooks/*.sh text\n' > "$d/near-miss"
+    got=$("$s" status "$d/near-miss")
+    if [[ "$got" == missing ]]; then
+        pass "gitattributes helper: a line without eol=lf is not the managed line"
+    else
+        fail "gitattributes helper: a line without eol=lf is not the managed line — got '$got'"
+    fi
+
+    # A symlink is refused, not followed.
+    printf '*.png binary\n' > "$d/link-target"
+    ln -s "$d/link-target" "$d/link"
+    rc=0; got=$("$s" ensure "$d/link") || rc=$?
+    if [[ $rc -eq 3 && "$got" == refused ]] && [[ "$(cat "$d/link-target")" == '*.png binary' ]]; then
+        pass "gitattributes helper: a symlinked .gitattributes is refused with exit 3 and left untouched"
+    else
+        fail "gitattributes helper: a symlinked .gitattributes is refused with exit 3 and left untouched — got '$got', exit $rc"
+    fi
+
+    # Gitattributes semantics: for each attribute the LAST matching line wins,
+    # so the appended line beats an earlier `* -text` for the hooks alone. The
+    # reversed file is the control that shows the order is what does it.
+    local r="$d/semantics"
+    gattr_git init -q -b main "$r"
+    cp "$d/star-minus-text/.gitattributes" "$r/.gitattributes"
+    got=$(gattr_git -C "$r" check-attr text eol -- .claude/hooks/x.sh README.md)
+    if [[ "$got" == *".claude/hooks/x.sh: text: set"* && "$got" == *".claude/hooks/x.sh: eol: lf"* \
+          && "$got" == *"README.md: text: unset"* && "$got" == *"README.md: eol: unspecified"* ]]; then
+        pass "gitattributes helper: appended after '* -text', the line sets text eol=lf on the hooks and nothing else"
+    else
+        fail "gitattributes helper: appended after '* -text', the line sets text eol=lf on the hooks and nothing else — got: $got"
+    fi
+    printf '%s\n* -text\n' "$L" > "$r/.gitattributes"
+    got=$(gattr_git -C "$r" check-attr text -- .claude/hooks/x.sh)
+    if [[ "$got" == *".claude/hooks/x.sh: text: unset"* ]]; then
+        pass "gitattributes helper (control): placed BEFORE '* -text' the line loses, so appending is what makes it win"
+    else
+        fail "gitattributes helper (control): placed BEFORE '* -text' the line loses — got: $got"
+    fi
+}
+
+# Real git, local only: does the line do its job? A committed LF hook checks
+# out CRLF under core.autocrlf=true without it, and LF with it — and bash
+# rejects the CRLF copy the way WSL sessions saw. Also pins down what the ADR
+# says about clones that already exist: adding the line does not rewrite their
+# working copy, and neither does `git checkout --`; removing the file and
+# checking it out again does.
+test_hook_eol_gitattributes_git_checkout() {
+    echo ""
+    echo "=== Test: real git honors the hook-script LF line under core.autocrlf=true ==="
+
+    local d="$TEST_DIR/gattr-git" src old new got
+    rm -rf "$d"; mkdir -p "$d"
+    src="$d/src"; old="$d/old-clone"; new="$d/new-clone"
+    gattr_git init -q -b main "$src"
+    mkdir -p "$src/.claude/hooks"
+    printf '#!/usr/bin/env bash\nf() {\n    echo ok\n}\nf\n' > "$src/.claude/hooks/x.sh"
+    gattr_git -C "$src" add .claude/hooks/x.sh
+    gattr_git -C "$src" commit -q -m "hook, no attributes"
+    gattr_git -C "$src" tag before-line
+
+    gattr_git -c core.autocrlf=true clone -q "$src" "$old" 2>/dev/null
+    gattr_git -C "$old" config core.autocrlf true
+    if grep -q $'\r' "$old/.claude/hooks/x.sh"; then
+        pass "real git: without the line, an autocrlf checkout gives the LF hook CRLF"
+    else
+        fail "real git: without the line, an autocrlf checkout gives the LF hook CRLF — it stayed LF, so this test proves nothing"
+    fi
+    if bash -n "$old/.claude/hooks/x.sh" 2>/dev/null; then
+        fail "real git: bash rejects the CRLF hook — it parsed"
+    else
+        pass "real git: bash rejects the CRLF hook (the WSL failure)"
+    fi
+
+    "$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure "$src/.gitattributes" >/dev/null
+    gattr_git -C "$src" add .gitattributes
+    gattr_git -C "$src" commit -q -m "pin hooks to LF"
+
+    gattr_git -c core.autocrlf=true clone -q "$src" "$new" 2>/dev/null
+    if grep -q $'\r' "$new/.claude/hooks/x.sh"; then
+        fail "real git: with the line, an autocrlf checkout keeps the hook LF — it has CR"
+    else
+        pass "real git: with the line, an autocrlf checkout keeps the hook LF"
+    fi
+    got=$(gattr_git -C "$new" ls-files --eol -- .claude/hooks/x.sh)
+    if [[ "$got" == *"i/lf"*"w/lf"*"eol=lf"* ]]; then
+        pass "real git: ls-files --eol reads i/lf w/lf with the attribute"
+    else
+        fail "real git: ls-files --eol reads i/lf w/lf with the attribute — got: $got"
+    fi
+    if bash -n "$new/.claude/hooks/x.sh" 2>/dev/null; then
+        pass "real git: bash parses the LF hook"
+    else
+        fail "real git: bash parses the LF hook"
+    fi
+
+    # The clone that already existed. Pulling the line in leaves its hook CRLF
+    # because the blob did not change; `git checkout --` does not rewrite a
+    # stat-clean file either.
+    gattr_git -C "$old" pull -q 2>/dev/null
+    gattr_git -C "$old" checkout -- .claude/hooks/
+    if grep -q $'\r' "$old/.claude/hooks/x.sh" && [[ -z "$(gattr_git -C "$old" status --porcelain)" ]]; then
+        pass "real git: an existing CRLF copy stays CRLF after the pull and after 'git checkout --', with a clean status"
+    else
+        fail "real git: an existing CRLF copy stays CRLF after the pull and after 'git checkout --', with a clean status"
+    fi
+    rm "$old/.claude/hooks/x.sh"
+    gattr_git -C "$old" checkout -- .claude/hooks/
+    if ! grep -q $'\r' "$old/.claude/hooks/x.sh" && bash -n "$old/.claude/hooks/x.sh" 2>/dev/null; then
+        pass "real git: removing the hook and checking it out again gives LF"
+    else
+        fail "real git: removing the hook and checking it out again gives LF"
+    fi
+}
+
+# setup_gattr_repos <bare dir> — the gattrorg fleet, one bare per
+# .gitattributes shape the sync has to handle.
+setup_gattr_repos() {
+    local bare_dir="$1" work="$TEST_DIR/gattr-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in repo-none repo-append repo-present repo-crlf repo-no-newline \
+                repo-star-minus-text repo-ignored repo-protected; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/gattrorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        case "$name" in
+            repo-append|repo-protected) printf '*.png binary\n' > "$work/$name/.gitattributes" ;;
+            repo-present) printf '*.png binary\n  %s  \n' "$GATTR_LINE_T" > "$work/$name/.gitattributes" ;;
+            repo-crlf) printf '*.png binary\r\n*.jpg binary\r\n' > "$work/$name/.gitattributes" ;;
+            repo-no-newline) printf '*.png binary' > "$work/$name/.gitattributes" ;;
+            repo-star-minus-text) printf '* -text\n' > "$work/$name/.gitattributes" ;;
+            repo-ignored) printf '.gitattributes\n' > "$work/$name/.gitignore" ;;
+        esac
+        [[ -f "$work/$name/.gitattributes" ]] && cp "$work/$name/.gitattributes" "$bare_dir/../gattr-orig-$name"
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/gattrorg_$name" HEAD:main 2>/dev/null
+    done
+    install_reject_main_hook "$bare_dir/gattrorg_repo-protected"
+}
+
+# gattr_section <log> <repo> — the lines sync.sh logged for one repo, so an
+# assertion about one repo cannot be satisfied by another's line.
+gattr_section() {
+    awk -v start="=== gattrorg/$2 ===" '
+        $0 == start { on = 1; print; next }
+        on && /^=== / { on = 0 }
+        on { print }
+    ' "$1"
+}
+
+# gattr_expect <repo> <expected printf format> <label> — the repo's
+# .gitattributes on main (or on <ref>) is exactly these bytes.
+gattr_expect() {
+    local repo="$1" want="$2" label="$3" ref="${4:-main}"
+    local bare="$TEST_DIR/gattr-bare/gattrorg_$repo"
+    printf "$want" > "$TEST_DIR/gattr-want"
+    if gattr_git -C "$bare" show "$ref:.gitattributes" > "$TEST_DIR/gattr-got" 2>/dev/null \
+       && cmp -s "$TEST_DIR/gattr-got" "$TEST_DIR/gattr-want"; then
+        pass "$label"
+    else
+        fail "$label — got $(od -An -c "$TEST_DIR/gattr-got" 2>/dev/null | tr -s ' ' | tr '\n' ' ')"
+    fi
+}
+
+test_sync_gitattributes() {
+    echo ""
+    echo "=== Test: sync.sh maintains the hook-script LF line in .gitattributes ==="
+
+    local bare="$TEST_DIR/gattr-bare" L="$GATTR_LINE_T" C="$GATTR_COMMENT_T"
+    local out="$TEST_DIR/gattr-sync" before after rc sec got
+    setup_gattr_repos "$bare"
+
+    run_gattr_sync() {   # <log> [--dry-run]
+        local log="$1"; shift
+        GITHUB_REPOSITORY_OWNER=gattrorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/gattr-pr-bodies" \
+        REPOS_YML="$TEST_DIR/repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+
+    # ── Dry run: reported like the other managed files, nothing written ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_gattr_sync "$out-dry.log" --dry-run || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "gitattributes (dry run): exits 0 and moves no ref"
+    else
+        fail "gitattributes (dry run): exits 0 and moves no ref — exit $rc"
+    fi
+    gattr_section "$out-dry.log" repo-none > "$out-dry-none"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add .gitattributes pinning .claude/hooks/*.sh to LF" \
+        "gitattributes (dry run): a repo without the file is told it would be created"
+    gattr_section "$out-dry.log" repo-append > "$out-dry-append"
+    assert_contains "$out-dry-append" "[DRY RUN] Would append the hook-script LF line to .gitattributes (existing lines preserved)" \
+        "gitattributes (dry run): a repo with the file is told the line would be appended"
+    gattr_section "$out-dry.log" repo-present > "$out-dry-present"
+    assert_not_contains "$out-dry-present" ".gitattributes" \
+        "gitattributes (dry run): a repo that already has the line is not told anything about it"
+    gattr_section "$out-dry.log" repo-ignored > "$out-dry-ignored"
+    assert_contains "$out-dry-ignored" "WARN: .gitattributes is gitignored" \
+        "gitattributes (dry run): a gitignored .gitattributes is named, not written"
+    assert_not_contains "$out-dry-ignored" "[DRY RUN] Would add .gitattributes" \
+        "gitattributes (dry run): a gitignored .gitattributes is not offered for writing"
+
+    # ── Drift report before the sync ──
+    local rpt="$TEST_DIR/gattr-drift-before.md"
+    GITHUB_REPOSITORY_OWNER=gattrorg MOCK_BARE_DIR="$bare" REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out-drift-before.log" 2>&1 || true
+    assert_row_note_contains "$rpt" "gattrorg/repo-present" "gitattr-ok" \
+        "gitattributes (drift): a repo carrying the line reads gitattr-ok"
+    assert_row_note_contains "$rpt" "gattrorg/repo-none" "gitattr-missing" \
+        "gitattributes (drift): a repo with no .gitattributes reads gitattr-missing"
+    assert_row_note_contains "$rpt" "gattrorg/repo-append" "gitattr-missing" \
+        "gitattributes (drift): a .gitattributes without the line reads gitattr-missing"
+    assert_scoped_line_lacks "$rpt" "gattrorg/repo-present" "gitattr-missing" \
+        "gitattributes (drift): the present repo is not also called missing"
+    assert_contains "$rpt" "**Hook-script line endings**" \
+        "gitattributes (drift): the legend explains the note"
+
+    # ── The real run ──
+    rc=0; run_gattr_sync "$out-1.log" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "gitattributes (sync): the run exits 0"
+    else
+        fail "gitattributes (sync): the run exits 0 — got $rc"
+    fi
+    gattr_expect repo-none "$C\n$L\n" \
+        "gitattributes (sync): created with the comment and the line"
+    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+        "gitattributes (sync): appended, every existing byte preserved"
+    gattr_expect repo-present "*.png binary\n  $L  \n" \
+        "gitattributes (sync): already present (padded) — byte-identical"
+    gattr_expect repo-crlf "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n" \
+        "gitattributes (sync): a CRLF file is appended to with CRLF"
+    gattr_expect repo-no-newline "*.png binary\n$C\n$L\n" \
+        "gitattributes (sync): a missing final newline is supplied before appending"
+    gattr_expect repo-star-minus-text "* -text\n$C\n$L\n" \
+        "gitattributes (sync): appended after '* -text'"
+
+    # Same commit as the rest of the delivery, not a second one.
+    got=$(gattr_git -C "$bare/gattrorg_repo-none" show --name-only --format= main)
+    if grep -qxF .gitattributes <<< "$got" && grep -qxF AGENTS.md <<< "$got" \
+       && [[ "$(gattr_git -C "$bare/gattrorg_repo-none" rev-list --count main)" == 2 ]]; then
+        pass "gitattributes (sync): delivered in the same single commit as AGENTS.md"
+    else
+        fail "gitattributes (sync): delivered in the same single commit as AGENTS.md — files: $(tr '\n' ' ' <<< "$got")"
+    fi
+    got=$(gattr_git -C "$bare/gattrorg_repo-present" show --name-only --format= main)
+    if grep -qxF .gitattributes <<< "$got"; then
+        fail "gitattributes (sync): a .gitattributes that already had the line is not in the commit"
+    else
+        pass "gitattributes (sync): a .gitattributes that already had the line is not in the commit"
+    fi
+
+    # `* -text` then the line: real git, on the synced repo itself.
+    local clone="$TEST_DIR/gattr-verify-star"
+    rm -rf "$clone"
+    gattr_git clone -q "$bare/gattrorg_repo-star-minus-text" "$clone" 2>/dev/null
+    got=$(gattr_git -C "$clone" check-attr text eol -- .claude/hooks/fleet-memory.sh README.md)
+    if [[ "$got" == *"fleet-memory.sh: text: set"* && "$got" == *"fleet-memory.sh: eol: lf"* \
+          && "$got" == *"README.md: text: unset"* ]]; then
+        pass "gitattributes (sync): in the '* -text' repo the hooks get text eol=lf and README.md stays -text"
+    else
+        fail "gitattributes (sync): in the '* -text' repo the hooks get text eol=lf and README.md stays -text — got: $got"
+    fi
+
+    # A gitignored .gitattributes: warned, not written, and the rest delivered.
+    if gattr_git -C "$bare/gattrorg_repo-ignored" cat-file -e main:.gitattributes 2>/dev/null; then
+        fail "gitattributes (sync): a gitignored .gitattributes is never written"
+    else
+        pass "gitattributes (sync): a gitignored .gitattributes is never written"
+    fi
+    if gattr_git -C "$bare/gattrorg_repo-ignored" cat-file -e main:AGENTS.md 2>/dev/null; then
+        pass "gitattributes (sync): the gitignored repo still gets the rest of the delivery"
+    else
+        fail "gitattributes (sync): the gitignored repo still gets the rest of the delivery"
+    fi
+
+    # The PR fallback carries it too, and says so.
+    gattr_expect repo-protected "*.png binary\n$C\n$L\n" \
+        "gitattributes (sync, PR fallback): appended on the fallback branch" agents-md-sync/update
+    got="$TEST_DIR/gattr-pr-bodies/gattrorg_repo-protected.body"
+    assert_prose_contains "$got" "This PR also adds one line to \`.gitattributes\`" \
+        "gitattributes (sync, PR fallback): the PR body names the .gitattributes change"
+
+    # ── Idempotence: a second run changes nothing and commits nothing ──
+    # repo-protected is left out: its main never receives the fallback PR in
+    # this mock, so every run re-proposes it, by design and with or without
+    # this line.
+    before=$(bare_fleet_fingerprint "$bare" | grep -v '^gattrorg_repo-protected ')
+    rc=0; run_gattr_sync "$out-2.log" || rc=$?
+    after=$(bare_fleet_fingerprint "$bare" | grep -v '^gattrorg_repo-protected ')
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "gitattributes (idempotent): a second run exits 0 and moves no ref"
+    else
+        fail "gitattributes (idempotent): a second run exits 0 and moves no ref — exit $rc"
+    fi
+    for sec in repo-none repo-append repo-present repo-crlf repo-no-newline repo-star-minus-text repo-ignored; do
+        gattr_section "$out-2.log" "$sec" > "$out-2-$sec"
+        assert_contains "$out-2-$sec" "Up to date — skipping." \
+            "gitattributes (idempotent): $sec is up to date on the second run"
+    done
+
+    # ── A repo that lacks ONLY the line still gets a commit ──
+    local w="$TEST_DIR/gattr-strip"
+    rm -rf "$w"
+    gattr_git clone -q "$bare/gattrorg_repo-append" "$w" 2>/dev/null
+    printf '*.png binary\n' > "$w/.gitattributes"
+    gattr_git -C "$w" commit -q -am "drop the line by hand"
+    gattr_git -C "$w" push -q origin HEAD:main 2>/dev/null
+    rc=0; run_gattr_sync "$out-3.log" || rc=$?
+    gattr_section "$out-3.log" repo-append > "$out-3-append"
+    assert_not_contains "$out-3-append" "Up to date — skipping." \
+        "gitattributes (only the line missing): the repo is not skipped"
+    got=$(gattr_git -C "$bare/gattrorg_repo-append" log -1 --format=%s main)
+    if [[ "$got" == "chore: pin the hook scripts to LF in .gitattributes" ]]; then
+        pass "gitattributes (only the line missing): the commit's subject names the change"
+    else
+        fail "gitattributes (only the line missing): the commit's subject names the change — got '$got'"
+    fi
+    got=$(gattr_git -C "$bare/gattrorg_repo-append" show --name-only --format= main)
+    if [[ "$got" == ".gitattributes" ]]; then
+        pass "gitattributes (only the line missing): the commit touches .gitattributes alone"
+    else
+        fail "gitattributes (only the line missing): the commit touches .gitattributes alone — got: $(tr '\n' ' ' <<< "$got")"
+    fi
+    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+        "gitattributes (only the line missing): the pair is back, every other byte preserved"
+
+    # ── Drift report after the sync ──
+    rpt="$TEST_DIR/gattr-drift-after.md"
+    GITHUB_REPOSITORY_OWNER=gattrorg MOCK_BARE_DIR="$bare" REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$rpt" PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" > "$out-drift-after.log" 2>&1 || true
+    for sec in repo-none repo-append repo-crlf repo-no-newline repo-star-minus-text; do
+        assert_row_note_contains "$rpt" "gattrorg/$sec" "gitattr-ok" \
+            "gitattributes (drift after sync): $sec reads gitattr-ok"
+    done
+}
+
+# This repo is excluded from its own sync, so its .gitattributes is committed
+# by hand; this is what stops it drifting from what consumers receive.
+test_self_hosted_gitattributes() {
+    echo ""
+    echo "=== Test: this repo's own .gitattributes carries the hook-script LF line ==="
+
+    local f="$REPO_ROOT/.gitattributes" got hook
+    got=$("$REPO_ROOT/scripts/hook-eol-gitattributes.sh" status "$f")
+    if [[ "$got" == present ]]; then
+        pass "self-hosted .gitattributes: the managed line is present"
+    else
+        fail "self-hosted .gitattributes: the managed line is $got — nothing syncs this repo, add it by hand"
+    fi
+    if grep -qxF -- "$GATTR_COMMENT_T" "$f" 2>/dev/null; then
+        pass "self-hosted .gitattributes: the managed comment is present"
+    else
+        fail "self-hosted .gitattributes: the managed comment is present"
+    fi
+    for hook in "$REPO_ROOT"/.claude/hooks/*.sh; do
+        got=$(GIT_CONFIG_NOSYSTEM=1 git -C "$REPO_ROOT" check-attr eol -- ".claude/hooks/${hook##*/}")
+        if [[ "$got" == *": eol: lf" ]]; then
+            pass "self-hosted .gitattributes: ${hook##*/} resolves to eol=lf"
+        else
+            fail "self-hosted .gitattributes: ${hook##*/} resolves to eol=lf — got: $got"
+        fi
+    done
+}
+
+# ── github-write-marker.sh: an agent's GitHub write carries the marker ─────
+#
+# A PreToolUse hook: hook JSON on stdin, exit 0 allows, exit 2 blocks. Every
+# leg feeds a literal event and checks the exit code, so nothing here touches
+# the network or a real `gh`. The `--body-file` legs point at files in this
+# test's own temp dir, passed as absolute paths, so `cwd` cannot leak in.
+# AGENT_NAME is pinned empty so the block message's footer is the Claude Code
+# one whatever the invoking shell exports. See docs/decisions/0023.
+test_github_write_marker_hook() {
+    echo ""
+    echo "TEST: github-write-marker.sh (an agent's GitHub write carries the marker)"
+
+    local d="$TEST_DIR/githubwritemarker"
+    rm -rf "$d"
+    mkdir -p "$d"
+    local GWM_HOOK="$REPO_ROOT/.claude/hooks/github-write-marker.sh"
+    local mark='<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>'
+    printf 'Body text.\n\n%s\n' "$mark" > "$d/marked.md"
+    printf 'Body text with no marker.\n' > "$d/unmarked.md"
+
+    # <expected rc> <label> <event json> — runs the hook and compares its exit
+    # code. stderr is kept per leg for the message assertions below.
+    local n=0
+    gwm() {
+        local want="$1" label="$2" event="$3" rc=0
+        n=$((n + 1))
+        printf '%s' "$event" | env AGENT_NAME= bash "$GWM_HOOK" \
+            > "$d/out-$n" 2> "$d/err-$n" || rc=$?
+        if [[ "$rc" == "$want" ]]; then
+            pass "github-write-marker: $label exits $want"
+        else
+            fail "github-write-marker: $label exits $want — got $rc: $(tr '\n' ' ' < "$d/err-$n")"
+        fi
+    }
+
+    # ── Blocked: exit 2 ──
+    gwm 2 "unmarked gh issue comment" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 5 --body \"Looks good.\""}}'
+    assert_contains "$d/err-$n" "$mark" \
+        "github-write-marker: the block message names the exact footer line"
+    assert_contains "$d/err-$n" "retry" \
+        "github-write-marker: the block message tells the agent to retry"
+    gwm 2 "unmarked gh pr create" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title T --body \"Adds a thing.\""}}'
+    gwm 2 "gh pr create whose --body-file lacks the marker" \
+        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh pr create --title T --body-file $d/unmarked.md\"}}"
+    gwm 2 "unmarked gh api POST to a comments endpoint" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh api -X POST repos/o/r/issues/5/comments -f body=hi"}}'
+    gwm 2 "unmarked MCP add_issue_comment (mcp__github__)" \
+        '{"tool_name":"mcp__github__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":5,"body":"Done."}}'
+    gwm 2 "unmarked MCP add_issue_comment (mcp__claude_ai_github-mcp__)" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":5,"body":"Done."}}'
+    gwm 2 "MCP review with event APPROVE, even marked" \
+        '{"tool_name":"mcp__github__pull_request_review_write","tool_input":{"method":"create","event":"APPROVE","body":"LGTM <sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    assert_contains "$d/err-$n" "never submits an APPROVE review" \
+        "github-write-marker: the APPROVE block says why"
+    gwm 2 "MCP review with event approve (lower case)" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__pull_request_review_write","tool_input":{"method":"submit_pending","event":"approve"}}'
+    gwm 2 "gh pr review --approve" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr review 7 --approve"}}'
+    gwm 2 "gh pr review -a" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr review 7 -a -b \"ok\""}}'
+
+    # ── Allowed: exit 0 ──
+    gwm 0 "marked gh issue comment" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 5 --body \"Looks good.\n\n<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>\""}}'
+    gwm 0 "marked gh pr create" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title T --body \"Adds a thing.\n\n<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>\""}}'
+    gwm 0 "gh pr create whose --body-file carries the marker" \
+        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh pr create --title T --body-file $d/marked.md\"}}"
+    gwm 0 "gh api POST whose body=@file carries the marker" \
+        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api -X POST repos/o/r/issues/5/comments -F body=@$d/marked.md\"}}"
+    gwm 0 "marked MCP add_issue_comment (mcp__github__)" \
+        '{"tool_name":"mcp__github__add_issue_comment","tool_input":{"body":"Done.\n\n<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm 0 "marked MCP add_issue_comment (mcp__claude_ai_github-mcp__)" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__add_issue_comment","tool_input":{"body":"Done.\n\n<sub>🤖 Written by Codex on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm 0 "marked MCP COMMENT review" \
+        '{"tool_name":"mcp__github__pull_request_review_write","tool_input":{"method":"create","event":"COMMENT","body":"Notes. <sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm 0 "MCP issue_write with labels only" \
+        '{"tool_name":"mcp__github__issue_write","tool_input":{"method":"update","owner":"o","repo":"r","issue_number":5,"labels":["agent-authored"]}}'
+    gwm 0 "gh issue edit --add-label (no body)" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue edit 5 --add-label agent-authored"}}'
+    gwm 0 "gh pr view 1" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh pr view 1"}}'
+    gwm 0 "a non-GitHub Bash command" \
+        '{"tool_name":"Bash","tool_input":{"command":"ls -la /tmp"}}'
+    gwm 0 "an unrelated MCP tool with an unmarked body" \
+        '{"tool_name":"mcp__github__get_issue","tool_input":{"body":"Done."}}'
+    # Malformed input carries `gh` so it gets past the fast path and reaches
+    # the JSON parse, which is the arm under test.
+    gwm 0 "malformed JSON" \
+        '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 5 --body'
+    assert_contains "$d/err-$n" "WARNING" \
+        "github-write-marker: malformed input is allowed with a stderr warning"
+
+    # ── Tokenized Bash checks ──
+    # <expected rc> <label> <command> [cwd] — the same as gwm, but the event
+    # JSON is built by json.dumps, so a command can carry quotes, `$` and
+    # newlines verbatim.
+    gwmc() {
+        local want="$1" label="$2" command="$3" cwd="${4:-}" event
+        event="$(python3 -c 'import json, sys
+ev = {"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}
+if sys.argv[2]:
+    ev["cwd"] = sys.argv[2]
+print(json.dumps(ev))' "$command" "$cwd")"
+        gwm "$want" "$label" "$event"
+    }
+    printf 'Body text.\n\n%s\n' "$mark" > "$HOME/gwm-marked.md"
+    local nl=$'\n'
+
+    # A body-file path built from a variable is expanded before it is read.
+    gwmc 0 "--body-file \"\$S/...\" with S assigned earlier in the command" \
+        'S='"$d"'; gh pr edit 320 --body-file "$S/marked.md"' "$d"
+    gwmc 0 "--body-file \"\${S}/...\" with S as a prefix assignment" \
+        'S='"$d"' gh pr edit 320 --body-file "${S}/marked.md"'
+    gwmc 0 "--body-file with an exported variable" \
+        'export S='"$d"' && gh pr edit 320 --body-file "$S/marked.md"'
+    gwmc 0 "--body-file \"\$HOME/...\"" \
+        'gh pr edit 320 --body-file "$HOME/gwm-marked.md"'
+    gwmc 0 "--body-file ~/..." \
+        'gh pr edit 320 --body-file ~/gwm-marked.md'
+    gwmc 2 "--body-file under an unset variable" \
+        'gh pr edit 320 --body-file "$UNSET_GWM_VAR/b.md"'
+    assert_contains "$d/err-$n" '$UNSET_GWM_VAR/b.md' \
+        "github-write-marker: the unresolved-variable block names the path"
+    assert_contains "$d/err-$n" "literal path" \
+        "github-write-marker: the unresolved-variable block asks for a literal path"
+    gwmc 2 "--body-file naming a missing file" \
+        "gh pr edit 320 --body-file $d/missing.md"
+    assert_contains "$d/err-$n" "$d/missing.md" \
+        "github-write-marker: the unreadable-file block names the path"
+
+    # gh text inside an argument is not a GitHub write.
+    gwmc 0 "python3 -c with a gh string argument" \
+        "python3 -c 'import json,sys; print(sys.argv[1])' \"gh pr edit 320 --body-file x\""
+    gwmc 0 "echo of a gh issue comment string" \
+        'echo "gh issue comment 5 --body hi"'
+    gwmc 0 "grep for a gh pr create string" \
+        'grep -n "gh pr create" file'
+
+    # gh in command position after an operator, prefix or wrapper still is.
+    gwmc 2 "gh pr comment after &&" \
+        'cd x && gh pr comment 1 --body hi'
+    gwmc 2 "gh issue comment after an assignment prefix" \
+        'FOO=1 gh issue comment 1 --body hi'
+    gwmc 2 "gh pr review --approve after ;" \
+        'true; gh pr review 3 --approve'
+    assert_contains "$d/err-$n" "never submits an APPROVE review" \
+        "github-write-marker: an approve after ; is blocked as an approval"
+    gwmc 2 "gh pr create inside an unquoted \$(...)" \
+        'url=$(gh pr create --title T --body hi)'
+    gwmc 2 "gh pr create inside a quoted \$(...)" \
+        'echo "$(gh pr create --title T --body hi)"'
+    gwmc 2 "gh pr comment inside bash -c" \
+        'bash -c "gh pr comment 1 --body hi"'
+    gwmc 2 "unbalanced quote falls back to the regex check" \
+        "gh issue comment 5 --body it's broken"
+
+    # Heredocs: the body is cut out before tokenizing, and the gh segment
+    # around or after it is still seen.
+    gwmc 0 "heredoc gh pr create carrying the marker" \
+        "gh pr create --title T --body-file - <<'EOF'${nl}It's a body.${nl}${nl}${mark}${nl}EOF"
+    gwmc 2 "heredoc gh pr create without the marker" \
+        "gh pr create --title T --body-file - <<'EOF'${nl}It's a body.${nl}EOF"
+    assert_contains "$d/err-$n" "stdin" \
+        "github-write-marker: the heredoc block says the body comes from stdin"
+    gwmc 2 "unmarked gh pr comment after a heredoc" \
+        "cat <<'EOF' > notes.txt${nl}It's a note; gh is mentioned.${nl}EOF${nl}gh pr comment 1 --body hi"
+
+    unset -f gwm gwmc
+}
+
 # ── Groups ─────────────────────────────────────────────────────────────────
 #
 # The suite runs as independent GROUPS, each in a fresh process of this same
@@ -22114,6 +22975,446 @@ PY
 # Each entry is a group name; GROUP_<name> lists what it runs, in order.
 # group_codex_cloud is the one group that is not a list: it runs the Python
 # unittest modules and needs none of the shell fixtures.
+# ── Dependabot auto-merge workflow delivery (repos.yml dependabot_auto_merge) ──
+# amorg in a MOCK_BARE_DIR of its own. Steps run in order: switch off → dry
+# run → real run → re-run (no-op).
+setup_am_repos() {
+    local bare_dir="$1" work="$TEST_DIR/am-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/amorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        mkdir -p "$work/$name/.github/workflows"
+        case "$name" in
+            am-yaml) echo "version: 2" > "$work/$name/.github/dependabot.yaml" ;;
+            am-noconfig) : ;;
+            *) echo "version: 2" > "$work/$name/.github/dependabot.yml" ;;
+        esac
+        case "$name" in
+            am-present) echo "name: hand-written" > "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
+            am-self) echo "name: self" > "$work/$name/.github/workflows/self-dependabot-auto-merge.yml" ;;
+            am-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
+            am-script)
+                mkdir -p "$work/$name/.github/scripts"
+                echo "# repo's own copy" > "$work/$name/.github/scripts/workflow-overlap.sh"
+                ;;
+        esac
+        echo "name: CI" > "$work/$name/.github/workflows/ci.yml"
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/amorg_$name" HEAD:main 2>/dev/null
+    done
+}
+
+# am_show <repo> <path> — the file's bytes on main, or nothing if absent.
+am_show() {
+    gattr_git -C "$TEST_DIR/am-bare/amorg_$1" show "main:$2" 2>/dev/null
+}
+
+test_sync_dependabot_auto_merge() {
+    echo ""
+    echo "=== Test: sync.sh adds the Dependabot auto-merge workflow where it is missing ==="
+
+    local bare="$TEST_DIR/am-bare" out="$TEST_DIR/am-sync" before after rc sec got
+    local tmpl="$REPO_ROOT/templates/dependabot-auto-merge"
+    local wf=".github/workflows/dependabot-auto-merge.yml" helper=".github/scripts/workflow-overlap.sh"
+    setup_am_repos "$bare"
+
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/am-repos-off.yml"
+    printf 'exclude: []\ndefault_sections: []\ndependabot_auto_merge:\n  deliver: true\n' > "$TEST_DIR/am-repos-on.yml"
+
+    run_am_sync() {   # <repos.yml> <log> [--dry-run]
+        local yml="$1" log="$2"; shift 2
+        GITHUB_REPOSITORY_OWNER=amorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/am-pr-bodies" \
+        REPOS_YML="$yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+    am_section() {    # <log> <repo>
+        awk -v start="=== amorg/$2 ===" '
+            $0 == start { on = 1; print; next }
+            on && /^=== / { on = 0 }
+            on { print }
+        ' "$1"
+    }
+
+    # ── Switch off (the default): nothing about the workflow is touched ──
+    rc=0; run_am_sync "$TEST_DIR/am-repos-off.yml" "$out-off.log" || rc=$?
+    if [[ $rc -eq 0 && -z "$(am_show am-none "$wf")" ]]; then
+        pass "auto-merge (off): with deliver unset the sync runs and adds no workflow"
+    else
+        fail "auto-merge (off): with deliver unset the sync runs and adds no workflow — exit $rc"
+    fi
+    assert_not_contains "$out-off.log" "dependabot-auto-merge" \
+        "auto-merge (off): the run does not mention the workflow at all"
+
+    # ── Dry run with the switch on: reported, nothing written ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-dry.log" --dry-run || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "auto-merge (dry run): exits 0 and moves no ref"
+    else
+        fail "auto-merge (dry run): exits 0 and moves no ref — exit $rc"
+    fi
+    am_section "$out-dry.log" am-none > "$out-dry-none"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
+        "auto-merge (dry run): a repo missing the workflow is told it would be added"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add $helper" \
+        "auto-merge (dry run): and its helper"
+    am_section "$out-dry.log" am-present > "$out-dry-present"
+    assert_not_contains "$out-dry-present" "Would add $wf" \
+        "auto-merge (dry run): a repo with the workflow is not offered another"
+
+    # ── The real run ──
+    rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-1.log" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "auto-merge (sync): the run exits 0"
+    else
+        fail "auto-merge (sync): the run exits 0 — got $rc"
+    fi
+
+    if cmp -s <(am_show am-none "$wf") "$tmpl/dependabot-auto-merge.yml" \
+       && cmp -s <(am_show am-none "$helper") "$tmpl/workflow-overlap.sh"; then
+        pass "auto-merge (sync): a repo with dependabot.yml and no merge path gets the template's workflow and helper, byte for byte"
+    else
+        fail "auto-merge (sync): a repo with dependabot.yml and no merge path gets the template's workflow and helper, byte for byte"
+    fi
+    got=$(gattr_git -C "$bare/amorg_am-none" ls-tree main -- "$helper" | awk '{print $1}')
+    if [[ "$got" == 100755 ]]; then
+        pass "auto-merge (sync): the helper is committed executable"
+    else
+        fail "auto-merge (sync): the helper is committed executable — mode $got"
+    fi
+    if cmp -s <(am_show am-yaml "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a .github/dependabot.yaml counts as a Dependabot config too"
+    else
+        fail "auto-merge (sync): a .github/dependabot.yaml counts as a Dependabot config too"
+    fi
+
+    # The switch-off run already delivered AGENTS.md, so this run's commit is
+    # the workflow alone, under its own subject rather than another lane's.
+    got=$(gattr_git -C "$bare/amorg_am-none" show --name-only --format= main | sed '/^$/d' | sort | tr '\n' ' ')
+    if [[ "$got" == "$helper $wf " ]]; then
+        pass "auto-merge (sync): the commit carries exactly the workflow and its helper"
+    else
+        fail "auto-merge (sync): the commit carries exactly the workflow and its helper — files: $got"
+    fi
+    got=$(gattr_git -C "$bare/amorg_am-none" log -1 --format=%B main)
+    if [[ "$got" == "chore: add the Dependabot auto-merge workflow"* \
+          && "$got" == *"Adds .github/workflows/dependabot-auto-merge.yml"* ]]; then
+        pass "auto-merge (sync): the commit's subject and body say why the workflow was added"
+    else
+        fail "auto-merge (sync): the commit's subject and body say why the workflow was added — got: $(head -1 <<< "$got")"
+    fi
+
+    if [[ "$(am_show am-present "$wf")" == "name: hand-written" ]]; then
+        pass "auto-merge (sync): an existing dependabot-auto-merge.yml is never overwritten"
+    else
+        fail "auto-merge (sync): an existing dependabot-auto-merge.yml is never overwritten"
+    fi
+    if [[ -z "$(am_show am-self "$wf")" ]]; then
+        pass "auto-merge (sync): cms-platform's self-dependabot-auto-merge.yml counts as a merge path"
+    else
+        fail "auto-merge (sync): cms-platform's self-dependabot-auto-merge.yml counts as a merge path"
+    fi
+    if [[ -z "$(am_show am-noconfig "$wf")" ]]; then
+        pass "auto-merge (sync): a repo with no Dependabot config gets nothing"
+    else
+        fail "auto-merge (sync): a repo with no Dependabot config gets nothing"
+    fi
+
+    if [[ -z "$(am_show am-lock "$wf")" ]]; then
+        pass "auto-merge (sync): a repo with actions.lock is not given the SHA-pinned template"
+    else
+        fail "auto-merge (sync): a repo with actions.lock is not given the SHA-pinned template"
+    fi
+    am_section "$out-1.log" am-lock > "$out-lock"
+    assert_contains "$out-lock" "WARN: amorg/am-lock locks its actions in .github/workflows/actions.lock" \
+        "auto-merge (sync): the actions.lock skip is named in the log"
+
+    if cmp -s <(am_show am-script "$wf") "$tmpl/dependabot-auto-merge.yml" \
+       && [[ "$(am_show am-script "$helper")" == "# repo's own copy" ]]; then
+        pass "auto-merge (sync): the workflow is added but a repo's existing helper is left as it is"
+    else
+        fail "auto-merge (sync): the workflow is added but a repo's existing helper is left as it is"
+    fi
+
+    # ── Re-run: nothing left to do ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-2.log" || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "auto-merge (re-run): a second run moves no ref"
+    else
+        fail "auto-merge (re-run): a second run moves no ref — exit $rc"
+    fi
+}
+
+# ── agent-checks delivery (repos.yml agent_checks, ADR 0021) ─────────────────
+# acorg in a MOCK_BARE_DIR of its own. Steps run in order: switch off → dry
+# run → real run → re-run (no-op).
+setup_ac_repos() {
+    local bare_dir="$1" work="$TEST_DIR/ac-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/acorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        mkdir -p "$work/$name/.github/workflows"
+        echo "name: CI" > "$work/$name/.github/workflows/ci.yml"
+        case "$name" in
+            ac-present)
+                printf 'name: CI\njobs:\n  a:\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n' \
+                    > "$work/$name/.github/workflows/ci.yml"
+                ;;
+            ac-drift)
+                mkdir -p "$work/$name/.githooks"
+                echo "# an older runner" > "$work/$name/.githooks/agent-checks"
+                ;;
+            ac-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
+            ac-platform) echo "platform_ref: v0.0.1" > "$work/$name/platform.lock" ;;
+            ac-ignored) echo ".claude/" > "$work/$name/.gitignore" ;;
+        esac
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/acorg_$name" HEAD:main 2>/dev/null
+    done
+}
+
+# ac_show <repo> <path> — the file's bytes on main, or nothing if absent.
+ac_show() {
+    gattr_git -C "$TEST_DIR/ac-bare/acorg_$1" show "main:$2" 2>/dev/null
+}
+
+test_sync_agent_checks() {
+    echo ""
+    echo "=== Test: sync.sh delivers the agent-checks runner, CI check and guard ==="
+
+    local bare="$TEST_DIR/ac-bare" out="$TEST_DIR/ac-sync" before after rc got
+    local tmpl="$REPO_ROOT/templates/agent-checks"
+    local runner=".githooks/agent-checks" wf=".github/workflows/agent-checks.yml"
+    local guard=".claude/hooks/agent-checks-guard.sh"
+    setup_ac_repos "$bare"
+
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/ac-repos-off.yml"
+    printf 'exclude: []\ndefault_sections: []\nagent_checks:\n  deliver: true\n' > "$TEST_DIR/ac-repos-on.yml"
+
+    run_ac_sync() {   # <repos.yml> <log> [--dry-run]
+        local yml="$1" log="$2"; shift 2
+        GITHUB_REPOSITORY_OWNER=acorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/ac-pr-bodies" \
+        REPOS_YML="$yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+    ac_section() {    # <log> <repo>
+        awk -v start="=== acorg/$2 ===" '
+            $0 == start { on = 1; print; next }
+            on && /^=== / { on = 0 }
+            on { print }
+        ' "$1"
+    }
+
+    # ── Switch off (the default): nothing of the lane is touched ──
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-off.yml" "$out-off.log" || rc=$?
+    if [[ $rc -eq 0 && -z "$(ac_show ac-none "$runner")" && -z "$(ac_show ac-none "$wf")" \
+          && -z "$(ac_show ac-none "$guard")" ]]; then
+        pass "agent-checks (off): with deliver unset the sync runs and delivers none of the lane"
+    else
+        fail "agent-checks (off): with deliver unset the sync runs and delivers none of the lane — exit $rc"
+    fi
+    assert_not_contains "$out-off.log" "agent-checks" \
+        "agent-checks (off): the run does not mention the lane at all"
+
+    # ── Dry run with the switch on: reported, nothing written ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-dry.log" --dry-run || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "agent-checks (dry run): exits 0 and moves no ref"
+    else
+        fail "agent-checks (dry run): exits 0 and moves no ref — exit $rc"
+    fi
+    ac_section "$out-dry.log" ac-none > "$out-dry-none"
+    assert_contains "$out-dry-none" "[DRY RUN] Would write $runner (runner missing)" \
+        "agent-checks (dry run): the runner is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
+        "agent-checks (dry run): the workflow is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would register the agent-checks guard on PreToolUse" \
+        "agent-checks (dry run): the guard registration is reported"
+
+    # ── The real run ──
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-1.log" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks (sync): the run exits 0"
+    else
+        fail "agent-checks (sync): the run exits 0 — got $rc"
+    fi
+
+    if cmp -s <(ac_show ac-none "$runner") "$tmpl/agent-checks" \
+       && cmp -s <(ac_show ac-none "$wf") "$tmpl/agent-checks.yml" \
+       && cmp -s <(ac_show ac-none "$guard") "$tmpl/agent-checks-guard.sh"; then
+        pass "agent-checks (sync): runner, workflow and guard arrive byte for byte"
+    else
+        fail "agent-checks (sync): runner, workflow and guard arrive byte for byte"
+    fi
+    got=$(gattr_git -C "$bare/acorg_ac-none" ls-tree main -- "$runner" "$guard" | awk '{print $1}' | sort -u | tr '\n' ' ')
+    if [[ "$got" == "100755 " ]]; then
+        pass "agent-checks (sync): runner and guard are committed executable"
+    else
+        fail "agent-checks (sync): runner and guard are committed executable — modes $got"
+    fi
+    got=$(ac_show ac-none .claude/settings.json | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+for g in doc["hooks"]["PreToolUse"]:
+    for h in g["hooks"]:
+        if "agent-checks-guard.sh" in h["command"]:
+            print(g["matcher"], h["timeout"], h["command"])
+')
+    if [[ "$got" == 'Bash|Edit|Write|MultiEdit|NotebookEdit 10 bash "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-checks-guard.sh"' ]]; then
+        pass "agent-checks (sync): the guard is registered on PreToolUse with its matcher and timeout"
+    else
+        fail "agent-checks (sync): the guard is registered on PreToolUse with its matcher and timeout — got: $got"
+    fi
+    if ac_show ac-none .gitattributes | grep -qxF '.githooks/* text eol=lf' \
+       && ac_show ac-none .gitattributes | grep -qxF '.claude/hooks/*.sh text eol=lf'; then
+        pass "agent-checks (sync): .gitattributes pins the runner to LF beside the hook-script line"
+    else
+        fail "agent-checks (sync): .gitattributes pins the runner to LF beside the hook-script line"
+    fi
+    got=$(gattr_git -C "$bare/acorg_ac-none" log -1 --format=%B main)
+    if [[ "$got" == "chore: deliver the agent-checks git hooks and CI check"* ]]; then
+        pass "agent-checks (sync): the commit says what it delivers"
+    else
+        fail "agent-checks (sync): the commit says what it delivers — got: $(head -1 <<< "$got")"
+    fi
+
+    # The delivered runner does its job in the delivered repo: a commit adding
+    # a .env file fails the CI mode the workflow runs.
+    local clone="$TEST_DIR/ac-clone"
+    rm -rf "$clone"
+    gattr_git clone -q "$bare/acorg_ac-none" "$clone"
+    echo "TOKEN=x" > "$clone/.env"
+    gattr_git -C "$clone" add .env
+    gattr_git -C "$clone" commit -q -m "add env"
+    rc=0; (cd "$clone" && bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]] && grep -q '\.env' "$out-ci.log"; then
+        pass "agent-checks (sync): the delivered runner's ci mode refuses a committed .env"
+    else
+        fail "agent-checks (sync): the delivered runner's ci mode refuses a committed .env — exit $rc"
+    fi
+
+    if [[ -z "$(ac_show ac-present "$wf")" ]]; then
+        pass "agent-checks (sync): a repo whose own workflow already runs the runner gets no second workflow"
+    else
+        fail "agent-checks (sync): a repo whose own workflow already runs the runner gets no second workflow"
+    fi
+    if cmp -s <(ac_show ac-drift "$runner") "$tmpl/agent-checks"; then
+        pass "agent-checks (sync): a drifted runner is overwritten with the managed copy"
+    else
+        fail "agent-checks (sync): a drifted runner is overwritten with the managed copy"
+    fi
+    if [[ -z "$(ac_show ac-lock "$wf")" ]] && cmp -s <(ac_show ac-lock "$runner") "$tmpl/agent-checks"; then
+        pass "agent-checks (sync): a repo with actions.lock gets the runner but not the SHA-pinned workflow"
+    else
+        fail "agent-checks (sync): a repo with actions.lock gets the runner but not the SHA-pinned workflow"
+    fi
+    ac_section "$out-1.log" ac-lock > "$out-lock"
+    assert_contains "$out-lock" "WARN: acorg/ac-lock locks its actions in .github/workflows/actions.lock" \
+        "agent-checks (sync): the actions.lock skip is named in the log"
+    if [[ -z "$(ac_show ac-platform "$wf")" ]] && cmp -s <(ac_show ac-platform "$runner") "$tmpl/agent-checks"; then
+        pass "agent-checks (sync): a cms-platform consumer (platform.lock) gets the runner but no extra workflow"
+    else
+        fail "agent-checks (sync): a cms-platform consumer (platform.lock) gets the runner but no extra workflow"
+    fi
+    ac_section "$out-1.log" ac-platform > "$out-platform"
+    assert_contains "$out-platform" "acorg/ac-platform is a cms-platform consumer (platform.lock)" \
+        "agent-checks (sync): the platform.lock skip is named in the log"
+    if [[ -z "$(ac_show ac-ignored "$guard")" ]] && cmp -s <(ac_show ac-ignored "$wf") "$tmpl/agent-checks.yml"; then
+        pass "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
+    else
+        fail "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
+    fi
+
+    # ── Re-run: nothing left to do ──
+    before=$(bare_fleet_fingerprint "$bare")
+    rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-2.log" || rc=$?
+    after=$(bare_fleet_fingerprint "$bare")
+    if [[ $rc -eq 0 && "$before" == "$after" ]]; then
+        pass "agent-checks (re-run): a second run moves no ref"
+    else
+        fail "agent-checks (re-run): a second run moves no ref — exit $rc"
+    fi
+}
+
+# The PreToolUse guard against skipping the hooks, over the cases in
+# test/fixtures/agent-checks-guard-cases.jsonl (each line: expect block|allow,
+# then the event Claude Code sends). Exit 2 is a block; anything else allows.
+test_agent_checks_guard() {
+    echo ""
+    echo "=== Test: the agent-checks guard blocks hook skipping and nothing else ==="
+    local cases="$SCRIPT_DIR/fixtures/agent-checks-guard-cases.jsonl"
+    local guard="$REPO_ROOT/templates/agent-checks/agent-checks-guard.sh"
+    local line expect event rc got label n=0
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        n=$((n + 1))
+        expect=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["expect"])' "$line")
+        event=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d.pop("expect"); print(json.dumps(d))' "$line")
+        label=$(python3 -c 'import json,sys; t=json.loads(sys.argv[1])["tool_input"]; print((t.get("command") or t.get("file_path") or "").split("\n")[0])' "$line")
+        rc=0; bash "$guard" <<< "$event" >/dev/null 2>&1 || rc=$?
+        if [[ $rc -eq 2 ]]; then got=block; else got=allow; fi
+        if [[ "$got" == "$expect" ]]; then
+            pass "agent-checks guard: $expect: $label"
+        else
+            fail "agent-checks guard: $expect: $label — got $got (exit $rc)"
+        fi
+    done < "$cases"
+    if (( n >= 20 )); then
+        pass "agent-checks guard: the case file was read ($n cases)"
+    else
+        fail "agent-checks guard: the case file was read — only $n cases"
+    fi
+    rc=0; PATH=/nonexistent /bin/bash "$guard" <<< '{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify"}}' >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks guard: with no python3 it fails open"
+    else
+        fail "agent-checks guard: with no python3 it fails open — exit $rc"
+    fi
+}
+
+# The sync never reaches this repo (SYNC_SELF_REPO), so it carries its own
+# copies, by hand: the runner must stay byte-identical to the template the
+# fleet receives, and the guard is registered straight from the template.
+test_self_agent_checks() {
+    echo ""
+    echo "=== Test: this repo runs the same agent-checks it delivers ==="
+    if cmp -s "$REPO_ROOT/.githooks/agent-checks" "$REPO_ROOT/templates/agent-checks/agent-checks"; then
+        pass "self agent-checks: .githooks/agent-checks matches templates/agent-checks/agent-checks"
+    else
+        fail "self agent-checks: .githooks/agent-checks matches templates/agent-checks/agent-checks — copy the template over it"
+    fi
+    if grep -qF 'bash .githooks/agent-checks ci' "$REPO_ROOT/.github/workflows/agent-checks.yml" 2>/dev/null; then
+        pass "self agent-checks: a workflow runs the runner in CI"
+    else
+        fail "self agent-checks: a workflow runs the runner in CI"
+    fi
+    if grep -qF 'templates/agent-checks/agent-checks-guard.sh' "$REPO_ROOT/.claude/settings.json"; then
+        pass "self agent-checks: the guard is registered from the template"
+    else
+        fail "self agent-checks: the guard is registered from the template"
+    fi
+}
+
+
 TEST_GROUPS=(
     runner
     codex_memory_audit
@@ -22130,6 +23431,10 @@ TEST_GROUPS=(
     self_hosted
     codex
     memory_home
+    github_write_marker
+    gitattr
+    automerge
+    agent_checks
 )
 
 GROUP_sync=(
@@ -22324,6 +23629,8 @@ GROUP_self_hosted=(
     test_routine_merge_gate
     test_fleet_guidance_mirror
     test_check_agent_markdown
+    test_check_ci_shards
+    test_self_hosted_gitattributes
 )
 
 # The Codex lane. The three size/gate tests read only this repo's own files;
@@ -22356,6 +23663,7 @@ GROUP_codex_memory_audit=(
 
 GROUP_runner=(
     test_runner_zero_counts
+    test_runner_group_selection
 )
 
 runner_probe_no_assert() { :; }
@@ -22506,12 +23814,159 @@ PY
         "runner empty bootstrap allowlist reports why"
 }
 
+# TEST_GROUPS_ONLY and --list-groups, the two halves CI's shards stand on:
+# the `suite` matrix runs each shard's groups through the first, and
+# scripts/check-ci-shards.js reads the canonical list through the second. The
+# selection is exercised in process, through the real select_groups and
+# run_groups with the child stubbed exactly as test_runner_zero_counts stubs
+# it, because a real child running the `runner` group would run this test
+# again. The entry point itself is exercised as a child only on paths that
+# exit before any group starts: --list-groups and a refused name.
+test_runner_group_selection() {
+    echo ""
+    echo "=== Test: TEST_GROUPS_ONLY runs only the named groups; --list-groups prints them ==="
+    # Recursion guard. Every child below carries RUNNER_SELECTION_PROBE, so if
+    # a regressed selection ever lets one run the `runner` group, that run
+    # fails here at once instead of spawning children of its own.
+    if [[ -n "${RUNNER_SELECTION_PROBE:-}" ]]; then
+        fail "runner selection: a child started by this test ran this test again — TEST_GROUPS_ONLY selected a group it should have refused"
+        return
+    fi
+    local base="$TEST_DIR/runner-selection" log rc
+    mkdir -p "$base"
+    local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
+
+    # --list-groups, unset selection: exactly TEST_GROUPS, in order, nothing
+    # else on stdout. Compared against the array, not against a copy of it.
+    if RUNNER_SELECTION_PROBE=1 env -u TEST_GROUPS_ONLY -u TEST_GROUP bash "$self" --list-groups > "$base/list.out" 2> "$base/list.err"; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 && "$(cat "$base/list.out")" == "$(printf '%s\n' "${TEST_GROUPS[@]}")" ]]; then
+        pass "runner --list-groups prints every group, one per line, in TEST_GROUPS order"
+    else
+        fail "runner --list-groups exited $rc and printed: $(tr '\n' ' ' < "$base/list.out")"
+    fi
+
+    # --list-groups under a selection: the selection, in TEST_GROUPS order
+    # rather than the order it was given in.
+    if RUNNER_SELECTION_PROBE=1 TEST_GROUPS_ONLY="  sync   runner " env -u TEST_GROUP bash "$self" --list-groups > "$base/sel.out" 2> "$base/sel.err"; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 && "$(tr '\n' ' ' < "$base/sel.out")" == "runner sync " ]]; then
+        pass "runner --list-groups under TEST_GROUPS_ONLY prints just the selection, in TEST_GROUPS order"
+    else
+        fail "runner --list-groups under TEST_GROUPS_ONLY='sync runner' exited $rc and printed: $(tr '\n' ' ' < "$base/sel.out")"
+    fi
+
+    # Refusals, through the real entry point WITHOUT --list-groups, so a
+    # refusal is shown to stop the run itself: exit 2, a message naming the
+    # problem, and no group started (no "Results:" line from anything).
+    # Every child here runs under `env -u TEST_GROUP`: this test itself runs
+    # inside a child whose TEST_GROUP is `runner`, and a grandchild that
+    # inherited it would run this group, and so this test, again — without
+    # end. For the same reason no value below names `runner`: should a
+    # refusal regress into acceptance, the child runs one small group and
+    # stops, rather than recursing.
+    local mode value needle
+    for mode in unknown duplicate blank; do
+        case "$mode" in
+            unknown) value="codex_memory_audit no_such_group"; needle="unknown group 'no_such_group' in TEST_GROUPS_ONLY" ;;
+            duplicate) value="codex_memory_audit codex_memory_audit"; needle="group 'codex_memory_audit' is named more than once in TEST_GROUPS_ONLY" ;;
+            blank) value="   "; needle="TEST_GROUPS_ONLY names no group" ;;
+        esac
+        log="$base/refuse-$mode.log"
+        if RUNNER_SELECTION_PROBE=1 TEST_GROUPS_ONLY="$value" TEST_JOBS=1 env -u TEST_GROUP bash "$self" > "$log" 2>&1; then rc=0; else rc=$?; fi
+        if [[ "$rc" == 2 ]]; then
+            pass "runner refuses a $mode TEST_GROUPS_ONLY with exit 2"
+        else
+            fail "runner $mode TEST_GROUPS_ONLY exited $rc, expected 2"
+        fi
+        assert_contains "$log" "$needle" "runner $mode TEST_GROUPS_ONLY says why"
+        assert_not_contains "$log" "Results:" "runner $mode TEST_GROUPS_ONLY starts no group"
+    done
+
+    # A subset runs only those groups: the real select_groups, then the real
+    # run_groups with its child stubbed to record which group it was asked
+    # for. Two of three selected, given out of order.
+    log="$base/subset.log"
+    if (
+        TEST_DIR="$base/subset"
+        mkdir -p "$TEST_DIR"
+        PASS=0; FAIL=0
+        TEST_GROUPS=(probe_a probe_b probe_c)
+        TEST_GROUPS_ONLY="probe_c probe_a"
+        TEST_JOBS=1
+        bash() { echo "child ran $TEST_GROUP"; echo "  Results: 1 passed, 0 failed"; }
+        select_groups
+        run_groups
+    ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 ]]; then
+        pass "runner subset run exits 0"
+    else
+        fail "runner subset run exited $rc, expected 0"
+    fi
+    assert_contains "$log" "child ran probe_a" "runner subset runs the first selected group"
+    assert_contains "$log" "child ran probe_c" "runner subset runs the second selected group"
+    assert_not_contains "$log" "child ran probe_b" "runner subset does not run an unselected group"
+    assert_contains "$log" "Results: 2 passed, 0 failed" "runner subset totals only the selected groups"
+    if grep -qE '^  probe_b ' "$log"; then
+        fail "runner subset lists the unselected group in its Groups table"
+    else
+        pass "runner subset's Groups table names only the selected groups"
+    fi
+
+    # And unset still means every group: the same stub, no selection.
+    log="$base/all.log"
+    if (
+        TEST_DIR="$base/all"
+        mkdir -p "$TEST_DIR"
+        PASS=0; FAIL=0
+        TEST_GROUPS=(probe_a probe_b probe_c)
+        unset TEST_GROUPS_ONLY
+        TEST_JOBS=1
+        bash() { echo "child ran $TEST_GROUP"; echo "  Results: 1 passed, 0 failed"; }
+        select_groups
+        run_groups
+    ) > "$log" 2>&1; then rc=0; else rc=$?; fi
+    if [[ "$rc" == 0 ]] && grep -qF "Results: 3 passed, 0 failed" "$log"; then
+        pass "runner with TEST_GROUPS_ONLY unset runs every group"
+    else
+        fail "runner with TEST_GROUPS_ONLY unset exited $rc: $(tail -3 "$log" | tr '\n' ' ')"
+    fi
+}
+
+# The .gitattributes lane (docs/decisions/0019). The helper and real-git tests
+# use temp dirs of their own; the sync test stands up gattrorg in a
+# MOCK_BARE_DIR of its own, and its steps run in order: dry run → drift report
+# → sync → re-run (no-op) → a line removed by hand → drift report.
+GROUP_gitattr=(
+    test_hook_eol_gitattributes_helper
+    test_hook_eol_gitattributes_git_checkout
+    test_sync_gitattributes
+)
+
+# The Dependabot auto-merge delivery lane: amorg in a MOCK_BARE_DIR of its
+# own; steps run in order (switch off → dry run → sync → re-run).
+GROUP_automerge=(
+    test_sync_dependabot_auto_merge
+)
+
+# The agent-checks delivery lane (ADR 0021): acorg in a MOCK_BARE_DIR of its
+# own; steps run in order (switch off → dry run → sync → re-run).
+GROUP_agent_checks=(
+    test_agent_checks_guard
+    test_self_agent_checks
+    test_sync_agent_checks
+)
+
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.
 GROUP_memory_home=(
     test_memory_home_hook
     test_register_memory_home_hook
+)
+
+# The github-write-marker lane (docs/decisions/0023). It reads only literal
+# hook events and files in its own temp dir, so it can sit anywhere.
+GROUP_github_write_marker=(
+    test_github_write_marker_hook
 )
 
 # Codex Cloud setup/maintenance runs the shared guidance hook directly before
@@ -22697,7 +24152,46 @@ run_groups() {
     [[ $FAIL -eq 0 && -z "$failed_groups" ]] && exit 0 || exit 1
 }
 
+# select_groups — narrow TEST_GROUPS to TEST_GROUPS_ONLY's names, kept in
+# TEST_GROUPS order so a shard's log reads like the matching slice of a full
+# run. Unset or empty leaves every group selected. A name that is not a group
+# exits 2, like an unknown TEST_GROUP: a shard list with a typo must stop the
+# shard, not quietly run fewer groups than it names. A name given twice exits
+# 2 too, since two children of one group would share its output directory.
+# Runs AFTER check_group_coverage, which judges the whole suite.
+select_groups() {
+    [[ -n "${TEST_GROUPS_ONLY:-}" ]] || return 0
+    local -a wanted=() picked=()
+    local w g seen=" "
+    read -r -a wanted <<< "$TEST_GROUPS_ONLY"
+    if (( ${#wanted[@]} == 0 )); then
+        echo "run-tests.sh: TEST_GROUPS_ONLY names no group (got '$TEST_GROUPS_ONLY'; unset it to run every group)" >&2
+        exit 2
+    fi
+    for w in "${wanted[@]}"; do
+        if [[ " ${TEST_GROUPS[*]} " != *" $w "* ]]; then
+            echo "run-tests.sh: unknown group '$w' in TEST_GROUPS_ONLY (one of: ${TEST_GROUPS[*]})" >&2
+            exit 2
+        fi
+        if [[ "$seen" == *" $w "* ]]; then
+            echo "run-tests.sh: group '$w' is named more than once in TEST_GROUPS_ONLY" >&2
+            exit 2
+        fi
+        seen+="$w "
+    done
+    for g in "${TEST_GROUPS[@]}"; do
+        [[ "$seen" == *" $g "* ]] && picked+=("$g")
+    done
+    TEST_GROUPS=("${picked[@]}")
+}
+
 check_group_coverage
+
+if [[ "${1:-}" == --list-groups ]]; then
+    select_groups
+    printf '%s\n' "${TEST_GROUPS[@]}"
+    exit 0
+fi
 
 if [[ -n "${TEST_GROUP:-}" ]]; then
     if [[ " ${TEST_GROUPS[*]} " != *" $TEST_GROUP "* ]]; then
@@ -22707,4 +24201,5 @@ if [[ -n "${TEST_GROUP:-}" ]]; then
     run_one_group "$TEST_GROUP"
 fi
 
+select_groups
 run_groups
