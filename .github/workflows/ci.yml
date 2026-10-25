@@ -1,22 +1,31 @@
 name: CI
 
 on:
+  # `main` only. A PR branch push used to run this whole workflow twice on
+  # one head sha, once for `push` and once for `pull_request`; since the shard
+  # split that is 12 jobs per push against the account's concurrent-job cap,
+  # so runs queued whenever several agents pushed at once. The `pull_request`
+  # run is the one branch protection reads (and it also tests the merge with
+  # main), so the branch `push` run bought nothing. `push` on main stays for
+  # post-merge verification. A branch pushed with no PR gets no automatic CI;
+  # `workflow_dispatch` below covers a manual run.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   # Manual re-run, no inputs. `test` publishes a status context meant to be
   # REQUIRED on main — cms-platform#437 declares it in repo-settings'
   # fleet.yml — so this trigger's safety no longer rests on nothing here
   # being required. It rests on a narrower fact instead: this file carries NO
-  # `concurrency:` block, at workflow or job level, so a same-sha burst — a
-  # `push` on `**`, a `pull_request` event, and any manual dispatch, all
-  # landing on one head sha — leaves only runs that FINISH, never a cancelled
-  # run shadowing a success (the shape that hard-blocks a merge on a required
-  # check). Test 7g in test/run-tests.sh locks that absence and the trigger
+  # `concurrency:` block, at workflow or job level, so a same-sha burst — on a
+  # PR head sha one `pull_request` run plus any manual dispatch, on main's sha
+  # a `push` run plus any manual dispatch — leaves only runs that FINISH,
+  # never a cancelled run shadowing a success (the shape that hard-blocks a
+  # merge on a required check). Test 7g in test/run-tests.sh locks that absence and the trigger
   # set off this file. The residual that absence does not cover: a human who
   # cancels a dispatched run sitting on a PR's head sha leaves the required
-  # `test` context itself concluded `cancelled` on that sha until someone
-  # re-runs it — this trigger only guards against the multi-event race
+  # `test` context concluded non-success on that sha (the aggregator fails
+  # closed on a cancelled need) until someone re-runs it — this trigger only
+  # guards against the multi-event race
   # GitHub can produce on its own, not against a person cancelling one by
   # hand.
   #
@@ -30,8 +39,9 @@ on:
   # not required" would there read as "merge it red". This repo's own
   # `skills.lock` is in that bumper's scope (see repos.yml — the allowlist
   # governs hook delivery, not lock bumping), so it opens a PR here on
-  # `skills-lock-bump/update`, and this workflow runs on every push and every
-  # pull request, that branch included.
+  # `skills-lock-bump/update`, and this workflow runs on every pull request,
+  # that branch included (a `push` run only on main, so the bump branch's
+  # conclusions come from its `pull_request` run and any dispatch).
   #
   # THE RESIDUAL, stated rather than argued away: dispatch this workflow AT
   # the bump branch and cancel it — or watch it fail — and that conclusion
@@ -51,25 +61,47 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # THREE JOBS, ONE REQUIRED CONTEXT. Until 2026-10 this was a single `test`
+  # job, and 3m19s of its ~3m34s was the integration suite: 18 groups, ~703
+  # CPU-seconds, queued four at a time on one 4-CPU runner. The suite is now
+  # split across the `suite` matrix below, the lint-shaped gates live in
+  # `checks`, and `test` is only an aggregator over the two. Branch protection
+  # requires the context `test` and nothing else (cms-platform#437), so its
+  # job id and name must not change — and neither `suite` nor `checks` needs
+  # to be required on its own, because `test` fails closed on anything but a
+  # `success` from either of them, a skipped or cancelled one included.
+  #
+  # `suite`: one shard per matrix entry, each running the groups it names
+  # through run-tests.sh's TEST_GROUPS_ONLY. The four lists are balanced by
+  # measured per-group seconds, not by count, so the slowest shard sets the
+  # wall clock. A group in no shard would stop running in CI while every
+  # shard stayed green, which is why the "CI shards cover every test group"
+  # step in `checks` fails unless the lists partition
+  # `./test/run-tests.sh --list-groups` exactly. Adding a group to
+  # run-tests.sh therefore means adding it to one shard here, in the same PR.
+  # `fail-fast: false` so one red shard does not cancel the others and hide
+  # their reports; `test` reads the matrix's combined result either way.
+  suite:
+    name: suite ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            groups: sweep_cleanup drift_testorg codex runner
+          - shard: 2
+            groups: bump drift hook_pin memory_home
+          - shard: 3
+            groups: bootstrap self_hosted sweep_merge automerge codex_memory_audit
+          - shard: 4
+            groups: codex_cloud sweep_retry sync gitattr agent_checks github_write_marker
     steps:
-      # fetch-depth: 0 (full history), not a targeted fetch of just the PR's
-      # base sha: scripts/check-guidance-touch.js (the "Guidance touch gate"
-      # step below) resolves BOTH the PR's base and head commits with
-      # `git show <sha>:<path>`, and ALSO runs `git merge-base` between them
-      # (base.sha is the base branch's tip at event time, not the PR's fork
-      # point, so the touch gate diffs from the merge-base instead — see that
-      # script's own header). A shallow (depth 1) checkout of a `pull_request`
-      # event's synthetic merge ref fetches only that merge commit's own
-      # objects; at depth 1 its parents are grafted — absent from the object
-      # database entirely, not merely thin — so neither `git show` nor `git
-      # merge-base` could resolve base.sha or head.sha as real commits. A full
-      # fetch removes that doubt outright, and this repo carries no binary
-      # assets and a modest history, so the extra fetch cost is negligible
-      # next to a targeted fetch's added complexity (reading the base sha out
-      # of $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
-      # saving.
+      # The same full-history checkout the suite ran on before the split, so
+      # no test that reads this repo's own git history sees a different
+      # repository from the one it was written against. See the `checks`
+      # job's checkout for why the touch gate needs full history; the suite
+      # inherits it rather than re-deciding it per shard.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
@@ -133,13 +165,67 @@ jobs:
       - name: Install the workflow parser
         run: npm ci
 
+      # TEST_GROUPS_ONLY arrives through `env:`, never as a `${{ }}` inside
+      # the `run:` body, where GitHub would render it into the echoed
+      # command. The checker in `checks` asserts exactly this wiring, so a
+      # matrix whose lists nothing reads cannot pass it.
+      - name: Run integration tests
+        env:
+          TEST_GROUPS_ONLY: ${{ matrix.groups }}
+        run: |
+          chmod +x scripts/build-agents-md.sh scripts/sync.sh scripts/drift-report.sh
+          chmod +x test/run-tests.sh
+          ./test/run-tests.sh
+
+  # Every gate that is not the integration suite, in the order and under the
+  # conditions they had inside the single `test` job, plus the shard checker
+  # at the end. It has no `needs:` and runs beside `suite`, so a red shard can
+  # no longer skip one of these steps — inside the single job, any step after
+  # a failed suite step was skipped, which is why the mirror check below used
+  # to have to sit ahead of it.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 (full history), not a targeted fetch of just the PR's
+      # base sha: scripts/check-guidance-touch.js (the "Guidance touch gate"
+      # step below) resolves BOTH the PR's base and head commits with
+      # `git show <sha>:<path>`, and ALSO runs `git merge-base` between them
+      # (base.sha is the base branch's tip at event time, not the PR's fork
+      # point, so the touch gate diffs from the merge-base instead — see that
+      # script's own header). A shallow (depth 1) checkout of a `pull_request`
+      # event's synthetic merge ref fetches only that merge commit's own
+      # objects; at depth 1 its parents are grafted — absent from the object
+      # database entirely, not merely thin — so neither `git show` nor `git
+      # merge-base` could resolve base.sha or head.sha as real commits. A full
+      # fetch removes that doubt outright, and this repo carries no binary
+      # assets and a modest history, so the extra fetch cost is negligible
+      # next to a targeted fetch's added complexity (reading the base sha out
+      # of $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
+      # saving.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      # Every gate below is a Node script, and several parse workflow YAML or
+      # Markdown with the pinned dev dependencies (`yaml`, `markdown-it`), so
+      # they have to be here as well as in `suite`. `npm ci`, not
+      # `npm install`: the lockfile is the version under test.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "20"
+
+      - name: Install the workflow parser
+        run: npm ci
+
       # ADVISORY, by owner decision D5 ("Warn"): British spellings and dangling
       # "see X above/below" references in the Markdown agents read. The script
       # exits 0 whatever it finds (annotations only; `--strict` is for its
-      # tests), so this step cannot fail the required `test` job and needs no
-      # `continue-on-error`. Placed first among the checks so its annotations
-      # print even when a later step fails, and kept unconditional with no
-      # `paths:` filter, like the rest of this job.
+      # tests), so this step cannot fail this job (and through it the
+      # required `test` context) and needs no `continue-on-error`. Placed
+      # first among the checks so its annotations print even when a later
+      # step fails, and kept unconditional with no `paths:` filter, like the
+      # rest of this job.
       - name: Agent Markdown warnings (spelling, dangling references)
         run: node scripts/check-agent-markdown.js
 
@@ -147,20 +233,16 @@ jobs:
       # hand-made byte-identical copy of agents-md/base.md that nothing syncs
       # (SYNC_SELF_REPO) and no drift report names; the same step proves every
       # docs/evidence/ file that base.md and stub.md point at still exists.
-      # Unconditional and not path-filtered, like the rest of this required job.
-      # It runs BEFORE the integration suite on purpose: that step fails first on
-      # a real drift (the suite compares the same two files), and a later step
-      # without `if: always()` would be skipped, hiding this one's message that
-      # names the one-line fix. It needs only node, so it sits right after
-      # `npm ci`.
+      # Unconditional and not path-filtered, like the rest of this job. The
+      # integration suite compares the same two files and fails on the same
+      # drift, but with a FAIL line buried in a shard's log; this step's
+      # message names the one-line fix. So it must never be skipped behind a
+      # failure: the suite now runs in the separate `suite` job, which this
+      # job does not need, and within this job it sits right after `npm ci`,
+      # ahead of every step that can fail, because a later step without
+      # `if: always()` is skipped once an earlier one fails.
       - name: Fleet payload mirrors base.md
         run: node scripts/check-fleet-guidance-mirror.js
-
-      - name: Run integration tests
-        run: |
-          chmod +x scripts/build-agents-md.sh scripts/sync.sh scripts/drift-report.sh
-          chmod +x test/run-tests.sh
-          ./test/run-tests.sh
 
       # This repo runs crons of its own (drift-report, the Dependabot sweep),
       # and a scheduled failure notifies nobody — drift-report.yml was red 26
@@ -249,3 +331,40 @@ jobs:
           # The hook-script LF line the sync appends to every consumer's
           # .gitattributes (docs/decisions/0019); nothing delivers it here.
           test "$(./scripts/hook-eol-gitattributes.sh status .gitattributes)" = present
+
+      # The `suite` matrix's lists must partition run-tests.sh's TEST_GROUPS:
+      # every group in exactly one shard. Without this, a group added to the
+      # runner but to no shard stops running in CI with every shard green, and
+      # nothing reports it — the coverage hole the shard split could open. The
+      # checker parses this file as YAML (never a line scan, which a group
+      # named in a comment would satisfy) and takes the canonical list from
+      # `./test/run-tests.sh --list-groups` rather than from the script's text.
+      - name: CI shards cover every test group
+        run: node scripts/check-ci-shards.js
+
+  # THE REQUIRED CONTEXT. Its job id and name are both `test` and must stay
+  # so: that is the context branch protection names. `if: always()` and not
+  # `!cancelled()` or the default `success()`: under either of those a red or
+  # cancelled need SKIPS this job, and a skipped required check reads as
+  # passing — the exact way an aggregator turns a failure into a green merge.
+  # So it always runs and fails closed: anything but `success` from both
+  # needs, `skipped` and `cancelled` included, is a failure. No checkout; the
+  # results reach the script through `env:`, never interpolated into `run:`.
+  test:
+    name: test
+    needs: [suite, checks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard and every check passed
+        env:
+          SUITE_RESULT: ${{ needs.suite.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: |
+          set -euo pipefail
+          echo "suite: ${SUITE_RESULT:-<none>}; checks: ${CHECKS_RESULT:-<none>}"
+          if [ "${SUITE_RESULT:-}" = success ] && [ "${CHECKS_RESULT:-}" = success ]; then
+            exit 0
+          fi
+          echo "::error::the required test context needs suite and checks both 'success' — got suite '${SUITE_RESULT:-<none>}', checks '${CHECKS_RESULT:-<none>}'"
+          exit 1

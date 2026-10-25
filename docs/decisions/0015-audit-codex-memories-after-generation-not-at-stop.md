@@ -1,5 +1,7 @@
 # 0015 — Audit Codex memories after generation, not at Stop
 
+> Note: ADR 0015 is also used by [0015-bump-prs-never-ask-for-native-auto-merge.md](0015-bump-prs-never-ask-for-native-auto-merge.md) (bump pull requests never ask for native auto-merge); the two are distinct decisions, numbered in parallel by mistake.
+
 **Status:** Accepted (2026-10-02)
 
 ## Context
