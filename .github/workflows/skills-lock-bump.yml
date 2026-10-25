@@ -20,7 +20,7 @@ name: Bump the fleet's skills pins
 # report. Native auto-merge is deliberately not used: where nothing is
 # required gh merges an already-mergeable PR on the spot rather than arming
 # it, and where something is required it waits only for the required
-# contexts. See docs/decisions/0015.
+# contexts. See docs/decisions/0015-bump-prs-never-ask-for-native-auto-merge.md.
 #
 # The re-pin itself is `generate_skills_lock.py --repin`, which lives in the
 # registry and is called, never reimplemented. The script probes the generator
