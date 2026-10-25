@@ -40,6 +40,7 @@ a page.
 | [0023](0023-pro-max-only-claude-code-tested-codex-best-effort.md) | Pro/Max only, Claude Code tested, Codex best effort, and the Projects-era strategy |
 | [0023](0023-mark-agent-contributions.md) | Mark every agent-made GitHub contribution, on Adam's account for now |
 | [0024](0024-actions-pin-through-lockfiles.md) | Actions are pinned through workflow lockfiles, and the lockfile is verified in a required check |
+| [0025](0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md) | A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest |
 
 ## Format
 
