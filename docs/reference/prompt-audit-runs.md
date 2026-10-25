@@ -10,6 +10,11 @@ PR, and the result. Each run appends its line on the branch its session
 assigned, in its own PR to `main`; the line reaches `main` when the owner
 merges that PR.
 
+**Runs from 2026-10-25 on are recorded on the `persistent/prompt-audit-runs`
+branch**, in
+[its copy of this file](https://github.com/Adam-S-Daniel/_agent-guidance/blob/persistent/prompt-audit-runs/docs/reference/prompt-audit-runs.md).
+This copy on `main` stops at the 2026-10-23 run.
+
 The first three lines are **trial runs** of the spec's **First run**, each
 merged from its own PR before the spec gave every run its own PR:
 [#259](https://github.com/Adam-S-Daniel/_agent-guidance/pull/259) (`DRY_RUN`),

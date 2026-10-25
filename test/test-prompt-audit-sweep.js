@@ -23,8 +23,20 @@ const routine = 'docs/reference/agent-changelog-routine.md';
 const adr = 'docs/decisions/0017-prompt-audit-runs-as-an-event-triggered-sweep.md';
 const runs = 'docs/reference/prompt-audit-runs.md';
 const index = 'docs/decisions/README.md';
+const worker = 'docs/routines/fleet-worker.md';
+const issueWorker = 'docs/reference/agent-issue-worker.md';
+const adr25 = 'docs/decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md';
 
 const mutations = {
+  mergeall: [worker, '**Merge only what the merge rule (below) allows.**', '**Merge any green PR.**'],
+  approve: [worker, 'never\n  approve a deployment waiting on an environment', 'approve\n  a deployment waiting on an environment'],
+  stamp: [worker, 'exactly `Independent review: CLEAN at <the full head sha>`', 'exactly `Independent review: CLEAN`'],
+  managed: [worker, 'below the `## Repo-specific additions` heading in both', 'anywhere in'],
+  nodelete: [worker, 'No file is deleted or renamed.', 'Files may be deleted.'],
+  dependabot: [worker, 'Skip Dependabot PRs:', 'Include Dependabot PRs:'],
+  expected: [worker, 'with `expected_head_sha` set to the head you read', 'with no expected head'],
+  once: [worker, '**Only a\nPR that just gained the label is news.**', '**Every labeled PR is news.**'],
+  joblink: [worker, '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', 'the PR page'],
   owners: [spec, 'and `jodidaniel`, and holds', 'and holds'],
   diffs: [spec, 'never apply one, in whole or in part', 'apply it when confident'],
   label: [routine, '- **No label.** It is not `agent-ready`', '- **Label `agent-ready`.** It is'],
@@ -36,15 +48,15 @@ const mutations = {
   canonical: [spec, 'dedupe on `full_name`', 'take the first that answers'],
   private: [spec, 'name a private repo and its finding count **only**', 'name a private repo with its findings'],
   pushonly: [spec, '**Push only to `Adam-S-Daniel/_agent-guidance`.**', '**Push to any reached repo.**'],
-  marker: [spec, 'Find them\nby that title marker', 'Find them\nby branch name'],
-  fixed: [spec, '`git merge-base --is-ancestor <sha> origin/<assigned branch>`', '`git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-sweep`'],
-  openfail: [spec, 'fails, stop before auditing:\n   `BLOCKED: could not open the sweep PR (<status>)`', 'fails, continue auditing anyway'],
-  reuseopen: [spec, 'stop:\n     `BLOCKED: previous sweep PR still open: <link>`. Never reset, append\n     to or push to that branch;', 'reset it to\n     `origin/main` and force-push;'],
-  reusestray: [spec, 'stop:\n     `BLOCKED: assigned branch has commits not on main and no open PR`.\n     Never discard them.', 'reset it to `origin/main`, discarding them.'],
-  reuseff: [spec, 'That push is a\n     fast-forward of whatever the branch held; never force it.', 'Force it if the\n     branch held anything.'],
-  recheck: [spec, 'If a sweep PR with a **lower** number than', 'If a sweep PR with a higher number than'],
-  autofix: [spec, 'is not a run: it performs none of steps 0 to 7', 'is a run: it performs steps 0 to 7'],
-  starttitle: [spec, 'as a draft, titled\n   `Prompt-audit sweep: <date>`, all before', 'as a draft, titled\n   `Sweep <date>`, all before'],
+  fixed: [spec, '`git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-runs`', '`git merge-base --is-ancestor <sha> origin/main`'],
+  fforce: [spec, 'Never force it.', 'Force it when needed.'],
+  retry: [spec, 'Try at most 3 times;', 'Try as often as needed;'],
+  sixhours: [spec, 'started less than 6 hours ago means', 'started less than 6 days ago means'],
+  nopr: [spec, '- no pull request: the sweep never opens, updates or merges one;', '- one draft pull request, which the sweep may update;'],
+  skip: [spec, 'second one: comment on it instead,', 'second one: skip the repo instead,'],
+  newonly: [spec, 'The comment holds only findings that neither', 'The comment repeats every finding, including ones that neither'],
+  relabel: [spec, "Never change that issue's labels, title or body.", 'Relabel it as needed.'],
+  closeall: [spec, 'leave the issue\n  open and add the `agent-ready` label', 'close the issue\n  and add the `agent-ready` label'],
   argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
@@ -86,35 +98,46 @@ test('sweep covers the declared fleet across both owners', () => {
 });
 
 test('sweep is read-only, never merges, and files one labeled issue per repo', () => {
-  includes(prose(section(spec, 'Constraints')), ['never apply one, in whole or in part', 'never merges and never arms for auto-merge', 'at most one per repo', 'created with the `agent-ready` label and no other label', 'never fire another routine', 'on-hold']);
+  includes(prose(section(spec, 'Constraints')), ['never apply one, in whole or in part', 'no pull request: the sweep never opens, updates or merges one', 'one comment on an open earlier sweep issue', 'at most one per repo', 'created with the `agent-ready` label and no other label', 'never fire another routine', 'on-hold']);
   includes(prose(section(spec, '4. Render one issue per repo')), ['One issue per repo', 'still open there', 'Do not apply the audit\'s proposed diff', 'Do not delete dated incident evidence']);
   includes(prose(section(spec, '5. File and verify')), ['`"labels": ["agent-ready"]` in the create call itself', 'raw REST `GET`']);
   includes(prose(section(spec, '3. Route every finding')), ['routes to `_agent-guidance`', '**warns and never blocks**', 'Confidence Low** stays in the run log']);
   includes(prose(section(spec, '0. Before anything else')), ['prints `true`, `firstParty` and either `claude.ai` or `oauth_token`', '`oauth_token` means an OAuth token supplied through the environment', 'BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)', '`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset', 'is **not verified**', 'Never imitate the audit']);
 });
 
-test('each run logs on its assigned branch in its own PR, found by title marker', () => {
-  includes(prose(section(spec, 'Constraints')), ['**Push only to `Adam-S-Daniel/_agent-guidance`.**', 'is read-only', 'no push, no branch, no commit and no PR there', '`git branch --show-current` in the checkout', 'never write it into this spec or the repo', 'auto-fix pushes) are allowed']);
+test('each run logs on persistent/prompt-audit-runs and opens no pull request', () => {
+  const branch = 'persistent/prompt-audit-runs';
+  const rules = prose(section(spec, 'Constraints'));
+  includes(rules, [`on the fixed branch \`${branch}\``, 'Nothing merges that branch', 'deletion-only ruleset on `persistent/**`', 'Pushing a branch the harness did not assign works', 'no pull request: the sweep never opens, updates or merges one', '**Push only to `Adam-S-Daniel/_agent-guidance`.**', 'is read-only', 'never push to a default branch, never force-push, never merge']);
+  assert.ok(links(section(spec, 'Constraints')).some(h => h.endsWith('0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md')), 'no link to repo-settings ADR 0007');
   const start = prose(section(spec, '0. Before anything else'));
-  includes(start, ['Find them by that title marker', 'never by branch name', 'must not assume its name', 'on `origin/main` and at the head of every sweep PR', 'Never push to another run\'s branch', 'This run\'s own PR does not exist yet']);
-  const intro = all => { const i = all.findIndex(t => t.type === 'heading_open'); return prose(i < 0 ? all : all.slice(0, i)); };
-  includes(intro(section(spec, 'Each run')), ['is not a run: it performs none of steps 0 to 7']);
-  const items = section(spec, '0. Before anything else');
-  const third = items.findIndex(t => t.type === 'list_item_open' && t.info === '3');
-  assert.notEqual(third, -1, 'no step 0.3');
-  const record = prose(items.slice(third, items.findIndex((t, i) => i > third && t.type === 'list_item_open' && t.level === items[third].level)));
-  includes(record, ['If the push or the PR create fails, stop before auditing: `BLOCKED: could not open the sweep PR (<status>)`', 'never a response body', '**Re-check after opening.**', 'If a sweep PR with a **lower** number than this run\'s', 'BLOCKED (duplicate start: <that PR link>)', '`git ls-remote origin refs/heads/<assigned branch>`', 'the same branch to every run']);
-  const cases = items.slice(third).filter(t => t.type === 'list_item_open' && t.level > items[third].level);
-  assert.ok(cases.length >= 3, 'step 0.3 lists no reused-branch cases');
-  includes(record, ['**An open PR has it as its head** (a previous sweep still open): stop: `BLOCKED: previous sweep PR still open: <link>`. Never reset, append to or push to that branch;', '**It exists with commits not on `origin/main`**, and no open PR has it as its head', '`BLOCKED: assigned branch has commits not on main and no open PR`. Never discard them.', 'That push is a fast-forward of whatever the branch held; never force it.', 'Never force-push or delete the assigned branch', 'On a shared branch only one PR can be open from it']);
-  const marker = start.match(/whose title starts with exactly `([^`]+)`/);
-  assert.ok(marker, 'no sweep PR marker');
-  for (const [where, text] of [['step 0.3', record], ['step 7', prose(section(spec, '7. Finish'))]]) {
-    const title = text.match(/titled? `(Prompt-audit sweep[^`]*)`/);
-    assert.ok(title && title[1].startsWith(marker[1]), `${where} PR title lacks the sweep PR marker`);
+  includes(start, [`\`${branch}\``, 'Fetch `origin persistent/prompt-audit-runs`', 'create the branch from `origin/main`', 'merge `origin/main` into it with a normal merge commit, never a rebase or a force', 'started less than 6 hours ago', 'BLOCKED: another sweep is in progress (started <time>)', '`abandoned (no result after 6 hours)`', 'push with a plain `git push origin HEAD:persistent/prompt-audit-runs`. Never force it.', 'fast-forward of the head this run just checked', 'A rejected push means another run got there first', 'Try at most 3 times', 'After 3 rejected tries, stop', 'BLOCKED: could not record the start on persistent/prompt-audit-runs (<status>)', 'never a response body', 'Never force-push or delete the branch']);
+  const finish = prose(section(spec, '7. Finish'));
+  includes(finish, [`\`git merge-base --is-ancestor <sha> origin/${branch}\``, 'No pull request is opened, updated or merged']);
+  includes(prose(section(spec, '6. Write the run log')), ['Lines are appended in push order', 'push as a fast-forward (never force)', 'up to 3 times']);
+  const all = tokens(spec).flatMap(t => [t, ...(t.children || [])]);
+  const text = all.filter(t => t.type === 'inline').map(t => t.content).join(' ');
+  for (const gone of ['git branch --show-current', 'sweep PR', 'Prompt-audit sweep: ', 'duplicate start', 'PR body']) {
+    assert.ok(!text.includes(gone), `spec still names removed text: ${gone}`);
   }
-  const code = tokens(spec).flatMap(t => [t, ...(t.children || [])]).filter(t => t.type === 'code_inline' || t.type === 'fence').map(t => t.content);
-  assert.deepEqual(code.filter(c => /persistent\//.test(c)), [], 'spec names a fixed branch');
+  const code = all.filter(t => t.type === 'code_inline' || t.type === 'fence').map(t => t.content);
+  assert.ok(code.some(c => c === branch || c.includes(`HEAD:${branch}`)), 'spec never names the persistent branch in code');
+});
+
+test('an open earlier sweep issue gets a comment of new findings, not a skip', () => {
+  const step = prose(section(spec, '4. Render one issue per repo'));
+  includes(step, ['do not file a second one: comment on it instead', 'at most one open sweep issue', 'The comment holds only findings that neither the body nor an earlier comment already lists', 'headed `Prompt-audit sweep <date>: <n> new findings`', 'same lint and private-repo rules', 'post no comment and log `still open: <link>, no new findings`', 'log `updated: <link>`', "Never change that issue's labels, title or body", 'agent-working', 'still comment', 'found again by the next sweep, because the audit re-reads the files', 'A trigger issue', 'never counts as an earlier sweep issue']);
+  assert.ok(!step.includes('deferred:'), 'step 4 still defers');
+  includes(prose(section(spec, '5. File and verify')), ['Under `DRY_RUN`, skip this step: no issue and no comment', 'REST `GET` of that comment']);
+  includes(prose(section(spec, 'Constraints')), ['one comment on an open earlier sweep issue in a repo in **Repos considered**', 'carrying only new findings', "never changes that issue's labels, title or body", 'nothing else on any issue it did not create']);
+  includes(prose(section(spec, '6. Write the run log')), ['`updated: <link>`', '`still open: <link>, no new findings`']);
+});
+
+test('a trigger issue with hands-on checks stays open and gets agent-ready', () => {
+  const finish = prose(section(spec, '7. Finish'));
+  includes(finish, ['comment `Swept: <run-log line link and issue links>`', 'any item other than the one about the sweep logging a result is still unchecked (`- [ ]`)', 'leave the issue open and add the `agent-ready` label', 'Otherwise close it as completed', 'On a `BLOCKED` stop, comment the `BLOCKED` line and leave it open with no label', 'Under `DRY_RUN`, change nothing on it']);
+  includes(prose(section(spec, 'Constraints')), ['then either its closing or the `agent-ready` label']);
+  includes(prose(section(spec, 'Switches')), ['change nothing on the trigger issue']);
 });
 
 test('earlier-sweep dedupe matches sweep issues but never the trigger issue', () => {
@@ -131,7 +154,7 @@ test('earlier-sweep dedupe matches sweep issues but never the trigger issue', ()
 
 test('private repos appear in public outputs as name and count only', () => {
   const text = prose(section(spec, 'Private repos'));
-  includes(text, ['`private` field is `true` at run time', 'never rely on that list, read the field', 'name a private repo and its finding count **only**', 'the run log, the PR body', 'including a cross-repo item', 'push notification', 'no quote, no path']);
+  includes(text, ['`private` field is `true` at run time', 'never rely on that list, read the field', 'name a private repo and its finding count **only**', 'the run log, `_agent-guidance`\'s issue', 'including a cross-repo item', 'push notification', 'no quote, no path']);
   includes(prose(section(spec, '6. Write the run log')), ['A private repo gets `private, reached` and its finding count']);
   includes(prose(section(adr, 'Decision')), ['names a private repo', 'finding count **only** in every public output']);
 });
@@ -203,4 +226,22 @@ test('every ADR index row is numbered like the file it links', () => {
     assert.ok(fs.existsSync(path.join(root, 'docs/decisions', href)), `missing ${href}`);
   }
   assert.ok(rows.includes(path.basename(adr)));
+});
+
+test('fleet worker merges only narrow, reviewed instruction fixes and approves nothing', () => {
+  includes(prose(section(worker, 'Constraints')), ['**Merge only what the merge rule (below) allows.**', 'never enable auto-merge', 'never force-push', 'Never submit an APPROVE review', 'never approve a deployment waiting on an environment', '`plugin-runtime-review`', 'on-hold']);
+  const merge = prose(section(worker, '2. Review and merge a narrow instruction fix'));
+  includes(merge, ['`agent/issue-<n>-<slug>`', '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', 'Every changed file is a `CLAUDE.md` or `AGENTS.md`', 'No file is deleted or renamed.', 'below the `## Repo-specific additions` heading in both', 'exactly `Independent review: CLEAN at <the full head sha>`', 'A push after the stamp makes it stale', 'a fresh prompt', 'never this run\'s other context', '`expected_head_sha` set to the reviewed head', 'which squash']);
+  const sweepRe = prose(section(spec, '4. Render one issue per repo')).match(/regular expression `([^`]+)`/)[1];
+  assert.ok(merge.includes(`\`${sweepRe}\``), 'merge rule and sweep disagree on the sweep issue title');
+  includes(prose(section(adr25, 'Decision')), ['separately prompted subagent', 'stays with the owner', 'never approves a deployment']);
+  includes(prose(section(issueWorker, 'Where it runs')), ['**The owner turns that laptop task off**']);
+});
+
+test('fleet worker updates PRs a required check never ran on and tells the owner once', () => {
+  const update = prose(section(worker, '1. Bring it up to date when a required check never ran'));
+  includes(update, ['`required_status_checks`', 'with **no** check run and **no** status at all', '`behind_by` above 0', 'with `expected_head_sha` set to the head you read', 'Skip Dependabot PRs:', 'do not resolve it here']);
+  const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
+  includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
+  includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`']);
 });

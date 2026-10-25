@@ -514,13 +514,17 @@ The sweep's own spec is
    rules (fixed block, quotes, publish times, lint, read-back, issue-map
    line), with three differences:
    - **Title:** `Prompt-audit sweep trigger: Claude Code <version or range> <what changed>`.
-   - **No label.** It is not `agent-ready`: the laptop issue worker must
-     never claim it. The sweep comments on it and closes it. Step 4's
+   - **No label.** It is not `agent-ready`: the issue worker must never
+     claim it before the sweep has run. The sweep comments on it, then
+     closes it, or labels it `agent-ready` when its `## To check` list
+     still holds hands-on items
+     ([`prompt-audit-sweep.md`](../routines/prompt-audit-sweep.md), step 7). Step 4's
      read-back checks that the issue has **no** labels, in place of the
      `agent-ready` check.
    - **`## To check`** has one box: the sweep fired for this issue logged a
      result in
-     [`prompt-audit-runs.md`](prompt-audit-runs.md).
+     [`prompt-audit-runs.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/persistent/prompt-audit-runs/docs/reference/prompt-audit-runs.md)
+     on the `persistent/prompt-audit-runs` branch.
 4. **Fire.** Not under `DRY_RUN`, not with `SCOPE=codex`, and only after
    the issue reads back correctly. The `Changelog Routine` environment
    provides `PROMPT_AUDIT_SWEEP_FIRE_URL` (the sweep routine's
