@@ -79,6 +79,9 @@ HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume|fork}"
 LEGACY_MATCHER="startup|resume"
 HOOK_TIMEOUT="${BOOTSTRAP_HOOK_TIMEOUT:-90}"
 HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
+# The hook event to register under. The agent-checks guard registers on
+# PreToolUse (ADR 0021); every other caller keeps the default.
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
 
 result=$(python3 -c '
 import copy, json, os, sys
@@ -89,6 +92,7 @@ matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 needle   = sys.argv[5]
 legacy   = sys.argv[6]
+event    = sys.argv[7]
 
 group = {
     "matcher": matcher,
@@ -133,7 +137,7 @@ def names_hook(e):
 # hand-written entry whose quoting or timeout differs from ours — with the one
 # exception of the legacy-matcher migration (see MIGRATION in the header).
 hooks = doc.get("hooks")
-existing = hooks.get("SessionStart", []) if isinstance(hooks, dict) else []
+existing = hooks.get(event, []) if isinstance(hooks, dict) else []
 naming = []
 if isinstance(existing, list):
     for i, g in enumerate(existing):
@@ -154,13 +158,13 @@ if naming:
         sys.exit(0)
     want = copy.deepcopy(doc)
     for i in naming:
-        want["hooks"]["SessionStart"][i]["matcher"] = matcher
+        want["hooks"][event][i]["matcher"] = matcher
     candidate = json.dumps(want, indent=2) + "\n"
     # The guard, migration edition: the original document with ONLY those
     # matcher strings changed, and nothing else.
     check = json.loads(candidate)
     for i in naming:
-        check["hooks"]["SessionStart"][i]["matcher"] = legacy
+        check["hooks"][event][i]["matcher"] = legacy
     if json.loads(candidate) != want or check != doc:
         print("refused-guard")
         sys.exit(3)
@@ -173,13 +177,13 @@ if naming:
 if hooks is not None and not isinstance(hooks, dict):
     print("refused-unparseable")
     sys.exit(3)
-if isinstance(hooks, dict) and "SessionStart" in hooks \
-        and not isinstance(hooks["SessionStart"], list):
+if isinstance(hooks, dict) and event in hooks \
+        and not isinstance(hooks[event], list):
     print("refused-unparseable")
     sys.exit(3)
 
 want = copy.deepcopy(doc)
-want.setdefault("hooks", {}).setdefault("SessionStart", []).append(group)
+want.setdefault("hooks", {}).setdefault(event, []).append(group)
 
 candidate = json.dumps(want, indent=2) + "\n"
 
@@ -192,7 +196,7 @@ if json.loads(candidate) != want:
 
 write_or_refuse(candidate)
 print("registered")
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$LEGACY_MATCHER") || {
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_BASENAME" "$LEGACY_MATCHER" "$HOOK_EVENT") || {
     status=$?
     [[ -n "$result" ]] && echo "$result"
     exit "$status"

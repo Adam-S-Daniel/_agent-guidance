@@ -2695,7 +2695,7 @@ still touches `agents-md/base.md` lines `#167` already rewrote to drop
 the hostname entirely, confirmed again by diffing its patch against the
 current file; not opened by this Routine and not a `repos.yml`
 classify/remove entry, so left alone as the fifteenth run also left it.
-**#151** (the Codex memory-audit ADR, `docs/decisions/0015` +
+**#151** (the Codex memory-audit ADR, `docs/decisions/0015-audit-codex-memories-after-generation-not-at-stop.md` +
 `docs/evidence/`, docs-only) and **#124** (the paused one-way-door review)
 carried forward, neither actionable by this Routine. **#111** (the
 automated `skills_bootstrap` hook-pin bump, open since 2026-09-02) is now

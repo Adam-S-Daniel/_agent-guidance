@@ -28,13 +28,18 @@ a page.
 | [0012](0012-codex-gets-the-guidance-as-user-instructions.md) | Codex gets the guidance as global user instructions, and the project budget is warned, never blocked |
 | [0013](0013-a-memory-note-outside-a-repo-names-its-home.md) | A memory note outside a repo names its home, and a session that wrote one without it does not stop |
 | [0014](0014-dependabot-config-health-is-swept-centrally.md) | Dependabot config health is swept centrally, from here |
-| [0015](0015-bump-prs-never-ask-for-native-auto-merge.md) | Bump pull requests never ask for native auto-merge |
-| [0015](0015-audit-codex-memories-after-generation-not-at-stop.md) | Audit Codex memories after generation, not at Stop — Accepted 2026-10-02 |
+| [0015](0015-bump-prs-never-ask-for-native-auto-merge.md) | Bump pull requests never ask for native auto-merge (shares number 0015 with the next row; distinct decisions) |
+| [0015](0015-audit-codex-memories-after-generation-not-at-stop.md) | Audit Codex memories after generation, not at Stop — Accepted 2026-10-02 (shares number 0015 with the previous row; distinct decisions) |
 | [0016](0016-the-freshest-delivery-wins-the-shared-global-block.md) | The freshest delivery wins the shared global block |
 | [0017](0017-prompt-audit-runs-as-an-event-triggered-sweep.md) | Prompt-audit runs as an event-triggered sweep, never as a check or a schedule |
 | [0018](0018-incident-narratives-live-in-docs-evidence.md) | Incident narratives live in `docs/evidence/`, and the guidance keeps a pointer |
 | [0019](0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md) | The sync pins the hook scripts to LF through each repo's `.gitattributes` |
 | [0020](0020-the-api-credit-lane-is-machine-local-not-fleet-guidance.md) | The API-credit lane is machine-local, delivered by plugin hooks, not by the fleet guidance |
+| [0021](0021-the-sync-delivers-agent-checks-to-every-fleet-repo.md) | The sync delivers the agent-checks runner, CI check and --no-verify guard to every fleet repo |
+| [0022](0022-the-changelog-routine-does-not-read-claudeissues-com.md) | The changelog routine does not read claudeissues.com |
+| [0023](0023-pro-max-only-claude-code-tested-codex-best-effort.md) | Pro/Max only, Claude Code tested, Codex best effort, and the Projects-era strategy |
+| [0023](0023-mark-agent-contributions.md) | Mark every agent-made GitHub contribution, on Adam's account for now |
+| [0024](0024-actions-pin-through-lockfiles.md) | Actions are pinned through workflow lockfiles, and the lockfile is verified in a required check |
 
 ## Format
 
