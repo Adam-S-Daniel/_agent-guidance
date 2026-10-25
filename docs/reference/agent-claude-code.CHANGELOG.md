@@ -30,6 +30,91 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-24 — 2.1.310 through 2.1.310
+
+- **Checked:** 2026-10-24T01:12Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.310](https://github.com/anthropics/claude-code/releases/tag/v2.1.310), published 2026-10-23T23:39Z
+- **Window:** v2.1.310 (published 2026-10-23T23:39Z), the first stable release after v2.1.309: 1 release, 26 bullets (not individually indexed: no group was drafted). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.310` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep. Last reached: `_agent-guidance`, `adam-agentskills`, `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `claude-memory-map`, `cms-platform`, `fastmail-actions`, `GHA-bench` (archived), `jodidaniel.com`, `repo-settings`, `rss-inator`, `skills-evals`, `wsl-automation` (local checkouts present this session).
+
+No group met the name-the-surface bar, and no bullet changes models, `/doctor` or instruction-file loading, so the prompt-audit sweep is not triggered. A grep of the fleet for `cleanupPeriodDays`, `PreToolUse` and `PermissionRequest` found only `adam-agentskills` ADR 0010, which cites `cleanupPeriodDays` for the earlier trash behavior (the 2.1.310 fix, about background cleanup deleting recent files at very large values, changes nothing it documents), and no fleet hook registered on either Windows-affected event.
+
+### 2026-10-23 — 2.1.308 through 2.1.309
+
+- **Checked:** 2026-10-23T01:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.309](https://github.com/anthropics/claude-code/releases/tag/v2.1.309), published 2026-10-22T22:18Z
+- **Window:** v2.1.308 (published 2026-10-22T04:34Z, "Bug fixes and reliability improvements") and v2.1.309 (published 2026-10-22T22:18Z), the first stable releases after v2.1.307: 2 releases, 82 bullets (1 + 81; only the two in group 1 are indexed). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.308` and `v2.1.309` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list below, so none is newly assessed beyond a fleet grep. Last reached: `_agent-guidance`, `adam-agentskills`, `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `claude-memory-map`, `cms-platform`, `fastmail-actions`, `GHA-bench` (archived), `jodidaniel.com`, `repo-settings`, `rss-inator`, `skills-evals`, `wsl-automation` (local checkouts present this session).
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.309](https://github.com/anthropics/claude-code/releases/tag/v2.1.309), published 2026-10-22T22:18Z
+  > Fixed sessions compacting repeatedly after reading files under a very large nested CLAUDE.md; a nested CLAUDE.md over the size limit now loads only its start
+- [v2.1.309](https://github.com/anthropics/claude-code/releases/tag/v2.1.309), published 2026-10-22T22:18Z
+  > Fixed a skill in an `--add-dir` folder being unreachable when another skill already held its name; it is now offered as `<folder>:<name>`
+
+**Issues:** [_agent-guidance#317](https://github.com/Adam-S-Daniel/_agent-guidance/issues/317) (no label). Sweep fired: https://claude.ai/code/cse_01Du2rKYDkUecMsqz1Anp17Q.
+
+No other group met the name-the-surface bar. A fleet grep for `ultrareview`, `--mcp-config`, `synced/manifest.json`, `"shell": "powershell"`, `BEDROCK_BASE_URL` and `git replace` found only `GHA-bench` `runner.py` passing an empty `--mcp-config` (unaffected by the fix about the config file being modified by sandboxed commands) and documentation of the `synced` store in `adam-agentskills` and `skills-evals`, which the 2.1.309 fix about synced plugins being removed after a disk read error does not contradict. The sandbox, permission-check, worktree, VS Code, cloud-session and Claude Tag bullets remove failures without changing a documented command, flag or setting. Codex: no stable release after 0.163.0 (pages 1 to 3 walked: page 1 holds only 0.163.0 and 0.164.0 alphas, 0.163.0 is on page 2, 0.162.0 and 0.162.1 on page 3).
+
+### 2026-10-22 — 2.1.306 through 2.1.307
+
+- **Checked:** 2026-10-22T01:08Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.307](https://github.com/anthropics/claude-code/releases/tag/v2.1.307), published 2026-10-21T22:17Z
+- **Window:** v2.1.306 (published 2026-10-21T03:16Z) and v2.1.307 (published 2026-10-21T22:17Z), the first stable releases after v2.1.305: 2 releases, 45 bullets (2 + 43; not individually indexed: no group was drafted). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.306` and `v2.1.307` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200, neither flagged pre-release) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 506f9d2 (the `persistent/vendor-changelog` checkout; origin/main is ahead), `adam-agentskills` 59c8c74, `adam-agentskills-private` 2465891, `adamdaniel.ai` ab557c5, `ai-usage-dashboard` 09d9845, `claude-memory-map` 676d7f9, `cms-platform` 3b0a799, `fastmail-actions` f3c799f, `GHA-bench` bf0f9875 (archived, read-only), `jodidaniel.com` 3626102, `repo-settings` a9dc5ea, `rss-inator` 346595f, `skills-evals` b644ea2, `wsl-automation` baa2d20.
+
+No group met the name-the-surface bar. A grep of the fleet for `CLAUDE_CODE_DISABLE_1M_CONTEXT`, `claude_code.safety_event`, `OTEL_EXPORTER_OTLP_HEADERS`, `CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS`, `axScreenReader`, `CLAUDE_AX_SCREEN_READER`, `prompt-caching-scope`, `/autocompact`, `@claude review` and `setModel` found no dependence on a changed behavior; the one `claude-api` hit is a skill-name list in an `adam-agentskills` experiment note. The v2.1.306 fix for `claude -p` reporting "Not logged in" inside cloud sessions and the v2.1.307 MCP and subagent fixes remove failures without changing a documented command, flag or setting. No bullet adds a model, changes what an alias resolves to, or changes `/doctor` or instruction-file loading, so the prompt-audit sweep (step 4a) was not triggered (`sweep: none`).
+
+### 2026-10-21 — 2.1.296 through 2.1.305
+
+- **Checked:** 2026-10-21T01:35Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.305](https://github.com/anthropics/claude-code/releases/tag/v2.1.305), published 2026-10-20T20:46Z
+- **Window:** eight stable releases after v2.1.295, in publish order: v2.1.296 (2026-10-09T19:28Z), v2.1.299 (2026-10-14T02:49Z), v2.1.300 (2026-10-14T18:24Z), v2.1.301 (2026-10-15T19:22Z), v2.1.302 (2026-10-16T20:53Z), v2.1.303 (2026-10-18T22:26Z), v2.1.304 (2026-10-19T21:34Z), v2.1.305 (2026-10-20T20:46Z): 586 bullets (79 + 190 + 88 + 51 + 63 + 1 + 76 + 38; not individually indexed, the quotes below are copied from the file by script). v2.1.297 and v2.1.298 have no tag or changelog section and were skipped as gaps. Publish times are the `datetime` attribute on each tag page, in UTC. The runs of 2026-10-10 through 2026-10-20 are not on this branch, so the window spans 12 days.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; the eight tags listed by `git ls-remote --tags`); all eight tag pages were fetched (HTTP 200, none flagged pre-release) for their publish times, and the bodies of v2.1.302 and v2.1.305 were spot-checked against them.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`, each reached (working-tree head read): `_agent-guidance` 7eb07f0 (origin/main; the checkout head `5b142c9` is this branch), `adam-agentskills` dd2852e, `adam-agentskills-private` 6b88a54, `adamdaniel.ai` 6afabe6, `ai-usage-dashboard` f6806a6, `claude-memory-map` 5f785a2, `cms-platform` 95579a3, `fastmail-actions` f4aafb1, `GHA-bench` bf0f9875, `jodidaniel.com` 815d6ba, `repo-settings` 942f203, `rss-inator` fe32eeb, `skills-evals` e97dce5, `wsl-automation` bc2862a.
+
+#### 1. `claude -p` subagent defaults changed
+
+- [v2.1.302](https://github.com/anthropics/claude-code/releases/tag/v2.1.302), published 2026-10-16T20:53Z
+  > Changed fork subagents (`subagent_type: "fork"`) to be on by default in `claude -p`, the Agent SDK, the desktop app and VS Code, as they already are in the terminal; `CLAUDE_CODE_FORK_SUBAGENT=0` turns them off, and `claude mcp serve` never offers them
+- [v2.1.302](https://github.com/anthropics/claude-code/releases/tag/v2.1.302), published 2026-10-16T20:53Z
+  > Changed the desktop app and VS Code to always run the main conversation's subagents in the background, as the terminal does, rather than let Claude choose; a subagent's own Agent calls in `claude -p`, the Agent SDK, the desktop app and VS Code now run in the foreground by default
+
+**Issues:** none filed: `GHA-bench` is archived (read-only; `POST /repos/Adam-S-Daniel/GHA-bench/issues` answered 403 "Repository was archived so is read-only"). The surface is `runner.py`'s `claude -p` command, where `CLAUDE_CODE_FORK_SUBAGENT` is not pinned; a future un-archive should re-check it. Trap: [_agent-guidance#307](https://github.com/Adam-S-Daniel/_agent-guidance/issues/307). `adam-agentskills`' credit lane runs a `claude -p` child (ADR 0018) but pins nothing a subagent default changes, so no issue.
+
+#### 2. Prompt-audit sweep trigger
+
+- [v2.1.299](https://github.com/anthropics/claude-code/releases/tag/v2.1.299), published 2026-10-14T02:49Z
+  > Changed skill and command loading: one whose file or folder name has hidden, direction-changing or blank-like characters, `<` or `>` is no longer offered until renamed; such a `name:` is ignored
+- [v2.1.299](https://github.com/anthropics/claude-code/releases/tag/v2.1.299), published 2026-10-14T02:49Z
+  > Improved `/reload-skills` to say it re-sends the full skill list to Claude, which is how to get skills back after compaction
+- [v2.1.301](https://github.com/anthropics/claude-code/releases/tag/v2.1.301), published 2026-10-15T19:22Z
+  > Fixed the `fable` (and `best`) model alias erroring on the Anthropic API when the newest Fable model is not available to your organization: Claude Code now retries once on the previous Fable model
+- [v2.1.301](https://github.com/anthropics/claude-code/releases/tag/v2.1.301), published 2026-10-15T19:22Z
+  > Fixed skills no longer being listed to the model after using `/rewind`
+- [v2.1.304](https://github.com/anthropics/claude-code/releases/tag/v2.1.304), published 2026-10-19T21:34Z
+  > Fixed resumed and cloud sessions sending Claude the whole skill list again each time plugins reloaded at startup
+- [v2.1.304](https://github.com/anthropics/claude-code/releases/tag/v2.1.304), published 2026-10-19T21:34Z
+  > Changed compaction to send Claude the skill list again afterwards; `/reload-skills` now sends only new or changed skills
+
+**Issues:** [_agent-guidance#308](https://github.com/Adam-S-Daniel/_agent-guidance/issues/308) (no label). Sweep fired: https://claude.ai/code/cse_01KRBZ2XyLTLMHoDwU5VfwvT.
+
+No other group met the name-the-surface bar. A grep of the fleet for `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `mcp__`, `claude plugin eval`, `claude rc`, `claude agents`, `--bg`, `sessions/`, `sandbox.` and `unshare` found no dependence on a changed behavior. The credit lane's `UserPromptSubmit` hook (`adam-agentskills`, `hooks/credit-lane/on-prompt.sh`) always exits 0 and only prints context, so running before skill expansion changes nothing. `wsl-automation` pins `claude rc --spawn same-dir`, so the saved spawn mode added in v2.1.305 does not apply, and it passes neither removed flag. The `claude plugin eval` additions in v2.1.299 add no script-running grader, so the monitor-don't-wrap decision in `skills-evals`' `DESIGN.md` stands. `sandbox.allowNestedUserNamespaces` (v2.1.305) leaves the fleet's "run in a PID namespace, never escalate out of the sandbox" rule true. `GHA-bench`'s `models.py` has no Sonnet 5.5 row, so the v2.1.296 cache-read price change touches nothing there. Other bullets cover mods, VS Code, Claude Tag, Code Review, cloud-session and self-hosted-runner internals.
+
+### 2026-10-09 — 2.1.294 through 2.1.295
+
+- **Checked:** 2026-10-09T01:25Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.295](https://github.com/anthropics/claude-code/releases/tag/v2.1.295), published 2026-10-08T19:48Z
+- **Window:** v2.1.294 (published 2026-10-08T05:03Z) and v2.1.295 (published 2026-10-08T19:48Z), the first stable releases after v2.1.293: 2 releases, 145 bullets (2 + 143; not individually indexed: no group was drafted). Publish times are the `datetime` attribute on each tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.294` and `v2.1.295` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet` (`ai-usage-dashboard` is new since the 2026-10-08 entry, which listed 13), each reached (working-tree head read): `_agent-guidance` 962a9d7, `adam-agentskills` 746881e, `adam-agentskills-private` 43e8448, `adamdaniel.ai` 3d1c2c0, `ai-usage-dashboard` 5115bdc (anonymous shallow clone, read-only), `claude-memory-map` 9873811, `cms-platform` 9dd9454, `fastmail-actions` 760ee52, `GHA-bench` bf0f987, `jodidaniel.com` 713c807, `repo-settings` c062ce2, `rss-inator` 49297d6, `skills-evals` 2fb97f8, `wsl-automation` 9303b57.
+
+No group met the name-the-surface bar. A grep of the fleet for `"type": "prompt"`/`"agent"` hooks, `CLAUDE_ENV_FILE`, `FORCE_COLOR`, `CLAUDE_CODE_RETRY_WATCHDOG`, `onFailure`, `CLAUDE_AUTO_BACKGROUND_TASKS`, `seed-admin`, `forceLoginMethod`, async hooks, subagent `skills:` frontmatter and `claude -p` output formats found no dependence on a changed behavior. The only `prompt` hook type is a test fixture string in `adam-agentskills`' `test_check_consistency.py`, so the 2.1.294 fixes to instruction-style `prompt` and `agent` hooks touch no fleet hook. The `CLAUDE_ENV_FILE` hits (`setup-hooks.sh` in `adamdaniel.ai`, `cms-platform` and `jodidaniel.com`) append a `LANG` export once, which the `/resume` and `/branch` fix leaves alone. Every fleet `claude -p` call (`GHA-bench`, `skills-evals`) uses `--output-format json` or `stream-json`, not the text output the `claude -p` fix changes. No fleet repo has a `.claude/agents` directory, so the cap of 32 preloaded subagent skills changes no fleet instruction file; it did not mark the prompt-audit sweep (`sweep: none`). The `ai-usage-dashboard` collector reads `~/.claude/.credentials.json`, and no bullet changes that file. Other bullets cover the Claude apps gateway, mods and plugin hooks workers, Remote Control and cloud-session fixes, terminal rendering and vim mode, VS Code, Claude Tag and Code Review, none of which a fleet repo depends on.
+
 ### 2026-10-08 — 2.1.293 through 2.1.293
 
 - **Checked:** 2026-10-08T01:20Z, [release log](https://github.com/anthropics/claude-code/releases)
