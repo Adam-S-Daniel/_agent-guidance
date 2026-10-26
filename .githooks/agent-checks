@@ -95,6 +95,18 @@ check_paths() {
 # (`git show ":<path>"` when empty). Its stderr passes through; a nonzero exit
 # refuses. It is a child, not sourced, so it can only add refusals: it cannot
 # skip, change or clear a fleet check. A symlink is not run.
+#
+# How to add one: commit .agent-checks/local.sh with LF line endings (add
+# `.agent-checks/* text eol=lf` to .gitattributes; bash fails on CRLF). Exit 0
+# to allow, nonzero to refuse, after printing on stderr what is wrong, why and
+# how to fix it; name the path, never print file content. Every event runs it,
+# so test it with `bash .githooks/agent-checks tree`. Example:
+#
+#   status=0
+#   while IFS= read -r -d '' path; do
+#     case "$path" in *.draft) echo "agent-checks (local): $path: drafts stay out of this repo. Move it to your notes." >&2; status=1 ;; esac
+#   done
+#   exit $status
 local_checks=.agent-checks/local.sh
 
 run_local_checks() {
