@@ -51,7 +51,7 @@ file_content() {
     spec="$content_rev:$1"
   fi
   git cat-file -e "$spec" 2>/dev/null || return 0
-  git show "$spec"
+  git cat-file blob "$spec"
 }
 
 # ── Lesson checks ────────────────────────────────────────────────────────────
