@@ -8,7 +8,10 @@ Run: python3 -m unittest discover -s test -p 'test_agent_check_lane.py'
 (test/run-tests.sh's agent_checks group runs it that way).
 """
 
+import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -26,7 +29,7 @@ EMPTY_LESSONS = "check_lessons() {\n  :\n}\n"
 PATH_ARM = """check_lessons() {
   case "$1" in
     *.notes-secret)
-      problem "$1: notes files hold private notes and must not be committed. Move it outside the repo." ;; # lesson: example-path
+      problem lesson-example-path "$1: notes files hold private notes and must not be committed. Move it outside the repo." ;; # lesson: example-path
   esac
 }
 """
@@ -36,7 +39,7 @@ CONTENT_ARM = """check_lessons() {
   case "$1" in
     *.cfg)
       if file_content "$1" | grep -q 'DO-NOT-SHIP'; then
-        problem "$1: holds a DO-NOT-SHIP marker, left in by a draft. Remove the marker before committing."  # lesson: example-content
+        problem lesson-example-content "$1: holds a DO-NOT-SHIP marker, left in by a draft. Remove the marker before committing."  # lesson: example-content
       fi ;;
   esac
 }
@@ -58,7 +61,8 @@ class LaneTestCase(unittest.TestCase):
         home = self.tmp / "home"
         home.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        self.env.update(HOME=str(home), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+        self.env.update(HOME=str(home), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
+                        AGENT_CHECKS_LOG="off")
 
     def git(self, repo, *args):
         return subprocess.run(["git", *args], cwd=str(repo), env=self.env,
@@ -363,6 +367,227 @@ class ScopeTests(LaneTestCase):
         out = self.scope()
         self.assertEqual(out.returncode, 1, out.stdout)
         self.assertIn("is not byte-identical", out.stdout)
+
+
+LOG_KEYS = ["v", "ts", "event", "repo", "checks", "failed"]
+KEBAB = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+class RunLogTests(LaneTestCase):
+    """The run log: one JSON line per pre-commit or pre-push run."""
+
+    def setUp(self):
+        super().setUp()
+        self.log = self.tmp / "state" / "agent-checks" / "runs.jsonl"
+        self.repo = self.new_repo("r")
+        self.git(self.repo, "remote", "add", "origin", "https://github.com/example-owner/widgets.git")
+
+    def run_logged(self, *args, log=None, stdin=None):
+        env = dict(self.env, AGENT_CHECKS_LOG=str(log or self.log))
+        return subprocess.run(["bash", str(RUNNER), *args], cwd=str(self.repo), env=env,
+                              input=stdin, capture_output=True, text=True)
+
+    def entries(self):
+        if not self.log.exists():
+            return []
+        out = []
+        for line in self.log.read_text(encoding="utf-8").splitlines():
+            entry = json.loads(line, object_pairs_hook=lambda pairs: pairs)
+            self.assertEqual([k for k, _ in entry], LOG_KEYS, line)
+            out.append(dict(entry))
+        return out
+
+    def stage(self, files):
+        self.write(self.repo, files)
+        self.git(self.repo, "add", "--", *files)
+
+    def test_passing_pre_commit_writes_one_line(self):
+        self.stage({"README.md": "# Example\n"})
+        out = self.run_logged("pre-commit")
+        self.assertEqual((out.returncode, out.stdout, out.stderr), (0, "", ""))
+        [entry] = self.entries()
+        self.assertEqual(entry["v"], 1)
+        self.assertRegex(entry["ts"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
+        self.assertEqual(entry["event"], "pre-commit")
+        self.assertEqual(entry["repo"], "example-owner/widgets")
+        self.assertEqual(entry["checks"], ["rules-dir", "secret-file"])
+        self.assertEqual(entry["failed"], [])
+
+    def test_refused_pre_commit_lists_the_check_and_keeps_the_message(self):
+        self.stage({".env": "A=1\n"})
+        silent = self.run_logged("pre-commit", log="off")
+        out = self.run_logged("pre-commit")
+        self.assertEqual(out.returncode, 1)
+        self.assertEqual((out.stdout, out.stderr), (silent.stdout, silent.stderr))
+        self.assertIn("agent-checks: .env: looks like a secret or credential file", out.stderr)
+        [entry] = self.entries()
+        self.assertEqual(entry["failed"], ["secret-file"])
+
+    def test_pre_push_to_default_lists_push_to_default(self):
+        self.commit(self.repo, {"README.md": "# Example\n"})
+        head = self.git(self.repo, "rev-parse", "HEAD").strip()
+        out = self.run_logged("pre-push", "origin", "https://github.com/example-owner/widgets.git",
+                              stdin=f"refs/heads/main {head} refs/heads/main {'0' * 40}\n")
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("refusing to push to main", out.stderr)
+        [entry] = self.entries()
+        self.assertEqual(entry["event"], "pre-push")
+        self.assertEqual(entry["checks"], ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file"])
+        self.assertEqual(entry["failed"], ["push-to-default"])
+
+    def test_repo_local_check_is_logged(self):
+        self.stage({".agent-checks/local.sh": "exit 3\n"})
+        out = self.run_logged("pre-commit")
+        self.assertEqual(out.returncode, 1, out.stderr)
+        [entry] = self.entries()
+        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "repo-local"])
+        self.assertEqual(entry["failed"], ["repo-local"])
+
+    def test_ci_tree_and_unknown_events_write_nothing(self):
+        base = self.git(self.repo, "rev-parse", "HEAD").strip()
+        self.commit(self.repo, {".env": "A=1\n"})
+        self.assertEqual(self.run_logged("ci", base, "HEAD").returncode, 1)
+        self.assertEqual(self.run_logged("tree", "HEAD").returncode, 1)
+        self.assertEqual(self.run_logged("post-merge").returncode, 0)
+        self.assertFalse(self.log.exists())
+
+    def test_off_writes_nothing(self):
+        self.stage({"README.md": "# Example\n"})
+        env = dict(self.env, AGENT_CHECKS_LOG="off", XDG_STATE_HOME=str(self.tmp / "state"))
+        out = subprocess.run(["bash", str(RUNNER), "pre-commit"], cwd=str(self.repo), env=env,
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertFalse((self.tmp / "state").exists())
+
+    def test_default_path_is_under_xdg_state_home(self):
+        self.stage({"README.md": "# Example\n"})
+        env = {k: v for k, v in self.env.items() if k != "AGENT_CHECKS_LOG"}
+        env["XDG_STATE_HOME"] = str(self.tmp / "state")
+        out = subprocess.run(["bash", str(RUNNER), "pre-commit"], cwd=str(self.repo), env=env,
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_unwritable_log_changes_nothing(self):
+        blocker = self.tmp / "blocker"
+        blocker.write_text("a file, so no directory can be made under it\n", encoding="utf-8")
+        for files, rc in (({"README.md": "# Example\n"}, 0), ({".env": "A=1\n"}, 1)):
+            self.stage(files)
+            silent = self.run_logged("pre-commit", log="off")
+            out = self.run_logged("pre-commit", log=blocker / "agent-checks" / "runs.jsonl")
+            self.assertEqual((out.returncode, out.stdout, out.stderr),
+                             (silent.returncode, silent.stdout, silent.stderr))
+            self.assertEqual(out.returncode, rc)
+
+    def test_repo_is_parsed_only_from_github_remotes(self):
+        self.stage({"README.md": "# Example\n"})
+        urls = {
+            "git@github.com:example-owner/widgets.git": "example-owner/widgets",
+            "ssh://git@github.com/example-owner/widgets": "example-owner/widgets",
+            "https://github.com/example-owner/my.widgets_2": "example-owner/my.widgets_2",
+            "https://gitlab.example.com/example-owner/widgets.git": None,
+            "/srv/git/widgets.git": None,
+            "https://user:pass@github.com/example-owner/widgets.git": None,
+            "https://github.com/example-owner/widgets/extra": None,
+            'https://github.com/example owner/wid"gets.git': None,
+            "git@github.com:example-owner/wid'gets\\\".git": None,
+        }
+        for url, want in urls.items():
+            self.git(self.repo, "remote", "set-url", "origin", url)
+            self.assertEqual(self.run_logged("pre-commit").returncode, 0)
+            self.assertEqual(self.entries()[-1]["repo"], want, url)
+        self.git(self.repo, "remote", "remove", "origin")
+        self.run_logged("pre-commit")
+        self.assertIsNone(self.entries()[-1]["repo"])
+        self.assertEqual(len(self.entries()), len(urls) + 1)
+
+    def test_lane_cases_write_nothing(self):
+        env = {k: v for k, v in self.env.items() if k != "AGENT_CHECKS_LOG"}
+        env["XDG_STATE_HOME"] = str(self.tmp / "state")
+        out = self.lane("cases", "--runner", str(RUNNER), env=env)
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertFalse((self.tmp / "state").exists())
+
+
+def canonical_runner(runner):
+    """The runner as bash itself parsed it: the whole file is wrapped in a
+    function that is defined, never called, and printed with declare -f, so
+    comments are gone and each command sits on its own line."""
+    script = 'eval "__agent_checks_all() {\n$(cat "$1")\n}" && declare -f __agent_checks_all'
+    out = subprocess.run(["bash", "-c", script, "bash", str(runner)],
+                         capture_output=True, text=True, check=True)
+    return out.stdout
+
+
+def runner_lesson_parts(runner):
+    """check_lessons as bash printed it, and the ids lesson_checks names."""
+    script = ('trap \'declare -f check_lessons; echo ===; printf "%s\\n" $lesson_checks\' EXIT; '
+              'source "$1" not-an-event')
+    out = subprocess.run(["bash", "-c", script, "bash", str(runner)],
+                         capture_output=True, text=True, check=True).stdout
+    body, _, ids = out.partition("===\n")
+    return body, ids.split()
+
+
+# Tokens after which the next word is a command name.
+COMMAND_START = {";", ";;", "&&", "||", "|", "&", "(", ")", "{", "!", "then", "do", "else", "elif",
+                 "if", "while", "until"}
+
+
+def problem_calls(text):
+    """(id token, raw line) for every `problem` command in canonical bash."""
+    calls = []
+    for raw in text.splitlines():
+        if not re.search(r"\bproblem\b", raw):
+            continue
+        lex = shlex.shlex(raw, posix=True, punctuation_chars=";&|(){}!")
+        lex.commenters = ""
+        lex.whitespace_split = True
+        tokens = list(lex)
+        for i, tok in enumerate(tokens):
+            if tok != "problem":
+                continue
+            if i > 0 and tokens[i - 1] == "function":
+                continue  # the definition
+            if i > 0 and tokens[i - 1] not in COMMAND_START:
+                raise AssertionError(f"`problem` is not at a command position: {raw.strip()}")
+            calls.append((tokens[i + 1] if i + 1 < len(tokens) else None, raw))
+    return calls
+
+
+class CheckIdTests(unittest.TestCase):
+    """Every refusal names a stable check id: the run log counts by it."""
+
+    def test_every_problem_call_passes_a_literal_kebab_case_id(self):
+        calls = problem_calls(canonical_runner(RUNNER))
+        self.assertGreaterEqual(len(calls), 7)
+        for ident, raw in calls:
+            self.assertIsNotNone(ident, raw)
+            self.assertRegex(ident, KEBAB, raw)
+            self.assertRegex(raw, r"\bproblem " + re.escape(ident) + r"(\s|;|$)",
+                             f"the id must be an unquoted literal: {raw.strip()}")
+
+    def test_core_check_ids(self):
+        ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
+        self.assertLessEqual({"rules-dir", "secret-file", "staged-index", "push-to-default", "persistent-delete",
+                              "repo-local"}, ids)
+
+    def test_lesson_arms_and_lesson_checks_agree(self):
+        for arm in (None, PATH_ARM):
+            runner = RUNNER
+            if arm:
+                tmp = Path(tempfile.mkdtemp(prefix="agent-check-ids-"))
+                self.addCleanup(shutil.rmtree, tmp, True)
+                runner = tmp / "candidate"
+                text = RUNNER.read_text(encoding="utf-8").replace(EMPTY_LESSONS, arm)
+                runner.write_text(text.replace('lesson_checks=""', 'lesson_checks="lesson-example-path"'),
+                                  encoding="utf-8")
+            body, listed = runner_lesson_parts(runner)
+            arm_ids = [ident for ident, _ in problem_calls(body)]
+            self.assertTrue(all(i.startswith("lesson-") for i in arm_ids + listed), arm_ids + listed)
+            self.assertEqual(sorted(set(arm_ids)), sorted(listed))
+            others = {i for i, _ in problem_calls(canonical_runner(runner))} - set(arm_ids)
+            self.assertFalse([i for i in others if i.startswith("lesson-")])
 
 
 if __name__ == "__main__":

@@ -24,7 +24,8 @@ and runs `ci <base> HEAD`, so a case can show a file caught although the head
 no longer has it.
 
 Every runner run gets a clean environment: a temp HOME, no global or system
-git config and no inherited GIT_* variable, so no machine hook fires.
+git config and no inherited GIT_* variable, so no machine hook fires, and
+AGENT_CHECKS_LOG=off, so no case lands in the owner's run log.
 
 Usage:
   python3 scripts/agent_check_lane.py cases --runner R [--cases F]
@@ -62,7 +63,8 @@ RUNNER_COPIES = SCOPE_PATHS[:2]
 
 def clean_env(home):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(HOME=str(home), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    env.update(HOME=str(home), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
+               AGENT_CHECKS_LOG="off")
     return env
 
 

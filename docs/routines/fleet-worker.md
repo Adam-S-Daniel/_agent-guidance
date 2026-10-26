@@ -237,8 +237,9 @@ oldest first, at most 2 lessons per run.
    memory-promotion item, say so in the issue comment of step 7. Move on.
 2. **Write the check.** Branch `agent/lesson-check-<id>` from `origin/main`.
    In `templates/agent-checks/agent-checks`, add arm(s) to `check_lessons`,
-   each refusing through `problem` with what is wrong, why and how to fix
-   it, ending `# lesson: <id>`. Read content with `file_content`; never
+   each refusing through `problem lesson-<id> "..."` with what is wrong, why
+   and how to fix it, ending `# lesson: <id>`, and add `lesson-<id>` to
+   `lesson_checks` (the run log's check id; kebab-case). Read content with `file_content`; never
    print it. A rule for one repo limits itself to that repo's paths. Add at
    least one `refuse` case and at least one near-miss `pass` case, tagged
    `"lesson": "<id>"`, to `test/fixtures/agent-checks-cases.jsonl`, with
