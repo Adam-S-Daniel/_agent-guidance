@@ -33,6 +33,8 @@ under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
   variable. Use `acorn`/`acorn-walk` for JS, `yaml` for YAML; regex only for a lexical token.
 - Writing that goes out under Adam's name: invoke the
   `adam-writing-style` skill.
+- **Text the owner pastes into a UI** (a routine prompt, a settings
+  field): give the complete replacement as one block, never edits to apply.
 
 ## Anything you name gets its link
 

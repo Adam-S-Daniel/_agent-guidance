@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-26 — working-in-these-repos — edit
+- Motivation: owner, 2026-10-26: handed edits to apply to the eval routine's saved prompt, he asked for the whole text to paste instead, and for a rule to always do that.
+- Change: a bullet saying text the owner pastes into a UI is given as one complete replacement, never as edits (PR number not yet assigned).
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-10-26 — finding-your-unknowns — edit
 - Motivation: owner rule 2026-10-26: a git hook is the first choice for a durable finding, ahead of a skill or text, both for fleet rules and for a repo's own.
 - Change: the "durable findings" list now puts a commit-checkable rule first, as a check in `templates/agent-checks/agent-checks` (fleet) or the repo's `.agent-checks/local.sh` (one repo), with a pointer to the how-to atop `.githooks/agent-checks`; section 786 -> 1015 bytes (ADR 0027 branch; PR number not yet assigned).
