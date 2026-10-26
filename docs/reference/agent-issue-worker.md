@@ -4,7 +4,9 @@ The issue pass of the cloud [fleet worker](../routines/fleet-worker.md). It
 takes the issues that the agent changelog routine
 ([`agent-changelog-routine.md`](agent-changelog-routine.md)) and the
 prompt-audit sweep ([`prompt-audit-sweep.md`](../routines/prompt-audit-sweep.md))
-file, each labeled `agent-ready`, and turns each one into a ready-for-review
+file, and the memory-promotion issues the memory curation routine
+([`memory-curation.md`](../routines/memory-curation.md)) files, each labeled
+`agent-ready`, and turns each one into a ready-for-review
 PR in that issue's repo. The worker never merges. The fleet worker's PR pass
 may later merge one narrow kind of fix PR
 ([ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md));
