@@ -40,7 +40,8 @@
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/anything-you-name-gets-its-link/
   bytes: 920
 
 - id: finding-your-unknowns
@@ -106,13 +107,15 @@
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/watch-finished-is-not-ci-passed/
   bytes: 1375
 
 - id: git-push-does-not-mean-commit-exists
   heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/git-push-does-not-mean-commit-exists/
   bytes: 1143
 
 - id: dependency-updates
@@ -130,7 +133,8 @@
 - id: pinning-github-actions
   heading: Pinning GitHub Actions
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/pinning-github-actions/
   bytes: 1153
 
 - id: test-that-can-signal-kills-every-session
@@ -160,7 +164,8 @@
 - id: git-practices
   heading: Git practices
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/git-practices/
   bytes: 1484
 
 - id: section-docker
