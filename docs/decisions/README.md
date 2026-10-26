@@ -41,6 +41,7 @@ a page.
 | [0023](0023-mark-agent-contributions.md) | Mark every agent-made GitHub contribution, on Adam's account for now (shares number 0023 with the previous row; distinct decisions) |
 | [0024](0024-actions-pin-through-lockfiles.md) | Actions are pinned through workflow lockfiles, and the lockfile is verified in a required check |
 | [0025](0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md) | A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest |
+| [0026](0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md) | Memory is curated by a routine, and its durable facts are promoted through the fleet worker |
 
 ## Format
 
