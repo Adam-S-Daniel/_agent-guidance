@@ -234,6 +234,44 @@ class ContentArmTests(LaneTestCase):
         self.assertIn("app.cfg: holds a DO-NOT-SHIP marker", out.stderr)
 
 
+class LocalChecksTests(LaneTestCase):
+    """.agent-checks/local.sh: a repo's own checks, run after the fleet's."""
+
+    def test_local_check_exiting_0_cannot_suppress_a_fleet_refusal(self):
+        repo = self.new_repo("r")
+        self.write(repo, {".agent-checks/local.sh": "failed=0\nexit 0\n", ".env": "A=1\n"})
+        self.git(repo, "add", ".agent-checks/local.sh", ".env")
+        out = self.runner(RUNNER, repo, "pre-commit")
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("agent-checks: .env: looks like a secret", out.stderr)
+
+    def test_local_check_reads_paths_rev_and_event(self):
+        script = ('rev=$AGENT_CHECKS_REV\n'
+                  'while IFS= read -r -d "" p; do\n'
+                  '  if git show "${rev}:$p" | grep -qx DRAFT; then echo "local: $1: $p is a draft" >&2; exit 3; fi\n'
+                  'done\n')
+        repo = self.new_repo("r", {".agent-checks/local.sh": script, "doc.md": "DRAFT\n"})
+        out = self.runner(RUNNER, repo, "tree", "HEAD")
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("local: tree: doc.md is a draft", out.stderr)
+        self.assertIn("agent-checks: .agent-checks/local.sh (this repo's own checks) refused, exit 3", out.stderr)
+        # pre-commit: an empty AGENT_CHECKS_REV reads the index.
+        self.write(repo, {"doc.md": "final\n"})
+        self.git(repo, "add", "doc.md")
+        self.write(repo, {"doc.md": "DRAFT\n"})
+        out = self.runner(RUNNER, repo, "pre-commit")
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_symlinked_local_check_is_not_run(self):
+        repo = self.new_repo("r")
+        (self.tmp / "outside.sh").write_text("exit 1\n", encoding="utf-8")
+        (repo / ".agent-checks").mkdir()
+        (repo / ".agent-checks" / "local.sh").symlink_to(self.tmp / "outside.sh")
+        self.write(repo, {"README.md": "# Example\n"})
+        self.git(repo, "add", "README.md")
+        self.assertEqual(self.runner(RUNNER, repo, "pre-commit").returncode, 0)
+
+
 @unittest.skipUnless(yq_usable(), "fleet-scan reads repos.yml with mikefarah yq, which is not on PATH "
                                   "(CI's suite job installs it in its 'Install yq' step)")
 class FleetScanTests(LaneTestCase):
