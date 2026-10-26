@@ -17,9 +17,11 @@ Three things, none of which any existing workflow checks:
 1. **Nothing multi-repo-applicable is stranded in one repo.** Guidance that
    would help every repo belongs in `agents-md/base.md`; a reusable procedure
    belongs in the `agentskills` registry (or `agentskills-private` if it names
-   anything sensitive); a propagation probe belongs in `skills-evals`. A
-   paragraph that is fleet-general but lives under one repo's
-   `## Repo-specific additions` is invisible to every other repo in the fleet.
+   anything sensitive); a propagation probe belongs in `skills-evals`; a
+   rule a commit can check belongs in the fleet's agent-checks runner, ahead
+   of any of those. A paragraph that is fleet-general but lives under one
+   repo's `## Repo-specific additions`, or a check in one repo's
+   `.agent-checks/local.sh`, is invisible to every other repo in the fleet.
 2. **Every repo receives `base.md`,** unless its exclusion is written down in
    `repos.yml` with a reason — and unless it is one of the three *structural*
    exclusions (fork, archived, this repo) that no entry could express anyway.
@@ -804,8 +806,19 @@ source.
 ### A. Centralization
 
 For every in-scope repo, read everything below `## Repo-specific additions`,
-plus any `.claude/skills/` directory it carries, and sort it:
+plus any `.claude/skills/` directory and `.agent-checks/local.sh` it carries,
+and sort it:
 
+- **A check first.** Owner's rule (2026-10-26): a git hook comes ahead of a
+  skill or text. Sort each check in `.agent-checks/local.sh`: one that would
+  hold in every fleet repo is proposed for the fleet runner,
+  `templates/agent-checks/agent-checks`, through the fleet worker's
+  lesson-check pass and its gates
+  ([ADR 0027](../decisions/0027-lessons-become-agent-checks-through-the-fleet-worker.md)),
+  and the local copy goes once it lands. Flag repo-specific prose or a repo
+  skill whose rule a commit could check, and propose it as a check (local
+  in that repo's `.agent-checks/local.sh`, or fleet through the same pass)
+  ahead of keeping it as text.
 - **Fleet-general → propose for `base.md`.** The test is not "is this true
   everywhere" but "would an agent in an unrelated repo act differently for
   having read it." base.md's own standard is stricter than general good
