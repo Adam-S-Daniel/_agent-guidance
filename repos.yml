@@ -242,6 +242,15 @@ skills_bootstrap:
       reason: >-
         Dormant since 2026-03; no session happens there to spend the context.
 
+    # A data channel, not a workspace: `feed.json` is rewritten by a scheduled
+    # script on BOXY (wsl-automation's scripts/publish-waiting-feed.sh) and
+    # read by the "Waiting on Adam" page. Nobody opens a session in it, so
+    # the bundle would cost always-on context in sessions that never happen.
+    - repo: waiting-feed
+      reason: >-
+        Machine-written feed repo (one JSON file, committed by a scheduled
+        script); no session happens there to spend the context.
+
   # Forks and archived repos are NOT listed above: discovery never reaches
   # them (`gh repo list --source --no-archived`), so their absence from
   # delivery is not a choice this key can express. See the header of
