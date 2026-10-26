@@ -52,7 +52,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-26 — working-in-these-repos — edit
 - Motivation: owner, 2026-10-26: handed edits to apply to the eval routine's saved prompt, he asked for the whole text to paste instead, and for a rule to always do that.
-- Change: a bullet saying text the owner pastes into a UI is given as one complete replacement, never as edits (PR number not yet assigned).
+- Change: a bullet saying text the owner must paste (a routine prompt, a settings field) is given whole, never as edits; worded tight for the 29696-byte Codex budget (PR #342).
 - Eval: none — no fixture yet
 - Outcome: pending
 
