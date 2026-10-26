@@ -37,8 +37,8 @@ a page.
 | [0020](0020-the-api-credit-lane-is-machine-local-not-fleet-guidance.md) | The API-credit lane is machine-local, delivered by plugin hooks, not by the fleet guidance |
 | [0021](0021-the-sync-delivers-agent-checks-to-every-fleet-repo.md) | The sync delivers the agent-checks runner, CI check and --no-verify guard to every fleet repo |
 | [0022](0022-the-changelog-routine-does-not-read-claudeissues-com.md) | The changelog routine does not read claudeissues.com |
-| [0023](0023-pro-max-only-claude-code-tested-codex-best-effort.md) | Pro/Max only, Claude Code tested, Codex best effort, and the Projects-era strategy |
-| [0023](0023-mark-agent-contributions.md) | Mark every agent-made GitHub contribution, on Adam's account for now |
+| [0023](0023-pro-max-only-claude-code-tested-codex-best-effort.md) | Pro/Max only, Claude Code tested, Codex best effort, and the Projects-era strategy (shares number 0023 with the next row; distinct decisions) |
+| [0023](0023-mark-agent-contributions.md) | Mark every agent-made GitHub contribution, on Adam's account for now (shares number 0023 with the previous row; distinct decisions) |
 | [0024](0024-actions-pin-through-lockfiles.md) | Actions are pinned through workflow lockfiles, and the lockfile is verified in a required check |
 | [0025](0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md) | A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest |
 

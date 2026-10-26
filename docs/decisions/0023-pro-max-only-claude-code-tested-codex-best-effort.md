@@ -1,5 +1,7 @@
 # 0023 — Pro/Max only, Claude Code tested, Codex best effort, and the Projects-era strategy
 
+> Note: ADR 0023 is also used by [0023-mark-agent-contributions.md](0023-mark-agent-contributions.md) (marking agent-made GitHub contributions); the two are distinct decisions, numbered in parallel by mistake.
+
 **Status:** Accepted (2026-10-24)
 
 ## Context
