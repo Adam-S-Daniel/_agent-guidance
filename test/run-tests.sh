@@ -21240,6 +21240,37 @@ test_fleet_memory_freshness() {
 
 # Codex's generated records are audited after generation; all memory, sidecar,
 # and CLI configuration paths in this group are synthetic and isolated.
+# The memory curation audit (docs/decisions/0026). Its unittest module owns
+# temporary memory directories of invented notes and needs no shell fixtures.
+# Each test counts as one PASS or FAIL here, and a module that discovers
+# nothing fails, so a renamed test file cannot pass silently.
+test_memory_audit() {
+    echo ""
+    echo "TEST: memory_audit.py (memory curation audit and promotion proposals)"
+    local counts="$TEST_DIR/memory-audit-counts" ran failed
+    python3 - "$SCRIPT_DIR" "$counts" <<'PY' || true
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_memory_audit.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+bad = len(result.failures) + len(result.errors) + len(result.unexpectedSuccesses)
+pathlib.Path(sys.argv[2]).write_text("%d %d\n" % (result.testsRun, bad), encoding="ascii")
+PY
+    if ! read -r ran failed < "$counts" 2>/dev/null; then
+        fail "memory-audit: the unittest module did not report a count"
+        return
+    fi
+    if (( ran == 0 )); then
+        fail "memory-audit: test_memory_audit.py ran zero tests"
+        return
+    fi
+    PASS=$((PASS + ran - failed))
+    FAIL=$((FAIL + failed))
+    (( failed == 0 )) && echo "  PASS: memory-audit: $ran unittest cases" || echo "  FAIL: memory-audit: $failed of $ran unittest cases"
+}
+
 test_codex_memory_audit() {
     echo ""
     echo "TEST: audit-codex-memory.py (read-only post-generation attestations)"
@@ -23545,6 +23576,7 @@ TEST_GROUPS=(
     self_hosted
     codex
     memory_home
+    memory_audit
     github_write_marker
     gitattr
     automerge
@@ -23773,6 +23805,11 @@ GROUP_codex=(
 # shellcheck disable=SC2034
 GROUP_codex_memory_audit=(
     test_codex_memory_audit
+)
+
+# shellcheck disable=SC2034
+GROUP_memory_audit=(
+    test_memory_audit
 )
 
 GROUP_runner=(
@@ -24165,7 +24202,7 @@ run_one_group() {
     else
         # This group owns its SQLite/filesystem fixtures and does not need mock
         # repos. It also runs unchanged in a Git-free negative-control scratch.
-        if [[ "$g" != codex_memory_audit && "$g" != runner ]]; then setup_fixtures; fi
+        if [[ "$g" != codex_memory_audit && "$g" != memory_audit && "$g" != runner ]]; then setup_fixtures; fi
         local ref="GROUP_${g}[@]"
         for t in "${!ref}"; do
             "$t"

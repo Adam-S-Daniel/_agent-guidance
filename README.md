@@ -254,9 +254,19 @@ the work. A home is **dangling** when a local clone of `<repo>` is found but
   overrides the wired path, which is how a run from a worktree points at the
   main checkout.
 
-Promotion is deliberately **not** automatic — choosing which repo owns a fact,
-and which file inside it, is judgment. Reasoning:
+The hooks never move a note — choosing which repo owns a fact, and which file
+inside it, is judgment. Reasoning:
 [`docs/decisions/0013`](docs/decisions/0013-a-memory-note-outside-a-repo-names-its-home.md).
+Curation and promotion are a separate weekly routine instead:
+[`scripts/memory_audit.py`](scripts/memory_audit.py) reports homeless,
+duplicate, stale, unindexed and oversize notes and proposes the text a home
+file still lacks, and [`docs/routines/memory-curation.md`](docs/routines/memory-curation.md)
+acts on it, filing promotions for the fleet worker
+([`docs/decisions/0026`](docs/decisions/0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md)).
+
+```bash
+python3 scripts/memory_audit.py <memory-dir> --clone-root ~/repos --summary summary.md > audit.json
+```
 
 #### Codex memory has an operator-run provenance audit
 

@@ -19,6 +19,22 @@ Each run does three passes, in this order:
 3. **The lesson-check pass** (below): turns checkable lessons into checks
    in the fleet's agent-checks runner, in PRs that auto-merge when green.
 
+Its work sources are the `agent-ready` issues the
+[prompt-audit sweep](prompt-audit-sweep.md), the agent changelog routine and
+the [memory curation routine](memory-curation.md) file. A memory-promotion
+issue (`Memory promotion <date>: ...`) proposes facts from agent memory for
+the repo's own files. When its target is the repo-specific half of an
+`AGENTS.md` or a `CLAUDE.md`, its fix is a narrow instruction fix under
+[ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
+and the merge rule below covers it
+([ADR 0026](../decisions/0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md)).
+
+A memory-promotion issue whose items are of kind `agent-check` is filed in
+`Adam-S-Daniel/_agent-guidance`, titled `Memory promotion <date>: <n> agent-checks`.
+The issue pass skips it: the lesson-check pass (below) works it, through the
+same gates as any other lesson, and its PR auto-merges when green
+([ADR 0027](../decisions/0027-lessons-become-agent-checks-through-the-fleet-worker.md)).
+
 ## Constraints
 
 Follow the [on-hold label policy](../reference/on-hold-label.md). Before
@@ -96,10 +112,12 @@ each read fresh:
 
 1. Its head branch is `agent/issue-<n>-<slug>` and its body starts with
    `Closes <owner>/<repo>#<n>`, where issue `<n>` in the same repo has a
-   title matching `^Prompt-audit sweep \d{4}-\d{2}-\d{2}: `.
-2. Every changed file is a `CLAUDE.md` or `AGENTS.md` at any depth, or a new
-   Markdown file added under `docs/evidence/` (a dated narrative the issue
-   asked to move). No file is deleted or renamed. In an `AGENTS.md`, every
+   title matching `^Prompt-audit sweep \d{4}-\d{2}-\d{2}: ` (a sweep
+   issue) or `^Memory promotion \d{4}-\d{2}-\d{2}: ` (a memory-promotion
+   issue).
+2. Every changed file is a `CLAUDE.md` or `AGENTS.md` at any depth, or, for
+   a sweep issue only, a new Markdown file added under `docs/evidence/` (a
+   dated narrative the issue asked to move). No file is deleted or renamed. In an `AGENTS.md`, every
    changed line sits below the `## Repo-specific additions` heading in both
    the base and the head versions. In `_agent-guidance` itself, `AGENTS.md`'s
    managed half is generated from `agents-md/base.md`, which this rule never
@@ -122,7 +140,12 @@ change, not approve it. It answers `CLEAN` only if every hunk fixes a
 finding the issue lists, no rule's meaning changed beyond what the finding
 asked, dated incident evidence was moved with a one-clause pointer rather
 than deleted, and the new text is American English with no closing keyword
-or stray `@name`. Otherwise it answers `FINDINGS` with each problem. Post
+or stray `@name`. For a memory-promotion issue, "fixes a finding" means
+adds one of the facts under its `## Proposed edits`, reworded to fit the
+file, and `CLEAN` also requires that the added text holds no personal data
+(no name but the owner's login, no email address, hostname, device,
+environment, session or thread id) and repeats nothing the file already
+says. Otherwise it answers `FINDINGS` with each problem. Post
 its verdict as a PR comment: first line `Independent review: CLEAN at <full
 head sha>` or `Independent review: FINDINGS at <full head sha>`, then the
 findings. At most 5 reviews per run.

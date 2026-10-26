@@ -89,7 +89,7 @@ jobs:
       matrix:
         include:
           - shard: 1
-            groups: sweep_cleanup drift_testorg codex runner
+            groups: sweep_cleanup drift_testorg codex runner memory_audit
           - shard: 2
             groups: bump drift hook_pin memory_home
           - shard: 3
