@@ -23516,6 +23516,40 @@ test_agent_checks_guard() {
     fi
 }
 
+# pre-push refuses deleting a persistent/* branch and nothing else: deleting
+# any other branch, and pushing to a persistent/* branch, still pass.
+test_agent_checks_persistent_delete() {
+    echo ""
+    echo "=== Test: agent-checks pre-push refuses deleting a persistent/* branch ==="
+    local runner="$REPO_ROOT/templates/agent-checks/agent-checks"
+    local repo="$TEST_DIR/ac-persistent" zero sha rc
+    zero=0000000000000000000000000000000000000000
+    git init -q "$repo"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m base
+    sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0; (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "(delete) $zero refs/heads/persistent/results $sha") >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 1 ]]; then
+        pass "agent-checks persistent: deleting persistent/results is refused"
+    else
+        fail "agent-checks persistent: deleting persistent/results is refused — exit $rc"
+    fi
+    rc=0; (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "(delete) $zero refs/heads/feature/x $sha") >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks persistent: deleting an ordinary branch passes"
+    else
+        fail "agent-checks persistent: deleting an ordinary branch passes — exit $rc"
+    fi
+    rc=0; (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/persistent/results $sha refs/heads/persistent/results $zero") >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks persistent: pushing to persistent/results passes"
+    else
+        fail "agent-checks persistent: pushing to persistent/results passes — exit $rc"
+    fi
+}
+
 # The sync never reaches this repo (SYNC_SELF_REPO), so it carries its own
 # copies, by hand: the runner must stay byte-identical to the template the
 # fleet receives, and the guard is registered straight from the template.
@@ -24131,6 +24165,7 @@ GROUP_automerge=(
 # lesson-check lane's tests (ADR 0027) use only temp repos of their own.
 GROUP_agent_checks=(
     test_agent_checks_guard
+    test_agent_checks_persistent_delete
     test_self_agent_checks
     test_sync_agent_checks
     test_agent_check_lane_cases
