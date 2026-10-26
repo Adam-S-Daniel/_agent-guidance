@@ -1,5 +1,7 @@
 # 0023 — Mark every agent-made GitHub contribution, on Adam's account for now
 
+> Note: ADR 0023 is also used by [0023-pro-max-only-claude-code-tested-codex-best-effort.md](0023-pro-max-only-claude-code-tested-codex-best-effort.md) (Pro/Max only, Claude Code tested, Codex best effort); the two are distinct decisions, numbered in parallel by mistake.
+
 **Status:** Accepted (2026-10-20)
 
 ## Context
