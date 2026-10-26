@@ -411,6 +411,40 @@ jobs:
             # BEHIND is deliberately NOT caught here: a stale branch is a
             # state this sweep can fix, and does, further down by refreshing
             # the branch rather than retrying the merge.
+            # mergeStateStatus is answered for the TOKEN asking, and
+            # GITHUB_TOKEN can never hold `workflows`. A workflow-file PR that
+            # has fallen behind its base therefore reads BLOCKED to this
+            # sweep even when the ruleset is satisfied: the merge commit
+            # would carry workflow content Dependabot never pushed, which
+            # GitHub refuses to write for this identity (the same refusal
+            # `gh pr update-branch` hits further down). Measured 2026-10-20
+            # to 2026-10-25 on #296: four red sweeps, each naming "a required
+            # review, a required status check that nothing reports, or a
+            # second ruleset" -- none of which existed. A base-policy probe
+            # answers the wrong question here, so it is not asked; the
+            # remedy is the one for the update-branch refusal below.
+            #
+            # Behind-ness is measured from the refs fetched above (the way
+            # the BEHIND arm below does) because a base that does not
+            # require an up-to-date head never says BEHIND, only BLOCKED.
+            behind_by=0
+            if behind_raw=$(git rev-list --count "dependabot-sweep/pr-${num}..origin/${base}" 2>/dev/null) \
+              && [ -n "$behind_raw" ] && [ -z "${behind_raw//[0-9]/}" ]; then
+              behind_by=$behind_raw
+            fi
+            touches_workflows=false
+            for f in "${CHANGED[@]}"; do
+              case "$f" in
+                .github/workflows/*) touches_workflows=true ;;
+              esac
+            done
+
+            if [ "$merge_state" = "BLOCKED" ] && [ "$touches_workflows" = "true" ] && [ "$behind_by" -gt 0 ]; then
+              echo "::error::blocked #${num} — it changes .github/workflows/ and is ${behind_by} commit(s) behind ${base}, so GITHUB_TOKEN (which cannot hold the \`workflows\` permission) cannot write the merge commit; GitHub reports that as mergeStateStatus=BLOCKED. Not attempting it. Needs a human: comment \`@dependabot rebase\` on the PR; the next sweep merges it once its checks are green."
+              BLOCKED_PRS=$((BLOCKED_PRS + 1))
+              continue
+            fi
+
             if [ "$merge_state" = "BLOCKED" ]; then
               diagnose_blocked "$base"
               echo "::error::blocked #${num} — mergeable with green checks, but GitHub's base branch policy refuses the merge (mergeStateStatus=BLOCKED); not attempting it. Cause (base ${base}): ${BLOCKED_CAUSE}"
@@ -452,22 +486,6 @@ jobs:
             # mergeStateStatus says BEHIND only when the base branch REQUIRES
             # an up-to-date head. This repo's main does not, so a stale PR
             # reads CLEAN and used to land in the "not behind" branch below:
-            # #296 on 2026-10-20 was CLEAN, 2 commits behind main, and its
-            # merge was refused because main had changed the same workflow
-            # file. Count the distance from the refs fetched above instead.
-            # Anything unreadable counts as 0, which keeps the old behaviour.
-            behind_by=0
-            if behind_raw=$(git rev-list --count "dependabot-sweep/pr-${num}..origin/${base}" 2>/dev/null) \
-              && [ -n "$behind_raw" ] && [ -z "${behind_raw//[0-9]/}" ]; then
-              behind_by=$behind_raw
-            fi
-            touches_workflows=false
-            for f in "${CHANGED[@]}"; do
-              case "$f" in
-                .github/workflows/*) touches_workflows=true ;;
-              esac
-            done
-
             if [ "$merge_state" = "BEHIND" ] || [ "$behind_by" -gt 0 ]; then
               # A stale branch is genuinely un-mergeable, and nothing short
               # of updating it can fix that — this is the exact
@@ -535,8 +553,12 @@ jobs:
               # BLOCKED_CAUSE holds only the LAST base probed, so naming it
               # here would attribute one branch's policy to every branch.
               echo "::error::${BLOCKED_PRS} Dependabot PR(s) blocked by the base branch policy across $# base branches (${BLOCKED_BASES}) — see the per-PR causes above."
-            else
+            elif [ -n "$BLOCKED_CAUSE" ]; then
               echo "::error::${BLOCKED_PRS} Dependabot PR(s) blocked by the base branch policy — ${BLOCKED_CAUSE}"
+            else
+              # Only the workflow-file arm blocked, which never probes the
+              # policy, so there is no cause to repeat here.
+              echo "::error::${BLOCKED_PRS} Dependabot PR(s) blocked — stale workflow-file PR(s) GITHUB_TOKEN cannot merge; see the per-PR remedy above."
             fi
           fi
           if [ "$FAILED" -gt 0 ]; then
