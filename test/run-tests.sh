@@ -40,6 +40,10 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # bit local runs; unsetting both here makes the run deterministic everywhere.
 unset GH_TOKEN GITHUB_TOKEN
 
+# A runner started by a test must not append to the owner's agent-checks run
+# log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
+export AGENT_CHECKS_LOG=off
+
 # Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
 # means rather than the directory several artifacts share.
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"

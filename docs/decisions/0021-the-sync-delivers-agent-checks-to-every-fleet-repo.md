@@ -66,3 +66,16 @@ its files from `templates/agent-checks/`:
   sync pushes to default branches directly, so a run on an owner machine with
   the hooks installed falls back to its PR path; CI runs have no hooks and are
   unaffected.
+
+## Addendum (2026-10-26): the run log
+
+Every `problem` call names a stable kebab-case check id (`rules-dir`,
+`secret-file`, `staged-index`, `push-to-default`, `repo-local`, a lesson's
+`lesson-<id>`, ...). Each local pre-commit and pre-push run appends one JSON
+line, `{"v":1,"ts","event","repo","checks","failed"}`, to `$AGENT_CHECKS_LOG`
+(default `${XDG_STATE_HOME:-$HOME/.local/state}/agent-checks/runs.jsonl`), so
+a dashboard can show how often each check runs and refuses per repo. `repo`
+is origin's GitHub `owner/name` or null; the line holds no paths, messages,
+branches or user names. CI and `tree` runs write nothing.
+`AGENT_CHECKS_LOG=off` turns it off, and a failed write is silent. The
+runner's header comment is the reference.
