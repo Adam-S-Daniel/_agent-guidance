@@ -21,8 +21,8 @@ is the decision now in force).
 
 ## Where it runs
 
-From 2026-10-25 it runs in the cloud, inside every fleet worker run (every 2
-hours). Before that it was a Claude Desktop scheduled task on the owner's
+From 2026-10-26 it runs in the cloud, inside every fleet worker run
+(hourly). Before that it was a Claude Desktop scheduled task on the owner's
 laptop, `handle-ready-for-review-issues-fleetwide`, created 2026-09-30, which
 ran only while the laptop was awake and the app was open and sat idle from
 about 2026-10-09. **The owner turns that laptop task off** (Claude Desktop,

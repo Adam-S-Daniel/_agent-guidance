@@ -1,7 +1,8 @@
 # Routine: fleet worker
 
-**Fires:** every 2 hours, from a claude.ai scheduled task in Adam's account
-named `Fleet worker`, created from a project thread on 2026-10-25. Each fire
+**Fires:** hourly, from a claude.ai scheduled task in Adam's account named
+`Fleet worker` (`trig_015GknYddgCBUBv7By3n7HHN`), which the owner created on
+the Routines page on 2026-10-26. Each fire
 starts a fresh cloud session. Why it exists, and why it may merge one narrow
 kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md).
 
@@ -68,10 +69,10 @@ no merge.
 
 ## The trigger
 
-- **Scheduled task settings.** Cron `0 */2 * * *` (UTC; the server spreads
-  it across the hour). Fresh session per fire. Environment: `My Whitelist`.
-  Model: no override. Push notifications on, email off. Connectors: none
-  beyond GitHub.
+- **Scheduled task settings.** Hourly (the Routines page offers no
+  2-hour option). Fresh session per fire. Environment: `My Whitelist`.
+  Model: no override. Push notifications on, email off. "Auto-fix pull
+  requests" on. Connectors: none beyond GitHub.
 - **Prompt, exactly:**
 
   > Read and follow `docs/routines/fleet-worker.md` in
@@ -173,7 +174,11 @@ A PR **needs the owner** when any of these holds:
 - **Ready for his merge:** authored by `Adam-S-Daniel`, every check green as
   in merge rule item 4, `mergeable_state` `clean`, and the merge rule does not
   allow this routine to merge it, or a review answered `FINDINGS`. A
-  lesson-check PR with auto-merge armed is not one: it merges itself.
+  lesson-check PR with auto-merge armed is not one: it merges itself. Nor is
+  a Decap CMS post that is still a draft or in review (a `decap-cms/draft`
+  or `decap-cms/pending_review` label): merging one publishes it, and the
+  owner moves it to `decap-cms/pending_publish` in the CMS when it is
+  ready.
 - **A failing lesson-check PR:** its head branch is
   `agent/lesson-check-<id>` and a check run on its head concluded `failure`
   or a commit status is `failure` or `error`. Auto-merge never lands it, and
