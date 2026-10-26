@@ -432,7 +432,7 @@ class RunLogTests(LaneTestCase):
         self.assertIn("refusing to push to main", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(entry["checks"], ["staged-index", "push-to-default", "rules-dir", "secret-file"])
+        self.assertEqual(entry["checks"], ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file"])
         self.assertEqual(entry["failed"], ["push-to-default"])
 
     def test_repo_local_check_is_logged(self):
@@ -569,7 +569,7 @@ class CheckIdTests(unittest.TestCase):
 
     def test_core_check_ids(self):
         ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
-        self.assertLessEqual({"rules-dir", "secret-file", "staged-index", "push-to-default",
+        self.assertLessEqual({"rules-dir", "secret-file", "staged-index", "push-to-default", "persistent-delete",
                               "repo-local"}, ids)
 
     def test_lesson_arms_and_lesson_checks_agree(self):

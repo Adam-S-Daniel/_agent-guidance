@@ -210,6 +210,7 @@ case "$event" in
     remote=${2:-origin}
     note_ran staged-index
     note_ran push-to-default
+    note_ran persistent-delete
     if ! git diff --cached --quiet; then
       problem staged-index "the index has staged changes that are in no commit. If your last 'git commit' was refused by a hook, this push would publish the commit before it and report success. Commit or unstage them first (git status), then push."
     fi
@@ -224,7 +225,7 @@ case "$event" in
       if is_zero "$local_oid"; then
         case "$remote_ref" in
           refs/heads/persistent/*)
-            problem "refusing to delete ${remote_ref#refs/heads/}: persistent/* branches outlive their PRs and hold data (results, usage records), and deleting one loses it. Private repos without rulesets have nothing else to stop this. If it really must go, ask Adam." ;;
+            problem persistent-delete "refusing to delete ${remote_ref#refs/heads/}: persistent/* branches outlive their PRs and hold data (results, usage records), and deleting one loses it. Private repos without rulesets have nothing else to stop this. If it really must go, ask Adam." ;;
         esac
         continue
       fi
