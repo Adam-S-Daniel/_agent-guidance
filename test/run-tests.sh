@@ -23489,7 +23489,7 @@ for g in doc["hooks"]["PreToolUse"]:
 # then the event Claude Code sends). Exit 2 is a block; anything else allows.
 test_agent_checks_guard() {
     echo ""
-    echo "=== Test: the agent-checks guard blocks hook skipping and nothing else ==="
+    echo "=== Test: the agent-checks guard blocks hook skipping and persistent/* deletes, nothing else ==="
     local cases="$SCRIPT_DIR/fixtures/agent-checks-guard-cases.jsonl"
     local guard="$REPO_ROOT/templates/agent-checks/agent-checks-guard.sh"
     local line expect event rc got label n=0
@@ -23511,6 +23511,16 @@ test_agent_checks_guard() {
         pass "agent-checks guard: the case file was read ($n cases)"
     else
         fail "agent-checks guard: the case file was read — only $n cases"
+    fi
+    # A persistent/* delete says why and whom to ask, not the hook-skipping advice.
+    rc=0; bash "$guard" <<< '{"tool_name":"Bash","tool_input":{"command":"git push origin --delete persistent/eval-results"}}' \
+        > /dev/null 2> "$TEST_DIR/guard-persistent.err" || rc=$?
+    if [[ $rc -eq 2 ]] && grep -qF 'deleting the remote branch persistent/eval-results' "$TEST_DIR/guard-persistent.err" \
+       && grep -qF 'ask Adam' "$TEST_DIR/guard-persistent.err" \
+       && ! grep -qF 'skipping the hook' "$TEST_DIR/guard-persistent.err"; then
+        pass "agent-checks guard: a persistent/* delete names the branch and says to ask Adam"
+    else
+        fail "agent-checks guard: a persistent/* delete names the branch and says to ask Adam — exit $rc: $(cat "$TEST_DIR/guard-persistent.err")"
     fi
     rc=0; PATH=/nonexistent /bin/bash "$guard" <<< '{"tool_name":"Bash","tool_input":{"command":"git commit --no-verify"}}' >/dev/null 2>&1 || rc=$?
     if [[ $rc -eq 0 ]]; then

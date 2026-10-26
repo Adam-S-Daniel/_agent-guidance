@@ -25,3 +25,24 @@
 {"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -m \"unterminated"}}
 {"expect": "block", "tool_name": "Edit", "tool_input": {"file_path": "/x/repo/.githooks/agent-checks"}}
 {"expect": "allow", "tool_name": "Write", "tool_input": {"file_path": "/x/repo/src/a.py"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api -X DELETE repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api repos/example-owner/widgets/git/refs/heads/persistent/eval-results --method DELETE"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api --method=DELETE /repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api -XDELETE repos/example-owner/widgets/git/refs/heads/persistent%2Feval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api -H 'Accept: application/vnd.github+json' -X delete repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "gh api repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "gh api -X GET repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "gh api -X DELETE repos/example-owner/widgets/git/refs/heads/feature/old-work"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin --delete persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push --delete origin refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push -d origin persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin :persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin :refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin +:refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "cd widgets && git push -o ci.skip origin feature/a --delete persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin --delete feature/old-work"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin :feature/old-work"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin HEAD:persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -m \"git push origin --delete persistent/eval-results\""}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -F - <<'EOF'\nDo not run gh api -X DELETE repos/example-owner/widgets/git/refs/heads/persistent/x\nEOF"}}

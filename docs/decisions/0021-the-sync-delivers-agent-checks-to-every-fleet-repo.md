@@ -79,3 +79,11 @@ is origin's GitHub `owner/name` or null; the line holds no paths, messages,
 branches or user names. CI and `tree` runs write nothing.
 `AGENT_CHECKS_LOG=off` turns it off, and a failed write is silent. The
 runner's header comment is the reference.
+
+## Addendum (2026-10-26): the guard refuses persistent/* deletes
+
+The guard also refuses deleting a remote `persistent/*` branch
+(`git push <remote> --delete`/`-d`, a `:persistent/...` refspec, or
+`gh api -X DELETE .../git/refs/heads/persistent/...`). Those branches outlive
+their pull requests and hold data, and a private repo has no ruleset to stop
+the delete.
