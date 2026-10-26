@@ -164,8 +164,10 @@ a fact whose home file does not hold it yet. For each one:
   no `@name` or `#N` outside code spans, no closing keyword.
 - A text promotion whose `narrow` is true (the target is an `AGENTS.md` or
   `CLAUDE.md` that exists) may be merged by the fleet worker after review
-  (ADR 0025); any other target, and every `agent-check` item, goes to the
-  owner as a PR.
+  (ADR 0025); any other target goes to the owner as a PR. An `agent-check`
+  item goes through the fleet worker's lesson-check pass, which gates it and
+  auto-merges its PR when green
+  ([ADR 0027](../decisions/0027-lessons-become-agent-checks-through-the-fleet-worker.md)).
 - Leave the note in place with its `home`; for an `agent-check` item, set
   the home to `Adam-S-Daniel/_agent-guidance:templates/agent-checks/agent-checks`
   once the check lands. Once the fact lands, the next

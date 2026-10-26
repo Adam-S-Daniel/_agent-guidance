@@ -23512,6 +23512,53 @@ test_self_agent_checks() {
     fi
 }
 
+# The lesson-check lane (ADR 0027): the case table holds against the template
+# runner the fleet receives, as the lane's `cases` gate runs it.
+test_agent_check_lane_cases() {
+    echo ""
+    echo "=== Test: the agent-checks case table holds against the template runner ==="
+    local log="$TEST_DIR/agent-check-lane-cases.log" rc=0
+    python3 "$REPO_ROOT/scripts/agent_check_lane.py" cases \
+        --runner "$REPO_ROOT/templates/agent-checks/agent-checks" > "$log" 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-check lane: every case in test/fixtures/agent-checks-cases.jsonl holds ($(tail -1 "$log"))"
+    else
+        fail "agent-check lane: every case in test/fixtures/agent-checks-cases.jsonl holds — exit $rc: $(grep '^FAIL' "$log" | tr '\n' ' ')"
+    fi
+}
+
+# The lane script's own unit tests, run as group_codex_cloud runs its modules:
+# unittest's real count goes into PASS, so a module that discovers nothing
+# cannot pass. The fleet-scan tests skip without mikefarah yq; CI's suite job
+# installs it, so under CI a skip is a failure rather than a quiet gap.
+test_agent_check_lane_module() {
+    echo ""
+    echo "=== Test: scripts/agent_check_lane.py unit tests ==="
+    local count_file="$TEST_DIR/agent-check-lane-count" rc=0 passed=0 skipped=0
+    python3 - "$SCRIPT_DIR" "$count_file" <<'PY' || rc=$?
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_agent_check_lane.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+passed = result.testsRun - len(result.skipped) - len(result.expectedFailures)
+pathlib.Path(sys.argv[2]).write_text(f"{passed} {len(result.skipped)}\n", encoding="ascii")
+sys.exit(0 if result.wasSuccessful() else 1)
+PY
+    if [[ -s "$count_file" ]]; then read -r passed skipped < "$count_file"; fi
+    if [[ $rc -ne 0 ]]; then
+        fail "agent-check lane: unit tests failed (exit $rc)"
+    elif (( passed == 0 )); then
+        fail "agent-check lane: test/test_agent_check_lane.py ran zero tests"
+    elif [[ "${CI:-}" == true ]] && (( skipped > 0 )); then
+        fail "agent-check lane: $skipped unit test(s) skipped under CI, where yq is installed"
+    else
+        PASS=$((PASS + passed))
+        echo "  agent-check lane: $passed unit test(s) passed, $skipped skipped"
+    fi
+}
+
 
 TEST_GROUPS=(
     runner
@@ -24052,11 +24099,14 @@ GROUP_automerge=(
 )
 
 # The agent-checks delivery lane (ADR 0021): acorg in a MOCK_BARE_DIR of its
-# own; steps run in order (switch off → dry run → sync → re-run).
+# own; steps run in order (switch off → dry run → sync → re-run). The
+# lesson-check lane's tests (ADR 0027) use only temp repos of their own.
 GROUP_agent_checks=(
     test_agent_checks_guard
     test_self_agent_checks
     test_sync_agent_checks
+    test_agent_check_lane_cases
+    test_agent_check_lane_module
 )
 
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
