@@ -690,6 +690,28 @@ Local dry run:
 SYNC_OWNERS="Adam-S-Daniel jodidaniel" node scripts/dependabot-config-health.js --dry-run
 ```
 
+## Impact report
+
+A daily job (`.github/workflows/impact-report.yml`, running
+`scripts/impact-report.js`) measures real-work outcomes for the project
+dashboard's impact view. For every non-fork, non-archived repo under both
+`SYNC_OWNERS`, and each of the last 8 ISO weeks (named by their Monday, UTC),
+it counts PRs opened, merged, closed unmerged and reverted (`Revert "` titles),
+merged PRs labelled `agent-authored`, merged PRs whose merge commit on the
+default branch carries a failed check run, and the `agent-checks` CI job's
+runs and failures on PR heads. Private repos are folded into one `private`
+row per week; no titles, authors, branch names or PR numbers are recorded or
+logged. Any read failure fails the run and publishes nothing.
+
+It publishes `usage/weekly-ci.json` to skills-evals' `persistent/eval-results`
+branch, committing that one path and nothing else, and skips the commit while
+the rows are unchanged and the published file is under 6 days old.
+
+Credential: the `agents-md-sync` App (see "Required secrets"), minted per owner
+read-only (contents, pull requests, checks, actions, metadata) for the sweep,
+plus one token for `Adam-S-Daniel` limited to the `skills-evals` repository
+with Contents: write for the publish.
+
 ## Cron coverage
 
 A `schedule:`-triggered workflow fails silently — no PR goes red, nothing
@@ -771,7 +793,8 @@ docs/decisions/         # ADRs (start at the README there)
 docs/routines/          # specs for the scheduled Claude Routines that audit
                         #   what no workflow here can check
 .github/workflows/      # CI, sync-on-push, nightly drift report, daily
-                        #   consumer-lock bump, cron health
+                        #   consumer-lock bump, cron health, daily
+                        #   impact report
 .agents-sync.example.yml
 repos.yml               # exclusions, default sections, skills-bootstrap pin,
                         #   cron-coverage fleet + out-of-scope
