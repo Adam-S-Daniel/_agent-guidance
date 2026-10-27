@@ -22,7 +22,8 @@ to `main` opens only when a run makes a substantive change (step 7). The
 `persistent/` prefix and a deletion-only ruleset keep the branch from being
 deleted, on merge or by mistake (repo-settings
 [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md)). The
-owner merges it; a run never merges anything. A quiet run just pushes to
+workflow `vendor-changelog-merge.yml` merges it when the merge gate
+passes; a run never merges anything. A quiet run just pushes to
 the branch, with no PR and no notification (step 8). Pushing a branch the
 harness did not assign worked with `git push` on 2026-10-02.
 
@@ -234,7 +235,7 @@ reason in its final message and its push notification.
    - Fetch `origin persistent/vendor-changelog`. The branch is protected
      from deletion by a ruleset (repo-settings
      [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md)), so
-     after the owner merges a PR it normally remains and is an ancestor of
+     after a PR merges it normally remains and is an ancestor of
      `origin/main`: fast-forward it to `origin/main` (the normal path after
      a merge). If it is missing (first run, or the owner deliberately
      removed it), create it from `origin/main`. Otherwise check it out as is and base every edit on it,
@@ -661,13 +662,18 @@ final message.
      judgment could have changed or left stale. Then run
      `node scripts/routine-merge-gate.js --pr pr.json --files files.json --check-runs check-runs.json --status status.json --issue-map docs/reference/agent-changelog-issue-map.txt`.
      It prints `{"merge": bool, "head_sha": "...", "reasons": [...]}`.
-  4. **Exit 0:** write "Merge gate: passed at <head sha>" in the PR body.
+  4. **Exit 0:** write "Merge gate: passed at <head sha>" in the PR body,
+     with the line "Merges automatically when the merge gate passes
+     (vendor-changelog-merge.yml)" instead of "The owner merges.".
      **Exit 2, exit 1, or checks still running after 30 minutes:** quote
      the reasons (the gate's, its stderr message, or "checks still running
      after 30 minutes") under a "Merge gate refused" heading in the PR
      body.
   5. **Never merge:** no `PUT .../merge`, no GitHub MCP merge tool, no
-     auto-merge arming. The owner merges.
+     auto-merge arming. `.github/workflows/vendor-changelog-merge.yml` runs
+     this same gate (main's copy) when CI and agent-checks complete on the
+     branch and merges the PR with `--match-head-commit` when it passes;
+     a refusal leaves the PR open for the owner.
   6. The run-log line records `gate passed` or `gate refused (<first
      reason>)`.
 
@@ -769,3 +775,7 @@ Each was hit on 2026-09-25. The step that now prevents it is in parentheses.
   per run made the owner merge a no-op PR daily. Runs now accumulate on
   `persistent/vendor-changelog` and open a PR only on a substantive change,
   which the owner merges (step 0, item 3; step 7).
+- **Update, 2026-10-27:** the owner still merged every PR by hand, so
+  `vendor-changelog-merge.yml` now merges it with the workflow's own token
+  when the same gate passes. The routine's constraints are unchanged: a run
+  never merges and never pushes to a default branch.
