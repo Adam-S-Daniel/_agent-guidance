@@ -19304,12 +19304,12 @@ test_routine_merge_gate() {
 
     # A minimum count is the cheapest proof anything actually ran: a suite that
     # merely `require()`d the module and defined zero tests would otherwise
-    # exit 0 with "# pass 0". 58 is the suite's actual count, so a test
+    # exit 0 with "# pass 0". 64 is the suite's actual count, so a test
     # deleted without updating this number fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 58 ]]; then
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 64 ]]; then
         pass "routine merge gate: node:test suite is green ($pass_n passed)"
     else
-        fail "routine merge gate: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=58): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "routine merge gate: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=64): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
