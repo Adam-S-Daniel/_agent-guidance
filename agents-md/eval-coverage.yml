@@ -60,7 +60,8 @@
 - id: security
   heading: Security
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/security/
   bytes: 431
 
 - id: data-exposure-in-ci
@@ -92,7 +93,8 @@
 - id: agent-contribution-markers
   heading: Agent-made GitHub contributions carry a marker
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/agent-contribution-markers/
   bytes: 622
 
 - id: github-404-means-not-authorized
@@ -126,7 +128,8 @@
 - id: dependency-updates
   heading: Dependency updates
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/dependency-updates/
   bytes: 546
 
 - id: name-becomes-scanner-data
@@ -146,7 +149,8 @@
 - id: test-that-can-signal-kills-every-session
   heading: A test that can signal can kill every session
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/test-that-can-signal-kills-every-session/
   bytes: 943
 
 - id: subagent-delegation
@@ -178,7 +182,8 @@
 - id: section-docker
   heading: Docker
   file: agents-md/sections/docker.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-docker/
   bytes: 604
 
 - id: section-dotnet
@@ -196,13 +201,15 @@
 - id: section-javascript
   heading: JavaScript
   file: agents-md/sections/javascript.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-javascript/
   bytes: 495
 
 - id: section-python
   heading: Python
   file: agents-md/sections/python.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-python/
   bytes: 786
 
 - id: section-rust
@@ -214,5 +221,6 @@
 - id: section-typescript
   heading: TypeScript
   file: agents-md/sections/typescript.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-typescript/
   bytes: 526
