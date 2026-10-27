@@ -48,13 +48,15 @@
 - id: finding-your-unknowns
   heading: Finding your unknowns
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/finding-your-unknowns/
   bytes: 1015
 
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/workstation-layout/
   bytes: 149
 
 - id: security
@@ -74,7 +76,8 @@
 - id: read-before-you-start
   heading: Read before you start
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/read-before-you-start/
   bytes: 342
 
 - id: automation-vs-branch-protection
@@ -87,7 +90,8 @@
 - id: two-github-connectors
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/two-github-connectors/
   bytes: 1259
 
 - id: agent-contribution-markers
@@ -163,13 +167,15 @@
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/skills-ecosystem/
   bytes: 1228
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/two-setup-gaps/
   bytes: 1970
 
 - id: git-practices
@@ -189,13 +195,15 @@
 - id: section-dotnet
   heading: .NET / C#
   file: agents-md/sections/dotnet.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-dotnet/
   bytes: 662
 
 - id: section-go
   heading: Go
   file: agents-md/sections/go.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-go/
   bytes: 553
 
 - id: section-javascript
@@ -215,7 +223,8 @@
 - id: section-rust
   heading: Rust
   file: agents-md/sections/rust.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/section-rust/
   bytes: 555
 
 - id: section-typescript
