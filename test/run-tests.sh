@@ -6887,8 +6887,6 @@ assert got == ["startup|resume", "startup|resume|fork", "startup|resume|fork"], 
 # Everything except our two matcher strings is untouched.
 for i in (1, 2):
     g[i]["matcher"] = "startup|resume"
-# The sync also sets disableSkillShellExecution (ADR 0029); nothing else new.
-assert after.pop("disableSkillShellExecution") is True
 assert after == before, "something besides the two matchers changed"
 print("OK")
 PY
