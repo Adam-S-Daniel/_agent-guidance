@@ -34,7 +34,8 @@
 - id: working-in-these-repos
   heading: Working in these repos
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/working-in-these-repos/
   bytes: 1422
 
 - id: anything-you-name-gets-its-link
@@ -65,7 +66,8 @@
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/data-exposure-in-ci/
   bytes: 1197
 
 - id: read-before-you-start
@@ -77,7 +79,8 @@
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/automation-vs-branch-protection/
   bytes: 2083
 
 - id: two-github-connectors
@@ -95,13 +98,15 @@
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/github-404-means-not-authorized/
   bytes: 884
 
 - id: fleet-spans-two-owners
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/fleet-spans-two-owners/
   bytes: 986
 
 - id: watch-finished-is-not-ci-passed
@@ -127,7 +132,8 @@
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/name-becomes-scanner-data/
   bytes: 1022
 
 - id: pinning-github-actions
@@ -146,7 +152,8 @@
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/subagent-delegation/
   bytes: 2554
 
 - id: skills-ecosystem
