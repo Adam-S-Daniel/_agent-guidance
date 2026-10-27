@@ -30,6 +30,23 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-27 — 2.1.311 through 2.1.311
+
+- **Checked:** 2026-10-27T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.311](https://github.com/anthropics/claude-code/releases/tag/v2.1.311), published 2026-10-26T21:51Z
+- **Window:** v2.1.311 (published 2026-10-26T21:51Z), the first stable release after v2.1.310: 1 release, 92 bullets (only the one in group 1 is indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.311` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep. Last reached: `_agent-guidance`, `adam-agentskills`, `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `claude-memory-map`, `cms-platform`, `fastmail-actions`, `GHA-bench` (archived), `jodidaniel.com`, `repo-settings`, `rss-inator`, `skills-evals`, `wsl-automation` (local checkouts present this session).
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.311](https://github.com/anthropics/claude-code/releases/tag/v2.1.311), published 2026-10-26T21:51Z (bullet 2.1.311/7)
+  > Fixed Claude seeing stale MEMORY.md and CLAUDE.md content right after automatic compaction when those files were edited earlier in the session
+
+**Issues:** [_agent-guidance#345](https://github.com/Adam-S-Daniel/_agent-guidance/issues/345) (no label). Sweep fired: https://claude.ai/code/cse_01UzAgQJGNAcMNs6W4eQB3Fp.
+
+No other group met the name-the-surface bar. A fleet grep for `DISABLE_COMPACT`, `SubagentStop`, `CLAUDE_CODE_SYNC_SKILLS`, `CLAUDE_CODE_MODEL_CATALOG`, `ultrathink`, `CLAUDE_CODE_RETRY_WATCHDOG` and `self-hosted-runner` found no fleet-repo file using them (hits were only in the vendor checkouts `claude-code` and `codex`, and `adam-agentskills` `setup.sh` for `syncClaudeAiSkills`, which the bullet about reusing a recent claude.ai skills list does not contradict). One candidate surface exists but cannot take an issue: the bullet about model names and IDs dropping the `[1m]` suffix may touch `GHA-bench` `combine_results.py` `_context` and `runner.py`, which key `modelUsage` by the requested model id with a `[1m]` fallback, but `GHA-bench` is archived, so no issue was filed; the suffix is still accepted and the fallback chain ends at the same 1M default for the models involved. The remaining bullets (VS Code, Claude Tag, Code Review, cloud-session, screen-reader and MCP fixes) remove failures without changing a documented command, flag or setting. Codex: no stable release after 0.164.0 (page 1 holds only 0.165.0 and 0.164.0 alphas above it).
+
 ### 2026-10-24 — 2.1.310 through 2.1.310
 
 - **Checked:** 2026-10-24T01:12Z, [release log](https://github.com/anthropics/claude-code/releases)
