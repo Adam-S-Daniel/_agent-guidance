@@ -96,16 +96,24 @@ session that lost the guidance must not also lose these.
 ## Repo-specific additions
 
 **`AGENTS.md` in this repo is a generated artifact.** Everything above the marker
-is `scripts/build-agents-md.sh` output — edit `agents-md/base.md` (or a file under
-`agents-md/sections/`), never this file's managed half. CI regenerates and diffs
-it, so a base.md edit without a regenerated `AGENTS.md` fails the build.
+is `scripts/build-agents-md.sh` output. By default (`AGENTS_MD_MODE=stub`, which
+the header's `Mode: stub` line records) that is `agents-md/stub.md`: the pointer,
+the session-start verdict and the floor rules. `base.md` is inlined only under
+`AGENTS_MD_MODE=full`. Never edit this file's managed half; edit `stub.md` (or a
+file under `agents-md/sections/`) and regenerate. CI regenerates and diffs it, so
+a stub edit without a regenerated `AGENTS.md` fails the build.
+
+**`agents-md/base.md` is the fleet-memory payload, with a mirror.** Every edit to
+it is copied byte for byte to `.claude/hooks/fleet-guidance.md`, which this
+repo's own sessions load. CI's "Fleet payload mirrors base.md" step
+(`scripts/check-fleet-guidance-mirror.js`) fails on any difference and names the
+fix. A PR that changes `base.md` shows the payload consumers receive on their
+next session; one that changes `stub.md` shows the text each consumer repo's
+`AGENTS.md` gets on the next sync.
 
 Why it is committed here at all, when `sync.sh` writes it everywhere else: the
 sync excludes its own repo (`SYNC_SELF_REPO`), so without this copy it would be
-the one repo in the fleet whose agents never read the fleet's guidance. The
-committed copy also means a PR that changes `base.md` shows the exact text every
-consumer repo is about to receive, in the same diff, instead of deferring it to
-an async run after merge.
+the one repo in the fleet whose agents never read the fleet's guidance.
 
 Regenerate with:
 
