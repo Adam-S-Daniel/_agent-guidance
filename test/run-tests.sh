@@ -13825,6 +13825,24 @@ for (const spec of Object.values(jobs)) {
 ' "$REPO_ROOT" "$1" "${2:-}"
 }
 
+# lock_entries <workflow path> — the action refs .github/workflows/actions.lock
+# lists for that workflow, one per line, as the lockfile spells them (owner and
+# repo lowercased). Parsed with the same real parser as workflow_steps.
+lock_entries() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const lock = YAML.parse(fs.readFileSync(process.argv[1] + "/.github/workflows/actions.lock", "utf8"));
+const list = lock && lock.workflows && lock.workflows[process.argv[2]];
+if (!Array.isArray(list)) process.exit(1);
+for (const ref of list) console.log(ref);
+' "$REPO_ROOT" "$1"
+}
+
 # workflow_step_by_run <file> <needle> [job] — facts about the FIRST job step
 # whose `run:` body contains <needle>, one per line:
 #
@@ -14148,19 +14166,27 @@ test_bump_workflow() {
         return
     fi
 
-    # Exact form, not "contains 40 hex": `@v4  # 34e1148…` would satisfy a
-    # looser check while pinning a movable tag.
+    # Lockfile form (ADR 0024): each uses: is an exact vX.Y.Z tag that
+    # actions.lock lists for this workflow. A major-only `@v4` would satisfy a
+    # looser check while naming a moving target, and a tag the lockfile does
+    # not list is not locked at all.
+    local locked_file="$TEST_DIR/bump-workflow-locked.txt"
+    if ! lock_entries ".github/workflows/skills-lock-bump.yml" > "$locked_file" 2>/dev/null; then
+        fail "bump workflow: could not read its entries in .github/workflows/actions.lock"
+        return
+    fi
     local uses unpinned=""
     while read -r uses _ _; do
         [[ "$uses" == "-" ]] && continue
-        if [[ ! "$uses" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+        if [[ ! "$uses" =~ ^[^@[:space:]]+@v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+           || ! grep -qxF -- "${uses,,}" "$locked_file"; then
             unpinned="${unpinned:+$unpinned, }$uses"
         fi
     done < "$steps_file"
     if [[ -z "$unpinned" ]]; then
-        pass "bump workflow: every uses: is pinned to a full 40-character commit SHA"
+        pass "bump workflow: every uses: is an exact tag locked in actions.lock"
     else
-        fail "bump workflow: not pinned to a 40-character SHA — $unpinned"
+        fail "bump workflow: not an exact tag locked in actions.lock — $unpinned"
     fi
 
     local registry_depth
@@ -14214,7 +14240,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4.3.1
         with:
           repository: Adam-S-Daniel/adam-agentskills
 YAML
@@ -14225,7 +14251,7 @@ YAML
         local decoy_uses decoy_unpinned=""
         while read -r decoy_uses _ _; do
             [[ "$decoy_uses" == "-" ]] && continue
-            if [[ ! "$decoy_uses" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+            if [[ ! "$decoy_uses" =~ ^[^@[:space:]]+@v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 decoy_unpinned="${decoy_unpinned:+$decoy_unpinned, }$decoy_uses"
             fi
         done < "$decoy_steps"
@@ -17553,7 +17579,7 @@ for (const file of fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort())
 #     `YQ_VERSION: latest` cannot satisfy the assertion above by shape alone;
 #   * all four copies are byte-identical. The step is duplicated across four
 #     workflows rather than factored into a composite action, because a local
-#     `uses: ./…` would fail test_bump_workflow's 40-hex pin assertion and
+#     `uses: ./…` would fail test_bump_workflow's exact-tag pin assertion and
 #     widening a security lint to accommodate a refactor is the wrong trade
 #     (docs/decisions/0008). Duplication is only safe while it cannot skew, and
 #     four copies of a version+digest is exactly the pin-skew hazard this
