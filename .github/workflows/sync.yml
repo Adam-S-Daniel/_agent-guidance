@@ -27,6 +27,7 @@ on:
       - "scripts/bridge-status.sh"
       - "scripts/bootstrap-status.sh"
       - "scripts/register-bootstrap-hook.sh"
+      - "scripts/set-skill-shell-setting.sh"
       # And what each consumer's .gitattributes gets (docs/decisions/0019).
       - "scripts/hook-eol-gitattributes.sh"
       # COPIED verbatim into every synced repo, and the payload it installs is
