@@ -4,7 +4,8 @@
 `Fleet worker` (`trig_015GknYddgCBUBv7By3n7HHN`), which the owner created on
 the Routines page on 2026-10-26. Each fire
 starts a fresh cloud session. Why it exists, and why it may merge one narrow
-kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md).
+kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
+widened to skill text by [ADR 0028](../decisions/0028-the-fleet-worker-also-merges-sweep-fixes-to-skill-text.md).
 
 This file is the spec. The scheduled task's prompt is short and points here,
 so the procedure is reviewed as a pull request rather than as an edit to a
@@ -116,13 +117,22 @@ each read fresh:
    title matching `^Prompt-audit sweep \d{4}-\d{2}-\d{2}: ` (a sweep
    issue) or `^Memory promotion \d{4}-\d{2}-\d{2}: ` (a memory-promotion
    issue).
-2. Every changed file is a `CLAUDE.md` or `AGENTS.md` at any depth, or, for
-   a sweep issue only, a new Markdown file added under `docs/evidence/` (a
-   dated narrative the issue asked to move). No file is deleted or renamed. In an `AGENTS.md`, every
-   changed line sits below the `## Repo-specific additions` heading in both
-   the base and the head versions. In `_agent-guidance` itself, `AGENTS.md`'s
-   managed half is generated from `agents-md/base.md`, which this rule never
-   allows, so a PR touching it never qualifies.
+2. Every changed file is one of these. No file is deleted or renamed.
+   - a `CLAUDE.md` or `AGENTS.md` at any depth. In an `AGENTS.md`, every
+     changed line sits below the `## Repo-specific additions` heading in both
+     the base and the head versions. In `_agent-guidance` itself,
+     `AGENTS.md`'s managed half is generated from `agents-md/base.md`, which
+     this rule never allows, so a PR touching it never qualifies.
+   - for a sweep issue only, a new Markdown file added under `docs/evidence/`
+     (a dated narrative the issue asked to move).
+   - for a sweep issue only, a `SKILL.md` at any depth whose frontmatter (the
+     block from the opening `---` line to the closing one) is byte-identical
+     in the base and the head, so the skill's name, description, allowed
+     tools and other settings never change
+     ([ADR 0028](../decisions/0028-the-fleet-worker-also-merges-sweep-fixes-to-skill-text.md)).
+     No other file in a skill's directory qualifies.
+   - for a sweep issue only, a `.freshness-allow.yml` at any depth whose diff
+     only removes lines.
 3. Neither the PR nor the issue carries `on-hold`.
 4. Every check run on the head concluded `success`, `neutral` or `skipped`,
    every commit status is `success`, none is pending, and every required
@@ -146,7 +156,11 @@ adds one of the facts under its `## Proposed edits`, reworded to fit the
 file, and `CLEAN` also requires that the added text holds no personal data
 (no name but the owner's login, no email address, hostname, device,
 environment, session or thread id) and repeats nothing the file already
-says. Otherwise it answers `FINDINGS` with each problem. Post
+says. In a `SKILL.md`, `CLEAN` also requires that the frontmatter is
+untouched and that no hunk adds a command, script, tool use or step that runs
+code beyond what its finding asked for. A line removed from a
+`.freshness-allow.yml` is `CLEAN` only when the text it allowed is removed
+in the same diff. Otherwise it answers `FINDINGS` with each problem. Post
 its verdict as a PR comment: first line `Independent review: CLEAN at <full
 head sha>` or `Independent review: FINDINGS at <full head sha>`, then the
 findings. At most 5 reviews per run.
