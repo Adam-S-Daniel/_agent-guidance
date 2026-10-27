@@ -889,7 +889,7 @@ test("workflow shape: no step's run: block contains ${{", () => {
   }
 });
 
-test("workflow shape: every uses: is pinned to a full 40-char sha with no trailing comment", () => {
+test("workflow shape: every uses: is an exact tag locked in actions.lock", () => {
   const doc = workflowDoc();
   const usesList = [];
   for (const job of Object.values(doc.jobs || {})) {
@@ -898,8 +898,13 @@ test("workflow shape: every uses: is pinned to a full 40-char sha with no traili
     }
   }
   assert.ok(usesList.length > 0);
+  const lock = YAML.parse(fs.readFileSync(path.join(path.dirname(WORKFLOW_PATH), "actions.lock"), "utf8"));
+  const locked = lock.workflows[".github/workflows/dependabot-config-health.yml"];
+  assert.ok(Array.isArray(locked), "actions.lock lists dependabot-config-health.yml");
   for (const u of usesList) {
-    assert.match(u, /@[0-9a-f]{40}$/, `${u} is not pinned to a bare 40-char sha`);
+    assert.match(u, /@v\d+\.\d+\.\d+$/, `${u} is not an exact vX.Y.Z tag`);
+    const [name, ref] = u.split("@");
+    assert.ok(locked.includes(`${name.toLowerCase()}@${ref}`), `${u} is not locked in actions.lock`);
   }
 });
 

@@ -86,7 +86,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install yq
         env:
@@ -130,7 +130,7 @@ jobs:
       - name: Mint installation token for Adam-S-Daniel
         id: token_adam_s_daniel
         continue-on-error: true
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        uses: actions/create-github-app-token@v3.3.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -139,7 +139,7 @@ jobs:
       - name: Mint installation token for jodidaniel
         id: token_jodidaniel
         continue-on-error: true
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        uses: actions/create-github-app-token@v3.3.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -173,7 +173,7 @@ jobs:
       # The script refuses a shallow checkout up front and says so, rather than
       # letting either failure be mistaken for drift.
       - name: Check out the skills registry
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7.0.1
         with:
           repository: Adam-S-Daniel/adam-agentskills
           path: registries/adam-agentskills
@@ -185,7 +185,7 @@ jobs:
       # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
       # because anything in this run bumps cms-platform's own pin.
       - name: Check out the federated source registry
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7.0.1
         with:
           repository: Adam-S-Daniel/cms-platform
           path: registries/cms-platform

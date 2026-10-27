@@ -159,3 +159,11 @@ as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
 (`scripts/check-ci-shards.js`) fails unless the shards' lists name every group
 from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
 per-group seconds in the suite's `Groups` table, not by count.
+
+**Action pins.** This repo's own workflows name third-party actions by exact
+release tag, and [`.github/workflows/actions.lock`](.github/workflows/actions.lock)
+locks each tag to a commit ([ADR 0024](docs/decisions/0024-actions-pin-through-lockfiles.md)).
+`agent-checks` runs `Adam-S-Daniel/verify-actions-lock` on every pull request.
+Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and
+commit both files. The suite's pin tests read the lockfile. The templates under
+`templates/` keep full SHAs, because the sync delivers them to legacy repos.
