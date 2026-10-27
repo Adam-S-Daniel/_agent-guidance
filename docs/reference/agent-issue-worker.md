@@ -91,7 +91,9 @@ blocked comments. The on-hold stop overrides step 7 below.
 5. **Open the PR,** ready for review, not a draft, labeled
    `agent-authored`, with commits carrying `Agent: claude-code`. Its body
    starts with `Closes <owner>/<repo>#<n>` (closing the issue is intended
-   here), then
+   here) or, when it fixes only some of the issue's findings and leaves the
+   rest open, `Refs <owner>/<repo>#<n>` followed by the findings it fixes,
+   then
    summarizes what changed and why, gives the test command and its result,
    says what the worker could not verify, and ends with
    `<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>`. For the three

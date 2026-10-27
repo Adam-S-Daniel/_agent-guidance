@@ -5,7 +5,7 @@
 the Routines page on 2026-10-26. Each fire
 starts a fresh cloud session. Why it exists, and why it may merge one narrow
 kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
-widened to skill text by [ADR 0028](../decisions/0028-the-fleet-worker-also-merges-sweep-fixes-to-skill-text.md).
+widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md).
 
 This file is the spec. The scheduled task's prompt is short and points here,
 so the procedure is reviewed as a pull request rather than as an edit to a
@@ -26,8 +26,10 @@ Its work sources are the `agent-ready` issues the
 the [memory curation routine](memory-curation.md) file. A memory-promotion
 issue (`Memory promotion <date>: ...`) proposes facts from agent memory for
 the repo's own files. When its target is the repo-specific half of an
-`AGENTS.md` or a `CLAUDE.md`, its fix is a narrow instruction fix under
-[ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
+`AGENTS.md`, a `CLAUDE.md`, a `SKILL.md` body or the fleet guidance, its fix
+is a narrow instruction fix under
+[ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md)
+and [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md),
 and the merge rule below covers it
 ([ADR 0026](../decisions/0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md)).
 
@@ -113,26 +115,34 @@ so the PR stays blocked with nothing red to fix (the 2026-10-25 case:
 each read fresh:
 
 1. Its head branch is `agent/issue-<n>-<slug>` and its body starts with
-   `Closes <owner>/<repo>#<n>`, where issue `<n>` in the same repo has a
-   title matching `^Prompt-audit sweep \d{4}-\d{2}-\d{2}: ` (a sweep
-   issue) or `^Memory promotion \d{4}-\d{2}-\d{2}: ` (a memory-promotion
-   issue).
+   `Closes <owner>/<repo>#<n>` or, for a fix that covers only some of the
+   issue's findings, `Refs <owner>/<repo>#<n>`, where issue `<n>` in the
+   same repo has a title matching `^Prompt-audit sweep \d{4}-\d{2}-\d{2}: `
+   (a sweep issue) or `^Memory promotion \d{4}-\d{2}-\d{2}: ` (a
+   memory-promotion issue).
 2. Every changed file is one of these. No file is deleted or renamed.
    - a `CLAUDE.md` or `AGENTS.md` at any depth. In an `AGENTS.md`, every
      changed line sits below the `## Repo-specific additions` heading in both
-     the base and the head versions. In `_agent-guidance` itself,
-     `AGENTS.md`'s managed half is generated from `agents-md/base.md`, which
-     this rule never allows, so a PR touching it never qualifies.
+     the base and the head versions, except in `_agent-guidance` itself,
+     where the managed half may change only as the regenerated output of a
+     fleet guidance change below (CI's `Self-guidance is current` step
+     proves it).
    - for a sweep issue only, a new Markdown file added under `docs/evidence/`
      (a dated narrative the issue asked to move).
-   - for a sweep issue only, a `SKILL.md` at any depth whose frontmatter (the
-     block from the opening `---` line to the closing one) is byte-identical
-     in the base and the head, so the skill's name, description, allowed
-     tools and other settings never change
-     ([ADR 0028](../decisions/0028-the-fleet-worker-also-merges-sweep-fixes-to-skill-text.md)).
+   - a `SKILL.md` at any depth whose frontmatter (the block from the opening
+     `---` line to the closing one) is byte-identical in the base and the
+     head, so the skill's name, description, allowed tools and other
+     settings never change
+     ([ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md)).
      No other file in a skill's directory qualifies.
    - for a sweep issue only, a `.freshness-allow.yml` at any depth whose diff
      only removes lines.
+   - in `_agent-guidance` only, the fleet guidance: `agents-md/base.md`,
+     `agents-md/stub.md` and `agents-md/sections/*.md`, together with what
+     an edit to them requires in the same PR: the byte-identical
+     `.claude/hooks/fleet-guidance.md` mirror, `agents-md/eval-coverage.yml`
+     rows whose only changes are `bytes` and `heading` values, and
+     `docs/guidance-impact.md`, whose diff only adds lines.
 3. Neither the PR nor the issue carries `on-hold`.
 4. Every check run on the head concluded `success`, `neutral` or `skipped`,
    every commit status is `success`, none is pending, and every required
@@ -160,17 +170,25 @@ says. In a `SKILL.md`, `CLEAN` also requires that the frontmatter is
 untouched and that no hunk adds a command, script, tool use or step that runs
 code beyond what its finding asked for. A line removed from a
 `.freshness-allow.yml` is `CLEAN` only when the text it allowed is removed
-in the same diff. Otherwise it answers `FINDINGS` with each problem. Post
+in the same diff. In the fleet guidance, which every session in every
+fleet repo loads, `CLEAN` also requires that no rule is weakened or dropped
+beyond what its finding asked, and that each changed section has a new
+`docs/guidance-impact.md` entry describing the change. For a `Refs` PR,
+`CLEAN` also requires that the body names which findings it fixes and that
+every hunk fixes one of those. Otherwise it answers `FINDINGS` with each
+problem. Post
 its verdict as a PR comment: first line `Independent review: CLEAN at <full
 head sha>` or `Independent review: FINDINGS at <full head sha>`, then the
-findings. At most 5 reviews per run.
+findings. At most 5 reviews per run. If the subagent cannot run or gives
+no verdict, post nothing: the PR has no stamp, so it is never merged, and it
+goes to the owner under step 3.
 
 **2b. The merge.** For a PR meeting all six items, merge it with
 `expected_head_sha` set to the reviewed head: a merge commit, except in the
 three cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
 `jodidaniel.com`), which squash. Then comment `Merged by the fleet worker:
 an instruction-file fix that passed CI and an independent review (ADR 0025).`
-and confirm the issue closed. A merge the API refuses is left for the owner
+and, for a `Closes` PR, confirm the issue closed. A merge the API refuses is left for the owner
 and listed under "Needs you".
 
 A `FINDINGS` review is not fixed by this routine. The PR goes to the owner
