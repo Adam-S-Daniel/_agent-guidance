@@ -210,8 +210,15 @@ test("workflow: read tokens are read-only; the write token reaches skills-evals 
   }
 });
 
-test("workflow: every uses: is a full commit SHA", () => {
-  for (const s of steps.filter((x) => x.uses)) assert.match(s.uses, /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+test("workflow: every uses: is an exact tag locked in actions.lock", () => {
+  const lock = YAML.parse(fs.readFileSync(path.join(ROOT, ".github/workflows/actions.lock"), "utf8"));
+  const locked = lock.workflows[".github/workflows/impact-report.yml"];
+  assert.ok(Array.isArray(locked), "actions.lock lists impact-report.yml");
+  for (const s of steps.filter((x) => x.uses)) {
+    assert.match(s.uses, /^[\w.-]+\/[\w.-]+@v\d+\.\d+\.\d+$/);
+    const [name, ref] = s.uses.split("@");
+    assert.ok(locked.includes(`${name.toLowerCase()}@${ref}`), `${s.uses} is not locked`);
+  }
 });
 
 test("workflow: the publish commits only usage/weekly-ci.json to persistent/eval-results", () => {

@@ -572,3 +572,73 @@ test("CLI refuses (exit 2) against a COPY of the real map with a bad line append
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── vendor-changelog-merge.yml: the workflow that acts on the gate ──────────
+// Parsed with the `yaml` package, never matched by regex over lines.
+
+const YAML = require("yaml");
+
+const MERGE_WORKFLOW = path.join(__dirname, "..", ".github", "workflows", "vendor-changelog-merge.yml");
+
+function mergeWorkflow() {
+  return YAML.parse(fs.readFileSync(MERGE_WORKFLOW, "utf8"));
+}
+
+test("merge workflow triggers on CI and agent-checks completion plus manual dispatch", () => {
+  const on = mergeWorkflow().on;
+  assert.deepEqual(Object.keys(on).sort(), ["workflow_dispatch", "workflow_run"]);
+  assert.deepEqual(on.workflow_run.workflows, ["CI", "agent-checks"]);
+  assert.deepEqual(on.workflow_run.types, ["completed"]);
+  // The names must be real workflows, or the trigger never fires.
+  const wfDir = path.dirname(MERGE_WORKFLOW);
+  const names = fs
+    .readdirSync(wfDir)
+    .filter((f) => f.endsWith(".yml"))
+    .map((f) => YAML.parse(fs.readFileSync(path.join(wfDir, f), "utf8")).name);
+  for (const n of on.workflow_run.workflows) assert.ok(names.includes(n), `no workflow named ${n}`);
+});
+
+test("merge workflow job runs only for the routine's branch from this repository", () => {
+  const cond = mergeWorkflow().jobs.merge.if.replace(/\s+/g, " ");
+  assert.ok(cond.includes("github.event_name == 'workflow_dispatch'"));
+  assert.ok(cond.includes("github.event.workflow_run.head_branch == 'persistent/vendor-changelog'"));
+  assert.ok(cond.includes("github.event.workflow_run.head_repository.full_name == github.repository"));
+});
+
+test("merge workflow holds no top-level permissions and exactly three write scopes on the job", () => {
+  const wf = mergeWorkflow();
+  assert.deepEqual(wf.permissions, {});
+  assert.deepEqual(wf.jobs.merge.permissions, {
+    contents: "write",
+    "pull-requests": "write",
+    actions: "write",
+  });
+});
+
+test("merge workflow never cancels a run in flight", () => {
+  const wf = mergeWorkflow();
+  for (const c of [wf.concurrency, wf.jobs.merge.concurrency]) {
+    if (c !== undefined) assert.equal(c["cancel-in-progress"], false);
+  }
+});
+
+test("merge workflow keeps event data and inputs out of every run: body", () => {
+  const steps = mergeWorkflow().jobs.merge.steps;
+  const runs = steps.filter((s) => typeof s.run === "string");
+  assert.ok(runs.length > 0);
+  for (const s of runs) {
+    assert.ok(!/\$\{\{\s*(github\.event|inputs)\b/.test(s.run), "event or input interpolated into run:");
+  }
+});
+
+test("merge workflow merges with a merge commit pinned to the gated head", () => {
+  const body = mergeWorkflow()
+    .jobs.merge.steps.filter((s) => typeof s.run === "string")
+    .map((s) => s.run)
+    .join("\n");
+  const merge = body.split("\n").filter((l) => l.trimStart().startsWith("gh pr merge"));
+  assert.equal(merge.length, 1);
+  assert.ok(merge[0].includes(" --merge "));
+  assert.ok(merge[0].includes("--match-head-commit"));
+  assert.ok(!merge[0].includes("--squash") && !merge[0].includes("--rebase") && !merge[0].includes("--auto"));
+});

@@ -1247,7 +1247,8 @@ report the parsed result before acting on it.
 `sync.yml` fires on push to `main` **only** for paths that decide what a run
 does: `repos.yml`, `agents-md/**`, `scripts/build-agents-md.sh`,
 `scripts/sync.sh`, `scripts/bridge-status.sh`, `scripts/bootstrap-status.sh`,
-`scripts/register-bootstrap-hook.sh`, and `sync.yml` itself. There is **no
+`scripts/register-bootstrap-hook.sh`, `scripts/set-skill-shell-setting.sh`, and
+`sync.yml` itself. There is **no
 scheduled sync.** So:
 
 - A merged PR touching any of those paths fires the sync by itself. That is the

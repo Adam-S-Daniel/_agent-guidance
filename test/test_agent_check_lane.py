@@ -410,7 +410,7 @@ class RunLogTests(LaneTestCase):
         self.assertRegex(entry["ts"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
         self.assertEqual(entry["event"], "pre-commit")
         self.assertEqual(entry["repo"], "example-owner/widgets")
-        self.assertEqual(entry["checks"], ["rules-dir", "secret-file"])
+        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell"])
         self.assertEqual(entry["failed"], [])
 
     def test_refused_pre_commit_lists_the_check_and_keeps_the_message(self):
@@ -432,7 +432,7 @@ class RunLogTests(LaneTestCase):
         self.assertIn("refusing to push to main", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(entry["checks"], ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file"])
+        self.assertEqual(entry["checks"], ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file", "skill-shell"])
         self.assertEqual(entry["failed"], ["push-to-default"])
 
     def test_repo_local_check_is_logged(self):
@@ -440,7 +440,7 @@ class RunLogTests(LaneTestCase):
         out = self.run_logged("pre-commit")
         self.assertEqual(out.returncode, 1, out.stderr)
         [entry] = self.entries()
-        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "repo-local"])
+        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell", "repo-local"])
         self.assertEqual(entry["failed"], ["repo-local"])
 
     def test_ci_tree_and_unknown_events_write_nothing(self):
@@ -569,7 +569,7 @@ class CheckIdTests(unittest.TestCase):
 
     def test_core_check_ids(self):
         ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
-        self.assertLessEqual({"rules-dir", "secret-file", "staged-index", "push-to-default", "persistent-delete",
+        self.assertLessEqual({"rules-dir", "secret-file", "skill-shell", "staged-index", "push-to-default", "persistent-delete",
                               "repo-local"}, ids)
 
     def test_lesson_arms_and_lesson_checks_agree(self):

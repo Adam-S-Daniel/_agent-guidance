@@ -102,7 +102,7 @@ jobs:
       # repository from the one it was written against. See the `checks`
       # job's checkout for why the touch gate needs full history; the suite
       # inherits it rather than re-deciding it per shard.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -158,7 +158,7 @@ jobs:
       # the one pinned dev dependency behind it has to be here. `npm ci`, not
       # `npm install`: the lockfile is the version under test.
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: "20"
 
@@ -202,7 +202,7 @@ jobs:
       # next to a targeted fetch's added complexity (reading the base sha out
       # of $GITHUB_EVENT_PATH a second time, in its own step) for a near-zero
       # saving.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -211,7 +211,7 @@ jobs:
       # they have to be here as well as in `suite`. `npm ci`, not
       # `npm install`: the lockfile is the version under test.
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: "20"
 
@@ -289,7 +289,7 @@ jobs:
       # any row here is `covered`, a fixture rename on that branch reds THIS
       # repo's CI on the next run, with no change on this side at all.
       - name: Check out skills-evals (read-only, for fixture existence)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7.0.1
         with:
           repository: Adam-S-Daniel/skills-evals
           path: skills-evals

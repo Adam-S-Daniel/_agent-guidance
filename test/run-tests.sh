@@ -6689,6 +6689,80 @@ JSON
     [[ "$result" == "registered" ]] && pass "legacy group beside a non-legacy one -> registered" || fail "legacy group beside a non-legacy one -> registered (got '$result')"
 }
 
+# ── set-skill-shell-setting.sh (ADR 0029) ──────────────────────────────────
+# Same posture as the registrar: one key added, every other key and its order
+# preserved, an unparseable file refused and left byte-identical, a repeat a
+# no-op, and `status` never writes.
+
+test_set_skill_shell_setting() {
+    echo ""
+    echo "=== Test: set-skill-shell-setting.sh (one key, never overwrite) ==="
+
+    local s="$REPO_ROOT/scripts/set-skill-shell-setting.sh"
+    local d="$TEST_DIR/skill-shell"
+    mkdir -p "$d"
+    local out rc
+
+    out=$("$s" ensure "$d/absent.json")
+    [[ "$out" == "set" ]] && pass "skill-shell: an absent file -> set" || fail "skill-shell: an absent file -> set (got '$out')"
+    out=$(python3 -c "import json;print(json.load(open('$d/absent.json')))")
+    [[ "$out" == "{'disableSkillShellExecution': True}" ]] \
+        && pass "skill-shell: the created file holds only the key" || fail "skill-shell: the created file holds only the key (got '$out')"
+
+    cp "$TEST_DIR/existing-settings.json" "$d/consumer.json"
+    out=$("$s" status "$d/consumer.json")
+    [[ "$out" == "unset" ]] && pass "skill-shell: status on a file without the key -> unset" || fail "skill-shell: status -> unset (got '$out')"
+    out=$("$s" ensure "$d/consumer.json")
+    [[ "$out" == "set" ]] && pass "skill-shell: an existing file -> set" || fail "skill-shell: an existing file -> set (got '$out')"
+    local shape
+    shape=$(python3 - "$TEST_DIR/existing-settings.json" "$d/consumer.json" 2>&1 <<'PY'
+import json, sys
+old = json.load(open(sys.argv[1]))
+new = json.load(open(sys.argv[2]))
+assert new.pop("disableSkillShellExecution") is True
+assert new == old, "another key changed"
+assert list(new) == list(old), "key order changed"
+print("ok")
+PY
+    ) || true
+    [[ "$shape" == "ok" ]] && pass "skill-shell: every other key and its order is preserved" || fail "skill-shell: every other key and its order is preserved — $shape"
+
+    cp "$d/consumer.json" "$d/consumer.after1.json"
+    out=$("$s" ensure "$d/consumer.json")
+    [[ "$out" == "already-set" ]] && pass "skill-shell: a second run -> already-set" || fail "skill-shell: a second run -> already-set (got '$out')"
+    cmp -s "$d/consumer.after1.json" "$d/consumer.json" \
+        && pass "skill-shell: a second run leaves the file byte-identical" || fail "skill-shell: a second run rewrote the file"
+
+    printf '{"disableSkillShellExecution": false, "model": "example"}\n' > "$d/false.json"
+    out=$("$s" ensure "$d/false.json")
+    [[ "$out" == "set" ]] && pass "skill-shell: a false value -> set" || fail "skill-shell: a false value -> set (got '$out')"
+    out=$(python3 -c "import json;d=json.load(open('$d/false.json'));print(d['disableSkillShellExecution'], d['model'])")
+    [[ "$out" == "True example" ]] && pass "skill-shell: false becomes true and the other key survives" || fail "skill-shell: false becomes true (got '$out')"
+
+    printf '{ this is not json\n' > "$d/bad.json"
+    cp "$d/bad.json" "$d/bad.orig"
+    if out=$("$s" ensure "$d/bad.json"); then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 3 && "$out" == "refused-unparseable" ]] \
+        && pass "skill-shell: an unparseable file -> refused-unparseable, exit 3" || fail "skill-shell: unparseable -> refused-unparseable, exit 3 (got rc=$rc '$out')"
+    cmp -s "$d/bad.orig" "$d/bad.json" \
+        && pass "skill-shell: an unparseable file is left byte-identical" || fail "skill-shell: an unparseable file was rewritten"
+
+    printf '[1, 2]\n' > "$d/array.json"
+    if out=$("$s" status "$d/array.json"); then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 3 && "$out" == "refused-unparseable" ]] \
+        && pass "skill-shell: a JSON array is not an object -> refused" || fail "skill-shell: a JSON array -> refused (got rc=$rc '$out')"
+
+    if "$s" bogus "$d/x.json" >/dev/null 2>&1; then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 2 ]] && pass "skill-shell: an unknown mode exits 2" || fail "skill-shell: an unknown mode exits 2 (got $rc)"
+
+    # This repo's own settings carry the key (the sync excludes its own repo).
+    out=$("$s" status "$REPO_ROOT/.claude/settings.json")
+    [[ "$out" == "already-set" ]] && pass "skill-shell: this repo's .claude/settings.json carries the key" || fail "skill-shell: this repo's .claude/settings.json is '$out'"
+
+    # The sync wires the helper in.
+    assert_contains "$REPO_ROOT/scripts/sync.sh" 'SKILL_SHELL_SCRIPT" ensure' "skill-shell: sync.sh calls the helper"
+}
+
 # ── Test 5a: register-bootstrap-hook.sh (append + idempotence) ────────────
 
 test_register_bootstrap_hook() {
@@ -13825,6 +13899,24 @@ for (const spec of Object.values(jobs)) {
 ' "$REPO_ROOT" "$1" "${2:-}"
 }
 
+# lock_entries <workflow path> — the action refs .github/workflows/actions.lock
+# lists for that workflow, one per line, as the lockfile spells them (owner and
+# repo lowercased). Parsed with the same real parser as workflow_steps.
+lock_entries() {
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        echo "node_modules/yaml is missing — run \`npm ci\` first" >&2
+        return 1
+    fi
+    node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const lock = YAML.parse(fs.readFileSync(process.argv[1] + "/.github/workflows/actions.lock", "utf8"));
+const list = lock && lock.workflows && lock.workflows[process.argv[2]];
+if (!Array.isArray(list)) process.exit(1);
+for (const ref of list) console.log(ref);
+' "$REPO_ROOT" "$1"
+}
+
 # workflow_step_by_run <file> <needle> [job] — facts about the FIRST job step
 # whose `run:` body contains <needle>, one per line:
 #
@@ -14148,19 +14240,27 @@ test_bump_workflow() {
         return
     fi
 
-    # Exact form, not "contains 40 hex": `@v4  # 34e1148…` would satisfy a
-    # looser check while pinning a movable tag.
+    # Lockfile form (ADR 0024): each uses: is an exact vX.Y.Z tag that
+    # actions.lock lists for this workflow. A major-only `@v4` would satisfy a
+    # looser check while naming a moving target, and a tag the lockfile does
+    # not list is not locked at all.
+    local locked_file="$TEST_DIR/bump-workflow-locked.txt"
+    if ! lock_entries ".github/workflows/skills-lock-bump.yml" > "$locked_file" 2>/dev/null; then
+        fail "bump workflow: could not read its entries in .github/workflows/actions.lock"
+        return
+    fi
     local uses unpinned=""
     while read -r uses _ _; do
         [[ "$uses" == "-" ]] && continue
-        if [[ ! "$uses" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+        if [[ ! "$uses" =~ ^[^@[:space:]]+@v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+           || ! grep -qxF -- "${uses,,}" "$locked_file"; then
             unpinned="${unpinned:+$unpinned, }$uses"
         fi
     done < "$steps_file"
     if [[ -z "$unpinned" ]]; then
-        pass "bump workflow: every uses: is pinned to a full 40-character commit SHA"
+        pass "bump workflow: every uses: is an exact tag locked in actions.lock"
     else
-        fail "bump workflow: not pinned to a 40-character SHA — $unpinned"
+        fail "bump workflow: not an exact tag locked in actions.lock — $unpinned"
     fi
 
     local registry_depth
@@ -14214,7 +14314,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4.3.1
         with:
           repository: Adam-S-Daniel/adam-agentskills
 YAML
@@ -14225,7 +14325,7 @@ YAML
         local decoy_uses decoy_unpinned=""
         while read -r decoy_uses _ _; do
             [[ "$decoy_uses" == "-" ]] && continue
-            if [[ ! "$decoy_uses" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+            if [[ ! "$decoy_uses" =~ ^[^@[:space:]]+@v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 decoy_unpinned="${decoy_unpinned:+$decoy_unpinned, }$decoy_uses"
             fi
         done < "$decoy_steps"
@@ -17553,7 +17653,7 @@ for (const file of fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort())
 #     `YQ_VERSION: latest` cannot satisfy the assertion above by shape alone;
 #   * all four copies are byte-identical. The step is duplicated across four
 #     workflows rather than factored into a composite action, because a local
-#     `uses: ./…` would fail test_bump_workflow's 40-hex pin assertion and
+#     `uses: ./…` would fail test_bump_workflow's exact-tag pin assertion and
 #     widening a security lint to accommodate a refactor is the wrong trade
 #     (docs/decisions/0008). Duplication is only safe while it cannot skew, and
 #     four copies of a version+digest is exactly the pin-skew hazard this
@@ -19304,12 +19404,12 @@ test_routine_merge_gate() {
 
     # A minimum count is the cheapest proof anything actually ran: a suite that
     # merely `require()`d the module and defined zero tests would otherwise
-    # exit 0 with "# pass 0". 58 is the suite's actual count, so a test
+    # exit 0 with "# pass 0". 64 is the suite's actual count, so a test
     # deleted without updating this number fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 58 ]]; then
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 64 ]]; then
         pass "routine merge gate: node:test suite is green ($pass_n passed)"
     else
-        fail "routine merge gate: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=58): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "routine merge gate: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=64): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -23663,6 +23763,7 @@ GROUP_sync=(
     test_bridge_status
     test_bootstrap_status
     test_register_bootstrap_hook
+    test_set_skill_shell_setting
     # Before the first sync that writes anything, so "not one ref moved" is
     # measured against pristine bares rather than against whatever the previous
     # test left.
