@@ -43,6 +43,7 @@ a page.
 | [0025](0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md) | A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest |
 | [0026](0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md) | Memory is curated by a routine, and its durable facts are promoted through the fleet worker |
 | [0027](0027-lessons-become-agent-checks-through-the-fleet-worker.md) | Lessons become agent-checks through the fleet worker, and their PRs auto-merge when green |
+| [0028](0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md) | The fleet worker also merges skill, fleet guidance and partial fixes |
 | [0029](0029-skills-never-run-shell-commands-on-load.md) | Skills never run shell commands on load: a runner check refuses them and the sync sets `disableSkillShellExecution` |
 
 ## Format

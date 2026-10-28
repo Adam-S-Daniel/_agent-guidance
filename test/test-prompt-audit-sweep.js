@@ -26,12 +26,17 @@ const index = 'docs/decisions/README.md';
 const worker = 'docs/routines/fleet-worker.md';
 const issueWorker = 'docs/reference/agent-issue-worker.md';
 const adr25 = 'docs/decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md';
+const adr28 = 'docs/decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md';
 
 const mutations = {
   mergeall: [worker, '**Merge only what the merge rule (below) allows.**', '**Merge any green PR.**'],
   approve: [worker, 'never\n  approve a deployment waiting on an environment', 'approve\n  a deployment waiting on an environment'],
   stamp: [worker, 'exactly `Independent review: CLEAN at <the full head sha>`', 'exactly `Independent review: CLEAN`'],
   managed: [worker, 'below the `## Repo-specific additions` heading in both', 'anywhere in'],
+  frontmatter: [worker, 'is byte-identical in the base and the\n     head', 'may change in the base and the\n     head'],
+  allowlist: [worker, 'whose diff\n     only removes lines', 'whose diff\n     changes any lines'],
+  noverdict: [worker, 'post nothing: the PR has no stamp, so it is never merged', 'merge it anyway'],
+  guidanceappend: [worker, '`docs/guidance-impact.md`, whose diff only adds lines', '`docs/guidance-impact.md`, any change'],
   nodelete: [worker, 'No file is deleted or renamed.', 'Files may be deleted.'],
   dependabot: [worker, 'Skip Dependabot PRs:', 'Include Dependabot PRs:'],
   expected: [worker, 'with `expected_head_sha` set to the head you read', 'with no expected head'],
@@ -231,10 +236,11 @@ test('every ADR index row is numbered like the file it links', () => {
 test('fleet worker merges only narrow, reviewed instruction fixes and approves nothing', () => {
   includes(prose(section(worker, 'Constraints')), ['**Merge only what the merge rule (below) allows.**', 'never enable auto-merge', 'never force-push', 'Never submit an APPROVE review', 'never approve a deployment waiting on an environment', '`plugin-runtime-review`', 'on-hold']);
   const merge = prose(section(worker, '2. Review and merge a narrow instruction fix'));
-  includes(merge, ['`agent/issue-<n>-<slug>`', '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', 'Every changed file is a `CLAUDE.md` or `AGENTS.md`', 'No file is deleted or renamed.', 'below the `## Repo-specific additions` heading in both', 'exactly `Independent review: CLEAN at <the full head sha>`', 'A push after the stamp makes it stale', 'a fresh prompt', 'never this run\'s other context', '`expected_head_sha` set to the reviewed head', 'which squash']);
+  includes(merge, ['`agent/issue-<n>-<slug>`', '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', 'Every changed file is one of these.', 'a `CLAUDE.md` or `AGENTS.md` at any depth', 'a `SKILL.md` at any depth whose frontmatter', 'is byte-identical in the base and the head', '`Refs <owner>/<repo>#<n>`', 'in `_agent-guidance` only, the fleet guidance', 'byte-identical `.claude/hooks/fleet-guidance.md` mirror', '`docs/guidance-impact.md`, whose diff only adds lines', 'no rule is weakened or dropped', 'If the subagent cannot run or gives no verdict, post nothing', 'it is never merged', 'No other file in a skill\'s directory qualifies.', 'a `.freshness-allow.yml` at any depth whose diff only removes lines', 'In a `SKILL.md`, `CLEAN` also requires that the frontmatter is untouched', 'No file is deleted or renamed.', 'below the `## Repo-specific additions` heading in both', 'exactly `Independent review: CLEAN at <the full head sha>`', 'A push after the stamp makes it stale', 'a fresh prompt', 'never this run\'s other context', '`expected_head_sha` set to the reviewed head', 'which squash']);
   const sweepRe = prose(section(spec, '4. Render one issue per repo')).match(/regular expression `([^`]+)`/)[1];
   assert.ok(merge.includes(`\`${sweepRe}\``), 'merge rule and sweep disagree on the sweep issue title');
   includes(prose(section(adr25, 'Decision')), ['separately prompted subagent', 'stays with the owner', 'never approves a deployment']);
+  includes(prose(section(adr28, 'Decision')), ['byte-identical', 'only removes lines', 'never approves anything', 'Nothing merges without', 'goes to the owner']);
   includes(prose(section(issueWorker, 'Where it runs')), ['**The owner turns that laptop task off**']);
 });
 
