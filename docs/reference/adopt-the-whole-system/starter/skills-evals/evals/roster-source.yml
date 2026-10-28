@@ -1,0 +1,17 @@
+# What evals/roster.yml is built from (guide 9.1), edited by hand.
+# scripts/refresh_roster.py (roster-refresh.yml, weekly) seats the `seats`
+# models with the largest share and opens a pull request only when
+# roster.yml would change. The reference setup fills this file from usage
+# data; the kit reads only what you write here (no network).
+# Schema (refresh_roster.py refuses anything else):
+#   seats:  how many arms, 1 to 4
+#   models: list of {id: claude model id, tier: string, share: 0..1 of your
+#           recent turns, why: optional text (default "<share>% of my recent turns")}
+#   judge:  claude model id, one tier above the strongest arm
+seats: 1
+models:
+  - id: claude-sonnet-5-5
+    tier: sonnet
+    share: 0.8
+    why: most of my recent turns
+judge: claude-opus-5-0

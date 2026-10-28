@@ -1,0 +1,6 @@
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "rules": [{ "type": "pull_request" }]
+}

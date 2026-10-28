@@ -1,0 +1,13 @@
+# Which fixtures the weekly sweep runs (guide 10.1; plan_week.py reads it).
+# Schema:
+#   fixtures: list of {fixture: "evals/<skill>/<name>", status: scheduled | draft}
+#   A scaffolded fixture is "draft" until it has two clean ingested runs (10.4).
+#   Only "scheduled" fixtures are planned; each runs once per roster seat.
+fixtures:
+  - fixture: evals/workflow-path-audit/basic
+    status: scheduled
+  # The example-skill placeholder stays a draft: its prompt is a stand-in, so
+  # the sweep never plans it. Copy it, replace the marked parts, and move the
+  # copy to "scheduled" after two clean runs.
+  - fixture: evals/example-skill/basic
+    status: draft

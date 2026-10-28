@@ -1,0 +1,96 @@
+name: agent-checks
+on:
+  pull_request_target:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  agent-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          fetch-depth: 0     # the base branch on pull_request_target
+      - name: Fetch the pull request's commits, as data only
+        if: github.event_name == 'pull_request_target'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
+      - name: Run the base branch's checks over this change
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          runner="$RUNNER_TEMP/agent-checks"
+          if [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            git show "$HEAD_SHA:.githooks/agent-checks" > "$runner"
+            AGENT_CHECKS_REF="$HEAD_SHA" bash "$runner" tree "$HEAD_SHA"
+            exit 0
+          fi
+          git show "$BASE:.githooks/agent-checks" > "$runner"
+          AGENT_CHECKS_REF="$BASE" bash "$runner" ci "$BASE" "$HEAD_SHA"
+  privacy-scan:
+    # Never for a fork's pull request: pull_request_target gives it the base
+    # branch's secrets, and its log would tell an outsider which guessed
+    # strings are on your denylist. Never on a private repo either:
+    # environments, and with them PRIVACY_DENYLIST, need a paid plan there,
+    # and nothing private needs the scan before it goes public. The required
+    # context is the privacy job below, which never passes a skipped scan
+    # except on a private repo.
+    if: >-
+      !github.event.repository.private &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    environment: privacy    # holds PRIVACY_DENYLIST; deployment branch: main only
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          fetch-depth: 0
+      - name: Fetch the pull request's commits, as data only
+        if: github.event_name == 'pull_request_target'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
+      - name: Scan added lines and commit messages
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+        run: |
+          set -euo pipefail
+          if [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            echo "privacy: first push of a branch; nothing to compare against"; exit 0
+          fi
+          umask 077
+          printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist"
+          PRIVACY_DENYLIST_FILE="$RUNNER_TEMP/denylist" \
+            python3 .githooks/check-privacy.py "$BASE" "$HEAD_SHA"
+  privacy:
+    # The required context. A skipped job reports success, so this job, not
+    # privacy-scan, is what branch protection names: it FAILS a fork's pull
+    # request (unscanned changes never merge; bring them in through a branch
+    # of your own) and passes only a scan that succeeded, or a private repo,
+    # where there is nothing to scan. It holds no secret and prints nothing
+    # from the change.
+    needs: privacy-scan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        env:
+          SCAN: ${{ needs.privacy-scan.result }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$PRIVATE" = true ]; then echo "privacy: a private repo is not scanned"; exit 0; fi
+          if [ "$EVENT" = pull_request_target ] && [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "privacy: a fork's pull request is never scanned here; bring this change in through a branch of your own"
+            exit 1
+          fi
+          if [ "$SCAN" = success ]; then echo "privacy: scan passed"; exit 0; fi
+          echo "privacy: the scan did not pass ($SCAN)"
+          exit 1

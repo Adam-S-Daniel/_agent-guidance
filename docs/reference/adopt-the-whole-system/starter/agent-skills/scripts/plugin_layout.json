@@ -1,0 +1,11 @@
+{
+  "plugins": {
+    "<you>-coding-anywhere": {
+      "defaultEnabled": true,
+      "skills": [
+        "example-skill",
+        "workflow-path-audit"
+      ]
+    }
+  }
+}

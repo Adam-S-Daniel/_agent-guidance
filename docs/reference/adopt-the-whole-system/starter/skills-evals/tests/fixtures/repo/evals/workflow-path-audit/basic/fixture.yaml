@@ -1,0 +1,23 @@
+skill: workflow-path-audit
+registry: <you>/agent-skills
+prompt: >
+  CI runs every workflow on every change. Make each one run only when
+  something it depends on changes.
+arms:
+  with_skill: { install: copy }
+  without_skill: { install: none }
+judge:
+  weights: { completeness: 0.5, salience: 0.3, restraint: 0.2 }
+objective_checks:
+  - id: workflows-parse
+    type: yaml_parses
+    paths: [".github/workflows/*.yml"]
+  - id: docs-change-skips-tests
+    type: command_succeeds
+    command: python3 checks/replay.py --changed docs/guide.md --expect-skip tests
+  - id: code-change-runs-tests
+    type: command_succeeds
+    command: python3 checks/replay.py --changed src/app.py --expect-run tests
+  - id: ruleset-untouched
+    type: file_unchanged
+    paths: [".github/rulesets/main.json"]

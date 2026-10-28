@@ -1,0 +1,15 @@
+name: routine-improve-pushed
+# Exists only so the gate (routine-improve-gate.yml) has an event to follow.
+# No permissions, no secrets, and it runs nothing from the branch.
+# The paths filter is this lane's own directory, so no other lane's push
+# (eval-results/**, eval-scaffold/**, eval-draft/**) can trigger it.
+on:
+  push:
+    branches: ['claude/eval-improve-*']
+    paths: ['eval-improve/**']
+permissions: {}
+jobs:
+  pushed:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "improve branch pushed"

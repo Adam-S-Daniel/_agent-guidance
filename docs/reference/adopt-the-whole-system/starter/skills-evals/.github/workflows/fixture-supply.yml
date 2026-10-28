@@ -1,0 +1,55 @@
+name: fixture-supply
+# Daily: turn merged pull requests into scaffold fires (guide 10.4).
+# scripts/fixture_supply.py reads evals/fixture-sources.yml (which public
+# repos to mine, which paths are evidence for which skill, how many fires a
+# day) and evals/scaffold-sources.json (pull requests already scaffolded);
+# pick_fixture_candidates.py ranks the merged pull requests' file lists; each
+# pick is dispatched as a scaffold fire through routine-eval-fire.yml, whose
+# allowance guard charges it per_run_cap. Only public metadata is read: the
+# number, merge time and file paths, never a title or body.
+# No secret here: GITHUB_TOKEN reads public pull requests and dispatches
+# workflows in this repo (actions: write).
+on:
+  schedule:
+    - cron: '29 7 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write          # dispatch routine-eval-fire.yml and read its runs
+concurrency:
+  group: fixture-supply
+  cancel-in-progress: false
+jobs:
+  supply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@<sha-of-the-v-tag-you-chose>
+        with:
+          python-version: "3.12"
+      - name: Install harness dependencies
+        run: python3 -m pip install --quiet -r requirements.txt
+      - name: Pick merged pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/fixture_supply.py prepare --out supply
+          : > supply/prs.ndjson
+          while IFS= read -r repo; do
+            gh pr list --repo "$repo" --state merged --limit 30 --json number,mergedAt,files \
+              | jq -c --arg r "$repo" '.[] | {repo: $r, number, merged_at: .mergedAt, files: [.files[].path]}' \
+              >> supply/prs.ndjson
+          done < supply/repos.txt
+          jq -s . supply/prs.ndjson > supply/prs.json
+          python3 scripts/pick_fixture_candidates.py --prs supply/prs.json --evidence supply/evidence.json \
+            --limit "$(cat supply/limit.txt)" > supply/picks.json
+          python3 scripts/fixture_supply.py plan --picks supply/picks.json > supply/plan.json
+          jq -r '"picked \(.fires | length) pull requests"' supply/plan.json
+      - name: Dispatch the scaffold fires
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/dispatch_fires.py supply/plan.json

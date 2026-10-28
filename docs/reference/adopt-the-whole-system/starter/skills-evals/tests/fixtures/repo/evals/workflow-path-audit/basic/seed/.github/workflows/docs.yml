@@ -1,0 +1,12 @@
+name: docs
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0000000000000000000000000000000000000001
+      - run: python3 -m pip install mkdocs
+      - run: mkdocs build --strict

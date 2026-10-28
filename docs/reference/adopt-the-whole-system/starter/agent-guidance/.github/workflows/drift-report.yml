@@ -1,0 +1,47 @@
+name: drift-report
+# Save as .github/workflows/drift-report.yml in agent-guidance.
+# Nightly, read-only for the fleet: scripts/drift-report.sh runs
+# `sync.sh --dry-run` over repos.yml (each repo is cloned and compared in a
+# scratch clone; nothing is pushed to any of them) and writes the per-repo
+# states to drift-report/report.json and report.md on persistent/drift-report
+# in this repo, a fast-forward only. Not a required check, so it may use a
+# concurrency group.
+on:
+  schedule:
+    - cron: "47 4 * * *"     # after the nightly sync (sync.yml, 03:17)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The guidance-sync App: variable GUIDANCE_SYNC_CLIENT_ID, secret
+    # GUIDANCE_SYNC_PEM. Deployment branches: main only (section 3.4).
+    environment: guidance-sync
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>   # full history: the guidance version is a commit time
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # No repositories: input: the dry run reads every repo the App is
+      # installed on (repos.yml), and the report is pushed to this one.
+      - id: token
+        uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
+        with:
+          client-id: ${{ vars.GUIDANCE_SYNC_CLIENT_ID }}
+          private-key: ${{ secrets.GUIDANCE_SYNC_PEM }}
+          owner: ${{ github.repository_owner }}
+      - name: Report drift and write it to persistent/drift-report
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SYNC_OWNER: ${{ github.repository_owner }}
+          SYNC_SELF_REPO: ${{ github.repository }}
+          DRIFT_REPO: ${{ github.repository }}
+        run: bash scripts/drift-report.sh --push "$RUNNER_TEMP/drift"

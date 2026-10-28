@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# agent-checks: commit-time rules, run by local git hooks and by CI.
+#   agent-checks pre-commit          (staged paths)
+#   agent-checks pre-push            (git's ref lines on stdin)
+#   agent-checks ci <base> <head>    (every path each commit in base..head adds or changes)
+#   agent-checks tree [<rev>]        (every path in a tree, default HEAD)
+# CI is the enforcement; a local hook is fast feedback (--no-verify skips it).
+# Each refusal says what is wrong, why, and how to fix it.
+# AGENT_CHECKS_REF=<rev> makes it read .agent-checks/local.sh from that commit
+# instead of the working tree (CI and the local hooks set it to a trusted rev).
+set -u
+failed=0
+problem() { echo "agent-checks: $*" >&2; failed=1; }
+
+check_path() {
+  local p=$1 lower q
+  lower=$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')
+  q=$(printf '%q' "$p")
+  case "$lower" in
+    .env|*.env|.env.*|*/.env.*|*.pem|*id_rsa*|*id_ed25519*|*id_ecdsa*|*.p12|*.pfx|*credentials.json)
+      case "$lower" in *.example|*.sample|*.pub) return 0 ;; esac
+      problem "$q looks like a secret or credential file. Remove it from the commit (git rm --cached -- $q) and keep the value in a secret store." ;;
+    .claude/rules/*)
+      problem "$q: path-scoped .claude/rules/ files are not used here; rules go in a check (.githooks/agent-checks or .agent-checks/local.sh) or in AGENTS.md." ;;
+  esac
+}
+
+# ---- lesson checks ---------------------------------------------------------
+# One check per lesson the fleet learned the hard way (the fleet worker's
+# lesson-check pass writes them; see docs/routines/fleet-worker.md). Each has an
+# id; an id runs only when it is in lesson_checks. A check gets one path and can
+# read the version being checked with content_of. A refusal is
+#   problem lesson-<id> "<what is wrong>. <why it matters>. <how to fix it>."
+lesson_checks=""
+
+# EXAMPLE, DISABLED: refuse a remove-before-merge marker (TODO, then
+# "remove-before-merge" in parentheses) in the content being checked. This
+# file never spells the marker out, so it cannot refuse itself. To turn the
+# check on, uncomment the next line (its "example-lesson: enable" tag lets a
+# test enable it with one sed).
+# lesson_checks="$lesson_checks remove-before-merge"  # example-lesson: enable
+
+# content_of <path>: the bytes being checked. content_rev is set per event
+# below: empty reads the index (":<path>"), otherwise "<rev>:<path>".
+content_rev=""
+content_of() { git show "$content_rev:$1" 2>/dev/null; }
+
+check_lessons() {
+  local p=$1 q id marker
+  q=$(printf '%q' "$p")
+  for id in $lesson_checks; do
+    case "$id" in
+      remove-before-merge)
+        # Built in two pieces so this file does not hold the marker itself.
+        marker='TODO(remove-before''-merge)'
+        case "$p" in *.png|*.jpg|*.jpeg|*.gif|*.pdf|*.zip|*.gz) continue ;; esac
+        # No pipefail in this file, so grep -q's status is the answer.
+        if content_of "$p" | grep -qF -- "$marker"; then
+          problem lesson-remove-before-merge "$q still holds a $marker marker. It flags code meant to come out before this change merges. Remove the marked code (or the marker, if the code should stay) and stage the file again."
+        fi ;;
+    esac
+  done
+}
+
+# run <git command...>: list NUL-separated paths with git (-z keeps unusual
+# names, even ones with newlines, intact), then check each one. The list is
+# captured to a file first, so a failed git command fails the run instead of
+# reading as "no paths", and the checks run in this shell, so refusals count.
+run() {
+  local list p
+  list=$(mktemp) || exit 1
+  if ! "$@" > "$list"; then
+    rm -f "$list"; echo "agent-checks: could not list paths ($*)" >&2; exit 1
+  fi
+  while IFS= read -r -d '' p; do
+    [ -n "$p" ] || continue
+    check_path "$p"
+    [ -n "$lesson_checks" ] && check_lessons "$p"
+  done < "$list"
+  rm -f "$list"
+  return 0
+}
+
+event=${1:-}
+case "$event" in
+  pre-commit) run git diff --cached -z --name-only --diff-filter=ACMR ;;
+  pre-push)
+    zero=0000000000000000000000000000000000000000
+    empty_tree=$(git hash-object -t tree /dev/null)
+    while read -r _lref lsha _rref rsha; do
+      [ "$lsha" = "$zero" ] && continue          # a branch deletion adds nothing
+      [ "$rsha" = "$zero" ] && rsha=$empty_tree  # a new branch: check every path
+      content_rev=$lsha
+      run git diff -z --name-only --diff-filter=ACMR "$rsha" "$lsha"
+    done ;;
+  ci)
+    # Every commit the range adds, not just the net diff: a secret added in one
+    # commit and deleted in the next is still in history. -m --first-parent
+    # also lists what a merge commit brings in.
+    commits=$(git rev-list "$2..$3") || { echo "agent-checks: bad range $2..$3" >&2; exit 1; }
+    for c in $commits; do
+      content_rev=$c
+      run git diff-tree -z -m --first-parent --no-commit-id --name-only -r --root --diff-filter=ACMR "$c"
+    done ;;
+  tree) content_rev=${2:-HEAD}; run git ls-tree -z -r --name-only "${2:-HEAD}" ;;
+  *) exit 0 ;;
+esac
+# Repo-local checks live outside .githooks/ because the sync overwrites this file.
+if [ -n "${AGENT_CHECKS_REF:-}" ]; then
+  if local_src=$(git show "$AGENT_CHECKS_REF:.agent-checks/local.sh" 2>/dev/null); then
+    bash -c "$local_src" local.sh "$@" || failed=1
+  fi
+elif [ -f .agent-checks/local.sh ]; then
+  bash .agent-checks/local.sh "$@" || failed=1
+fi
+exit "$failed"

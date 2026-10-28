@@ -1,0 +1,84 @@
+name: apply-rulesets
+# Re-applies rulesets/ to every fleet repo on a push that changes them, and
+# weekly, so a ruleset edited by hand in the UI is put back. PAID PLAN ONLY:
+# repo-settings is private, and GitHub Free has no environments there.
+#
+# The token is the settings-admin App's (administration: write), minted from
+# the settings-admin environment: variable SETTINGS_ADMIN_CLIENT_ID, secret
+# SETTINGS_ADMIN_PEM (bootstrap/create-apps.sh settings-admin puts both there).
+# The workflow's own GITHUB_TOKEN reads this repo and nothing else.
+#
+# Repository variables it reads (Settings > Secrets and variables > Actions >
+# Variables), all optional:
+#   OWNER_TYPE            user (default) or org
+#   LOOP_WRITER_APP_ID    set: skills-evals gets its full persistent-branches ruleset
+#   GUIDANCE_SYNC_APP_ID  set: agent-guidance gets its full persistent-branches ruleset
+#   REQUIRED_CHECKS       on after phase 4 (the fleet.env key of the same name),
+#                         or this run removes the phase 4 required checks
+#   VISIBILITY_AGENT_GUIDANCE, VISIBILITY_SKILLS_EVALS
+#                         as in fleet.env (empty means public)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rulesets/**'
+      - 'bin/**'
+      - '.github/workflows/apply.yml'
+  schedule:
+    - cron: '23 6 * * 1'   # Mondays 06:23 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apply-rulesets
+  cancel-in-progress: false
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: settings-admin   # holds the App key; deployment branch: main only
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          persist-credentials: false
+      - name: Check the App credentials are present
+        env:
+          CLIENT_ID: ${{ vars.SETTINGS_ADMIN_CLIENT_ID }}
+          HAS_PEM: ${{ secrets.SETTINGS_ADMIN_PEM != '' }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ "$HAS_PEM" != true ]; then
+            echo "::error::SETTINGS_ADMIN_CLIENT_ID or SETTINGS_ADMIN_PEM is missing from the settings-admin environment: run bootstrap/create-apps.sh settings-admin"
+            exit 1
+          fi
+      - id: token
+        uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
+        with:
+          client-id: ${{ vars.SETTINGS_ADMIN_CLIENT_ID }}
+          private-key: ${{ secrets.SETTINGS_ADMIN_PEM }}
+          owner: ${{ github.repository_owner }}
+      - name: Apply the rulesets and read them back
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ vars.OWNER_TYPE }}
+          LOOP_WRITER_APP_ID: ${{ vars.LOOP_WRITER_APP_ID }}
+          GUIDANCE_SYNC_APP_ID: ${{ vars.GUIDANCE_SYNC_APP_ID }}
+          REQUIRED_CHECKS: ${{ vars.REQUIRED_CHECKS }}
+          VISIBILITY_AGENT_GUIDANCE: ${{ vars.VISIBILITY_AGENT_GUIDANCE }}
+          VISIBILITY_SKILLS_EVALS: ${{ vars.VISIBILITY_SKILLS_EVALS }}
+        run: |
+          set -euo pipefail
+          # apply-rulesets.sh parses this file strictly and refuses a bad value.
+          cfg="$RUNNER_TEMP/fleet.env"
+          {
+            printf 'OWNER=%s\n' "$OWNER"
+            printf 'OWNER_TYPE=%s\n' "${OWNER_TYPE:-user}"
+            printf 'PLAN=paid\n'
+            printf 'LOOP_WRITER_APP_ID=%s\n' "$LOOP_WRITER_APP_ID"
+            printf 'GUIDANCE_SYNC_APP_ID=%s\n' "$GUIDANCE_SYNC_APP_ID"
+            printf 'REQUIRED_CHECKS=%s\n' "$REQUIRED_CHECKS"
+            printf 'VISIBILITY_AGENT_GUIDANCE=%s\n' "$VISIBILITY_AGENT_GUIDANCE"
+            printf 'VISIBILITY_SKILLS_EVALS=%s\n' "$VISIBILITY_SKILLS_EVALS"
+          } > "$cfg"
+          # No --with/--without flag: the REQUIRED_CHECKS key decides, as on your machine.
+          bash bin/apply-rulesets.sh --config "$cfg" --rulesets-dir rulesets --all

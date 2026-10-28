@@ -1,0 +1,16 @@
+# Improve mode settings (guide 10.2 and 10.5; the planner and improve gate read it).
+# Schema: these keys only (improve_gate.py refuses any other). A key left out
+# takes the default in improve_gate.py's DEFAULT_POLICY.
+min_fixtures: 4              # first is a fixed holdout; one more rotates as validation
+trials: 3
+training_gain_min: 0.10      # objective pass-rate gain on the training fixtures
+judge_gain_when_tied: 1.0    # judge points out of ten, used when pass rates tie
+validation_may_not_worsen: true   # always applied by the gate; may not be set false
+holdout_may_not_regress: true     # always applied by the gate; may not be set false
+no_errored_fixture: true          # always applied by the gate; may not be set false
+pause_after_rejection_days: 14
+pause_after_consecutive_rejections: 3   # until something changes
+no_branch_counts_as_rejection_after_hours: 12
+max_patch_bytes: 40000       # the improve gate refuses a larger patch
+max_token_ratio: 1.5         # candidate tokens over baseline tokens, at most
+improve_merge_mode: draft    # draft | auto. Start with draft; switch to auto after you trust the lane.

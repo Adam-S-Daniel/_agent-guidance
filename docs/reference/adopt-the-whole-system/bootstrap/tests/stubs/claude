@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Test stub for the claude CLI's plugin commands. Logs argv to $CLAUDE_LOG;
+# keeps configured marketplaces and installed plugins in $CLAUDE_STUB_STATE.
+set -euo pipefail
+printf '%s\n' "$*" >> "$CLAUDE_LOG"
+touch "$CLAUDE_STUB_STATE"
+case "$*" in
+  "plugin marketplace list --json")
+    grep '^market ' "$CLAUDE_STUB_STATE" | cut -d' ' -f2 | jq -R '{name: .}' | jq -s . ;;
+  "plugin marketplace add "*)
+    # CLAUDE_STUB_NO_MARKET=1: the registry has no marketplace yet (its
+    # starter pull request is not merged).
+    if [ "${CLAUDE_STUB_NO_MARKET:-0}" = 1 ]; then echo "Error: no marketplace.json on the default branch" >&2; exit 1; fi
+    repo=${4#*/}; owner=${4%%/*}
+    printf 'market %s\n' "${owner,,}${repo#agent}" >> "$CLAUDE_STUB_STATE" ;;
+  "plugin list")
+    grep '^plugin ' "$CLAUDE_STUB_STATE" | cut -d' ' -f2 | sed 's/^/  ❯ /; s/$/  enabled/' || true ;;
+  "plugin install "*)
+    printf 'plugin %s\n' "$3" >> "$CLAUDE_STUB_STATE" ;;
+  *) echo "claude stub: unsupported: $*" >&2; exit 2 ;;
+esac

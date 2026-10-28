@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Test stub for gh: see gh_stub.py.
+exec python3 -I "$(dirname "${BASH_SOURCE[0]}")/gh_stub.py" "$@"

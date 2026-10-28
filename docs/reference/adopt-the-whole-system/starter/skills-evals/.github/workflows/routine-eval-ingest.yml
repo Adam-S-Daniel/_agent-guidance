@@ -1,0 +1,97 @@
+name: Ingest eval results
+
+# Step 5 of guide 9.4. Triggered by workflow_run, so it runs the DEFAULT
+# branch's copy of this file and of scripts/. The pushed branch is checked out
+# as DATA into branch/ and is never executed. Only the loop-writer App may push
+# persistent/eval-results (ruleset in repo-settings), so the write uses its
+# token, minted in the step right before the push, from environment loop-writer.
+on:
+  workflow_run:
+    workflows: ["Eval results pushed"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+# Not a required check, so a concurrency group is safe here: ingests queue
+# one at a time and none is cancelled.
+concurrency:
+  group: ingest-eval-results
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: loop-writer
+    steps:
+      - name: Validate the branch name before anything uses it
+        env:
+          EVENT_PATH: ${{ github.event_path }}
+        run: |
+          branch=$(jq -r '.workflow_run.head_branch' "$EVENT_PATH")
+          if ! printf '%s' "$branch" | grep -Eqx 'claude/eval-results-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}'; then
+            echo "REFUSED: branch name"; exit 1
+          fi
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$(jq -r '.workflow_run.head_sha' "$EVENT_PATH")" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+
+      - run: python3 -m pip install --quiet -r requirements.txt
+
+      # The branch, as data. Full history is needed to list what it changed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: branch
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: List changed paths and validate
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git -C branch diff --name-only -z "origin/$DEFAULT_BRANCH...$HEAD_SHA" > changed.z
+          python3 scripts/ingest_validate.py --branch "$BRANCH" --root branch --changed changed.z
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        id: app
+        with:
+          client-id: ${{ vars.LOOP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.LOOP_WRITER_PEM }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Write routine-results to persistent/eval-results
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          url="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$url" persistent/eval-results >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch persistent/eval-results "$url" results
+          else
+            git init --quiet results
+            git -C results checkout --quiet -b persistent/eval-results
+            git -C results remote add origin "$url"
+          fi
+          python3 scripts/ingest_validate.py --branch "$BRANCH" --root branch --changed changed.z --dest results
+          run_id="${BRANCH#claude/eval-results-}"
+          git -C results config user.name "loop-writer[bot]"
+          git -C results config user.email "loop-writer@users.noreply.github.com"
+          git -C results add "routine-results/$run_id"
+          git -C results commit --quiet -m "Ingest eval run $run_id"
+          git -C results push --quiet origin persistent/eval-results
+          git -C results fetch --quiet origin persistent/eval-results
+          git -C results merge-base --is-ancestor HEAD origin/persistent/eval-results
+          echo "ingested $run_id"

@@ -1,0 +1,135 @@
+name: routine-draft-skill
+# Daily: pick the most frequent lesson not yet drafted and dispatch ONE draft
+# fire through routine-eval-fire.yml (guide 10.4), whose allowance guard
+# charges it per_run_cap and refuses it when the week has no room.
+#
+# Lessons live on persistent/lessons in the PRIVATE repo named by the
+# variable LESSONS_REPO, read with the read-only lessons-reader App
+# (environment lessons-reader: variable LESSONS_READER_CLIENT_ID, secret
+# LESSONS_READER_PEM). This repo is public and the lessons are not, so a
+# lesson's text and subject never leave the pick step: pick_lesson.py writes
+# the plan and prints only the lesson's opaque id (the sha256 of its subject),
+# and that id is all that reaches the fire's workflow_dispatch input, its run
+# name, this run's log and outputs, and persistent/eval-results. The draft
+# routine reads the lesson from the private registry with its own read access
+# (docs/routine-prompts.md). Ids already fired are kept in
+# drafted-subjects.json on persistent/eval-results (written with the
+# loop-writer token in the record job), so each lesson is drafted once.
+on:
+  schedule:
+    - cron: '53 8 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write          # dispatch routine-eval-fire.yml and read its runs
+concurrency:
+  group: routine-draft-skill
+  cancel-in-progress: false
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: lessons-reader   # App key lives here; default branch only
+    outputs:
+      lesson_id: ${{ steps.pick.outputs.lesson_id }}
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@<sha-of-the-v-tag-you-chose>
+        with:
+          python-version: "3.12"
+      - name: Install harness dependencies
+        run: python3 -m pip install --quiet -r requirements.txt
+      # The results branch may not exist before the first ingest.
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        continue-on-error: true
+        with:
+          ref: persistent/eval-results
+          path: results
+          persist-credentials: false
+      - name: Name the lessons repo
+        id: repo
+        env:
+          LESSONS_REPO: ${{ vars.LESSONS_REPO }}
+        run: |
+          [[ "$LESSONS_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || { echo "::error::the repository variable LESSONS_REPO is not set"; exit 1; }
+          echo "name=${LESSONS_REPO#*/}" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
+        id: app
+        with:
+          client-id: ${{ vars.LESSONS_READER_CLIENT_ID }}
+          private-key: ${{ secrets.LESSONS_READER_PEM }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.repo.outputs.name }}
+          permission-contents: read
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          repository: ${{ vars.LESSONS_REPO }}
+          ref: persistent/lessons
+          path: lessons
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+      - name: Pick one lesson
+        id: pick
+        run: |
+          set -euo pipefail
+          drafted=results/drafted-subjects.json
+          [ -f "$drafted" ] || { mkdir -p results; echo '[]' > "$drafted"; }
+          rc=0
+          id=$(python3 scripts/pick_lesson.py pick --lessons lessons/lessons --drafted "$drafted" \
+            --plan-out "$RUNNER_TEMP/plan.json") || rc=$?
+          rm -rf lessons            # nothing later in this job needs the private text
+          if [ "$rc" = 1 ]; then echo "no lesson to draft"; exit 0; fi
+          [ "$rc" = 0 ] || exit "$rc"
+          [[ "$id" =~ ^[0-9a-f]{64}$ ]] || { echo "bad lesson id"; exit 1; }
+          echo "lesson_id=$id" >> "$GITHUB_OUTPUT"
+      - name: Dispatch the draft fire
+        if: steps.pick.outputs.lesson_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/dispatch_fires.py "$RUNNER_TEMP/plan.json"
+  record:
+    needs: pick
+    if: needs.pick.outputs.lesson_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: loop-writer
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          persist-credentials: false
+      - uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
+        id: app
+        with:
+          client-id: ${{ vars.LOOP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.LOOP_WRITER_PEM }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Record the lesson id in drafted-subjects.json
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+          LESSON_ID: ${{ needs.pick.outputs.lesson_id }}
+        run: |
+          set -euo pipefail
+          [[ "$LESSON_ID" =~ ^[0-9a-f]{64}$ ]] || { echo "bad lesson id"; exit 1; }
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          url="https://github.com/${GITHUB_REPOSITORY}.git"
+          g() { git -c http.extraheader="AUTHORIZATION: basic $auth" "$@"; }
+          if g ls-remote --exit-code --heads "$url" persistent/eval-results >/dev/null 2>&1; then
+            g clone --quiet --depth 1 --branch persistent/eval-results "$url" write
+          else
+            git init --quiet write
+            git -C write checkout --quiet -b persistent/eval-results
+          fi
+          python3 scripts/pick_lesson.py record --drafted write/drafted-subjects.json --lesson-id "$LESSON_ID"
+          git -C write add drafted-subjects.json
+          if git -C write diff --cached --quiet; then echo "already recorded"; exit 0; fi
+          git -C write -c user.name="loop-writer[bot]" -c user.email="loop-writer@users.noreply.github.com" \
+            commit --quiet -m "Record a drafted lesson id"
+          sha=$(git -C write rev-parse HEAD)
+          g -C write push --quiet "$url" HEAD:refs/heads/persistent/eval-results
+          g -C write fetch --quiet "$url" persistent/eval-results
+          git -C write merge-base --is-ancestor "$sha" FETCH_HEAD
+          echo "recorded"

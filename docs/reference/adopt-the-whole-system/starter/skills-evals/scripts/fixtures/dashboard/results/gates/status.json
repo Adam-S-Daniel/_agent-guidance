@@ -1,0 +1,57 @@
+{
+  "cells": [
+    {
+      "class": "ceiling",
+      "cli_versions": 2,
+      "fixture": "evals/example-skill/basic",
+      "model": "claude-sonnet-5-5",
+      "runs": 5,
+      "skill": "example-skill"
+    },
+    {
+      "class": "no-benefit",
+      "cli_versions": 2,
+      "fixture": "evals/guidance/basic",
+      "model": "claude-sonnet-5-5",
+      "runs": 10,
+      "skill": "guidance/example-section"
+    },
+    {
+      "class": "insufficient",
+      "cli_versions": 1,
+      "fixture": "evals/workflow-path-audit/ci-skips-docs",
+      "model": "claude-opus-4-7",
+      "runs": 1,
+      "skill": "workflow-path-audit"
+    },
+    {
+      "class": "insufficient",
+      "cli_versions": 2,
+      "fixture": "evals/workflow-path-audit/ci-skips-docs",
+      "model": "claude-sonnet-5-5",
+      "runs": 2,
+      "skill": "workflow-path-audit"
+    }
+  ],
+  "skills": {
+    "example-skill": {
+      "classes": [
+        "ceiling"
+      ],
+      "verdict": "keep"
+    },
+    "guidance/example-section": {
+      "classes": [
+        "no-benefit"
+      ],
+      "verdict": "retire"
+    },
+    "workflow-path-audit": {
+      "classes": [
+        "insufficient",
+        "insufficient"
+      ],
+      "verdict": "keep"
+    }
+  }
+}

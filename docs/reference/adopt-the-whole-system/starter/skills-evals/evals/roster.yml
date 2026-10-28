@@ -1,0 +1,12 @@
+# Models the evals use (guide 9.1). Seat the models you actually use.
+# Schema:
+#   arms:  list of {id: claude model id, tier: string, why: string}; the first is the default
+#   judge: {id: claude model id}   one tier above the strongest arm
+# These ids are placeholders: replace them with ids your account runs
+# (a model id must match ^claude-[a-z0-9][a-z0-9.-]{0,62}$).
+arms:
+  - id: claude-sonnet-5-5
+    tier: sonnet
+    why: most of my recent turns
+judge:
+  id: claude-opus-5-0

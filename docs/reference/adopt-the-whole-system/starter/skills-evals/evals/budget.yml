@@ -1,0 +1,15 @@
+# Budget, in fractions of the weekly allowance (guide 9.5).
+# Schema (harness/budget.py refuses unknown keys, and values outside these rules):
+#   weekly_cap               0 < x <= 1   all automated evals in one allowance week
+#   per_run_cap              0 < x <= weekly_cap   one run starts no new trial past this;
+#                            also what a fire without ingested results is charged
+#   per_run_overrun          0 <= x <= 1  added to each measured run: its last call is unmeasured
+#   stop_when_account_above  0 < x <= 1   nothing starts once the account meter reads this
+#   improve_reservation      0 < x <= weekly_cap   charged for an improve fire, whatever its outcome
+#   weekly_reset_fallback    "<mon..sun> HH:MM" UTC; used until an ingested run.json's meter carries resets_at
+weekly_cap: 0.30
+per_run_cap: 0.03
+per_run_overrun: 0.005
+stop_when_account_above: 0.80
+improve_reservation: 0.12
+weekly_reset_fallback: "mon 17:00"

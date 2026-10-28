@@ -1,0 +1,69 @@
+name: plugin-runtime-review
+# A pull request that changes how a plugin runs code waits for the owner's
+# approval (guide 10.5 step 6). Make the `plugin-runtime-review` job a
+# required check; it always reports:
+#
+#   detect                    runs scripts/runtime_detect.py from the BASE
+#                             branch's checkout, with the pull request's head
+#                             fetched as data only (nothing from it runs).
+#   plugin-runtime-approval   only when detect says runtime=true: waits in
+#                             the environment plugin-runtime-review, whose
+#                             required reviewer is you. Never let an agent
+#                             approve it.
+#   plugin-runtime-review     always: passes when detect passed and either the
+#                             change is not a runtime change or the approval
+#                             job succeeded; fails otherwise.
+#
+# pull_request_target, so this file runs from the default branch and a pull
+# request cannot rewrite its own review. No paths filter and no concurrency
+# group: it is a required check (guide 3.2). GITHUB_TOKEN reads only.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runtime: ${{ steps.detect.outputs.runtime }}
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          fetch-depth: 0          # the base branch, on pull_request_target
+          persist-credentials: false
+      - name: Fetch the pull request's commits, as data only
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
+      - name: Decide whether this changes how a plugin runs code
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/runtime_detect.py --repo . --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+  plugin-runtime-approval:
+    needs: detect
+    if: needs.detect.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    environment: plugin-runtime-review   # you are the required reviewer
+    steps:
+      - run: echo "the owner approved this runtime change"
+  plugin-runtime-review:
+    needs: [detect, plugin-runtime-approval]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        env:
+          DETECT: ${{ needs.detect.result }}
+          RUNTIME: ${{ needs.detect.outputs.runtime }}
+          APPROVAL: ${{ needs.plugin-runtime-approval.result }}
+        run: |
+          if [ "$DETECT" != success ]; then echo "detect did not succeed ($DETECT)"; exit 1; fi
+          if [ "$RUNTIME" = false ]; then echo "not a runtime change"; exit 0; fi
+          if [ "$RUNTIME" = true ] && [ "$APPROVAL" = success ]; then echo "runtime change, approved"; exit 0; fi
+          echo "runtime change without approval ($APPROVAL)"; exit 1

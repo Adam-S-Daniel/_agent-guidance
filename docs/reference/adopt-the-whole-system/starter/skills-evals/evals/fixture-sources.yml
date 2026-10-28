@@ -1,0 +1,13 @@
+# Where fixture-supply.yml looks for merged pull requests to scaffold into
+# draft fixtures (guide 10.4), edited by hand.
+# Schema (scripts/fixture_supply.py refuses anything else):
+#   repos:   public <owner>/<repo> names whose merged pull requests are mined
+#            (the workflow reads them with its own token, public data only)
+#   skills:  {<skill>: [regular expressions for paths that are evidence for it]}
+#   per_day: fires a day, 1 to 3
+repos:
+  - <you>/agent-guidance
+skills:
+  workflow-path-audit:
+    - '^\.github/workflows/[^/]+\.ya?ml$'
+per_day: 1
