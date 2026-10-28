@@ -6689,6 +6689,80 @@ JSON
     [[ "$result" == "registered" ]] && pass "legacy group beside a non-legacy one -> registered" || fail "legacy group beside a non-legacy one -> registered (got '$result')"
 }
 
+# ── set-skill-shell-setting.sh (ADR 0029) ──────────────────────────────────
+# Same posture as the registrar: one key added, every other key and its order
+# preserved, an unparseable file refused and left byte-identical, a repeat a
+# no-op, and `status` never writes.
+
+test_set_skill_shell_setting() {
+    echo ""
+    echo "=== Test: set-skill-shell-setting.sh (one key, never overwrite) ==="
+
+    local s="$REPO_ROOT/scripts/set-skill-shell-setting.sh"
+    local d="$TEST_DIR/skill-shell"
+    mkdir -p "$d"
+    local out rc
+
+    out=$("$s" ensure "$d/absent.json")
+    [[ "$out" == "set" ]] && pass "skill-shell: an absent file -> set" || fail "skill-shell: an absent file -> set (got '$out')"
+    out=$(python3 -c "import json;print(json.load(open('$d/absent.json')))")
+    [[ "$out" == "{'disableSkillShellExecution': True}" ]] \
+        && pass "skill-shell: the created file holds only the key" || fail "skill-shell: the created file holds only the key (got '$out')"
+
+    cp "$TEST_DIR/existing-settings.json" "$d/consumer.json"
+    out=$("$s" status "$d/consumer.json")
+    [[ "$out" == "unset" ]] && pass "skill-shell: status on a file without the key -> unset" || fail "skill-shell: status -> unset (got '$out')"
+    out=$("$s" ensure "$d/consumer.json")
+    [[ "$out" == "set" ]] && pass "skill-shell: an existing file -> set" || fail "skill-shell: an existing file -> set (got '$out')"
+    local shape
+    shape=$(python3 - "$TEST_DIR/existing-settings.json" "$d/consumer.json" 2>&1 <<'PY'
+import json, sys
+old = json.load(open(sys.argv[1]))
+new = json.load(open(sys.argv[2]))
+assert new.pop("disableSkillShellExecution") is True
+assert new == old, "another key changed"
+assert list(new) == list(old), "key order changed"
+print("ok")
+PY
+    ) || true
+    [[ "$shape" == "ok" ]] && pass "skill-shell: every other key and its order is preserved" || fail "skill-shell: every other key and its order is preserved — $shape"
+
+    cp "$d/consumer.json" "$d/consumer.after1.json"
+    out=$("$s" ensure "$d/consumer.json")
+    [[ "$out" == "already-set" ]] && pass "skill-shell: a second run -> already-set" || fail "skill-shell: a second run -> already-set (got '$out')"
+    cmp -s "$d/consumer.after1.json" "$d/consumer.json" \
+        && pass "skill-shell: a second run leaves the file byte-identical" || fail "skill-shell: a second run rewrote the file"
+
+    printf '{"disableSkillShellExecution": false, "model": "example"}\n' > "$d/false.json"
+    out=$("$s" ensure "$d/false.json")
+    [[ "$out" == "set" ]] && pass "skill-shell: a false value -> set" || fail "skill-shell: a false value -> set (got '$out')"
+    out=$(python3 -c "import json;d=json.load(open('$d/false.json'));print(d['disableSkillShellExecution'], d['model'])")
+    [[ "$out" == "True example" ]] && pass "skill-shell: false becomes true and the other key survives" || fail "skill-shell: false becomes true (got '$out')"
+
+    printf '{ this is not json\n' > "$d/bad.json"
+    cp "$d/bad.json" "$d/bad.orig"
+    if out=$("$s" ensure "$d/bad.json"); then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 3 && "$out" == "refused-unparseable" ]] \
+        && pass "skill-shell: an unparseable file -> refused-unparseable, exit 3" || fail "skill-shell: unparseable -> refused-unparseable, exit 3 (got rc=$rc '$out')"
+    cmp -s "$d/bad.orig" "$d/bad.json" \
+        && pass "skill-shell: an unparseable file is left byte-identical" || fail "skill-shell: an unparseable file was rewritten"
+
+    printf '[1, 2]\n' > "$d/array.json"
+    if out=$("$s" status "$d/array.json"); then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 3 && "$out" == "refused-unparseable" ]] \
+        && pass "skill-shell: a JSON array is not an object -> refused" || fail "skill-shell: a JSON array -> refused (got rc=$rc '$out')"
+
+    if "$s" bogus "$d/x.json" >/dev/null 2>&1; then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 2 ]] && pass "skill-shell: an unknown mode exits 2" || fail "skill-shell: an unknown mode exits 2 (got $rc)"
+
+    # This repo's own settings carry the key (the sync excludes its own repo).
+    out=$("$s" status "$REPO_ROOT/.claude/settings.json")
+    [[ "$out" == "already-set" ]] && pass "skill-shell: this repo's .claude/settings.json carries the key" || fail "skill-shell: this repo's .claude/settings.json is '$out'"
+
+    # The sync wires the helper in.
+    assert_contains "$REPO_ROOT/scripts/sync.sh" 'SKILL_SHELL_SCRIPT" ensure' "skill-shell: sync.sh calls the helper"
+}
+
 # ── Test 5a: register-bootstrap-hook.sh (append + idempotence) ────────────
 
 test_register_bootstrap_hook() {
@@ -23689,6 +23763,7 @@ GROUP_sync=(
     test_bridge_status
     test_bootstrap_status
     test_register_bootstrap_hook
+    test_set_skill_shell_setting
     # Before the first sync that writes anything, so "not one ref moved" is
     # measured against pristine bares rather than against whatever the previous
     # test left.

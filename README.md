@@ -429,6 +429,12 @@ Mechanics:
   (`scripts/register-bootstrap-hook.sh`), and `scripts/bootstrap-status.sh` is
   the shared classifier — `registered` / `stale-matcher` / `no-entry` /
   `unparseable` / `missing` — used by both the sync and the drift report.
+- The same file also gets `"disableSkillShellExecution": true`
+  ([ADR 0029](docs/decisions/0029-skills-never-run-shell-commands-on-load.md)),
+  set by `scripts/set-skill-shell-setting.sh` the same way: one key added, every
+  other key kept, an unparseable file refused, and a repo that gitignores
+  `.claude/` skipped with a warning. The runner's `skill-shell` check refuses a
+  `SKILL.md` or command file that would run a shell command on load.
 - The matcher is `startup|resume|fork`: since Claude Code
   [2.1.214](https://github.com/anthropics/claude-code/releases/tag/v2.1.214) a
   forked session reports source `fork`, not `resume`. A group the sync wrote

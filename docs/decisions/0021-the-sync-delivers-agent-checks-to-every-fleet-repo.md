@@ -70,7 +70,7 @@ its files from `templates/agent-checks/`:
 ## Addendum (2026-10-26): the run log
 
 Every `problem` call names a stable kebab-case check id (`rules-dir`,
-`secret-file`, `staged-index`, `push-to-default`, `repo-local`, a lesson's
+`secret-file`, `skill-shell`, `staged-index`, `push-to-default`, `repo-local`, a lesson's
 `lesson-<id>`, ...). Each local pre-commit and pre-push run appends one JSON
 line, `{"v":1,"ts","event","repo","checks","failed"}`, to `$AGENT_CHECKS_LOG`
 (default `${XDG_STATE_HOME:-$HOME/.local/state}/agent-checks/runs.jsonl`), so

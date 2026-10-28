@@ -35,6 +35,9 @@ BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
 BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
 BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
 REGISTER_SCRIPT="$SCRIPT_DIR/register-bootstrap-hook.sh"
+# Delivers "disableSkillShellExecution": true (ADR 0029), same posture as the
+# registrar: append a key, never overwrite, refuse an unparseable file.
+SKILL_SHELL_SCRIPT="$SCRIPT_DIR/set-skill-shell-setting.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
@@ -1207,7 +1210,22 @@ for repo_name in "${REPOS[@]}"; do
         ac_up_to_date=false
     fi
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date; then
+    # ── skill shell execution: state ───────────────────────────────────
+    # A repo whose .claude/ is gitignored, or whose settings.json is not
+    # parseable, is a refusal, not a failure (same as the hooks above).
+    skillshell_state="n/a"          # n/a | already-set | unset
+    if git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
+        log "WARN: $SETTINGS_REL_PATH is gitignored in $repo_name — disableSkillShellExecution not delivered."
+    elif skillshell_state=$("$SKILL_SHELL_SCRIPT" status "$SETTINGS_REL_PATH"); then
+        :
+    else
+        log "WARN: $SETTINGS_REL_PATH is not parseable JSON — refusing to set disableSkillShellExecution."
+        skillshell_state="n/a"
+    fi
+    skillshell_up_to_date=true
+    [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
+
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1305,6 +1323,10 @@ for repo_name in "${REPOS[@]}"; do
                 [[ "$ac_reg_state" != "registered" ]] \
                     && log "[DRY RUN] Would register the agent-checks guard on PreToolUse in $SETTINGS_REL_PATH (currently: $ac_reg_state)"
             fi
+        fi
+
+        if ! $skillshell_up_to_date; then
+            log "[DRY RUN] Would set disableSkillShellExecution: true in $SETTINGS_REL_PATH (existing keys preserved)"
         fi
 
         ((SKIP_COUNT++)) || true
@@ -1528,6 +1550,18 @@ for repo_name in "${REPOS[@]}"; do
         fi
         log "agent-checks: runner=$ac_runner_written workflow=$ac_wf_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
     fi
+    # ── skill shell execution: write ───────────────────────────────────
+    skillshell_written=false
+    if ! $skillshell_up_to_date; then
+        mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+        if skillshell_result=$("$SKILL_SHELL_SCRIPT" ensure "$SETTINGS_REL_PATH"); then
+            [[ "$skillshell_result" == "set" ]] && skillshell_written=true
+            log "skill-shell: settings.json — $skillshell_result."
+        else
+            log "WARN: could not set disableSkillShellExecution in $SETTINGS_REL_PATH (${skillshell_result:-no output}) — leaving it untouched."
+        fi
+    fi
+
     ac_any_written=false
     if $ac_runner_written || $ac_wf_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
         ac_any_written=true
@@ -1541,6 +1575,7 @@ for repo_name in "${REPOS[@]}"; do
     # lanes may also have touched need no once-only bookkeeping here.
     $ac_eol_written && add_paths+=("$GITATTR_REL_PATH")
     $ac_registered_now && add_paths+=("$SETTINGS_REL_PATH")
+    $skillshell_written && add_paths+=("$SETTINGS_REL_PATH")
     $automerge_written && add_paths+=("$AUTOMERGE_WF_REL_PATH")
     $automerge_script_written && add_paths+=("$AUTOMERGE_SCRIPT_REL_PATH")
     $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
@@ -1574,6 +1609,15 @@ Also delivers the skills-bootstrap SessionStart hook, fetched from
 ${BOOTSTRAP_REGISTRY}@${BOOTSTRAP_REF:0:7} (pinned in _agent-guidance's
 repos.yml) and registered as an additional SessionStart entry. This repo's
 own skills.lock declares which bundles it installs and is not touched."
+    fi
+
+    if $skillshell_written; then
+        bootstrap_note="${bootstrap_note}
+
+Sets \"disableSkillShellExecution\": true in $SETTINGS_REL_PATH (one key; every
+other key preserved): Claude Code otherwise runs a !\`cmd\` line or a \`\`\`! block
+in a skill as a shell command before the model reads the skill, out of reach
+of review. See _agent-guidance's docs/decisions/0029."
     fi
 
     if $matcher_migrated; then
@@ -1614,6 +1658,13 @@ templates/agent-checks/; see its docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: disable shell execution when a skill loads
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $ac_any_written && ! $automerge_written && ! $gitattr_written \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
