@@ -30,6 +30,25 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-28 — 2.1.312 through 2.1.312
+
+- **Checked:** 2026-10-28T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.312](https://github.com/anthropics/claude-code/releases/tag/v2.1.312), published 2026-10-27T20:24Z
+- **Window:** v2.1.312 (published 2026-10-27T20:24Z), the first stable release after v2.1.311: 1 release, 39 bullets (only the two in group 1 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.312` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep. Last reached: `_agent-guidance`, `adam-agentskills`, `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `claude-memory-map`, `cms-platform`, `fastmail-actions`, `GHA-bench` (archived), `jodidaniel.com`, `repo-settings`, `rss-inator`, `skills-evals`, `wsl-automation` (local checkouts present this session).
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.312](https://github.com/anthropics/claude-code/releases/tag/v2.1.312), published 2026-10-27T20:24Z (bullet 2.1.312/3)
+  > Fixed Claude overwriting a very large CLAUDE.md, rules file or @-included file in a subdirectory after seeing only its start; Write now asks Claude to read it all or edit in place
+- [v2.1.312](https://github.com/anthropics/claude-code/releases/tag/v2.1.312), published 2026-10-27T20:24Z (bullet 2.1.312/4)
+  > Fixed per-directory and `paths:` skills not being found after a Bash `cd` deeper into a git repository
+
+**Issues:** [_agent-guidance#358](https://github.com/Adam-S-Daniel/_agent-guidance/issues/358) (no label). Sweep fired: https://claude.ai/code/cse_01SphsQALvzaFjKqVqwYqpxp.
+
+No other group met the name-the-surface bar. The remaining bullets (VS Code, Claude Tag, Code Review, cloud-session, Remote Control, OpenTelemetry, effort-indicator, vim-mode and hook-concurrency changes) remove failures or adjust display without changing a documented command, flag or setting the fleet uses. Codex: no stable release after 0.164.0 (page 1 holds only 0.165.0 and 0.166.0 alphas above it).
+
 ### 2026-10-27 — 2.1.311 through 2.1.311
 
 - **Checked:** 2026-10-27T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
