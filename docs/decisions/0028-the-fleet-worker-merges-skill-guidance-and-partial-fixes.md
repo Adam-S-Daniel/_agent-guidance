@@ -84,3 +84,26 @@ into those files do too, with the AI review gating every merge.
 - Where a repo makes a skill change wait on an environment such as
   `plugin-runtime-review`, merge rule item 4 still holds the PR, and the
   worker tells the owner rather than approving it.
+
+## Addendum (2026-10-28)
+
+Two gaps showed up once the rule was live.
+
+First, a `SKILL.md` edit in `adam-agentskills` never qualified. That repo's
+`AGENTS.md` and CI also require a bundle `version` raise in both
+`plugin.json` files, a `docs/skill-impact.md` entry, a `PURPOSE.md` beside
+the skill, and a met eval touch gate. Merge rule item 2 now allows those
+files, in `adam-agentskills` only and only beside a qualifying `SKILL.md`
+change in the same bundle: the manifests when only `version` changes, the
+impact file when its diff only adds lines, and the `PURPOSE.md` in the
+changed skill's directory. The independent review answers `FINDINGS` unless
+each changed skill has a new impact entry and the PR body states how the
+touch gate was met.
+
+Second, a merged `Refs` PR left its issue open on `agent-working`, so no run
+took the remaining findings. After merging a `Refs` PR the fleet worker now
+swaps `agent-working` for `agent-ready` (skipping an `on-hold` issue) and
+comments which findings the PR fixed. The issue worker then does only the
+findings no merged PR fixed, and closes the issue as completed when none
+are left. If it cannot do the rest, the existing `agent-blocked` stop
+applies.

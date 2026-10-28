@@ -80,7 +80,16 @@ blocked comments. The on-hold stop overrides step 7 below.
 3. **Branch and work.** On a branch named `agent/issue-<n>-<short-slug>`
    from `origin/<default branch>`, read the repo's `AGENTS.md` and
    `CLAUDE.md` and follow them. Do the issue's "To check" items, plus any in
-   a later `Prompt-audit sweep <date>: <n> new findings` comment on it. If
+   a later `Prompt-audit sweep <date>: <n> new findings` comment on it. If a
+   merged `Refs` PR already fixed some findings (the fleet worker comments
+   which), do only the findings no merged PR fixed; when none are left,
+   close the issue as completed with a comment naming the merged PRs. In
+   `adam-agentskills`, an edit to a `SKILL.md` also raises the bundle's
+   `version` in both `plugin.json` files (only that value changes), adds a
+   `docs/skill-impact.md` entry (add lines only) and a `PURPOSE.md` beside
+   the `SKILL.md`, and the PR body states how the eval touch gate was met
+   (eval command, exit code and counts; a fixture PR link; or the skill's
+   non-coverage row), so the PR qualifies for the merge rule. If
    the items need no file change (a measurement, a confirmation), comment
    the evidence on the issue, close it as completed, and take the next one. Run the
    repo's own test suite unpiped and record the count and the exit code.
