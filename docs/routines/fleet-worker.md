@@ -143,6 +143,14 @@ each read fresh:
      `.claude/hooks/fleet-guidance.md` mirror, `agents-md/eval-coverage.yml`
      rows whose only changes are `bytes` and `heading` values, and
      `docs/guidance-impact.md`, whose diff only adds lines.
+   - in `Adam-S-Daniel/adam-agentskills` only, and only beside a qualifying
+     `SKILL.md` change in the same bundle (that repo's `AGENTS.md` and CI
+     require these with any skill edit): the bundle's
+     `plugins/<bundle>/plugin.json` and
+     `plugins/<bundle>/.claude-plugin/plugin.json`, when the only change in
+     each is the `version` value; `docs/skill-impact.md`, whose diff only
+     adds lines; and the `PURPOSE.md` in the same directory as a changed
+     `SKILL.md`.
 3. Neither the PR nor the issue carries `on-hold`.
 4. Every check run on the head concluded `success`, `neutral` or `skipped`,
    every commit status is `success`, none is pending, and every required
@@ -173,7 +181,12 @@ code beyond what its finding asked for. A line removed from a
 in the same diff. In the fleet guidance, which every session in every
 fleet repo loads, `CLEAN` also requires that no rule is weakened or dropped
 beyond what its finding asked, and that each changed section has a new
-`docs/guidance-impact.md` entry describing the change. For a `Refs` PR,
+`docs/guidance-impact.md` entry describing the change. In
+`adam-agentskills`, `CLEAN` also requires that each changed skill has a new
+`docs/skill-impact.md` entry and that the PR body states how the eval touch
+gate was met (the eval command with its exit code and counts, a fixture PR
+link, or the skill's row in skills-evals' non-coverage table); otherwise
+`FINDINGS`, so the PR goes to the owner. For a `Refs` PR,
 `CLEAN` also requires that the body names which findings it fixes and that
 every hunk fixes one of those. Otherwise it answers `FINDINGS` with each
 problem. Post
@@ -188,7 +201,10 @@ goes to the owner under step 3.
 three cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
 `jodidaniel.com`), which squash. Then comment `Merged by the fleet worker:
 an instruction-file fix that passed CI and an independent review (ADR 0025).`
-and, for a `Closes` PR, confirm the issue closed. A merge the API refuses is left for the owner
+and, for a `Closes` PR, confirm the issue closed. After merging a `Refs`
+PR, re-read the issue's labels; unless it carries `on-hold`, swap
+`agent-working` for `agent-ready` and comment which findings the merged PR
+fixed, so a later issue pass takes the rest. A merge the API refuses is left for the owner
 and listed under "Needs you".
 
 A `FINDINGS` review is not fixed by this routine. The PR goes to the owner
