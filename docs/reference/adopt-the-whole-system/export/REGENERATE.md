@@ -14,8 +14,8 @@ a pull request with the result.
 ## `_agent-guidance`
 
 - **`skills.lock`** names your registry's commit and each skill's digest.
-  The digests change with your registry's content (the kit ships it empty,
-  DECISIONS X9). After your `acsi-agentskills` repo has its first commit:
+  The digests change with your registry's content (the kit ships it with one
+  skill, `workflow-path-audit`, DECISIONS X9). After your `acsi-agentskills` repo has its first commit:
 
   ```bash
   python3 ../acsi-agentskills/scripts/generate_skills_lock.py --repo ../acsi-agentskills \
@@ -25,8 +25,9 @@ a pull request with the result.
   (`--repin` cannot do this first one: it checks the clone against the
   commit the lock already pins, which is the source registry's. After that,
   the nightly `skills-lock-bump.yml` re-pins it once its App is installed.
-  Until your registry has skills, the lock has none to name; the registry's
-  own docs say how it treats an empty bundle.)
+  The lock names the skills your registry has: the one the kit ships, then
+  whatever you add. The exported lock still names the source registry's full
+  list, which your registry does not have; this command replaces it.)
 
 - **`repos.yml` `skills_bootstrap.ref`** names the registry commit the
   vendored `.claude/hooks/skills-bootstrap.sh` came from. The export
@@ -141,15 +142,15 @@ a pull request with the result.
   ```
 
 - **`.github/workflows/eval.yml`**'s `fixture` input defaults to
-  `evals/workflow-path-audit/required-check-routing`, a fixture the kit does
-  not ship (DECISIONS X9). A dispatch that keeps the default is refused by
-  the workflow's own fixture validation until you add that fixture or change
-  the default to one you have.
+  `evals/workflow-path-audit/required-check-routing`, a fixture the kit ships
+  (the one real skill's, DECISIONS X9), so a dispatch that keeps the default
+  runs. Change the default when you have a fixture of your own.
 
 ## `acsi-agentskills` and `acsi-agentskills-private`
 
 - **`skills.lock`** (both repos) is the public registry's own generator's
-  output: the cloud-safe bundles with no skills (DECISIONS X9). Its `ref` and
+  output: the cloud-safe bundles with their one skill, `workflow-path-audit`
+  (DECISIONS X9). Its `ref` and
   `generated_from` are forty zeros, because the commit they name is your
   first `acsi-agentskills` commit. Until you replace them, CI's
   `generate_skills_lock.py --check` and `--check-current` steps fail, and two
@@ -162,9 +163,10 @@ a pull request with the result.
   ```
 
   and copy the same `skills.lock` into `acsi-agentskills-private`. (Checked on
-  the exported tree: after this both checks print OK with 0 skills, and the
-  two dogfood tests pass.) `--check-format` refuses a lock with no skills by
-  design; its dogfood test skips until your first skill is locked.
+  the exported tree: after this both checks print OK, and the dogfood tests
+  pass.) `--check-format` refuses a lock with no skills by design, so a
+  registry that removed its last skill would fail it; the kit's one skill
+  keeps it passing.
 
 - **`.github/workflows/scheduled-run-health.yml`** (acsi-agentskills) calls
   `_agent-guidance`'s reusable at a placeholder sha, as in `repo-settings`

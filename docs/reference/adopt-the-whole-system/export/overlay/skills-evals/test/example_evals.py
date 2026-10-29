@@ -1,14 +1,17 @@
 """A scratch checkout of this repository with example fixtures committed.
 
-The adoption kit ships no eval fixtures (its DECISIONS X9): `evals/` holds
-only the config, the canaries and the propagation probe until you add your
-own. Several tests exercise machinery that reads the COMMITTED fixtures of a
-checkout (`git ls-files evals`, `evals/scheduled.yml`): the dispatch
-validation, the weekly planner, the improve and guidance-improve fire checks.
-They run against this scratch checkout instead: every tracked file of the
-repository, plus the invented, test-only fixtures under
-`test/fixtures/evals/` copied into its `evals/`, and a schedule naming them,
-all in one commit (DECISIONS C8).
+The adoption kit ships two sets of eval fixtures (its DECISIONS X9): the
+workflow-path-audit skill's and the git-push guidance section's. Beyond
+those, `evals/` holds only the config, the canaries and the propagation probe
+until you add your own. Several tests exercise machinery that reads the
+COMMITTED fixtures of a checkout (`git ls-files evals`, `evals/scheduled.yml`):
+the dispatch validation, the weekly planner, the improve and guidance-improve
+fire checks. They need more fixtures than the kit ships (a writing-adrs skill
+with several, guidance sections with four fixtures), so they run against this
+scratch checkout instead: every tracked file of the repository, plus the
+invented, test-only fixtures under `test/fixtures/evals/` copied into its
+`evals/`, and a schedule naming four of them (one is the kit's own
+workflow-path-audit fixture), all in one commit (DECISIONS C8).
 
 `checkout()` builds it once per process, in a fresh temporary directory
 removed at exit; nothing is written under the repository itself.

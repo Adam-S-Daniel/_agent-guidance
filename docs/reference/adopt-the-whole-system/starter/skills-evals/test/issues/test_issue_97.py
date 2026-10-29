@@ -1573,7 +1573,7 @@ class TestIssue97(unittest.TestCase):
         # ambient: the harness reads it itself and never passes it on.
         skill_log = tmp / "skill-argv.jsonl"
         skill_eval = tmp / "skill-eval"
-        shutil.copytree(example_evals.FIXTURES / "workflow-path-audit"
+        shutil.copytree(REPO_ROOT / "evals" / "workflow-path-audit"
                         / "required-check-routing", skill_eval)
         skill_fixture = yaml.safe_load(
             (skill_eval / "fixture.yaml").read_text(encoding="utf-8"))
@@ -3901,7 +3901,7 @@ class TestIssue97(unittest.TestCase):
         # objective-only run died with a bare ImportError traceback on a
         # machine without the parser, for a code path that never parses
         # markdown. The import is at its one call site now.
-        skill_dir = example_evals.FIXTURES / "workflow-path-audit" / "required-check-routing"
+        skill_dir = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
         baseline, _ = self._run_main([skill_dir, "--arm", "objective-only"])
         blocked = dict(sys.modules)
         blocked["markdown_it"] = None
@@ -4633,7 +4633,7 @@ class TestIssue97(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         proc = subprocess.run(
             [sys.executable, str(HARNESS_DIR / "run_eval.py"),
-             str(example_evals.FIXTURES / "workflow-path-audit"),
+             str(REPO_ROOT / "evals" / "workflow-path-audit"),
              "--arm", "with_guidance", "--results-dir", str(tmp)],
             cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=120)
         self.assertEqual(proc.returncode, 2)

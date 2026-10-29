@@ -46,9 +46,10 @@ CONTENT_ARM = """check_lessons() {
 """
 
 
-# The kit's runner ships no checks (DECISIONS X9). The tests of its
-# machinery that need a check to refuse something use this test-only fixture:
-# the template with PATH_ARM in its lesson slot and the id listed.
+# The kit's runner ships one fleet check, skill-shell (DECISIONS X9), which
+# these machinery tests leave alone. Those that need a check to refuse a plain
+# path use this test-only fixture: the template with PATH_ARM in its lesson
+# slot and the id listed.
 FIXTURE_CHECK = "lesson-example-path"
 
 # A repo-local check (.agent-checks/local.sh) that refuses *.draft files.
@@ -437,7 +438,7 @@ class RunLogTests(LaneTestCase):
         self.assertRegex(entry["ts"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
         self.assertEqual(entry["event"], "pre-commit")
         self.assertEqual(entry["repo"], "example-owner/widgets")
-        self.assertEqual(entry["checks"], [FIXTURE_CHECK])
+        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK])
         self.assertEqual(entry["failed"], [])
 
     def test_refused_pre_commit_lists_the_check_and_keeps_the_message(self):
@@ -459,7 +460,7 @@ class RunLogTests(LaneTestCase):
         self.assertIn("a.notes-secret: notes files", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(entry["checks"], [FIXTURE_CHECK])
+        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK])
         self.assertEqual(entry["failed"], [FIXTURE_CHECK])
 
     def test_repo_local_check_is_logged(self):
@@ -467,7 +468,7 @@ class RunLogTests(LaneTestCase):
         out = self.run_logged("pre-commit")
         self.assertEqual(out.returncode, 1, out.stderr)
         [entry] = self.entries()
-        self.assertEqual(entry["checks"], [FIXTURE_CHECK, "repo-local"])
+        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK, "repo-local"])
         self.assertEqual(entry["failed"], ["repo-local"])
 
     def test_ci_tree_and_unknown_events_write_nothing(self):
@@ -587,8 +588,8 @@ class CheckIdTests(unittest.TestCase):
 
     def test_every_problem_call_passes_a_literal_kebab_case_id(self):
         calls = problem_calls(canonical_runner(RUNNER))
-        # The kit's runner has the machinery's own three (DECISIONS X9).
-        self.assertGreaterEqual(len(calls), 3)
+        # The kit's runner has the machinery's own three and skill-shell (DECISIONS X9).
+        self.assertGreaterEqual(len(calls), 4)
         for ident, raw in calls:
             self.assertIsNotNone(ident, raw)
             self.assertRegex(ident, KEBAB, raw)
@@ -597,7 +598,7 @@ class CheckIdTests(unittest.TestCase):
 
     def test_core_check_ids(self):
         ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
-        self.assertEqual({"repo-local", "runner-error", "tree-rev"}, ids)
+        self.assertEqual({"skill-shell", "repo-local", "runner-error", "tree-rev"}, ids)
 
     def test_lesson_arms_and_lesson_checks_agree(self):
         for arm in (None, PATH_ARM):

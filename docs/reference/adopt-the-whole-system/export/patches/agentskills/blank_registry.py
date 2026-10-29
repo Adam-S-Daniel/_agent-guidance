@@ -1,14 +1,16 @@
-"""DECISIONS X9 for the public registry: the plugins ship with no skills.
+"""DECISIONS X9 for the public registry: the plugins ship with one skill.
 
-Runs on the substituted tree (the four `plugins/<plugin>/skills/` folders
-are already excluded by the manifest), before the regenerate steps, which
-rebuild the README table and skills.lock from what this leaves.
+Runs on the substituted tree (the manifest excludes every skill folder but
+`workflow-path-audit`, which the owner chose as the one real skill on
+2026-10-29 12:29 UTC), before the regenerate steps, which rebuild the README
+table and skills.lock from what this leaves.
 
-The machinery stays and is made to accept an empty registry, because that is
-the adopter's starting state:
+The machinery stays and is made to accept a registry with empty plugins,
+because three of the four start that way:
 
 - scripts/plugin_layout.json keeps its four plugins and their defaultEnabled
-  values, with empty skill lists (canonical json.dumps(indent=2) + newline).
+  values; the coding-anywhere plugin lists the one kept skill, the others
+  have empty skill lists (canonical json.dumps(indent=2) + newline).
 - generate_readme_table.py renders a plugin with no skills as ONE row that
   says so and names where its skills go. Its rule, "a published bundle is
   never silence in the README", is kept: before, an empty bundle broke that
@@ -77,6 +79,10 @@ PLUGINS = {
 }
 
 
+# The one real skill the kit ships (DECISIONS X9), per plugin.
+KEPT_SKILLS = {"acsi-coding-anywhere": ["workflow-path-audit"]}
+
+
 def _inline(words) -> str:
     return "[" + ", ".join(json.dumps(w) for w in words) + "]"
 
@@ -89,8 +95,8 @@ def apply(root: Path, ctx) -> None:
     # ── scripts/plugin_layout.json ─────────────────────────────────────────
     layout_path = root / "scripts" / "plugin_layout.json"
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
-    for entry in layout["plugins"].values():
-        entry["skills"] = []
+    for name, entry in layout["plugins"].items():
+        entry["skills"] = list(KEPT_SKILLS.get(name, []))
     layout_path.write_text(json.dumps(layout, indent=2) + "\n", encoding="utf-8")
 
     # ── the manifests ──────────────────────────────────────────────────────

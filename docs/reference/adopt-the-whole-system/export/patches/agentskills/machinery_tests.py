@@ -116,24 +116,8 @@ def apply(root: Path, ctx) -> None:
 '''),
     ])
 
-    # ── scripts/test_generate_skills_lock.py: the dogfood format check ─────
-    # --check-format refuses a lock with no skills by design ("no work is not
-    # no errors"), and the registry ships none, so this repo's own lock has
-    # nothing to judge until its first skill. It skips, saying so, and runs
-    # again from the first skill on.
-    _sub(root, "scripts/test_generate_skills_lock.py", [
-        ('''    of, and it is the reference an adopter compares theirs against."""
-    proc = run_generator("--check-format", "-o", str(REPO_ROOT / "skills.lock"))
-''', '''    of, and it is the reference an adopter compares theirs against."""
-    if not json.loads((REPO_ROOT / "skills.lock").read_text(encoding="utf-8"))["skills"]:
-        pytest.skip("this registry's lock lists no skills yet, and --check-format refuses an "
-                    "empty lock by design; it runs once the first skill is locked")
-    proc = run_generator("--check-format", "-o", str(REPO_ROOT / "skills.lock"))
-'''),
-    ])
-
     # ── scripts/test_agent_checks.py ───────────────────────────────────────
-    # The runner the sync delivers ships no checks (X9). Its machinery tests
+    # The runner the sync delivers ships one check, skill-shell (X9). Its machinery tests
     # (events, ranges, the installer, real git) run against a TEST-ONLY copy
     # with a lesson in its slot that refuses the paths the source's fleet
     # checks refused, so each case keeps its shape. Removed, because each
@@ -144,8 +128,8 @@ def apply(root: Path, ctx) -> None:
         ('''ZERO = "0" * 40
 ''', '''ZERO = "0" * 40
 
-# The runner ships no checks (the adoption kit's DECISIONS X9), so each scratch
-# repo gets a TEST-ONLY copy of it with this lesson in its lesson slot. It
+# The runner ships one check, skill-shell (the adoption kit's DECISIONS X9), so
+# each scratch repo gets a TEST-ONLY copy of it with this lesson in its lesson slot. It
 # refuses the paths the source registry's fleet checks refused, so the cases
 # below exercise the runner's events, ranges and hook wiring unchanged.
 FIXTURE_LESSON = """check_lessons() {

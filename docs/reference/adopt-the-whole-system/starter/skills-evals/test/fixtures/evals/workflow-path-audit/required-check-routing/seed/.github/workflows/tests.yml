@@ -1,9 +1,0 @@
-name: tests
-on:
-  pull_request:
-    paths: ["src/**"]
-jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo test

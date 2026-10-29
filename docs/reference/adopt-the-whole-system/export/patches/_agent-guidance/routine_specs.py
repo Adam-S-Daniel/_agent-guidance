@@ -15,7 +15,7 @@ other repos and other counts. So, after substitution:
 * the trigger is "this Routine's own `trig_` id, from `list_triggers`";
 * the stored prompt's two source-only checks (the source's `base.md`
   connector-prefix defect and its pull request) are dropped, since the
-  adopter's `base.md` starts blank (X9);
+  adopter's `base.md` carries one rule section, not those (X9);
 * the spec's two history sections are headed "(source system history)", the
   marker the kit's C11 check (export/tests/test_no_leaks.py) skips.
 

@@ -9,9 +9,21 @@ after: [_agent-guidance]
 
 exclude:
   - path: plugins/adam-anything-anywhere/skills/
-    why: DECISIONS X9 (the content starts blank; the plugin keeps its manifests).
-  - path: plugins/adam-coding-anywhere/skills/
-    why: DECISIONS X9.
+    why: DECISIONS X9 (the content starts with one skill; the plugin keeps its manifests).
+  - path: plugins/adam-coding-anywhere/skills/ci-job-performance/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+  - path: plugins/adam-coding-anywhere/skills/debug-github-workflows/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+  - path: plugins/adam-coding-anywhere/skills/disarm-inherited-reach/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+  - path: plugins/adam-coding-anywhere/skills/github-actions-repo-settings/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+  - path: plugins/adam-coding-anywhere/skills/review-bash-ci-reliability/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+  - path: plugins/adam-coding-anywhere/skills/skills-doctor/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+  - path: plugins/adam-coding-anywhere/skills/vendor-release-impact-issues/
+    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
   - path: plugins/adam-coding-local/skills/
     why: DECISIONS X9 (the plugin's hooks and bin/ are machinery and stay).
   - path: plugins/adam-non-coding-local/skills/
@@ -234,13 +246,15 @@ edits:
     new: "An example of a federated plugin: the skills of a separate platform repo, served from that repo rather than mirrored here. Point it at a repo of your own, or remove the entry. |"
     why: The README's generated plugin table repeats the marketplace description.
 
-# DECISIONS X9: the plugins ship with no skills (see each patch's docstring).
+# DECISIONS X9: the plugins ship with one skill, workflow-path-audit (see each
+# patch's docstring).
 patches:
   - file: blank_registry.py
     why: >-
-      X9. plugin_layout.json keeps its plugins with empty skill lists, the
-      README table renders an empty plugin as one "none yet" row, and the
-      manifests drop the descriptions of skills the kit does not ship.
+      X9. plugin_layout.json lists the one kept skill and gives the other
+      plugins empty lists, the README table renders an empty plugin as one
+      "none yet" row, and the manifests drop the descriptions of skills the
+      kit does not ship.
   - file: machinery_tests.py
     why: >-
       X9. The tests that read the shipped layout accept an empty skill list,

@@ -1,10 +1,3 @@
-=== test/issues/test_issue_202_harness.py
-# why: the version-recording runs drive a nested fixture through the harness; it is now the invented test/fixtures/evals/workflow-path-audit/required-check-routing.
-@@@ old
-EVAL_DIR = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
-@@@ new
-EVAL_DIR = REPO_ROOT / "test" / "fixtures" / "evals" / "workflow-path-audit" / "required-check-routing"
-@@@ end
 === test/issues/test_issue_371_scheduled_fixtures.py
 # why: the schedule's shape checks read a checkout's committed schedule and fixtures; they read the example checkout (test/example_evals.py).
 @@@ old
@@ -35,13 +28,6 @@ PROPAGATION_YML = REPO_ROOT / ".github" / "workflows" / "propagation.yml"
         example = yaml.safe_load(EXAMPLE_NON_COVERAGE.read_text(encoding="utf-8"))
         self.assertTrue(example["skips"])
         doc = {"skips": doc["skips"] + example["skips"]}
-@@@ end
-=== test/issues/test_issue_66.py
-# why: the documented objective-only invocation runs on the invented nested fixture instead of the scheduled one the kit does not ship.
-@@@ old
-        eval_dir = (REPO_ROOT / "evals" / "workflow-path-audit"
-@@@ new
-        eval_dir = (REPO_ROOT / "test" / "fixtures" / "evals" / "workflow-path-audit"
 @@@ end
 === test/issues/test_issue_68_model_input.py
 # why: the dispatch validation reads a checkout's committed fixtures and schedule: it runs in the example checkout, and the fire step gets ROUTINE_TRIGGER_ID (C7).
@@ -100,11 +86,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
     evals = REPO_ROOT / "evals"
 @@@ new
     evals = FIXTURE_EVALS
-@@@ end
-@@@ old
-        shutil.copytree(REPO_ROOT / "evals" / "workflow-path-audit"
-@@@ new
-        shutil.copytree(FIXTURE_EVALS / "workflow-path-audit"
 @@@ end
 @@@ old
             shutil.copytree(REPO_ROOT / "evals" / SKILL / name, evals / SKILL / name)
@@ -187,11 +168,6 @@ import example_evals  # noqa: E402
                               # The example checkout commits the fixtures
                               # these cases name (test/example_evals.py).
                               cwd=str(cwd or example_evals.checkout()), env=env,
-@@@ end
-@@@ old
-             str(REPO_ROOT / "evals" / "workflow-path-audit"),
-@@@ new
-             str(example_evals.FIXTURES / "workflow-path-audit"),
 @@@ end
 @@@ old
         skipped = []
@@ -362,7 +338,7 @@ FLAT_SOURCE = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-rout
 #: The invented test-only fixtures (the kit ships none, its DECISIONS X9),
 #: laid out as a checkout's evals/ (test/example_evals.py).
 FIXTURE_EVALS = REPO_ROOT / "test" / "fixtures" / "evals"
-FLAT_SOURCE = FIXTURE_EVALS / "workflow-path-audit" / "required-check-routing"
+FLAT_SOURCE = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
 @@@ end
 @@@ old
         real = yaml.safe_load((REPO_ROOT / "evals" / "ci-watcher-loops"
@@ -628,7 +604,7 @@ EVAL_DIR = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing
 #: The invented test-only fixtures (the kit ships none, its DECISIONS X9),
 #: laid out as a checkout's evals/ (test/example_evals.py).
 FIXTURE_EVALS = TEST_DIR / "fixtures" / "evals"
-EVAL_DIR = FIXTURE_EVALS / "workflow-path-audit" / "required-check-routing"
+EVAL_DIR = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
 @@@ end
 @@@ old
 ADRS_EXISTING_DIR = REPO_ROOT / "evals" / "writing-adrs" / "existing-convention"
@@ -721,18 +697,6 @@ ADRS_BOOTSTRAP_DIR = FIXTURE_EVALS / "writing-adrs" / "bootstrap"
                            + globlib.glob(str(REPO_ROOT / "test" / "fixtures" / "**" /
                                               "fixture.yaml"), recursive=True)):
 @@@ end
-=== test/issues/test_issue_97.py
-# why: two harness tests copied or ran the left-out scheduled skill fixture (the run against a missing directory passed vacuously); they use the invented one.
-@@@ old
-        shutil.copytree(REPO_ROOT / "evals" / "workflow-path-audit"
-@@@ new
-        shutil.copytree(example_evals.FIXTURES / "workflow-path-audit"
-@@@ end
-@@@ old
-        skill_dir = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
-@@@ new
-        skill_dir = example_evals.FIXTURES / "workflow-path-audit" / "required-check-routing"
-@@@ end
 === test/run_tests.py
 # why: JudgeDiffTests' end-to-end case builds the invented nested-repo seed (test/fixtures/evals/nested-repo-diff). TestIssue81 reads the invented pairwise fixtures (test/fixtures/evals/acsi-writing-style), so its tests of judge.mode, strip_seed and the pairwise path run on real input; the judge-call pin drops the left-out README's warning, and the end-to-end rank uses an invented candidate.
 @@@ old
@@ -793,4 +757,45 @@ ADRS_BOOTSTRAP_DIR = FIXTURE_EVALS / "writing-adrs" / "bootstrap"
             # variables (DECISIONS, Review fixes); they are not the roster App.
             text = re.sub(r"\$\{\{ vars\.ANTHROPIC_(FEDERATION_RULE|ORGANIZATION"
                           r"|SERVICE_ACCOUNT|WORKSPACE)_ID \}\}", "", json.dumps(job))
+@@@ end
+=== test/issues/test_issue_80_supersede.py
+# why: only the pattern-anchoring helpers stay (test_issue_wpa_workflow_doc_in_step.py imports them); its test class locks a left-out fixture.
+@@@ old
+"""evals/writing-adrs/supersede: the third writing-adrs fixture (issue #80).
+@@@ new
+"""evals/writing-adrs/supersede: the third writing-adrs fixture (issue #80).
+
+In the adoption kit this module is a helper only (its DECISIONS X9): the
+fixture is not shipped, so the test class that pinned it is removed, and
+`anchoring_problems` stays because the workflow-path-audit fixture's test
+(test_issue_wpa_workflow_doc_in_step.py) imports it.
+@@@ end
+@@@ old
+if __name__ == "__main__":
+    unittest.main()
+@@@ new
+class AnchoringHelperTests(unittest.TestCase):
+    """The helper the workflow-path-audit fixture's test reuses, pinned alone.
+
+    The kit removes this module's fixture test class (its DECISIONS X9), and
+    the runner requires every discovered module to contribute a test, so the
+    helper carries its own.
+    """
+
+    def test_a_whole_line_pattern_has_no_anchoring_problem(self):
+        self.assertEqual(anchoring_problems(r"^needs: \[a, b\]$"), [])
+
+    def test_a_loose_pattern_is_named(self):
+        problems = anchoring_problems(r"needs.*")
+        self.assertTrue(any("does not start with ^" in p for p in problems))
+        self.assertTrue(any("does not end with $" in p for p in problems))
+        self.assertTrue(any("unescaped ." in p for p in problems))
+
+    def test_an_inline_flag_is_named(self):
+        self.assertIn("carries an inline flag",
+                      anchoring_problems(r"(?i)^a$"))
+
+
+if __name__ == "__main__":
+    unittest.main()
 @@@ end

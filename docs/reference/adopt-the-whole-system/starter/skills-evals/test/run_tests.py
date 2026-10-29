@@ -51,7 +51,7 @@ FAKE_REGISTRY_LEGACY = TEST_DIR / "fixtures" / "fake_registry_legacy"
 #: The invented test-only fixtures (the kit ships none, its DECISIONS X9),
 #: laid out as a checkout's evals/ (test/example_evals.py).
 FIXTURE_EVALS = TEST_DIR / "fixtures" / "evals"
-EVAL_DIR = FIXTURE_EVALS / "workflow-path-audit" / "required-check-routing"
+EVAL_DIR = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
 ELEVATION_DIR = REPO_ROOT / "evals" / "windows-elevation-from-wsl"
 CANARY_DIR = REPO_ROOT / "evals" / "guidance-bridge-canary"
 ADRS_EXISTING_DIR = FIXTURE_EVALS / "writing-adrs" / "existing-convention"
@@ -446,6 +446,96 @@ class JudgeScoreTests(unittest.TestCase):
                                        "restraint": -3, "communication": 1.0})
         self.assertAlmostEqual(result["overall"], (8 + 9 + 7 + 6) / 4)
 
+
+class ObjectiveAsymmetryTests(unittest.TestCase):
+    """Guards the README-documented asymmetry: the pristine seed fails; a
+    correctly audited copy passes every check.
+
+    The "correct" edits below are applied by anchored replacement, and each
+    anchor is asserted present first — so if the seed's workflows drift, this
+    test fails loudly instead of quietly measuring nothing.
+    """
+
+    # docs-site.yml consumes mkdocs.yml + docs/ and nothing else. Written with
+    # a YAML anchor/alias on purpose: an agent may legitimately share one list
+    # between two events, and the scorer parses YAML rather than scanning lines.
+    _DOCS_ON = ("on:\n  pull_request:\n  push:\n    branches: [main]\n",
+                "on:\n"
+                "  pull_request:\n"
+                "    paths: &docs-paths\n"
+                "      - docs/**\n"
+                "      - mkdocs.yml\n"
+                "      - .github/workflows/docs-site.yml\n"
+                "  push:\n"
+                "    branches: [main]\n"
+                "    paths: *docs-paths\n")
+
+    # deploy.yml ships src/ plus the runtime dependency set.
+    _DEPLOY_ON = ("on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+                  "on:\n"
+                  "  push:\n"
+                  "    branches: [main]\n"
+                  "    paths:\n"
+                  "      - src/**\n"
+                  "      - package.json\n"
+                  "      - package-lock.json\n"
+                  "      - scripts/deploy.sh\n"
+                  "      - .github/workflows/deploy.yml\n"
+                  "  workflow_dispatch:\n")
+
+    # tests.yml carries a REQUIRED check, so it keeps firing on every event and
+    # moves the salience decision inside itself instead.
+    _TESTS_STEPS = ("      - run: npm ci\n      - run: npm test\n",
+                    "      - name: Detect salient changes\n"
+                    "        id: salient\n"
+                    '        run: echo "run=true" >> "$GITHUB_OUTPUT"\n'
+                    "      - if: steps.salient.outputs.run == 'true'\n"
+                    "        run: npm ci\n"
+                    "      - if: steps.salient.outputs.run == 'true'\n"
+                    "        run: npm test\n")
+
+    def _replace(self, path: Path, old: str, new: str) -> None:
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text, f"{path.name}: anchor drifted out of the seed")
+        path.write_text(text.replace(old, new), encoding="utf-8")
+
+    def _audit_all(self, ws: Path) -> None:
+        workflows = ws / ".github" / "workflows"
+        self._replace(workflows / "docs-site.yml", *self._DOCS_ON)
+        self._replace(workflows / "deploy.yml", *self._DEPLOY_ON)
+        self._replace(workflows / "tests.yml", *self._TESTS_STEPS)
+
+    def _run(self, audited: bool) -> dict:
+        fixture = run_eval.load_fixture(EVAL_DIR)
+        seed = EVAL_DIR / "seed"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            shutil.copytree(seed, ws)
+            if audited:
+                self._audit_all(ws)
+            results = objective.run_checks(fixture, str(ws), str(seed))
+        return {r["id"]: r for r in results}
+
+    def test_pristine_seed_fails_the_routing_checks(self):
+        by_id = self._run(audited=False)
+        for check_id in ("docs-change-routes-correctly",
+                         "source-change-routes-correctly",
+                         "lockfile-change-routes-to-installers",
+                         "prose-change-runs-nothing-but-the-required-check",
+                         "required-check-always-fires-and-gates-internally"):
+            self.assertFalse(by_id[check_id]["passed"], by_id[check_id]["detail"])
+
+    def test_pristine_seed_passes_the_restraint_checks(self):
+        # The restraint checks can only be broken by a careless agent, so they
+        # must start out green — otherwise a failure says nothing about the arm.
+        by_id = self._run(audited=False)
+        for check_id in ("workflows-still-parse", "event-only-workflows-unfiltered",
+                         "ruleset-unchanged"):
+            self.assertTrue(by_id[check_id]["passed"], by_id[check_id]["detail"])
+
+    def test_audited_copy_passes_all_checks(self):
+        for check_id, result in self._run(audited=True).items():
+            self.assertTrue(result["passed"], f"{check_id}: {result['detail']}")
 
 
 class WorkflowPathFilterTests(unittest.TestCase):

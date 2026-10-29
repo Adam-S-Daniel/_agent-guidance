@@ -34,7 +34,7 @@ The per-file detail is in the manifests beside this file.
 | X5 | `evals/real-work/_agent-guidance-196` | runtime-data | Its seed and checker pin real commit SHAs and byte-equal checks, so they can't be substituted. An adopter's fixture-supply job mines its own real-work cases. Tests that read these fixtures are pointed at a small invented seed instead. | Ship it unsubstituted as a read-only example. |
 | X6 | Eval results branches (`persistent/eval-results`, `persistent/orchestration-state`) | runtime-data | They are the owner's measurements of the owner's skills; an adopter's own runs produce theirs. | Copy them as a baseline. |
 | X7 | `docs/evidence/2026-10-07-workstation-retirement-117.md` | personal | It is a checkpoint on retiring the owner's own workstation (its machine and task names); nothing links to it. | Include it with the hostnames replaced. |
-| X9 | **Content starts blank** (owner, 2026-10-29 02:02 UTC): every skill, every guidance rule in `agents-md/base.md` and `agents-md/sections/`, every agent-checks check, and the eval fixtures that test that content. The machinery that delivers, measures, improves and retires them all comes along. Tests that only lock a specific skill, section or check are removed and listed in the export's record; tests of the machinery use test-only fixtures. | owner choice | An adopter grows their own content through the loop, starting from nothing. | Copy chosen skills, sections or checks in later, one at a time. |
+| X9 | **Content starts with one real item of each kind and a template** (owner, 2026-10-29 12:29 UTC; it replaces the same day's 02:02 UTC decision that content start fully blank). Skills, guidance sections and agent-checks checks each keep ONE real item copied unchanged (apart from substitution) from the owner's setup, plus a commented-out or inert template beside it: the skill `workflow-path-audit` (with the four eval fixtures under `evals/workflow-path-audit/` and a template in `templates/skill/`), the guidance section "A successful `git push` does not mean your commit exists" (with its fixture `evals/guidance/git-push-does-not-mean-commit-exists/` and an HTML-commented section template in `agents-md/base.md`), and the agent-checks check `skill-shell` (with a commented-out `.orig`/`.rej` example beside it). Every other skill, section and check, and the eval fixtures that test them, is left out. The machinery that delivers, measures, improves and retires them all comes along. Tests that only lock a left-out skill, section or check are removed and listed in the export's record; tests of the machinery use test-only fixtures. | owner choice | An adopter grows their own content through the loop, with a worked example of each kind to copy from instead of a blank page. | Delete the three real items and their fixtures (the first, blank form of X9: re-add the manifest excludes for them, restore the patches' blanking of `blank_content.py`, `blank_registry.py` and `empty_config.py`, and move the restored tests back into `removed_tests.txt` and the patches), or copy more chosen items in, one at a time (drop that item's `exclude` and add its tests back). |
 | X10 | From `wsl-automation`: the restic backup, and the Remote Control session keeper. The waiting-on-you feed is **included** (owner, 2026-10-29: the dashboard's waiting list keeps all its plumbing, renamed from "Waiting on" the owner's name to "waiting on you"), and so is the usage census task (wrapper, Task Scheduler registration, checkout updater, tests), with a cron equivalent for Linux and macOS; the session miner is scheduled the same way. | personal | They maintain the owner's machine and dashboard; the census feeds the loop's value score. | Include them. |
 | X8 | Scheduled tasks: Morning brief, Heartbeat, Watch for Work locally, Lockfile upstream daily check, Dashboard Hub refresh, Token sprint heartbeat, Rotate-keys reminder, one-shot eval-cap reminders, Watch reaper rejects, Cross-post watcher | personal or platform | They serve the owner's day, other projects or the platform repo, not the loop. | Add their prompts to the kit's routine list. |
 
@@ -109,22 +109,38 @@ caller's `uses:` line matches the key now, not the owner name.
 
 ### X9 in practice
 
-- `agents-md/base.md` keeps its preamble and one empty slot, `## Fleet rules`.
+- `agents-md/base.md` keeps its preamble, a template section, and one real
+  section, "A successful `git push` does not mean your commit exists",
+  copied byte for byte from the source (after substitution).
   `scripts/check-guidance-coverage.js` refuses a payload with no `##`
-  heading (exit 2), so the slot is the minimum the tooling accepts.
+  heading (exit 2), so one real section is also the minimum the tooling
+  accepts. The template is an HTML comment placed between the preamble and
+  the real section, so no section's byte extent counts it. It shows the
+  heading indented, never at the start of a line, so a line-regex reader
+  cannot take it for a heading (the checker's markdown parse reads the
+  comment as one html block either way). It departs from the manifest's own
+  note, "do not put these ids into base.md itself", only by being a comment
+  with no ids; the owner chose it.
 - `agents-md/sections/*.md` keep their `##` heading and a one-line "None
   yet" body: the sync tests check that a requested section's heading arrives
   in the built `AGENTS.md`.
-- `agents-md/eval-coverage.yml` keeps its header and one `gap` row per slot
-  (eight: the base slot and seven sections); byte counts are regenerated.
+- `agents-md/eval-coverage.yml` keeps its header, the real section's row as
+  the source has it (`covered`, fixture
+  `evals/guidance/git-push-does-not-mean-commit-exists/` in `skills-evals`)
+  and one `gap` row per empty section file (eight rows: the real section and
+  seven sections); byte counts are regenerated.
 - `docs/guidance-impact.md` keeps its header and entry format;
   `docs/agent-checks-lessons.md` keeps its header and table head.
 - The agent-checks runner (`templates/agent-checks/agent-checks`, and the
   repo's own `.githooks/agent-checks`) keeps its events, the run log, the
-  empty lesson slot (`check_lessons`) and `.agent-checks/local.sh`. Removed
-  checks: `rules-dir`, `secret-file`, `skill-shell` (path checks) and
-  `staged-index`, `push-to-default`, `persistent-delete` (pre-push). The
-  machinery's own ids remain: `repo-local`, `runner-error`, `tree-rev`.
+  empty lesson slot (`check_lessons`) and `.agent-checks/local.sh`, and the
+  `skill-shell` check exactly as the source has it (it refuses a `SKILL.md`
+  or command file with a shell-command line, so it also guards the kit's
+  own skill and skill template). Beside it is a commented-out example check
+  (`.orig`/`.rej` leftovers). Removed checks: `rules-dir`, `secret-file`
+  (path checks) and `staged-index`, `push-to-default`, `persistent-delete`
+  (pre-push). The machinery's own ids remain: `repo-local`, `runner-error`,
+  `tree-rev`.
   The PreToolUse guard (`agent-checks-guard.sh`) is machinery and is kept
   whole.
 
@@ -133,7 +149,10 @@ caller's `uses:` line matches the key now, not the owner name.
 Moved to a test-only fixture (the test still exercises the same machinery;
 the check it uses lives in the test):
 
-- `test/test_agent_check_lane.py`: `test_wrong_expectation_is_reported`,
+- `test/test_agent_check_lane.py` (these use the template with the file's
+  own `PATH_ARM` example lesson in place of the removed `secret-file` check,
+  and they leave the real `skill-shell` check alone, so a run's `checks`
+  list now starts with `skill-shell`): `test_wrong_expectation_is_reported`,
   `test_refusal_without_the_message_is_reported`,
   `test_tree_checks_every_path_of_a_revision`,
   `test_local_check_exiting_0_cannot_suppress_a_fleet_refusal`, and the
@@ -149,8 +168,8 @@ the check it uses lives in the test):
 - `test_pre_push_to_default_lists_push_to_default` becomes
   `test_refused_pre_push_is_logged_as_pre_push`: the run log's pre-push
   entry, from a fixture refusal on a feature branch.
-- `CheckIdTests`: the core ids are the machinery's three, and the minimum
-  `problem` call count is three, not seven.
+- `CheckIdTests`: the core ids are the machinery's three and `skill-shell`,
+  and the minimum `problem` call count is four, not seven.
 - `test/fixtures/agent-checks-cases.jsonl` (the lane's case table):
   `ci-earlier-commit-caught` and `tree-refuses-committed-key` (renamed
   `tree-refuses-committed-draft`) keep their range and tree shape with the
@@ -165,16 +184,24 @@ the check it uses lives in the test):
 Removed, because each locked only content the kit does not ship:
 
 - Lane case table: `rules-dir-refused`, `claude-dir-other-file-passes`,
-  `env-refused`, `env-local-refused`, `env-example-passes`, `pem-refused`,
-  `ssh-key-refused`, and the six `skill-shell-*` cases (the removed
-  `rules-dir`, `secret-file` and `skill-shell` checks).
+  `env-refused`, `env-local-refused`, `env-example-passes`, `pem-refused`
+  and `ssh-key-refused` (the removed `rules-dir` and `secret-file` checks).
+
+Restored for the one real check (owner, 2026-10-29 12:29 UTC): the six
+`skill-shell-*` cases of the lane's case table
+(`skill-shell-inline-refused`, `-fenced-refused`, `-command-file-refused`,
+`-plugin-command-refused`, `-code-span-passes`, `-in-readme-passes`), which
+the first blanking had removed with the check. The tests that asserted a
+`checks` list or the set of check ids (`test_passing_pre_commit_writes_one_line`,
+`test_refused_pre_push_is_logged_as_pre_push`, `test_repo_local_check_is_logged`,
+`CheckIdTests`) name `skill-shell` again.
 - `test/run-tests.sh`: "agent-checks persistent: deleting persistent/results
   is refused" (the removed `persistent-delete` check). The two cases beside
   it, a branch delete and a push to `persistent/*` passing, stay.
 - `test/test-on-hold-label.js`: the `ON_HOLD_MUTATION=policy` branch, which
   mutated the removed on-hold rule's wording in `base.md`.
 
-The skills registries (later builders) ship no skills under the same entry.
+The skills registries ship one skill under the same entry (below).
 
 ### C11 in practice
 
@@ -396,12 +423,20 @@ manifest's `source:` names the source repo).
 
 ### Left out
 
-- **X9:** all four `plugins/*/skills/` folders of the public registry (21
-  skills, including the X1 Fastmail ones) and the private registry's one
-  skill (X2). The tests inside those skills went with them
-  (`skills-doctor`, `launch-top-level-claude-session`,
-  `migrate-claude-memory`, `sync-cc-settings-between-wsl-and-windows`,
-  `rename-pdfs`).
+- **X9:** every skill of the public registry's four `plugins/*/skills/`
+  folders (21, including the X1 Fastmail ones) but one, and the private
+  registry's one skill (X2). The kept skill is `workflow-path-audit`
+  (`acsi-coding-anywhere`), the single file `SKILL.md`: the source has no
+  `PURPOSE.md` for it, and adding one would move its digest, so the kit does
+  not (the registry's own rule is no mass backfill). The tests inside the
+  skills that went went with them (`skills-doctor`,
+  `launch-top-level-claude-session`, `migrate-claude-memory`,
+  `sync-cc-settings-between-wsl-and-windows`, `rename-pdfs`). The template for
+  your own skill is `templates/skill/` (`SKILL.md`, `PURPOSE.md`, and a
+  `templates/README.md` saying how to adopt it), an overlay: it sits outside
+  `plugins/*/skills/`, which every registry check, the lock generator and the
+  README table read, so none of them sees it (checked by the registry's own
+  suite).
 - **X3:** `docs/credential-runbook.md` of the private registry. Never read
   into the kit.
 - The plugins keep their manifests and machinery: `acsi-coding-local` keeps its
@@ -444,13 +479,17 @@ manifest's `source:` names the source repo).
   (a clone of a missing repo fails the job), with the how-to left as a
   comment. The census keeps this registry and the optional private one.
 
-### X9: machinery changed to accept an empty registry
+### X9: machinery changed to accept an empty plugin
+
+Three of the four plugins still start empty, so this stays (the owner's
+2026-10-29 12:29 UTC decision added one skill to the fourth).
 
 - `setup.sh` (public) refused a registry with no skills (`ERROR: no skills
   found`); it now prints that and goes on, since it links nothing any more
   (ADR 0017) and its settings and owner-machine steps still apply.
 - `scripts/plugin_layout.json` keeps the four plugins and their
-  `defaultEnabled`, with `skills: []`.
+  `defaultEnabled`; `acsi-coding-anywhere` lists `workflow-path-audit`, the
+  other three have `skills: []`.
 - `generate_readme_table.py` refused a plugin with no skills ("renders no
   table rows"). It now renders one row, `none yet — add skills under
   plugins/<plugin>/skills/`, so the rule the refusal protected (every
@@ -459,8 +498,9 @@ manifest's `source:` names the source repo).
   template prefix `shopt -s nullglob;`: with no skill tests the two plugin
   globs match nothing and pytest exits 4 on the literal. The kit's `suite:`
   command does the same.
-- `skills.lock` is regenerated with the repo's generator (no skills); its
-  ref is forty zeros until the adopter's first commit (REGENERATE.md).
+- `skills.lock` is regenerated with the repo's generator (it lists the one
+  skill); its ref is forty zeros until the adopter's first commit
+  (REGENERATE.md).
 
 ### X9: tests changed or removed
 
@@ -478,17 +518,19 @@ Changed (the machinery is still tested):
 - `test_generate_skills_lock.py`: `test_the_source_limits_are_the_hooks_own`
   (cited by the vendored hook, defined in the left-out skills-doctor skill)
   is declared in
-  `_TESTS_IN_ANOTHER_REPO`; `test_this_repos_committed_lock_passes_check_format`
-  skips while the shipped lock lists no skills (`--check-format` refuses an
-  empty lock by design) and runs again from the first skill.
+  `_TESTS_IN_ANOTHER_REPO`. (`test_this_repos_committed_lock_passes_check_format`
+  had been changed to skip while the shipped lock listed no skills, since
+  `--check-format` refuses an empty lock by design. The lock lists one skill
+  now, so the test is the source's again and runs.)
 - `test_setup_owner_machine.py`:
   `test_a_whole_directory_home_link_is_removed_only_when_it_is_ours` links
   the legacy home to `plugins/acsi-coding-local/hooks/` (a shipped folder under
   `plugins/`) instead of the absent `skills/`.
 - `test_agent_checks.py`: each scratch repo gets a test-only copy of the
-  blank runner with a lesson in its slot that refuses the paths the source's
-  `secret-file` and `rules-dir` checks refused, so the pre-commit, pre-push,
-  ci, installer and real-git tests run unchanged against it.
+  runner (which ships `skill-shell`) with a lesson in its slot that refuses
+  the paths the source's `secret-file` and `rules-dir` checks refused, so the
+  pre-commit, pre-push, ci, installer and real-git tests run unchanged
+  against it.
 
 Removed, because each locked only a check the kit does not ship:
 
@@ -524,9 +566,15 @@ section records what is more than a substitution.
 
 ### What X4, X5, X6 and X9 leave out, and what stays
 
-- Every skill fixture directory under `evals/` (25 skills), every guidance
-  fixture (`evals/guidance/[!_]*`), all five `evals/real-work/` seeds and
-  `badges/workflow-path-audit.json`. No results branch is copied (X6).
+- Every skill fixture directory under `evals/` but one (24 of 25 skills;
+  `evals/workflow-path-audit/`, with its four fixtures, stays), every
+  guidance fixture but one (28 of 30; `evals/guidance/_delivery/` and
+  `evals/guidance/git-push-does-not-mean-commit-exists/` stay), all five
+  `evals/real-work/` seeds and `badges/workflow-path-audit.json` (a
+  generated result, the owner's measurement). No results branch is copied
+  (X6). The kept fixtures are byte copies after substitution. The guidance
+  ones are excluded one directory at a time, so a new source section's
+  fixture is not copied by accident.
 - Kept as machinery: `evals/orchestrator-scenarios/` (the orchestrator's
   own scenarios, no skill), `evals/guidance/_delivery/`,
   `evals/guidance-bridge-canary/` and `evals/propagation/` (probes of the
@@ -534,22 +582,29 @@ section records what is more than a substitution.
   `gate-policy.yml`, `improve-policy.yml`, `budget.yml`), `harness/`,
   `scripts/`, every workflow and `dashboard/` with `config.example/` and
   `inputs.example/` (the private `config/` is not in the source tree).
-- `evals/scheduled.yml` ships `fixtures: []` and `evals/non-coverage.yml`
-  `skips: []`, each keeping its header (`patches/skills-evals/empty_config.py`).
-  `scripts/plan_scheduled_evals.py` refused an empty schedule; it now
-  accepts 0 to 256 entries.
+- `evals/scheduled.yml` keeps the rows of the two kept fixtures, as the
+  source has them (the skill's `required-check-routing` and the section's
+  `hook-refused-commit`, readiness notes and all), so the weekly planner has
+  something to run on day one; the other 30 rows are dropped.
+  `evals/non-coverage.yml` ships `skips: []`. Each keeps its header
+  (`patches/skills-evals/empty_config.py`). `scripts/plan_scheduled_evals.py`
+  refused an empty schedule; it still accepts 0 to 256 entries, so an
+  adopter who replaces the two sample rows with their own can pass through
+  an empty list (the tests of that, `test_issue_scheduled_fixtures.py`, keep
+  their X9 edit).
 - `evals/real-work/README.md` (overlay) says the directory ships empty and
   how the fixture supply routine fills it.
-- Symlinks: the source has 22. The 17 inside left-out fixture seeds went
-  with them; the 5 `evals/orchestrator-scenarios/*/seed/bin/gh` links stay,
-  and the invented `test/fixtures/fake-gh/seed/bin/gh` adds one (6 in all,
-  each resolving to `harness/fakes/gh`).
+- Symlinks: the source has 22. The 14 inside left-out fixture seeds went
+  with them; the 5 `evals/orchestrator-scenarios/*/seed/bin/gh` links and the
+  3 in the kept `evals/workflow-path-audit/*/seed/bin/` stay, and the
+  invented `test/fixtures/fake-gh/seed/bin/gh` adds one (9 in all, each
+  resolving to `harness/fakes/gh`).
 
 ### C8: the invented test-only fixtures
 
 `overlay/skills-evals/test/fixtures/` holds small invented fixtures, laid out
 as they would sit in a checkout, named after source skills only as test data
-(`workflow-path-audit/required-check-routing`, four `writing-adrs`, four
+(four `writing-adrs`, four
 `guidance/anything-you-name-gets-its-link` and one
 `guidance/finding-your-unknowns` fixture, three pairwise `acsi-writing-style`
 fixtures, two `github-actions-repo-settings` fixtures, one
@@ -562,18 +617,19 @@ committed fixtures: dispatch validation, the weekly planner, the improve and
 guidance-improve fire checks, the skill census allowlist, `dev_setup.sh`'s
 directory lists.
 
-The test edits are 85 exact old/new pairs in
+The test edits are 84 exact old/new pairs in
 `patches/skills-evals/retargets.txt`, one section per file with its `why`
-(22 files). Edits that are more than a path change:
+(24 files; the earlier "85 pairs, 22 files" had drifted). Edits that are more
+than a path change:
 
 - `test_issue_scheduled_fixtures.py`: the empty schedule moved from the
   bad-schema list to an assertion that it is valid.
 - `test_issue_local_eval.py`: the left-out `ci-watcher-loops` checks are
   inlined.
 - `test_issue_97.py`: four lines checking the left-out windows-elevation
-  fixture's env block are dropped; two harness tests that read the left-out
-  scheduled fixture (one passed vacuously on the missing directory) use the
-  invented one.
+  fixture's env block are dropped. (Two harness tests that read the scheduled
+  workflow-path-audit fixture had been pointed at an invented copy; the real
+  fixture ships now, so they are the source's again.)
 - `run_tests.py`: the fake `gh` tests (`TestIssue84*`) drive
   `test/fixtures/fake-gh`; three expected payload strings are the invented
   seed's, the in-world allowlist is empty, and the fixture-wide scans (env
@@ -600,19 +656,20 @@ to the tests that still exist (40 keys to 17), keeping its serialization.
 ### Tests removed
 
 Each locks content the kit leaves out. Single tests and classes are listed in
-`patches/skills-evals/removed_tests.txt` (678 entries, each group commented):
-584 in `test/run_tests.py` (the fixture-hardening classes of the left-out
+`patches/skills-evals/removed_tests.txt` (673 entries, each group commented):
+581 in `test/run_tests.py` (the fixture-hardening classes of the left-out
 skill fixtures, `TestIssue74`-`TestIssue92`, the vendor-release check, the
 windows-elevation fixture and its stand-in `powershell.exe`, 74 tests of the
 cms-stuck-pr-triage fixture's checks and rubric, 12 tests of the
 owner's writing-style fixtures' own avoid list, facts and rubrics, which had
 passed vacuously over an empty directory),
-37 in `test_issue_124_guidance_gates.py`, 35 in `test_issue_89_fixture.py`,
+34 in `test_issue_124_guidance_gates.py`, 35 in `test_issue_89_fixture.py`,
 13 in `test_issue_94.py`, 5 in `test_issue_real_work_fixtures.py` (the
 committed fixtures' seeds, prompts and red/green runs), 2 in
 `test_issue_371_scheduled_fixtures.py` (the source schedule's size and
 measured bytes) and one each in `test_issue_64.py` (the test-canary row) and
-`test_issue_followups.py` (rename-pdfs' follow-up text).
+`test_issue_followups.py` (rename-pdfs' follow-up text), and the whole
+`TestIssue80Supersede` class, whose module stays as a helper (below).
 
 **Restored after review (2026-10-29).** Seven tests the first pass removed
 test machinery, not left-out content, and are back:
@@ -629,16 +686,51 @@ adopter's scaffolds commit); and `JudgeDiffTests::test_build_judge_diff_on_the_r
 (it builds the invented `test/fixtures/evals/nested-repo-diff` seed, a bare
 `prod.git` and a clone, instead of the left-out disarm fixture). The two
 fixture-shape tests were checked to fail on a broken input (a fixture
-without `strip_agent_context` or `checker/`). The 584 `run_tests.py` entries left were then re-audited
+without `strip_agent_context` or `checker/`). The 581 `run_tests.py` entries left were then re-audited
 class by class: an AST walk of each removed test, its class, its base
 classes and the helpers it calls finds the left-out fixture it reads in
-every one. The verdicts, per class, are at the top of `removed_tests.txt`. The manifest leaves out 28 whole modules that test nothing else
+every one. The verdicts, per class, are at the top of `removed_tests.txt`. The manifest leaves out 24 whole modules that test nothing else
 (`test_issue_71_trigger_set`, `_75`, `_75_onboarding`, `_76` and its three
-siblings, `_78`, `_80_supersede`, `_80_why`, `_87`, `_88_fixture`, `_90`,
-`_91`, `_93`, the three `bash_ci_*`, `ci_job_performance_browser_cache`, the
-three `skills_doctor_*`, the three `vendor_release_*` and the three `wpa_*`)
-and their two helpers (`test/workflow_path_audit_case.py`,
-`test/vendor_release_fixtures.py`).
+siblings, `_78`, `_80_why`, `_87`, `_88_fixture`, `_90`, `_91`, `_93`, the
+three `bash_ci_*`, `ci_job_performance_browser_cache`, the three
+`skills_doctor_*` and the three `vendor_release_*`) and their helper
+(`test/vendor_release_fixtures.py`).
+
+**Restored for the kit's two real fixtures (owner, 2026-10-29 12:29 UTC).**
+The first pass left these out with the fixtures they read; the fixtures ship
+now, so the tests are back as the source has them:
+
+- The three `wpa_*` modules (`test_issue_wpa_companion_skip_pair`,
+  `_moved_test_dir`, `_workflow_doc_in_step`) and their helper
+  `test/workflow_path_audit_case.py`, which test the workflow-path-audit
+  skill's other three fixtures. `_workflow_doc_in_step` imports the
+  pattern-anchoring helpers of `test_issue_80_supersede`, so that module stays
+  as a helper: its one test class, which locks the left-out
+  `writing-adrs/supersede` fixture, is removed and its docstring says so. The
+  runner requires every discovered module to contribute a test, so the helper
+  gains `AnchoringHelperTests` (3 tests of `anchoring_problems` itself, added by
+  `retargets.txt`).
+- `ObjectiveAsymmetryTests` (3 tests, `test/run_tests.py`), which read the
+  source `required-check-routing` fixture's seed anchors and eight checks.
+- `PushFixtureTests` (3 tests, `test_issue_124_guidance_gates.py`), which run
+  the `git push` section's `hook-refused-commit` fixture's trap, its bypass
+  and its fix through the scorer. `FixtureLayoutTests::test_each_covered_section_has_fixtures_and_one_has_four`
+  stays removed: it pins the source's thirty-section set.
+- Retargets undone because the real fixture exists: the invented
+  `test/fixtures/evals/workflow-path-audit/required-check-routing` is gone
+  from the overlay, and `test_issue_202_harness.py`, `test_issue_66.py`,
+  `test_issue_97.py` (two harness tests), `test_issue_71.py` (one
+  copy of the fixture) and the `EVAL_DIR` and `FLAT_SOURCE` constants of
+  `run_tests.py` and `test_issue_local_eval.py` read `evals/workflow-path-audit/`
+  again. The example checkout (`test/example_evals.py`) now gets that
+  fixture from the repository's tracked files and names it in its schedule.
+
+Left as they were, because they test machinery on a fixture set the kit does
+not have: `test_issue_scheduled_fixtures.py`, `test_issue_371_scheduled_fixtures.py`
+(they read the example checkout and its schedule; the source schedule's size
+and measured bytes are not the kit's), `test_issue_70_retirement.py` (the
+`FIXTURE_ALIASES` loop runs for the skills the checkout has) and the dispatch
+validation tests, which still run in the example checkout.
 
 ### C4, C6, C7, C12 in practice
 

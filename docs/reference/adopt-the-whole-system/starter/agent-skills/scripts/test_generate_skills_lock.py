@@ -2294,9 +2294,6 @@ def test_check_format_exits_zero_on_a_lock_this_generator_wrote(registry, tmp_pa
 def test_this_repos_committed_lock_passes_check_format():
     """Dogfood. This repo's own lock is the one every consumer copies the shape
     of, and it is the reference an adopter compares theirs against."""
-    if not json.loads((REPO_ROOT / "skills.lock").read_text(encoding="utf-8"))["skills"]:
-        pytest.skip("this registry's lock lists no skills yet, and --check-format refuses an "
-                    "empty lock by design; it runs once the first skill is locked")
     proc = run_generator("--check-format", "-o", str(REPO_ROOT / "skills.lock"))
     assert proc.returncode == 0, proc.stdout + proc.stderr
 

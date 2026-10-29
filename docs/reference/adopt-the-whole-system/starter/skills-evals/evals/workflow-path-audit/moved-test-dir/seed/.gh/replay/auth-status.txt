@@ -1,0 +1,6 @@
+github.com
+  ✓ Logged in to github.com account example-bot (GH_TOKEN)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: ****************************************
+  - Token scopes: 'read:org', 'repo'

@@ -389,7 +389,7 @@ class TestIssue66SingleTrialIsMainPlusN(_HarnessCase):
     def test_the_documented_objective_only_invocation_still_works(self):
         # The issue's own verifier line, on the fixture the scheduled run
         # uses: `--trials 1` beside objective-only prints what no flag does.
-        eval_dir = (REPO_ROOT / "test" / "fixtures" / "evals" / "workflow-path-audit"
+        eval_dir = (REPO_ROOT / "evals" / "workflow-path-audit"
                     / "required-check-routing")
         plain = self._run(eval_dir, "--arm", "objective-only")
         flagged = self._run(eval_dir, "--arm", "objective-only",

@@ -31,12 +31,22 @@
 #   TestIssue92 (15)              keep removed: evals/browser-testing
 #   WindowsElevationFixtureTests (9), FakePowershellTests (5)
 #                                 keep removed: ELEVATION_DIR
-#   ObjectiveAsymmetryTests (3)   keep removed: EVAL_DIR's seed anchors (docs-site.yml and
-#                                 the source fixture's eight checks); the invented
-#                                 required-check-routing fixture has neither
+#   ObjectiveAsymmetryTests (3)   restored (2026-10-29, the owner's one-real-skill decision): the kit
+#                                 ships workflow-path-audit's fixtures, so they read the
+#                                 source fixture again
 #   JudgeDiffTests                restored: its end-to-end case builds the invented
 #                                 nested-repo seed (retargets.txt)
-# 584 run_tests.py entries remain, every one tied to a left-out fixture.
+# 581 run_tests.py entries remain, every one tied to a left-out fixture.
+#
+# Restored for the kit's two real fixtures (the owner, 2026-10-29 12:29 UTC):
+# the three ObjectiveAsymmetryTests above and test_issue_124_guidance_gates.py's
+# PushFixtureTests (3), which read evals/workflow-path-audit/required-check-routing and
+# evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit. Their
+# modules (test_issue_wpa_*.py and test/workflow_path_audit_case.py) are no longer
+# left out by the manifest.
+# test_issue_80_supersede.py stays as a helper module with its one test class removed
+# (it locks the left-out writing-adrs/supersede fixture): test_issue_wpa_workflow_doc_in_step.py
+# imports its pattern-anchoring helpers. That makes 673 entries, one a whole class.
 test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_changelog_check
 test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_multi_repo_cloud_session
 test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_new_config_key
@@ -51,9 +61,6 @@ test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_merge_commit_
 test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_merge_trap_squashes_first_and_closes_the_issue
 test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_watch_rollup_names_the_legacy_failure
 test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_watch_trap_merges_on_green_check_runs
-test/issues/test_issue_124_guidance_gates.py::PushFixtureTests::test_the_bypass_lands_the_change_but_not_the_scan
-test/issues/test_issue_124_guidance_gates.py::PushFixtureTests::test_the_trap_reports_success_and_fails_both_checks
-test/issues/test_issue_124_guidance_gates.py::PushFixtureTests::test_verifying_and_putting_the_scanner_on_path_passes
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_a_404_reported_as_deletion_fails_and_a_scope_gap_passes
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_census_from_the_index_is_wrong_and_asking_each_repository_is_right
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_concurrency_trap_fails_and_disjoint_triggers_pass
@@ -74,6 +81,7 @@ test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_parse
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_pull_request_markers
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_search_query
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_stop_worker
+test/issues/test_issue_80_supersede.py::TestIssue80Supersede
 test/issues/test_issue_89_fixture.py::TestCiWatcherFixture::test_a_foreground_poller_rereading_on_every_followup_stays_in_bound
 test/issues/test_issue_89_fixture.py::TestCiWatcherFixture::test_a_watch_that_stops_after_the_first_turn_still_fails
 test/issues/test_issue_89_fixture.py::TestCiWatcherFixture::test_consumer_mutation_fails_only_repository_guard
@@ -127,9 +135,6 @@ test/run_tests.py::FakePowershellTests::test_elevation_dodges_fail_and_are_class
 test/run_tests.py::FakePowershellTests::test_elevation_requiring_writes_are_denied
 test/run_tests.py::FakePowershellTests::test_reads_succeed_with_canned_output
 test/run_tests.py::FakePowershellTests::test_stdin_script_is_read_and_logged
-test/run_tests.py::ObjectiveAsymmetryTests::test_audited_copy_passes_all_checks
-test/run_tests.py::ObjectiveAsymmetryTests::test_pristine_seed_fails_the_routing_checks
-test/run_tests.py::ObjectiveAsymmetryTests::test_pristine_seed_passes_the_restraint_checks
 test/run_tests.py::TestIssue74::test_a_finding_1_comment_pins_its_claims_to_named_tests
 test/run_tests.py::TestIssue74::test_a_other_handlers_are_left_to_the_judge
 test/run_tests.py::TestIssue74::test_a_watch_or_echo_handler_fails

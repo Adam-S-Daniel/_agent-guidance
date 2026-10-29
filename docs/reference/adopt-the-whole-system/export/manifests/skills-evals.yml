@@ -1,7 +1,7 @@
 # Export of skills-evals into starter/skills-evals/. Built from the
 # inventory (scratch manifests/skills-evals.yml, 2026-10-29) as amended by
-# DECISIONS.md: no skill or guidance fixtures and no real-work seeds (X4, X5,
-# X9); the machinery (harness, scorers, fakes, scripts, config, workflows)
+# DECISIONS.md: only the fixtures of the one kept skill and the one kept
+# guidance section, and no real-work seeds (X4, X5, X9); the machinery (harness, scorers, fakes, scripts, config, workflows)
 # comes along whole. The export record in DECISIONS.md lists every edit
 # that is more than a substitution and every test changed or removed.
 repo: skills-evals
@@ -43,8 +43,62 @@ substitutions:
 exclude:
   - path: evals/real-work/
     why: X4 (the four platform seeds) and X5 (_agent-guidance-196, pinned to real commits); an adopter's fixture-supply job mines its own.
-  - path: evals/guidance/[!_]*
-    why: X9 (fixtures for guidance sections the kit does not ship). evals/guidance/_delivery/ stays; it is the delivery canary, not a section's fixture.
+  - path: evals/guidance/agent-contribution-markers/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/anything-you-name-gets-its-link/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/automation-vs-branch-protection/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/data-exposure-in-ci/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/dependency-updates/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/finding-your-unknowns/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/fleet-spans-two-owners/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/git-practices/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/github-404-means-not-authorized/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/name-becomes-scanner-data/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/pinning-github-actions/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/read-before-you-start/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-docker/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-dotnet/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-go/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-javascript/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-python/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-rust/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/section-typescript/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/security/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/skills-ecosystem/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/subagent-delegation/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/test-that-can-signal-kills-every-session/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/two-github-connectors/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/two-setup-gaps/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/watch-finished-is-not-ci-passed/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/working-in-these-repos/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
+  - path: evals/guidance/workstation-layout/
+    why: X9 (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary, and so does git-push-does-not-mean-commit-exists/, the fixture of the one section the kit ships.
   - path: evals/adam-writing-style/
     why: X2 and X9.
   - path: evals/admin-config-render/
@@ -91,12 +145,10 @@ exclude:
     why: X9 (the kit ships no skills, so no skill fixtures).
   - path: evals/windows-elevation-from-wsl/
     why: X9 (the kit ships no skills, so no skill fixtures).
-  - path: evals/workflow-path-audit/
-    why: X9 (the kit ships no skills, so no skill fixtures).
   - path: evals/writing-adrs/
     why: X9 (the kit ships no skills, so no skill fixtures).
   - path: badges/workflow-path-audit.json
-    why: X6 (a generated result badge, for a fixture that is left out).
+    why: X6 (a generated result badge, the owner's measurement of the one kept skill; an adopter's own runs make theirs).
 
   # ---- X9 / C8: test modules that only lock a left-out fixture (each listed in DECISIONS.md)
   - path: test/issues/test_issue_71_trigger_set.py
@@ -115,8 +167,6 @@ exclude:
     why: X9. Every test in it locks the debug-github-workflows swallowed-failure fixture, which the kit does not ship.
   - path: test/issues/test_issue_78.py
     why: X9. Every test in it locks the finding-unknowns fixture, which the kit does not ship.
-  - path: test/issues/test_issue_80_supersede.py
-    why: X9. Every test in it locks the writing-adrs supersede fixture, which the kit does not ship.
   - path: test/issues/test_issue_80_why.py
     why: X9. Every test in it locks the writing-adrs why-no-comment-trail fixture, which the kit does not ship.
   - path: test/issues/test_issue_87.py
@@ -149,14 +199,6 @@ exclude:
     why: X9. Every test in it locks a vendor-release-impact-issues fixture, which the kit does not ship.
   - path: test/issues/test_issue_vendor_release_stamps_skip_quotes.py
     why: X9. Every test in it locks a vendor-release-impact-issues fixture, which the kit does not ship.
-  - path: test/issues/test_issue_wpa_companion_skip_pair.py
-    why: X9. Every test in it locks a workflow-path-audit fixture, which the kit does not ship.
-  - path: test/issues/test_issue_wpa_moved_test_dir.py
-    why: X9. Every test in it locks a workflow-path-audit fixture, which the kit does not ship.
-  - path: test/issues/test_issue_wpa_workflow_doc_in_step.py
-    why: X9. Every test in it locks a workflow-path-audit fixture, which the kit does not ship.
-  - path: test/workflow_path_audit_case.py
-    why: X9. The shared helper of the three workflow-path-audit fixture modules above; nothing else imports it.
   - path: test/vendor_release_fixtures.py
     why: X9. The shared helper of the vendor-release-impact-issues fixture modules above; nothing else imports it.
 
@@ -458,7 +500,8 @@ patches:
     why: >-
       X9 and C8. Removes the tests in kept modules that only lock a left-out
       fixture (removed_tests.txt) and points the machinery tests at the
-      invented test-only fixtures under test/fixtures/.
+      invented test-only fixtures under test/fixtures/ (the two kept
+      fixtures' tests read the real fixtures).
   - file: federation_vars.py
     why: >-
       C12. eval.yml's two token exchanges named the source's own Anthropic
@@ -478,9 +521,9 @@ patches:
       source owner's first name; it is an invented one of the same shape.
   - file: empty_config.py
     why: >-
-      X9. evals/scheduled.yml and evals/non-coverage.yml keep their header
-      and key with an empty list; their rows named fixtures and skills the
-      kit does not ship.
+      X9. evals/scheduled.yml keeps the rows of the two shipped fixtures and
+      evals/non-coverage.yml keeps its header and key with an empty list;
+      the dropped rows named fixtures and skills the kit does not ship.
 
 protect_except:
   - path: test/issues/test_issue_70_retire.py

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# secrets-scan: refuses the commit unless secret-scan runs clean on the staged
+# files. It fails closed when the scanner is missing.
+if [ "${SKIP_SECRETS_SCAN:-}" = 1 ]; then
+  echo "secrets-scan: skipped (SKIP_SECRETS_SCAN=1)" >&2
+  exit 0
+fi
+if ! command -v secret-scan >/dev/null 2>&1; then
+  echo "secrets-scan: secret-scan is not on PATH; refusing the commit (fails closed)" >&2
+  exit 1
+fi
+files=$(git diff --cached --name-only -- . ':!.scan')
+# shellcheck disable=SC2086
+secret-scan $files || exit 1
+mkdir -p .scan
+printf 'scanned: %s\n' $files > .scan/record.txt
+git add .scan/record.txt

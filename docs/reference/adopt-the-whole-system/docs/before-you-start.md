@@ -30,8 +30,9 @@
   measured**. The weekly planner runs on Tuesdays at 07:00 UTC, after the
   allowance week turns over (Monday 17:00 UTC). An improve fire needs four
   fixtures for its skill, and a fixture the loop adds stays off the schedule
-  until it has two clean runs. Since the content starts blank, your first
-  skill and its fixtures come first. Expect the first improvement merged or
+  until it has two clean runs. The kit ships one skill with four fixtures
+  (`workflow-path-audit`), so the planner has something to run on day one, but
+  an improve fire for your own skills needs your own first. Expect the first improvement merged or
   rejected one to two weeks after the first eval runs.
 - **Running it:** evals run as routines on your plan, so they draw down the
   weekly allowance like any session, within the 30% cap and with a hard stop

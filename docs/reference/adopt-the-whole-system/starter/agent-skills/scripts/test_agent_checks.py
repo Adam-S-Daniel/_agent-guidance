@@ -92,8 +92,8 @@ def head(repo: Path, tmp_path: Path) -> str:
 
 ZERO = "0" * 40
 
-# The runner ships no checks (the adoption kit's DECISIONS X9), so each scratch
-# repo gets a TEST-ONLY copy of it with this lesson in its lesson slot. It
+# The runner ships one check, skill-shell (the adoption kit's DECISIONS X9), so
+# each scratch repo gets a TEST-ONLY copy of it with this lesson in its lesson slot. It
 # refuses the paths the source registry's fleet checks refused, so the cases
 # below exercise the runner's events, ranges and hook wiring unchanged.
 FIXTURE_LESSON = """check_lessons() {

@@ -5,6 +5,8 @@
     "acsi-anything-anywhere",
     "acsi-coding-anywhere"
   ],
-  "skills": {},
+  "skills": {
+    "acsi-coding-anywhere/workflow-path-audit": "sha256:8a7c57bcd890bbab38c42473d8705f0b2521954385f03bf5289e3ec84d3fcdde"
+  },
   "generated_from": "0000000000000000000000000000000000000000"
 }

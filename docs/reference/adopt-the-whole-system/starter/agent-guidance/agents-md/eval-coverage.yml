@@ -31,11 +31,12 @@
 # delivered into every session by the fleet-memory hook and cost tokens
 # forever. This manifest is the only place they live.
 
-- id: fleet-rules
-  heading: Fleet rules
+- id: git-push-does-not-mean-commit-exists
+  heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
-  status: gap
-  bytes: 226
+  status: covered
+  fixture: evals/guidance/git-push-does-not-mean-commit-exists/
+  bytes: 1152
 
 - id: section-docker
   heading: Docker

@@ -303,8 +303,8 @@
     },
     {
       "id": "18",
-      "title": "Point eval.yml at a fixture you have",
-      "run": "In a pull request on `<you>/skills-evals`, change `.github/workflows/eval.yml`'s `fixture` default to a fixture under `evals/` (or add one)",
+      "title": "Decide eval.yml's default fixture",
+      "run": "`.github/workflows/eval.yml`'s `fixture` default, `evals/workflow-path-audit/required-check-routing`, ships with the kit and runs as it is: keep it, or change it to a fixture of your own in a pull request on `<you>/skills-evals`",
       "kind": "manual",
       "part": "generated files",
       "link": "docs/generated-files.md#the-evalyml-fixture-default",

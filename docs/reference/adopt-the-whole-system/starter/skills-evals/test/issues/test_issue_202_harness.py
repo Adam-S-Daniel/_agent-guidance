@@ -56,7 +56,7 @@ EVAL_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "eval.yml"
 PROPAGATION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "propagation.yml"
 FAKE_CLAUDE = TEST_DIR / "fake-claude"
 # A nested fixture: its arms are written under its own name (#66).
-EVAL_DIR = REPO_ROOT / "test" / "fixtures" / "evals" / "workflow-path-audit" / "required-check-routing"
+EVAL_DIR = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
 FAKE_VERSION_LINE = "fake-claude 0.0.0 (hermetic test stub)"
 
 sys.path.insert(0, str(HARNESS_DIR))

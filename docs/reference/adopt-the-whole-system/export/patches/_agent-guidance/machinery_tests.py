@@ -29,16 +29,18 @@ def _sub(root: Path, rel: str, pairs) -> None:
 
 # ── test/fixtures/agent-checks-cases.jsonl ──────────────────────────────────
 # The lane's case table. Kept: the cases that exercise the runner itself
-# (events, ranges, the repo-local check). Removed: the cases for the fleet
-# checks the kit does not ship. Two range cases keep their shape with the
-# repo-local draft check standing in for the removed secret-file check.
+# (events, ranges, the repo-local check) and the six cases of the one fleet
+# check the kit ships, skill-shell (restored by the owner's 2026-10-29 12:29
+# decision, X9). Removed: the cases for the fleet checks the kit does not
+# ship. Two range cases keep their shape with the repo-local draft check
+# standing in for the removed secret-file check.
 KEEP_CASES = ["readme-passes", "ci-ordinary-passes", "tree-ordinary-passes",
-              "local-check-refuses", "local-check-passes"]
+              "local-check-refuses", "local-check-passes",
+              "skill-shell-inline-refused", "skill-shell-fenced-refused",
+              "skill-shell-command-file-refused", "skill-shell-plugin-command-refused",
+              "skill-shell-code-span-passes", "skill-shell-in-readme-passes"]
 DROP_CASES = ["rules-dir-refused", "claude-dir-other-file-passes", "env-refused", "env-local-refused",
-              "env-example-passes", "pem-refused", "ssh-key-refused", "skill-shell-inline-refused",
-              "skill-shell-fenced-refused", "skill-shell-command-file-refused",
-              "skill-shell-plugin-command-refused", "skill-shell-code-span-passes",
-              "skill-shell-in-readme-passes"]
+              "env-example-passes", "pem-refused", "ssh-key-refused"]
 CONVERT_CASES = ["ci-earlier-commit-caught", "tree-refuses-committed-key"]
 
 
@@ -74,9 +76,10 @@ LANE_EDITS = [
     # A test-only runner with one check, for the machinery tests that need a
     # runner that refuses something.
     ('''def yq_usable():''',
-     '''# The kit's runner ships no checks (DECISIONS X9). The tests of its
-# machinery that need a check to refuse something use this test-only fixture:
-# the template with PATH_ARM in its lesson slot and the id listed.
+     '''# The kit's runner ships one fleet check, skill-shell (DECISIONS X9), which
+# these machinery tests leave alone. Those that need a check to refuse a plain
+# path use this test-only fixture: the template with PATH_ARM in its lesson
+# slot and the id listed.
 FIXTURE_CHECK = "lesson-example-path"
 
 # A repo-local check (.agent-checks/local.sh) that refuses *.draft files.
@@ -188,7 +191,7 @@ def yq_usable():'''),
         return subprocess.run(["bash", str(self.fixture), *args], cwd=str(self.repo), env=env,'''),
     ('''        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell"])
         self.assertEqual(entry["failed"], [])''',
-     '''        self.assertEqual(entry["checks"], [FIXTURE_CHECK])
+     '''        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK])
         self.assertEqual(entry["failed"], [])'''),
     ('''        self.stage({".env": "A=1\\n"})
         silent = self.run_logged("pre-commit", log="off")
@@ -226,10 +229,10 @@ def yq_usable():'''),
         self.assertIn("a.notes-secret: notes files", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(entry["checks"], [FIXTURE_CHECK])
+        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK])
         self.assertEqual(entry["failed"], [FIXTURE_CHECK])'''),
     ('''        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell", "repo-local"])''',
-     '''        self.assertEqual(entry["checks"], [FIXTURE_CHECK, "repo-local"])'''),
+     '''        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK, "repo-local"])'''),
     ('''        self.commit(self.repo, {".env": "A=1\\n"})
         self.assertEqual(self.run_logged("ci", base, "HEAD").returncode, 1)''',
      '''        self.commit(self.repo, {"a.notes-secret": "x\\n"})
@@ -240,11 +243,11 @@ def yq_usable():'''),
     ('''        calls = problem_calls(canonical_runner(RUNNER))
         self.assertGreaterEqual(len(calls), 7)''',
      '''        calls = problem_calls(canonical_runner(RUNNER))
-        # The kit's runner has the machinery's own three (DECISIONS X9).
-        self.assertGreaterEqual(len(calls), 3)'''),
+        # The kit's runner has the machinery's own three and skill-shell (DECISIONS X9).
+        self.assertGreaterEqual(len(calls), 4)'''),
     ('''        self.assertLessEqual({"rules-dir", "secret-file", "skill-shell", "staged-index", "push-to-default", "persistent-delete",
                               "repo-local"}, ids)''',
-     '''        self.assertEqual({"repo-local", "runner-error", "tree-rev"}, ids)'''),
+     '''        self.assertEqual({"skill-shell", "repo-local", "runner-error", "tree-rev"}, ids)'''),
 ]
 
 

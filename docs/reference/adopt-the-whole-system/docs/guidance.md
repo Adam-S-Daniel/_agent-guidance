@@ -6,10 +6,14 @@
 layer: the always-on rules, the machinery that delivers them to every repo
 and every session, and the specs the standing routines follow.
 
-- `agents-md/base.md` is the fleet guidance, starting with a
-  `## Fleet rules` heading that says "None yet". `agents-md/sections/` holds
-  per-stack sections (python, javascript, typescript, go, dotnet, rust,
-  docker), each empty too; a repo asks for one in its `.agents-sync.yml`.
+- `agents-md/base.md` is the fleet guidance. It ships one real section,
+  "A successful `git push` does not mean your commit exists", copied
+  unchanged from the owner's guidance (its fixture is in `skills-evals`), and
+  an HTML-commented template of a section above it (DECISIONS X9; a new
+  section also needs a row in `agents-md/eval-coverage.yml` and an entry in
+  `docs/guidance-impact.md`). `agents-md/sections/` holds per-stack sections
+  (python, javascript, typescript, go, dotnet, rust, docker), each empty; a
+  repo asks for one in its `.agents-sync.yml`.
 - `agents-md/stub.md` is the short floor each consumer's `AGENTS.md` gets:
   a pointer to the full guidance, the session-start verdict and a few rules
   restated for a session that lost the rest.
@@ -57,8 +61,10 @@ A rule that a commit can show is broken becomes a check, not text:
 
 - **agent-checks** is one runner, `templates/agent-checks/agent-checks`,
   delivered to every fleet repo as `.githooks/agent-checks` with its CI
-  workflow `agent-checks.yml`. It ships with no checks of its own; a repo's
-  own go in `.agent-checks/local.sh`, and fleet-wide ones in the template.
+  workflow `agent-checks.yml`. It ships one check, `skill-shell` (it refuses
+  a `SKILL.md` or command file that runs a shell command when it loads),
+  with a commented-out example of a second beside it; a repo's own checks go
+  in `.agent-checks/local.sh`, and fleet-wide ones in the template.
   Each refusal says what is wrong, why, and how to fix it, so the rule does
   not need to sit in always-on guidance.
 - **On your machine** a config-based git hook (Git 2.54+) runs it on every

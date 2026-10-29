@@ -45,7 +45,7 @@ FAKE_CLAUDE_INIT = REPO_ROOT / "test" / "fake-claude-init"
 #: The invented test-only fixtures (the kit ships none, its DECISIONS X9),
 #: laid out as a checkout's evals/ (test/example_evals.py).
 FIXTURE_EVALS = REPO_ROOT / "test" / "fixtures" / "evals"
-FLAT_SOURCE = FIXTURE_EVALS / "workflow-path-audit" / "required-check-routing"
+FLAT_SOURCE = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
 EVAL_DIR = FLAT_SOURCE
 GUIDANCE_FIXTURE = REPO_ROOT / "evals" / "guidance" / "_delivery"
 SKILL = "workflow-path-audit"

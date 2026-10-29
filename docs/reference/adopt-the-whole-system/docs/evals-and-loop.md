@@ -27,12 +27,17 @@ The deepest account is its
 
 A fixture is a directory with a `fixture.yaml` (the prompt, the arms, the
 objective checks, the judge rubric) and a `seed/` the agent starts from. The
-kit ships only the fixtures that test the machinery: `evals/guidance/_delivery`
+kit ships the fixtures that test the machinery: `evals/guidance/_delivery`
 (guidance delivery), `evals/guidance-bridge-canary`, `evals/propagation`,
-the orchestrator scenarios, and test-only fixtures under `test/fixtures/`.
-`evals/scheduled.yml` starts with `fixtures: []`, so nothing runs on the
-weekly plan until you add your own: write a fixture for your first skill
-under `evals/<skill>/<name>/`, run it locally
+the orchestrator scenarios, and test-only fixtures under `test/fixtures/`;
+and the fixtures of its two real items (DECISIONS X9): the four of the
+`workflow-path-audit` skill (`evals/workflow-path-audit/`) and the one of the
+`git push` guidance section
+(`evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit`).
+`evals/scheduled.yml` starts with those two rows (the skill's
+`required-check-routing` and the section's fixture), so the weekly plan has
+something to run; add the rest as you write them: write a fixture for your
+next skill under `evals/<skill>/<name>/`, run it locally
 (`python3 harness/run_eval.py evals/<skill>/<name> --arm both --registry ../acsi-agentskills`, see the
 [README's "Running"](../starter/skills-evals/README.md#running)), and add it
 to `scheduled.yml` in a pull request. An improve fire needs four fixtures

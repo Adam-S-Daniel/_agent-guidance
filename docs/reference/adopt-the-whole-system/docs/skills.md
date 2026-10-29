@@ -10,15 +10,24 @@ opt-in). A skill is a folder `plugins/<plugin>/skills/<skill>/` holding a
 `SKILL.md`, and the same file works in Codex and any agent that reads the
 Agent Skills format.
 
-The kit ships every plugin empty (DECISIONS X9). To add your first skill:
+The kit ships one real skill and a template (DECISIONS X9). The skill is
+`workflow-path-audit`, copied unchanged from the owner's registry into
+`acsi-coding-anywhere`, with its four eval fixtures in `skills-evals`
+(`evals/workflow-path-audit/`), so the loop has something to measure on day
+one. Every other plugin is empty. The template is `templates/skill/` in the
+registry (a `SKILL.md` and a `PURPOSE.md` with `<placeholders>`); it sits
+outside `plugins/`, so nothing loads, lists or locks it. To add your own
+skill:
 
-1. Write `plugins/<plugin>/skills/<skill>/SKILL.md`, and a `PURPOSE.md`
-   beside it saying what incident or pattern motivated it.
+1. Copy `templates/skill/` to `plugins/<plugin>/skills/<skill>/`, fill in the
+   `SKILL.md`, and write the `PURPOSE.md` saying what incident or pattern
+   motivated it.
 2. Add it to `scripts/plugin_layout.json` (the canonical list of which
    plugin ships which skill) and an entry to `docs/skill-impact.md`.
 3. Give it at least one eval fixture in `skills-evals` (`evals/<skill>/`):
    a skill graduates into the registry only with a green `with_skill` arm
-   ([evals](evals-and-loop.md#fixtures)).
+   ([evals](evals-and-loop.md#fixtures)). `workflow-path-audit`'s fixtures
+   are the worked example.
 
 Its folder name is a one-way door once shipped: a consumer's `skills.lock`
 keys on it, and the marketplace has no `renames` map. The registry's

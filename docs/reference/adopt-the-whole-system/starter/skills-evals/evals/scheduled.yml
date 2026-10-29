@@ -2,6 +2,11 @@
 # record: from the fixture's pins at skills-evals c1bf71c, or for the unpinned
 # fixture from the roster's first arm and judge at fc7e1cf.
 #
-# The kit ships this list empty (DECISIONS X9): the rows the source repo
-# carried named fixtures and skills an adopter does not have. Add your own.
-fixtures: []
+# The kit ships the rows of its two fixtures (DECISIONS X9): the rows the
+# source repo carried for fixtures an adopter does not have are dropped.
+# Add a row when a fixture is ready to run weekly.
+fixtures:
+  - path: evals/workflow-path-audit/required-check-routing
+    readiness: "Isolation pair on pins since removed (agent claude-sonnet-5, judge claude-opus-4-8). Current scheduled fixture; local smoke: with 8 vs without 7."
+  - path: evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit
+    readiness: "Isolation pair of four guidance arms (section vs none, full vs full-minus-section), unpinned (the committed roster then named arm claude-sonnet-5-5 and judge claude-fable-5-1). No paid run yet; hermetic: the seed's trap fails its checks and the fix passes them (test_issue_124_guidance_gates.py, 2026-10-26)."

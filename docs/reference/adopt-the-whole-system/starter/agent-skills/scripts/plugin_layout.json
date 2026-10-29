@@ -6,7 +6,9 @@
     },
     "acsi-coding-anywhere": {
       "defaultEnabled": true,
-      "skills": []
+      "skills": [
+        "workflow-path-audit"
+      ]
     },
     "acsi-coding-local": {
       "defaultEnabled": false,

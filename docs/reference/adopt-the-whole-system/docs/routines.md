@@ -105,8 +105,8 @@ It appends to the changelog files on `persistent/vendor-changelog` (merged
 by `vendor-changelog-merge.yml`), files `agent-ready` issues, and fires the
 sweep when a release changes what the audit measures. The spec's issue
 steps use the `vendor-release-impact-issues` skill, which the kit does not
-ship (the content starts blank); until you add one, the routine files the
-issues by the spec's own steps.
+ship (it ships one skill, `workflow-path-audit`, DECISIONS X9); until you
+add it, the routine files the issues by the spec's own steps.
 
 ## Memory curation
 

@@ -100,21 +100,25 @@ edits:
       .pytest_cache/, node_modules/, .DS_Store); the lines already present
       are not repeated.
 
-# DECISIONS X9: the content starts blank (see the patch's docstring).
+# DECISIONS X9: the content starts with one real item of each kind and a
+# template (see the patch's docstring).
 patches:
   - file: blank_content.py
     why: >-
-      X9. base.md and sections carry no guidance rule, eval-coverage.yml,
-      guidance-impact.md and the lessons ledger keep headers only, and the
-      agent-checks runner ships none of its checks.
+      X9. base.md keeps one real section (git push) and a commented template,
+      the sections carry no rule, eval-coverage.yml keeps the real section's
+      row, guidance-impact.md and the lessons ledger keep headers only, and
+      the agent-checks runner ships one check (skill-shell) and a commented
+      example.
   - file: kit_repos.py
     why: >-
       C11. repos.yml (sync delivery, the registry partition, cron coverage)
       names only the kit's repos.
   - file: machinery_tests.py
     why: >-
-      X9. The tests that asserted on that content move to test-only fixtures
-      or, where they only locked it, are removed (listed in DECISIONS.md X9).
+      X9. The tests that asserted on the removed content move to test-only
+      fixtures or, where they only locked it, are removed; the skill-shell
+      cases are kept (listed in DECISIONS.md X9).
   - file: routine_specs.py
     why: >-
       C11 and C7. The guidance-centralization audit's stored prompt and spec

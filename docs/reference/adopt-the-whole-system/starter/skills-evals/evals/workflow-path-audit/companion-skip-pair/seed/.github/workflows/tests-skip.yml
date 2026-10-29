@@ -1,0 +1,24 @@
+name: Tests (skipped)
+
+# A pull request that changes nothing tests.yml watches never starts it, and
+# the required `unit-tests` check would then be missing. This workflow covers
+# exactly those pull requests and reports the check as passed.
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "src/**"
+      - "test/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No test-relevant changes; nothing to run."

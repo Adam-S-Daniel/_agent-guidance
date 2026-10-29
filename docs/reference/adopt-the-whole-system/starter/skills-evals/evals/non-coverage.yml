@@ -32,5 +32,5 @@
 # that acts on a real Fastmail account with a real API token.
 #
 # The kit ships this list empty (DECISIONS X9): the rows the source repo
-# carried named fixtures and skills an adopter does not have. Add your own.
+# carried named skills an adopter does not have. Add your own.
 skips: []

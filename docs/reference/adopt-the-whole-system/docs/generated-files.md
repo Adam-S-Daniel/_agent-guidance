@@ -57,8 +57,9 @@ lists the two registries under one heading.)
    a clone of your registry (`--repo`), keeping each lock's bundles. Merge
    the four pull requests.
 
-Until your registry has skills, every lock names none. From then on the
-nightly `skills-lock-bump.yml` in `_agent-guidance` keeps the consumers
+Your registry starts with one skill, `workflow-path-audit`, so each lock
+names it (the exported consumer locks name the source registry's longer
+list until this step replaces them). From then on the nightly `skills-lock-bump.yml` in `_agent-guidance` keeps the consumers
 current.
 
 ## The skills-bootstrap hook pin
@@ -120,9 +121,9 @@ consumers the same way later.
 
 `skills-evals`' `.github/workflows/eval.yml` takes a `fixture` input whose
 default, `evals/workflow-path-audit/required-check-routing`, is a fixture
-the kit does not ship (the content starts blank). A dispatch that keeps the
-default is refused by the workflow's own validation. Change the default to
-a fixture you have, or add that fixture, in a pull request.
+the kit ships (the one real skill's, DECISIONS X9), so a dispatch that keeps
+the default runs. Keep it, or change the default to a fixture of your own in
+a pull request, and mark the step done.
 
 ## Filled in by copy-starter.sh
 
