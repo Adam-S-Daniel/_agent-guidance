@@ -1,0 +1,9 @@
+[
+ {
+  "id": "trig_example_reminder",
+  "name": "Restore the weekly cap",
+  "run_once_at": "2026-01-12T17:05:00Z",
+  "enabled": true,
+  "hearth_channel_id": "chan_example"
+ }
+]

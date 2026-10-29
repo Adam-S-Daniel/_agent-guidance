@@ -1,79 +1,80 @@
-# Section manifest for the fleet guidance: one row per `##` heading in
+# Section manifest for the fleet guidance — one row per `##` heading in
 # agents-md/base.md and one per file under agents-md/sections/ (each of those
-# is a single `##`). `###` subsections are never rows of their own.
+# is a single `##`). `### ` subsections are never rows of their own; their
+# parent heading's fixture is expected to cover them too.
 #
-# `id` is the stable key (kebab-case, assigned once, never renamed when the
-# heading text changes). `heading` is the exact current heading text without
-# the leading "## "; a CI step compares it with the real file, so a reworded
-# heading that forgets this row fails as a stale row.
+# This file is the join between two things that otherwise have no shared key:
+# a heading in base.md, which gets reworded on its own schedule (#116 did it
+# the week this file was added), and an eval fixture in skills-evals, which is
+# named by path. `id` is that shared key — kebab-case, assigned once, and
+# NEVER renamed when the heading text changes. `heading` is the volatile half:
+# the exact current heading text (no leading "## "), checked byte-for-byte by
+# scripts/check-guidance-coverage.js against the real file on every CI run. A
+# heading edit that forgets to update the matching row's `heading` here is
+# reported as a stale row, not a missing one, with the nearest current heading
+# offered as the likely rename target.
 #
 # status:
-#   gap      tracked, no fixture yet.
-#   covered  `fixture` (a path under skills-evals, such as
-#            evals/guidance/<id>/<fixture>/) names the eval that exercises it.
-#   skipped  deliberately not covered; `reason` and `since` are required.
+#   gap      — tracked, no fixture yet.
+#   covered  — `fixture` (a path under skills-evals, e.g.
+#              evals/guidance/<id>/) names the eval that exercises it.
+#   skipped  — deliberately not covered; `reason` and `since` are required.
 #
-# `bytes` is the section's byte extent, from its heading through the line
-# before the next `##` heading (or end of file). It is the per-session context
-# cost the evals weigh against a section's benefit. Regenerate it whenever a
-# section's body changes.
+# `bytes` is generated — the section's byte extent from its heading through
+# the line before the next `##` heading (or end of file). Regenerate with
+# `node scripts/check-guidance-coverage.js --write-bytes`; CI runs
+# `--check-bytes` so a stale value fails the build. It is the per-session
+# context cost the eval harness's ablation arm and the retirement gate weigh,
+# and this repo is the one that knows each section's extent.
 #
-# Every row starts `skipped`: the starter kit ships no guidance fixtures.
-# Replace a row's status with `covered` and a `fixture` once you write one
-# (adoption guide, phase 8).
+# Do not put these ids into base.md itself — an HTML comment there would be
+# delivered into every session by the fleet-memory hook and cost tokens
+# forever. This manifest is the only place they live.
 
-- id: working-in-these-repos
-  heading: 'Working in these repos'
+- id: fleet-rules
+  heading: Fleet rules
   file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 568
+  status: gap
+  bytes: 226
 
-- id: anything-you-name-gets-its-link
-  heading: 'Anything you name gets its link'
-  file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 395
+- id: section-docker
+  heading: Docker
+  file: agents-md/sections/docker.md
+  status: gap
+  bytes: 127
 
-- id: push-is-not-a-commit
-  heading: 'A successful `git push` does not mean your commit exists'
-  file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 511
+- id: section-dotnet
+  heading: .NET / C#
+  file: agents-md/sections/dotnet.md
+  status: gap
+  bytes: 130
 
-- id: watch-finished-is-not-ci-passed
-  heading: '"The watch finished" is not "CI passed"'
-  file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 319
+- id: section-go
+  heading: Go
+  file: agents-md/sections/go.md
+  status: gap
+  bytes: 123
 
-- id: branch-protection-and-merges
-  heading: 'Branch protection and merges'
-  file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 263
+- id: section-javascript
+  heading: JavaScript
+  file: agents-md/sections/javascript.md
+  status: gap
+  bytes: 131
 
-- id: security-and-data-exposure-in-ci
-  heading: 'Security and data exposure in CI'
-  file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 575
+- id: section-python
+  heading: Python
+  file: agents-md/sections/python.md
+  status: gap
+  bytes: 127
 
-- id: your-lessons
-  heading: '<Your lessons>'
-  file: agents-md/base.md
-  status: skipped
-  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
-  since: 2026-10-28
-  bytes: 316
+- id: section-rust
+  heading: Rust
+  file: agents-md/sections/rust.md
+  status: gap
+  bytes: 125
+
+- id: section-typescript
+  heading: TypeScript
+  file: agents-md/sections/typescript.md
+  status: gap
+  bytes: 131

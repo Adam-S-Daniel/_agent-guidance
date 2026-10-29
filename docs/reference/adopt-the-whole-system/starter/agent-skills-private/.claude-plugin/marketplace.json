@@ -1,0 +1,14 @@
+{
+  "name": "agentskills-private",
+  "owner": { "name": "<your name>" },
+  "description": "Private agent skills: content that is personal or sensitive. Public counterpart: example-adopter/agentskills.",
+  "plugins": [
+    {
+      "name": "private-anything-anywhere",
+      "source": "./plugins/private-anything-anywhere",
+      "description": "Private skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",
+      "category": "claude-code",
+      "defaultEnabled": true
+    }
+  ]
+}

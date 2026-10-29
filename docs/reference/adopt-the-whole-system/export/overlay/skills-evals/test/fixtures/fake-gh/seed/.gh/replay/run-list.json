@@ -1,0 +1,11 @@
+[
+  {
+    "databaseId": 4471182930,
+    "workflowName": "Publish loop",
+    "headBranch": "main",
+    "event": "workflow_dispatch",
+    "status": "completed",
+    "conclusion": "failure",
+    "createdAt": "2026-09-02T05:41:02Z"
+  }
+]

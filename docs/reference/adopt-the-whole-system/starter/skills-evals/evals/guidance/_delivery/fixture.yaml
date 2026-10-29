@@ -1,0 +1,108 @@
+# Eval fixture: guidance/_delivery — the fleet-memory DELIVERY canary.
+#
+# Not a behavioral A/B. This fixture asks one question, on a schedule: does the
+# fleet's guidance actually REACH an agent's context the way fleet-memory.sh
+# says it does, in each of the five delivery modes? It is the scheduled probe
+# of the user-memory path that _agent-guidance#17 item 3 asked for and that
+# the guidance-bridge canary no longer covers: since the fleet-memory change
+# (measured 2026-08-29) the payload no longer travels through the
+# `CLAUDE.md -> @AGENTS.md` bridge — it is written into ~/.claude/CLAUDE.md by
+# the hook, whose only signal was its own verdict line. Keep the bridge canary
+# for the repo-stub path; this one covers user memory.
+#
+# Every treatment arm carries the run's magic word (a fresh token per run,
+# never reproducible from an earlier one). The CONTROL arm carries a DECOY: a
+# second fresh token, delivered to it and to nothing else, through the same
+# hook. That makes the control's checks two-sided — it must report its decoy
+# (so it did read its own scratch user memory) and must not report the
+# treatment token (so nothing else delivered the guidance to it). A control
+# arm that carried nothing could only ever answer "no magic word", which is
+# also what a CONTAMINATED arm answers, so its guard proved nothing at all.
+#
+# TWO LOOKS PER ARM, deliberately. The harness's per-arm delivery guard is the
+# authoritative one: tool-free, with the canary's disallowed-tools list, so the
+# model cannot forage the token off disk. The `transcript_matches` check below
+# is the second look, through the ordinary agent invocation, and it is what
+# makes the delivery visible in the badge/report rather than only in the guard
+# block.
+
+subject: guidance
+
+# The section only has to exist and be small: this fixture measures DELIVERY,
+# not what any section teaches. `security` is the smallest `##` in base.md
+# (493 bytes), which keeps the `section` arm's payload — and this canary's
+# weekly cost — down. The id is a row in _agent-guidance's
+# agents-md/eval-coverage.yml and never changes when the heading is reworded.
+section: security
+
+# The cheapest model that can answer a tool-free probe: the roster's current
+# haiku, matching its `preflight` entry (evals/roster.yml). It is both the
+# agent model for these arms and, because a guidance arm's guard runs on
+# `--model` or else the fixture's own pin (harness/run_eval.py), the model the
+# delivery guard runs on. Move it when the roster's preflight model moves.
+model: claude-haiku-5-5
+model_pin_reason: >-
+  the cheapest model that can answer a tool-free probe, kept equal to the
+  roster's preflight id (see the comment above)
+
+# Both legs of every arm are a single tool-free question, so the budget is
+# small on purpose: five arms x (guard probe + agent call) has to fit inside
+# eval.yml's 45-minute job timeout with room to spare.
+timeout_s: 120
+guard:
+  timeout_s: 120
+
+# The canary prompt: no task, just "is it in your context".
+prompt: >
+  If your context contains any magic words, reply with every one of them and
+  nothing else. If it contains none, reply with exactly NO-MAGIC-WORD. Do not
+  use any tools.
+
+# One arm per delivery mode. `$MAGIC_TOKEN` is the harness's placeholder for
+# the run's fresh token — a fixture cannot name a token that does not exist
+# until the run starts.
+arms:
+  without_guidance:
+    mode: none
+    objective_checks:
+      - id: decoy-visible-and-treatment-absent-under-none
+        description: >
+          Two-sided. The control's own decoy token must be in its context —
+          it was delivered that and nothing else, so its absence means this
+          arm never read its own scratch user memory and nothing measured on
+          it means anything. The treatment token must NOT be: if it is, some
+          other channel delivered the guidance to this arm and every
+          without-arm number in the fleet is suspect.
+        type: transcript_matches
+        must_match: ["$DECOY_TOKEN"]
+        must_not_match: ["$MAGIC_TOKEN"]
+  with_guidance_stub:
+    mode: stub
+    objective_checks:
+      - id: token-visible-under-stub
+        description: The repo stub reached the agent's context.
+        type: transcript_matches
+        must_match: ["$MAGIC_TOKEN"]
+  with_guidance_section:
+    mode: section
+    objective_checks:
+      - id: token-visible-under-section
+        description: One section, plus its file's intro, reached the context.
+        type: transcript_matches
+        must_match: ["$MAGIC_TOKEN"]
+  with_guidance_full:
+    mode: full
+    objective_checks:
+      - id: token-visible-under-full
+        description: >
+          The whole 56 KB corpus reached the context — the arm most likely to
+          break first if a delivery or context limit changes.
+        type: transcript_matches
+        must_match: ["$MAGIC_TOKEN"]
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+    objective_checks:
+      - id: token-visible-under-full-minus-section
+        description: The ablation payload reached the context.
+        type: transcript_matches
+        must_match: ["$MAGIC_TOKEN"]

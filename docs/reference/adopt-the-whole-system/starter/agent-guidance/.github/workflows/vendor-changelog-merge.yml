@@ -1,0 +1,160 @@
+# Merges the agent changelog watcher's PR (persistent/vendor-changelog -> main)
+# when scripts/routine-merge-gate.js passes, so the owner no longer merges it by
+# hand (docs/reference/agent-changelog-routine.md, step 7). The routine's own
+# session cannot merge: its permission classifier denied the call on
+# 2026-10-01 and 2026-10-02 (repo-settings ADR 0006). The routine still never
+# merges; this workflow does, with the job's GITHUB_TOKEN and no new credential.
+#
+# Trigger: `workflow_run`, which always runs the DEFAULT branch's copy of this
+# file and of the gate script, so nothing from the PR branch is executed. It
+# fires when either check the gate reads finishes ("CI" provides `test`;
+# agent-checks is the other required check). The first completion usually finds
+# the other still running; the gate refuses on a pending check, this job exits
+# 0, and the other workflow's completion retries. Two events for one head sha
+# are therefore normal, which is why there is no cancelling concurrency group:
+# `--match-head-commit` makes a second merge attempt a clean refusal.
+# `workflow_dispatch` retries by hand for a PR number.
+name: Vendor changelog merge
+
+on:
+  workflow_run:
+    workflows: ["CI", "agent-checks"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to run the merge gate on"
+        required: true
+        type: string
+
+permissions: {}
+
+# Queued, never cancelled: every run does the same job from fresh API reads.
+concurrency:
+  group: vendor-changelog-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The branch name and same-repo head are checked here and again in the
+    # script (a dispatched PR number is checked there against the PR's head).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_branch == 'persistent/vendor-changelog' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    permissions:
+      contents: write       # the merge itself
+      pull-requests: write  # the merge itself
+      actions: write        # dispatch vendor-discrepancy-alert.yml after a merge
+    steps:
+      # The default branch, never the PR's: the gate must be main's copy.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      # The gate parses the PR body with markdown-it, installed by `npm ci`
+      # exactly as ci.yml does.
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - name: Run the merge gate and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          DISPATCH_PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          branch=persistent/vendor-changelog
+          docs="$RUNNER_TEMP/gate"
+          mkdir -p "$docs"
+
+          # Status line only on an HTTP error, never the response body.
+          api() {
+            gh api -H "Accept: application/vnd.github+json" "$@" 2>/dev/null
+          }
+
+          if [ -n "$DISPATCH_PR" ]; then
+            case "$DISPATCH_PR" in
+              *[!0-9]*|'') echo "::error::pr input must be digits"; exit 1 ;;
+            esac
+            pr="$DISPATCH_PR"
+          else
+            list=$(api "repos/$REPO/pulls?state=open&base=main&head=$OWNER:$branch&per_page=100") || list=""
+            if [ -z "$list" ]; then
+              echo "::error::could not list pull requests"; exit 1
+            fi
+            pr=$(jq -r 'first(.[] | select(.head.ref == "'"$branch"'" and .base.ref == "main") | .number) // empty' <<<"$list")
+            if [ -z "$pr" ]; then
+              echo "::notice::no open pull request from $branch to main"
+              exit 0
+            fi
+          fi
+
+          api "repos/$REPO/pulls/$pr" > "$docs/pr.json" || { echo "::error::could not read PR #$pr"; exit 1; }
+          if [ "$(jq -r '.head.ref' "$docs/pr.json")" != "$branch" ]; then
+            echo "::error::PR #$pr does not come from $branch"; exit 1
+          fi
+          head_sha=$(jq -r '.head.sha' "$docs/pr.json")
+          case "$head_sha" in
+            *[!0-9a-f]*|'') echo "::error::unexpected head sha"; exit 1 ;;
+          esac
+
+          api "repos/$REPO/pulls/$pr/files?per_page=100" > "$docs/files.json" \
+            || { echo "::error::could not read PR #$pr files"; exit 1; }
+          api "repos/$REPO/commits/$head_sha/check-runs?per_page=100" > "$docs/check-runs.json" \
+            || { echo "::error::could not read check runs"; exit 1; }
+          api "repos/$REPO/commits/$head_sha/status" > "$docs/status.json" \
+            || { echo "::error::could not read commit statuses"; exit 1; }
+
+          # The same arguments the routine passes (step 7, sub-step 3). Exit 0
+          # merges, 2 is a refusal, 1 is bad input; read the code directly.
+          rc=0
+          node scripts/routine-merge-gate.js \
+            --pr "$docs/pr.json" --files "$docs/files.json" \
+            --check-runs "$docs/check-runs.json" --status "$docs/status.json" \
+            --issue-map docs/reference/agent-changelog-issue-map.txt \
+            > "$docs/gate.json" || rc=$?
+          if [ "$rc" -eq 2 ]; then
+            # Mostly the gate's fixed strings; a few name a file, check or
+            # status from the PR, so newlines are folded and every line gets a
+            # prefix that keeps it from being read as a workflow command.
+            echo "Merge gate refused PR #$pr at $head_sha:"
+            jq -r '.reasons[] | gsub("[\r\n]"; " ") | "  - " + .' "$docs/gate.json"
+            echo "::notice::gate refused; a later completion of CI or agent-checks retries"
+            exit 0
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::merge gate failed with exit $rc (bad input)"
+            exit 1
+          fi
+
+          sha=$(jq -r '.head_sha' "$docs/gate.json")
+          gh pr merge "$pr" --repo "$REPO" --merge --match-head-commit "$sha"
+
+          merged=$(api "repos/$REPO/pulls/$pr" --jq '.merged') || merged=""
+          if [ "$merged" != "true" ]; then
+            echo "::error::PR #$pr is not merged after the merge call"
+            exit 1
+          fi
+          echo "Merged PR #$pr at $sha"
+
+          # A merge made with GITHUB_TOKEN fires no `push` workflow, and
+          # vendor-discrepancy-alert.yml keys on a push to main touching these
+          # paths. `workflow_dispatch` is the one event GITHUB_TOKEN may start.
+          # Of the other workflows with `push: branches: [main]`, sync.yml
+          # filters on fleet-sync inputs, none of which the gate's allowlist
+          # (changelogs, discrepancies, run log, issue map) can touch, and
+          # ci.yml is post-merge verification only: the PR's own CI already
+          # ran on this content, so a skipped push run loses nothing.
+          # The alert diffs HEAD~1..HEAD on a dispatch, so it reads the merge
+          # commit's first-parent diff as long as main has not moved since.
+          if jq -e 'any(.[]; .filename | test("^docs/reference/agent-[^/]*\\.DISCREPANCIES\\.md$") or startswith("docs/reference/vendor-issue-drafts/"))' "$docs/files.json" >/dev/null; then
+            gh workflow run vendor-discrepancy-alert.yml --repo "$REPO" --ref main -f dry_run=false
+            echo "Dispatched vendor-discrepancy-alert.yml"
+          fi

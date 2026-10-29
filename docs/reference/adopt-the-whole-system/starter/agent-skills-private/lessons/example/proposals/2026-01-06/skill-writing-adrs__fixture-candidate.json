@@ -1,0 +1,17 @@
+{
+ "evidence_count": 2,
+ "examples": [
+  "2026-01-05 example-repo [correction] No, the ADR needs a Consequences section, not just a Decision.",
+  "2026-01-06 example-docs [interrupted] Stop, number it after the last ADR, not 0001."
+ ],
+ "first_seen": "2026-01-05",
+ "id": "44c613033eaf",
+ "kind": "fixture-candidate",
+ "last_seen": "2026-01-06",
+ "repos": [
+  "example-docs",
+  "example-repo"
+ ],
+ "schema_version": 1,
+ "subject": "skill:writing-adrs"
+}

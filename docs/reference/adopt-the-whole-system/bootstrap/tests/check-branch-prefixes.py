@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""check-branch-prefixes.py: the loop's branch names agree across the kit.
+"""check-branch-prefixes.py: the eval loop's branch lanes agree across the
+exported skills-evals and the kit's docs.
 
-  * Every `claude/eval-<lane>-` a routine doc names (skills-evals docs/ and
-    agent-guidance docs/routines/) is a branch some skills-evals workflow
-    listens on (on.push.branches), and no doc names `claude/eval-<run id>`
-    without its lane.
-  * The pull request branches the loop opens (open_loop_pr.sh's --branch
-    rule, plus the improve gate's eval-improve/) are exactly what the two
-    disarm workflows cover: agent-skills' loop-disarm.yml and skills-evals'
-    scaffold-disarm.yml.
-  * dashboard-refresh.md lists exactly the branch prefixes the gates count
-    as open loop pull requests (routine-improve-gate.yml and open_loop_pr.sh
-    agree on that set), and no doc says draft-skill/ for the draft lane.
+The eval runner routine pushes its results to claude/<lane>-<run> branches,
+and one no-permission "pushed" workflow per lane listens for them
+(on.push.branches) and hands off to its gate. So:
+
+  * the lanes are the claude/ branch patterns of skills-evals' workflows,
+    and there are the five the system has: results (claude/eval-*),
+    improve, guidance improve, scaffold and draft-skill;
+  * every claude/<lane>- branch the routine prompt (docs/routine-prompt.md)
+    or another skills-evals doc names matches a lane, and every lane is
+    named by the routine prompt (no workflow listens for a branch nothing
+    pushes);
+  * where one branch name matches two lanes (claude/eval-improve-<run> also
+    matches claude/eval-*), every lane it matches has a paths filter, and the
+    filters share no directory, so exactly one lane's workflow fires;
+  * the kit's docs/evals-and-loop.md names every lane pattern.
 
 Workflow structure is parsed with PyYAML; branch names are lexical tokens.
 Prints "N assertions passed" and exits 1 on any failure.
 """
+import fnmatch
 import re
 import sys
 from pathlib import Path
@@ -24,8 +30,6 @@ import yaml
 
 KIT = Path(__file__).resolve().parent.parent.parent
 SE = KIT / "starter" / "skills-evals"
-AG = KIT / "starter" / "agent-guidance"
-AS = KIT / "starter" / "agent-skills"
 passed = failed = 0
 
 
@@ -38,62 +42,47 @@ def check(desc, ok):
         print(f"FAIL: {desc}")
 
 
-def load(path):
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    doc["on"] = doc.pop(True, doc.get("on"))
-    return doc
-
-
-pushed = set()
+lanes = {}   # pattern -> (workflow name, set of top-level path dirs or None)
 for path in sorted((SE / ".github" / "workflows").glob("*.yml")):
-    push = load(path)["on"].get("push") if isinstance(load(path)["on"], dict) else None
-    for b in (push or {}).get("branches", []):
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    on = doc.get(True, doc.get("on"))
+    push = on.get("push") if isinstance(on, dict) else None
+    if not isinstance(push, dict):
+        continue
+    for b in push.get("branches") or []:
         if b.startswith("claude/"):
-            pushed.add(b[:-1])                       # claude/eval-<lane>-*  ->  claude/eval-<lane>-
-check("skills-evals listens on four routine lanes", pushed == {
-    "claude/eval-results-", "claude/eval-improve-", "claude/eval-scaffold-", "claude/eval-draft-"})
+            paths = push.get("paths")
+            lanes[b] = (path.name, {p.split("/")[0] for p in paths} if paths else None)
+check(f"skills-evals listens on the five routine lanes ({sorted(lanes)})", set(lanes) == {
+    "claude/eval-*", "claude/eval-improve-*", "claude/eval-guidance-improve-*",
+    "claude/scaffold-*", "claude/draft-skill-*"})
 
-docs = sorted((SE / "docs").glob("*.md")) + sorted((AG / "docs" / "routines").glob("*"))
-for doc in docs:
-    text = doc.read_text(encoding="utf-8")
+BRANCH = re.compile(r"claude/[a-z][a-z-]*-")
+prompt = (SE / "docs" / "routine-prompt.md").read_text(encoding="utf-8")
+named_in_prompt = set(BRANCH.findall(prompt))
+check("the routine prompt names its branches", bool(named_in_prompt))
+for doc in sorted((SE / "docs").glob("*.md")):
     rel = doc.relative_to(KIT)
-    named = set(re.findall(r"claude/eval-[a-z]+-", text))
-    check(f"{rel}: names only branches a workflow listens on ({sorted(named - pushed)})", named <= pushed)
-    check(f"{rel}: no branch without its lane", not re.search(r"claude/eval-(?![a-z]+-)", text))
-    check(f"{rel}: the draft lane's branches are eval-draft/, not draft-skill/", "draft-skill/" not in text)
+    for token in sorted(set(BRANCH.findall(doc.read_text(encoding="utf-8")))):
+        sample = token + "run"
+        hits = [p for p in lanes if fnmatch.fnmatchcase(sample, p)]
+        check(f"{rel}: {token}<run> is a branch some lane listens on", bool(hits))
+        if len(hits) > 1:
+            dirs = [lanes[p][1] for p in hits]
+            check(f"{rel}: {token}<run> matches {sorted(hits)}, and each has a paths filter", all(d for d in dirs))
+            if all(dirs):
+                seen = set()
+                for d in dirs:
+                    check(f"{rel}: the lanes {token}<run> matches write disjoint directories ({sorted(seen & d)})",
+                          not (seen & d))
+                    seen |= d
+for pattern in sorted(lanes):
+    check(f"the routine prompt pushes to {pattern} ({lanes[pattern][0]} listens)",
+          any(fnmatch.fnmatchcase(t + "run", pattern) for t in named_in_prompt))
 
-
-def open_prefixes(text):
-    m = re.search(r'test\("\^\(([a-z|-]+)\)/"\)', text)
-    return {p + "/" for p in m.group(1).split("|")} if m else set()
-
-
-gate = (SE / ".github" / "workflows" / "routine-improve-gate.yml").read_text()
-opener = (SE / "scripts" / "open_loop_pr.sh").read_text()
-counted = open_prefixes(gate)
-check("the improve gate counts some loop branches", bool(counted))
-check("open_loop_pr.sh counts the same open loop branches as the improve gate", open_prefixes(opener) == counted)
-m = re.search(r"\^\(([a-z|-]+)\)/\[A-Za-z0-9", opener)
-opened = {p + "/" for p in m.group(1).split("|")} if m else set()
-opened.add("eval-improve/")                          # the improve gate opens these itself
-
-
-def disarmed(path):
-    cond = load(path)["jobs"]["disarm"]["if"]
-    return set(re.findall(r"head\.ref, '([a-z-]+/)'\)", cond))
-
-
-covered = disarmed(AS / ".github" / "workflows" / "loop-disarm.yml") | \
-    disarmed(SE / ".github" / "workflows" / "scaffold-disarm.yml")
-check(f"every branch a gate opens is disarmed on a later push (opened {sorted(opened)}, covered {sorted(covered)})",
-      opened == covered)
-check("every lane the loop opens is counted as an open loop pull request", opened <= counted)
-
-dash = (AG / "docs" / "routines" / "dashboard-refresh.md").read_text()
-m = re.search(r"branch names (.*?)\)", dash, re.S)
-listed = set(re.findall(r"`([a-z-]+/)`", m.group(1))) if m else set()
-check(f"dashboard-refresh.md lists the counted loop branches (listed {sorted(listed)}, counted {sorted(counted)})",
-      listed == counted)
+loop_doc = (KIT / "docs" / "evals-and-loop.md").read_text(encoding="utf-8")
+for pattern in sorted(lanes):
+    check(f"docs/evals-and-loop.md names the lane `{pattern}`", f"`{pattern}`" in loop_doc)
 
 print(f"{passed} assertions passed, {failed} failed")
 sys.exit(1 if failed else 0)

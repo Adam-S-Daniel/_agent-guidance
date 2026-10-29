@@ -19557,6 +19557,124 @@ test_check_ci_shards() {
     fi
 }
 
+# ── The adoption kit's step in ci.yml's checks job ─────────────────────────
+#
+# docs/reference/adopt-the-whole-system/ has its own tests (a leak scan over
+# every kit file, including the owner's private denylist read from the
+# PRIVACY_DENYLIST secret) and `export.py --check`; before this step nothing
+# ran either. Pinned here: the step exists in `checks` (so the required
+# `test` context covers it), it is gated by the kit-changed detection step,
+# the secret reaches it through `env:` only, a missing secret fails it, and
+# the detection step's verdict on real git ranges. Structural reads go
+# through the yaml package, never a line scan.
+test_ci_adoption_kit_step() {
+    echo ""
+    echo "=== Test: ci.yml runs the adoption kit's tests when the kit changes ==="
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "adoption kit step: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+    local wf="$REPO_ROOT/.github/workflows/ci.yml" dir="$TEST_DIR/kit-step"
+    mkdir -p "$dir"
+    local facts="$dir/facts.txt"
+    if ! node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const steps = (doc.jobs && doc.jobs.checks && doc.jobs.checks.steps) || [];
+const detect = steps.find((s) => s.id === "kit");
+const check = steps.find((s) => typeof s.run === "string" && s.run.includes("export/export.py\" --check"));
+const py = steps.find((s) => typeof s.uses === "string" && s.uses.startsWith("actions/setup-python@"));
+const out = [];
+out.push("detect " + (detect ? "found" : "missing"));
+out.push("detect-if " + (detect && detect.if !== undefined ? String(detect.if) : "-"));
+out.push("check " + (check ? "found" : "missing"));
+out.push("check-if " + (check && check.if !== undefined ? String(check.if) : "-"));
+out.push("python-if " + (py && py.if !== undefined ? String(py.if) : "-"));
+out.push("order " + (detect && py && check && steps.indexOf(detect) < steps.indexOf(py) && steps.indexOf(py) < steps.indexOf(check) ? "ok" : "bad"));
+out.push("denylist-env " + ((check && check.env && check.env.PRIVACY_DENYLIST) || "-"));
+out.push("interpolates " + (check && /\$\{\{/.test(check.run) ? "yes" : "no") + " " + (detect && /\$\{\{/.test(detect.run) ? "yes" : "no"));
+out.push("runs-tests " + (check && check.run.includes("pytest \"$kit/export/tests\"") ? "yes" : "no"));
+fs.writeFileSync(process.argv[3] + "/detect.sh", detect ? detect.run : "exit 99\n");
+fs.writeFileSync(process.argv[3] + "/check.sh", check ? check.run : "exit 99\n");
+console.log(out.join("\n"));
+' "$REPO_ROOT" "$wf" "$dir" > "$facts" 2>&1; then
+        fail "adoption kit step: could not read ci.yml — $(tr '\n' ' ' < "$facts")"
+        return
+    fi
+    local want
+    for want in "detect found" "detect-if -" "check found" "check-if steps.kit.outputs.run == 'true'" \
+            "python-if steps.kit.outputs.run == 'true'" "order ok" \
+            'denylist-env ${{ secrets.PRIVACY_DENYLIST }}' "interpolates no no" "runs-tests yes"; do
+        if grep -qxF -- "$want" "$facts"; then
+            pass "adoption kit step: $want"
+        else
+            fail "adoption kit step: expected '$want' — got: $(tr '\n' ' ' < "$facts")"
+        fi
+    done
+
+    # The detection step's verdict, on a scratch repository and event files.
+    local repo="$dir/repo" ev="$dir/event.json" out="$dir/out" verdict
+    git init -q "$repo"
+    git -C "$repo" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
+    local base head
+    base=$(git -C "$repo" rev-parse HEAD)
+    kit_verdict() {  # kit_verdict <event name> → the step's run= value
+        : > "$out"
+        (cd "$repo" && GITHUB_EVENT_NAME="$1" GITHUB_EVENT_PATH="$ev" GITHUB_OUTPUT="$out" bash -e "$dir/detect.sh" >/dev/null 2>&1) || { echo "error"; return; }
+        sed -n 's/^run=//p' "$out"
+    }
+    commit_touching() {  # commit_touching <path> → the new head sha
+        mkdir -p "$repo/$(dirname "$1")"; echo x >> "$repo/$1"
+        git -C "$repo" add -A >/dev/null && git -C "$repo" -c user.name=t -c user.email=t@example.com commit -q -m "touch $1"
+        git -C "$repo" rev-parse HEAD
+    }
+    local path expect
+    for path in "docs/reference/adopt-the-whole-system/README.md:true" "README.md:false" ".gitignore:true" \
+            ".github/workflows/ci.yml:true" "docs/reference/other.md:false"; do
+        expect=${path##*:}; path=${path%:*}
+        git -C "$repo" checkout -q "$base" 2>/dev/null
+        head=$(commit_touching "$path")
+        printf '{"pull_request":{"base":{"sha":"%s"},"head":{"sha":"%s"}}}' "$base" "$head" > "$ev"
+        verdict=$(kit_verdict pull_request)
+        if [[ "$verdict" == "$expect" ]]; then
+            pass "adoption kit step: a pull request touching $path → run=$expect"
+        else
+            fail "adoption kit step: a pull request touching $path should give run=$expect, got '$verdict'"
+        fi
+    done
+    printf '{"before":"%s","after":"%s"}' "0000000000000000000000000000000000000000" "$head" > "$ev"
+    verdict=$(kit_verdict push)
+    if [[ "$verdict" == true ]]; then pass "adoption kit step: a push with no before sha runs the checks"
+    else fail "adoption kit step: a push with no before sha should run the checks, got '$verdict'"; fi
+    echo '{}' > "$ev"
+    verdict=$(kit_verdict workflow_dispatch)
+    if [[ "$verdict" == true ]]; then pass "adoption kit step: a dispatch runs the checks"
+    else fail "adoption kit step: a dispatch should run the checks, got '$verdict'"; fi
+
+    # A missing or blank secret fails closed before anything runs.
+    local stub="$dir/stub" called="$dir/python-called" rc secret
+    mkdir -p "$stub"
+    printf '#!/usr/bin/env bash\necho called >> "%s"\n' "$called" > "$stub/python3"; chmod +x "$stub/python3"
+    for secret in "" " "; do
+        rm -f "$called"; rc=0
+        PRIVACY_DENYLIST="$secret" PATH="$stub:$PATH" bash -e "$dir/check.sh" > "$dir/check.out" 2>&1 || rc=$?
+        if [[ "$rc" -ne 0 && ! -e "$called" ]] && grep -qF -- "PRIVACY_DENYLIST repository secret is unset or empty" "$dir/check.out"; then
+            pass "adoption kit step: a blank PRIVACY_DENYLIST ('$secret') fails closed before any test runs"
+        else
+            fail "adoption kit step: a blank PRIVACY_DENYLIST ('$secret') should fail before python runs — exit $rc, python $( [[ -e "$called" ]] && echo ran || echo 'did not run')"
+        fi
+    done
+    rm -f "$called"; rc=0
+    PRIVACY_DENYLIST="pattern" RUNNER_TEMP="$dir" GITHUB_WORKSPACE="$REPO_ROOT" SOURCE_OWNER=example-owner \
+        PATH="$stub:$PATH" bash -e "$dir/check.sh" > "$dir/check.out" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 && "$(wc -l < "$called" | tr -d ' ')" == 4 ]]; then
+        pass "adoption kit step: with the secret set it runs pip, the tests, the fetch and the check"
+    else
+        fail "adoption kit step: with the secret set it should call python four times — exit $rc, calls $(wc -l < "$called" 2>/dev/null)"
+    fi
+}
+
 # ── fleet-memory.sh ────────────────────────────────────────────────────────
 #
 # The hook that replaced the per-repo managed block with a single user-memory
@@ -23953,6 +24071,7 @@ GROUP_self_hosted=(
     test_fleet_guidance_mirror
     test_check_agent_markdown
     test_check_ci_shards
+    test_ci_adoption_kit_step
     test_self_hosted_gitattributes
 )
 

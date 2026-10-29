@@ -17,11 +17,12 @@
 # ${ADOPT_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/adopt-the-whole-system/<owner>.json}.
 # A path inside this kit or any git work tree is refused. It never prompts.
 #
-# Prints one line per step (done, next, todo, or "asked: done"), then
-# "N of M done" and the next step: title, time estimate, kind, what to run and
-# the guide section. Steps are sequential: the first step not done is next.
-# A step done earlier can turn not done when a later one changes what it
-# expects (an App ID in fleet.env changes the rulesets); rerun it.
+# Prints one line per step (done, next, todo, optional, or "asked: done"),
+# then "N of M done" and the next step: title, time estimate, kind, what to
+# run and the docs section that explains it. Steps are sequential: the first
+# step not done is next, except that an optional step never blocks the next
+# one. A step done earlier can turn not done when something changes under it
+# (a merged pull request that breaks a pin); rerun it.
 # Exit 0 whatever the progress; 1 only on its own errors. Never prints a
 # secret or variable value (verify.sh reads names only). Needs: gh, jq.
 
@@ -49,12 +50,12 @@ require_tools jq
 [ -f "$STEPS_FILE" ] || die "steps file not found: $STEPS_FILE"
 jq -e '.steps | type == "array" and length > 0' "$STEPS_FILE" >/dev/null 2>&1 || die "$STEPS_FILE: no steps list"
 IDS=()
-declare -A TITLE KIND RUN LINK MIN CTYPE CARG
-while IFS=$'\t' read -r id title kind run link minutes ctype carg; do
+declare -A TITLE KIND RUN LINK MIN CTYPE CARG OPT
+while IFS=$'\t' read -r id title kind run link minutes ctype opt carg; do
   [ -z "${TITLE[$id]+set}" ] || die "$STEPS_FILE: step id $id appears twice"
   case $ctype in config|verify|files|ask) ;; *) die "$STEPS_FILE: step $id has an unknown check type: $ctype" ;; esac
-  IDS+=("$id") TITLE[$id]=$title KIND[$id]=$kind RUN[$id]=$run LINK[$id]=$link MIN[$id]=$minutes CTYPE[$id]=$ctype CARG[$id]=$carg
-done < <(jq -r '.steps[] | [.id, .title, .kind, (.run | gsub("`"; "")), .link, (.minutes | tostring), .check.type,
+  IDS+=("$id") TITLE[$id]=$title KIND[$id]=$kind RUN[$id]=$run LINK[$id]=$link MIN[$id]=$minutes CTYPE[$id]=$ctype CARG[$id]=$carg OPT[$id]=$opt
+done < <(jq -r '.steps[] | [.id, .title, .kind, (.run | gsub("`"; "")), .link, (.minutes | tostring), .check.type, (if .optional then "yes" else "no" end),
   (if .check.type == "verify" then (.check.groups | join(","))
    elif .check.type == "files" then ([.check.files[] | .repo + ":" + .path] | join(" "))
    else "" end)] | @tsv' "$STEPS_FILE")
@@ -150,6 +151,8 @@ for id in "${IDS[@]}"; do
   if [ -n "${DONE[$id]:-}" ]; then
     N=$((N + 1))
     if [ "${CTYPE[$id]}" = ask ]; then label="asked: done"; else label=done; fi
+  elif [ "${OPT[$id]}" = yes ]; then
+    label=optional
   elif [ -z "$NEXT" ]; then
     NEXT=$id label=next
   else
@@ -159,12 +162,12 @@ for id in "${IDS[@]}"; do
 done
 printf '%d of %d done\n' "$N" "${#IDS[@]}"
 if [ -z "$NEXT" ]; then
-  log "Next: nothing; every step is done. bootstrap/verify.sh checks the whole setup."
+  log "Next: nothing; every required step is done. bootstrap/verify.sh checks the whole setup."
   exit 0
 fi
 log "Next: $NEXT ${TITLE[$NEXT]} (about ${MIN[$NEXT]} minutes, ${KIND[$NEXT]})"
 log "  Run: ${RUN[$NEXT]}"
-log "  Guide: ${LINK[$NEXT]}"
+log "  Read: ${LINK[$NEXT]}"
 if [ -n "${DETAIL[$NEXT]:-}" ]; then
   log "  Not done yet:"
   printf '%s\n' "${DETAIL[$NEXT]}" | sed 's/^/    /'

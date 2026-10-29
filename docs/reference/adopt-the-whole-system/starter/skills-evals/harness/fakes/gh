@@ -1,0 +1,1237 @@
+#!/usr/bin/env python3
+"""Offline gh: answer from a directory of recorded responses, never the network.
+
+Point GH_REPLAY_DIR at a directory of responses recorded from a real
+repository and this replays them, keyed by the NORMALIZED command line, so a
+session can be re-run on a machine with no network and no token. Three
+behaviours, and nothing else:
+
+  * READS are answered from GH_REPLAY_DIR, keyed by the normalized argv
+    (see payload_key), and classed read.
+  * WRITES -- pr merge, pr close, workflow run, api with a POST method, and
+    friends -- are refused with a real-shaped HTTP 403, the way a read-only
+    token is refused, and classed write. No remote state is changed.
+    An optional write-policy.json permits local label additions and recorded
+    workflow dispatch responses; once it grants any dispatch, an ungranted
+    one is refused with the permitted command lines instead of the 403,
+    which would blame the token. An optional timeline.json advances selected
+    reads by invocation count, with independent workspace-local counters.
+    The class records INTENT: a verb that would reach the network or write
+    the working tree (pr checkout, repo clone, run download) is refused
+    the same way, because what matters afterwards is what was reached for.
+  * An UNKNOWN read is answered with gh's own 404 and classed unknown,
+    never a Python traceback: whoever guesses an endpoint must see what gh
+    would have shown them, not this file's internals. The resolved key goes
+    to the log only, never to stderr.
+
+NOTHING A SHELL WOULD EXPAND MAY APPEAR IN THIS DOCSTRING -- no backticks,
+no dollar-paren, no dollar-brace -- and keep it that way. A shell handed
+this file runs it line by line, and a line inside a docstring is not a
+comment to a shell. Measured under bash before the quotes
+came out: sh bin/gh pr close 421 wrote FOUR records into the log -- three
+bare reads and one write, class=write key=- exit=1, from the api POST that
+used to sit inside the prose above -- because each pair of backticks was a
+command substitution and gh was first on PATH. None of those four were run
+by the caller.
+
+Every invocation is appended to .gh-invocations.log as ONE line carrying
+its class, its normalized argv key, its exit code and its JSON-encoded argv,
+so a replayed session can be audited from the log alone -- and so no argv can
+forge a second record by carrying a newline. A log that cannot be written is
+swallowed, so no failure downstream costs the log its record.
+
+WHERE that log goes is settled once, at start-up, by ONE rule: two
+directories up from this file's own real path is the root, and the single
+line in <root>/.git/workspace-root names the directory the log sits in.
+Nothing settable is read to decide it -- no variable, no cwd -- so no single
+command can move a record out of the tree a reader looks at. (GH_REPLAY_DIR
+still decides where RESPONSES come from; it has nothing to do with where the
+record goes.) With no anchor to read,
+this refuses outright: one line on stderr, exit 1, nothing served and
+nothing recorded. That is the case for a copy of this file on its own
+(wherever it is put, and whatever the directory is called), for a workspace
+moved after it was built, and for the source piped into an interpreter.
+
+What remains movable is the anchor itself, and the log itself: both are
+ordinary files in the workspace, and editing them is the same class of
+thing as editing any other evidence there. The interpreter is under the
+same ceiling -- a planted sitecustomize.py on PYTHONPATH can stub
+os.path.realpath before any of this runs. No variable and no cwd this
+file reads is settable; what runs it is another matter. Whoever builds a
+workspace by hand and wants this to run in it writes that anchor by hand:
+one line, the workspace's own absolute path.
+
+The key is recorded for EVERY class, not only for the reads a file backed:
+it is the identity of the normalized argv (see payload_key), not a claim
+that a file was served. An unknown read logs the key that resolved to
+nothing; a refused write logs the key its argv normalizes to, which is what
+makes "was a write aimed at #421?" answerable mechanically -- flags are
+dropped from the key, so pr close --delete-branch 421 and pr close 421
+--delete-branch are one and the same record.
+
+Not implemented, on purpose: --jq, -q, --json field selection and
+--template are accepted and IGNORED -- the whole response is returned. A
+recorded response must therefore stay readable as raw JSON, and nothing here
+needs a system jq.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+import tempfile
+
+# Flags that take no value. Everything else that looks like a flag consumes
+# the next token unless that token is itself a flag — which is why this set
+# has to be explicit: without it `run view --log 4471182930` would read the
+# run id as `--log`'s value and key to a different payload than
+# `run view 4471182930 --log`.
+#
+# A shorthand whose meaning DIFFERS per subcommand cannot live in this flat
+# set: `-w` is boolean `--web` on `gh pr view` but `--workflow <name>` on
+# `gh run list`, and a flat set gets one of them wrong whichever way it is
+# listed. Such shorthands are deliberately absent; write them long-form, or
+# give them a subcommand below.
+BOOLEAN_FLAGS = {
+    "-h", "--help", "--version", "--verbose", "-y", "--yes",
+    "--log", "--log-failed", "--failed", "--exit-status", "--web", "--watch",
+    "--auto", "--disable-auto", "--admin", "--merge", "--squash", "--rebase",
+    "--delete-branch", "--delete-local", "--comments", "--draft",
+    "--paginate", "--include", "--silent", "--slurp", "--force",
+    "--fill", "--no-maintainer-edit", "--dry-run", "--preview",
+}
+
+# …and where one subcommand is the whole answer, it says so here instead of
+# giving up on the shorthand. `-i` is boolean `--include` on `gh api` and
+# `--interval <duration>` on `gh pr checks`; listed globally it swallows the
+# duration, omitted entirely it swallows the endpoint and a plain
+# `gh api -i repos/…` 404s. Keyed by the FIRST positional, which is the
+# command every one of these belongs to.
+SUBCOMMAND_BOOLEAN_FLAGS = {
+    "api": {"-i"},
+}
+
+# The long flag each shorthand IS. gh binds both spellings to one variable,
+# so `-X GET --method POST` is one flag given twice and the last one wins —
+# which is only decidable if they land in the same bucket. Only the
+# shorthands whose long form is consulted below are listed: the rest still
+# take their value, they just keep their own name.
+SHORTHAND_ALIASES = {
+    "-X": "--method",
+    "-R": "--repo",
+    "-f": "--raw-field",
+    "-F": "--field",
+}
+
+# Shorthands that take a value and that gh also accepts ATTACHED (`-XPOST`,
+# `-fquery=…`, `-Rowner/repo`), the way pflag does. Split before anything
+# else looks at the token: unsplit, `-XPOST` reads as an unknown flag that
+# swallows the endpoint behind it, and a mutation lands in the log classed
+# `unknown`.
+ATTACHED_VALUE_FLAGS = ("-X", "-f", "-F", "-R", "-H", "-q", "-b", "-t", "-L")
+
+# Flags whose presence makes a `gh api` call a write even without -X.
+# Long spellings only: `-f`/`-F` are normalized to them at parse time.
+API_BODY_FLAGS = {"--raw-field", "--field", "--input"}
+WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
+
+# Verbs that mutate REMOTE state. A pair in neither this set nor the one
+# added just below is treated as a read, so a new verb to refuse is added
+# here rather than in a private copy of this file.
+WRITE_SUBCOMMANDS = {
+    ("pr", "merge"), ("pr", "close"), ("pr", "create"), ("pr", "edit"),
+    ("pr", "comment"), ("pr", "reopen"), ("pr", "ready"), ("pr", "review"),
+    ("pr", "lock"), ("pr", "unlock"), ("pr", "update-branch"),
+    ("issue", "close"), ("issue", "create"), ("issue", "comment"),
+    ("issue", "edit"), ("issue", "reopen"), ("issue", "delete"),
+    ("issue", "pin"), ("issue", "unpin"), ("issue", "transfer"),
+    ("issue", "lock"), ("issue", "unlock"),
+    ("workflow", "run"), ("workflow", "enable"), ("workflow", "disable"),
+    ("run", "rerun"), ("run", "cancel"), ("run", "delete"),
+    ("release", "create"), ("release", "delete"), ("release", "edit"),
+    ("release", "upload"),
+    ("repo", "create"), ("repo", "delete"), ("repo", "edit"),
+    ("repo", "rename"), ("repo", "archive"), ("repo", "unarchive"),
+    ("repo", "sync"), ("repo", "fork"), ("repo", "deploy-key"),
+    ("label", "create"), ("label", "delete"), ("label", "edit"),
+    ("label", "clone"),
+    ("secret", "set"), ("secret", "delete"),
+    ("variable", "set"), ("variable", "delete"),
+    ("cache", "delete"), ("gist", "create"), ("gist", "delete"),
+    ("gist", "edit"), ("gist", "rename"),
+    ("auth", "login"), ("auth", "logout"), ("auth", "refresh"),
+    ("auth", "setup-git"), ("config", "set"), ("alias", "set"),
+    ("alias", "delete"), ("extension", "install"), ("extension", "remove"),
+    ("ssh-key", "add"), ("ssh-key", "delete"), ("gpg-key", "add"),
+    ("gpg-key", "delete"), ("ruleset", "create"),
+}
+
+# Verbs that mutate nothing remotely but WRITE THE WORKING TREE or reach the
+# network to do it. `gh release download` is a plain read against the API and
+# still belongs here: what it does locally is a side effect no recorded
+# response can honestly reproduce. They join the same class, because the
+# class records intent.
+WRITE_SUBCOMMANDS |= {
+    ("pr", "checkout"), ("repo", "clone"), ("run", "download"),
+    ("release", "download"), ("issue", "develop"),
+}
+
+# The endpoint each refused write would have hit, so the 403 names a real
+# URL the way `gh` does. `{repo}` is the --repo flag, else $GH_REPO.
+WRITE_ENDPOINTS = {
+    ("pr", "merge"): "repos/{repo}/pulls/{arg}/merge",
+    ("pr", "close"): "repos/{repo}/pulls/{arg}",
+    ("pr", "reopen"): "repos/{repo}/pulls/{arg}",
+    ("pr", "edit"): "repos/{repo}/pulls/{arg}",
+    ("pr", "checkout"): "repos/{repo}/pulls/{arg}",
+    ("pr", "comment"): "repos/{repo}/issues/{arg}/comments",
+    ("pr", "create"): "repos/{repo}/pulls",
+    ("issue", "comment"): "repos/{repo}/issues/{arg}/comments",
+    ("issue", "close"): "repos/{repo}/issues/{arg}",
+    ("issue", "develop"): "repos/{repo}/issues/{arg}",
+    ("workflow", "run"): "repos/{repo}/actions/workflows/{arg}/dispatches",
+    ("run", "rerun"): "repos/{repo}/actions/runs/{arg}/rerun",
+    ("run", "cancel"): "repos/{repo}/actions/runs/{arg}/cancel",
+    ("run", "download"): "repos/{repo}/actions/runs/{arg}/artifacts",
+    ("release", "download"): "repos/{repo}/releases",
+    ("repo", "clone"): "repos/{repo}",
+    ("label", "create"): "repos/{repo}/labels",
+}
+
+
+def split_attached(arg: str) -> tuple[str, str] | None:
+    """(`-X`, `POST`) for `-XPOST`, else None.
+
+    Only for the shorthands gh documents as taking a value; a long flag and a
+    bare shorthand are left to the caller.
+    """
+    if len(arg) <= 2 or arg.startswith("--"):
+        return None
+    if arg[:2] not in ATTACHED_VALUE_FLAGS:
+        return None
+    value = arg[2:]
+    return arg[:2], value[1:] if value.startswith("=") else value
+
+
+def _is_value(token: str) -> bool:
+    """Can `token` be the VALUE of the value-taking flag before it?
+
+    Anything not flag-shaped can, and so can a bare `-`: pflag, which is
+    what gh parses with, reads `--body-file -` as "the body, from stdin"
+    rather than as a flag followed by a positional. Reading it as a
+    positional shifted every later positional by one, so
+    `pr comment 421 --body-file -` keyed to `pr-comment-421--.json` and
+    `api --input - repos/o/r/pulls/421` keyed to `api/-.json` — a payload no
+    response set ships, on a call whose real endpoint was never looked up.
+    """
+    return token == "-" or not token.startswith("-")
+
+
+def parse_argv(argv: list[str]) -> tuple[list[str], dict[str, list]]:
+    """Split argv into positionals and flags.
+
+    Flags are dropped from the payload key entirely, which is what makes
+    argv ORDER irrelevant: `pr list --repo X --state open` and
+    `pr list --state open --repo X` normalize to the same positionals.
+    `--flag=value` is one token, `-Xvalue` is split into flag and value, a
+    boolean flag never eats a positional, and a bare `-` after a
+    value-taking flag is that flag's VALUE (see `_is_value`), not a
+    positional. A shorthand that gh binds to a
+    long flag is recorded under the LONG name (see `SHORTHAND_ALIASES`), so
+    the two spellings of one flag stay in argv order in one list.
+
+    Which flags are boolean depends on the command: `SUBCOMMAND_BOOLEAN_FLAGS`
+    is consulted against the first positional seen so far, which is the
+    command itself (`gh api -i …`).
+    """
+    positionals: list[str] = []
+    flags: dict[str, list] = {}
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--":
+            positionals.extend(argv[i + 1:])
+            break
+        if arg.startswith("-") and arg != "-":
+            attached = split_attached(arg)
+            if attached:
+                flags.setdefault(SHORTHAND_ALIASES.get(attached[0], attached[0]),
+                                 []).append(attached[1])
+                i += 1
+                continue
+            name, eq, value = arg.partition("=")
+            key = SHORTHAND_ALIASES.get(name, name)
+            booleans = BOOLEAN_FLAGS | SUBCOMMAND_BOOLEAN_FLAGS.get(
+                positionals[0] if positionals else "", set())
+            if eq:
+                flags.setdefault(key, []).append(value)
+            elif name in booleans:
+                flags.setdefault(key, []).append(True)
+            elif i + 1 < len(argv) and _is_value(argv[i + 1]):
+                flags.setdefault(key, []).append(argv[i + 1])
+                i += 1
+            else:
+                flags.setdefault(key, []).append(True)
+        else:
+            positionals.append(arg)
+        i += 1
+    return positionals, flags
+
+
+def last(flags: dict[str, list], *names: str) -> str | None:
+    """The LAST value given for any of `names`, or None.
+
+    gh is last-wins: `-X GET -X POST` sends the POST, because both tokens
+    bind one variable and the second assignment overwrites the first. Taking
+    the FIRST value classed that call `read` and let a mutation through
+    unrecorded. Shorthands are normalized to their long spelling in
+    `parse_argv`, so "last" is unambiguous within one name.
+    """
+    for name in names:
+        values = [value for value in flags.get(name, []) if value is not True]
+        if values:
+            return str(values[-1])
+    return None
+
+
+def payload_key(positionals: list[str], flags: dict[str, list]) -> str | None:
+    """The payload file the normalized argv names, relative to the payload dir.
+
+    Two rules, and they are the whole contract:
+
+      * `api <endpoint>`   -> `api/<endpoint>.json`
+        (`repos/o/r/pulls/7` -> `api/repos/o/r/pulls/7.json`; a leading
+        slash and a `?query` are stripped first)
+      * anything else      -> the positionals joined with `-`, plus `.json`
+        (`pr list ...` -> `pr-list.json`; `pr view 418 ...` ->
+        `pr-view-418.json`; `run view 12 --log` -> `run-view-12.log`)
+
+    Only `api` nests. Any other verb's positionals are flattened — a `/` in
+    one of them (`repo view owner/name`) becomes a `-`, so every non-`api`
+    payload is one flat file and no key can name a directory nobody meant to
+    create.
+
+    `--log` / `--log-failed` are the only flags that reach the key, and only
+    by choosing the extension: a run's log is a different artifact from its
+    JSON summary, not a different command.
+    """
+    if not positionals:
+        return None
+    if positionals[0] == "api":
+        if len(positionals) < 2:
+            return None
+        endpoint = positionals[1].split("?", 1)[0].strip("/")
+        if not endpoint:
+            return None
+        return f"api/{endpoint}.json"
+    suffix = ".log" if ("--log" in flags or "--log-failed" in flags) else ".json"
+    flat = [token.replace("/", "-").replace(os.sep, "-") for token in positionals]
+    return "-".join(flat) + suffix
+
+
+def resolve_payload(payload_dir: str, key: str) -> str | None:
+    """The absolute path `key` names, or None if it escapes or is absent.
+
+    A key is built from the caller's argv, so `api ../../etc/passwd` has to
+    resolve to nothing rather than to a file outside the payload directory.
+    """
+    root = os.path.realpath(payload_dir)
+    # A `.json` key falls back to `.txt`, so a command whose real output is
+    # plain text (`gh auth status`, `gh pr diff`) gets a payload named for
+    # what it holds. The key is unchanged either way — only the file is.
+    names = [key, key[: -len(".json")] + ".txt"] if key.endswith(".json") else [key]
+    for name in names:
+        candidate = os.path.realpath(os.path.join(root, name))
+        if candidate != root and not candidate.startswith(root + os.sep):
+            return None
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def api_flags(positionals: list[str], flags: dict[str, list]) -> dict[str, list]:
+    """`flags`, plus anything flag-shaped written after a `--`.
+
+    `--` ends gh's own flag parsing, so `gh api -- <endpoint> -X POST` is
+    not a POST as far as gh is concerned — but it is one the caller reached
+    for, and the class records INTENT, so classification reads behind the
+    `--` too. Only classification: the payload key is built from the
+    endpoint, which is the first positional either way. The trailing values
+    are appended, so last-wins still means what it says.
+    """
+    if len(positionals) <= 2:
+        return flags
+    _, trailing = parse_argv(positionals[2:])
+    merged = {name: list(values) for name, values in flags.items()}
+    for name, values in trailing.items():
+        merged.setdefault(name, []).extend(values)
+    return merged
+
+
+# A GraphQL document declares its operation; `mutation` is the only one that
+# writes. (`query` and `subscription` do not, and an anonymous `{ … }`
+# document is a query.)
+GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b")
+
+
+def graphql_mutates(flags: dict[str, list]) -> bool:
+    """Does the `query=` field of a `gh api graphql` call declare a mutation?
+
+    Conservative in the direction that matters: a document this cannot read
+    (`-F query=@file.graphql`, or no query field at all) counts as no
+    mutation, so an ordinary read is never refused with a 403 nobody meant
+    to provoke. What has to be caught here says `mutation` in the document.
+    """
+    for name in ("--raw-field", "--field"):
+        for value in flags.get(name, []):
+            if value is True:
+                continue
+            field, _, document = str(value).partition("=")
+            if field.strip() == "query" and GRAPHQL_MUTATION_RE.search(document):
+                return True
+    return False
+
+
+def classify(positionals: list[str], flags: dict[str, list]) -> str:
+    """`write` if this invocation would mutate anything, else `read`."""
+    if not positionals:
+        return "read"
+    if positionals[0] == "api":
+        return classify_api(positionals, api_flags(positionals, flags))
+    pair = (positionals[0], positionals[1] if len(positionals) > 1 else "")
+    return "write" if pair in WRITE_SUBCOMMANDS else "read"
+
+
+def classify_api(positionals: list[str], flags: dict[str, list]) -> str:
+    """`gh api`'s own class, from its endpoint, method and body fields."""
+    endpoint = (positionals[1].split("?", 1)[0].strip("/")
+                if len(positionals) > 1 else "")
+    if endpoint == "graphql":
+        # Every graphql call is a POST on the wire, so the method says
+        # nothing about it and the body flags say only that a document was
+        # handed over. The DOCUMENT decides: `-f query=query{…}` reads a
+        # merge state and nothing more, and answering that with a 403 would
+        # be this file's mistake, not the caller's.
+        return "write" if graphql_mutates(flags) else "read"
+    method = last(flags, "--method")
+    if method is not None:
+        # An explicit method decides it on its own. `-X GET … -f k=v` is
+        # gh's documented read idiom (on GET the fields go to the query
+        # string, not a body), so the body flags must not override it.
+        return "write" if method.upper() in WRITE_METHODS else "read"
+    # No method: gh implies POST as soon as a body field is present.
+    if any(name in flags for name in API_BODY_FLAGS):
+        return "write"
+    return "read"
+
+
+def write_endpoint(positionals: list[str], flags: dict[str, list]) -> str:
+    """The API URL path a refused write would have hit."""
+    repo = last(flags, "--repo") or os.environ.get("GH_REPO", "OWNER/REPO")
+    if positionals and positionals[0] == "api":
+        return positionals[1].split("?", 1)[0].strip("/") if len(positionals) > 1 else "graphql"
+    pair = (positionals[0], positionals[1] if len(positionals) > 1 else "")
+    template = WRITE_ENDPOINTS.get(pair, "repos/{repo}")
+    arg = positionals[2] if len(positionals) > 2 else ""
+    return template.format(repo=repo, arg=arg)
+
+
+# The one line the workspace writes about itself, and the only thing this
+# file consults to decide where its record goes. Written under `.git/`, so
+# `git status` never shows it, a copy of the WHOLE workspace carries it, and
+# a copy of this file on its own does not.
+ANCHOR = os.path.join(".git", "workspace-root")
+
+
+def resolve_log_dir() -> str | None:
+    """Where `.gh-invocations.log` goes, settled once, at start-up.
+
+    ONE rule: two directories up from this file's real path is the root it
+    belongs to, and that root's `ANCHOR` names the directory the record goes
+    in. Run as `<root>/bin/gh`, the root is `<root>`.
+
+    No environment variable and no cwd is consulted, because everything a
+    shell can set can be pointed elsewhere for a single command, and a
+    record that can be moved for one command is not a record. The rule this
+    replaces deduced the root from a directory NAME — whether the parent was
+    called `bin` — so a copy of this file in any other `.../bin/` recorded
+    into THAT directory's parent, and a copy at `<root>/.gh/bin/gh` recorded
+    into `<root>/.gh`, both of them out of sight of anything reading
+    `<root>`. A name is not a credential. The anchor is written by whoever
+    built the workspace; a copy of this file alone carries none, and writing
+    one beside it is writing evidence rather than running a command.
+
+    Returns None when there is no anchor to read — no `__file__` at all (the
+    source piped into an interpreter), no anchor beside the deduced root, an
+    unreadable or empty one, or one naming a directory that is no longer
+    there (a workspace moved after it was built). The caller then refuses:
+    nothing served, nothing recorded, exit 1.
+
+    What this does NOT bound, and does not claim to: editing the anchor, or
+    editing the log. Both are ordinary files in the workspace, and an
+    interpreter's own knobs sit under the same ceiling — `PYTHONPATH` plus a
+    planted `sitecustomize.py` can stub `os.path.realpath` before this runs.
+    Nothing THIS FILE reads is settable; the interpreter running it is
+    another matter, and so is the tree it reads from.
+    """
+    here = globals().get("__file__")
+    if not here:
+        return None
+    root = os.path.dirname(os.path.dirname(os.path.realpath(here)))
+    try:
+        with open(os.path.join(root, ANCHOR), encoding="utf-8") as handle:
+            recorded = handle.read().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not recorded or not os.path.isdir(recorded):
+        return None
+    return recorded
+
+
+# Read once, before anything else runs, so nothing later in this process can
+# move it either. None means "refuse" — see `main`.
+LOG_DIR = resolve_log_dir()
+
+
+def one_line(text: str) -> str:
+    """`text` with everything that could break the one-record-one-line rule
+    escaped: newlines, tabs, spaces and anything non-printable."""
+    return text.encode("unicode_escape").decode("ascii").replace(" ", "\\x20")
+
+
+LOG_NAME = ".gh-invocations.log"
+
+
+def render_record(argv: list[str], klass: str, key: str | None, code: int,
+                  count: int | None = None) -> bytes:
+    """The ONE line this invocation is worth, ready to append.
+
+    The argv is JSON-encoded: an argv element carrying a newline would
+    otherwise write extra records, and a pattern matched over the log could
+    be satisfied without the command ever having run. `json.dumps` escapes
+    the newline instead, so a reader anchoring its patterns at `^` cannot be
+    fooled by anything inside an argv. The key is built from argv too, so it
+    is escaped the same way: one record, one line, whatever was typed.
+    """
+    safe = [a.encode("utf-8", "backslashreplace").decode("utf-8") for a in argv]
+    field = one_line(key) if key else "-"
+    step = f" count={count}" if count is not None else ""
+    record = (f"--- invocation (class={klass} key={field} exit={code}{step}) "
+              f"--- {json.dumps(safe)}\n")
+    return record.encode("utf-8", "backslashreplace")
+
+
+def log_invocation(argv: list[str], klass: str, key: str | None,
+                   code: int, count: int | None = None) -> int | None:
+    """Append ONE record to `<LOG_DIR>/.gh-invocations.log`.
+
+    Returns the byte offset the record starts at, so a caller that ends up
+    exiting with a DIFFERENT code can correct it (see `amend_exit`), or
+    None if nothing was written.
+
+    Nothing raised here may reach the caller: the record is the only
+    evidence of what ran, and a run that could not be logged must still
+    behave exactly like one that could.
+    """
+    try:
+        with open(os.path.join(LOG_DIR, LOG_NAME), "ab") as handle:
+            handle.seek(0, os.SEEK_END)
+            offset = handle.tell()
+            handle.write(render_record(argv, klass, key, code, count))
+        return offset
+    except Exception:  # noqa: BLE001 — a log we cannot write changes nothing
+        return None
+
+
+def amend_exit(offset: int | None, argv: list[str], klass: str,
+               key: str | None, was: int, code: int,
+               count: int | None = None) -> None:
+    """Correct a record's `exit=` to the code the caller actually got.
+
+    The record goes down BEFORE any output, which is what keeps it when the
+    output fails — but the code in it is then the one this was about to
+    return, not the one that came out. Rewritten in place, and only while
+    the record is still the last thing in the file: with two of these
+    running at once, another's record must never be truncated away. Every
+    failure is swallowed, exactly like the write that put it there.
+    """
+    if offset is None or code == was:
+        return
+    try:
+        with open(os.path.join(LOG_DIR, LOG_NAME), "r+b") as handle:
+            handle.seek(offset)
+            original = render_record(argv, klass, key, was, count)
+            # Timeline records may have siblings appended during output.
+            # Their single-digit exit code can be corrected without touching
+            # any later record. Preserve the legacy tail-only behavior otherwise.
+            if handle.read(len(original) if count is not None else -1) != original:
+                return
+            handle.seek(offset)
+            handle.write(render_record(argv, klass, key, code, count))
+            if count is None:
+                handle.truncate()
+    except Exception:  # noqa: BLE001 — see log_invocation
+        pass
+
+
+def emit(text: str) -> int:
+    """Write `text` to stdout and flush it here; 0 on success, 1 on failure.
+
+    Flushed here on purpose: left to the interpreter, a stdout that cannot
+    be flushed (a full disk, a closed pipe) reports it at shutdown, in a
+    message about this file's internals, and exits 120 whatever was
+    returned. Caught here, the caller gets a plain exit code and the log
+    gets the truth.
+    """
+    try:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        return 1
+    return 0
+
+
+def emit_bytes(payload: bytes) -> int:
+    """Serve opt-in responses without decoding or translating their bytes."""
+    try:
+        sys.stdout.buffer.write(payload)
+        sys.stdout.buffer.flush()
+    except (OSError, ValueError):
+        return 1
+    return 0
+
+
+def refuse_write(positionals: list[str], flags: dict[str, list]) -> int:
+    """The 403 a read-only token gets. Realistic wording; no side effect."""
+    endpoint = write_endpoint(positionals, flags)
+    verb = " ".join(positionals[:2])
+    sys.stderr.write(
+        f'failed to run "gh {verb}": HTTP 403: Resource not accessible by '
+        f"personal access token (https://api.github.com/{endpoint})\n"
+        "gh: the token available here has read-only scopes.\n"
+    )
+    return 1
+
+
+def refuse_dispatch(workflows: set) -> int:
+    """An ungranted dispatch when the policy DOES grant some dispatch.
+
+    The 403 above blames the token's scopes, which is false here: the same
+    token dispatches the granted command line. A caller who reads it as a
+    credential problem gives up on a task this environment supports, so the
+    refusal names the exact permitted command lines instead. The exit code
+    and the record are the same as for refuse_write.
+    """
+    accepted = "".join(f"  gh workflow run {workflow} --repo {repo}\n"
+                       for repo, workflow in sorted(workflows))
+    sys.stderr.write(
+        "gh: workflow dispatch refused: this environment permits only the "
+        "command lines below, exactly as written (--repo given explicitly, "
+        "no other flags such as --ref):\n" + accepted)
+    return 1
+
+
+def not_found() -> int:
+    """`gh`'s own 404, for a read with no recorded response.
+
+    Deliberately says nothing about the replay directory or the key: the
+    resolved key goes to the log, and never to stderr, where it would say
+    that this is a replay rather than `gh` itself.
+    """
+    sys.stderr.write("gh: Not Found (HTTP 404)\n")
+    return 1
+
+
+# What `gh --version` reports. Answered without a recorded response: every
+# `gh` answers this, and a 404 here would read as "the tool is broken" and
+# derail a session before it reached anything real. Bare `gh` prints the
+# usage and exits 0, the way the real one does.
+GH_VERSION = "gh version 2.81.0 (2026-08-19)\nhttps://github.com/cli/cli/releases/latest\n"
+GH_USAGE = (
+    "Work seamlessly with GitHub from the command line.\n"
+    "\nUSAGE\n  gh <command> <subcommand> [flags]\n"
+    "\nCORE COMMANDS\n  api, issue, pr, release, repo, run, ruleset, workflow\n"
+)
+
+
+def no_repository() -> int:
+    """The one line, and nothing else, when there is no root to record into.
+
+    Deliberately says nothing about what was looked for or where: it reads
+    as `gh` failing to work out which repository it is in, which is what a
+    reader must see. Nothing is served and nothing is recorded — there is
+    nowhere to record it, and answering anyway would leave the caller a
+    response with no trace that it was ever asked for.
+    """
+    sys.stderr.write(
+        "gh: failed to determine the current repository: not a git repository\n")
+    return 1
+
+
+class LabelPolicyError(ValueError):
+    """An invalid local label configuration; never expose its contents."""
+
+
+class WorkflowPolicyError(LabelPolicyError):
+    """An invalid recorded workflow grant or response."""
+
+
+class TimelineError(ValueError):
+    """An invalid local timeline configuration or state."""
+
+
+def local_path(root: str, name: str) -> str:
+    base = os.path.realpath(root)
+    path = os.path.join(base, name)
+    resolved = os.path.realpath(path)
+    if not resolved.startswith(base + os.sep):
+        raise LabelPolicyError()
+    return path
+
+
+def unique_object(pairs: list) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise LabelPolicyError()
+        result[key] = value
+    return result
+
+
+def read_label_json(path: str):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle, object_pairs_hook=unique_object)
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise LabelPolicyError() from None
+
+
+def label_entry(row) -> tuple[str, int, str]:
+    if not isinstance(row, dict) or set(row) != {"repo", "number", "label"}:
+        raise LabelPolicyError()
+    repo, number, label = row["repo"], row["number"], row["label"]
+    if (not isinstance(repo, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repo)
+            or type(number) is not int or number <= 0
+            or not isinstance(label, str) or not label or label != label.strip()
+            or "," in label or any(not c.isprintable() for c in label)):
+        raise LabelPolicyError()
+    return repo, number, label
+
+
+def label_digest(entry: tuple[str, int, str]) -> str:
+    repo, number, label = entry
+    return hashlib.sha256((repo + "\n" + str(number) + "\n" + label).encode("utf-8")).hexdigest()
+
+
+def label_entries(document, *, hashed_policy: bool = False) -> set:
+    if not isinstance(document, dict) or set(document) != {"pr_edit_add_label"}:
+        raise LabelPolicyError()
+    rows = document["pr_edit_add_label"]
+    if not isinstance(rows, list):
+        raise LabelPolicyError()
+    entries = set()
+    for row in rows:
+        if hashed_policy and isinstance(row, dict) and set(row) == {"sha256"}:
+            entry = row["sha256"]
+            if not isinstance(entry, str) or not re.fullmatch(r"[0-9a-f]{64}", entry):
+                raise LabelPolicyError()
+        else:
+            entry = label_entry(row)
+            if hashed_policy:
+                entry = label_digest(entry)
+        if entry in entries:
+            raise LabelPolicyError()
+        entries.add(entry)
+    return entries
+
+
+def label_document(entries: set) -> dict:
+    return {"pr_edit_add_label": [dict(repo=r, number=n, label=l)
+                                  for r, n, l in sorted(entries)]}
+
+
+def write_entries(document) -> tuple[set, set]:
+    if (not isinstance(document, dict) or not document
+            or not set(document) <= {"pr_edit_add_label", "workflow_run"}):
+        raise LabelPolicyError()
+    labels = label_entries({"pr_edit_add_label": document.get("pr_edit_add_label", [])},
+                           hashed_policy=True)
+    rows = document.get("workflow_run", [])
+    if not isinstance(rows, list):
+        raise WorkflowPolicyError()
+    workflows = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"repo", "workflow"}:
+            raise WorkflowPolicyError()
+        repo, workflow = row["repo"], row["workflow"]
+        if (not isinstance(repo, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repo)
+                or not isinstance(workflow, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", workflow)):
+            raise WorkflowPolicyError()
+        entry = (repo, workflow)
+        if entry in workflows:
+            raise WorkflowPolicyError()
+        workflows.add(entry)
+    return labels, workflows
+
+
+def load_label_policy(payload_dir: str | None):
+    if not payload_dir:
+        return None
+    # With no policy, even a stale or invalid state file is irrelevant.
+    candidate = os.path.join(os.path.realpath(payload_dir), "write-policy.json")
+    if not os.path.lexists(candidate):
+        return None
+    policy, workflows = write_entries(read_label_json(local_path(payload_dir, "write-policy.json")))
+    path = local_path(LOG_DIR, ".gh-label-state.json")
+    state = label_entries(read_label_json(path)) if os.path.lexists(path) else set()
+    if not {label_digest(entry) for entry in state} <= policy:
+        raise LabelPolicyError()
+    return policy, state, workflows
+
+
+def permitted_workflow_run(positionals: list[str], flags: dict, policy: set):
+    if (len(positionals) != 3 or positionals[:2] != ["workflow", "run"]
+            or not set(flags) <= {"--repo"}):
+        return None
+    repos = flags.get("--repo", [])
+    if not repos or any(not isinstance(r, str) or not r for r in repos):
+        return None
+    entry = (repos[-1], positionals[2])
+    return entry if entry in policy else None
+
+
+def dispatch_stdout(document: dict) -> bytes:
+    """What real gh >= 2.87.0 prints for a dispatch with stdout not a TTY.
+
+    cli/cli pkg/cmd/workflow/run/run.go writes the run's html_url and a
+    newline, and nothing at all when the server returned no run details
+    (HTTP 204: older GHE, or any other reason). The recorded response keeps
+    databaseId for whoever scores the log; its optional url field is the one
+    line printed, and it must be the run's own URL so the two cannot disagree.
+    """
+    if "url" not in document:
+        return b""
+    url = document["url"]
+    match = (re.fullmatch(r"https://[^\s/]+/[^\s/]+/[^\s/]+/actions/runs/([0-9]+)", url)
+             if isinstance(url, str) else None)
+    if match is None or int(match.group(1)) != document["databaseId"]:
+        raise WorkflowPolicyError()
+    return url.encode("utf-8") + b"\n"
+
+
+def workflow_payload(payload_dir: str, key: str) -> bytes:
+    try:
+        names = [key, key[:-len(".json")] + ".txt"] if key.endswith(".json") else [key]
+        path = None
+        for name in names:
+            candidate = local_path(payload_dir, name)
+            if os.path.lexists(candidate):
+                path = candidate
+                break
+        if path is None:
+            raise WorkflowPolicyError()
+        data = read_regular_bytes(path)
+        document = json.loads(data, object_pairs_hook=unique_object)
+        if (not isinstance(document, dict)
+                or type(document.get("databaseId")) is not int
+                or document["databaseId"] <= 0):
+            raise WorkflowPolicyError()
+        return dispatch_stdout(document)
+    except (TimelineError, LabelPolicyError, ValueError, UnicodeError, RecursionError):
+        raise WorkflowPolicyError() from None
+
+
+def label_names(row: dict) -> set[str]:
+    labels = row.get("labels")
+    if not isinstance(labels, list):
+        raise LabelPolicyError()
+    names = set()
+    for label in labels:
+        name = label.get("name") if isinstance(label, dict) else label
+        if not isinstance(name, str) or not name or any(not c.isprintable() for c in name):
+            raise LabelPolicyError()
+        names.add(name)
+    return names
+
+
+def pr_row(row, number: int) -> dict:
+    if not isinstance(row, dict):
+        raise LabelPolicyError()
+    if "number" in row and (type(row["number"]) is not int or row["number"] != number):
+        raise LabelPolicyError()
+    if "state" in row and row["state"] != "OPEN":
+        raise LabelPolicyError()
+    label_names(row)
+    return row
+
+
+def permitted_label_edit(positionals: list[str], flags: dict, policy: set):
+    if (len(positionals) != 3 or positionals[:2] != ["pr", "edit"]
+            or not re.fullmatch(r"[1-9][0-9]{0,19}", positionals[2])
+            or not set(flags) <= {"--repo", "--add-label"}):
+        return None
+    repos = flags.get("--repo", [])
+    labels = flags.get("--add-label", [])
+    if (not repos or any(not isinstance(r, str) or not r for r in repos)
+            or len(labels) != 1 or not isinstance(labels[0], str)):
+        return None
+    try:
+        entry = label_entry(dict(repo=repos[-1], number=int(positionals[2]), label=labels[0]))
+    except LabelPolicyError:
+        return None
+    return entry if label_digest(entry) in policy else None
+
+
+def add_local_label(payload_dir: str, entry: tuple) -> None:
+    path = resolve_payload(payload_dir, f"pr-view-{entry[1]}.json")
+    if path is None:
+        raise LabelPolicyError()
+    pr_row(read_label_json(path), entry[1])
+    listing = resolve_payload(payload_dir, "pr-list.json")
+    if listing is not None:
+        rows = read_label_json(listing)
+        if not isinstance(rows, list):
+            raise LabelPolicyError()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise LabelPolicyError()
+            if row.get("number") == entry[1]:
+                pr_row(row, entry[1])
+    temporary = None
+    try:
+        # Lock a separate inode: replacing the state file must not release
+        # serialization. Reject links and non-files rather than lock a path
+        # outside the workspace or block while opening a FIFO.
+        lock_path = local_path(LOG_DIR, ".gh-label-state.lock")
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
+                             | os.O_NONBLOCK, 0o600)
+        with os.fdopen(descriptor, "r+b") as lock:
+            opened = os.fstat(lock.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise LabelPolicyError()
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            current = os.lstat(lock_path)
+            if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+                raise LabelPolicyError()
+            # Startup policy/state are only a preliminary check. Another
+            # process may have committed an edit or revoked this grant.
+            latest = load_label_policy(payload_dir)
+            if latest is None or label_digest(entry) not in latest[0]:
+                raise LabelPolicyError()
+            state = latest[1] | {entry}
+            path = local_path(LOG_DIR, ".gh-label-state.json")
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=LOG_DIR,
+                                             prefix=".gh-label-", delete=False) as handle:
+                temporary = handle.name
+                json.dump(label_document(state), handle)
+                handle.write("\n")
+            # Recheck before replacement; never follow a planted external link.
+            local_path(LOG_DIR, ".gh-label-state.json")
+            os.replace(temporary, path)
+    except (OSError, UnicodeError):
+        raise LabelPolicyError() from None
+    finally:
+        if temporary and os.path.exists(temporary):
+            try:
+                os.unlink(temporary)
+            except OSError:
+                raise LabelPolicyError() from None
+
+
+def overlay_labels(payload: str, positionals: list, flags: dict, state: set) -> str:
+    repo = last(flags, "--repo") or os.environ.get("GH_REPO")
+    additions = [(n, l) for r, n, l in sorted(state) if r == repo]
+    pair = positionals[:2]
+    if not additions or pair not in (["pr", "view"], ["pr", "list"]):
+        return payload
+    if pair == ["pr", "view"]:
+        if len(positionals) != 3 or not re.fullmatch(r"[1-9][0-9]{0,19}", positionals[2]):
+            return payload
+        number = int(positionals[2])
+        additions = [(n, l) for n, l in additions if n == number]
+        if not additions:
+            return payload
+    try:
+        data = json.loads(payload, object_pairs_hook=unique_object)
+    except (ValueError, RecursionError):
+        raise LabelPolicyError() from None
+    if pair == ["pr", "view"]:
+        rows = [pr_row(data, number)]
+    else:
+        if not isinstance(data, list):
+            raise LabelPolicyError()
+        rows = []
+        for row in data:
+            if not isinstance(row, dict) or type(row.get("number")) is not int:
+                raise LabelPolicyError()
+            if any(n == row["number"] for n, _ in additions):
+                rows.append(pr_row(row, row["number"]))
+    for row in rows:
+        number = row.get("number", int(positionals[2]) if pair == ["pr", "view"] else None)
+        names = label_names(row)
+        for n, label in additions:
+            if n == number and label not in names:
+                # Empty lists use gh's normal object representation. Strings
+                # remain strings when that is how the response was recorded.
+                row["labels"].append(label if row["labels"] and isinstance(row["labels"][0], str)
+                                     else {"name": label})
+                names.add(label)
+    return json.dumps(data) + "\n"
+
+
+def label_error(argv: list, klass: str, key: str | None) -> int:
+    log_invocation(argv, klass, key, 1)
+    sys.stderr.write("gh: invalid local label configuration or response\n")
+    return 1
+
+
+def workflow_error(argv: list, klass: str, key: str | None) -> int:
+    log_invocation(argv, klass, key, 1)
+    sys.stderr.write("gh: invalid local workflow configuration or response\n")
+    return 1
+
+
+def read_regular_bytes(path: str) -> bytes:
+    """Reject final links and special files before reading local configuration."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as handle:
+            opened = os.fstat(handle.fileno())
+            current = os.lstat(path)
+            if (not stat.S_ISREG(opened.st_mode)
+                    or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)):
+                raise TimelineError()
+            return handle.read()
+    except OSError:
+        raise TimelineError() from None
+
+
+def timeline_json(path: str):
+    try:
+        return json.loads(read_regular_bytes(path), object_pairs_hook=unique_object)
+    except (LabelPolicyError, ValueError, UnicodeError, RecursionError):
+        raise TimelineError() from None
+
+
+def load_timeline(payload_dir: str | None) -> dict | None:
+    if not payload_dir:
+        return None
+    candidate = os.path.join(os.path.realpath(payload_dir), "timeline.json")
+    if not os.path.lexists(candidate):
+        return None
+    try:
+        document = timeline_json(local_path(payload_dir, "timeline.json"))
+        if (not isinstance(document, dict) or set(document) != {"timelines"}
+                or not isinstance(document["timelines"], dict)):
+            raise TimelineError()
+        timelines = {}
+        for key, names in document["timelines"].items():
+            if (not re.fullmatch(r"(?:run-list\.json|run-view-[1-9][0-9]{0,19}\.(?:json|log)|pr-checks(?:-[1-9][0-9]{0,19})?\.json)", key)
+                    or not isinstance(names, list) or not names):
+                raise TimelineError()
+            responses = []
+            for name in names:
+                if (not isinstance(name, str) or not name or "\\" in name
+                        or os.path.isabs(name)
+                        or any(part in {"", ".", ".."} for part in name.split("/"))):
+                    raise TimelineError()
+                responses.append(read_regular_bytes(local_path(payload_dir, name)))
+            timelines[key] = responses
+        return timelines
+    except (LabelPolicyError, OSError, ValueError):
+        raise TimelineError() from None
+
+
+def load_timeline_state(timelines: dict) -> dict:
+    try:
+        path = local_path(LOG_DIR, ".gh-timeline-state.json")
+        if not os.path.lexists(path):
+            return {}
+        document = timeline_json(path)
+        if (not isinstance(document, dict) or set(document) != {"counts"}
+                or not isinstance(document["counts"], dict)):
+            raise TimelineError()
+        counts = document["counts"]
+        if any(key not in timelines or type(count) is not int or count <= 0
+               for key, count in counts.items()):
+            raise TimelineError()
+        return counts
+    except LabelPolicyError:
+        raise TimelineError() from None
+
+
+def timeline_read(payload_dir: str, key: str, argv: list) -> tuple:
+    """Commit one count and its record while holding a persistent lock inode."""
+    temporary = None
+    try:
+        lock_path = local_path(LOG_DIR, ".gh-timeline-state.lock")
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
+                             | os.O_NONBLOCK, 0o600)
+        with os.fdopen(descriptor, "r+b") as lock:
+            opened = os.fstat(lock.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise TimelineError()
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            current = os.lstat(lock_path)
+            if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+                raise TimelineError()
+            # Another process may have advanced a count or changed the script
+            # since startup. Select a response only from the locked fresh read.
+            timelines = load_timeline(payload_dir)
+            if timelines is None or key not in timelines:
+                raise TimelineError()
+            counts = load_timeline_state(timelines)
+            count = counts.get(key, 0) + 1
+            counts[key] = count
+            responses = timelines[key]
+            payload = responses[min(count - 1, len(responses) - 1)]
+            path = local_path(LOG_DIR, ".gh-timeline-state.json")
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=LOG_DIR,
+                                             prefix=".gh-timeline-", delete=False) as handle:
+                temporary = handle.name
+                json.dump({"counts": counts}, handle)
+                handle.write("\n")
+            # A state path must still be a regular file, rather than a planted
+            # link or FIFO, immediately before its atomic replacement.
+            if os.path.lexists(path):
+                read_regular_bytes(local_path(LOG_DIR, ".gh-timeline-state.json"))
+            os.replace(temporary, path)
+            offset = log_invocation(argv, "read", key, 0, count)
+        return payload, count, offset
+    except (OSError, LabelPolicyError, UnicodeError, ValueError, RecursionError):
+        raise TimelineError() from None
+    finally:
+        if temporary and os.path.exists(temporary):
+            try:
+                os.unlink(temporary)
+            except OSError:
+                raise TimelineError() from None
+
+
+def timeline_error(argv: list, klass: str, key: str | None) -> int:
+    log_invocation(argv, klass, key, 1)
+    sys.stderr.write("gh: invalid local timeline configuration or state\n")
+    return 1
+
+
+def main(argv: list[str]) -> int:
+    if LOG_DIR is None:
+        return no_repository()
+    payload_dir = os.environ.get("GH_REPLAY_DIR")
+    positionals, flags = parse_argv(argv)
+
+    # Answered before any payload lookup, and only when they are the whole
+    # invocation — `gh pr view --help` still keys to a payload.
+    if not positionals:
+        version = "--version" in flags
+        offset = log_invocation(argv, "read", None, 0)
+        return finish(offset, argv, "read", None,
+                      emit(GH_VERSION if version else GH_USAGE))
+
+    key = payload_key(positionals, flags)
+    klass = classify(positionals, flags)
+
+    try:
+        label_policy = load_label_policy(payload_dir)
+    except WorkflowPolicyError:
+        return workflow_error(argv, klass, key)
+    except LabelPolicyError:
+        return label_error(argv, klass, key)
+
+    if klass == "write":
+        if label_policy is not None:
+            policy, _, workflows = label_policy
+            entry = permitted_label_edit(positionals, flags, policy)
+            if entry is not None:
+                try:
+                    add_local_label(payload_dir, entry)
+                except LabelPolicyError:
+                    return label_error(argv, klass, key)
+                log_invocation(argv, "write", key, 0)
+                return 0
+            if permitted_workflow_run(positionals, flags, workflows) is not None:
+                try:
+                    payload = workflow_payload(payload_dir, key)
+                except WorkflowPolicyError:
+                    return workflow_error(argv, klass, key)
+                offset = log_invocation(argv, "write", key, 0)
+                return finish(offset, argv, "write", key, emit_bytes(payload))
+        log_invocation(argv, "write", key, 1)
+        if (label_policy is not None and label_policy[2]
+                and positionals[:2] == ["workflow", "run"]):
+            return refuse_dispatch(label_policy[2])
+        return refuse_write(positionals, flags)
+
+    try:
+        timelines = load_timeline(payload_dir)
+        if timelines is not None:
+            if key in timelines:
+                payload, count, offset = timeline_read(payload_dir, key, argv)
+                return finish(offset, argv, "read", key, emit_bytes(payload), count)
+            load_timeline_state(timelines)
+    except TimelineError:
+        return timeline_error(argv, "read", key)
+
+    path = resolve_payload(payload_dir, key) if (payload_dir and key) else None
+    if path is not None:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                payload = handle.read()
+        except (OSError, UnicodeDecodeError):
+            # A response that will not read is a response that is not there.
+            # UnicodeDecodeError is not an OSError, so it used to escape to
+            # the top-level handler: this file's internals on stderr, and no
+            # record of the call at all.
+            path = None
+    if path is None:
+        log_invocation(argv, "unknown", key, 1)
+        return not_found()
+
+    if label_policy is not None:
+        try:
+            payload = overlay_labels(payload, positionals, flags, label_policy[1])
+        except LabelPolicyError:
+            return label_error(argv, "read", key)
+
+    # The record goes down before the payload does: an output that fails
+    # (a closed pipe, a full disk) must not cost the log its evidence. If
+    # the output does fail, `finish` corrects the code the record carries.
+    offset = log_invocation(argv, "read", key, 0)
+    return finish(offset, argv, "read", key, emit(payload))
+
+
+def finish(offset: int | None, argv: list[str], klass: str, key: str | None,
+           code: int, count: int | None = None) -> int:
+    """Return `code`, having corrected the record if the output failed.
+
+    Ends the process itself on failure: stdout still holds what could not be
+    written, and letting the interpreter discover that at shutdown prints
+    its own error and exits 120 whatever this returns — which would leave
+    the log naming a code the caller never saw, the very thing the
+    correction exists to stop.
+    """
+    if code == 0:
+        return 0
+    amend_exit(offset, argv, klass, key, 0, code, count)
+    sys.stderr.flush()
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main(sys.argv[1:]))
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        # A caller must never see this file's internals: a traceback here
+        # teaches them about this file, not about `gh`.
+        sys.stderr.write(f"gh: unexpected error: {type(exc).__name__}: {exc}\n")
+        raise SystemExit(1)

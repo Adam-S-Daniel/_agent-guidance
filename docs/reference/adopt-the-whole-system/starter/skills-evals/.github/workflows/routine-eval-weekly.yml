@@ -1,82 +1,213 @@
-name: routine-eval-weekly
-# The weekly sweep (guide 10.1). Plans the week's fires inside the allowance
-# room and dispatches them through routine-eval-fire.yml, which checks the
-# allowance guard again before each one fires.
+name: Weekly routine evals
+
+# The closed loop's weekly sweep (G5, G6): scripts/plan_week.py plans eval
+# AND improve fires by priority band (safety, missing evidence, near a
+# decision, improvements, re-checks; the thresholds design's rule D; then
+# bare baselines, ADR 0012's 2026-10-27 addendum: one `arms: bare` fire of
+# three trials per in-place fixture and roster model, once), with
+# improve eligibility and stopping (rules A and C) read from evidence that
+# already exists (scripts/improve_outcomes.py). Each leg dispatches the
+# existing fire workflow, which validates its inputs, runs the allowance
+# guard and holds the routine bearer.
 #
-# * Scheduled for Monday 18:17 UTC, after the "mon 17:00" reset in
-#   evals/budget.yml; move it if your allowance resets at another time.
-#   workflow_dispatch reruns the sweep when GitHub skips a schedule.
-# * allowance_guard.py room turns this week's fires and ingested runs into the
-#   guard file; scripts/loop_state.py state builds plan_week.py's state from
-#   persistent/eval-results and the registry's open pull requests.
-# * The plan (fires, work items, paused skills) is uploaded as the
-#   week-plan artifact before anything is dispatched.
-# * dispatch_fires.py keeps at most 3 fires in flight and never retries one.
-# * No secret here: GITHUB_TOKEN reads public data and dispatches workflows in
-#   this repo (actions: write). Reads the repository variable REGISTRY_REPO.
+# * Improve mode is scheduled since the owner's 2026-10-26 decision (ADR 0010,
+#   decision 4 addendum): no human in the loop. So is guidance-improve mode
+#   (ADR 0005, "Routine guidance improve mode addendum"): an eligible
+#   _agent-guidance section is an improve-band fire, one at a time, sent
+#   `trials=3` like an improve fire.
+# * The plan job reads the whole results branch (ingested runs, the usage
+#   census) and the three public registries as data, computes the
+#   retirement verdicts as scripts/compute_gates.py does, and reads the
+#   GitHub evidence (fire runs, improve and guidance-improve branches,
+#   agentskills and _agent-guidance pull requests, open on-hold
+#   issues) with its read-only token. A read failure
+#   plans nothing (fail closed). When nothing fits, `count` is 0 and the
+#   dispatch job is skipped.
+# * Dispatch: one leg at a time (`max-parallel: 1`). Each leg waits until
+#   fewer than three fires are in flight (`plan_week.py wait-slot`), fires,
+#   then waits 60 seconds before the next leg (the routine's fire limit).
+#   Improve fires are planned last, so a long improve run never holds up
+#   the evals.
+# * A manual dispatch runs the same sweep (no inputs). GitHub did not start
+#   the 2026-10-27 07:00 UTC schedule, and a schedule-only workflow left the
+#   week's plan with no way to run until the next Tuesday. The plan job's
+#   default-branch condition and the fire workflow's allowance guard bound a
+#   manual run exactly as a scheduled one.
+# * Not a pull_request or push workflow, so no path filter and no required
+#   check. Inputs are never interpolated into `run:`; matrix values reach
+#   the shell through `env` and are revalidated before the dispatch.
 on:
   schedule:
-    - cron: '17 18 * * 1'
+    - cron: "0 7 * * 2"
   workflow_dispatch:
-permissions:
-  contents: read
-  actions: write          # dispatch routine-eval-fire.yml and read its runs
-concurrency:
-  group: routine-eval-weekly
-  cancel-in-progress: false
+
+permissions: {}
+
 jobs:
-  sweep:
+  plan:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
-      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@<sha-of-the-v-tag-you-chose>
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
-      - name: Install harness dependencies
-        run: python3 -m pip install --quiet -r requirements.txt
-      # The results branch may not exist before the first ingest.
-      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
-        continue-on-error: true
+      - name: Install PyYAML
+        run: python3 -m pip install pyyaml==6.0.3
+      - name: Check out persistent/eval-results (the ingested runs)
+        uses: actions/checkout@v7.0.1
         with:
           ref: persistent/eval-results
-          path: results
+          path: eval-results-branch
           persist-credentials: false
-      - name: Allowance room
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p results plan
-          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "NOW=$now" >> "$GITHUB_ENV"
-          start=$(python3 scripts/allowance_guard.py reset --results results \
-            --budget evals/budget.yml --now "$now" | jq -er .window_start)
-          bash scripts/list_fires.sh "$start" > plan/fires.json
-          python3 scripts/allowance_guard.py room --results results --fires plan/fires.json \
-            --budget evals/budget.yml --now "$now" > plan/guard.json
-      - name: State and plan
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REGISTRY_REPO: ${{ vars.REGISTRY_REPO }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$REGISTRY_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::the repository variable REGISTRY_REPO is not set (bootstrap/create-environments.sh sets it)"; exit 1
-          fi
-          gh pr list --repo "$REGISTRY_REPO" --state open --limit 100 --json headRefName > plan/open-prs.json
-          python3 scripts/loop_state.py state --results results --open-prs plan/open-prs.json \
-            --now "$NOW" > plan/state.json
-          python3 scripts/plan_week.py --state plan/state.json --guard plan/guard.json > plan/plan.json
-          jq -r '"planned \(.fires | length) fires, \(.work_items | length) work items, room \(.room)"' plan/plan.json
-      - uses: actions/upload-artifact@<sha-of-the-v-tag-you-chose>
+      - name: Check out agentskills
+        uses: actions/checkout@v7.0.1
         with:
-          name: week-plan
-          path: plan/
-          retention-days: 30
-      - name: Dispatch the fires
+          repository: example-adopter/agentskills
+          path: registry-agentskills
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out example-site-platform
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/example-site-platform
+          path: registry-cms
+          persist-credentials: false
+      - name: Check out example-site-a
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/example-site-a
+          path: registry-site
+          persist-credentials: false
+      - name: Check out _agent-guidance (the guidance sections' content)
+        # Read for the sections' extents and digests, never run (#124). Full
+        # history: a section's newest change lifts its three-rejection stop.
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/_agent-guidance
+          path: agent-guidance
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plan the week's fires by band within the weekly allowance
+        id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/dispatch_fires.py plan/plan.json
+        run: |
+          set -euo pipefail
+          as_of="$(git -C eval-results-branch log -1 --format=%cI)"
+          python3 scripts/plan_week.py plan --results-tree eval-results-branch \
+            --as-of "$as_of" --max-fires 30 \
+            --registry "agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
+            --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
+            --guidance "$GITHUB_WORKSPACE/agent-guidance" \
+            --out "$RUNNER_TEMP/plan.json" \
+            --ranking-out "$RUNNER_TEMP/improve-ranking.json"
+      - name: Upload the improve ranking
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: improve-ranking
+          path: ${{ runner.temp }}/improve-ranking.json
+          retention-days: 30
+          if-no-files-found: error
+
+  dispatch:
+    needs: plan
+    # An empty matrix is an error to GitHub, so no fire fitting skips the job.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: python3 -m pip install pyyaml==6.0.3
+      - name: Revalidate the planned fire
+        env:
+          MODE: ${{ matrix.mode }}
+          ARMS: ${{ matrix.arms }}
+          FIXTURE: ${{ matrix.fixture }}
+          EVAL_KEY: ${{ matrix.eval_key }}
+          MODEL: ${{ matrix.model }}
+          SKILL: ${{ matrix.skill }}
+          SECTION: ${{ matrix.section }}
+          HOLDOUT: ${{ matrix.holdout }}
+        run: python3 scripts/plan_week.py validate-fire
+      - name: Wait until fewer than three fires are in flight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/plan_week.py wait-slot --max-wait 1500
+      - name: Dispatch the validated fire
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          MODE: ${{ matrix.mode }}
+          ARMS: ${{ matrix.arms }}
+          FIXTURE: ${{ matrix.fixture }}
+          MODEL: ${{ matrix.model }}
+          SKILL: ${{ matrix.skill }}
+          SECTION: ${{ matrix.section }}
+          HOLDOUT: ${{ matrix.holdout }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            eval)
+              # A bare baseline is one arm at three trials; a cell's pair
+              # is both arms at one.
+              case "${ARMS:-}" in
+                both) trials=1 ;;
+                bare) trials=3 ;;
+                *)
+                  echo "::error::Routine eval dispatch failed"
+                  exit 1 ;;
+              esac
+              fields=(--raw-field mode=eval --raw-field "fixture=$FIXTURE"
+                      --raw-field "model=$MODEL" --raw-field "arms=$ARMS"
+                      --raw-field "trials=$trials") ;;
+            improve)
+              fields=(--raw-field mode=improve --raw-field "skill=$SKILL"
+                      --raw-field "holdout=$HOLDOUT" --raw-field arms=both --raw-field trials=3) ;;
+            guidance-improve)
+              fields=(--raw-field mode=guidance-improve --raw-field "section=$SECTION"
+                      --raw-field "holdout=$HOLDOUT" --raw-field arms=both --raw-field trials=3) ;;
+            *)
+              echo "::error::Routine eval dispatch failed"
+              exit 1 ;;
+          esac
+          if ! gh workflow run routine-eval-fire.yml \
+            --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" "${fields[@]}" > /dev/null 2>&1; then
+            echo "::error::Routine eval dispatch failed"
+            exit 1
+          fi
+      # The routine's fire limit: about one fire a minute.
+      - name: Space the next fire
+        run: sleep 60

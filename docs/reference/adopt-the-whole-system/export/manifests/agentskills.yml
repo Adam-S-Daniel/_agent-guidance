@@ -1,0 +1,299 @@
+# Export of adam-agentskills (repo key `agentskills`) into starter/agent-skills/ (repo name
+# `agentskills`, DECISIONS C1). Built from the inventory (scratch
+# manifests/adam-agentskills.yml, 2026-10-29) as amended by DECISIONS.md.
+repo: agentskills
+kit_name: agent-skills
+source: adam-agentskills
+source_sha: d2d81b00c51388baf51c3922a540ae27839adcde
+after: [_agent-guidance]
+
+exclude:
+  - path: plugins/adam-anything-anywhere/skills/
+    why: DECISIONS X9 (the content starts blank; the plugin keeps its manifests).
+  - path: plugins/adam-coding-anywhere/skills/
+    why: DECISIONS X9.
+  - path: plugins/adam-coding-local/skills/
+    why: DECISIONS X9 (the plugin's hooks and bin/ are machinery and stay).
+  - path: plugins/adam-non-coding-local/skills/
+    why: DECISIONS X9 (this also drops the Fastmail skills of X1).
+
+substitutions:
+  # C1, repo-specific. In this repo a bare `agentskills` (and
+  # `agentskills-private`) almost always names the RETIRED predecessor
+  # registry: its marketplace (`my@agentskills`), its checkout beside this one,
+  # its issues (`agentskills#55`), its history in the ADRs. The live registry
+  # is `adam-agentskills`, which C1 renames to `agentskills`, so the retired
+  # one takes `retired-agentskills` (as the common owner-qualified rule does)
+  # and the two never collide. Tried before the common rules; a name inside
+  # `adam-agentskills` or `owner/agentskills` starts earlier and is matched
+  # there by the common rules first. `agentskills.io` and AGENTSKILLS_* are
+  # untouched.
+  - name: C1 retired registry (bare)
+    regex: '(?<![\w.-])agentskills(-private)?(?![\w.-])'
+    to: 'retired-agentskills\1'
+  # C1: the bare `adam` bundle label where the common rule's word boundary
+  # does not reach it (after a hyphen).
+  - {name: C1 bare adam label (branch name), literal: e5-probe-adam-local, to: e5-probe-my-local}
+  - {name: C1 bare adam label (test id), literal: bundles-claims-adam, to: bundles-claims-my}
+
+edits:
+  # ---- Review fixes (2026-10-29)
+  - path: scripts/install-agent-hooks.sh
+    stage: output
+    old: "owners=\"example-adopter example-adopter example-adopter-two\"\n"
+    new: "owners=\"example-adopter example-adopter-two\"\n"
+    why: >-
+      The source listed its first owner twice, in its two letter cases; C2
+      folds both into one login, which the installer then wrote as duplicate
+      includeIf conditions.
+  - path: scripts/test_agent_checks.py
+    stage: output
+    old: "    joined = \"\\n\".join(first)\n"
+    new: "    owners = re.search(r'^owners=\"([^\"]*)\"$', INSTALLER.read_text(), re.M).group(1).split()\n    assert len(owners) == len(set(owners)), owners  # git keeps one include per condition anyway\n    joined = \"\\n\".join(first)\n"
+    why: >-
+      Locks the deduplicated owner list above. Read from the script, since
+      git's config keeps one entry per includeIf condition however often the
+      installer writes it, so the installed config cannot show a duplicate.
+  # ---- C4: the scheduled-run-health caller points at _agent-guidance's copy
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "    uses: Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.164\n"
+    new: "    uses: Adam-S-Daniel/_agent-guidance/.github/workflows/scheduled-run-health-reusable.yml@0000000000000000000000000000000000000000\n"
+    why: >-
+      C4. The reusable now lives in _agent-guidance. A cross-repo reusable
+      takes a full commit sha (test_cross_repo_reusable_workflows_are_pinned_to_a_full_sha),
+      and the adopter's _agent-guidance commit does not exist yet, so this is
+      a placeholder sha the adopter replaces (REGENERATE.md), as in repo-settings.
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "# sweep once startup-failed 30/30 for a month unnoticed). The platform owns\n# the audit logic; this thin caller schedules it."
+    new: "# sweep once startup-failed 30/30 for a month unnoticed). _agent-guidance's\n# scheduled-run-health-reusable.yml owns the audit logic; this thin caller\n# schedules it."
+    why: C4. The audit logic now lives in _agent-guidance.
+
+  # ---- X9: the machinery accepts a registry with no skills yet
+  - path: setup.sh
+    stage: output
+    old: |
+      if [[ ${#SKILL_DIRS[@]} -eq 0 ]]; then
+        echo "ERROR: no skills found under $PLUGINS_DIR/*/skills/*" >&2
+        exit 1
+      fi
+    new: |
+      # A registry with no skills yet (the adoption kit ships it that way) is
+      # not an error: nothing is linked any more, and the settings convergence
+      # and owner-machine steps below still have work to do.
+      if [[ ${#SKILL_DIRS[@]} -eq 0 ]]; then
+        echo "No skills found under $PLUGINS_DIR/*/skills/* yet."
+      fi
+    why: >-
+      X9. setup.sh refused a registry with no skills, which is the kit's
+      starting state, and so did every test that runs it (23 in
+      test_setup_owner_machine.py). setup.sh no longer links skills (ADR
+      0017); the count is only printed, so an empty list has nothing to break.
+  - path: .github/workflows/ci.yml
+    stage: output
+    count: 2
+    old: "        run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto\n"
+    new: "        run: shopt -s nullglob; python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto\n"
+    why: >-
+      X9. With no skill shipping tests or scripts the two plugin globs match
+      nothing, bash passes them through literally and pytest exits 4 (file
+      not found). nullglob drops an unmatched glob, so the step runs scripts/
+      now and picks each skill's tests up as they are added. Both jobs run
+      bash and must stay byte-identical (test_ci_workflow.py).
+  - path: AGENTS.md
+    stage: output
+    old: |2
+        Exactly one test file in the repo does not:
+        `plugins/non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py`
+        ends with `unittest.main()`, and running THAT one directly really does run
+        its tests — which is why the habit to build is naming the runner rather than
+        auditing each file for a footer. The one command that actually runs this
+        repo's suite is the one CI runs:
+        `python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q`,
+        and read its result from `$?` directly rather than through a pipe.
+    new: |2
+        A skill's own test file may end in `unittest.main()` (one in the source
+        registry did), and running THAT one directly really does run its tests —
+        which is why the habit to build is naming the runner rather than
+        auditing each file for a footer. The one command that actually runs this
+        repo's suite is the one CI runs:
+        `shopt -s nullglob; python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q`,
+        and read its result from `$?` directly rather than through a pipe.
+        (`nullglob` because a registry with no skill tests yet leaves the two
+        plugin globs unmatched, and pytest refuses a literal glob.)
+    why: >-
+      X9. The file it named was a skill's test, which the kit does not ship;
+      and the command gets the same nullglob as ci.yml.
+  - path: .github/pull_request_template.md
+    stage: output
+    old: "- [ ] Tests run: `python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q` (say the count)."
+    new: "- [ ] Tests run: `shopt -s nullglob; python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q` (say the count)."
+    why: X9. The same command as ci.yml and AGENTS.md.
+  - path: README.md
+    stage: output
+    old: "| `anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |\n| `coding-anywhere` | enabled | CI, GitHub and skill-delivery skills | Claude Code terminals and cloud sessions |\n| `coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser) | Claude Code on the owner's machines |\n"
+    new: "| `anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |\n| `coding-anywhere` | enabled | coding skills (CI, GitHub, skill delivery) | Claude Code terminals and cloud sessions |\n| `coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser), plus the clone-sync and API-credit-lane hooks | Claude Code on the owner's machines |\n"
+    why: X9. Says what each plugin is for, not which skills the source registry happened to ship.
+  - path: README.md
+    stage: output
+    old: "| PDF and Fastmail skills | the Claude Desktop app's local Cowork |"
+    new: "| document and browser skills | the Claude Desktop app's local Cowork |"
+    why: X1 and X9. The Fastmail skills are left out, and so is every other skill.
+  - path: README.md
+    stage: output
+    old: "\nAvailable skills:\n"
+    new: "\nAvailable skills (a plugin with none yet says so; the table is generated by\n`scripts/generate_readme_table.py`):\n"
+    why: X9. The generated table below now shows each plugin as \"none yet\" until it holds a skill.
+  - path: STRATEGY.md
+    stage: output
+    old: "   NOT use in headless/cloud sessions\"). `fastmail` is the model example."
+    new: "   NOT use in headless/cloud sessions\")."
+    why: X1. The model example is a Fastmail skill the kit does not ship.
+
+  # ---- C11: config names only the kit's repos
+  - path: .github/workflows/ci.yml
+    stage: output
+    old: |2
+            - name: Check out sibling registries for the cross-registry census
+              # Cloned to ../<repo>, OUTSIDE the workspace checkout, so the trees being
+              # audited never pollute the one under test — and that is exactly where
+              # scripts/skills_registries.yml expects them by default. Both repos are
+              # public, so a plain anonymous shallow clone is simpler than
+              # actions/checkout here and needs no token scoping.
+              run: |
+                git clone --depth 1 --filter=blob:none --quiet https://github.com/example-adopter/example-site-platform.git ../example-site-platform
+                git clone --depth 1 --filter=blob:none --quiet https://github.com/example-adopter/example-site-a.git ../example-site-a
+    new: |2
+            # A public sibling registry to audit too goes here: clone it to
+            # ../<repo>, OUTSIDE the workspace checkout, so the trees being audited
+            # never pollute the one under test (that is where
+            # scripts/skills_registries.yml expects it), with a plain anonymous
+            # shallow clone (`git clone --depth 1 --filter=blob:none --quiet
+            # https://github.com/<owner>/<repo>.git ../<repo>`), and give it an
+            # entry in that file.
+    why: >-
+      C11. The step cloned the source owner's platform repo and one of its
+      consumer sites, which an adopter does not have; a clone of a missing
+      repo fails the job. The how-to stays as a comment.
+  - path: .github/workflows/ci.yml
+    stage: output
+    old: |2
+                This job clones the DEFAULT BRANCHES of example-adopter/example-site-platform and
+                example-adopter/example-site-a and audits them, so its verdict can change
+                with no commit in this repo at all. Look upstream first: the likely
+                cause is a change in one of those repos rather than a change here.
+    new: |2
+                This job audits the registries scripts/skills_registries.yml names. A
+                sibling registry it clones is read at its DEFAULT BRANCH, so its verdict
+                can change with no commit in this repo at all: if one is listed, look
+                there first.
+    why: C11. The body named the two clones removed above.
+  - path: .github/workflows/ci.yml
+    stage: output
+    old: "      # skills-conformance job already clones ../example-site-platform — or they exit 1\n"
+    new: "      # skills-conformance job would clone a sibling registry — or they exit 1\n"
+    why: C11. That job no longer clones the platform repo.
+  - path: scripts/skills_registries.yml
+    stage: output
+    old: |2
+        - name: example-site-platform
+          path: ../example-site-platform
+          layout: "skills/*/SKILL.md"
+          optional: true
+          reason: "not checked out in every environment; CI clones it explicitly"
+        - name: example-site-a
+          path: ../example-site-a
+          layout: ".claude/skills/*/SKILL.md"
+          optional: true
+          reason: "not checked out in every environment; CI clones it explicitly"
+    new: ""
+    why: >-
+      C11. The census covered the source owner's platform repo and one of its
+      consumer sites. This registry and the optional private one remain.
+
+  - path: .gitignore
+    stage: output
+    old: "pytest-cache*\n"
+    new: "pytest-cache*\n# The adoption kit's copy-starter.sh skips these when it copies the tree;\n# ignoring them here keeps them out of the adopter's first commits too.\nnode_modules/\n.DS_Store\n"
+    why: >-
+      The kit's bootstrap test requires every starter tree's .gitignore to
+      name each path copy-starter.sh skips (__pycache__/, *.pyc,
+      .pytest_cache/, node_modules/, .DS_Store); the lines already present
+      are not repeated.
+
+  - path: .claude-plugin/marketplace.json
+    stage: output
+    old: "      \"description\": \"The example-site-platform site machinery's own skills, federated from that repo rather than mirrored here: Decap /admin config rendering, AWS bootstrap and PR preview environments, Playwright e2e, CI watcher loops, stuck-PR triage, and the platform release/consumer-bump flow.\",\n      \"category\": \"development\",\n      \"keywords\": [\"cms\", \"decap\", \"jekyll\", \"aws\", \"cloudformation\", \"cloudfront\", \"preview-environments\", \"playwright\", \"e2e\", \"ci-cd\", \"github-actions\", \"release\"],\n"
+    new: "      \"description\": \"An example of a federated plugin: the skills of a separate platform repo, served from that repo rather than mirrored here. Point it at a repo of your own, or remove the entry.\",\n      \"category\": \"development\",\n      \"keywords\": [\"example\", \"federated\"],\n"
+    why: >-
+      The federated example described the source's real platform repo (its
+      stack and services); it now describes an invented one.
+  - path: README.md
+    stage: output
+    old: "The example-site-platform site machinery's own skills, federated from that repo rather than mirrored here: Decap /admin config rendering, AWS bootstrap and PR preview environments, Playwright e2e, CI watcher loops, stuck-PR triage, and the platform release/consumer-bump flow. |"
+    new: "An example of a federated plugin: the skills of a separate platform repo, served from that repo rather than mirrored here. Point it at a repo of your own, or remove the entry. |"
+    why: The README's generated plugin table repeats the marketplace description.
+
+# DECISIONS X9: the plugins ship with no skills (see each patch's docstring).
+patches:
+  - file: blank_registry.py
+    why: >-
+      X9. plugin_layout.json keeps its plugins with empty skill lists, the
+      README table renders an empty plugin as one "none yet" row, and the
+      manifests drop the descriptions of skills the kit does not ship.
+  - file: machinery_tests.py
+    why: >-
+      X9. The tests that read the shipped layout accept an empty skill list,
+      and the README-table tests use an unrenderable entry where they used an
+      empty bundle (listed in DECISIONS.md, Export record: agentskills).
+
+# P3 and the files the sync delivers.
+regenerate:
+  - copy_from_kit: {repo: _agent-guidance, from: agents-md/base.md, to: .claude/hooks/fleet-guidance.md}
+    why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
+    why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks-guard.sh, to: .claude/hooks/agent-checks-guard.sh}
+    why: The sync delivers the guard from _agent-guidance's templates (byte-identical in the sources).
+  - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/fleet-memory.sh, to: .claude/hooks/fleet-memory.sh}
+    why: The sync delivers the fleet-memory hook (byte-identical in the sources).
+  - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/skills-bootstrap.sh, to: .claude/hooks/skills-bootstrap.sh}
+    why: >-
+      Byte-identical in the sources, and _agent-guidance's repos.yml pins its
+      sha256; this repo's own substitutions (the retired-registry rule) must
+      not make the two copies differ.
+  - run: >-
+      printf '%s\n%s\n' "$("$EXPORT_TREE_AGENT_GUIDANCE/scripts/build-agents-md.sh")"
+      "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new
+      && mv AGENTS.md.new AGENTS.md
+    why: The managed half of AGENTS.md is the exported _agent-guidance's build-agents-md.sh output.
+  - run: python3 -I -B scripts/generate_readme_table.py >/dev/null
+    why: The README's plugin table is generated (CI runs it with --check); with no skills it lists each plugin as "none yet".
+  - run: >-
+      set -e; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+      GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z;
+      git init -q -b main; git add -A;
+      git -c user.name=kit -c user.email=kit@example.com -c core.hooksPath=/dev/null commit -qm export;
+      sha=$(git rev-parse HEAD);
+      python3 -I -B scripts/generate_skills_lock.py --ref "$sha" >/dev/null; rm -rf .git;
+      sed -i "s/$sha/0000000000000000000000000000000000000000/g" skills.lock
+    why: >-
+      P3. skills.lock is the repo's own generator's output: the cloud-safe
+      bundles, with no skills (X9). The ref it pins is the adopter's first
+      commit, which does not exist yet, so it is written as forty zeros and
+      REGENERATE.md gives the command to run after that commit.
+
+# The repo's own suite, as its AGENTS.md and ci.yml run it. The two plugin
+# globs match nothing while no skill ships tests, so the command sets
+# nullglob (ci.yml carries the same edit).
+suite:
+  git_init: true
+  setup: >-
+    python3 -I -c 'import yaml, markdown_it, bashlex, jsonschema, xdist; assert yaml.__version__ == "6.0.3", yaml.__version__';
+    if [ "$(id -u)" = 0 ]; then chmod o+rx "$PWD" "$(dirname "$PWD")"; fi
+  command: shopt -s nullglob; python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto -p no:cacheprovider
+  needs: >-
+    the pins in requirements-dev.txt (python3 -m pip install --ignore-installed
+    PyYAML -r requirements-dev.txt), bash, git; pwsh optional (its tests skip
+    without it). As root, two hook tests drop to `nobody` through setpriv and
+    need the checkout's parent directories searchable, which setup opens.
+  summary: '^(=+ )?(\d+ (passed|failed).*?)( =+)?$'

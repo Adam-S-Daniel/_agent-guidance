@@ -1,0 +1,701 @@
+#!/usr/bin/env bash
+# setup.sh — one-time setup for the agentskills repo.
+#
+# This repo is a Claude Code *plugin marketplace*: skills ship in plugins
+# under plugins/<plugin>/skills/<skill>/ (ADR 0013). Claude Code users can
+# install a plugin with one command (Claude Code v2.1.275 or later)
+#
+#   /plugin install coding-anywhere --marketplace example-adopter/agentskills
+#
+# which offers to add the marketplace before installing — or, on older CLIs,
+# with the two-step form
+#
+#   /plugin marketplace add example-adopter/agentskills
+#   /plugin install coding-anywhere@agentskills
+#
+# invoke its skills as /<plugin>:<skill> (e.g.
+# /anything-anywhere:finding-unknowns),
+# and don't need this script at all. OpenAI Codex installs the same plugins
+# from the same marketplace (`codex plugin marketplace add
+# example-adopter/agentskills`).
+#
+# THIS SCRIPT NO LONGER LINKS SKILLS ANYWHERE (ADR 0017). It used to link
+# every skill into ~/.agents/skills, ~/.agent/skills and ~/.cursor/skills for
+# the other agent tools. Codex now installs the plugins from the marketplace,
+# so a link there would load every skill a second time; nothing on the
+# owner's machines reads ~/.agent/skills; Cursor is not installed on them;
+# and Gemini / Antigravity was retired as a target on 2026-08-14 (an owner
+# scope decision: Antigravity's IDE really does read
+# ~/.gemini/antigravity/skills). So all five homes are RETIRED, and
+# sweep_retired_homes below removes the links an earlier version made there
+# and leaves everything else alone.
+#
+# Claude Code never was in that list. It is served by the plugin marketplace
+# (/plugin marketplace add example-adopter/agentskills). Linking the
+# same skills into ~/.claude/skills as well would double-load them — once as a
+# namespaced marketplace plugin and once as a personal skill — which wastes
+# context and makes invocation ambiguous. This script removes any such links it
+# created in earlier versions (see dedup_claude_code_dir below). Background:
+# docs/2026-06-05-skill-discovery-and-centralized-strategy.md.
+#
+# OWNER-MACHINE STEPS ARE OPT-IN. Run as `bash setup.sh`, this script only
+# removes the links earlier versions made. The other steps configure a
+# machine the way the registry's OWNER runs it, and they are wrong on anyone
+# else's: cleaning up the retired global sync-skills pre-push hook (ADR
+# 0014) — a GLOBAL git config entry a prior run may have left registered,
+# fired in every repo on the machine, now pointing at a script that no
+# longer exists; in WSL, making WSL git read the Windows clones under /mnt/
+# with core.autocrlf=true; converging ~/.claude/settings.json — which
+# registers the owner's PRIVATE marketplace, enables the owner's plugins and
+# sets `syncClaudeAiSkills: false`, turning off that user's claude.ai account
+# skills in their terminals (ADR 0010, ADR 0013), sets
+# `disableSkillShellExecution: true`, and applies the per-OS
+# policy for `non-coding-local` (off in WSL/Linux, left on in Windows;
+# ADR 0015); and, in Windows Git Bash, registering the `my-clone-sync`
+# scheduled task (ADR 0017). They run only with `--owner-machine` or
+# AGENTSKILLS_OWNER_MACHINE=1.
+#
+# Safe to re-run (idempotent). Run on Windows (Git Bash) AND in WSL
+# separately; each has its own filesystem and its own $HOME.
+#
+# AGENTSKILLS_HOST_KIND (wsl|gitbash|other) overrides which kind of machine
+# this is; the tests use it. Unset, Git Bash is recognized by $OSTYPE and WSL
+# by WSL_DISTRO_NAME or a /proc/version that mentions Microsoft.
+set -u
+
+OWNER_MACHINE="${AGENTSKILLS_OWNER_MACHINE:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --owner-machine) OWNER_MACHINE=1 ;;
+    -h|--help)
+      echo "usage: bash setup.sh [--owner-machine]"
+      echo "  (default)        remove the skill links earlier versions made in ~/.agents/skills,"
+      echo "                   ~/.agent/skills, ~/.cursor/skills, ~/.gemini and ~/.claude/skills"
+      echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook, set up"
+      echo "                   WSL git for the Windows clones (WSL), converge"
+      echo "                   ~/.claude/settings.json, and register the my-clone-sync"
+      echo "                   scheduled task (Windows Git Bash), for the registry owner's own"
+      echo "                   machines (same as AGENTSKILLS_OWNER_MACHINE=1)"
+      exit 0 ;;
+    *) echo "ERROR: unknown argument: $arg (see --help)" >&2; exit 2 ;;
+  esac
+done
+if [[ "$OWNER_MACHINE" != 1 ]]; then
+  OWNER_MACHINE=0
+fi
+export OWNER_MACHINE
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGINS_DIR="$REPO_ROOT/plugins"
+
+if [[ ! -d "$PLUGINS_DIR" ]]; then
+  echo "ERROR: plugins directory not found at $PLUGINS_DIR" >&2
+  exit 1
+fi
+
+# >>> skill-collection
+# Collect every skill directory: plugins/<plugin>/skills/<skill>/SKILL.md
+# A SYMLINKED skill directory is skipped. check_consistency.py refuses any
+# symlink under plugins/ (ADR 0013), so none should exist; if one ever did,
+# following it would link one skill twice under one basename.
+SKILL_DIRS=()
+for skill_md in "$PLUGINS_DIR"/*/skills/*/SKILL.md; do
+  [[ -f "$skill_md" ]] || continue
+  [[ -L "$(dirname "$skill_md")" ]] && continue
+  SKILL_DIRS+=("$(dirname "$skill_md")")
+done
+# <<< skill-collection
+
+# A registry with no skills yet (the adoption kit ships it that way) is
+# not an error: nothing is linked any more, and the settings convergence
+# and owner-machine steps below still have work to do.
+if [[ ${#SKILL_DIRS[@]} -eq 0 ]]; then
+  echo "No skills found under $PLUGINS_DIR/*/skills/* yet."
+fi
+
+# Detect platform: Git Bash / MSYS / Cygwin on Windows → junctions.
+case "${OSTYPE:-}" in
+  msys*|cygwin*|win32*) PLATFORM="windows" ;;
+  *)                    PLATFORM="unix" ;;
+esac
+
+# Which kind of machine, for the owner-machine steps that differ by it.
+if [[ -n "${AGENTSKILLS_HOST_KIND:-}" ]]; then
+  HOST_KIND="$AGENTSKILLS_HOST_KIND"
+  case "$HOST_KIND" in
+    wsl|gitbash|other) ;;
+    *) echo "ERROR: AGENTSKILLS_HOST_KIND=$HOST_KIND is not one of wsl, gitbash, other" >&2; exit 2 ;;
+  esac
+elif [[ "$PLATFORM" = "windows" ]]; then
+  HOST_KIND="gitbash"
+elif [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/version 2>/dev/null; then
+  HOST_KIND="wsl"
+else
+  HOST_KIND="other"
+fi
+
+echo "Platform:  $PLATFORM"
+echo "Repo:      $REPO_ROOT"
+echo "Skills:    ${#SKILL_DIRS[@]}"
+echo "Host:      $HOST_KIND"
+echo "\$HOME:     $HOME"
+echo ""
+
+# Homes this script used to populate and no longer does (ADR 0017; Gemini
+# and Antigravity since 2026-08-14). Un-listing a home is not enough on a
+# machine that has already run an earlier version: the links are still
+# there, still feeding an unmanaged copy of the skill set to that agent, and
+# they dangle the moment a skill is renamed. sweep_retired_homes reaps them.
+RETIRED_HOMES=(
+  ".agents/skills"
+  ".agent/skills"
+  ".cursor/skills"
+  ".gemini/skills"
+  ".gemini/antigravity/skills"
+)
+
+# The retired `retired-agentskills` registry's checkout, when it sits beside this one
+# (its setup.sh made the same kind of links into the same homes). Only links
+# into it or into $PLUGINS_DIR are ever removed.
+RETIRED_REGISTRY_DIR="$(dirname "$REPO_ROOT")/retired-agentskills"
+
+# PowerShell parses its own quoting sanely (unlike cmd.exe, which cannot
+# digest the \"-escaped inner quotes MSYS builds into the command line —
+# live-debugged 2026-07-17: `MSYS_NO_PATHCONV=1 cmd.exe /c "mklink /J
+# \"C:\path\" \"C:\path\""` fails with "The filename, directory name, or
+# volume label syntax is incorrect", but the identical command with the
+# inner quotes stripped succeeds — the quoting layering was the bug, not the
+# operation). Single quotes inside the -Command string below are safe
+# because Windows paths in this repo's layout never contain single quotes or
+# apostrophes. -LiteralPath + -Force also sees BOTH reparse point flavors
+# (Junction and SymbolicLink), which the old fsutil-based detection missed —
+# legacy links created from Git Bash/WSL can be POSIX-style symlinks, not
+# junctions. Uses powershell.exe (Windows PowerShell 5.1), not pwsh, since a
+# stock Windows install isn't guaranteed to have PowerShell 7.
+
+# win_link_type <msys-path> — echoes Junction/SymbolicLink/empty; rc 0 iff reparse point
+win_link_type() {
+  local p; p="$(cygpath -w "$1")"
+  local t
+  t=$(MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command \
+    "try { (Get-Item -LiteralPath '$p' -Force -ErrorAction Stop).LinkType } catch { '' }" 2>/dev/null </dev/null | tr -d '\r')
+  [[ -n "$t" ]] && { echo "$t"; return 0; } || return 1
+}
+
+# win_remove_link <msys-path> — removes the reparse point itself, never recursing into the target
+win_remove_link() {
+  local p; p="$(cygpath -w "$1")"
+  MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command \
+    "[System.IO.Directory]::Delete('$p')" </dev/null >/dev/null 2>&1
+}
+
+# migrate_legacy <home-skills-path> — remove a legacy whole-directory link so
+# we can replace it with a real directory of per-skill links. Removing a
+# symlink/junction never touches the directory it points at.
+migrate_legacy() {
+  local home_skills="$1"
+  if [[ "$PLATFORM" = "windows" ]]; then
+    if win_link_type "$home_skills" >/dev/null; then
+      echo "  MIGRATE  removing legacy reparse point"
+      win_remove_link "$home_skills"
+    fi
+  elif [[ -L "$home_skills" ]]; then
+    echo "  MIGRATE  removing legacy directory symlink"
+    rm "$home_skills"
+  fi
+}
+
+# dedup_claude_code_dir — earlier versions of this script also linked skills
+# into ~/.claude/skills. Claude Code is now served by the marketplace, so remove
+# any links we previously created there to avoid double-loading. Only links that
+# point back into THIS repo (plus a legacy whole-directory link) are removed;
+# real personal skills the user keeps in ~/.claude/skills are left untouched.
+# retired_link_target <path> — echo <path>'s link target; rc 0 only when
+# <path> really is a symlink/junction AND we could read where it points. A
+# regular file or a real directory gives rc 1, and so does a junction MSYS
+# cannot read: guessing there would risk deleting something that isn't ours.
+retired_link_target() {
+  local p="$1" t
+  if [[ "$PLATFORM" = "windows" ]]; then
+    win_link_type "$p" >/dev/null || return 1
+  else
+    [[ -L "$p" ]] || return 1
+  fi
+  t="$(readlink "$p" 2>/dev/null || true)"
+  [[ -n "$t" ]] || return 1
+  echo "$t"
+}
+
+# ours_target <target> — rc 0 when a link target lies under $PLUGINS_DIR or
+# under the retired registry's checkout beside this one: the only targets
+# this script (or the retired registry's setup.sh) ever linked to.
+ours_target() {
+  case "$1" in
+    "$PLUGINS_DIR"/*|"$RETIRED_REGISTRY_DIR"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# remove_link <path> — remove a symlink or junction itself, never its target.
+remove_link() {
+  if [[ "$PLATFORM" = "windows" ]]; then
+    win_remove_link "$1"
+  else
+    rm "$1"
+  fi
+}
+
+# sweep_retired_homes — remove the links this script created in RETIRED_HOMES.
+#
+# Deliberately conservative, because these are directories inside a user's
+# $HOME that we no longer manage: a link is removed ONLY if its target lies
+# under $PLUGINS_DIR or the retired registry's checkout (ours_target). A
+# regular file, a real directory, or a link pointing anywhere else belongs to
+# the user and is left untouched — and because the directory is then removed
+# with rmdir, which refuses a non-empty directory, one such bystander keeps
+# the whole directory alive too. A home that is ITSELF a link (the legacy
+# whole-directory form) is removed when its target is ours and otherwise
+# left alone without looking inside, so the sweep never reaches through a
+# link into a directory it does not own. Silent when there is nothing to do,
+# and never fails the script if the paths don't exist.
+sweep_retired_homes() {
+  local rel dir link target name dir_removed
+  local -a removed
+  for rel in "${RETIRED_HOMES[@]}"; do
+    dir="$HOME/$rel"
+
+    if target="$(retired_link_target "$dir")"; then
+      if ours_target "$target"; then
+        remove_link "$dir"
+        echo "=== $dir (retired home — setup.sh no longer links skills) ==="
+        echo "  UNLINK   (legacy whole-directory link)"
+      fi
+      continue
+    fi
+    [[ -d "$dir" ]] || continue
+
+    removed=()
+    for link in "$dir"/*; do
+      # An unmatched glob expands to the literal pattern, which is neither a
+      # symlink nor a junction, so retired_link_target rejects it.
+      target="$(retired_link_target "$link")" || continue
+      ours_target "$target" || continue
+      remove_link "$link"
+      removed+=("$(basename "$link")")
+    done
+
+    dir_removed=0
+    if rmdir "$dir" 2>/dev/null; then
+      dir_removed=1
+    fi
+
+    if [[ ${#removed[@]} -gt 0 ]] || [[ "$dir_removed" -eq 1 ]]; then
+      echo "=== $dir (retired home — setup.sh no longer links skills) ==="
+      for name in "${removed[@]}"; do
+        echo "  UNLINK   $name"
+      done
+      if [[ "$dir_removed" -eq 1 ]]; then
+        echo "  RMDIR    (nothing left in it)"
+      fi
+    fi
+  done
+}
+
+dedup_claude_code_dir() {
+  local cc="$HOME/.claude/skills"
+  migrate_legacy "$cc"            # legacy whole-directory link at ~/.claude/skills
+  [[ -d "$cc" ]] || return 0
+  echo "=== $cc (de-dup: marketplace owns Claude Code) ==="
+  local sd link
+  for sd in "${SKILL_DIRS[@]}"; do
+    link="$cc/$(basename "$sd")"
+    if [[ "$PLATFORM" = "windows" ]]; then
+      if win_link_type "$link" >/dev/null; then
+        echo "  UNLINK   $(basename "$link")"
+        win_remove_link "$link"
+      fi
+    elif [[ -L "$link" ]]; then
+      case "$(readlink "$link")" in
+        "$PLUGINS_DIR"/*) echo "  UNLINK   $(basename "$link")"; rm "$link" ;;
+      esac
+    fi
+  done
+}
+
+dedup_claude_code_dir
+sweep_retired_homes
+
+if [[ "$OWNER_MACHINE" == 1 ]]; then
+echo ""
+echo "=== Cleaning up the retired sync-skills pre-push hook ==="
+# sync-skills (retired, ADR 0014) registered these as GLOBAL git-config-based
+# hooks (git 2.54+, `git hook list`), so they fired on every push in every
+# repo on the machine. The skill and its setup.sh are gone; a machine that
+# still has either section registered would fail EVERY push the moment
+# something tries to run a hook command pointing at a script that no longer
+# exists. Removal is idempotent — a section already absent is left alone and
+# nothing is printed for it.
+for section in hook.sync-skills-reminder hook.sync-skills-private-reminder; do
+  if git config --global --get-regexp "^${section}\." >/dev/null 2>&1; then
+    git config --global --remove-section "$section"
+    echo "REMOVED  global hook section: $section"
+  fi
+done
+
+echo ""
+echo "=== Fleet agent-checks git hooks (ADR 0020) ==="
+# Unlike the hook removed above, these point at no absolute path: a missing
+# include file or runner is a no-op, so they cannot break pushes.
+bash "$REPO_ROOT/scripts/install-agent-hooks.sh" || echo "WARNING: install-agent-hooks.sh failed" >&2
+
+if [[ "$HOST_KIND" == wsl ]]; then
+echo ""
+echo "=== WSL git for the Windows clones under /mnt/ ==="
+# Windows git checks files out with CRLF line endings, because Git for
+# Windows sets core.autocrlf=true in its SYSTEM config. WSL git never reads
+# that file, so in a clone under /mnt/ it compares CRLF working files with LF
+# blobs and reports every file as modified. An includeIf scoped to gitdirs
+# under /mnt/ gives WSL git the same autocrlf there, and nowhere else.
+# Idempotent: a value already right is left alone, and an includeIf that
+# already points somewhere else is reported, never overwritten.
+windows_clones_config="$HOME/.gitconfig-windows-clones"
+# Single quotes on purpose: git expands the ~ itself when it reads the include.
+# shellcheck disable=SC2088
+windows_clones_include='~/.gitconfig-windows-clones'
+if [[ "$(git config --file "$windows_clones_config" --get core.autocrlf 2>/dev/null)" != "true" ]]; then
+  git config --file "$windows_clones_config" core.autocrlf true
+  echo "SET      core.autocrlf = true in $windows_clones_config"
+fi
+include_values="$(git config --global --get-all 'includeIf.gitdir:/mnt/.path' 2>/dev/null || true)"
+if [[ -z "$include_values" ]]; then
+  git config --global --add 'includeIf.gitdir:/mnt/.path' "$windows_clones_include"
+  echo "ADDED    includeIf.gitdir:/mnt/.path = ~/.gitconfig-windows-clones"
+elif ! grep -qxF -e "$windows_clones_include" -e "$windows_clones_config" <<< "$include_values"; then
+  echo "WARN     includeIf.gitdir:/mnt/.path is already set to something else; left as it is." >&2
+  echo "         Point it at ~/.gitconfig-windows-clones by hand if WSL git reports" >&2
+  echo "         every file modified in the Windows clones." >&2
+fi
+fi
+fi
+
+# >>> settings-convergence
+# scripts/test_setup_settings_convergence.py runs this section, as shipped, in
+# a throwaway HOME. Keep both marker lines.
+if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
+  echo ""
+  echo "Skipped the owner-machine steps (retired global hook cleanup, WSL git for Windows clones,"
+  echo "the ~/.claude/settings.json convergence, the my-clone-sync scheduled task)."
+  echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
+else
+echo ""
+echo "=== Converging ~/.claude/settings.json (marketplace + plugin enablement) ==="
+# The interpreter is chosen by RUNNING it, not by `command -v`. On Windows,
+# python3/python on PATH can be the Microsoft Store stub under WindowsApps: it
+# resolves, prints "Python was not found" and exits 49. Picking it by name made
+# this whole block a silent no-op on a Windows home while the script went on to
+# report success (measured 2026-09-24: that home's settings.json never
+# received ADR 0010's keys). `py -3` is the Windows launcher's spelling.
+#
+# The probe also refuses Python 2 and anything before 3.3: the floor for
+# correctness (os.replace, 3.3); key order is only preserved from 3.7, so an
+# older 3.x converges correctly but may reorder keys. Each probe is announced and reads
+# /dev/null for stdin: the Windows Python install manager may try to INSTALL a
+# runtime when none exists (docs.python.org/3/using/windows.html), and that
+# should show up as a named step, not as a mute stall.
+PYTHON_CMD=()
+for candidate in "python3" "python" "py -3"; do
+  read -r -a cmd <<< "$candidate"
+  command -v "${cmd[0]}" >/dev/null 2>&1 || continue
+  echo "settings: probing $candidate..."
+  if "${cmd[@]}" -c 'import sys; sys.exit(sys.version_info < (3, 3))' </dev/null >/dev/null 2>&1; then
+    PYTHON_CMD=("${cmd[@]}")
+    break
+  fi
+done
+
+if [[ ${#PYTHON_CMD[@]} -eq 0 ]]; then
+  echo "ERROR    no working Python 3 found (tried: python3, python, py -3), so" >&2
+  echo "         ~/.claude/settings.json was NOT converged. On Windows, a" >&2
+  echo "         python3/python that prints 'Python was not found' is the" >&2
+  echo "         Microsoft Store stub (…/WindowsApps): install Python or turn" >&2
+  echo "         off its App execution aliases, then re-run setup.sh." >&2
+  exit 1
+fi
+
+"${PYTHON_CMD[@]}" - <<'PYEOF'
+import copy
+import io
+import json
+import os
+import sys
+
+SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
+
+# Marketplace registration + bundle enablement every machine should converge
+# on. autoUpdate is a real (optional) boolean field on marketplace entries —
+# verified against the claude 2.1.211 binary's zod schema.
+TARGET_MARKETPLACES = {
+    "agentskills": {
+        "source": {"source": "github", "repo": "example-adopter/agentskills"},
+        "autoUpdate": True,
+    },
+    "agentskills-private": {
+        "source": {"source": "github", "repo": "example-adopter/agentskills-private"},
+        "autoUpdate": True,
+    },
+}
+# ADR 0013: the public registry's plugins are grouped by audience and runtime.
+# A terminal takes the three that make sense on a durable machine from the
+# marketplace, pinned and version-gated: the two `-anywhere` plugins plus
+# `coding-local`, which carries this machine's own local-only skills
+# (sync-cc-settings-between-wsl-and-windows, launch-top-level-claude-session,
+# migrate-claude-memory, windows-elevation-from-wsl) and so must run here.
+# `non-coding-local` (Windows, browser and document workflows) is
+# per-OS: see NON_CODING_LOCAL_BY_HOST below. From the private registry,
+# `private-anything-anywhere` is enabled the same way.
+#
+# The two `-anything-anywhere` plugins are also enabled on the claude.ai
+# account (web, iOS, Chrome, Desktop), and a terminal signed in with the account
+# downloads account plugins too, as `<name>@synced` (E6 #160 §3.6). Enabled,
+# that copy would load the same skills a second time beside the marketplace
+# install, from the channel that drifts. `"<name>@synced": false` in user
+# enabledPlugins is the documented per-plugin off switch
+# (code.claude.com/docs/en/plugins-reference#synced-plugins). It must land on
+# every durable machine, in EACH home (Windows and WSL).
+#
+# Two side effects, stated where they happen. This writes `false` on EVERY
+# run, so a manual `claude plugin enable <name>@synced` lasts only until
+# setup.sh next runs. And these are the user settings the Desktop app's Code
+# tab reads too, so the synced copies are off there as well — the Desktop
+# app's Chat and Cowork tabs are enabled separately, in its own plugin settings.
+#
+# THE RETIRED REGISTRY'S PLUGINS ARE WRITTEN OFF BY NAME. A machine converged
+# by an earlier version of this script has them enabled, and they carry the
+# same skills under the same basenames as the plugins above — left on, every
+# skill would load twice (ADR 0013). `false` for a plugin that was never
+# installed is inert, so this is safe on a machine that never had them.
+#
+# Their `extraKnownMarketplaces` entries (`retired-agentskills`,
+# `retired-agentskills-private`) are deliberately LEFT in place: deep_merge only adds
+# and overwrites, nothing here deletes a key, and removing a marketplace the
+# CLI still has installed plugins from is not a documented, tested operation.
+# With every plugin from them disabled they deliver nothing; removing them is
+# the manual migration step ADR 0013 names (`claude plugin marketplace
+# remove`).
+RETIRED_PLUGINS = (
+    "my@retired-agentskills",
+    "my-local@retired-agentskills",
+    "fastmail@retired-agentskills",
+    "my-personal@retired-agentskills",
+    "my-private@retired-agentskills-private",
+)
+TARGET_ENABLED_PLUGINS = {
+    "anything-anywhere@agentskills": True,
+    "coding-anywhere@agentskills": True,
+    "coding-local@agentskills": True,
+    "private-anything-anywhere@agentskills-private": True,
+    "anything-anywhere@synced": False,
+    "private-anything-anywhere@synced": False,
+}
+TARGET_ENABLED_PLUGINS.update({name: False for name in RETIRED_PLUGINS})
+
+# `non-coding-local` (add-from-address, add-received-from-addresses,
+# fastmail, ocr-pdfs, pdf-ocr-audit, rename-pdfs, compare-pdfpairs) is the
+# Windows, browser and document bundle. In WSL it cost ~1.3k tokens of
+# always-on skill descriptions per turn and was used zero times in 7 days
+# (/skill-doctor, 2026-10-05), so the policy is per OS (ADR 0015):
+#
+#   Windows  keep it ON. Nothing is written: it stays however it arrives
+#            (`@synced` from the account, or `@agentskills`), and this
+#            block never turns off a copy a Windows home is using.
+#   Linux    (WSL included) OFF. `false` under EVERY key it can arrive by,
+#            because the same bundle shows up as `@synced` (claude.ai account
+#            sync, even with `syncClaudeAiSkills: false`, which covers skills,
+#            not plugins) or `@agentskills` (marketplace install), and
+#            disabling one leaves the other. `false` for a key that was never
+#            installed is inert, and nothing here installs the plugin.
+#   macOS    untouched: no measurement was taken there, so no decision is
+#            made for it.
+#
+# Like the `@synced` lines above, `false` is written on every run, so a manual
+# `claude plugin enable non-coding-local@synced` on a Linux machine lasts
+# only until setup.sh next runs. Which OS this is comes from sys.platform;
+# AGENTSKILLS_HOST_OS (windows|macos|linux) overrides it for the tests.
+NON_CODING_LOCAL_KEYS = (
+    "non-coding-local@synced",
+    "non-coding-local@agentskills",
+)
+NON_CODING_LOCAL_BY_HOST = {
+    "windows": {},
+    "macos": {},
+    "linux": {key: False for key in NON_CODING_LOCAL_KEYS},
+}
+
+
+def host_os():
+    forced = os.environ.get("AGENTSKILLS_HOST_OS")
+    if forced:
+        if forced not in NON_CODING_LOCAL_BY_HOST:
+            sys.exit("settings: ERROR AGENTSKILLS_HOST_OS=%r is not one of %s"
+                     % (forced, ", ".join(sorted(NON_CODING_LOCAL_BY_HOST))))
+        return forced
+    if sys.platform in ("win32", "cygwin", "msys"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+TARGET_ENABLED_PLUGINS.update(NON_CODING_LOCAL_BY_HOST[host_os()])
+
+# ADR 0010: pinned channels own the terminal.
+#
+# Claude Code 2.1.273+ downloads every skill enabled on the claude.ai account
+# into a terminal session signed in with it. On a converged machine that is 21
+# more always-on descriptions (~3,236 tok, measured 2026-09-18), three of them
+# a second copy of a skill this machine already has pinned -- and it puts the
+# one channel that drifts in front of the machine-bound skills
+# `coding-local` already carries pinned, from the marketplace.
+#
+# False, the JSON boolean: the CLI honours only `false`, so a string "false"
+# or a 0 is an opt-out that silently does not happen. Only user, local or
+# managed settings are read for it, which is why this belongs here and cannot
+# be done from a repo's .claude/settings.json -- and why a CLOUD session is
+# unaffected by this line and keeps syncing.
+#
+# The price, stated where the change is: this also removes Anthropic's
+# docx/pptx/xlsx/pdf skills from laptop terminals. The pinned way back is
+# Anthropic's own marketplace plugin; that is an owner call, not this script's.
+#
+# syncClaudeAiPlugins is deliberately NOT set. `false` would turn off every
+# plugin the account enables, in every terminal, including Anthropic's
+# (E6 #160 §3.1 measured six syncing since 2026-09-20). The account plugins
+# this fleet owns are turned off by name in TARGET_ENABLED_PLUGINS instead
+# (ADR 0013). The key stays absent rather than
+# written either way.
+#
+# disableSkillShellExecution: true, the JSON boolean. Claude Code runs
+# `!`cmd`` lines and ```! blocks in a SKILL.md (and in custom commands) as
+# shell commands the moment the skill is invoked, before the model reads it
+# (https://code.claude.com/docs/en/skills, "Inject dynamic context"). No skill
+# in this registry uses that syntax, so turning it off costs nothing here and
+# closes a path where a skill's text becomes a command. The key covers user,
+# project, plugin and additional-directory skills. The companion fleet change
+# in _agent-guidance adds the same key to fleet repos' .claude/settings.json
+# plus an agent-checks git hook that refuses the syntax in a commit.
+TARGET_SETTINGS = {"syncClaudeAiSkills": False, "disableSkillShellExecution": True}
+
+
+def deep_merge(dst, src):
+    """Merge src into dst in place, recursing into nested dicts and
+    overwriting only the leaf keys src specifies. Keys in dst that src
+    doesn't mention (sibling marketplaces, other plugins, extra fields
+    like installLocation) are left alone."""
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            deep_merge(dst[key], value)
+        else:
+            dst[key] = copy.deepcopy(value)
+
+
+settings = {}
+# A UTF-8 BOM is legitimate here: the sync-cc-settings skill preserves one on
+# these files, so a Windows home can carry it. It is read past (utf-8-sig) and
+# written back if it was there — the operator's encoding choice is kept, not
+# silently stripped. Anything that is not UTF-8 at all (a UTF-16 file, say) is
+# an unreadable file like invalid JSON: named, left untouched, non-zero exit.
+had_bom = False
+if os.path.exists(SETTINGS_PATH):
+    with io.open(SETTINGS_PATH, "rb") as f:
+        data = f.read()
+    had_bom = data.startswith(b"\xef\xbb\xbf")
+    try:
+        raw = data.decode("utf-8-sig")
+        loaded = json.loads(raw) if raw.strip() else {}
+    except ValueError as exc:
+        # UnicodeDecodeError is a ValueError too. An error, not a warning: a
+        # file we cannot read is a file we did not converge, and setup.sh must
+        # not then report success.
+        sys.exit("settings: ERROR invalid JSON in %s (%s) - left untouched; "
+                 "fix it by hand and re-run" % (SETTINGS_PATH, exc))
+    if not isinstance(loaded, dict):
+        sys.exit("settings: ERROR %s does not contain a JSON object - left "
+                 "untouched; fix it by hand and re-run" % SETTINGS_PATH)
+    settings = loaded
+
+# A container this block merges into must be a JSON object. Anything else
+# (a list, a string, null) is refused before any write, with its name,
+# rather than surfacing as an AttributeError from deep_merge.
+for container in ("extraKnownMarketplaces", "enabledPlugins"):
+    if container in settings and not isinstance(settings[container], dict):
+        sys.exit(
+            "settings: ERROR %s: %r is %s, not a JSON object - left untouched; "
+            "fix it by hand and re-run" % (
+                SETTINGS_PATH, container, type(settings[container]).__name__))
+
+original = copy.deepcopy(settings)
+
+settings.setdefault("extraKnownMarketplaces", {})
+deep_merge(settings["extraKnownMarketplaces"], TARGET_MARKETPLACES)
+
+settings.setdefault("enabledPlugins", {})
+deep_merge(settings["enabledPlugins"], TARGET_ENABLED_PLUGINS)
+
+deep_merge(settings, TARGET_SETTINGS)
+
+if settings == original:
+    print("settings: unchanged")
+else:
+    settings_dir = os.path.dirname(SETTINGS_PATH)
+    if settings_dir and not os.path.isdir(settings_dir):
+        os.makedirs(settings_dir)
+    tmp_path = SETTINGS_PATH + ".tmp"
+    with io.open(tmp_path, "w", encoding="utf-8-sig" if had_bom else "utf-8") as f:
+        f.write(json.dumps(settings, indent=2))
+        f.write("\n")
+    # One atomic step on POSIX and Windows alike: there is never a moment
+    # with no settings.json, which the remove-then-rename it replaces had.
+    os.replace(tmp_path, SETTINGS_PATH)
+    print("settings: updated")
+PYEOF
+converge_rc=$?
+if [[ $converge_rc -ne 0 ]]; then
+  echo "ERROR    settings.json convergence failed (exit $converge_rc); ~/.claude/settings.json was NOT converged" >&2
+  exit "$converge_rc"
+fi
+fi
+# <<< settings-convergence
+
+if [[ "${OWNER_MACHINE:-0}" == 1 && "${HOST_KIND:-}" == gitbash ]]; then
+echo ""
+echo "=== Registering the my-clone-sync scheduled task ==="
+# The task fast-forwards this machine's clean clones every 30 minutes and at
+# logon (ADR 0017). It runs a launcher that resolves the INSTALLED
+# coding-local plugin at each run, so registering it from this checkout
+# never makes the task run this checkout's code. pwsh is found by full path:
+# PATH first, then PowerShell 7's default install location.
+register_script="$PLUGINS_DIR/coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1"
+pwsh_exe="$(command -v pwsh.exe 2>/dev/null || true)"
+if [[ -z "$pwsh_exe" && -x "/c/Program Files/PowerShell/7/pwsh.exe" ]]; then
+  pwsh_exe="/c/Program Files/PowerShell/7/pwsh.exe"
+fi
+if [[ -z "$pwsh_exe" ]]; then
+  echo "WARN     PowerShell 7 (pwsh.exe) not found, so the my-clone-sync task was NOT" >&2
+  echo "         registered. Install PowerShell 7 and re-run setup.sh --owner-machine." >&2
+else
+  register_arg="$register_script"
+  if command -v cygpath >/dev/null 2>&1; then
+    register_arg="$(cygpath -w "$register_script")"
+  fi
+  if MSYS_NO_PATHCONV=1 "$pwsh_exe" -NoProfile -NonInteractive -File "$register_arg" </dev/null; then
+    :
+  else
+    register_rc=$?
+    echo "ERROR    registering the my-clone-sync task failed (exit $register_rc)" >&2
+    exit "$register_rc"
+  fi
+fi
+fi
+
+echo ""
+echo "Setup complete."

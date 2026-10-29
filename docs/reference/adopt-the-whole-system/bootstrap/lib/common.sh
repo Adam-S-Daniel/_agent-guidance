@@ -2,15 +2,33 @@
 #
 # Provides:
 #   load_config <path>     parse fleet.env strictly (no `source`), set CFG_* vars
-#   fleet_repos            the five repo names from the guide (section 1)
+#   FLEET_REPOS            the six repos the kit exports (DECISIONS C1 names)
+#   kit_tree <repo>        the kit's starter/<tree> folder name for a repo
 #   repo_visibility <name> public|private, from the plan and fleet.env
 #   gh_read <endpoint>     GET; sets GH_OUT (body) and GH_HTTP (status); never prints the body
 #   gh_write_api <METHOD> <endpoint> [json]   write call, or a printed DRY-RUN line
 #   run_write <cmd...>     any other write command (gh repo create, gh pr create, ...)
 #   run_write_stdin <cmd...>  write command whose value arrives on stdin (secrets)
+#   value_names <secret|variable> <owner/repo> <env|->  names set (never values)
 #   finish                 the "changed N things" / "nothing to change" summary
 #
+# The registries below (ENVIRONMENTS, APPS, OTHER_VALUES, REPO_VARIABLES,
+# LABELS) list what the exported repos' workflows actually read. The kit's
+# tests (tests/check-refs.py) parse every starter workflow and fail on a name
+# no registry or the README's by-hand list covers.
+#
 # Error output carries only an HTTP status or a fixed message, never a body.
+
+# bash 4.4 or later: the scripts use associative arrays, ${var,,} and
+# "${arr[@]}" on an empty array under `set -u`, which bash 3.2 (macOS's
+# /bin/bash) and 4.0-4.3 reject or get wrong. This check itself parses in 3.2.
+bash_version_ok() { # major minor
+  [ "$1" -gt 4 ] || { [ "$1" -eq 4 ] && [ "$2" -ge 4 ]; }
+}
+if [ -z "${BASH_VERSINFO:-}" ] || ! bash_version_ok "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"; then
+  printf 'ERROR: the bootstrap needs bash 4.4 or later, and this is bash %s. On macOS: brew install bash, then run the script as: "$(brew --prefix)/bin/bash" <script> ...\n' "${BASH_VERSION:-unknown}" >&2
+  exit 1
+fi
 
 set -euo pipefail
 
@@ -19,10 +37,17 @@ DRY_RUN=${DRY_RUN:-0}
 WRITES=0
 SKIPS=0
 
-# The five repos (guide section 1). The names are the guide's suggestions.
-FLEET_REPOS=(agent-guidance agent-skills agent-skills-private skills-evals repo-settings)
-# The two that must be private on every plan (guide section 2, "What you need").
-ALWAYS_PRIVATE=(agent-skills-private repo-settings)
+# The six repos, as the owner names them (DECISIONS C1: the registries drop
+# the owner's name; _agent-guidance, repo-settings and skills-evals keep theirs).
+FLEET_REPOS=(_agent-guidance repo-settings agentskills agentskills-private skills-evals wsl-automation)
+# Created only when named or with --with-optional: the waiting feed's private
+# data repo (REGENERATE.md, wsl-automation), which no kit tree fills.
+OPTIONAL_REPOS=(waiting-feed)
+# Private on every plan: the private registry and its lessons, the settings
+# engine's config (the owner's is private), and the waiting feed (session titles).
+ALWAYS_PRIVATE=(agentskills-private repo-settings waiting-feed)
+# Public on every plan: the plugin marketplace other machines add by URL.
+ALWAYS_PUBLIC=(agentskills)
 
 log()  { printf '%s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -37,30 +62,44 @@ chmod 700 "$BOOT_WORK"
 cleanup_work() { rm -rf "$BOOT_WORK"; }
 trap cleanup_work EXIT
 
+# kit_tree <repo>: the starter folder that holds a repo's export.
+kit_tree() {
+  case $1 in
+    _agent-guidance) echo agent-guidance ;;
+    agentskills) echo agent-skills ;;
+    agentskills-private) echo agent-skills-private ;;
+    repo-settings|skills-evals|wsl-automation) echo "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
 # ------------------------------------------------------------------ config
 CONFIG_KEYS=(
-  OWNER OWNER_TYPE PLAN REVIEWER OWNER_NAME
-  VISIBILITY_AGENT_GUIDANCE VISIBILITY_SKILLS_EVALS
-  SHA_PINNING_REQUIRED APP_NAME_PREFIX PLUGINS
-  GUIDANCE_SYNC_APP_ID SETTINGS_ADMIN_APP_ID LOOP_WRITER_APP_ID
-  LESSONS_READER_APP_ID ROSTER_WRITER_APP_ID
-  REQUIRED_CHECKS
+  OWNER OWNER_TWO OWNER_TYPE PLAN REVIEWER OWNER_NAME
+  VISIBILITY_AGENT_GUIDANCE VISIBILITY_SKILLS_EVALS VISIBILITY_WSL_AUTOMATION
+  APP_NAME_PREFIX REPOS_DIR
+  GUIDANCE_SYNC_APP_ID SETTINGS_ADMIN_APP_ID SETTINGS_READ_APP_ID
+  EVAL_IMPROVE_APP_ID ROSTER_WRITER_APP_ID REGISTRY_READ_APP_ID
+  ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_ORGANIZATION_ID
+  ANTHROPIC_SERVICE_ACCOUNT_ID ANTHROPIC_WORKSPACE_ID
 )
 
 _valid_value() { # key value
   local k=$1 v=$2
   [ -z "$v" ] && return 0   # empty means "use the default"; required keys are checked after parsing
   case $k in
-    OWNER|REVIEWER) [[ $v =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] ;;
+    OWNER|OWNER_TWO|REVIEWER) [[ $v =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] ;;
     OWNER_TYPE) [[ $v == user || $v == org ]] ;;
     PLAN) [[ $v == free || $v == paid ]] ;;
     OWNER_NAME) [[ $v =~ ^[A-Za-z0-9\ .\'-]{0,80}$ ]] ;;
-    VISIBILITY_AGENT_GUIDANCE|VISIBILITY_SKILLS_EVALS) [[ $v == public || $v == private ]] ;;
-    SHA_PINNING_REQUIRED) [[ $v == true || $v == false ]] ;;
+    VISIBILITY_*) [[ $v == public || $v == private ]] ;;
     APP_NAME_PREFIX) [[ $v =~ ^[a-z0-9][a-z0-9-]{0,19}$ ]] ;;
-    PLUGINS) [[ $v =~ ^[a-z0-9@\ ._-]{0,400}$ ]] ;;
+    REPOS_DIR) [[ $v =~ ^(~|/)[A-Za-z0-9._/~-]{0,200}$ ]] ;;
     *_APP_ID) [[ $v =~ ^[1-9][0-9]{0,11}$ ]] ;;
-    REQUIRED_CHECKS) [[ $v == on || $v == off ]] ;;
+    ANTHROPIC_FEDERATION_RULE_ID) [[ $v =~ ^fdrl_[A-Za-z0-9]{8,64}$ ]] ;;
+    ANTHROPIC_ORGANIZATION_ID) [[ $v =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ;;
+    ANTHROPIC_SERVICE_ACCOUNT_ID) [[ $v =~ ^svac_[A-Za-z0-9]{8,64}$ ]] ;;
+    ANTHROPIC_WORKSPACE_ID) [[ $v =~ ^wrkspc_[A-Za-z0-9]{8,64}$ ]] ;;
     *) return 1 ;;
   esac
 }
@@ -86,14 +125,22 @@ load_config() { # path
   done < "$path"
   [ -n "$CFG_OWNER" ] || die "$path: OWNER is required"
   [ -n "$CFG_PLAN" ] || die "$path: PLAN is required (free or paid)"
-  : "${CFG_OWNER_TYPE:=user}" "${CFG_REVIEWER:=$CFG_OWNER}" "${CFG_SHA_PINNING_REQUIRED:=true}" "${CFG_REQUIRED_CHECKS:=off}"
-  # <your name> lands in public repos: default to the public handle, never a legal name.
+  : "${CFG_OWNER_TYPE:=user}" "${CFG_REVIEWER:=$CFG_OWNER}"
+  # <your name> and "Example Adopter" land in public repos: default to the
+  # public handle, never a legal name.
   : "${CFG_OWNER_NAME:=$CFG_OWNER}"
+  : "${CFG_REPOS_DIR:=$HOME/repos}"
+  CFG_REPOS_DIR=${CFG_REPOS_DIR/#\~/$HOME}
   if [ -z "$CFG_APP_NAME_PREFIX" ]; then
     CFG_APP_NAME_PREFIX=$(printf '%s' "$CFG_OWNER" | tr '[:upper:]' '[:lower:]' | cut -c1-20)
   fi
-  : "${CFG_PLUGINS:=${CFG_OWNER,,}-coding-anywhere}"
   CONFIG_PATH=$path
+}
+
+# owners: the owner, then the second owner when it is set and different.
+owners() {
+  printf '%s\n' "$CFG_OWNER"
+  if [ -n "$CFG_OWNER_TWO" ] && [ "${CFG_OWNER_TWO,,}" != "${CFG_OWNER,,}" ]; then printf '%s\n' "$CFG_OWNER_TWO"; fi
 }
 
 # set_config_value <key> <value>: rewrite one KEY= line in fleet.env (or
@@ -128,10 +175,12 @@ PY
 repo_visibility() { # name
   local r=$1 p
   for p in "${ALWAYS_PRIVATE[@]}"; do [ "$p" = "$r" ] && { echo private; return; }; done
+  for p in "${ALWAYS_PUBLIC[@]}"; do [ "$p" = "$r" ] && { echo public; return; }; done
   if [ "$CFG_PLAN" = paid ]; then
     case $r in
-      agent-guidance) echo "${CFG_VISIBILITY_AGENT_GUIDANCE:-public}"; return ;;
+      _agent-guidance) echo "${CFG_VISIBILITY_AGENT_GUIDANCE:-public}"; return ;;
       skills-evals) echo "${CFG_VISIBILITY_SKILLS_EVALS:-public}"; return ;;
+      wsl-automation) echo "${CFG_VISIBILITY_WSL_AUTOMATION:-public}"; return ;;
     esac
   fi
   echo public
@@ -139,11 +188,13 @@ repo_visibility() { # name
 
 description_for() {
   case $1 in
-    agent-guidance) echo "Fleet guidance, its sync, the git-hook check runner and routine specs" ;;
-    agent-skills) echo "Shareable agent skills, packaged as a Claude Code plugin marketplace" ;;
-    agent-skills-private) echo "Private agent skills and lesson records" ;;
-    skills-evals) echo "Eval fixtures, harness, results, planner and gate workflows" ;;
-    repo-settings) echo "Rulesets, merge settings and App bypasses, as JSON applied by a script" ;;
+    _agent-guidance) echo "Fleet guidance, the sync that delivers it, the agent-checks runner and the routine specs" ;;
+    repo-settings) echo "Repository settings as code: the engine, fleet.yml and the fan-out workflow" ;;
+    agentskills) echo "Reusable agent skills, packaged as a Claude Code plugin marketplace" ;;
+    agentskills-private) echo "Private agent skills and the lessons mined from your sessions" ;;
+    skills-evals) echo "Evals for the skills and guidance, and the loop that improves and retires them" ;;
+    wsl-automation) echo "Scheduled jobs for your durable machine: usage census, waiting feed, session miner" ;;
+    waiting-feed) echo "Private data branch for the waiting-on-you feed" ;;
   esac
 }
 
@@ -154,7 +205,8 @@ generated_readme() { # name
   printf '# %s\n\n%s\n\n%s\n' "$1" "$(description_for "$1")" "$GENERATED_README_MARKER"
 }
 
-is_known_repo() { local r; for r in "${FLEET_REPOS[@]}"; do [ "$r" = "$1" ] && return 0; done; return 1; }
+is_known_repo() { local r; for r in "${FLEET_REPOS[@]}" "${OPTIONAL_REPOS[@]}"; do [ "$r" = "$1" ] && return 0; done; return 1; }
+is_fleet_repo() { local r; for r in "${FLEET_REPOS[@]}"; do [ "$r" = "$1" ] && return 0; done; return 1; }
 
 # ------------------------------------------------------------------ gh calls
 _status_from() { grep -oE 'HTTP [0-9]{3}' "$1" 2>/dev/null | tail -n1 | cut -d' ' -f2 || true; }
@@ -238,86 +290,95 @@ parse_common_args() {
 
 usage() { sed -n '2,/^$/{s/^# \{0,1\}//;p}' "$0"; }
 
+# sha256_stdin: the hex sha256 of stdin. python3, not sha256sum, which macOS lacks.
+sha256_stdin() { python3 -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'; }
+
 require_tools() { local t; for t in "$@"; do command -v "$t" >/dev/null 2>&1 || die "$t is required"; done; }
 
 # ------------------------------------------------------------------ registry
-# Every environment, with where its name comes from:
-#   guide     named in the guide (3.4, 4.5, 6.5, 9.4)
-#   derived   the guide says an App's key lives in an environment but names
-#             none; named after the App, as the guide does for guidance-sync
-#             and loop-writer
-#   reference the guide asks for an owner-approval environment (10.5 step 6)
-#             without a name; named as in the reference registry
-# Format: repo|environment|reviewer (owner|none)|source|optional (yes|no)
+# Every GitHub Actions environment a kit workflow names, with its protection:
+#   repo-settings  fleet-apply            the admin App's key; the owner approves
+#                                         every apply; deploys from main only
+#                                         (repo-settings README, "One-time setup" 5)
+#   agentskills    plugin-runtime-review  the owner approves plugin runtime
+#                                         changes; no branch policy, because it
+#                                         runs on pull_request_target (ADR 0016)
+#   skills-evals   routine-fire           the eval routine's bearer and trigger
+#                                         id; default branch only (routine-eval-fire.yml)
+# Format: repo|environment|reviewer (owner|none)|branches (default|any)
 ENVIRONMENTS=(
-  "agent-guidance|guidance-sync|none|guide|no"
-  "agent-guidance|privacy|none|guide|no"
-  "agent-skills|privacy|none|guide|no"
-  "agent-skills|plugin-runtime-review|owner|reference|no"
-  "skills-evals|privacy|none|guide|no"
-  "skills-evals|loop-writer|none|guide|no"
-  "skills-evals|routine-fire|none|guide|no"
-  "skills-evals|lessons-reader|none|derived|no"
-  "skills-evals|roster-writer|none|derived|yes"
-  "repo-settings|privacy|none|guide|no"
-  "repo-settings|settings-admin|none|derived|no"
+  "repo-settings|fleet-apply|owner|default"
+  "agentskills|plugin-runtime-review|owner|any"
+  "skills-evals|routine-fire|none|default"
 )
 
-# Every label a routine spec or workflow reads or writes, created in each repo
-# by create-repos.sh and checked by verify.sh.
-# Format: name|color|description (guide 11.3 and 10.5; the last two from the
-# routine specs in starter/agent-guidance/docs/routines/)
+# Labels a routine reads that no fleet.yml entry declares. The settings
+# engine creates agent-authored (fleet.yml defaults) and eval-scaffold; the
+# workflows create ci, needs-owner and hook-proposal on first use.
+# Format: name|color|description
 LABELS=(
-  "agent-ready|0e8a16|An agent may fix this."
-  "on-hold|b60205|Do not touch. Only the owner adds or removes it."
-  "agent-authored|5319e7|Opened by an agent or a loop gate."
-  "vendor-release|fbca04|A vendor release may affect this repo (changelog watcher)."
-  "agent-check|1d76db|A lesson to turn into a commit-time check (fleet worker)."
+  "agent-ready|0e8a16|An agent may fix this (the fleet worker's queue)."
+  "on-hold|b60205|Paused by the owner. Only the owner adds or removes it."
 )
 
-# Every App in the guide's 3.4 table.
-# Format: app|permissions (JSON)|installed on (repos, or "fleet")|env repo|environment|variable|secret|config key|optional
+# Every GitHub App the exported workflows mint a token from, named as the
+# kit names them (APP_NAME_PREFIX-<app>), with the owner's permissions:
+#   guidance-sync   _agent-guidance's agents-md-sync App (README, "Required
+#                   secrets" a; widened for the Dependabot sweep, ADR 0014)
+#   settings-admin  repo-settings' admin App (README, One-time setup 1-5)
+#   settings-read   repo-settings' read-only App (One-time setup 6)
+#   eval-improve    skills-evals' improve, draft and retirement PRs (ADR 0005)
+#   roster          skills-evals' roster, scaffold and fixture PRs (ADR 0003);
+#                   fleet.yml names its id as a bypass on roster/proposal
+#   registry-read   skills-evals' read of agentskills-private (lessons, census)
+# Format: app|permissions (JSON)|installed on ("fleet" or repos)|repo holding
+# the credentials|client id kind:name|key environment (- = repository level)|
+# key secret|config key|optional (yes|no)
 APPS=(
-  'guidance-sync|{"contents":"write","pull_requests":"write","workflows":"write"}|fleet|agent-guidance|guidance-sync|GUIDANCE_SYNC_CLIENT_ID|GUIDANCE_SYNC_PEM|GUIDANCE_SYNC_APP_ID|no'
-  'settings-admin|{"administration":"write","metadata":"read"}|fleet|repo-settings|settings-admin|SETTINGS_ADMIN_CLIENT_ID|SETTINGS_ADMIN_PEM|SETTINGS_ADMIN_APP_ID|no'
-  'loop-writer|{"contents":"write","pull_requests":"write","issues":"write"}|agent-skills agent-guidance skills-evals|skills-evals|loop-writer|LOOP_WRITER_CLIENT_ID|LOOP_WRITER_PEM|LOOP_WRITER_APP_ID|no'
-  'lessons-reader|{"contents":"read"}|agent-skills-private|skills-evals|lessons-reader|LESSONS_READER_CLIENT_ID|LESSONS_READER_PEM|LESSONS_READER_APP_ID|no'
-  'roster-writer|{"contents":"write","pull_requests":"write"}|skills-evals|skills-evals|roster-writer|ROSTER_WRITER_CLIENT_ID|ROSTER_WRITER_PEM|ROSTER_WRITER_APP_ID|yes'
+  'guidance-sync|{"contents":"write","pull_requests":"write","metadata":"read","actions":"read","checks":"read","issues":"write"}|fleet|_agent-guidance|variable:APP_CLIENT_ID|-|APP_PRIVATE_KEY|GUIDANCE_SYNC_APP_ID|no'
+  'settings-admin|{"administration":"write","actions":"write","issues":"write","metadata":"read"}|fleet|repo-settings|variable:REPO_SETTINGS_APP_CLIENT_ID|fleet-apply|REPO_SETTINGS_APP_PRIVATE_KEY|SETTINGS_ADMIN_APP_ID|no'
+  'settings-read|{"administration":"read","actions":"read","issues":"read","metadata":"read"}|fleet|repo-settings|variable:REPO_SETTINGS_READ_APP_CLIENT_ID|-|REPO_SETTINGS_READ_APP_PRIVATE_KEY|SETTINGS_READ_APP_ID|no'
+  'eval-improve|{"contents":"write","pull_requests":"write"}|agentskills _agent-guidance|skills-evals|secret:EVAL_IMPROVE_APP_CLIENT_ID|-|EVAL_IMPROVE_APP_PEM|EVAL_IMPROVE_APP_ID|no'
+  'roster|{"contents":"write","pull_requests":"write"}|skills-evals|skills-evals|variable:ROSTER_APP_CLIENT_ID|-|ROSTER_APP_PRIVATE_KEY|ROSTER_WRITER_APP_ID|no'
+  'registry-read|{"contents":"read"}|agentskills-private|skills-evals|variable:REGISTRY_READ_APP_CLIENT_ID|-|REGISTRY_READ_APP_PEM|REGISTRY_READ_APP_ID|no'
 )
+
+# The generated files regenerate.sh rebuilds (export/REGENERATE.md), in the
+# order the quick start runs them; verify.sh's regen:<task> groups.
+REGEN_TASKS=(skills-locks hook-pin run-health-sha codex-pin actions-lock)
 
 # Secrets and variables that are not App credentials (set-secrets.sh).
-# Format: repo|environment|kind (secret|variable)|name|source of the value
+# Format: repo|environment (- = repository level)|kind (secret|variable)|name|source
 OTHER_VALUES=(
+  "agentskills|-|secret|PRIVACY_DENYLIST|file"
   "skills-evals|routine-fire|secret|EVAL_ROUTINE_FIRE_BEARER|prompt"
   "skills-evals|routine-fire|variable|ROUTINE_TRIGGER_ID|prompt"
-  "agent-guidance|privacy|secret|PRIVACY_DENYLIST|file"
-  "agent-skills|privacy|secret|PRIVACY_DENYLIST|file"
-  "skills-evals|privacy|secret|PRIVACY_DENYLIST|file"
-  "repo-settings|privacy|secret|PRIVACY_DENYLIST|file"
 )
+# The group name set-secrets.sh --only and verify.sh values:<group> take.
+value_group() { case $1 in PRIVACY_DENYLIST) echo privacy ;; *) echo routine-fire ;; esac; }
 
 # Repository variables (repo level, not an environment's) that the kit's
-# workflows read. create-environments.sh sets them; verify.sh compares them.
-# Format: repo|NAME|source. repo:<fleet repo> is "$OWNER/<fleet repo>";
-# cfg:<KEY> is that fleet.env value, and while it is empty the variable is
-# left as it is (the workflow then uses its default). Rerun
-# create-environments.sh after create-apps.sh or a changed REQUIRED_CHECKS.
+# workflows read and no App step sets. create-environments.sh sets them;
+# verify.sh compares them. repo-settings.yml maps both into the engine's
+# environment, and fleet.yml names them as "${NAME}" bypass actors
+# (DECISIONS C12): the engine refuses a plan while either is unset.
+# Format: repo|NAME|cfg:<fleet.env key>; empty in fleet.env leaves it alone.
+# repo|name|source|verify group. The `federation` group is eval.yml's
+# Anthropic workload identity federation set-up (docs/evals-and-loop.md,
+# "Workload identity federation"): optional, so verify.sh checks it only when
+# named (--only federation), and an empty fleet.env key is skipped.
 REPO_VARIABLES=(
-  "skills-evals|REGISTRY_REPO|repo:agent-skills"
-  "skills-evals|GUIDANCE_REPO|repo:agent-guidance"
-  "skills-evals|LESSONS_REPO|repo:agent-skills-private"
-  "repo-settings|OWNER_TYPE|cfg:OWNER_TYPE"
-  "repo-settings|LOOP_WRITER_APP_ID|cfg:LOOP_WRITER_APP_ID"
-  "repo-settings|GUIDANCE_SYNC_APP_ID|cfg:GUIDANCE_SYNC_APP_ID"
-  "repo-settings|REQUIRED_CHECKS|cfg:REQUIRED_CHECKS"
-  "repo-settings|VISIBILITY_AGENT_GUIDANCE|cfg:VISIBILITY_AGENT_GUIDANCE"
-  "repo-settings|VISIBILITY_SKILLS_EVALS|cfg:VISIBILITY_SKILLS_EVALS"
+  "repo-settings|GUIDANCE_SYNC_APP_ID|cfg:GUIDANCE_SYNC_APP_ID|variables"
+  "repo-settings|ROSTER_WRITER_APP_ID|cfg:ROSTER_WRITER_APP_ID|variables"
+  "skills-evals|ANTHROPIC_FEDERATION_RULE_ID|cfg:ANTHROPIC_FEDERATION_RULE_ID|federation"
+  "skills-evals|ANTHROPIC_ORGANIZATION_ID|cfg:ANTHROPIC_ORGANIZATION_ID|federation"
+  "skills-evals|ANTHROPIC_SERVICE_ACCOUNT_ID|cfg:ANTHROPIC_SERVICE_ACCOUNT_ID|federation"
+  "skills-evals|ANTHROPIC_WORKSPACE_ID|cfg:ANTHROPIC_WORKSPACE_ID|federation"
 )
 
 # repo_variable_value <source>: the value a REPO_VARIABLES source stands for.
 repo_variable_value() {
   case $1 in
-    repo:*) printf '%s/%s' "$CFG_OWNER" "${1#repo:}" ;;
     cfg:*) local k="CFG_${1#cfg:}"; printf '%s' "${!k}" ;;
     *) die "bad REPO_VARIABLES source: $1" ;;
   esac
@@ -338,15 +399,35 @@ repo_variables() {
 # env_available <repo>: environments exist in private repos only on a paid plan.
 env_available() { [ "$CFG_PLAN" = paid ] || [ "$(repo_visibility "$1")" = public ]; }
 
-# env_names <secret|variable> <owner/repo> <env>: set ENV_NAMES_OUT to the
-# names set in an environment, one per line (names only: gh never lists
-# values). Called directly, not in $( ), so GH_HTTP survives; returns 1 with
-# GH_HTTP set when unreadable.
-env_names() {
-  local out err="$BOOT_WORK/err"
-  ENV_NAMES_OUT=""
-  if out=$("$GH" "$1" list --env "$3" --repo "$2" --json name 2>"$err"); then
-    GH_HTTP=200; ENV_NAMES_OUT=$(printf '%s' "$out" | jq -r '.[].name'); return 0
+# value_names <secret|variable> <owner/repo> <env|->: set NAMES_OUT to the
+# names set in an environment, or at repository level for "-", one per line
+# (names only: gh never lists secret values, and variable values are not
+# asked for). Called directly, not in $( ), so GH_HTTP survives; returns 1
+# with GH_HTTP set when unreadable.
+value_names() {
+  local out err="$BOOT_WORK/err" scope=()
+  NAMES_OUT=""
+  [ "$3" = - ] || scope=(--env "$3")
+  if out=$("$GH" "$1" list "${scope[@]}" --repo "$2" --json name 2>"$err"); then
+    GH_HTTP=200; NAMES_OUT=$(printf '%s' "$out" | jq -r '.[].name'); return 0
   fi
   GH_HTTP=$(_status_from "$err"); GH_HTTP=${GH_HTTP:-000}; return 1
+}
+
+# set_value <secret|variable> <owner/repo> <env|-> <name>: store the value on
+# this function's stdin, at repository level for "-".
+set_value() {
+  local scope=()
+  [ "$3" = - ] || scope=(--env "$3")
+  run_write_stdin "$GH" "$1" set "$4" "${scope[@]}" --repo "$2"
+}
+
+# ------------------------------------------------------------------ git
+# Remote clones go through GIT_BASE (tests point it at local bare repos).
+GIT_BASE=${BOOTSTRAP_GIT_BASE:-${COPY_STARTER_GIT_BASE:-https://github.com}}
+
+# clone_repo <owner/repo> <dir> [--depth N]: a clone of the default branch.
+clone_repo() {
+  local repo=$1 dir=$2; shift 2
+  git clone --quiet "$@" "$GIT_BASE/$repo.git" "$dir" 2>"$BOOT_WORK/err" || die "could not clone $repo"
 }

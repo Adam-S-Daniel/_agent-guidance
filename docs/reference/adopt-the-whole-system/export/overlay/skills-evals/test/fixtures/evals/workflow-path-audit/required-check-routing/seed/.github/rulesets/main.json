@@ -1,0 +1,17 @@
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "required_status_checks": [
+          {
+            "context": "unit-tests"
+          }
+        ]
+      }
+    }
+  ]
+}

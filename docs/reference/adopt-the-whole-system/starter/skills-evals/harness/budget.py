@@ -1,140 +1,89 @@
-"""Budget file loader and the account meter helpers (guide 9.5).
+"""The weekly allowance budget: `evals/budget.yml`, read and validated (#68).
 
-evals/budget.yml, in fractions of the weekly allowance:
+One reader for the three layers that enforce the owner's 30% decision
+(https://github.com/Adam-S-Daniel/skills-evals/issues/68#issuecomment-6097945979):
+run_eval's in-run stop, scripts/allowance_guard.py's pre-fire check, and the
+weekly planner (scripts/plan_scheduled_evals.py) through the guard. Every
+value is a fraction of the subscription's weekly allowance, read the way the
+CLI's meter reports it (`unifiedWindows.seven_day.utilization`, 0 to 1).
 
-  weekly_cap, per_run_cap, per_run_overrun, stop_when_account_above,
-  improve_reservation, weekly_reset_fallback
-
-Used by run_eval.py (inside a run) and scripts/allowance_guard.py (before a
-fire). No clock is read here: callers pass `now`.
+Strict, because a typo here is a spending decision nobody made: exactly the
+four keys, no duplicates, each a finite number above 0 and at most 1 (a
+bool is not a number), and `per_run_cap` no larger than `weekly_cap`. A
+problem is a BudgetError whose message names the key and the rule, never a
+value from the file.
 """
+
 from __future__ import annotations
 
 import math
-import re
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import jsonschema
 import yaml
 
-WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-_RESET_FALLBACK = re.compile(r"^(mon|tue|wed|thu|fri|sat|sun) ([01][0-9]|2[0-3]):[0-5][0-9]$")
-WEEK = timedelta(days=7)
-
-BUDGET_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["weekly_cap", "per_run_cap", "per_run_overrun",
-                 "stop_when_account_above", "improve_reservation",
-                 "weekly_reset_fallback"],
-    "properties": {
-        "weekly_cap": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "per_run_cap": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "per_run_overrun": {"type": "number", "minimum": 0, "maximum": 1},
-        "stop_when_account_above": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "improve_reservation": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "weekly_reset_fallback": {"type": "string", "pattern": _RESET_FALLBACK.pattern[:-1] + r"\Z"},
-    },
-}
+#: The committed budget, beside the roster and the schedule.
+DEFAULT_BUDGET = Path(__file__).resolve().parent.parent / "evals" / "budget.yml"
+KEYS = ("weekly_cap", "per_run_cap", "per_run_overrun", "stop_when_account_above")
 
 
-class BudgetError(Exception):
-    """budget.yml is unreadable or invalid. Callers fail closed."""
+class BudgetError(ValueError):
+    """The budget file is missing, unreadable or breaks a rule."""
 
 
-def validate_budget(doc: object) -> dict:
-    if not isinstance(doc, dict):
+class _UniqueLoader(yaml.SafeLoader):
+    """SafeLoader that refuses a repeated key, as plan_scheduled_evals does:
+    PyYAML would otherwise keep the last one silently."""
+
+
+def _mapping(loader, node):
+    result = {}
+    for key, value in loader.construct_pairs(node, deep=True):
+        if not isinstance(key, str) or key in result:
+            raise BudgetError("budget has a duplicate or non-string key")
+        result[key] = value
+    return result
+
+
+_UniqueLoader.add_constructor("tag:yaml.org,2002:map", _mapping)
+
+
+def parse_budget(text: str) -> dict:
+    """The validated budget in `text`, as {key: float}, or BudgetError."""
+    try:
+        document = yaml.load(text, Loader=_UniqueLoader)
+    except yaml.YAMLError:
+        raise BudgetError("budget is not valid YAML") from None
+    if not isinstance(document, dict):
         raise BudgetError("budget must be a mapping")
+    unknown = sorted(set(document) - set(KEYS))
+    if unknown:
+        raise BudgetError(f"budget has unknown keys {unknown}")
+    missing = [key for key in KEYS if key not in document]
+    if missing:
+        raise BudgetError(f"budget is missing keys {missing}")
+    budget = {}
+    for key in KEYS:
+        value = document[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(value) or not 0 < value <= 1:
+            raise BudgetError(f"budget {key} must be a number above 0 and at most 1")
+        budget[key] = float(value)
+    if budget["per_run_cap"] > budget["weekly_cap"]:
+        raise BudgetError("budget per_run_cap must not exceed weekly_cap")
+    return budget
+
+
+def load_budget(path: Path | None = None) -> dict:
+    """`parse_budget` of the file at `path` (default: evals/budget.yml)."""
+    path = Path(path) if path is not None else DEFAULT_BUDGET
     try:
-        jsonschema.validate(doc, BUDGET_SCHEMA)
-    except jsonschema.ValidationError as exc:
-        raise BudgetError(f"budget invalid at {list(exc.absolute_path)}: {exc.validator}") from None
-    for key, value in doc.items():
-        if isinstance(value, bool) or (isinstance(value, float) and not math.isfinite(value)):
-            raise BudgetError(f"{key}: not a finite number")
-    if doc["per_run_cap"] > doc["weekly_cap"]:
-        raise BudgetError("per_run_cap must be at most weekly_cap")
-    if doc["improve_reservation"] > doc["weekly_cap"]:
-        raise BudgetError("improve_reservation must be at most weekly_cap")
-    return doc
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise BudgetError(f"budget file {path.name} could not be read") from None
+    return parse_budget(text)
 
 
-def load_budget(path: str | Path) -> dict:
-    try:
-        doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise BudgetError(f"cannot read budget: {type(exc).__name__}") from None
-    return validate_budget(doc)
-
-
-# --- the weekly window -----------------------------------------------------
-
-def last_fallback_reset(fallback: str, now: datetime) -> datetime:
-    """The most recent `<weekday> HH:MM` (UTC) at or before `now`."""
-    m = _RESET_FALLBACK.fullmatch(fallback)
-    if not m:
-        raise BudgetError("bad weekly_reset_fallback")
-    day = WEEKDAYS.index(m.group(1))
-    hour, minute = int(fallback[4:6]), int(fallback[7:9])
-    now = now.astimezone(timezone.utc)
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    candidate -= timedelta(days=(candidate.weekday() - day) % 7)
-    if candidate > now:
-        candidate -= WEEK
-    return candidate
-
-
-def week_window(reset: datetime, now: datetime) -> tuple[datetime, datetime]:
-    """The allowance week [start, end) holding `now`, given any one reset
-    instant (past or future). Weeks are exactly seven days apart."""
-    reset, now = reset.astimezone(timezone.utc), now.astimezone(timezone.utc)
-    start = reset + ((now - reset) // WEEK) * WEEK
-    return start, start + WEEK
-
-
-def parse_instant(value: object) -> datetime:
-    """An ISO-8601 string or epoch seconds (milliseconds when huge) to UTC."""
-    if isinstance(value, bool):
-        raise ValueError("not an instant")
-    if isinstance(value, (int, float)):
-        if not math.isfinite(value):
-            raise ValueError("not an instant")
-        seconds = value / 1000 if value > 1e11 else value
-        return datetime.fromtimestamp(seconds, tz=timezone.utc)
-    if isinstance(value, str):
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            raise ValueError("instant needs a timezone")
-        return dt.astimezone(timezone.utc)
-    raise ValueError("not an instant")
-
-
-def isoformat(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-# --- the meter in a `claude -p --output-format json --verbose` message list --
-
-def meter_reading(messages: object) -> dict | None:
-    """The newest weekly reading, {"seven_day": float, "resets_at": iso|None},
-    from the `rate_limit_event` messages, or None when there is none."""
-    reading = None
-    for msg in messages if isinstance(messages, list) else ():
-        if not isinstance(msg, dict) or msg.get("type") != "rate_limit_event":
-            continue
-        info = msg.get("rate_limit_info")
-        windows = info.get("unifiedWindows") if isinstance(info, dict) else None
-        week = windows.get("seven_day") if isinstance(windows, dict) else None
-        util = week.get("utilization") if isinstance(week, dict) else None
-        if isinstance(util, bool) or not isinstance(util, (int, float)) \
-                or not math.isfinite(util) or not 0 <= util <= 1:
-            continue
-        resets = None
-        try:
-            if week.get("resetsAt") is not None:
-                resets = isoformat(parse_instant(week["resetsAt"]))
-        except (ValueError, OverflowError, OSError):
-            resets = None
-        reading = {"seven_day": float(util), "resets_at": resets}
-    return reading
+def run_reservation(budget: dict) -> float:
+    """What one fire is charged before its spend is known: the per-run cap
+    the in-run stop holds it to, plus the overrun past the last reading."""
+    return budget["per_run_cap"] + budget["per_run_overrun"]

@@ -1,0 +1,38 @@
+# Tier-2 propagation probe fixture.
+#
+# Unlike the A/B fixtures there is no prompt and no rubric here: the probe
+# asserts set membership against agentskills' `skills.lock`, which is the
+# declared expectation every arm compares against. Everything below names a
+# path or a knob; the arms themselves live in harness/propagation/arms.py
+# because materialising a marketplace install or a SessionStart hook run is
+# code, not data.
+name: propagation
+
+# Resolved against the agentskills checkout (--registry /
+# $AGENTSKILLS_DIR).
+lock_path: skills.lock
+hook_path: .claude/hooks/skills-bootstrap.sh
+
+# One cloud-safe plugin the lock pins. The plugin-marketplace arm installs
+# EVERY plugin the lock names (anything-anywhere and coding-anywhere);
+# this one is where --self-test plants its phantom skill, so it must be a
+# plugin the registry really ships. `<plugin>:<skill>` is what a marketplace
+# install makes visible, and the namespace is the plugin-channel discriminator.
+bundle: coding-anywhere
+
+# Seeded as a repo-owned `.claude/skills/<skill>/` copy in the collision arm,
+# which must make the hook decline to install its own copy and say so.
+#
+# This arms the hook-vs-PROJECT collision only. The hook-vs-ACCOUNT collision
+# cannot be armed here for the same surface reason Tier 3 exists — a runner has
+# no `~/.claude/skills/synced/` to collide with. It is measured instead in
+# agentskills `docs/experiments/E5-account-store-vs-hook-precedence.md`:
+# the hook's copy wins there too, and the name is listed once.
+collision_skill: workflow-path-audit
+
+arms:
+  - clean-room
+  - project-mirror
+  - plugin-marketplace
+  - bootstrap-hook
+  - collision-guard

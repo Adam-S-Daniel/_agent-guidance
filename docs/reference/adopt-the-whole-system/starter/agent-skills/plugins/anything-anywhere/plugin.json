@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "anything-anywhere",
+  "version": "1.0.0",
+  "description": "Skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code.",
+  "author": { "name": "<your name>" },
+  "repository": "https://github.com/example-adopter/agentskills",
+  "keywords": [
+    "skills",
+    "writing",
+    "planning"
+  ]
+}

@@ -1,15 +1,42 @@
-# Budget, in fractions of the weekly allowance (guide 9.5).
-# Schema (harness/budget.py refuses unknown keys, and values outside these rules):
-#   weekly_cap               0 < x <= 1   all automated evals in one allowance week
-#   per_run_cap              0 < x <= weekly_cap   one run starts no new trial past this;
-#                            also what a fire without ingested results is charged
-#   per_run_overrun          0 <= x <= 1  added to each measured run: its last call is unmeasured
-#   stop_when_account_above  0 < x <= 1   nothing starts once the account meter reads this
-#   improve_reservation      0 < x <= weekly_cap   charged for an improve fire, whatever its outcome
-#   weekly_reset_fallback    "<mon..sun> HH:MM" UTC; used until an ingested run.json's meter carries resets_at
+# The weekly allowance budget for every automated eval (#68).
+#
+# The owner's standing decision (2026-10-10,
+# https://github.com/Adam-S-Daniel/skills-evals/issues/68#issuecomment-6097945979):
+# all automated evals together stay within 30% of the Claude subscription's
+# weekly allowance. Every value below is a fraction of that allowance, as the
+# CLI's meter reports it (`unifiedWindows.seven_day.utilization`, 0 to 1), so
+# 0.01 is one point, and points = percent of the weekly allowance.
+#
+# Three layers read this file (docs/how-it-works.md, "The weekly allowance
+# guard"):
+#   * harness/run_eval.py stops starting new trials and judge calls once a
+#     run has spent `per_run_cap` or the account is at
+#     `stop_when_account_above` (the in-run stop);
+#   * scripts/allowance_guard.py refuses a routine fire whose reservation
+#     would take the eval spend since the account's last weekly reset past
+#     `weekly_cap` (the pre-fire check in routine-eval-fire.yml);
+#   * scripts/plan_scheduled_evals.py plans only as many weekly fires as fit
+#     under `weekly_cap` (routine-eval-weekly.yml).
+#
+# harness/budget.py validates it strictly: exactly these four keys, each a
+# number above 0 and at most 1, and `per_run_cap` no larger than
+# `weekly_cap`. A change here is a spending decision: it is the owner's.
+
+# 30 points: all automated evals together, in each allowance week of the
+# account (Monday 17:00 UTC to the next; the owner, 2026-10-26), so a sanctioned
+# push in one week is not charged to the next.
 weekly_cap: 0.30
+
+# 3 points: one run stops starting new work once the meter has moved this
+# much since the run's first reading.
 per_run_cap: 0.03
+
+# Half a point, added to every run's measured spend: the meter is read as an
+# agent call begins, so the run's last call (and any judge call after it) is
+# never inside the measured delta.
 per_run_overrun: 0.005
+
+# 80 points: once the account's own weekly meter reads this high, a run stops
+# starting new work, whatever it has spent, so evals never take the last of
+# the allowance from the owner's own work.
 stop_when_account_above: 0.80
-improve_reservation: 0.12
-weekly_reset_fallback: "mon 17:00"

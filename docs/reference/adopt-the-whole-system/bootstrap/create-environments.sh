@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# create-environments.sh [--config fleet.env] [--dry-run] [--with-optional]
+# create-environments.sh [--config fleet.env] [--dry-run]
 #
-# Creates every GitHub Actions environment the guide names, in the repo whose
-# workflow uses it, with deployment branches limited to the default branch: a
-# custom branch policy named after the repo's default branch (guide 3.4).
+# Creates the three GitHub Actions environments the exported workflows name,
+# protected the way the owner's are (ENVIRONMENTS in lib/common.sh):
 #
-#   agent-guidance  guidance-sync (4.5), privacy (6.5)
-#   agent-skills    privacy (6.5), plugin-runtime-review (10.5 step 6: you are
-#                   the required reviewer)
-#   skills-evals    privacy (6.5), loop-writer (3.4), routine-fire (9.4),
-#                   lessons-reader (10.4), roster-writer (--with-optional)
-#   repo-settings   settings-admin (3.4)
+#   repo-settings  fleet-apply            REVIEWER must approve; deploys from
+#                                         the default branch only. Holds the
+#                                         settings-admin App's key.
+#   agentskills    plugin-runtime-review  REVIEWER must approve; no branch
+#                                         policy (it runs on pull_request_target).
+#                                         prevent_self_review is off: agents
+#                                         open pull requests as you (ADR 0016).
+#   skills-evals   routine-fire           no reviewer; deploys from the default
+#                                         branch only. Holds the eval routine's
+#                                         bearer and trigger id.
 #
-# It also sets the repository variables the workflows read (REPO_VARIABLES
-# in lib/common.sh): skills-evals' REGISTRY_REPO, GUIDANCE_REPO and
-# LESSONS_REPO, and repo-settings' mirror of fleet.env (OWNER_TYPE, the
-# loop-writer and guidance-sync App IDs, REQUIRED_CHECKS, the visibility
-# keys). A key that is empty in fleet.env is left alone. Rerun this script
-# after create-apps.sh and after apply-rulesets.sh records REQUIRED_CHECKS.
+# Then sets the repository variables REPO_VARIABLES lists: repo-settings'
+# GUIDANCE_SYNC_APP_ID and ROSTER_WRITER_APP_ID, the App ids fleet.yml names
+# as ruleset bypass actors (export/DECISIONS.md C12), and skills-evals' four
+# ANTHROPIC_* federation ids eval.yml's token exchange reads. A key that is
+# still empty in fleet.env is left alone, so run this again after
+# create-apps.sh, and after filling in the federation ids.
 #
-# The guide names no environment for lessons-reader, roster-writer or
-# settings-admin, nor the owner-approval one; see README.md for the names used.
-#
-# PLAN=free: environments exist only in public repos, so the ones in private
-# repos are skipped and the script prints what the guide says to do instead.
+# PLAN=free: environments exist only in public repos, so fleet-apply (in the
+# private repo-settings) is skipped, and the script says what to do instead.
 #
 # Idempotent: reads each environment and its branch policies first and writes
 # only what differs; a second run says "Nothing to change". Extra branch
@@ -35,14 +35,8 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-WITH_OPTIONAL=0
 parse_common_args "$@"
-for a in "${REST_ARGS[@]}"; do
-  case $a in
-    --with-optional) WITH_OPTIONAL=1 ;;
-    *) die "unknown argument: $a" ;;
-  esac
-done
+for a in "${REST_ARGS[@]}"; do die "unknown argument: $a"; done
 require_tools jq "$GH"
 load_config "$CONFIG"
 O=$CFG_OWNER
@@ -58,14 +52,23 @@ reviewer_id() {
   printf '%s' "$REVIEWER_ID"
 }
 
-ensure_env() { # repo env reviewer source
-  local r=$1 e=$2 rev=$3 src=$4 default cur want_rev have_rev body fresh=0 names
+# env_body <reviewer owner|none> <branches default|any>
+env_body() {
+  local policy='{"protected_branches":false,"custom_branch_policies":true}'
+  [ "$2" = default ] || policy=null
+  if [ "$1" = owner ]; then
+    jq -nc --argjson id "$(reviewer_id)" --argjson p "$policy" \
+      '{deployment_branch_policy: $p, prevent_self_review: false, reviewers: [{type: "User", id: $id}]}'
+  else
+    jq -nc --argjson p "$policy" '{deployment_branch_policy: $p}'
+  fi
+}
+
+ensure_env() { # repo env reviewer branches
+  local r=$1 e=$2 rev=$3 br=$4 default cur fresh=0 names want_rev have_rev ok
   if ! env_available "$r"; then
     log "skip: $O/$r/$e: $r is private and PLAN=free, where environments exist only in public repos."
-    case $e in
-      settings-admin) log "      The guide (3.4): run repo-settings' apply script (apply-rulesets.sh here) from your own machine with gh instead of from a workflow; the settings-admin App is then not needed." ;;
-      *) log "      The guide (3.4): keep this workflow's credential out of the private repo, or upgrade the plan." ;;
-    esac
+    [ "$e" != fleet-apply ] || log "      Without it, apply fleet.yml from your machine with apply-settings.sh; repo-settings.yml's apply job cannot run."
     return 0
   fi
   if gh_read "repos/$O/$r"; then
@@ -76,31 +79,27 @@ ensure_env() { # repo env reviewer source
   else
     die "could not read $O/$r (HTTP $GH_HTTP); run create-repos.sh first"
   fi
-  [ "$src" = guide ] || log "note: the guide gives no name for $e; using '$e' ($src)"
-
-  want_rev=""
-  [ "$rev" = owner ] && want_rev=$(reviewer_id)
-
   if gh_read "repos/$O/$r/environments/$e"; then
     cur=$GH_OUT
   else
     [ "$GH_HTTP" = 404 ] || die "could not read environment $e in $O/$r (HTTP $GH_HTTP)"
     cur='{}'; fresh=1
   fi
+  want_rev=""; [ "$rev" = owner ] && want_rev=$(reviewer_id)
   have_rev=$(printf '%s' "$cur" | jq -r '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]? | .reviewer.id] | map(tostring) | sort | join(",")')
-  if [ "$fresh" = 0 ] \
-     && [ "$(printf '%s' "$cur" | jq -r '"\(.deployment_branch_policy.protected_branches)/\(.deployment_branch_policy.custom_branch_policies)"')" = "false/true" ] \
-     && { [ "$rev" != owner ] || [ "$have_rev" = "$want_rev" ]; }; then
+  if [ "$br" = default ]; then
+    ok=$(printf '%s' "$cur" | jq -r '"\(.deployment_branch_policy.protected_branches)/\(.deployment_branch_policy.custom_branch_policies)"')
+    [ "$ok" = false/true ] && ok=1 || ok=0
+  else
+    ok=$(printf '%s' "$cur" | jq -r 'if .deployment_branch_policy == null then 1 else 0 end')
+  fi
+  if [ "$fresh" = 0 ] && [ "$ok" = 1 ] && [ "$have_rev" = "$want_rev" ]; then
     skip "$O/$r environment $e"
   else
-    if [ "$rev" = owner ]; then
-      body=$(jq -n --argjson id "$want_rev" '{deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}, prevent_self_review: false, reviewers: [{type: "User", id: $id}]}')
-    else
-      body='{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
-    fi
-    gh_write_api PUT "repos/$O/$r/environments/$e" "$body"
+    gh_write_api PUT "repos/$O/$r/environments/$e" "$(env_body "$rev" "$br")"
     did "$([ "$fresh" = 1 ] && echo created || echo updated) environment $e in $O/$r$([ "$rev" = owner ] && echo " (required reviewer: $CFG_REVIEWER)")"
   fi
+  [ "$br" = default ] || return 0
 
   names=""
   if [ "$fresh" = 0 ] || [ "$DRY_RUN" = 0 ]; then
@@ -113,8 +112,7 @@ ensure_env() { # repo env reviewer source
   if grep -qxF -- "branch/$default" <<<"$names"; then
     skip "$O/$r environment $e deploys only from $default"
   else
-    body=$(jq -n --arg n "$default" '{name: $n, type: "branch"}')
-    gh_write_api POST "repos/$O/$r/environments/$e/deployment-branch-policies" "$body"
+    gh_write_api POST "repos/$O/$r/environments/$e/deployment-branch-policies" "$(jq -nc --arg n "$default" '{name: $n, type: "branch"}')"
     did "limited environment $e in $O/$r to branch $default"
   fi
   local extra
@@ -127,18 +125,16 @@ ensure_env() { # repo env reviewer source
 
 log "Owner $O, plan $CFG_PLAN$([ "$DRY_RUN" = 1 ] && echo ', DRY RUN')"
 for entry in "${ENVIRONMENTS[@]}"; do
-  IFS='|' read -r repo env rev src optional <<<"$entry"
-  if [ "$optional" = yes ] && [ "$WITH_OPTIONAL" = 0 ]; then
-    log "skip: $O/$repo/$env is optional (pass --with-optional)"; continue
-  fi
-  ensure_env "$repo" "$env" "$rev" "$src"
+  IFS='|' read -r repo env rev br <<<"$entry"
+  ensure_env "$repo" "$env" "$rev" "$br"
 done
 declare -A HAVE_VARS
-ensure_repo_variable() { # repo name source
-  local r=$1 name=$2 src=$3 want
+ensure_repo_variable() { # repo name source group
+  local r=$1 name=$2 src=$3 group=$4 want hint="run create-apps.sh, then this again"
+  [ "$group" = federation ] && hint="optional; docs/evals-and-loop.md#workload-identity-federation"
   want=$(repo_variable_value "$src")
   if [ -z "$want" ]; then
-    log "skip: $O/$r variable $name: ${src#cfg:} is empty in fleet.env"; return 0
+    log "skip: $O/$r variable $name: ${src#cfg:} is empty in fleet.env ($hint)"; return 0
   fi
   if [ -z "${HAVE_VARS[$r]+set}" ]; then
     if repo_variables "$O/$r"; then HAVE_VARS[$r]=$REPO_VARS_OUT
@@ -148,15 +144,12 @@ ensure_repo_variable() { # repo name source
   if grep -qxF -- "$name"$'\t'"$want" <<<"${HAVE_VARS[$r]}"; then
     skip "$O/$r variable $name"; return 0
   fi
-  printf '%s' "$want" | run_write_stdin "$GH" variable set "$name" --repo "$O/$r"
+  set_value variable "$O/$r" - "$name" < <(printf '%s' "$want")
   did "set variable $name in $O/$r"
 }
 for entry in "${REPO_VARIABLES[@]}"; do
-  IFS='|' read -r repo name src <<<"$entry"
-  ensure_repo_variable "$repo" "$name" "$src"
+  IFS='|' read -r repo name src group <<<"$entry"
+  ensure_repo_variable "$repo" "$name" "$src" "$group"
 done
-if [ "$CFG_PLAN" = free ]; then
-  log "PLAN=free: agent-skills-private gets no privacy job (it holds private data by design, guide 3.4)."
-fi
 finish
 [ "$PROBLEMS" = 0 ] || { warn "$PROBLEMS environment(s) need a manual fix"; exit 1; }

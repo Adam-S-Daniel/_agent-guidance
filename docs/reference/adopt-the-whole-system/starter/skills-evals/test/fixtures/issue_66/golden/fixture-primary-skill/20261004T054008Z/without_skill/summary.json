@@ -1,0 +1,89 @@
+{
+  "skill": "fixture-primary-skill",
+  "arm": "without_skill",
+  "timestamp": "20261004T054008Z",
+  "error": null,
+  "agent": {
+    "cost_usd": 0.04,
+    "num_turns": 3,
+    "duration_ms": 9000,
+    "usage": {
+      "input_tokens": 1234,
+      "output_tokens": 567,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "objective_checks": [
+    {
+      "id": "readme-kept",
+      "passed": true,
+      "detail": "1 file(s) matched ['README.md']"
+    },
+    {
+      "id": "notes-written",
+      "passed": false,
+      "detail": "found 0, expected at least 1"
+    },
+    {
+      "id": "transcript-reports-the-change",
+      "passed": true,
+      "detail": "transcript matches"
+    }
+  ],
+  "judge": {
+    "dimensions": [
+      {
+        "name": "Completeness",
+        "score": 8,
+        "rationale": "Filtered every workflow found."
+      },
+      {
+        "name": "Correctness",
+        "score": 9,
+        "rationale": "Required check still always fires."
+      },
+      {
+        "name": "Restraint",
+        "score": 7,
+        "rationale": "Left schedule-only workflows alone."
+      },
+      {
+        "name": "Communication",
+        "score": 6,
+        "rationale": "Explained changes briefly."
+      }
+    ],
+    "overall": 7.05
+  },
+  "harness": {
+    "name": "claude-code",
+    "version": "fake-claude 0.0.0 (hermetic test stub)",
+    "permission_mode": "auto",
+    "effort": null
+  },
+  "models_used": [
+    "fake-agent-model"
+  ],
+  "judge_models_used": [
+    "fake-judge-model"
+  ],
+  "model_tokens": {
+    "fake-agent-model": {
+      "input_tokens": 1234,
+      "output_tokens": 567,
+      "cache_read_input_tokens": null,
+      "cache_creation_input_tokens": null,
+      "canonical_model": null
+    }
+  },
+  "cross_model": {
+    "model": "fake-agent-model",
+    "canonical_model": null,
+    "complete": true,
+    "dropped": 0,
+    "other_share": null,
+    "threshold": 0.5,
+    "flagged": null
+  }
+}

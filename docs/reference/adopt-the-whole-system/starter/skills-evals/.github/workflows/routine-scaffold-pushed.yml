@@ -1,15 +1,40 @@
-name: routine-scaffold-pushed
-# Exists only so the gate (routine-scaffold-gate.yml) has an event to follow.
-# No permissions, no secrets, and it runs nothing from the branch.
-# The paths filter is this lane's own directory (each scaffold branch adds
-# eval-scaffold/<run id>/source.json), so no other lane's push can trigger it.
+name: Routine scaffold pushed
+
+# The trigger half of the real-work fixture scaffold gate (DESIGN.md "The
+# scaffolder and its gate"; owner decision Q6, "Routine + own gate"). The
+# eval routine pushes one draft fixture to `claude/scaffold-<fixture id>`;
+# this workflow does nothing but exist for that push, so that
+# `routine-scaffold-gate.yml` can run on its `workflow_run` event.
+#
+# Why two workflows: a `push` workflow runs the copy of itself on the PUSHED
+# commit, and the pushed branch is untrusted (a model run wrote it), so any
+# job here could have been rewritten by the branch it is judging. A
+# `workflow_run` workflow always runs the default branch's copy, so the gate,
+# its validator and its `pull-requests: write` token never come from the
+# branch. This job therefore holds no permissions, checks nothing out and
+# runs nothing from the branch (the same split as
+# routine-eval-results-pushed.yml).
+#
+# No path filter: every push to a scaffold branch is salient. The gate's
+# pull request may already have auto-merge on (the owner, 2026-10-26: no human in
+# the loop), and auto-merge follows the branch, not a commit, so the gate's
+# first job turns it off on EVERY push, whatever the push touched; only a
+# push that passes the gate again turns it back on. A path filter on
+# `evals/real-work/**` would let a push outside that directory ride an armed
+# pull request to main ungated. This is not a pull_request workflow, so it
+# publishes no required check.
+
 on:
   push:
-    branches: ['claude/eval-scaffold-*']
-    paths: ['eval-scaffold/**']
+    branches:
+      - claude/scaffold-*
+
 permissions: {}
+
 jobs:
-  pushed:
+  signal:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - run: echo "scaffold branch pushed"
+      - name: Hand off to the scaffold gate
+        run: echo "Fixture scaffold pushed; routine-scaffold-gate.yml validates it from the default branch."

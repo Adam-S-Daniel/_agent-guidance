@@ -1,0 +1,33 @@
+# Test-only fixture, invented for the adoption kit (DECISIONS X9 and C8).
+# The kit ships no eval fixtures; the machinery tests load this one as
+# input. It measures nothing and no schedule names it.
+
+skill: my-writing-style
+registry: https://github.com/example-adopter/agentskills-private
+
+judge:
+  mode: pairwise
+  references:
+    - name: in-voice
+      path: references/in-voice.md
+    - name: generic
+      path: references/generic.md
+
+prompt: >
+  Write the self appraisal opening for this example proposal.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+objective_checks:
+  - id: no-buzzwords
+    description: No avoid-list word survives into the reply
+    type: transcript_matches
+    strip_seed: true
+    must_not_match: ['(?i)\bsynerg(?:y|ies|istic)\b']
+
+judge_rubric: >
+  Which reply reads more like the in-voice reference?

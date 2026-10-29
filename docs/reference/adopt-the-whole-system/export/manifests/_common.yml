@@ -1,0 +1,159 @@
+# Rules every repo's export shares. A repo's manifest may add its own
+# `protect` and `substitutions` entries; they are tried BEFORE these.
+# DECISIONS.md (beside this folder) is the owner-approved source for every
+# rule here; the entry names give the decision number.
+#
+# protect: spans the substitution must not touch, found before it runs.
+#   kind: citation  P2: a link to a specific issue, pull request, commit or
+#                   file-at-a-commit in the source owners' repos. It records
+#                   where a lesson came from, so it keeps pointing there.
+#   kind: keep      a literal a decision keeps verbatim.
+# test_no_leaks.py allows a forbidden token only inside one of these spans
+# (or as an allowlisted hit it names by file).
+protect:
+  # C5 keeps the published action where it is USED or LINKED (a `uses:` or
+  # lock key ends in @, a prose name sits in backticks, a URL follows
+  # github.com/). A fleet registry entry naming it as one of the owner's
+  # repos (fleet.yml, a test's repo map) is an ordinary owner reference.
+  - name: C5 published verify-actions-lock action (used or named)
+    kind: keep
+    regex: '(?i:adam-s-daniel)/verify-actions-lock(?=@|`)'
+  - name: C5 published verify-actions-lock action (linked)
+    kind: keep
+    regex: '(?<=github\.com/)(?i:adam-s-daniel)/verify-actions-lock\b'
+  - name: P2 issue, pull request, discussion or commit URL
+    kind: citation
+    regex: 'https?://github\.com/(?:Adam-S-Daniel|jodidaniel|superoutrigger)/[A-Za-z0-9_.-]+/(?:issues|pull|discussions|commit)/[0-9a-f]+(?:/files|/commits/[0-9a-f]{7,40})?(?:#[A-Za-z0-9_-]+)?'
+  - name: P2 Actions run, job or check-run URL
+    kind: citation
+    regex: 'https?://github\.com/(?:Adam-S-Daniel|jodidaniel|superoutrigger)/[A-Za-z0-9_.-]+/(?:actions/runs|runs)/\d+(?:/(?:job|attempts)/\d+)?(?:#[A-Za-z0-9_-]+)?'
+  - name: P2 file or tree at a commit
+    kind: citation
+    regex: 'https?://github\.com/(?:Adam-S-Daniel|jodidaniel|superoutrigger)/[A-Za-z0-9_.-]+/(?:blob|tree|raw)/[0-9a-f]{40}(?:/[A-Za-z0-9_.@%~/+-]*[A-Za-z0-9_/~+-])?(?:#[A-Za-z0-9_.-]+)?'
+  - name: P2 compare between commits
+    kind: citation
+    regex: 'https?://github\.com/(?:Adam-S-Daniel|jodidaniel|superoutrigger)/[A-Za-z0-9_.-]+/compare/[0-9a-f]{7,40}\.\.\.?[0-9a-f]{7,40}'
+  - name: P2 owner/repo#N short reference
+    kind: citation
+    regex: '(?<![\w./-])(?:Adam-S-Daniel|jodidaniel|superoutrigger)/[A-Za-z0-9_.-]*[A-Za-z0-9_]#\d+'
+  - name: P2 repo#N short reference to a repo that is renamed or left out
+    kind: citation
+    regex: '(?<![\w./-])(?:cms-platform|adamdaniel\.ai|jodidaniel\.com|adam-agentskills(?:-private)?)#\d+'
+
+# substitutions: one left-to-right pass; at each position the first entry
+# that matches wins, so longer literals come before the names inside them.
+#   literal + to          exact text
+#   literal + to + forms  also every case and separator form (adam-s-daniel,
+#                         adam_s_daniel, ADAM_S_DANIEL, ...; a one-word name
+#                         next to `_` takes the snake form)
+#   regex + to            a Python re template (\1 for groups)
+#   sentence_case: true   capitalize the replacement at a sentence start
+#   paths: [globs]        only in these files
+substitutions:
+  # C1: the retired predecessor registry keeps a distinct name, so it does
+  # not collide with the renamed current registry (`agentskills`).
+  - name: C1 retired registry (owner-qualified)
+    regex: 'Adam-S-Daniel/agentskills(-private)?(?![\w.-])'
+    to: 'example-adopter/retired-agentskills\1'
+  - name: C1 retired registry, second owner
+    regex: 'jodidaniel/agentskills(-private)?(?![\w.-])'
+    to: 'example-adopter-two/retired-agentskills\1'
+  # C1: repo and plugin names that carry the owner's name.
+  - {name: C1 private registry, literal: adam-agentskills-private, to: agentskills-private}
+  - {name: C1 registry, literal: adam-agentskills, to: agentskills}
+  - {name: C1 registry (identifier), literal: adam_agentskills, to: agentskills}
+  - {name: C1 private plugins, regex: 'adam-private-([a-z0-9][a-z0-9-]*)', to: 'private-\1'}
+  - {name: C1 plugin anything-anywhere, literal: adam-anything-anywhere, to: anything-anywhere}
+  - {name: C1 plugin coding-anywhere, literal: adam-coding-anywhere, to: coding-anywhere}
+  - {name: C1 plugin non-coding-local, literal: adam-non-coding-local, to: non-coding-local}
+  - {name: C1 plugin coding-local, literal: adam-coding-local, to: coding-local}
+  # C3: the platform's consumer sites become invented example consumers.
+  - {name: C3 consumer site A, literal: adamdaniel.ai, to: example-site-a}
+  - {name: C3 consumer site B, literal: jodidaniel.com, to: example-site-b}
+  # C2 and C9: owners, in every case and separator form.
+  - {name: C9 step ids of the first owner, regex: '\b(plan|token)_adam\b', to: '\1_example_adopter'}
+  - {name: C2 first owner, literal: Adam-S-Daniel, to: example-adopter, forms: true}
+  - {name: C2 second owner, literal: jodidaniel, to: example-adopter-two, forms: true}
+  - {name: C2 third owner, literal: superoutrigger, to: example-third, forms: true}
+  - {name: C3 consumer site A (bare), literal: adamdaniel, to: example-site-a}
+  # C3: the shared platform repo.
+  - {name: C3 platform repo, literal: cms-platform, to: example-site-platform, forms: true}
+  # C10: people's names in prose say "the owner".
+  - {name: C10 full name possessive, regex: "(?<![\\w-])Adam Daniel['’]s(?![\\w-])", to: "the owner's", sentence_case: true}
+  - {name: C10 full name, regex: '(?<![\w-])Adam Daniel(?![\w-])', to: 'the owner', sentence_case: true}
+  - {name: C10 first name possessive, regex: "(?<![\\w-])Adam['’]s(?![\\w-])", to: "the owner's", sentence_case: true}
+  - {name: C10 first name, regex: '(?<![\w-])Adam(?![\w-])', to: 'the owner', sentence_case: true}
+  # C1: the bare `adam` bundle label (and names built on it) becomes `my`.
+  - {name: C1 bare adam label, regex: '(?<![\w-])adam(?![a-z_])', to: 'my'}
+  # Machine names and the owner's drive letter.
+  - {name: workstation name, regex: '\bBOXY\b', to: 'WORKSTATION'}
+  - {name: old workstation name, regex: '\bZENDA\b', to: 'OLD-WORKSTATION'}
+  - {name: owner's clone drive, regex: 'D:(?=\\+repos)', to: '<drive>:'}
+  # C7: claude.ai account object ids.
+  - name: C7 claude.ai trigger, environment and session ids
+    regex: '\b(trig|env|session|cse)_(?!EXAMPLE|FIXTURE)[A-Za-z0-9]{16,}\b'
+    to: '\1_EXAMPLE'
+  - name: C7 claude.ai artifact, project and chat ids
+    regex: 'claude\.ai/((?:code/)?(?:artifact|artifacts|project|chat))/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    to: 'claude.ai/\1/00000000-0000-0000-0000-000000000000'
+  # The short form (claude.ai/artifact/<base62 id>) names the same objects.
+  - name: C7 claude.ai artifact, project and chat ids (short form)
+    regex: 'claude\.ai/((?:code/)?(?:artifact|artifacts|project|chat))/(?!EXAMPLE)(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{16,40}\b'
+    to: 'claude.ai/\1/EXAMPLE'
+  # C12: a numeric GitHub user id in a noreply address is the source
+  # account's; 0+<login> is GitHub's id-less form, and copy-starter.sh puts
+  # the adopter's own id there.
+  - name: C12 numeric GitHub user id in a noreply address
+    regex: '\b[1-9][0-9]{0,11}\+(?=(?i:Adam-S-Daniel|jodidaniel|superoutrigger)@users\.noreply\.github\.com)'
+    to: '0+'
+  - name: C12 numeric GitHub user id named beside the owner's login
+    regex: '(?<=`Adam-S-Daniel`, id )[1-9][0-9]{0,11}\b'
+    to: '<user id>'
+
+# leak_scan: what tests/test_no_leaks.py looks for in every file of the kit
+# (starter trees, export/, docs/, bootstrap/, .claude/, README.md), by name.
+# Each is a Python regular expression searched on its own. A hit counts only
+# outside a protected span; this folder's manifests may hold any of them
+# (they are the substitution rules and the source text their edits match),
+# and every other allowed hit is listed in the test by file and count.
+# Personal details that appear in no source repo are NOT listed here: the
+# test reads them from PRIVACY_DENYLIST or PRIVACY_DENYLIST_FILE, outside
+# the repo, and allows none of them anywhere.
+leak_scan:
+  - {name: Adam, regex: 'Adam'}
+  - {name: 'adam or adams (any case, as a word)', regex: '(?i)(?<![a-z])adams?(?![a-z])'}
+  - {name: jodidaniel, regex: '(?i)jodidaniel'}
+  - {name: superoutrigger, regex: '(?i)superoutrigger'}
+  - {name: adamdaniel, regex: '(?i)adamdaniel'}
+  - {name: BOXY, regex: 'BOXY'}
+  - {name: ZENDA, regex: 'ZENDA'}
+  - {name: 'D:\repos', regex: 'D:\\+repos'}
+  - {name: claude.ai id, regex: '\b(?:trig|env|session|cse)_(?!EXAMPLE|FIXTURE)[A-Za-z0-9]{16,}'}
+  - name: claude.ai artifact, project or chat id
+    regex: 'claude\.ai/(?:code/)?(?:artifacts?|project|chat)/(?!EXAMPLE\b|00000000-0000-0000-0000-000000000000\b)(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]{16,}'
+  - {name: Anthropic federation id, regex: '\b(?:fdrl|svac|wrkspc)_(?!EXAMPLE)[A-Za-z0-9]{8,}'}
+  - {name: numeric noreply id, regex: '(?<![0-9$])(?!0\+)[0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com'}
+  - {name: cms-platform, regex: '(?i)cms-platform'}
+  - name: email
+    regex: '[A-Za-z0-9._%+-]+@(?!(?:[A-Za-z0-9-]+\.)*(?:example\.(?:com|net|org)|users\.noreply\.github\.com|github\.com|anthropic\.com|openai\.com)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'
+
+# The source owners' logins, for code that must recognize them in parsed
+# data without spelling them (export/tests/test_no_leaks.py).
+source_owners: [Adam-S-Daniel, jodidaniel, superoutrigger]
+
+# DECISIONS C11: the repos live config may name (repos.yml, fleet.yml, any
+# workflow or script repo list), as the exported names. Patches read it from
+# ctx["common"], and test_no_leaks.py checks the exported config against it.
+# Each entry is a bare repo name under one of `kit_owners`.
+kit_owners: [example-adopter, example-adopter-two]
+kit_repos:
+  - _agent-guidance
+  - agentskills
+  - agentskills-private
+  - skills-evals
+  - repo-settings
+  - wsl-automation
+  # C3's invented example platform and its two consumer sites.
+  - example-site-platform
+  - example-site-a
+  - example-site-b

@@ -1,0 +1,9 @@
+{
+  "databaseId": 902,
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "name": "build / verify",
+  "runAttempt": 2,
+  "createdAt": "2026-01-02T00:00:00Z",
+  "status": "completed",
+  "conclusion": "failure"
+}

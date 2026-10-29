@@ -1,0 +1,10 @@
+{
+ "example-owner/skills-evals:routine-eval-weekly.yml": [
+  {
+   "created_at": "2026-01-06T07:01:00Z",
+   "status": "completed",
+   "conclusion": "success",
+   "html_url": "https://github.com/example-owner/skills-evals/actions/runs/1"
+  }
+ ]
+}

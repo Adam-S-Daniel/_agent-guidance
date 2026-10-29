@@ -1,10 +1,14 @@
-The workflow-path-audit skill, and parts of the guidance this kit ships, are derived from
-  https://github.com/Adam-S-Daniel/adam-agentskills
-  https://github.com/Adam-S-Daniel/_agent-guidance
-both licensed under the Apache License, Version 2.0
-(https://www.apache.org/licenses/LICENSE-2.0).
+This tree is an export of the original author's public skills registry
+(`agentskills` here) at commit d2d81b00c51388baf51c3922a540ae27839adcde,
+licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0; see LICENSE).
 
-It has been modified: owner-specific names, repositories, paths, dates,
-incident links and infrastructure were removed or generalized, some text was
-rewritten, and some files were replaced. The modified content is distributed
-under the same license.
+It has been modified by the adoption kit's export
+(docs/reference/adopt-the-whole-system/export/export.py in _agent-guidance):
+owner, repository, plugin, site and machine names were replaced with invented
+ones, links to specific issues, pull requests and commits still point at the
+original repositories, every skill was left out (the plugins, their hooks and
+the registry's machinery remain), and the edits recorded in
+this tree's export manifest (under export/manifests/) were applied. Each change and its reason
+is listed in export/DECISIONS.md. The modified content is distributed under
+the same license.

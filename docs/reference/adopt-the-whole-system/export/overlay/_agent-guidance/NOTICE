@@ -1,0 +1,12 @@
+This tree is an export of the original author's `_agent-guidance` repository at
+commit 9404fe7d648eb916a65128818fb58c4ca5f998aa, licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0; see LICENSE).
+
+It has been modified by the adoption kit's export
+(docs/reference/adopt-the-whole-system/export/export.py in _agent-guidance):
+owner, repository, site and machine names were replaced with invented ones,
+links to specific issues, pull requests and commits still point at the
+original repositories, the guidance and check content was left out, and the
+edits recorded in export/manifests/_agent-guidance.yml were applied. Each change and its
+reason is listed in export/DECISIONS.md. The modified content is distributed
+under the same license.

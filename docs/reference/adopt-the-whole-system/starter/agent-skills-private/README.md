@@ -1,35 +1,87 @@
-# agent-skills-private
+# agentskills-private
 
-The private half of the skills registry. This repo is private on every plan
-and must stay private: never make it public, never copy its contents into a
-public repo, and never paste them into a public issue, pull request or log.
+The **private** half of the owner's agent skills — content that is simply
+personal rather than generally reusable. It is packaged exactly like the
+public registry: skills are grouped into **bundle plugins** under
+`plugins/<bundle>/skills/<skill>/`, and the repo root is a Claude Code plugin
+**marketplace** (`.claude-plugin/marketplace.json`).
 
-## What goes here
+The public, generally-reusable skills live in
+[example-adopter/agentskills](https://github.com/example-adopter/agentskills),
+the canonical upstream registry. The rule for what goes where — public vs
+private — is documented in that repo's
+[`STRATEGY.md`](https://github.com/example-adopter/agentskills/blob/main/STRATEGY.md):
+**public = reusable + no secrets → agentskills; private (here) = anything
+personal or sensitive → agentskills-private.**
 
-- **Lessons**, on the branch `persistent/lessons` (never on `main`). The
-  session miner (`skills-evals/scripts/mine_sessions.py`) runs on your own
-  machine only, because it reads your transcripts; it refuses to run in a
-  cloud session. From its output you write one `lessons/<subject>.json` per
-  lesson and push them to `persistent/lessons` yourself. The draft-skill lane
-  reads that branch with the read-only lessons-reader App and turns the most
-  frequent lesson into a draft skill or hook proposal. The file shape is in
-  [`lessons/README.md`](lessons/README.md).
-- **Private skills**: skills that hold anything you would not publish (your
-  own hosts, accounts, people, private procedures). Lay them out like the
-  public registry, `plugins/<plugin>/skills/<skill>/SKILL.md`.
+> The `private-anything-anywhere` bundle holds skills that run
+> everywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code. More
+> private bundles may be added later, following the same structure and the
+> placement/promotion rules in the public `STRATEGY.md`. Invoke a skill as
+> `/private-anything-anywhere:<skill>` (bundle-namespaced, same as the
+> public registry's `/<bundle>:<skill>` form).
 
-## What never goes here
+## Install — Claude Code
 
-Secrets of any kind (private keys, tokens, passwords, denylists): those live in
-GitHub environment secrets. A lesson is redacted text about what went wrong,
-not a transcript.
+Use **Claude Code v2.1.280 or later**. That release fixes background
+marketplace updates ignoring Git credential helpers, which could prevent this
+private marketplace from updating or cause it to be re-cloned every run
+([release notes](https://github.com/anthropics/claude-code/releases/tag/v2.1.280)).
 
-## Protection
+One command resolves the source, offers to add this marketplace, then installs
+the bundle:
 
-`bootstrap/apply-rulesets.sh` gives `persistent/lessons` a ruleset with
-deletion and non-fast-forward blocked and no bypass: you push it from your
-machine, never force-push it, and never delete it. On GitHub Free, rulesets
-are not enforced on private repos, so that rests on you.
+```bash
+/plugin install private-anything-anywhere --marketplace example-adopter/agentskills-private
+```
 
-`tests/run.sh` checks that the documentation is present and that the example
-in `lessons/README.md` has the shape the picker reads.
+Installation refreshes the marketplace automatically, so newly published
+plugins do not need a manual marketplace update first
+([v2.1.232 release notes](https://github.com/anthropics/claude-code/releases/tag/v2.1.232)).
+Installing, enabling, or disabling a plugin from `/plugin` takes effect when
+you close the menu; `/reload-plugins` is no longer needed afterward
+([v2.1.268 release notes](https://github.com/anthropics/claude-code/releases/tag/v2.1.268)).
+
+The public registry installs the same way. Its
+[README](https://github.com/example-adopter/agentskills#install--claude-code) has
+the command.
+
+On older CLIs, add this marketplace alongside the public one, then install by
+`plugin@marketplace`:
+
+```bash
+/plugin marketplace add example-adopter/agentskills
+/plugin marketplace add example-adopter/agentskills-private
+/plugin install private-anything-anywhere@agentskills-private
+```
+
+Skills are namespaced by bundle, e.g. `/private-anything-anywhere:<skill>`.
+To refresh the catalog manually later, use
+`/plugin marketplace update agentskills-private`.
+
+## Install — Codex, Gemini, Cursor, and local use
+
+Run `setup.sh` once **in each environment** (Windows Git Bash *and* WSL). It links
+every private skill under `plugins/*/skills/*` into the standard per-agent skill
+homes — the same way the public repo does, and sharing the same de-dup so Claude
+Code stays marketplace-only (never `~/.claude/skills`):
+
+```bash
+bash setup.sh
+```
+
+It is safe to run while a bundle has no skills yet — it simply reports that
+there are none to link.
+
+## Repo layout
+
+```
+.claude-plugin/marketplace.json       # private marketplace catalog (lists every bundle)
+plugins/
+  <bundle>/                           # private-anything-anywhere (more may be added later)
+    .claude-plugin/plugin.json        # bundle manifest
+    skills/<skill>/SKILL.md           # one dir per skill (+ scripts/, tests/, hooks/)
+setup.sh                              # link private skills into per-agent dirs (non-Claude-Code)
+```
+
+Validate the marketplace and any plugin with `claude plugin validate <path>`.

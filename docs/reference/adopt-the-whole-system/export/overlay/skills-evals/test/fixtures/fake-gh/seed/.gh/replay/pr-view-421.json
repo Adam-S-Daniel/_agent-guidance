@@ -1,0 +1,26 @@
+{
+  "number": 421,
+  "title": "Add the autumn hours page",
+  "headRefName": "content/autumn-hours",
+  "baseRefName": "main",
+  "mergeStateStatus": "UNKNOWN",
+  "isDraft": false,
+  "createdAt": "2026-09-02T06:09:41Z",
+  "author": {
+    "login": "example-editor",
+    "is_bot": false
+  },
+  "url": "https://github.com/example-org/example-site/pull/421",
+  "headRefOid": "a83f0c6519d7e42b8065f3ac1d97e2b40f5c86d1",
+  "baseRefOid": "9e41b7c2d6084f1ab3c57e0d9a2f6b18c4d70e35",
+  "mergeable": "MERGEABLE",
+  "autoMergeRequest": null,
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "name": "build",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS"
+    }
+  ]
+}

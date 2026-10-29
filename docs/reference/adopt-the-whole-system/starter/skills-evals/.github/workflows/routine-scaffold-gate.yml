@@ -1,106 +1,326 @@
-name: routine-scaffold-gate
-# Runs the DEFAULT branch's copy of this file (workflow_run). It validates the
-# routine's scaffold branch as data (scripts/scaffold_gate.py: only one new
-# evals/<skill>/<fixture>/ directory that harness/fixture.py loads, plus
-# eval-scaffold/<run id>/source.json), builds the commit with no write
-# credential, and only then opens the pull request here with a loop-writer
-# token minted for this repo alone. A draft unless improve_merge_mode is auto;
-# scaffold-disarm.yml turns auto-merge off on any later push to the branch.
+name: Gate routine fixture scaffold
+
+# The scaffold PR's own review gate (DESIGN.md "The scaffolder and its gate";
+# owner decision Q6, "Routine + own gate", separate from #71's three
+# improvement PRs). The eval routine never opens pull requests: it pushes one
+# draft fixture to `claude/scaffold-<fixture id>`, and this workflow decides
+# whether that branch becomes a pull request that merges itself.
+#
+# * The branch is UNTRUSTED (a model run wrote it). This workflow runs on
+#   `workflow_run`, so GitHub always runs the DEFAULT BRANCH's copy of it,
+#   never one the branch carries (see routine-scaffold-pushed.yml). The
+#   checkout is the default branch; the branch is only fetched into a
+#   private ref and read through git plumbing by
+#   scripts/scaffold_real_work.py `gate`. Nothing from it is checked out,
+#   imported or executed: the gate checks shape, size, the fixture schema,
+#   the stripped seed and the answer-leak lint without running the seed or
+#   its tests. Red on the seed and green with the fix are checked by the
+#   routine before it pushes, and by the committed fixtures' test module on
+#   the pull request (`test`). The checker files must be the merge commit's
+#   own, read from trusted Git bytes.
+# * The gate also RECOMPUTES the issue snapshot here, where GitHub GraphQL
+#   works (a routine session refuses it, so routine-eval-fire.yml sends the
+#   snapshot in the payload), with the code the fire workflow ran, and
+#   rejects the branch unless `issue-before-fix.txt` is the same bytes and
+#   its three times are equal: the routine passes the snapshot on and cannot
+#   alter the task's issue text. The repository the fixture header names
+#   must be a fleet repository (owner in SYNC_OWNERS, name in
+#   cron_coverage.fleet, from _agent-guidance's default branch) whose GitHub
+#   full_name is that name, or the branch is rejected before any read. A
+#   revision deleted, or past 100 revisions, between fire and gate rejects
+#   an honest branch: fail closed (the owner, 2026-10-06: "Yes, fail closed
+#   (Recommended)"). The validate step holds the job's read-only
+#   token (`contents: read`) for those reads, and no step runs branch code.
+# * The validator rejects the whole branch unless it only ADDS regular files
+#   (no symlink or submodule, an executable bit only under seed/ and
+#   checker/, no change to any existing path) under one
+#   `evals/real-work/<fixture id>/` matching the branch name, within the size
+#   caps, as a `draft: true`, `subject: any` fixture with no `setup:` or
+#   `env:`.
+# * Three jobs, so the job that reads the untrusted branch holds only
+#   `contents: read`, and the jobs that hold `pull-requests: write` read
+#   only the event's branch name (`disarm`, pattern-checked) or the validated
+#   outputs (`pull-request`), their tokens and the repository name: no other
+#   `github.event` expression and no workflow- or job-level `env:`.
+#   Workflow permissions are `{}`.
+# * The pull request merges with no human in it (the owner, 2026-10-26: "closed
+#   loop with no human in the loop"; ADR 0003's 2026-10-26 addendum). The
+#   roster App (vars.ROSTER_APP_CLIENT_ID, secrets.ROSTER_APP_PRIVATE_KEY,
+#   ADR 0003 round 6) opens it ready for review with the fixed label, or
+#   marks an open draft ready, and turns on auto-merge (merge commit) with
+#   `--match-head-commit` on the validated sha. The App, not GITHUB_TOKEN,
+#   opens it so the pull request's own `pull_request` run of `test` (the
+#   required check) starts with no approval; `test` scores the fixture red
+#   on the seed and green with the fix, so a fixture whose checker does not
+#   discriminate never merges. No App token: the job opens a DRAFT with
+#   GITHUB_TOKEN, as before this addendum, and turns nothing on. It never
+#   approves, pushes or deletes anything.
+# * Auto-merge follows the branch, not a commit, and `--match-head-commit`
+#   is checked only when auto-merge is turned on. So `disarm` runs first on
+#   every gate run and turns auto-merge off on the branch's open pull
+#   request, and routine-scaffold-pushed.yml has no path filter: every push
+#   to the branch reaches this workflow. `pull-request` needs both `disarm`
+#   and `validate`, so only a push that passes the gate is ever armed. A
+#   failed `disarm` fails the run and arms nothing.
+# * Branch names, shas and file content are never interpolated into a
+#   `run:` block: the event is read from $GITHUB_EVENT_PATH by the
+#   validator, which emits only values that matched a strict pattern, and
+#   every later step reads them through `env`.
+# * No `concurrency` group: GitHub keeps only the newest pending run in a
+#   group, so a burst of pushes would cancel gates silently.
+# * `workflow_dispatch` re-gates a branch by name (for a missed or failed
+#   run); only the default branch's copy may run.
+
 on:
   workflow_run:
-    workflows: [routine-scaffold-pushed]
+    workflows: [Routine scaffold pushed]
     types: [completed]
-permissions:
-  contents: read
+    branches:
+      - claude/scaffold-*
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: The scaffold branch, claude/scaffold-<fixture id>.
+        required: true
+        type: string
+
+permissions: {}
+
 jobs:
-  prepare:
+  validate:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name == 'workflow_dispatch'
+          || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: privacy          # holds PRIVACY_DENYLIST only; default branch only
-    env:
-      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    permissions:
+      contents: read
+    outputs:
+      base: ${{ github.event.repository.default_branch }}
+      branch: ${{ steps.resolve.outputs.branch }}
+      fixture_id: ${{ steps.gate.outputs.fixture_id }}
+      sha: ${{ steps.gate.outputs.sha }}
     steps:
-      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: skills-evals
           fetch-depth: 0
           persist-credentials: false
-      - name: Fetch the branch's commit as data
-        run: |
-          set -euo pipefail
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha"; exit 1; }
-          [[ "$HEAD_BRANCH" =~ ^claude/eval-scaffold-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]] || { echo "bad branch"; exit 1; }
-          git fetch --no-tags origin "$HEAD_SHA"
-      - uses: actions/setup-python@<sha-of-the-v-tag-you-chose>
+
+      # The fleet pin for the snapshot recompute (the owner, 2026-10-06: "Pin to
+      # fleet owners (Recommended)"): the repository the fixture header
+      # names must have its owner in SYNC_OWNERS and its name in
+      # cron_coverage.fleet, read from _agent-guidance's default branch as
+      # the miner reads them. A public repository; no credentials are kept.
+      - name: Check out _agent-guidance (the fleet registry)
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/_agent-guidance
+          path: _agent-guidance
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
-      - name: Install harness dependencies
-        run: python3 -m pip install --quiet -r requirements.txt
-      - name: Validate, then prepare the commit (no write credential here)
+
+      - name: Install the validator's one dependency
+        run: python3 -m pip install pyyaml==6.0.3
+
+      - name: Resolve the branch to gate
+        id: resolve
+        working-directory: skills-evals
         env:
-          DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/scaffold_real_work.py resolve \
+            --event-name "$EVENT_NAME" --event-path "$GITHUB_EVENT_PATH" \
+            > "$RUNNER_TEMP/resolve.out"
+          cat "$RUNNER_TEMP/resolve.out" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the scaffold branch into a private ref
+        working-directory: skills-evals
+        env:
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/scaffold/source"
+
+      - name: Validate the scaffold
+        id: gate
+        working-directory: skills-evals
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          SHA: ${{ steps.resolve.outputs.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          umask 077
-          printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist"
-          export PRIVACY_DENYLIST_FILE="$RUNNER_TEMP/denylist"
-          # The gate's own code is copied out first: prepare switches the
-          # checkout to the new branch, and nothing from the routine's commit runs.
-          cp -r scripts harness evals/improve-policy.yml "$RUNNER_TEMP/"
-          base=$(git rev-parse "origin/$DEFAULT_BRANCH")
-          python3 "$RUNNER_TEMP/scripts/scaffold_gate.py" prepare --repo . --sha "$HEAD_SHA" \
-            --head-branch "$HEAD_BRANCH" --base "$base" --policy "$RUNNER_TEMP/improve-policy.yml" \
-            --out "$RUNNER_TEMP/out"
-          branch=$(jq -er .branch "$RUNNER_TEMP/out/result.json")
-          [[ "$branch" =~ ^eval-scaffold/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]]
-          git bundle create "$RUNNER_TEMP/out/loop.bundle" "$base..$branch"
-          mkdir -p out && cp "$RUNNER_TEMP"/out/* out/
-      - uses: actions/upload-artifact@<sha-of-the-v-tag-you-chose>
-        with:
-          name: scaffold-commit
-          path: out/
-          retention-days: 3
-  open-pr:
-    needs: prepare
+          python3 scripts/scaffold_real_work.py gate \
+            --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
+            --source refs/scaffold/source --branch "$BRANCH" \
+            --expect-sha "$SHA" --out "$RUNNER_TEMP/scaffold" \
+            --registry ../_agent-guidance/repos.yml \
+            --sync-workflow ../_agent-guidance/.github/workflows/sync.yml \
+            > "$RUNNER_TEMP/gate.out"
+          cat "$RUNNER_TEMP/gate.out" >> "$GITHUB_OUTPUT"
+
+  disarm:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: loop-writer      # App key lives here; default branch only
-    concurrency:
-      group: loop-open-pr         # every lane that opens a loop PR; not a required check
-      cancel-in-progress: false
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+      - name: Turn off auto-merge on the branch's open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -uo pipefail
+          # The branch from the event file, never an expression. Anything
+          # that is not a scaffold branch name has no pull request to disarm;
+          # validate rejects it on its own.
+          branch="$(jq -r 'if .workflow_run then .workflow_run.head_branch else .inputs.branch end // ""' \
+            "${GITHUB_EVENT_PATH:?}")" || branch=""
+          if ! [[ "$branch" =~ ^claude/scaffold-[A-Za-z0-9_][A-Za-z0-9._-]{0,63}-[1-9][0-9]{0,6}$ ]]; then
+            echo "not a scaffold branch; nothing to turn off"
+            exit 0
+          fi
+          owner="${REPO%%/*}"
+          found="$(gh api "repos/${REPO}/pulls?state=open&head=${owner}:${branch}&base=${BASE}" \
+            --jq 'if length == 0 then "none" elif length == 1 then "\(.[0].number) \(.[0].auto_merge != null)" else "many" end')" || found=""
+          case "$found" in
+            none)
+              echo "no open pull request from ${branch}"
+              exit 0 ;;
+            *" false")
+              echo "auto-merge is already off"
+              exit 0 ;;
+            *" true")
+              number="${found%% *}" ;;
+            *)
+              echo "::error::could not read the open pull request from ${branch}"
+              exit 1 ;;
+          esac
+          if ! [[ "$number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::could not read the open pull request from ${branch}"
+            exit 1
+          fi
+          if ! gh pr merge "$number" --repo "$REPO" --disable-auto > /dev/null 2>&1; then
+            echo "::error::could not turn off auto-merge on #${number}"
+            exit 1
+          fi
+          echo "turned off auto-merge on #${number} until this push passes the gate"
+
+  pull-request:
+    needs: [disarm, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # ADR 0003 round 6's App, minted only here, for this repository alone,
+      # under `continue-on-error`: a missing or misconfigured App leaves the
+      # token empty and the next step falls back to a draft.
+      - name: Mint the roster App token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3.2.0
         with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@<sha-of-the-v-tag-you-chose>
-        with:
-          name: scaffold-commit
-          path: out
-      - name: Load the prepared commit
-        id: pre
+          client-id: ${{ vars.ROSTER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ROSTER_APP_PRIVATE_KEY }}
+          owner: example-adopter
+          repositories: skills-evals
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open the pull request and turn on auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Under its own name, never as GH_TOKEN: an empty GH_TOKEN would
+          # make gh fall back to GITHUB_TOKEN silently (ADR 0003 round 6).
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ needs.validate.outputs.base }}
+          BRANCH: ${{ needs.validate.outputs.branch }}
+          FIXTURE_ID: ${{ needs.validate.outputs.fixture_id }}
+          SHA: ${{ needs.validate.outputs.sha }}
+          LABEL: eval-scaffold
         run: |
           set -euo pipefail
-          branch=$(jq -er .branch out/result.json)
-          [[ "$branch" =~ ^eval-scaffold/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]]
-          git fetch out/loop.bundle "refs/heads/$branch:refs/heads/$branch"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "draft=$(jq -er .draft out/result.json)" >> "$GITHUB_OUTPUT"
-      - uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
-        id: app
-        with:
-          client-id: ${{ vars.LOOP_WRITER_CLIENT_ID }}
-          private-key: ${{ secrets.LOOP_WRITER_PEM }}
-          repositories: ${{ github.event.repository.name }}
-      - name: Open the pull request
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          BRANCH: ${{ steps.pre.outputs.branch }}
-          DRAFT: ${{ steps.pre.outputs.draft }}
-        run: |
-          bash scripts/open_loop_pr.sh --repo "$GITHUB_REPOSITORY" --dir . --branch "$BRANCH" \
-            --title "$(jq -er .title out/result.json)" --body-file out/pr-body.md --draft "$DRAFT"
+          # The branch must still be the commit the validator judged; a newer
+          # push runs its own gate.
+          tip="$(gh api "repos/${REPO}/git/ref/heads/${BRANCH}" --jq '.object.sha')" || tip=""
+          if [ "$tip" != "$SHA" ]; then
+            echo "::error::${BRANCH} moved after validation; its newer push runs its own gate"
+            exit 1
+          fi
+          app_token=""
+          case "${APP_TOKEN:-}" in
+            ''|*[!A-Za-z0-9_.-]*) : ;;
+            *) app_token="$APP_TOKEN" ;;
+          esac
+          app_gh() {
+            GH_TOKEN="$app_token" GITHUB_TOKEN="" gh "$@"
+          }
+          # Filter on the head's OWNER too: the CLI's `--head` filter matches the
+          # branch name in any fork, so a fork's same-named branch could
+          # otherwise suppress this pull request.
+          owner="${REPO%%/*}"
+          open="$(gh api "repos/${REPO}/pulls?state=open&head=${owner}:${BRANCH}&base=${BASE}" \
+            --jq 'if length == 0 then "none" elif length == 1 then "\(.[0].number) \(.[0].draft)" else "many" end')" || open=""
+          case "$open" in
+            none) number="" ;;
+            *" true"|*" false") number="${open%% *}" ;;
+            *)
+              echo "::error::could not tell whether a pull request from ${BRANCH} is open"
+              exit 1 ;;
+          esac
+          if [ -n "$number" ] && ! [[ "$number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::could not tell whether a pull request from ${BRANCH} is open"
+            exit 1
+          fi
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Real-work fixture \`evals/real-work/${FIXTURE_ID}/\`, scaffolded by the eval routine from \`${BRANCH}\` at \`${SHA}\`."
+            echo
+            echo "The gate (routine-scaffold-gate.yml) checked shape, size caps, schema, stripped seed and answer-leak lint without running the branch. It recomputed the issue snapshot and candidate base from GitHub, re-proved guidance provenance against trusted Git bytes, recomputed context budgets, and checked that every checker file is the merge commit's own file at its path. Task text, \`interface_strings:\`, checker selection, dependencies and trim choices were model-authored; other branch content received schema and lint checks, not an independent reconstruction from git."
+            echo
+            echo "\`test\` scores the fixture red on the seed and green with the fix (test/issues/test_issue_real_work_fixtures.py); ci.yml installs its \`deps:\` from the fixture itself. The fixture lands \`draft: true\`, and \`scripts/scaffold_real_work.py promote\` (routine-fixture-supply.yml) removes that and schedules it once two ingested runs of it have both arms and no error."
+            echo
+            echo "Every push to \`${BRANCH}\` turns auto-merge off; only a push that passes the gate again turns it back on."
+          } > "$body"
+          if [ -z "$app_token" ]; then
+            # Today's flow before the 2026-10-26 addendum: a draft a person
+            # merges. Nothing is armed.
+            echo "::warning::the roster App token is unavailable; opening a draft, not turning on auto-merge"
+            if [ -n "$number" ]; then
+              echo "a pull request from ${BRANCH} is already open; the push updated it"
+              exit 0
+            fi
+            gh pr create --repo "$REPO" --draft --base "$BASE" --head "$BRANCH" \
+              --title "Real-work fixture: ${FIXTURE_ID}" \
+              --label "$LABEL" --body-file "$body"
+            exit 0
+          fi
+          if [ -z "$number" ]; then
+            url="$(app_gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
+              --title "Real-work fixture: ${FIXTURE_ID}" \
+              --label "$LABEL" --body-file "$body")"
+            number="${url##*/}"
+            if ! [[ "$number" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::could not read the new pull request's number"
+              exit 1
+            fi
+          elif [ "${open##* }" = true ]; then
+            app_gh pr ready "$number" --repo "$REPO"
+          fi
+          app_gh pr merge "$number" --repo "$REPO" --auto --merge --match-head-commit "$SHA"
+          echo "auto-merge is on for #${number} at ${SHA}"

@@ -1,0 +1,49 @@
+# NOT AN EVAL. The fixture behind test/issues/test_issue_66.py's golden
+# comparison: a flat, single-trial skill fixture small enough that every byte
+# the harness writes for it can be committed (../golden/) and compared.
+#
+# It lives under test/ and not under evals/ so that nothing that enumerates
+# the evals — eval.yml's dispatch input, the coverage checks — ever sees it.
+# The skill name is the one test/fixtures/fake_registry ships.
+skill: fixture-primary-skill
+registry: https://github.com/example-adopter/agentskills
+
+# Pinned, so the run needs no roster. Not real model ids: test/fake-claude
+# echoes whatever `--model` it is given back as the model that served it.
+model: fake-agent-model
+
+judge:
+  model: fake-judge-model
+  # Present so the golden covers a recomputed overall, not only the judge's
+  # own.
+  weights:
+    completeness: 0.5
+    correctness: 0.3
+    restraint: 0.2
+
+prompt: >
+  Add a NOTES.md to this repository saying what it is for.
+
+judge_rubric: |
+  Score Completeness, Correctness, Restraint and Communication from 0 to 10.
+
+objective_checks:
+  # One check that passes on the untouched seed and one that fails on it, so
+  # the golden carries both a `passed: true` and a `passed: false` entry with
+  # their details. test/fake-claude never edits the workspace.
+  - id: readme-kept
+    description: The seed's README.md is still there, and still the only one
+    type: file_count
+    paths: ["README.md"]
+    min: 1
+    max: 1
+  - id: notes-written
+    description: A NOTES.md was added
+    type: file_count
+    paths: ["NOTES.md"]
+    min: 1
+  - id: transcript-reports-the-change
+    description: The reply says what was done
+    type: transcript_matches
+    must_match:
+      - 'Filtered'

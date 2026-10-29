@@ -1,0 +1,10 @@
+{
+  "registry": "example-adopter/agentskills",
+  "ref": "0000000000000000000000000000000000000000",
+  "bundles": [
+    "anything-anywhere",
+    "coding-anywhere"
+  ],
+  "skills": {},
+  "generated_from": "0000000000000000000000000000000000000000"
+}

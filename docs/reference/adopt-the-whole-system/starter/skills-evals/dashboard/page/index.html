@@ -1,0 +1,1173 @@
+<style>
+#dash-root { --dash-gutter: var(--cds-pad-lg); }
+.pd { font-family: var(--font-anthropic-sans); display: flex; flex-direction: column; gap: var(--cds-gap-lg); }
+.pd-head { display: flex; flex-direction: column; gap: var(--cds-gap-xs); }
+.pd-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; text-wrap: balance; }
+.pd-goal { color: var(--color-fg-muted); font-size: var(--cds-font-size-body); margin: 0; max-width: 70ch; }
+.pd-take { font-size: var(--cds-font-size-body); margin: 0; max-width: 75ch; line-height: 1.5; }
+.pd-take b { font-weight: 600; }
+.pd-tabs { display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs); border-bottom: 1px solid var(--color-border-line); }
+.pd-tab { font: inherit; font-size: var(--cds-font-size-body); background: none; border: 0; border-bottom: 2px solid transparent; color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-sm); cursor: pointer; }
+.pd-tab[aria-selected="true"] { color: var(--color-fg); border-bottom-color: var(--color-fg); }
+.pd-tab:focus-visible, .pd-tile:focus-visible { outline: 2px solid var(--color-fg); outline-offset: 2px; }
+.pd-page { display: flex; flex-direction: column; gap: var(--cds-gap-lg); }
+.pd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--cds-gap-md); }
+.pd-tile { font: inherit; text-align: left; cursor: pointer; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-md); display: flex; flex-direction: column; gap: var(--cds-gap-xs); color: var(--color-fg); }
+.pd-tile:hover { border-color: var(--color-fg-muted); }
+.pd-tile-label { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+.pd-tile-num { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.pd-tile-num small { font-family: var(--font-anthropic-sans); font-size: var(--cds-font-size-body); color: var(--color-fg-muted); }
+.pd-tile-note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+.pd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: var(--cds-gap-md); }
+.pd-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-sm); min-width: 0; }
+.pd-card h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; }
+.pd-note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); margin: 0; line-height: 1.45; }
+.pd-scroll { overflow: auto; max-height: 28rem; }
+.pd-table { width: 100%; border-collapse: collapse; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+.pd-table th { text-align: left; font-weight: var(--cds-font-weight-medium); color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-sm); border-bottom: 1px solid var(--color-border-line); position: sticky; top: 0; background: var(--color-panel); white-space: nowrap; cursor: pointer; }
+.pd-table td { padding: var(--cds-pad-xs) var(--cds-pad-sm); border-bottom: 1px solid var(--color-border-line); vertical-align: top; }
+.pd-table td.num, .pd-table th.num { text-align: right; }
+.pd-table a { color: inherit; }
+.pd-pill { display: inline-block; padding: 0 var(--cds-pad-xs); border-radius: 999px; border: 1px solid var(--color-border-line); white-space: nowrap; }
+.pd-good { color: var(--color-ok); }
+.pd-warn { color: var(--color-warn); }
+.pd-bad { color: var(--color-bad); }
+.pd-search { font: inherit; font-size: var(--cds-font-size-caption); padding: var(--cds-pad-xs) var(--cds-pad-sm); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); background: var(--color-bg); color: var(--color-fg); max-width: 20rem; }
+.pd-chips { display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs); }
+.pd-chip { font: inherit; font-size: var(--cds-font-size-caption); padding: var(--cds-pad-xs) var(--cds-pad-sm); border-radius: 999px; border: 1px solid var(--color-border-line); background: none; color: var(--color-fg-muted); cursor: pointer; }
+.pd-chip[aria-pressed="true"] { color: var(--color-fg); border-color: var(--color-fg); }
+.pd-meter { display: flex; flex-direction: column; gap: var(--cds-gap-xs); }
+.pd-meter-top { display: flex; justify-content: space-between; gap: var(--cds-gap-sm); font-size: var(--cds-font-size-caption); flex-wrap: wrap; }
+.pd-meter-top b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pd-bar { position: relative; height: 0.75rem; background: var(--cds-chart-grid); border-radius: 999px; overflow: visible; }
+.pd-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; }
+.pd-bar-mark { position: absolute; top: -0.25rem; bottom: -0.25rem; width: 2px; background: var(--cds-chart-reference); }
+.pd-chart { position: relative; min-height: 14rem; }
+.pd-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); white-space: nowrap; z-index: 2; }
+.pd-tip .k { color: var(--cds-text-secondary); }
+.pd-legend { display: flex; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); flex-wrap: wrap; }
+.pd-sw { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; }
+.pd-fail { display: flex; align-items: center; justify-content: center; gap: var(--cds-gap-xs); color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); min-height: 3rem; }
+.pd-fail::before { content: ""; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: var(--color-bad); }
+[data-dash-source-state=empty] { color: transparent; }
+[data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+</style>
+
+<div class="pd">
+  <header class="pd-head" id="top">
+    <h1 class="pd-title">Self-improvement project</h1>
+    <p class="pd-goal">Goal: a fully automatic system that adds, removes and changes your skills and rules files so your real work in Claude Code goes better, and proves each change with tests.</p>
+    <p class="pd-take" id="takeaway">
+      Gate to start building again: <b class="dash-skeleton" data-source="headline" data-field="gate_met">—</b> of <b class="dash-skeleton" data-source="headline" data-field="gate_total">—</b> conditions met.
+      Tests used <b class="dash-skeleton" data-source="cap_use" data-field="spent">—</b> of <b class="dash-skeleton" data-source="cap_use" data-field="cap">—</b> allowance points this week.
+      The skill beat no skill in <b class="dash-skeleton" data-source="eval_summary" data-where="model=All" data-field="helped">—</b> of <b class="dash-skeleton" data-source="eval_summary" data-where="model=All" data-field="runs">—</b> tests.
+      <b class="dash-skeleton" data-source="headline" data-field="waiting">—</b> items wait on you.
+    </p>
+  </header>
+
+  <nav class="pd-tabs" role="tablist" aria-label="Sections">
+    <button class="pd-tab" role="tab" id="tab-overview" data-page="overview">Overview</button>
+    <button class="pd-tab" role="tab" id="tab-loop" data-page="loop">Self-improvement loop</button>
+    <button class="pd-tab" role="tab" id="tab-impact" data-page="impact">Real-work impact</button>
+    <button class="pd-tab" role="tab" id="tab-evals" data-page="evals">Test results</button>
+    <button class="pd-tab" role="tab" id="tab-cleanup" data-page="cleanup">Cleanup</button>
+    <button class="pd-tab" role="tab" id="tab-work" data-page="work">PRs and issues</button>
+    <button class="pd-tab" role="tab" id="tab-routines" data-page="routines">Routines</button>
+    <button class="pd-tab" role="tab" id="tab-decisions" data-page="decisions">Decisions</button>
+  </nav>
+
+  <!-- OVERVIEW -->
+  <section class="pd-page" id="overview" data-page-id="overview">
+    <div class="pd-tiles">
+      <button class="pd-tile" data-go="decisions" id="tile-gate">
+        <span class="pd-tile-label">Gate to build again</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="headline" data-field="gate_met">—</span> <small>of <span data-source="headline" data-field="gate_total">—</span> met</small></span>
+        <span class="pd-tile-note">One improvement judged, two sweeps inside the cap</span>
+      </button>
+      <button class="pd-tile" data-go="loop" id="tile-loop">
+        <span class="pd-tile-label">Loop gaps closed</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="loop_counts" data-field="done">—</span> <small>of <span data-source="loop_counts" data-field="total">—</span></small></span>
+        <span class="pd-tile-note"><span data-source="loop_counts" data-field="in_progress">—</span> being built now</span>
+      </button>
+      <button class="pd-tile" data-go="evals" id="tile-cap">
+        <span class="pd-tile-label">Test allowance, this week</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="cap_use" data-field="spent">—</span> <small>of <span data-source="cap_use" data-field="cap">—</span> points</small></span>
+        <span class="pd-tile-note">Points are percent of the weekly plan allowance</span>
+      </button>
+      <button class="pd-tile" data-go="evals" id="tile-helped">
+        <span class="pd-tile-label">Skill beat no skill</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="eval_summary" data-where="model=All" data-field="helped">—</span> <small>of <span data-source="eval_summary" data-where="model=All" data-field="runs">—</span> tests</small></span>
+        <span class="pd-tile-note"><span data-source="eval_scope" data-field="skills">—</span> skills, 3 tries per side; now on <span data-source="eval_scope" data-field="models">—</span></span>
+      </button>
+      <button class="pd-tile" data-go="cleanup" id="tile-cleanup">
+        <span class="pd-tile-label">Cleanup list done</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="headline" data-field="cleanup_done">—</span> <small>of <span data-source="headline" data-field="cleanup_total">—</span></small></span>
+        <span class="pd-tile-note">Fixed list C1 to C15, due about Nov 7</span>
+      </button>
+      <button class="pd-tile" data-go="work" id="tile-prs">
+        <span class="pd-tile-label">Open PRs, live</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="pr_counts" data-field="open">—</span></span>
+        <span class="pd-tile-note"><span data-source="pr_counts" data-field="by_bots">—</span> from bots</span>
+      </button>
+      <button class="pd-tile" data-go="overview" id="tile-waiting">
+        <span class="pd-tile-label">Waiting on you</span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="headline" data-field="waiting">—</span></span>
+        <span class="pd-tile-note">Listed below</span>
+      </button>
+    </div>
+
+    <div class="pd-grid">
+      <div class="pd-card" id="card-waiting">
+        <h2>Waiting on you</h2>
+        <p class="pd-note">Things only you can do or decide. Click a row's link to act on it.</p>
+        <div class="pd-scroll">
+          <table class="pd-table" id="tbl-waiting" data-source="waiting" data-row-key="item">
+            <thead><tr><th data-field="item">What</th><th data-field="where">Where</th><th data-field="since">Since</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pd-card" id="card-routines-mini">
+        <h2>Routines</h2>
+        <p class="pd-note">The automatic jobs that keep the system running. Details on the Routines tab.</p>
+        <div class="pd-scroll">
+          <table class="pd-table" id="tbl-routines-mini" data-source="routines" data-row-key="name">
+            <thead><tr><th data-field="name">Routine</th><th data-field="health">Health</th><th data-field="last_run">Last run</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-latest">
+      <h2>Latest test runs, live</h2>
+      <p class="pd-note"><span data-source="new_runs" data-field="new_runs">—</span> runs finished since the test results snapshot was taken. Each row is a finished run saved to the results branch.</p>
+      <div class="pd-scroll" style="max-height: 16rem">
+        <table class="pd-table" id="tbl-ingests" data-source="eval_ingests" data-row-key="sha">
+          <thead><tr><th data-field="run_id">Run</th><th data-field="ingested_at">Saved</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- LOOP -->
+  <section class="pd-page" id="loop" data-page-id="loop" hidden>
+    <div class="pd-card" id="card-loop-stages">
+      <h2>The loop, stage by stage</h2>
+      <p class="pd-note">Each change moves through signal, proposal, test, decision, then merge or retirement, without a person in the path. Fixes are chosen in this order: a git hook check (or, when the rule is about a tool call, a Claude Code hook) first, then a skill, then guidance text, then a memory note. A stage's status comes from the gaps it depends on.</p>
+      <div class="pd-meter" data-source="loop_counts">
+        <div class="pd-meter-top"><span><b data-source="loop_counts" data-field="done">—</b> gaps closed, <b data-source="loop_counts" data-field="in_progress">—</b> being built</span><span><b data-source="loop_counts" data-field="total">—</b> gaps</span></div>
+        <div class="pd-bar"><div class="pd-bar-fill" id="fill-loop"></div></div>
+      </div>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-loop-stages" data-source="loop_stages" data-row-key="order">
+          <thead><tr><th data-field="kind">Step</th><th data-field="stage">Stage</th><th data-field="status">Status</th><th data-field="what">What it does</th><th data-field="gaps">Gaps</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-loop-grid">
+      <h2>What works for skills, guidance and memories</h2>
+      <p class="pd-note">The loop has to work for three kinds of thing. Memories have no test step: the weekly memory audit makes the call.</p>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-loop-grid" data-source="loop_grid" data-row-key="stage">
+          <thead><tr><th data-field="stage">Step</th><th data-field="skills">Skills</th><th data-field="guidance">Guidance sections</th><th data-field="memories">Memories</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-loop-lanes">
+      <h2>Who is building each lane</h2>
+      <p class="pd-note">One project thread per lane. "Latest" and "State" are from the snapshot taken at each refresh.</p>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-loop-lanes" data-source="loop_lanes_live" data-row-key="thread">
+          <thead><tr><th data-field="lane">Lane</th><th data-field="thread">Thread</th><th data-field="does">Builds</th><th data-field="latest">Latest</th><th data-field="state">State</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-loop-gaps">
+      <h2>Gaps, G1 to G13</h2>
+      <p class="pd-note">From the loop's gap list. The loop thread updates each status as its PRs merge.</p>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-loop-gaps" data-source="loop_gaps" data-row-key="gap">
+          <thead><tr><th data-field="gap">#</th><th data-field="title">Gap</th><th data-field="status">Status</th><th data-field="owner">Owner</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- IMPACT -->
+  <section class="pd-page" id="impact" data-page-id="impact" hidden>
+    <div class="pd-card" id="card-impact-summary">
+      <h2>How much real work uses the system</h2>
+      <p class="pd-note">Counts from your real sessions and CI runs, by week: each skill use and each git hook check run, and how often a git hook check blocked a commit or push. These are git hooks (the agent-checks runner on pre-commit and pre-push), not Claude Code hooks; Claude Code hook runs are not counted yet. Only weekly totals are kept, never session text. Names not on the public list are counted as "other". Guidance has no direct use signal; its effect shows only in test results.</p>
+      <p class="pd-note" id="impact-empty" hidden><b>Not all sources are in yet.</b> PR outcomes and git hook check runs in CI arrive daily (2:53 AM ET). Skill counts start after your computer's next daily usage job (12:37 PM ET); the counter merged in skills-evals#420. Git hook checks run on your computers (with what they blocked) follow once git hook logging (_agent-guidance#337) reaches each machine.</p>
+      <div class="pd-tiles" id="impact-tiles">
+        <div class="pd-tile"><span class="pd-tile-label">Skill uses</span><span class="pd-tile-num" data-source="usage_summary" data-field="skill_uses">—</span><span class="pd-tile-note">in <span data-source="usage_summary" data-field="skill_names">—</span> skills</span></div>
+        <div class="pd-tile"><span class="pd-tile-label">Git hook runs</span><span class="pd-tile-num" data-source="usage_summary" data-field="hook_runs">—</span><span class="pd-tile-note"><span data-source="usage_summary" data-field="hook_runs_local">—</span> on your computers, the rest in CI</span></div>
+        <div class="pd-tile"><span class="pd-tile-label">Git hook runs that blocked or failed</span><span class="pd-tile-num" data-source="usage_summary" data-field="hook_blocked">—</span><span class="pd-tile-note">at least one check failed; <span data-source="usage_summary" data-field="hook_names">—</span> checks seen locally</span></div>
+        <div class="pd-tile"><span class="pd-tile-label">Weeks covered</span><span class="pd-tile-num" data-source="usage_summary" data-field="weeks">—</span><span class="pd-tile-note">latest week of <span data-source="usage_summary" data-field="latest_week">—</span></span></div>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-impact-names">
+      <h2>By skill and git hook check</h2>
+      <p class="pd-note">Click a row to see it by repo and by week below. A blank cell means that number isn't collected yet. Each git hook run executes many checks, so the per-check rows add up to more than the run totals above; "agent-checks" in CI counts whole CI runs.</p>
+      <div class="pd-chips" id="impact-kinds" role="group" aria-label="Kind"></div>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-impact-names" data-source="usage_by_name" data-row-key="key">
+          <thead><tr><th data-field="kind">Kind</th><th data-field="name">Name</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="sessions">Sessions</th><th class="num" data-field="blocked">Blocked</th><th class="num" data-field="overridden">Bypassed</th><th class="num" data-field="repos">Repos</th><th data-field="last_week">Last week seen</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-grid">
+      <div class="pd-card" id="card-impact-repos">
+        <h2>By repo: <span id="impact-sel-repo">all</span></h2>
+        <p class="pd-note">PR counts come from CI; blank until that job runs.</p>
+        <div class="pd-scroll">
+          <table class="pd-table" id="tbl-impact-repos" data-source="usage_by_repo" data-row-key="key">
+            <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="blocked">Blocked</th><th class="num" data-field="prs_opened">PRs opened</th><th class="num" data-field="prs_merged">PRs merged</th><th class="num" data-field="ci_red_after">CI failed after</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pd-card" id="card-impact-weeks">
+        <h2>By week: <span id="impact-sel-week">all</span></h2>
+        <p class="pd-note">Weeks start Monday (UTC). "Where" is your computer or the cloud.</p>
+        <div class="pd-scroll">
+          <table class="pd-table" id="tbl-impact-weeks" data-source="usage_by_week" data-row-key="key">
+            <thead><tr><th data-field="week">Week of</th><th data-field="surface">Where</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="sessions">Sessions</th><th class="num" data-field="blocked">Blocked</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-impact-outcomes">
+      <h2>PR outcomes by repo</h2>
+      <p class="pd-note">From CI, across both GitHub owners; private repos are summed into one "private" row. "Agent PRs merged" counts merged PRs labeled agent-authored; the label is new, so most earlier agent PRs are not counted. "CI failed after" counts merges whose checks then went red. Click a repo to see it by week.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-impact-outcomes" data-source="usage_outcomes" data-row-key="repo">
+          <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="prs_opened">PRs opened</th><th class="num" data-field="prs_merged">Merged</th><th class="num" data-field="agent_prs_merged">Agent PRs merged</th><th class="num" data-field="prs_closed_unmerged">Closed unmerged</th><th class="num" data-field="prs_reverted">Reverted</th><th class="num" data-field="ci_red_after">CI failed after</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <h2 style="margin-top: var(--cds-gap-md)">By week: <span id="impact-sel-orepo">all repos</span></h2>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-impact-oweeks" data-source="usage_outcomes" data-row-key="week">
+          <thead><tr><th data-field="week">Week of</th><th class="num" data-field="prs_opened">PRs opened</th><th class="num" data-field="prs_merged">Merged</th><th class="num" data-field="agent_prs_merged">Agent PRs merged</th><th class="num" data-field="prs_closed_unmerged">Closed unmerged</th><th class="num" data-field="prs_reverted">Reverted</th><th class="num" data-field="ci_red_after">CI failed after</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-impact-sources">
+      <h2>Where the counts come from</h2>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-impact-sources" data-source="usage_sources" data-row-key="file">
+          <thead><tr><th data-field="file">File</th><th data-field="surface">Where</th><th data-field="scope">Scope</th><th data-field="from">From</th><th data-field="to">To</th><th class="num" data-field="sessions_scanned">Sessions read</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- EVALS -->
+  <section class="pd-page" id="evals" data-page-id="evals" hidden>
+    <div class="pd-card" id="card-allowance">
+      <h2>Test allowance this week</h2>
+      <p class="pd-note">Automatic tests share your weekly plan allowance. A guard refuses a new test once test use since the Monday 17:00 UTC reset would pass the cap (#432), and every run stops if the whole account reaches the stop line. Late in a week with unused allowance, the guard allows more ("pace room").</p>
+      <div class="pd-meter" data-source="cap_use" id="meter-cap">
+        <div class="pd-meter-top"><span>Test use since Monday 17:00 UTC reset: <b data-source="cap_use" data-field="spent">—</b> points</span><span>Cap: <b data-source="cap_use" data-field="cap">—</b> points (from the budget file)</span></div>
+        <div class="pd-bar"><div class="pd-bar-fill" id="fill-cap"></div></div>
+      </div>
+      <div class="pd-meter" data-source="cap_use" id="meter-account">
+        <div class="pd-meter-top"><span>Whole account this week: <b data-source="cap_use" data-field="account_used">—</b>%</span><span>Stop line: <b data-source="cap_use" data-field="stop">—</b>%</span></div>
+        <div class="pd-bar"><div class="pd-bar-fill" id="fill-account"></div><div class="pd-bar-mark" id="mark-stop"></div></div>
+      </div>
+      <p class="pd-note">Room for new tests now: about <span data-source="cap_use" data-field="room_now">—</span> points (the larger of what's left under the cap and the pace room of <span data-source="cap_use" data-field="pace_room">—</span>). Each test reserves <span data-source="cap_use" data-field="reservation">—</span>. Fires still running are not subtracted here. Account reading taken <span data-source="eval_allowance" data-field="account_reading_at" id="reading-at">—</span>; the week resets <span data-source="eval_allowance" data-field="week_resets_at" id="resets-at">—</span>. This week the cap is raised to 60 points until the Nov 2 reset (#456, #466, #470), then returns to 30; each test gets 3 points plus 0.5 point of overrun, and tests stop when the account is at 80%. A test that saves no results gives its reserved points back after 45 minutes (#452).</p>
+    </div>
+
+    <div class="pd-card" id="card-roster">
+      <h2>Models in the tests</h2>
+      <p class="pd-note">The list follows what you actually use. It is recomputed every Monday at 07:00 UTC (2:00 AM ET from Nov 2) and merges itself once its checks pass. The last change (#409, Oct 25) dropped Sonnet 5 and moved the quick check to Haiku 5.5.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-roster" data-source="roster" data-row-key="id">
+          <thead><tr><th data-field="model">Model</th><th data-field="role">Role</th><th data-field="status">Status</th><th data-field="why">Why</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-by-model">
+      <h2>Skill vs. no skill, by model</h2>
+      <p class="pd-note">Each test runs the same task 3 times with the skill and 3 times without it, then scores the finished work with scripted pass/fail checks. "Score" is the average share of checks passed.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-models" data-source="eval_summary" data-row-key="model">
+          <thead><tr><th data-field="model">Model</th><th class="num" data-field="runs">Tests</th><th class="num" data-field="helped">Skill better</th><th class="num" data-field="tied">Tie</th><th class="num" data-field="hurt">Skill worse</th><th class="num" data-field="with_avg">Score with</th><th class="num" data-field="without_avg">Score without</th><th class="num" data-field="lift">Lift</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-dumbbell">
+      <h2>Each skill's latest test</h2>
+      <p class="pd-note">Share of checks passed without the skill (hollow) and with it (filled). A line running right means the skill helped.</p>
+      <div class="pd-chips" id="model-chips" role="group" aria-label="Model"></div>
+      <div class="pd-legend"><span><span class="pd-sw" id="sw-with"></span>With skill</span><span><span class="pd-sw" id="sw-without"></span>Without skill</span></div>
+      <div class="pd-chart" id="chart-dumbbell" data-source="eval_latest"></div>
+    </div>
+
+    <div class="pd-card" id="card-trend">
+      <h2>Test results over time</h2>
+      <p class="pd-note">Average share of checks passed per day, with the skill and without it, across every scored test that day. The gap between the lines is what the skills add.</p>
+      <div class="pd-legend"><span><span class="pd-sw" id="sw-trend-with"></span>With skill</span><span><span class="pd-sw" id="sw-trend-without"></span>Without skill</span></div>
+      <div class="pd-chart" id="chart-trend" data-source="eval_trend"></div>
+    </div>
+
+    <div class="pd-card" id="card-coverage">
+      <h2>Test coverage by skill</h2>
+      <p class="pd-note">Every test folder in skills-evals' evals/ on main, read live, matched with the scored runs above. "Not yet tested" means no scored run since Oct 20.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-coverage" data-source="eval_coverage" data-row-key="skill">
+          <thead><tr><th data-field="skill">Skill test</th><th data-field="status">Status</th><th class="num" data-field="runs">Runs</th><th data-field="last_run">Last run</th><th class="num" data-field="with_share">With</th><th class="num" data-field="without_share">Without</th><th class="num" data-field="gain">Gain</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-runs">
+      <h2>Every scored test run</h2>
+      <p class="pd-note">Snapshot of the results branch. "Judge" is a second model's rating out of 10, used only when the checks show no gain for the skill. Open a report for the full detail.</p>
+      <input class="pd-search" id="search-runs" type="search" placeholder="Filter runs" aria-label="Filter runs">
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-runs" data-source="eval_runs" data-row-key="run_id">
+          <thead><tr><th data-field="fired_at">Started</th><th data-field="fixture">Skill test</th><th data-field="model">Model</th><th class="num" data-field="with_skill">With</th><th class="num" data-field="without_skill">Without</th><th class="num" data-field="checks">Checks</th><th data-field="judge">Judge</th><th class="num" data-field="cost_usd">List-price cost</th><th class="num" data-field="meter_points">Points</th><th data-field="report_url">Report</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pd-card" id="card-bare">
+      <h2>Bare model vs our setup</h2>
+      <p class="pd-note">"Bare" is the model alone: no skills, guidance or memory, run once per test and model and repeated only when a new model appears. "Without" is our full setup minus the skill under test; "With" is the full setup. With and Without come from the newest paired run of the same test and model, which can be days older than the bare run. Bare runs never count toward a skill's keep or remove decision.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-bare-sum" data-source="bare_summary" data-row-key="model">
+          <thead><tr><th data-field="model">Model</th><th class="num" data-field="pairs">Tests</th><th class="num" data-field="bare">Bare</th><th class="num" data-field="without">Without</th><th class="num" data-field="with">With</th><th class="num" data-field="setup_lift">Setup adds</th><th class="num" data-field="skill_lift">Skill adds</th><th class="num" data-field="bare_won">Bare beat With</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <h3>Each test</h3>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-bare" data-source="bare_runs" data-row-key="run_id">
+          <thead><tr><th data-field="fired_at">Bare run</th><th data-field="fixture">Skill test</th><th data-field="model">Model</th><th class="num" data-field="bare_share">Bare</th><th class="num" data-field="without_share">Without</th><th class="num" data-field="with_share">With</th><th data-field="paired_at">Paired run</th><th class="num" data-field="trials">Trials</th><th class="num" data-field="cost_usd">List-price cost</th><th data-field="report_url">Report</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLEANUP -->
+  <section class="pd-page" id="cleanup" data-page-id="cleanup" hidden>
+    <div class="pd-card" id="card-cleanup">
+      <h2>Cleanup list, C1 to C15</h2>
+      <p class="pd-note">A fixed list of 15 items, each with a test for "done", agreed Oct 24 with two weeks to finish. After that, one repo at a time. Statuses checked against GitHub when this snapshot was taken.</p>
+      <div class="pd-meter" data-source="headline">
+        <div class="pd-meter-top"><span><b data-source="headline" data-field="cleanup_done">—</b> done, <b data-source="headline" data-field="cleanup_partly">—</b> partly done</span><span><b data-source="headline" data-field="cleanup_total">—</b> items</span></div>
+        <div class="pd-bar"><div class="pd-bar-fill" id="fill-cleanup"></div></div>
+      </div>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-cleanup" data-source="cleanup" data-row-key="id">
+          <thead><tr><th data-field="id">#</th><th data-field="item">Item</th><th data-field="done_when">Done when</th><th data-field="status">Status</th><th data-field="detail">Detail</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORK -->
+  <section class="pd-page" id="work" data-page-id="work" hidden>
+    <p class="pd-note">Live from GitHub through your GitHub connector, across skills-evals, _agent-guidance, agentskills and claude-memory-map. The private skills repo is not visible to that connector, so it is left out.</p>
+    <div class="pd-card" id="card-open-prs">
+      <h2>Open pull requests</h2>
+      <input class="pd-search" id="search-prs" type="search" placeholder="Filter PRs" aria-label="Filter PRs">
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-prs" data-source="open_prs" data-row-key="repo,number">
+          <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="number">#</th><th data-field="title">Title</th><th data-field="author">Opened by</th><th data-field="created_at">Opened</th><th data-field="labels">Labels</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pd-card" id="card-merged">
+      <h2>Recently merged</h2>
+      <p class="pd-note">The 30 most recently updated merged pull requests.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-merged" data-source="merged_prs" data-row-key="repo,number">
+          <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="number">#</th><th data-field="title">Title</th><th data-field="closed_at">Merged</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pd-card" id="card-issues">
+      <h2>Open issues</h2>
+      <input class="pd-search" id="search-issues" type="search" placeholder="Filter issues" aria-label="Filter issues">
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-issues" data-source="open_issues" data-row-key="repo,number">
+          <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="number">#</th><th data-field="title">Title</th><th data-field="labels">Labels</th><th data-field="updated_at">Updated</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pd-card" id="card-threads">
+      <h2>Project threads</h2>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-threads" data-source="threads" data-row-key="title">
+          <thead><tr><th data-field="title">Thread</th><th data-field="state">State</th><th data-field="last_active">Last active</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ROUTINES -->
+  <section class="pd-page" id="routines" data-page-id="routines" hidden>
+    <div class="pd-card" id="card-routines">
+      <h2>Routines</h2>
+      <p class="pd-note">Scheduled or triggered Claude sessions that run without you. Snapshot of their last run.</p>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-routines" data-source="routines" data-row-key="name">
+          <thead><tr><th data-field="name">Routine</th><th data-field="what">What it does</th><th data-field="schedule">When</th><th data-field="last_run">Last run</th><th data-field="health">Health</th><th data-field="note">Note</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pd-card" id="card-checkins">
+      <h2>Scheduled check-ins</h2>
+      <p class="pd-note">One-time reminders Claude set for itself in this project.</p>
+      <div class="pd-scroll">
+        <table class="pd-table" id="tbl-checkins" data-source="checkins" data-row-key="id">
+          <thead><tr><th data-field="when">When</th><th data-field="what">What</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- DECISIONS -->
+  <section class="pd-page" id="decisions" data-page-id="decisions" hidden>
+    <div class="pd-card" id="card-gate">
+      <h2>The gate: nothing new gets built until</h2>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-gate" data-source="gate" data-row-key="condition">
+          <thead><tr><th data-field="condition">Condition</th><th data-field="status">Status</th><th data-field="detail">Detail</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pd-card" id="card-decisions">
+      <h2>Your decisions</h2>
+      <p class="pd-note">The full strategy, options and survey are in the project's files (strategy/projects-era-strategy-2026-10-20.md).</p>
+      <div class="pd-scroll" style="max-height: none">
+        <table class="pd-table" id="tbl-decisions" data-source="decisions" data-row-key="date,decision">
+          <thead><tr><th data-field="date">Date</th><th data-field="decision">Decision</th><th data-field="link">Record</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+// ---- Placeholder rows ----
+// dashboard/build.py writes one placeholder row (key field "none") instead of an empty
+// list, because an empty dataset reads as "failed to load". Calcs and tables never see them.
+(() => {
+  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file' };
+  const real = (id, rows) => (PH[id] && Array.isArray(rows) ? rows.filter((r) => r[PH[id]] !== 'none') : rows);
+  try {
+    const calc = dash.calc.bind(dash);
+    dash.calc = (id, o) => calc(id, { ...o, fn: (...a) => o.fn(...a.map((x, i) => real(o.inputs[i], x))) });
+    const data = dash.data.bind(dash);
+    dash.data = (id) => { const d = data(id); return d && d.status === 'ok' ? { ...d, data: real(id, d.data) } : d; };
+  } catch (e) { /* a runtime that forbids this shows the placeholder rows instead */ }
+})();
+// ---- Live data: answers from the GitHub connector, reshaped into rows ----
+dash.loader('open_prs', {
+  description: 'The GitHub search answer as one row per pull request, with the repo name taken from its address',
+  fn: ({ answer }) => {
+    let a = answer;
+    if (a && Array.isArray(a.content)) { const t = a.content.find((c) => c.type === 'text' && /^[\[{]/.test(String(c.text).trim())); if (t) a = t.text; }
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { throw new Error('GitHub answered with text, not results: ' + a.slice(0, 160)); } }
+    if (!a || !Array.isArray(a.items)) throw new Error('GitHub search returned no items');
+    return a.items.map((p) => ({
+      repo: String(p.repository_url || '').split('/').pop(), number: p.number, title: p.title,
+      author: (p.user && p.user.login) || '', draft: !!p.draft,
+      labels: (p.labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean).join(', '),
+      created_at: p.created_at, updated_at: p.updated_at, url: p.html_url,
+    }));
+  },
+});
+dash.loader('merged_prs', {
+  description: 'The GitHub search answer as one row per merged pull request',
+  fn: ({ answer }) => {
+    let a = answer;
+    if (a && Array.isArray(a.content)) { const t = a.content.find((c) => c.type === 'text' && /^[\[{]/.test(String(c.text).trim())); if (t) a = t.text; }
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { throw new Error('GitHub answered with text, not results: ' + a.slice(0, 160)); } }
+    if (!a || !Array.isArray(a.items)) throw new Error('GitHub search returned no items');
+    return a.items.map((p) => ({
+      repo: String(p.repository_url || '').split('/').pop(), number: p.number, title: p.title,
+      author: (p.user && p.user.login) || '', closed_at: p.closed_at, url: p.html_url,
+    }));
+  },
+});
+dash.loader('open_issues', {
+  description: 'Open issues in skills-evals, then the same call for _agent-guidance, agentskills and claude-memory-map, as one row per issue',
+  fn: async ({ answer, call, args }) => {
+    const parse = (x) => {
+      let a = x;
+      if (a && Array.isArray(a.content)) { const t = a.content.find((c) => c.type === 'text' && /^[\[{]/.test(String(c.text).trim())); if (t) a = t.text; }
+      if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { throw new Error('GitHub answered with text, not issues: ' + a.slice(0, 160)); } }
+      if (!a || !Array.isArray(a.issues)) throw new Error('GitHub returned no issues list');
+      return a.issues;
+    };
+    const sets = [[args.repo, parse(answer)]];
+    for (const repo of ['_agent-guidance', 'agentskills', 'claude-memory-map']) {
+      sets.push([repo, parse(await call('list_issues', { ...args, repo }))]);
+    }
+    const rows = [];
+    for (const [repo, list] of sets) for (const i of list) rows.push({
+      repo, number: i.number, title: i.title,
+      labels: (i.labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean).join(', '),
+      created_at: i.created_at, updated_at: i.updated_at,
+      url: 'https://github.com/' + args.owner + '/' + repo + '/issues/' + i.number,
+    });
+    return rows;
+  },
+});
+dash.loader('eval_ingests', {
+  description: 'Commits on the results branch as rows: the run id each one saved, when, and its link',
+  fn: ({ answer }) => {
+    let a = answer;
+    if (a && Array.isArray(a.content)) { const t = a.content.find((c) => c.type === 'text' && /^[\[{]/.test(String(c.text).trim())); if (t) a = t.text; }
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { throw new Error('GitHub answered with text, not commits: ' + a.slice(0, 160)); } }
+    if (!Array.isArray(a)) throw new Error('GitHub returned no commit list');
+    return a.map((c) => {
+      const msg = (c.commit && c.commit.message) || '';
+      const m = msg.match(/routine run (\d{8}T\d{6}Z-[0-9a-f]{6})/);
+      return { sha: c.sha, run_id: m ? m[1] : null, message: msg.split('\n')[0], ingested_at: c.commit && c.commit.committer && c.commit.committer.date, url: c.html_url };
+    });
+  },
+});
+
+dash.loader('eval_dirs', {
+  description: 'The evals/ folder listing on main as rows: the name of each entry and whether it is a folder',
+  fn: ({ answer }) => {
+    let a = answer;
+    if (a && Array.isArray(a.content)) { const t = a.content.find((c) => c.type === 'text' && /^[\[{]/.test(String(c.text).trim())); if (t) a = t.text; }
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { throw new Error('GitHub answered with text, not a folder listing: ' + a.slice(0, 160)); } }
+    if (!Array.isArray(a)) throw new Error('GitHub returned no folder listing');
+    return a.map((e) => ({ name: e.name, type: e.type }));
+  },
+});
+
+// ---- Worked-out figures ----
+dash.calc('eval_summary', {
+  title: 'Skill vs. no skill by model',
+  description: 'Per model and overall: tests where the skill scored higher, tied or lower, the average share of checks passed on each side, and the difference (lift).',
+  inputs: ['eval_runs'],
+  fn: (eval_runs) => {
+    const g = {};
+    for (const r of eval_runs) for (const k of ['All', r.model]) {
+      const x = g[k] || (g[k] = { model: k, runs: 0, helped: 0, tied: 0, hurt: 0, w: 0, wo: 0 });
+      x.runs += 1;
+      if (r.gain > 0) x.helped += 1; else if (r.gain < 0) x.hurt += 1; else x.tied += 1;
+      x.w += r.with_share; x.wo += r.without_share;
+    }
+    return Object.values(g).map((x) => ({ model: x.model, runs: x.runs, helped: x.helped, tied: x.tied, hurt: x.hurt, with_avg: x.w / x.runs, without_avg: x.wo / x.runs, lift: (x.w - x.wo) / x.runs }));
+  },
+});
+dash.calc('eval_latest', {
+  title: 'Latest test per skill and model',
+  description: 'The newest scored run for each skill test on each model.',
+  inputs: ['eval_runs'],
+  fn: (eval_runs) => {
+    const seen = new Map();
+    for (const r of [...eval_runs].sort((a, b) => (a.fired_at < b.fired_at ? 1 : -1))) {
+      const k = r.fixture + '|' + r.model;
+      if (!seen.has(k)) seen.set(k, { fixture: r.fixture, model: r.model, with_share: r.with_share, without_share: r.without_share, with_skill: r.with_skill, without_skill: r.without_skill, checks: r.checks, fired_at: r.fired_at, run_id: r.run_id });
+    }
+    return [...seen.values()];
+  },
+});
+dash.calc('eval_trend', {
+  title: 'Test results by day',
+  description: 'Per day (UTC): number of scored tests and the average share of checks passed with and without the skill.',
+  inputs: ['eval_runs'],
+  fn: (eval_runs) => {
+    const g = {};
+    for (const r of eval_runs) {
+      const day = String(r.fired_at).slice(0, 10);
+      const x = g[day] || (g[day] = { day, runs: 0, w: 0, wo: 0 });
+      x.runs += 1; x.w += r.with_share; x.wo += r.without_share;
+    }
+    return Object.values(g).sort((a, b) => (a.day < b.day ? -1 : 1)).map((x) => ({ day: x.day, runs: x.runs, with_avg: x.w / x.runs, without_avg: x.wo / x.runs }));
+  },
+});
+dash.calc('eval_coverage', {
+  title: 'Test coverage by skill',
+  description: 'Each test folder on main (not the guidance, real-work or usage folders), with its scored runs since Oct 20 and its newest result on any model.',
+  inputs: ['eval_dirs', 'eval_runs'],
+  fn: (eval_dirs, eval_runs) => {
+    const skip = ['guidance', 'real-work', 'usage'];
+    return eval_dirs.filter((d) => d.type === 'dir' && !skip.includes(d.name)).map((d) => {
+      const runs = eval_runs.filter((r) => r.skill === d.name).sort((a, b) => (a.fired_at < b.fired_at ? 1 : -1));
+      const last = runs[0];
+      return { skill: d.name, status: last ? 'Tested' : 'Not yet tested', runs: runs.length, last_run: last ? last.fired_at : null,
+        with_share: last ? last.with_share : null, without_share: last ? last.without_share : null, gain: last ? last.with_share - last.without_share : null };
+    });
+  },
+});
+dash.calc('cap_use', {
+  title: 'Test allowance use',
+  description: 'Test use since the weekly reset against the cap in the budget file, the account meter against its stop line, and the room left.',
+  inputs: ['eval_allowance', 'budget'],
+  fn: (eval_allowance, budget) => {
+    const a = eval_allowance[0] || {};
+    const b = Object.fromEntries(budget.map((r) => [r.setting, r.value]));
+    const cap = b.weekly_cap * 100;
+    const left = Math.max(0, cap - a.points);
+    return [{ spent: a.points, cap, left, stop: b.stop_when_account_above * 100, account_used: a.account_week_used, pace_room: a.pace_room_points, room_now: Math.max(left, a.pace_room_points || 0), reservation: (b.per_run_cap + b.per_run_overrun) * 100 }];
+  },
+});
+dash.calc('eval_scope', {
+  title: 'What the tests cover',
+  description: 'Distinct skills in the scored runs, and the models the tests run on now (from the model list).',
+  inputs: ['eval_runs', 'roster'],
+  fn: (eval_runs, roster) => [{
+    skills: new Set(eval_runs.map((r) => r.skill)).size,
+    models: roster.filter((r) => r.role === 'Tested' && r.status === 'In use').map((r) => r.model).join(' and '),
+  }],
+});
+dash.calc('loop_counts', {
+  title: 'Loop gap counts',
+  description: 'Loop gaps closed, being built and in all.',
+  inputs: ['loop_gaps'],
+  fn: (loop_gaps) => [{ done: loop_gaps.filter((g) => g.status === 'Done').length, in_progress: loop_gaps.filter((g) => g.status === 'In progress').length, total: loop_gaps.length }],
+});
+dash.calc('loop_lanes_live', {
+  title: 'Loop lanes',
+  description: 'Each lane of the loop build with its thread; the thread state is copied from the threads snapshot when it lists the thread.',
+  inputs: ['loop_lanes', 'threads'],
+  fn: (loop_lanes, threads) => {
+    const t = new Map(threads.map((r) => [r.title, r]));
+    return loop_lanes.map((l) => ({ ...l, state: (t.get(l.thread) || {}).state || '' }));
+  },
+});
+// Sum a list of usage rows; a field stays null (not collected) unless some row has it.
+const usageSum = (rows, f) => (rows.some((r) => r[f] != null) ? d3.sum(rows, (r) => r[f] || 0) : null);
+const usageGroup = (usage_rows, keyFn, base) => [...d3.group(usage_rows, keyFn)].map(([key, rs]) => ({
+  key, ...base(rs[0]), invocations: d3.sum(rs, (r) => r.invocations || 0),
+  sessions: usageSum(rs, 'sessions'), blocked: usageSum(rs, 'blocked'), overridden: usageSum(rs, 'overridden'),
+  prs_opened: usageSum(rs, 'prs_opened'), prs_merged: usageSum(rs, 'prs_merged'), ci_red_after: usageSum(rs, 'ci_red_after'),
+  repos: new Set(rs.map((r) => r.repo)).size, last_week: d3.max(rs, (r) => r.week),
+}));
+dash.calc('usage_by_name', {
+  title: 'Use by skill and git hook check',
+  description: 'Each skill or git hook check summed over all weeks, repos and places: uses, sessions, blocks, bypasses, repos and the last week seen.',
+  inputs: ['usage_rows'],
+  fn: (usage_rows) => usageGroup(usage_rows.filter((r) => r.kind !== 'repo' && r.kind !== 'hook_all'), (r) => r.kind + '|' + r.name, (r) => ({ kind: r.kind, name: r.name })),
+});
+dash.calc('usage_by_repo', {
+  title: 'Use by repo',
+  description: 'Each skill or git hook check per repo, with PR outcomes where CI reports them.',
+  inputs: ['usage_rows'],
+  fn: (usage_rows) => usageGroup(usage_rows.filter((r) => r.kind !== 'repo' && r.kind !== 'hook_all'), (r) => r.kind + '|' + r.name + '|' + r.repo, (r) => ({ kind: r.kind, name: r.name, sel: r.kind + '|' + r.name, repo: r.repo })),
+});
+dash.calc('usage_by_week', {
+  title: 'Use by week',
+  description: 'Each skill or git hook check per week and place (your computer or the cloud).',
+  inputs: ['usage_rows'],
+  fn: (usage_rows) => usageGroup(usage_rows.filter((r) => r.kind !== 'repo' && r.kind !== 'hook_all'), (r) => r.kind + '|' + r.name + '|' + r.week + '|' + r.surface, (r) => ({ kind: r.kind, name: r.name, sel: r.kind + '|' + r.name, week: r.week, surface: r.surface })),
+});
+const OUTCOMES = ['prs_opened', 'prs_merged', 'agent_prs_merged', 'prs_closed_unmerged', 'prs_reverted', 'ci_red_after'];
+dash.calc('usage_outcomes', {
+  title: 'PR outcomes by repo and week',
+  description: 'PRs opened, merged, merged from agents, closed unmerged, reverted, and merges with red checks after, per repo and week, from the daily CI impact report.',
+  inputs: ['usage_rows'],
+  fn: (usage_rows) => usage_rows.filter((r) => r.kind === 'repo').map((r) => ({ repo: r.repo, week: r.week, ...Object.fromEntries(OUTCOMES.map((k) => [k, r[k]])) })),
+});
+dash.calc('usage_summary', {
+  title: 'Real-work use totals',
+  description: 'Skill uses, git hook check runs, blocks and bypasses over all weeks collected, and the weeks covered.',
+  inputs: ['usage_rows'],
+  fn: (usage_rows) => {
+    // Hook run totals: the local per-week "all" rows plus CI's agent-checks job runs. One run executes
+    // many checks, so per-check rows never add up to a run count and are not used here.
+    const sk = usage_rows.filter((r) => r.kind === 'skill');
+    const runs = usage_rows.filter((r) => r.kind === 'hook_all' || (r.kind === 'hook' && r.surface === 'ci'));
+    const checks = usage_rows.filter((r) => r.kind === 'hook' && r.surface !== 'ci');
+    const weeks = [...new Set(usage_rows.map((r) => r.week))].sort();
+    return [{ rows: usage_rows.length, skill_uses: d3.sum(sk, (r) => r.invocations || 0), skill_names: new Set(sk.map((r) => r.name)).size,
+      hook_runs: d3.sum(runs, (r) => r.invocations || 0), hook_names: new Set(checks.map((r) => r.name)).size,
+      hook_blocked: d3.sum(runs, (r) => r.blocked || 0),
+      hook_runs_local: d3.sum(runs.filter((r) => r.kind === 'hook_all'), (r) => r.invocations || 0),
+      weeks: weeks.length, latest_week: weeks.length ? weeks[weeks.length - 1] : null }];
+  },
+});
+dash.calc('headline', {
+  title: 'Gate, cleanup and waiting counts',
+  description: 'Gate conditions met, cleanup items done or partly done, and items waiting on you.',
+  inputs: ['gate', 'cleanup', 'waiting'],
+  fn: (gate, cleanup, waiting) => [{
+    gate_met: gate.filter((g) => g.status === 'Met').length, gate_total: gate.length,
+    cleanup_done: cleanup.filter((c) => c.status === 'Done').length,
+    cleanup_partly: cleanup.filter((c) => c.status === 'Partly done').length,
+    cleanup_total: cleanup.length, waiting: waiting.filter((w) => w.id !== 'none').length,
+  }],
+});
+dash.calc('pr_counts', {
+  title: 'Open PR counts',
+  description: 'Open pull requests, and how many a bot opened.',
+  inputs: ['open_prs'],
+  fn: (open_prs) => [{ open: open_prs.length, by_bots: open_prs.filter((p) => /\[bot\]$/.test(p.author)).length }],
+});
+dash.calc('bare_summary', {
+  title: 'Bare model vs our setup, by model',
+  description: 'Average share of checks passed by the bare model, by our setup without the skill, and with it, over tests that have both a bare run and a paired run.',
+  inputs: ['bare_runs'],
+  fn: (bare_runs) => {
+    const g = {};
+    for (const r of bare_runs) {
+      if (r.bare_share == null || r.with_share == null || r.without_share == null) continue;
+      for (const k of ['All', r.model]) {
+        const x = g[k] || (g[k] = { model: k, pairs: 0, b: 0, wo: 0, w: 0, bare_won: 0 });
+        x.pairs += 1; x.b += r.bare_share; x.wo += r.without_share; x.w += r.with_share;
+        if (r.bare_share > r.with_share) x.bare_won += 1;
+      }
+    }
+    return Object.values(g).map((x) => ({ model: x.model, pairs: x.pairs, bare: x.b / x.pairs, without: x.wo / x.pairs, with: x.w / x.pairs,
+      setup_lift: (x.wo - x.b) / x.pairs, skill_lift: (x.w - x.wo) / x.pairs, bare_won: x.bare_won }));
+  },
+});
+dash.calc('new_runs', {
+  title: 'Runs since the snapshot',
+  description: 'Saved test runs on the results branch that are not yet in the test results snapshot.',
+  inputs: ['eval_ingests', 'eval_runs', 'bare_runs'],
+  fn: (eval_ingests, eval_runs, bare_runs) => {
+    const known = new Set([...eval_runs, ...bare_runs].map((r) => r.run_id));
+    return [{ new_runs: eval_ingests.filter((c) => c.run_id && !known.has(c.run_id)).length }];
+  },
+});
+
+// ---- Page ----
+(() => {
+  // Times show in US Eastern; Intl handles the EDT/EST switch.
+  const etDate = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' });
+  const etTime = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  const fmtDate = (d) => etDate.format(d);
+  const fmtTime = (d) => etTime.format(d);
+  const pct = d3.format('.0%');
+  const one = d3.format('.1f');
+  const two = d3.format('.2f');
+  const usd = d3.format('$.2f');
+  const dt = (s) => (s ? fmtTime(new Date(s)) : '');
+  const day = (s) => (s ? fmtDate(new Date(s)) : '');
+  const safeUrl = (u) => (typeof u === 'string' && /^https:\/\/(github\.com|claude\.ai)\//.test(u) ? u : null);
+  const status = (id) => dash.data(id).status;
+  const rowsOf = (id) => (dash.data(id).status === 'ok' && Array.isArray(dash.data(id).data) ? dash.data(id).data : []);
+  const one_ = (id) => rowsOf(id)[0] || {};
+  const pageOf = (el) => el.closest('[data-page-id]');
+  const visible = (el) => !pageOf(el) || !pageOf(el).hidden;
+
+  // tabs
+  const tabs = [...document.querySelectorAll('.pd-tab')];
+  const pages = [...document.querySelectorAll('.pd-page')];
+  const show = (name, link) => {
+    if (!pages.some((p) => p.id === name)) name = 'overview';
+    pages.forEach((p) => { p.hidden = p.id !== name; });
+    tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.page === name)));
+    if (link) dash.setLink(name);
+    draw();
+  };
+  tabs.forEach((t) => t.addEventListener('click', () => show(t.dataset.page, true)));
+  document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.go === 'overview') { document.getElementById('card-waiting').scrollIntoView({ block: 'nearest' }); return; }
+    show(b.dataset.go, true);
+  }));
+
+
+  // scalar marks
+  const fills = {
+    spent: one, cap: d3.format('.0f'), stop: d3.format('.0f'), account_used: d3.format('.0f'),
+    room_now: one, pace_room: one, reservation: one,
+  };
+  const fillMarks = () => {
+    document.querySelectorAll('[data-source][data-field]:not(th)').forEach((el) => {
+      if (el.closest('table')) return;
+      const src = el.dataset.source, field = el.dataset.field;
+      const d = dash.data(src);
+      if (d.status !== 'ok') { if (d.status === 'error' || d.status === 'connect') el.classList.remove('dash-skeleton'); el.textContent = '—'; return; }
+      let rows = Array.isArray(d.data) ? d.data : [];
+      if (el.dataset.where) {
+        const [k, v] = el.dataset.where.split('=').map(decodeURIComponent);
+        rows = rows.filter((r) => String(r[k]) === v);
+      }
+      const v = rows[0] ? rows[0][field] : null;
+      el.classList.remove('dash-skeleton');
+      if (v == null) { el.textContent = '—'; return; }
+      if (field.endsWith('_at')) el.textContent = dt(v);
+      else if (typeof v === 'number') el.textContent = fills[field] ? fills[field](v) : d3.format(',')(v);
+      else el.textContent = v;
+    });
+  };
+
+  // tables
+  const sortState = {};
+  const searchState = {};
+  const pill = (txt) => {
+    const s = document.createElement('span');
+    s.className = 'pd-pill';
+    const t = String(txt || '');
+    if (/^(Done|OK|Met|Succeeded|ok)$/i.test(t)) s.classList.add('pd-good');
+    else if (/stalled|stopped|not started|failed/i.test(t)) s.classList.add('pd-bad');
+    else if (/waiting|partly|needs|not yet|in progress/i.test(t)) s.classList.add('pd-warn');
+    s.textContent = t;
+    return s;
+  };
+  const renderTable = (id, src, cols, keyFn, opts = {}) => {
+    const table = document.getElementById(id);
+    if (!visible(table)) return;
+    const tbody = table.querySelector('tbody');
+    const d = dash.data(src);
+    tbody.replaceChildren();
+    const ths = [...table.querySelectorAll('th')];
+    if (d.status !== 'ok') {
+      if (d.status === 'error' || d.status === 'connect' || d.status === 'declined') {
+        const tr = document.createElement('tr'); const td = document.createElement('td');
+        td.colSpan = cols.length; const f = document.createElement('div'); f.className = 'pd-fail'; f.textContent = 'Failed to load';
+        td.append(f); tr.append(td); tbody.append(tr);
+      }
+      return;
+    }
+    let rows = Array.isArray(d.data) ? [...d.data] : [];
+    if (opts.filter) rows = rows.filter(opts.filter);
+    const q = (searchState[id] || '').toLowerCase();
+    if (q) rows = rows.filter((r) => cols.some((c) => String(r[c.field] ?? '').toLowerCase().includes(q)));
+    const s = sortState[id] || opts.sort;
+    if (s) rows.sort((a, b) => {
+      const x = a[s.field], y = b[s.field];
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''));
+      return s.dir === 'desc' ? -c : c;
+    });
+    ths.forEach((th) => th.setAttribute('aria-sort', s && th.dataset.field === s.field ? (s.dir === 'desc' ? 'descending' : 'ascending') : 'none'));
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.dataset.key = keyFn(r);
+      for (const c of cols) {
+        const td = document.createElement('td');
+        if (c.num) td.className = 'num';
+        const v = r[c.field];
+        if (c.pill) td.append(pill(v));
+        else if (c.link) {
+          const u = safeUrl(r[c.link]);
+          const txt = c.fmt ? c.fmt(v, r) : (v ?? '');
+          if (u) { const a = document.createElement('a'); a.href = u; a.target = '_blank'; a.rel = 'noopener'; a.textContent = txt; td.append(a); }
+          else td.textContent = txt;
+        } else td.textContent = v == null ? '' : c.fmt ? c.fmt(v, r) : v;
+        tr.append(td);
+      }
+      tbody.append(tr);
+    }
+  };
+  document.querySelectorAll('.pd-table').forEach((table) => {
+    table.querySelectorAll('th').forEach((th) => th.addEventListener('click', () => {
+      const cur = sortState[table.id];
+      sortState[table.id] = { field: th.dataset.field, dir: cur && cur.field === th.dataset.field && cur.dir === 'asc' ? 'desc' : 'asc' };
+      draw();
+    }));
+  });
+  [['search-runs', 'tbl-runs'], ['search-prs', 'tbl-prs'], ['search-issues', 'tbl-issues']].forEach(([i, t]) => {
+    const el = document.getElementById(i);
+    el.addEventListener('input', () => { searchState[t] = el.value; draw(); });
+  });
+  const enc = encodeURIComponent;
+
+  // meters
+  const drawMeters = () => {
+    const c = one_('cap_use');
+    const okCap = status('cap_use') === 'ok';
+    const fc = document.getElementById('fill-cap');
+    fc.style.width = okCap && c.cap ? Math.min(100, (c.spent / c.cap) * 100) + '%' : '0';
+    fc.style.background = okCap && c.spent > c.cap ? 'var(--cds-chart-status-critical)' : dash.colors[0];
+    const fa = document.getElementById('fill-account');
+    fa.style.width = okCap && c.account_used != null ? Math.min(100, c.account_used) + '%' : '0';
+    fa.style.background = okCap && c.account_used >= c.stop ? 'var(--cds-chart-status-critical)' : dash.colors[1];
+    document.getElementById('mark-stop').style.left = okCap ? c.stop + '%' : '0';
+    const lc = one_('loop_counts');
+    const flp = document.getElementById('fill-loop');
+    flp.style.width = status('loop_counts') === 'ok' && lc.total ? (lc.done / lc.total) * 100 + '%' : '0';
+    flp.style.background = dash.colors[0];
+    const h = one_('headline');
+    const fl = document.getElementById('fill-cleanup');
+    fl.style.width = status('headline') === 'ok' && h.cleanup_total ? (h.cleanup_done / h.cleanup_total) * 100 + '%' : '0';
+    fl.style.background = dash.colors[0];
+    document.getElementById('sw-with').style.background = dash.colors[0];
+    document.getElementById('sw-without').style.background = 'var(--color-bg)';
+    document.getElementById('sw-without').style.border = '2px solid ' + 'var(--cds-chart-muted)';
+  };
+
+  // model chips + dumbbell
+  const chips = document.getElementById('model-chips');
+  chips.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-model]');
+    if (b) dash.setParams({ model: b.dataset.model });
+  });
+  const drawDumbbell = () => {
+    const box = document.getElementById('chart-dumbbell');
+    if (!visible(box)) return;
+    box.replaceChildren();
+    const st = status('eval_latest');
+    if (st !== 'ok') {
+      if (st === 'error') { const f = document.createElement('div'); f.className = 'pd-fail'; f.textContent = 'Failed to load'; box.append(f); }
+      return;
+    }
+    const all = rowsOf('eval_latest');
+    const models = [...new Set(all.map((r) => r.model))].sort();
+    let model = dash.params().model;
+    if (!models.includes(model)) model = d3.greatest(models, (mm) => all.filter((r) => r.model === mm).length);
+    chips.replaceChildren(...models.map((m) => {
+      const b = document.createElement('button'); b.className = 'pd-chip'; b.dataset.model = m; b.textContent = m.replace('claude-', '');
+      b.setAttribute('aria-pressed', String(m === model)); return b;
+    }));
+    const rows = all.filter((r) => r.model === model).sort((a, b) => d3.descending(a.with_share - a.without_share, b.with_share - b.without_share));
+    const W = Math.max(280, box.clientWidth);
+    const rowH = 30;
+    const svg = d3.select(box).append('svg').attr('width', '100%');
+    const probe = svg.append('g').attr('font-size', 'var(--cds-font-size-caption)');
+    let labW = 0;
+    rows.forEach((r) => { const t = probe.append('text').text(r.fixture); labW = Math.max(labW, t.node().getComputedTextLength()); });
+    probe.remove();
+    labW = Math.min(labW, W * 0.45);
+    const m = { top: 8, right: 24, bottom: 28, left: labW + 12 };
+    const H = m.top + m.bottom + rows.length * rowH;
+    svg.attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    const x = d3.scaleLinear([0, 1], [m.left, W - m.right]);
+    const y = d3.scaleBand(rows.map((r) => r.fixture), [m.top, H - m.bottom]).padding(0.3);
+    const ticks = x.ticks(W < 420 ? 3 : 5);
+    svg.append('g').selectAll('line').data(ticks).join('line')
+      .attr('x1', (t) => x(t)).attr('x2', (t) => x(t)).attr('y1', m.top).attr('y2', H - m.bottom)
+      .attr('stroke', 'var(--cds-chart-grid)').attr('stroke-width', 1);
+    svg.append('g').selectAll('text').data(ticks).join('text')
+      .attr('x', (t) => x(t)).attr('y', H - m.bottom + 16).attr('text-anchor', 'middle')
+      .attr('fill', 'var(--color-fg-muted)').attr('font-size', 'var(--cds-font-size-caption)').text((t) => pct(t));
+    svg.append('g').selectAll('text').data(rows).join('text')
+      .attr('x', m.left - 10).attr('y', (r) => y(r.fixture) + y.bandwidth() / 2).attr('dy', '0.35em').attr('text-anchor', 'end')
+      .attr('fill', 'var(--color-fg)').attr('font-size', 'var(--cds-font-size-caption)').text((r) => r.fixture);
+    const g = svg.append('g').selectAll('g').data(rows).join('g');
+    g.append('line').attr('x1', (r) => x(r.without_share)).attr('x2', (r) => x(r.with_share))
+      .attr('y1', (r) => y(r.fixture) + y.bandwidth() / 2).attr('y2', (r) => y(r.fixture) + y.bandwidth() / 2)
+      .attr('stroke', (r) => (r.with_share < r.without_share ? 'var(--cds-chart-status-critical)' : 'var(--cds-chart-muted)')).attr('stroke-width', 2).attr('stroke-linecap', 'round');
+    g.append('circle').attr('cx', (r) => x(r.without_share)).attr('cy', (r) => y(r.fixture) + y.bandwidth() / 2).attr('r', 5)
+      .attr('fill', 'var(--color-panel)').attr('stroke', 'var(--cds-chart-muted)').attr('stroke-width', 2);
+    g.append('circle').attr('cx', (r) => x(r.with_share)).attr('cy', (r) => y(r.fixture) + y.bandwidth() / 2).attr('r', 5)
+      .attr('fill', dash.colors[0]);
+    const tip = document.createElement('div'); tip.className = 'pd-tip'; tip.hidden = true; box.append(tip);
+    g.append('rect').attr('x', 0).attr('width', W).attr('y', (r) => y(r.fixture) - 4).attr('height', y.bandwidth() + 8).attr('fill', 'transparent')
+      .on('mousemove', (ev, r) => {
+        tip.replaceChildren();
+        const k = document.createElement('div'); k.className = 'k'; k.textContent = r.fixture + ' · ' + day(r.fired_at); tip.append(k);
+        const a = document.createElement('div'); a.textContent = 'With skill: ' + one(r.with_skill) + ' of ' + r.checks + ' checks'; tip.append(a);
+        const b = document.createElement('div'); b.textContent = 'Without: ' + one(r.without_skill) + ' of ' + r.checks + ' checks'; tip.append(b);
+        tip.hidden = false;
+        const [px, py] = d3.pointer(ev, box);
+        const tw = tip.offsetWidth;
+        tip.style.left = Math.max(0, Math.min(px + 12, box.clientWidth - tw)) + 'px';
+        tip.style.top = py + 12 + 'px';
+      })
+      .on('mouseleave', () => { tip.hidden = true; });
+  };
+
+  const drawTrend = () => {
+    const box = document.getElementById('chart-trend');
+    if (!visible(box)) return;
+    box.replaceChildren();
+    const st = status('eval_trend');
+    if (st !== 'ok') {
+      if (st === 'error') { const f = document.createElement('div'); f.className = 'pd-fail'; f.textContent = 'Failed to load'; box.append(f); }
+      return;
+    }
+    const rows = rowsOf('eval_trend').map((r) => ({ ...r, d: new Date(r.day + 'T12:00:00Z') }));
+    if (!rows.length) return;
+    document.getElementById('sw-trend-with').style.background = dash.colors[0];
+    document.getElementById('sw-trend-without').style.background = 'var(--cds-chart-muted)';
+    const W = Math.max(280, box.clientWidth), H = 224;
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    const yTicks = [0, 0.25, 0.5, 0.75, 1];
+    const probe = svg.append('text').attr('font-size', 'var(--cds-font-size-caption)').text('100%');
+    const tickW = probe.node().getComputedTextLength(); probe.remove();
+    const m = { top: 12, right: 16, bottom: 28, left: tickW + 12 };
+    const x = d3.scaleUtc(d3.extent(rows, (r) => r.d), [m.left, W - m.right]);
+    if (rows.length === 1) x.domain([d3.utcDay.offset(rows[0].d, -1), d3.utcDay.offset(rows[0].d, 1)]);
+    const y = d3.scaleLinear([0, 1], [H - m.bottom, m.top]);
+    svg.append('g').selectAll('line').data(yTicks).join('line').attr('x1', m.left).attr('x2', W - m.right)
+      .attr('y1', (t) => y(t)).attr('y2', (t) => y(t)).attr('stroke', 'var(--cds-chart-grid)').attr('stroke-width', 1);
+    svg.append('g').selectAll('text').data(yTicks).join('text').attr('x', m.left - 6).attr('y', (t) => y(t)).attr('dy', '0.35em')
+      .attr('text-anchor', 'end').attr('fill', 'var(--color-fg-muted)').attr('font-size', 'var(--cds-font-size-caption)').text((t) => pct(t));
+    const xTicks = x.ticks(Math.max(2, Math.min(rows.length, Math.floor(W / 90))));
+    svg.append('g').selectAll('text').data(xTicks).join('text').attr('x', (t) => x(t)).attr('y', H - m.bottom + 18)
+      .attr('text-anchor', 'middle').attr('fill', 'var(--color-fg-muted)').attr('font-size', 'var(--cds-font-size-caption)').text((t) => d3.utcFormat('%b %-d')(t));
+    const series = [['without_avg', 'var(--cds-chart-muted)'], ['with_avg', dash.colors[0]]];
+    for (const [f, color] of series) {
+      svg.append('path').datum(rows).attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2)
+        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round').attr('d', d3.line((r) => x(r.d), (r) => y(r[f])));
+      svg.append('g').selectAll('circle').data(rows).join('circle').attr('cx', (r) => x(r.d)).attr('cy', (r) => y(r[f])).attr('r', 3).attr('fill', color);
+    }
+    const tip = document.createElement('div'); tip.className = 'pd-tip'; tip.hidden = true; box.append(tip);
+    const rule = svg.append('line').attr('y1', m.top).attr('y2', H - m.bottom).attr('stroke', 'var(--cds-chart-axis)').attr('stroke-width', 1).attr('visibility', 'hidden');
+    svg.append('rect').attr('x', m.left).attr('y', m.top).attr('width', W - m.left - m.right).attr('height', H - m.top - m.bottom).attr('fill', 'transparent')
+      .on('mousemove', (ev) => {
+        const [px] = d3.pointer(ev);
+        const r = rows[d3.minIndex(rows, (q) => Math.abs(x(q.d) - px))];
+        rule.attr('x1', x(r.d)).attr('x2', x(r.d)).attr('visibility', 'visible');
+        tip.replaceChildren();
+        const k = document.createElement('div'); k.className = 'k'; k.textContent = d3.utcFormat('%b %-d')(r.d) + ' · ' + r.runs + (r.runs === 1 ? ' test' : ' tests'); tip.append(k);
+        const a = document.createElement('div'); a.textContent = 'With skill: ' + pct(r.with_avg); tip.append(a);
+        const b = document.createElement('div'); b.textContent = 'Without: ' + pct(r.without_avg); tip.append(b);
+        tip.hidden = false;
+        const [bx, by] = d3.pointer(ev, box);
+        tip.style.left = Math.max(0, Math.min(bx + 12, box.clientWidth - tip.offsetWidth)) + 'px';
+        tip.style.top = by + 12 + 'px';
+      })
+      .on('mouseleave', () => { tip.hidden = true; rule.attr('visibility', 'hidden'); });
+  };
+
+  // real-work impact: kind chips and row selection drive the repo and week tables
+  const kindBox = document.getElementById('impact-kinds');
+  kindBox.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-kind]');
+    if (b) dash.setParams({ ikind: b.dataset.kind, isel: '' });
+  });
+  document.querySelector('#tbl-impact-names tbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-key]');
+    if (tr) dash.setParams({ isel: dash.params().isel === tr.dataset.key ? '' : tr.dataset.key });
+  });
+  document.querySelector('#tbl-impact-outcomes tbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-key]');
+    if (tr) dash.setParams({ orepo: dash.params().orepo === tr.dataset.key ? '' : tr.dataset.key });
+  });
+  const drawImpact = () => {
+    const page = document.getElementById('impact');
+    if (page.hidden) return;
+    const empty = status('usage_rows') === 'ok' && !rowsOf('usage_rows').some((r) => r.kind === 'skill');
+    document.getElementById('impact-empty').hidden = !empty;
+    const p = dash.params();
+    const kind = ['skill', 'hook', 'guidance'].includes(p.ikind) ? p.ikind : '';
+    const sel = p.isel || '';
+    kindBox.replaceChildren(...[['', 'All'], ['skill', 'Skills'], ['hook', 'Git hook checks'], ['guidance', 'Guidance']].map(([k, label]) => {
+      const b = document.createElement('button'); b.className = 'pd-chip'; b.dataset.kind = k; b.textContent = label;
+      b.setAttribute('aria-pressed', String(k === kind)); return b;
+    }));
+    const label = sel ? sel.replace(/^([^|]*)\|/, '$1: ') : // only the kind|name separator; a name may hold '|'
+      (kind ? kind + ' (all)' : 'all');
+    document.getElementById('impact-sel-repo').textContent = label;
+    document.getElementById('impact-sel-week').textContent = label;
+    const inScope = (r) => (sel ? r.sel === sel : !kind || r.kind === kind);
+    const nn = (v) => (v == null ? '' : d3.format(',')(v));
+    renderTable('tbl-impact-names', 'usage_by_name', [{ field: 'kind', fmt: (v) => (v === 'hook' ? 'git hook' : v) }, { field: 'name' }, { field: 'invocations', num: true, fmt: nn }, { field: 'sessions', num: true, fmt: nn }, { field: 'blocked', num: true, fmt: nn }, { field: 'overridden', num: true, fmt: nn }, { field: 'repos', num: true }, { field: 'last_week' }], (r) => r.key, { sort: { field: 'invocations', dir: 'desc' }, filter: (r) => !kind || r.kind === kind });
+    document.querySelectorAll('#tbl-impact-names tbody tr').forEach((tr) => tr.setAttribute('aria-selected', String(tr.dataset.key === sel)));
+    // Without a selection, the repo and week tables sum every skill and check in scope.
+    const roll = (src, keyOf) => {
+      const rows = rowsOf(src).filter(inScope);
+      if (sel) return rows;
+      return [...d3.group(rows, keyOf)].map(([key, rs]) => ({ key, ...rs[0], invocations: d3.sum(rs, (r) => r.invocations || 0),
+        sessions: usageSum(rs, 'sessions'), blocked: usageSum(rs, 'blocked'), prs_opened: usageSum(rs, 'prs_opened'), prs_merged: usageSum(rs, 'prs_merged'), ci_red_after: usageSum(rs, 'ci_red_after') }));
+    };
+    const fillRows = (id, rows, cols) => {
+      const tbody = document.querySelector('#' + id + ' tbody');
+      tbody.replaceChildren(...rows.map((r) => {
+        const tr = document.createElement('tr');
+        for (const c of cols) { const td = document.createElement('td'); if (c.num) td.className = 'num'; const v = r[c.field]; td.textContent = c.num ? nn(v) : (v ?? ''); tr.append(td); }
+        return tr;
+      }));
+    };
+    if (status('usage_by_repo') === 'ok') fillRows('tbl-impact-repos', roll('usage_by_repo', (r) => r.repo).sort((a, b) => d3.descending(a.invocations, b.invocations)),
+      [{ field: 'repo' }, { field: 'invocations', num: true }, { field: 'blocked', num: true }, { field: 'prs_opened', num: true }, { field: 'prs_merged', num: true }, { field: 'ci_red_after', num: true }]);
+    if (status('usage_by_week') === 'ok') fillRows('tbl-impact-weeks', roll('usage_by_week', (r) => r.week + '|' + r.surface).sort((a, b) => d3.descending(a.week, b.week)),
+      [{ field: 'week' }, { field: 'surface' }, { field: 'invocations', num: true }, { field: 'sessions', num: true }, { field: 'blocked', num: true }]);
+    // PR outcomes: totals per repo, then by week for the clicked repo (or all repos)
+    const orepo = p.orepo || '';
+    document.getElementById('impact-sel-orepo').textContent = orepo || 'all repos';
+    if (status('usage_outcomes') === 'ok') {
+      const oc = rowsOf('usage_outcomes');
+      const sumBy = (rs, keyOf, base) => [...d3.group(rs, keyOf)].map(([k, g]) => ({ ...base(k), ...Object.fromEntries(OUTCOMES.map((f) => [f, usageSum(g, f)])) }));
+      const cols = [...OUTCOMES.map((f) => ({ field: f, num: true }))];
+      fillRows('tbl-impact-outcomes', sumBy(oc, (r) => r.repo, (k) => ({ repo: k })).sort((a, b) => d3.descending(a.prs_opened, b.prs_opened)), [{ field: 'repo' }, ...cols]);
+      document.querySelectorAll('#tbl-impact-outcomes tbody tr').forEach((tr, i, all) => { tr.dataset.key = tr.firstChild.textContent; tr.setAttribute('aria-selected', String(tr.dataset.key === orepo)); });
+      fillRows('tbl-impact-oweeks', sumBy(oc.filter((r) => !orepo || r.repo === orepo), (r) => r.week, (k) => ({ week: k })).sort((a, b) => d3.descending(a.week, b.week)), [{ field: 'week' }, ...cols]);
+    }
+    renderTable('tbl-impact-sources', 'usage_sources', [{ field: 'file' }, { field: 'surface' }, { field: 'scope' }, { field: 'from', fmt: dt }, { field: 'to', fmt: dt }, { field: 'sessions_scanned', num: true }], (r) => r.file + r.scope);
+  };
+
+  function draw() {
+    drawImpact();
+    fillMarks();
+    drawMeters();
+    drawDumbbell();
+    drawTrend();
+    renderTable('tbl-coverage', 'eval_coverage', [
+      { field: 'skill' }, { field: 'status', pill: true }, { field: 'runs', num: true }, { field: 'last_run', fmt: (v) => (v ? day(v) : '—') },
+      { field: 'with_share', num: true, fmt: (v) => (v == null ? '—' : pct(v)) }, { field: 'without_share', num: true, fmt: (v) => (v == null ? '—' : pct(v)) },
+      { field: 'gain', num: true, fmt: (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + d3.format('.0f')(v * 100) + ' pts') },
+    ], (r) => r.skill, { sort: { field: 'runs', dir: 'asc' } });
+    renderTable('tbl-waiting', 'waiting', [{ field: 'item' }, { field: 'where', link: 'link' }, { field: 'since', fmt: day }], (r) => r.item);
+    renderTable('tbl-routines-mini', 'routines', [{ field: 'name', link: 'link' }, { field: 'health', pill: true }, { field: 'last_run', fmt: dt }], (r) => r.name);
+    renderTable('tbl-ingests', 'eval_ingests', [{ field: 'run_id', link: 'url', fmt: (v, r) => v || r.message }, { field: 'ingested_at', fmt: dt }], (r) => r.sha);
+    renderTable('tbl-loop-stages', 'loop_stages', [{ field: 'kind' }, { field: 'stage', link: 'link' }, { field: 'status', pill: true }, { field: 'what' }, { field: 'gaps' }], (r) => r.order);
+    renderTable('tbl-loop-grid', 'loop_grid', [{ field: 'stage' }, { field: 'skills' }, { field: 'guidance' }, { field: 'memories' }], (r) => r.stage);
+    renderTable('tbl-loop-lanes', 'loop_lanes_live', [{ field: 'lane' }, { field: 'thread', link: 'link' }, { field: 'does' }, { field: 'latest', link: 'latest_link' }, { field: 'state', pill: true }], (r) => r.thread);
+    renderTable('tbl-loop-gaps', 'loop_gaps', [{ field: 'gap' }, { field: 'title', link: 'link' }, { field: 'status', pill: true }, { field: 'owner' }], (r) => r.gap);
+    renderTable('tbl-roster', 'roster', [{ field: 'model', link: 'link' }, { field: 'role' }, { field: 'status', pill: true }, { field: 'why' }], (r) => r.id);
+    renderTable('tbl-models', 'eval_summary', [{ field: 'model' }, { field: 'runs', num: true }, { field: 'helped', num: true }, { field: 'tied', num: true }, { field: 'hurt', num: true }, { field: 'with_avg', num: true, fmt: pct }, { field: 'without_avg', num: true, fmt: pct }, { field: 'lift', num: true, fmt: (v) => (v >= 0 ? '+' : '') + d3.format('.1f')(v * 100) + ' pts' }], (r) => r.model, { sort: { field: 'runs', dir: 'desc' } });
+    renderTable('tbl-runs', 'eval_runs', [
+      { field: 'fired_at', fmt: dt }, { field: 'fixture' }, { field: 'model', fmt: (v) => String(v).replace('claude-', '') },
+      { field: 'with_skill', num: true, fmt: one }, { field: 'without_skill', num: true, fmt: one }, { field: 'checks', num: true },
+      { field: 'judge', fmt: (v, r) => (v === 'ran' ? one(r.with_judge) + ' vs ' + one(r.without_judge) : 'not needed') },
+      { field: 'cost_usd', num: true, fmt: usd }, { field: 'meter_points', num: true, fmt: one },
+      { field: 'report_url', link: 'report_url', fmt: () => 'Report' },
+    ], (r) => r.run_id, { sort: { field: 'fired_at', dir: 'desc' } });
+    renderTable('tbl-bare-sum', 'bare_summary', [
+      { field: 'model', fmt: (v) => String(v).replace('claude-', '') }, { field: 'pairs', num: true },
+      { field: 'bare', num: true, fmt: pct }, { field: 'without', num: true, fmt: pct }, { field: 'with', num: true, fmt: pct },
+      { field: 'setup_lift', num: true, fmt: (v) => (v == null ? '—' : ((v = Math.round(v * 1000) / 10) >= 0 ? '+' : '') + d3.format('.1f')(v) + ' pts') }, { field: 'skill_lift', num: true, fmt: (v) => (v == null ? '—' : ((v = Math.round(v * 1000) / 10) >= 0 ? '+' : '') + d3.format('.1f')(v) + ' pts') },
+      { field: 'bare_won', num: true },
+    ], (r) => r.model, { sort: { field: 'pairs', dir: 'desc' } });
+    renderTable('tbl-bare', 'bare_runs', [
+      { field: 'fired_at', fmt: dt }, { field: 'fixture' }, { field: 'model', fmt: (v) => (v ? String(v).replace('claude-', '') : '—') },
+      { field: 'bare_share', num: true, fmt: (v) => (v == null ? '—' : pct(v)) }, { field: 'without_share', num: true, fmt: (v) => (v == null ? '—' : pct(v)) }, { field: 'with_share', num: true, fmt: (v) => (v == null ? '—' : pct(v)) },
+      { field: 'paired_at', fmt: (v) => (v ? dt(v) : '—') },
+      { field: 'trials', num: true }, { field: 'cost_usd', num: true, fmt: (v) => (v == null ? '—' : usd(v)) },
+      { field: 'report_url', link: 'report_url', fmt: (v) => (v ? 'Report' : '—') },
+    ], (r) => r.run_id, { sort: { field: 'fired_at', dir: 'desc' } });
+    renderTable('tbl-cleanup', 'cleanup', [{ field: 'id', link: 'link' }, { field: 'item' }, { field: 'done_when' }, { field: 'status', pill: true }, { field: 'detail' }], (r) => r.id);
+    renderTable('tbl-prs', 'open_prs', [{ field: 'repo' }, { field: 'number', num: true, link: 'url' }, { field: 'title', link: 'url' }, { field: 'author', fmt: (v) => String(v).replace('[bot]', ' (bot)') }, { field: 'created_at', fmt: day }, { field: 'labels' }], (r) => enc(r.repo) + ',' + r.number, { sort: { field: 'created_at', dir: 'asc' } });
+    renderTable('tbl-merged', 'merged_prs', [{ field: 'repo' }, { field: 'number', num: true, link: 'url' }, { field: 'title', link: 'url' }, { field: 'closed_at', fmt: day }], (r) => enc(r.repo) + ',' + r.number, { sort: { field: 'closed_at', dir: 'desc' } });
+    renderTable('tbl-issues', 'open_issues', [{ field: 'repo' }, { field: 'number', num: true, link: 'url' }, { field: 'title', link: 'url' }, { field: 'labels' }, { field: 'updated_at', fmt: day }], (r) => enc(r.repo) + ',' + r.number, { sort: { field: 'updated_at', dir: 'desc' } });
+    renderTable('tbl-threads', 'threads', [{ field: 'title', link: 'link' }, { field: 'state', pill: true }, { field: 'last_active', fmt: dt }], (r) => r.title);
+    renderTable('tbl-routines', 'routines', [{ field: 'name', link: 'link' }, { field: 'what' }, { field: 'schedule' }, { field: 'last_run', fmt: dt }, { field: 'health', pill: true }, { field: 'note' }], (r) => r.name);
+    renderTable('tbl-checkins', 'checkins', [{ field: 'when', fmt: dt }, { field: 'what' }], (r) => r.id, { sort: { field: 'when', dir: 'asc' } });
+    renderTable('tbl-gate', 'gate', [{ field: 'condition', link: 'link' }, { field: 'status', pill: true }, { field: 'detail' }], (r) => r.condition);
+    renderTable('tbl-decisions', 'decisions', [{ field: 'date' }, { field: 'decision' }, { field: 'link', link: 'link', fmt: (v) => (/github\.com/.test(v) ? v.replace(/^https:\/\/github\.com\/[^/]+\//, '').replace('/pull/', '#') : 'Thread') }], (r) => enc(r.date) + ',' + enc(r.decision), { sort: { field: 'date', dir: 'desc' } });
+  }
+
+  dash.onData(draw);
+  show(location.hash.slice(1) || 'overview', false);
+})();
+</script>

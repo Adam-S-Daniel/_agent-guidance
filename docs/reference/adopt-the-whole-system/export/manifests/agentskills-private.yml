@@ -1,0 +1,93 @@
+# Export of adam-agentskills-private into starter/agent-skills-private/ (repo
+# name `agentskills-private`, DECISIONS C1). Built from the inventory (scratch
+# manifests/adam-agentskills-private.yml, 2026-10-29) as amended by
+# DECISIONS.md. Only what that inventory lists as include or include_edit is
+# copied: everything but the credential runbook (X3) and the one skill (X2).
+repo: agentskills-private
+kit_name: agent-skills-private
+source: adam-agentskills-private
+source_sha: c4bf812e4703e7b9fdd3f5408ed9198cba9df9be
+# The sync-delivered files come from the exported _agent-guidance, and the
+# lock pins the exported public registry.
+after: [_agent-guidance, agentskills]
+
+exclude:
+  - path: docs/credential-runbook.md
+    why: DECISIONS X3 (it names the owner's real credentials and where they live). Never copied.
+  - path: plugins/adam-private-anything-anywhere/skills/
+    why: DECISIONS X2 and X9 (the owner's writing-style skill, the only skill here; the plugin keeps its manifest).
+
+substitutions:
+  # C1, as in the public registry's manifest: a bare `agentskills` names the
+  # retired predecessor registry, never the renamed live one.
+  - name: C1 retired registry (bare)
+    regex: '(?<![\w.-])agentskills(-private)?(?![\w.-])'
+    to: 'retired-agentskills\1'
+
+edits:
+  - path: .claude-plugin/marketplace.json
+    stage: output
+    old: |
+      "owner": { "name": "the owner" },
+        "description": "the owner's personal agent skills — content that is simply personal. Public counterpart: example-adopter/agentskills.",
+    new: |
+      "owner": { "name": "<your name>" },
+        "description": "Private agent skills: content that is personal or sensitive. Public counterpart: example-adopter/agentskills.",
+    why: >-
+      C10 and X9. Names the owner with the kit's `<your name>` placeholder
+      (copy-starter.sh fills it from OWNER_NAME) and describes the registry,
+      not the owner.
+  - path: .claude-plugin/marketplace.json
+    stage: output
+    old: '"description": "the owner''s personal skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",'
+    new: '"description": "Private skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",'
+    why: C10. Describes the bundle, not the owner.
+  - path: plugins/private-anything-anywhere/.claude-plugin/plugin.json
+    stage: output
+    old: |
+      "description": "the owner's personal skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",
+        "author": { "name": "the owner" }
+    new: |
+      "description": "Private skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",
+        "author": { "name": "<your name>" }
+    why: The same description as the marketplace entry, and the `<your name>` placeholder.
+
+# overlay/agentskills-private/ adds NOTICE and .gitignore (the source has
+# no .gitignore; the kit's bootstrap test wants every starter tree to ignore
+# what copy-starter.sh skips).
+
+regenerate:
+  - copy_from_kit: {repo: _agent-guidance, from: agents-md/base.md, to: .claude/hooks/fleet-guidance.md}
+    why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
+    why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks-guard.sh, to: .claude/hooks/agent-checks-guard.sh}
+    why: The sync delivers the guard (byte-identical in the sources).
+  - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/fleet-memory.sh, to: .claude/hooks/fleet-memory.sh}
+    why: The sync delivers the fleet-memory hook (byte-identical in the sources).
+  - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/skills-bootstrap.sh, to: .claude/hooks/skills-bootstrap.sh}
+    why: Byte-identical in the sources; _agent-guidance's repos.yml pins its sha256.
+  - copy_from_kit: {repo: agentskills, from: skills.lock, to: skills.lock}
+    why: >-
+      P3. This lock pins the public registry's cloud-safe bundles, exactly
+      what the public registry's own regenerated lock says (no skills, X9;
+      the ref is the adopter's first public commit, REGENERATE.md).
+  - run: >-
+      printf '%s\n%s\n' "$("$EXPORT_TREE_AGENT_GUIDANCE/scripts/build-agents-md.sh")"
+      "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new
+      && mv AGENTS.md.new AGENTS.md
+    why: The managed half of AGENTS.md is the exported _agent-guidance's build-agents-md.sh output.
+
+# The repo has no test suite; its one CI job (agent-checks.yml) runs the
+# agent-checks runner over the change. This runs it the same way over the
+# starter's one commit and its whole tree, then setup.sh with a scratch HOME,
+# which must succeed while the bundle has no skills.
+suite:
+  git_init: true
+  command: >-
+    bash .githooks/agent-checks ci "" HEAD
+    && bash .githooks/agent-checks tree HEAD
+    && h=$(mktemp -d) && HOME="$h" bash setup.sh && rm -rf "$h"
+    && echo "OK: agent-checks ci and tree, and setup.sh with no skills"
+  needs: bash, git
+  summary: '^(OK: .*|No private skills found.*)$'

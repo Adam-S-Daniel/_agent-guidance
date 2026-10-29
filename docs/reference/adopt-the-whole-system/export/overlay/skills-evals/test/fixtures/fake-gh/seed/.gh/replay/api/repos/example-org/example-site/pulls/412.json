@@ -1,0 +1,13 @@
+{
+  "number": 412,
+  "state": "open",
+  "title": "Add the spring notes page",
+  "head": {
+    "ref": "content/spring-notes",
+    "sha": "c47a1f9e02b6538d7ac194e0f2b83d65a70c19bb"
+  },
+  "base": {
+    "ref": "main",
+    "sha": "9e41b7c2d6084f1ab3c57e0d9a2f6b18c4d70e35"
+  }
+}

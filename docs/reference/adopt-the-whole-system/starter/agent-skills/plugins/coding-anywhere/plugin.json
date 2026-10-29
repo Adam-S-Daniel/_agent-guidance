@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "coding-anywhere",
+  "version": "1.3.2",
+  "description": "Coding skills for Claude Code terminals and Claude Code cloud sessions.",
+  "author": { "name": "<your name>" },
+  "repository": "https://github.com/example-adopter/agentskills",
+  "keywords": [
+    "skills",
+    "coding",
+    "claude-code"
+  ]
+}

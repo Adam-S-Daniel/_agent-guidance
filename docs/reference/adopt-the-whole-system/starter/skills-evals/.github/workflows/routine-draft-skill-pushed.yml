@@ -1,0 +1,40 @@
+name: Routine draft skill pushed
+
+# The trigger half of draft mode's gate (docs/how-it-works.md, "Draft
+# mode"). In draft mode the eval routine always pushes
+# `claude/draft-skill-<run id>`: a record under `draft-skill/<run id>/`, and
+# on an accepted skill draft its fixtures under `evals/<subject>/`. This
+# workflow does nothing but exist for that push, so that
+# `routine-draft-skill-gate.yml` can run on its `workflow_run` event.
+#
+# Why two workflows: a `push` workflow runs the copy of itself on the PUSHED
+# commit, and the pushed branch is untrusted (a model run wrote it), so any
+# job here could have been rewritten by the branch it is judging. A
+# `workflow_run` workflow always runs the default branch's copy, so the gate
+# and its validator never come from the branch. This job therefore holds no
+# permissions, checks nothing out and runs nothing from the branch (the same
+# split as routine-improve-pushed.yml).
+#
+# Salient paths: `draft-skill/**` and `evals/**`, the two directories a
+# draft branch adds to. `claude/draft-skill-*` matches none of the other
+# routine signals' branch filters (`claude/eval-*`, `claude/eval-improve-*`,
+# `claude/scaffold-*`), so no other gate sees this push. This is not a
+# pull_request workflow, so it publishes no required check.
+
+on:
+  push:
+    branches:
+      - claude/draft-skill-*
+    paths:
+      - draft-skill/**
+      - evals/**
+
+permissions: {}
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Hand off to the draft gate
+        run: echo "Skill draft pushed; routine-draft-skill-gate.yml validates it from the default branch."

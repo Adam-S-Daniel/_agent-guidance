@@ -7,9 +7,18 @@ requests) lives in the JSON file $GH_STUB_STATE, so a second run sees what
 the first one wrote. A secret's value is stored only as a SHA-256, so no
 secret text lands in any file.
 
+User installations come from the state's "installations" list (a test
+writes it): {"id", "app_id", "account": {"login"}, "repos": [full names]}.
+`gh actions-lock` is stubbed too: --help exits 0 unless
+GH_STUB_NO_ACTIONS_LOCK=1; --no-narrow appends GH_STUB_ACTIONS_LOCK_LINE (if
+set) to .github/workflows/actions.lock in the current directory; --verify
+exits GH_STUB_ACTIONS_LOCK_VERIFY (default 0).
+
 Knobs: GH_STUB_DRIFT=1 makes a ruleset read-back drop its last rule.
 GH_STUB_ENV_LIST_STATUS=<code> makes every environment secret/variable list
 fail with that HTTP status.
+GH_STUB_GIT_REMOTES=<dir> answers a contents read from the bare repo
+<dir>/<owner>/<repo>.git's default branch, so a test's merge is what GitHub sees.
 GH_STUB_FAKE_PEM and GH_STUB_CLIENT_SECRET are what a manifest conversion
 returns. Errors look like gh's: a JSON body on stdout, "gh: ... (HTTP n)" on
 stderr, exit 1.
@@ -101,6 +110,16 @@ def api(args):
         u = m.group(1)
         return out({"login": u, "id": 5000 + sum(map(ord, u)), "type": "User"})
 
+    if path == "user/installations":
+        return out({"total_count": len(st.get("installations", [])),
+                    "installations": [{k: v for k, v in i.items() if k != "repos"} for i in st.get("installations", [])]})
+    m = re.fullmatch(r"user/installations/(\d+)/repositories", path)
+    if m:
+        for i in st.get("installations", []):
+            if str(i["id"]) == m.group(1):
+                return out({"total_count": len(i["repos"]), "repositories": [{"full_name": r} for r in i["repos"]]})
+        return err(404, "Not Found")
+
     m = re.fullmatch(r"app-manifests/([^/]+)/conversions", path)
     if m and method == "POST":
         if m.group(1) == "expired":
@@ -137,6 +156,12 @@ def api(args):
         # The default branch's files: README.md once there is a first commit,
         # plus whatever a test puts in the repo's "files" (a merged pull request).
         p = rest[len("/contents/"):]
+        remotes = os.environ.get("GH_STUB_GIT_REMOTES")
+        if remotes:  # the default branch of the test's bare repo is the truth
+            import subprocess
+            ok = subprocess.run(["git", f"--git-dir={remotes}/{full}.git", "cat-file", "-e",
+                                 f"{r['default_branch']}:{p}"], capture_output=True).returncode == 0
+            return out({"type": "file", "path": p, "name": p.split("/")[-1]}) if ok else err(404, "Not Found")
         if (p == "README.md" and r["has_commits"]) or p in r.get("files", {}):
             return out({"type": "file", "path": p, "name": p.split("/")[-1]})
         return err(404, "Not Found")
@@ -297,6 +322,16 @@ elif cmd in ("variable", "secret"):
     values(cmd, argv[1:])
 elif cmd == "pr":
     pr(argv[1:])
+elif cmd == "actions-lock":
+    if os.environ.get("GH_STUB_NO_ACTIONS_LOCK") == "1":
+        print("unknown command \"actions-lock\" for \"gh\"", file=sys.stderr)
+        sys.exit(1)
+    if "--no-narrow" in argv and os.environ.get("GH_STUB_ACTIONS_LOCK_LINE"):
+        with open(".github/workflows/actions.lock", "a", encoding="utf-8") as f:
+            f.write(os.environ["GH_STUB_ACTIONS_LOCK_LINE"] + "\n")
+    if "--verify" in argv:
+        sys.exit(int(os.environ.get("GH_STUB_ACTIONS_LOCK_VERIFY", "0")))
+    sys.exit(0)
 else:
     print("stub: unsupported command", file=sys.stderr)
     sys.exit(2)

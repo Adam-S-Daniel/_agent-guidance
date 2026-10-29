@@ -1,97 +1,166 @@
-name: Ingest eval results
+name: Ingest routine eval results
 
-# Step 5 of guide 9.4. Triggered by workflow_run, so it runs the DEFAULT
-# branch's copy of this file and of scripts/. The pushed branch is checked out
-# as DATA into branch/ and is never executed. Only the loop-writer App may push
-# persistent/eval-results (ruleset in repo-settings), so the write uses its
-# token, minted in the step right before the push, from environment loop-writer.
+# ADR 0010, decision 2 ("Smallest next PRs" item 3): validate a routine's
+# `claude/eval-<run id>` branch and copy its results to
+# `persistent/eval-results` under `routine-results/<run id>/`.
+#
+# * The branch is UNTRUSTED (an AI run wrote it). This workflow runs on
+#   `workflow_run`, so GitHub always runs the DEFAULT BRANCH's copy of it,
+#   never one the branch carries (see routine-eval-results-pushed.yml). The
+#   checkout is the default branch; the source branch is only fetched into a
+#   private ref and read through git plumbing by
+#   scripts/ingest_routine_results.py. Nothing from it is checked out,
+#   imported or executed.
+# * The validator rejects the whole branch unless it only ADDS regular
+#   files (no symlink, submodule or executable bit, no change to any
+#   existing path: no workflow, script or main-tree edit) under one
+#   `eval-results/<run id>/` matching the branch name, each in a shape the harness
+#   writes, under its size cap, and passing its schema. It stages exactly the
+#   bytes it validated; `place` copies them without overwriting a file that
+#   differs, so a re-run is a no-op and a conflicting one fails.
+#   Only summary.json and report.md are kept (KEEP_LONG_TERM); a validated
+#   tool_trace.json is dropped. `git add` runs without -f, so
+#   persistent/eval-results' .gitignore stays in force.
+# * Branch names, shas and file content are never interpolated into a `run:`
+#   block: the event is read from $GITHUB_EVENT_PATH by the validator, which
+#   emits only values that matched a strict pattern, and every later step
+#   reads them through `env`.
+# * Writes go only to `persistent/eval-results` (the sanctioned bot-write
+#   target; AGENTS.md "Automation vs branch protection"), never to main.
+#   Workflow permissions are `{}`; only the `ingest` job holds
+#   `contents: write`.
+# * No `concurrency` group: GitHub keeps only the newest pending run in a
+#   group, so a burst of pushes would cancel ingests silently. A push that
+#   loses a race to eval.yml's publish is rebuilt on the new tip and retried
+#   (three attempts); each run writes only its own run id's directory.
+# * The source branch is NOT deleted after ingest: that is an owner decision
+#   still open.
+# * `workflow_dispatch` re-ingests a branch by name (for a missed or failed
+#   run); only the default branch's copy may run, as for the fire workflow.
+
 on:
   workflow_run:
-    workflows: ["Eval results pushed"]
+    workflows: [Routine eval results pushed]
     types: [completed]
+    branches:
+      - claude/eval-*
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: The routine results branch, claude/eval-<run id>.
+        required: true
+        type: string
 
-permissions:
-  contents: read
-
-# Not a required check, so a concurrency group is safe here: ingests queue
-# one at a time and none is cancelled.
-concurrency:
-  group: ingest-eval-results
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
   ingest:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name == 'workflow_dispatch'
+          || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: loop-writer
+    permissions:
+      contents: write
     steps:
-      - name: Validate the branch name before anything uses it
-        env:
-          EVENT_PATH: ${{ github.event_path }}
-        run: |
-          branch=$(jq -r '.workflow_run.head_branch' "$EVENT_PATH")
-          if ! printf '%s' "$branch" | grep -Eqx 'claude/eval-results-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}'; then
-            echo "REFUSED: branch name"; exit 1
-          fi
-          echo "BRANCH=$branch" >> "$GITHUB_ENV"
-          echo "HEAD_SHA=$(jq -r '.workflow_run.head_sha' "$EVENT_PATH")" >> "$GITHUB_ENV"
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
         with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: "3.12"
-
-      - run: python3 -m pip install --quiet -r requirements.txt
-
-      # The branch, as data. Full history is needed to list what it changed.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          path: branch
+          ref: ${{ github.event.repository.default_branch }}
+          path: skills-evals
           fetch-depth: 0
           persist-credentials: false
 
-      - name: List changed paths and validate
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          git -C branch diff --name-only -z "origin/$DEFAULT_BRANCH...$HEAD_SHA" > changed.z
-          python3 scripts/ingest_validate.py --branch "$BRANCH" --root branch --changed changed.z
-
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        id: app
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
         with:
-          client-id: ${{ vars.LOOP_WRITER_CLIENT_ID }}
-          private-key: ${{ secrets.LOOP_WRITER_PEM }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
+          python-version: "3.12"
 
-      - name: Write routine-results to persistent/eval-results
+      - name: Resolve the branch to ingest
+        id: resolve
+        working-directory: skills-evals
         env:
-          TOKEN: ${{ steps.app.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          url="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if git ls-remote --exit-code --heads "$url" persistent/eval-results >/dev/null 2>&1; then
-            git clone --quiet --depth 1 --branch persistent/eval-results "$url" results
-          else
-            git init --quiet results
-            git -C results checkout --quiet -b persistent/eval-results
-            git -C results remote add origin "$url"
-          fi
-          python3 scripts/ingest_validate.py --branch "$BRANCH" --root branch --changed changed.z --dest results
-          run_id="${BRANCH#claude/eval-results-}"
-          git -C results config user.name "loop-writer[bot]"
-          git -C results config user.email "loop-writer@users.noreply.github.com"
-          git -C results add "routine-results/$run_id"
-          git -C results commit --quiet -m "Ingest eval run $run_id"
-          git -C results push --quiet origin persistent/eval-results
-          git -C results fetch --quiet origin persistent/eval-results
-          git -C results merge-base --is-ancestor HEAD origin/persistent/eval-results
-          echo "ingested $run_id"
+          python3 scripts/ingest_routine_results.py resolve \
+            --event-name "$EVENT_NAME" --event-path "$GITHUB_EVENT_PATH" \
+            > "$RUNNER_TEMP/resolve.out"
+          cat "$RUNNER_TEMP/resolve.out" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the results branch into a private ref
+        working-directory: skills-evals
+        env:
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/ingest/source"
+
+      - name: Validate and stage the results
+        id: validate
+        working-directory: skills-evals
+        env:
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ingest_routine_results.py validate \
+            --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
+            --source refs/ingest/source --branch "$BRANCH" \
+            --expect-sha "$SHA" --out "$RUNNER_TEMP/staged" \
+            > "$RUNNER_TEMP/validate.out"
+          cat "$RUNNER_TEMP/validate.out" >> "$GITHUB_OUTPUT"
+
+      - name: Commit to persistent/eval-results and push
+        working-directory: skills-evals
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.validate.outputs.run_id }}
+          SOURCE_SHA: ${{ steps.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          tree="$RUNNER_TEMP/results-tree"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          refspec="+refs/heads/persistent/eval-results:refs/remotes/origin/persistent/eval-results"
+          for attempt in 1 2 3; do
+            git fetch --no-tags origin "$refspec"
+            if [ -d "$tree" ]; then
+              git worktree remove --force "$tree"
+            fi
+            git worktree add --detach "$tree" refs/remotes/origin/persistent/eval-results
+            placed="$(python3 scripts/ingest_routine_results.py place \
+              --staged "$RUNNER_TEMP/staged" --tree "$tree")"
+            if grep -qxF -- "changed=false" <<<"$placed"; then
+              echo "run ${RUN_ID} is already on persistent/eval-results; nothing to commit"
+              exit 0
+            fi
+            git -C "$tree" add -- "routine-results/${RUN_ID}"
+            git -C "$tree" \
+              -c user.name="skills-evals routine-ingest bot" \
+              -c user.email="skills-evals@users.noreply.github.com" \
+              commit -q -m "ingest: routine run ${RUN_ID} from ${SOURCE_SHA} [skip ci]"
+            commit="$(git -C "$tree" rev-parse HEAD)"
+            if git -C "$tree" -c "http.https://github.com/.extraheader=$auth" \
+                 push origin HEAD:refs/heads/persistent/eval-results; then
+              git fetch --no-tags origin "$refspec"
+              if git merge-base --is-ancestor "$commit" refs/remotes/origin/persistent/eval-results; then
+                echo "ingested run ${RUN_ID} as ${commit}"
+                {
+                  echo "### Routine results ingested"
+                  echo
+                  echo "- Run id: \`${RUN_ID}\`"
+                  echo "- Source commit: \`${SOURCE_SHA}\`"
+                  echo "- persistent/eval-results commit: \`${commit}\`"
+                  echo "- Path: \`routine-results/${RUN_ID}/\`"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              echo "::error::the push reported success but ${commit} is not on persistent/eval-results"
+              exit 1
+            fi
+            echo "push attempt ${attempt} was rejected; rebuilding on the new tip"
+          done
+          echo "::error::could not push to persistent/eval-results after 3 attempts"
+          exit 1

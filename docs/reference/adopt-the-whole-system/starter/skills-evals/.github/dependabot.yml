@@ -1,0 +1,105 @@
+# Dependabot for this repo.
+#
+# Previously this repo pinned third-party GitHub Actions to commit SHAs (per
+# the account-wide SHA-pinning convention) but had no dependabot.yml at all,
+# so those pins had no bump path — they'd sit until someone noticed. This
+# onboards the github-actions ecosystem so pins (an exact release tag in the
+# workflow plus its commit in .github/workflows/actions.lock, which Dependabot
+# updates together) get proposed weekly, landed
+# unattended by .github/workflows/dependabot-auto-merge.yml once CI is
+# green (see that file for why this repo needs a scheduled sweep, not just
+# native auto-merge, to actually land them).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # MINIMUM PACKAGE AGE ("cooldown") — how long a release must exist before
+    # Dependabot will even OPEN the PR. Version updates ONLY: security
+    # updates bypass cooldown by GitHub's spec, so an advisory still opens
+    # (and auto-merges) immediately. GitHub's own default is an implicit
+    # 3-day minimum age, so `default-days: 7` here is a deliberate RAISE, not
+    # a floor from zero — it mechanises this account's standing 7-day
+    # cooling-off convention for third-party action releases (pinned through
+    # .github/workflows/actions.lock per _agent-guidance ADR 0024), matching
+    # example-site-platform's own .github/dependabot.yml.
+    #
+    # NO semver-major-days (and no semver-minor-days / semver-patch-days
+    # either): GitHub's Dependabot options reference marks the
+    # github-actions ecosystem as supporting `default-days` but NOT
+    # per-SemVer-tier cooldown at all. Every actions bump, majors included,
+    # waits only the flat 7 days above — there is no separate major-bump
+    # wait to configure. Re-adding any `semver-*-days` key to a
+    # github-actions block is a schema validation error ("...cooldown' is
+    # not supported for the package ecosystem 'github-actions'") that takes
+    # the WHOLE `updates[]` entry out of service, not a silently-ignored
+    # key — and since this is the only entry in this file, that means no
+    # updates run at all. dependabot/dependabot-core#14628 is the open
+    # upstream request to add the support; until it lands, this stays flat.
+    cooldown:
+      default-days: 7
+      # example-site-platform releases are this account's own code, gated by its own
+      # required checks before a tag ever exists, so they don't need the
+      # 7-day cooling-off above — that applies to third-party actions. This
+      # entry used to ignore example-site-platform bumps outright: the
+      # scheduled-run-health thin caller carried the platform version TWICE
+      # (the reusable's `uses:@<tag>` and a `platform_ref:` input), and this
+      # ecosystem saw only the `uses:` half, so an unignored bump would have
+      # moved the workflow and left the script pin behind — exactly the
+      # two-halves skew cms-platform#244 was filed for, after ONE platform
+      # release produced fifteen piecemeal bump PRs in example-site-b
+      # (#8-#22). The reusable now resolves its own script commit from the
+      # job context, so the caller names the version once, and this exclude
+      # is what lets that one bump land without the third-party wait
+      # (https://github.com/Adam-S-Daniel/cms-platform/issues/424).
+      exclude: ["example-adopter/example-site-platform/*"]
+    # ONE pull request per weekly run, not one per action. Every action bump
+    # here edits the same few workflow files (eval.yml is in all of them), so
+    # sibling PRs share files. The sweep merges with GITHUB_TOKEN, which has
+    # no `workflows` permission: once the first sibling lands, merging the
+    # next means GitHub writing a merged workflow file that neither branch
+    # holds, and it refuses. Dependabot does not rebase them, since nothing
+    # conflicts. Measured 2026-10-19: #386 merged, then #385 and #384 got
+    # "refusing to allow a GitHub App to create or update workflow
+    # `.github/workflows/eval.yml` without `workflows` permission", and the
+    # 2026-10-20 sweep saw both as mergeStateStatus=BLOCKED. A single grouped
+    # PR has no sibling to fall behind. Security updates stay one per
+    # advisory (a group's `applies-to` defaults to version-updates).
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The real-work fixtures' seeds (evals/real-work/*/seed) are frozen copies of
+  # other repositories, lockfiles included: a bump there changes what a fixture
+  # measures, and the auto-merge allowlist would land it (skills-evals#312 was
+  # such a security update). Version updates are per listed directory, so the
+  # seeds got none, but security updates cover every lockfile in the repository
+  # whether or not it is listed. `exclude-paths` cannot help: it is marked
+  # version-updates-only in GitHub's options reference. `ignore` is marked for
+  # both, so one entry per ecosystem the seeds use lists them all and ignores
+  # every dependency by name (`update-types` would not hold back a security
+  # update, and `versions` would narrow it). test_issue_real_work_fixtures.py
+  # parses this file and fails when a seed manifest falls outside these globs.
+  # The cooldown repeats the standing convention; with everything ignored it
+  # never fires, but a new block starts from the account's setting, not none.
+  - package-ecosystem: npm
+    directories:
+      - "/evals/real-work/**/*"
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+  - package-ecosystem: bundler
+    directories:
+      - "/evals/real-work/**/*"
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30

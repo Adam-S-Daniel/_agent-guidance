@@ -1,0 +1,18 @@
+{
+ "trig_example_runner": {
+  "enabled": true,
+  "next_run_at": null,
+  "last_run": {
+   "status": "ROUTINE_RUN_STATUS_SUCCEEDED",
+   "fired_at": "2026-01-06T08:00:00Z"
+  }
+ },
+ "trig_example_worker": {
+  "enabled": true,
+  "next_run_at": "2026-01-06T13:20:00Z",
+  "last_run": {
+   "status": "ROUTINE_RUN_STATUS_FAILED",
+   "fired_at": "2026-01-06T12:20:00Z"
+  }
+ }
+}

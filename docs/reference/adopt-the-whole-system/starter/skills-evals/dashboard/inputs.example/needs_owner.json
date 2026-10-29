@@ -1,0 +1,29 @@
+[
+ {
+  "title": "Approve the new plugin hook",
+  "html_url": "https://github.com/example-owner/skills-registry/pull/3",
+  "repository_url": "https://api.github.com/repos/example-owner/skills-registry",
+  "state": "open",
+  "created_at": "2026-01-05T12:00:00Z",
+  "labels": [
+   {
+    "name": "needs-owner"
+   }
+  ]
+ },
+ {
+  "title": "Paused idea",
+  "html_url": "https://github.com/example-owner/skills-registry/issues/4",
+  "repository_url": "https://api.github.com/repos/example-owner/skills-registry",
+  "state": "open",
+  "created_at": "2026-01-05T12:00:00Z",
+  "labels": [
+   {
+    "name": "needs-owner"
+   },
+   {
+    "name": "on-hold"
+   }
+  ]
+ }
+]
