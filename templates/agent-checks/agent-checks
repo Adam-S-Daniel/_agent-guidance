@@ -281,7 +281,8 @@ run_dated_phrasing() {
   [ -n "$dated_dir" ] && [ -f "$dated_dir/dated-phrasing.js" ] || return 0
   if ! command -v node > /dev/null 2>&1; then
     # Silent unless a path in scope changed, which needs no node to tell.
-    count=$(tr '\0' '\n' < "$list" | grep -cE '(^|/)(AGENTS|CLAUDE|SKILL)\.md$|^agents-md/.*\.md$') || count=0
+    count=$(tr '\0' '\n' < "$list" | grep -vE '^evals/.*/seed/' \
+            | grep -cE '(^|/)(AGENTS|CLAUDE|SKILL)\.md$|^agents-md/.*\.md$') || count=0
     [ "$count" -gt 0 ] && dated_warn "dated-phrasing skipped: node is not on PATH. Install Node.js to get these warnings locally; CI still runs them."
     return 0
   fi
