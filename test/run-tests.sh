@@ -23824,9 +23824,13 @@ test_agent_checks_dated_phrasing() {
     git -C "$repo" add -A
     GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m base
 
+    # The suite itself runs under GitHub Actions in CI, so each run drops
+    # GITHUB_ACTIONS and RUNNER_TEMP unless DATED_GHA asks for the CI form.
     run_dated() {   # <runner> <log stem> <event...> — env passes through
         local runner=$1 stem=$2; shift 2
-        (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null bash "$runner" "$@") > "$stem.out" 2> "$stem.err"
+        local -a ci=(env -u GITHUB_ACTIONS -u RUNNER_TEMP)
+        [ -n "${DATED_GHA:-}" ] && ci=(env GITHUB_ACTIONS=true)
+        (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null "${ci[@]}" bash "$runner" "$@") > "$stem.out" 2> "$stem.err"
     }
 
     # ── Tree mode over every path in scope ──
@@ -23867,7 +23871,7 @@ test_agent_checks_dated_phrasing() {
     fi
 
     # ── GitHub Actions: annotations ──
-    rc=0; GITHUB_ACTIONS=true AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-gha" tree || rc=$?
+    rc=0; DATED_GHA=1 AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-gha" tree || rc=$?
     n=$(grep -c '^::warning file=[^,]*,line=[0-9]*,title=dated-phrasing::dated phrasing: ' "$out-gha.out" || true)
     if [[ $rc -eq 0 && "$n" == 6 ]] \
        && grep -qxF '::warning file=AGENTS.md,line=7,title=dated-phrasing::dated phrasing: the phrase "is now". Instruction files load into every session and are read as the rule that holds now, so history (what changed, and when) goes stale here and belongs in docs/evidence/ or git. Reword it as the present-tense rule; if it is right as written, add a line to .agent-checks/dated-phrasing-allowlist.txt (format: the header of .githooks/dated-phrasing-allowlist.txt). Warning only.' "$out-gha.out"; then
@@ -23979,7 +23983,7 @@ test_agent_checks_dated_phrasing() {
     printf '#!/bin/sh\necho "$*" >> "%s/calls"\nexit 1\n' "$stub" > "$stub/npm"
     chmod +x "$stub/npm"
     rc=0; env -u AGENT_CHECKS_DATED_PHRASING_MODULES PATH="$stub:$PATH" XDG_CACHE_HOME="$cache" \
-        bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
+        env -u GITHUB_ACTIONS -u RUNNER_TEMP bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
         > "$out-npmfail.out" 2> "$out-npmfail.err" || rc=$?
     n=$(grep -c '' "$out-npmfail.err" || true)
     if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'dated-phrasing skipped: installing markdown-it with npm ci failed' "$out-npmfail.err" \
@@ -23993,7 +23997,7 @@ test_agent_checks_dated_phrasing() {
         "$stub" "$tmpl" "$mods" > "$stub/npm"
     for n in 1 2; do
         env -u AGENT_CHECKS_DATED_PHRASING_MODULES PATH="$stub:$PATH" XDG_CACHE_HOME="$cache" \
-            bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
+            env -u GITHUB_ACTIONS -u RUNNER_TEMP bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
             > "$out-npm$n.out" 2> "$out-npm$n.err" || true
     done
     got=$(sha256sum "$tmpl/dated-phrasing/package-lock.json" | cut -d' ' -f1)
