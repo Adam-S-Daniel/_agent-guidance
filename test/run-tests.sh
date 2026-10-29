@@ -18990,7 +18990,11 @@ test_dependabot_sweep_merge_gating() {
 #!/usr/bin/env bash
 case "${1:-}" in
     fetch) exit 0 ;;
-    diff) echo ".github/workflows/ci.yml"; exit 0 ;;
+    diff)
+        # The PR's changed files: FIXTURES/diff-files, else one workflow file.
+        if [[ -f "$FIXTURES/diff-files" ]]; then cat "$FIXTURES/diff-files"; else echo ".github/workflows/ci.yml"; fi
+        exit 0
+        ;;
     rev-list)
         # How far the PR head is behind its base: FIXTURES/behind-by, else 0.
         if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
@@ -19069,6 +19073,10 @@ case "${1:-}" in
 esac
 GHSTUB
     chmod +x "$binhome/gh"
+
+    # `sleep` stub: read_pr's UNKNOWN re-reads wait 10s each for real.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$binhome/sleep"
+    chmod +x "$binhome/sleep"
 
     # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json>
     write_pr() {
@@ -19281,6 +19289,73 @@ GHSTUB
         "sweep gating (j): no pr update-branch when the head is not behind"
     assert_contains "$out_j" "is not behind main" \
         "sweep gating (j): reports the merge refusal as not behind"
+
+    # (k) #296 on 2026-10-29: the first read after main moved answers
+    #     mergeable=UNKNOWN. The sweep re-reads instead of skipping, and
+    #     merges once GitHub has computed MERGEABLE.
+    local fx_k="$TEST_DIR/auto-merge-gating-case-k"
+    mkdir -p "$fx_k"
+    printf '900\n' > "$fx_k/pr-numbers.txt"
+    write_pr "$fx_k/pr-900.json" 900 "$HEAD_X" "UNKNOWN" "UNKNOWN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    write_pr "$fx_k/pr-900.after.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_k="$TEST_DIR/auto-merge-gating-out-k.txt"
+    run_case "$fx_k" "" "$SELF" "$out_k" >/dev/null
+    assert_contains "$out_k" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (k): a first-read UNKNOWN is re-read and then merged"
+
+    # (l) control: UNKNOWN on every read stops after the bound and skips,
+    #     saying how many re-reads it made.
+    local fx_l="$TEST_DIR/auto-merge-gating-case-l"
+    mkdir -p "$fx_l"
+    printf '900\n' > "$fx_l/pr-numbers.txt"
+    write_pr "$fx_l/pr-900.json" 900 "$HEAD_X" "UNKNOWN" "UNKNOWN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
+    local out_l="$TEST_DIR/auto-merge-gating-out-l.txt"
+    run_case "$fx_l" "" "$SELF" "$out_l" >/dev/null
+    assert_contains "$out_l" "still UNKNOWN after 6 re-reads" \
+        "sweep gating (l): an UNKNOWN that never resolves is skipped after 6 re-reads"
+    assert_not_contains "$fx_l/calls.log" "pr merge" \
+        "sweep gating (l): no pr merge call while mergeable stays UNKNOWN"
+
+    # (m) #296 on 2026-10-27: Dependabot rewrites actions.lock with every
+    #     action bump (ADR 0024). The re-check accepts it beside workflow YAML.
+    local fx_m="$TEST_DIR/auto-merge-gating-case-m"
+    mkdir -p "$fx_m"
+    printf '900\n' > "$fx_m/pr-numbers.txt"
+    printf '.github/workflows/actions.lock\n.github/workflows/ci.yml\n' > "$fx_m/diff-files"
+    write_pr "$fx_m/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_m="$TEST_DIR/auto-merge-gating-out-m.txt"
+    run_case "$fx_m" "" "$SELF" "$out_m" >/dev/null
+    assert_contains "$out_m" "merged=1" \
+        "sweep gating (m): a diff of workflow YAML plus actions.lock merges"
+
+    # (n) control: any other non-manifest path is still left for a human.
+    local fx_n="$TEST_DIR/auto-merge-gating-case-n"
+    mkdir -p "$fx_n"
+    printf '900\n' > "$fx_n/pr-numbers.txt"
+    printf '.github/workflows/actions.lock\nscripts/sync.sh\n' > "$fx_n/diff-files"
+    write_pr "$fx_n/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_n="$TEST_DIR/auto-merge-gating-out-n.txt"
+    run_case "$fx_n" "" "$SELF" "$out_n" >/dev/null
+    assert_not_contains "$fx_n/calls.log" "pr merge" \
+        "sweep gating (n): no pr merge call when the diff touches a non-manifest path"
+
+    # Job `auto-merge` runs the same allowlist on each push; it interpolates
+    # \${{ }} so it is not extracted and run here. Both copies must accept the
+    # lockfile, or the job fails the PR the sweep would merge.
+    local lock_arms
+    # `|| true`: grep -c exits 1 on zero matches, which `set -e` would turn
+    # into an aborted group rather than this test's FAIL.
+    lock_arms=$(grep -cE '^ +\.github/workflows/actions\.lock\) ;;$' "$wf" || true)
+    if [[ "$lock_arms" -eq 2 ]]; then
+        pass "auto-merge: both manifest allowlists accept .github/workflows/actions.lock"
+    else
+        fail "auto-merge: both manifest allowlists should accept .github/workflows/actions.lock — found $lock_arms arm(s)"
+    fi
 
     unset -f write_pr
     unset -f run_case
