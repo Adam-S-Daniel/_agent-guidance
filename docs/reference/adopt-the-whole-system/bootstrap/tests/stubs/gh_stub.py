@@ -133,6 +133,13 @@ def api(args):
         r["has_commits"] = True
         r["readme"] = base64.b64decode(body["content"]).decode("utf-8")
         return out({"content": {"path": "README.md"}})
+    if rest.startswith("/contents/") and method == "GET":
+        # The default branch's files: README.md once there is a first commit,
+        # plus whatever a test puts in the repo's "files" (a merged pull request).
+        p = rest[len("/contents/"):]
+        if (p == "README.md" and r["has_commits"]) or p in r.get("files", {}):
+            return out({"type": "file", "path": p, "name": p.split("/")[-1]})
+        return err(404, "Not Found")
     if rest == "/actions/permissions":
         if method == "PUT":
             r["actions"] = body

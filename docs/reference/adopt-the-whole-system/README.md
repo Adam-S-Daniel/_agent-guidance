@@ -68,6 +68,13 @@ content only once the loop around it works.
 
 ## Quick start
 
+The easiest path is a guided run in Claude Code: run `claude` in this
+folder and type `/adopt`. It reads the real state of your account with
+[`bootstrap/status.sh`](bootstrap/status.sh), explains the next step, and
+runs each script with you, dry run first. To see where you are without it,
+run `bootstrap/status.sh` yourself; the table below is the same list of
+steps ([`bootstrap/steps.json`](bootstrap/steps.json)).
+
 First, see the kit pass on your machine. From this folder, run
 [`run-all-tests.sh`](run-all-tests.sh):
 
@@ -88,24 +95,36 @@ with your config at `./fleet.env`. Each script takes `--dry-run`, which makes
 the same reads and prints each write instead of making it; run it first
 every time. Each one is idempotent: a second run prints `Nothing to change`.
 
-| Step | Run | Phase (section) |
-|---|---|---|
-| 0 | `cp bootstrap/fleet.env.example fleet.env`, fill in `OWNER` and `PLAN` | before you start (2) |
-| 1 | `bootstrap/create-repos.sh` | 1 (3.1, 3.3) |
-| 2 | `bootstrap/apply-rulesets.sh --all` | 1 (3.1) |
-| 3 | `bootstrap/create-environments.sh` | 1 (3.4) |
-| 4 | `bootstrap/set-secrets.sh --only privacy --denylist <file outside every repo>` | 1, before any sync (6.5) |
-| 5 | `bootstrap/copy-starter.sh starter/repo-settings <you>/repo-settings` | 1 (3.1) |
-| 6 | `bootstrap/create-apps.sh guidance-sync`, install the App, `bootstrap/apply-rulesets.sh --all` and `bootstrap/create-environments.sh`, then `bootstrap/copy-starter.sh starter/agent-guidance <you>/agent-guidance` | 2 (4) |
-| 7 | `bootstrap/copy-starter.sh starter/agent-skills <you>/agent-skills` and `starter/agent-skills-private <you>/agent-skills-private` | 3 (5) |
-| 8 | On each durable machine: `bootstrap/install-machine.sh` (it reads `starter/machine`) | 3, 4, 6 (5.3, 6.2, 8.1) |
-| 9 | Once `agent-checks` has reported on a pull request: `bootstrap/apply-rulesets.sh --all --with-required-check` (it records `REQUIRED_CHECKS=on` in `fleet.env`), then `bootstrap/create-environments.sh` | 4 (6.3) |
-| 10 | `bash starter/cloud/build-setup-script.sh --config fleet.env` (it fills your owner into the generated script only), then paste `starter/cloud/cloud-setup-script.sh` into the cloud environment | 5 (7.3) |
-| 11 | `bootstrap/create-apps.sh loop-writer`, install it, `bootstrap/apply-rulesets.sh --all`, `bootstrap/create-environments.sh`, `bootstrap/copy-starter.sh starter/skills-evals <you>/skills-evals`, create the eval runner routine, `bootstrap/set-secrets.sh --only routine-fire` | 7 (9) |
-| 12 | `bootstrap/create-apps.sh lessons-reader`; for the optional roster refresh, `bootstrap/create-environments.sh --with-optional` and then `bootstrap/create-apps.sh --with-optional roster-writer`; on a paid plan, `bootstrap/create-apps.sh settings-admin` | 8 (10) |
-| 13 | Create the standing routines at claude.ai | 9 (11) |
-| 14 | `bash starter/skills-evals/scripts/build-dashboard-site.sh <results checkout>` | 10 (12) |
-| any | `bootstrap/verify.sh --phase <N>` after finishing phase N (it checks only what should exist by then); with no `--phase` it expects everything, and the required checks once `fleet.env` says `REQUIRED_CHECKS=on` | all |
+<!-- quickstart:begin -->
+<!-- generated from bootstrap/steps.json by bootstrap/render-quickstart.py: edit steps.json, then rerun it -->
+
+| Step | Run | Time | Phase (section) |
+|---|---|---|---|
+| 0 | `cp bootstrap/fleet.env.example fleet.env`, fill in `OWNER` and `PLAN` | 5 min | before you start (2) |
+| 1 | `bootstrap/create-repos.sh` | 5 min | 1 (3.1, 3.3) |
+| 2 | `bootstrap/apply-rulesets.sh --all` | 3 min | 1 (3.1) |
+| 3 | `bootstrap/create-environments.sh` | 3 min | 1 (3.4) |
+| 4 | `bootstrap/set-secrets.sh --only privacy --denylist <file outside every repo>` | 10 min | 1, before any sync (6.5) |
+| 5 | `bootstrap/copy-starter.sh starter/repo-settings <you>/repo-settings` | 15 min | 1 (3.1) |
+| 6a | `bootstrap/create-apps.sh guidance-sync` (GitHub's App manifest flow, in the browser) | 10 min | 2 (3.4, 4) |
+| 6b | Install the App at the URL `create-apps.sh` printed (`https://github.com/apps/<slug>/installations/new`), on the repos it names | 5 min | 2 (3.4) |
+| 6c | `bootstrap/apply-rulesets.sh --all` and `bootstrap/create-environments.sh` | 3 min | 2 (3.1, 4.5) |
+| 6d | `bootstrap/copy-starter.sh starter/agent-guidance <you>/agent-guidance` | 30 min | 2 (4) |
+| 7 | `bootstrap/copy-starter.sh starter/agent-skills <you>/agent-skills` and `starter/agent-skills-private <you>/agent-skills-private` | 30 min | 3 (5) |
+| 8 | On each durable machine: `bootstrap/install-machine.sh` (it reads `starter/machine`) | 15 min | 3, 4, 6 (5.3, 6.2, 8.1) |
+| 9 | Once `agent-checks` has reported on a pull request: `bootstrap/apply-rulesets.sh --all --with-required-check` (it records `REQUIRED_CHECKS=on` in `fleet.env`), then `bootstrap/create-environments.sh` | 5 min | 4 (6.3) |
+| 10 | `bash starter/cloud/build-setup-script.sh --config fleet.env` (it fills your owner into the generated script only), then paste `starter/cloud/cloud-setup-script.sh` into the cloud environment | 15 min | 5 (7.3) |
+| 11a | `bootstrap/create-apps.sh loop-writer` (GitHub's App manifest flow, in the browser) | 10 min | 7 (3.4, 9) |
+| 11b | Install the App at the URL `create-apps.sh` printed (`https://github.com/apps/<slug>/installations/new`), on the repos it names | 5 min | 7 (3.4) |
+| 11c | `bootstrap/apply-rulesets.sh --all` and `bootstrap/create-environments.sh` | 3 min | 7 (3.1, 9.4) |
+| 11d | `bootstrap/copy-starter.sh starter/skills-evals <you>/skills-evals` | 30 min | 7 (9) |
+| 11e | At https://claude.ai/code/routines, create the eval runner routine by hand, with an API trigger; keep the bearer it shows once and the `trig_...` ID for the next step | 20 min | 7 (9.4) |
+| 11f | `bootstrap/set-secrets.sh --only routine-fire` | 5 min | 7 (9.4) |
+| 12 | `bootstrap/create-apps.sh lessons-reader`; for the optional roster refresh, `bootstrap/create-environments.sh --with-optional` and then `bootstrap/create-apps.sh --with-optional roster-writer`; on a paid plan, `bootstrap/create-apps.sh settings-admin` | 30 min | 8 (10) |
+| 13 | Create the standing routines at claude.ai | 60 min | 9 (11) |
+| 14 | `bash starter/skills-evals/scripts/build-dashboard-site.sh <results checkout>` | 15 min | 10 (12) |
+| any | `bootstrap/verify.sh --phase <N>` after finishing phase N (it checks only what should exist by then); with no `--phase` it expects everything, and the required checks once `fleet.env` says `REQUIRED_CHECKS=on` | | all |
+<!-- quickstart:end -->
 
 `<you>` is your GitHub owner throughout. `copy-starter.sh` fills `<you>` and
 `<your name>` in the files it copies, so most placeholders take care of
@@ -245,7 +264,7 @@ broke something.
 
 ### What it costs
 
-- Hands-on setup: the 15 Quick start steps come to about 30 to 40 commands
+- Hands-on setup: the 23 Quick start steps come to about 30 to 40 commands
   and browser actions, roughly one to two days. The browser steps (creating
   and installing GitHub Apps, saving routines) take most of that time. Do it
   in the phase order below and stop at each phase's acceptance check.

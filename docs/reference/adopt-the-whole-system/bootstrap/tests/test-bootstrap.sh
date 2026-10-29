@@ -50,7 +50,7 @@ git config --global init.defaultBranch main
 git config --global protocol.file.allow always
 git config --global "url.file://$T/remotes/.insteadOf" "https://github.com/"
 
-SCRIPTS=(create-repos.sh create-environments.sh create-apps.sh set-secrets.sh copy-starter.sh apply-rulesets.sh install-machine.sh verify.sh)
+SCRIPTS=(create-repos.sh create-environments.sh create-apps.sh set-secrets.sh copy-starter.sh apply-rulesets.sh install-machine.sh verify.sh status.sh)
 OUT="$T/out" ERR="$T/err"
 run() { "$@" >"$OUT" 2>"$ERR"; }   # run a script, keep its stdout and stderr
 
@@ -527,6 +527,48 @@ assert_eq "create-environments puts the variable back" "$(RV skills-evals REGIST
 GH_STUB_ENV_LIST_STATUS=403 run bash "$B/verify.sh" --config "$CFG"; rc=$?
 assert_eq "verify fails when environment names are unreadable" "$rc" 1
 assert "verify names the list's own HTTP status" grep -qE '^FAIL: acme-example/[a-z-]+ environment [a-z-]+ (secret|variable)s readable \(HTTP 403\)' "$OUT"
+# --only <group>: just those items. skills-evals is still missing its
+# vendor-release label here, so the groups without labels must pass.
+run bash "$B/verify.sh" --config "$CFG" --only labels; rc=$?
+assert_eq "verify --only labels fails on the missing label" "$rc" 1
+assert "and names it" grep -q '^FAIL: acme-example/skills-evals has label vendor-release' "$OUT"
+assert_eq "and checks labels alone" "$(grep -E '^(PASS|FAIL|SKIP): ' "$OUT" | grep -vc ' has label ')" 0
+run bash "$B/verify.sh" --config "$CFG" --only rulesets,environments; rc=$?
+assert_eq "verify --only rulesets,environments passes without the label" "$rc" 0
+assert "it checks the rulesets" grep -q '^PASS: acme-example/agent-guidance ruleset default-branch is live' "$OUT"
+assert "and the environments" grep -q '^PASS: acme-example/skills-evals environment routine-fire exists' "$OUT"
+assert_not "and not the merge settings" grep -q 'merge settings' "$OUT"
+assert_not "nor the environment values" grep -q 'has secret' "$OUT"
+run bash "$B/verify.sh" --config "$CFG" --only apps:loop-writer; rc=$?
+assert_eq "verify --only apps:loop-writer passes" "$rc" 0
+assert "it checks loop-writer's key" grep -q '^PASS: acme-example/skills-evals environment loop-writer has secret LOOP_WRITER_PEM' "$OUT"
+assert_not "and no other App" grep -qE 'GUIDANCE_SYNC|LESSONS_READER' "$OUT"
+run bash "$B/verify.sh" --config "$CFG" --only values:privacy; rc=$?
+assert "verify --only values:privacy checks the denylist" grep -q '^PASS: acme-example/agent-skills environment privacy has secret PRIVACY_DENYLIST' "$OUT"
+assert_not "and not routine-fire's values" grep -q 'EVAL_ROUTINE_FIRE_BEARER' "$OUT"
+run bash "$B/verify.sh" --config "$CFG" --only variables; rc=$?
+assert_eq "verify --only variables passes" "$rc" 0
+assert_eq "and checks only the repository variables" "$(grep -E '^(PASS|FAIL): ' "$OUT" | grep -vc ' variable ')" 0
+run bash "$B/verify.sh" --config "$CFG" --only required-checks; rc=$?
+assert_eq "verify --only required-checks expects the phase 4 checks, which are off here" "$rc" 1
+run bash "$B/verify.sh" --config "$CFG" --only required-checks --without-required-check; rc=$?
+assert_eq "--only required-checks with --without-required-check is refused" "$rc" 1
+jq 'del(.repos["acme-example/agent-guidance"])' "$GH_STUB_STATE" > "$T/no-ag.json"
+GH_STUB_STATE="$T/no-ag.json" run bash "$B/verify.sh" --config "$CFG" --only rulesets; rc=$?
+assert_eq "verify --only fails on a missing repo, whatever the groups" "$rc" 1
+assert "and names it" grep -q '^FAIL: acme-example/agent-guidance exists (HTTP 404)' "$OUT"
+for g in bogus apps:no-such-app values:no-such-env "labels,"; do
+  run bash "$B/verify.sh" --config "$CFG" --only "$g"; rc=$?
+  assert_eq "verify --only $g is refused" "$rc" 1
+  assert "and says why" grep -qE 'unknown (group|App|environment)|empty group' "$ERR"
+done
+run bash "$B/verify.sh" --config "$CFG" --only labels,bogus; rc=$?
+assert "an unknown group among known ones is refused before any check" bash -c '[ "$1" = 1 ] && ! grep -q "^PASS" "$2"' _ "$rc" "$OUT"
+# Every group steps.json names is one verify.sh accepts.
+while IFS= read -r g; do
+  run bash "$B/verify.sh" --config "$CFG" --only "$g"; rc=$?
+  assert_not "steps.json's verify groups $g are all known to verify.sh" grep -q 'unknown' "$ERR"
+done < <(jq -r '.steps[] | select(.check.type == "verify") | .check.groups | join(",")' "$B/steps.json" | sort -u)
 
 # ======================================================== copy-starter.sh
 mkremote() { # owner/repo, with a main branch holding README.md
@@ -732,6 +774,139 @@ printf '{ not json' > "$T/home/.claude/settings.json"; cp "$T/home/.claude/setti
 HOME="$H" GIT_CONFIG_GLOBAL="$H/.gitconfig" bash "$B/install-machine.sh" --config "$CFG" --machine-dir "$M" >"$OUT" 2>"$ERR"; rc=$?
 assert_eq "invalid settings.json is refused" "$rc" 1
 assert "invalid settings.json is left as it was" cmp -s "$T/home/.claude/settings.json" "$T/bad.orig"
+
+# ======================================================== status.sh
+# A fresh account, walked through the first steps. status.sh reads the real
+# state (the stub's) and its own state file for the ask steps; it makes no
+# write call to GitHub and never reads stdin.
+ST="$T/status"; mkdir -p "$ST"
+NSTEPS=$(jq '.steps | length' "$B/steps.json")
+status() { # status <args>: status.sh in the fresh account, no write calls allowed
+  local n0 rc0
+  n0=$(log_lines "$ST/gh.log")
+  GH_STUB_STATE="$ST/state.json" GH_LOG="$ST/gh.log" ADOPT_STATE_FILE=${SFILE-$ST/adopt/acme-example.json} \
+    bash "$B/status.sh" --config "$ST/fleet.env" "$@" </dev/null >"$OUT" 2>"$ERR"; rc0=$?
+  tail -n +"$((n0 + 1))" "$ST/gh.log" > "$T/delta"
+  [ "$(writes "$T/delta")" = 0 ] || bad "status.sh $* made a write call"
+  return "$rc0"
+}
+fresh() { GH_STUB_STATE="$ST/state.json" GH_LOG="$ST/gh.log" "$@" --config "$ST/fleet.env" >/dev/null 2>&1 </dev/null; }
+line_for() { grep -E "^(done|next|todo|asked: done) +$1 " "$OUT" | sed -E 's/ +'"$1"' .*//'; }   # the status word of step <id>
+touch "$ST/gh.log"
+status; rc=$?
+assert_eq "status.sh without fleet.env exits 0" "$rc" 0
+assert_eq "without fleet.env, step 0 is next" "$(line_for 0)" next
+assert_eq "and step 1 is todo" "$(line_for 1)" todo
+assert "it counts the steps" has "$OUT" "0 of $NSTEPS done"
+assert "it names the next step, its time and kind" has "$OUT" "Next: 0 Write fleet.env (about 5 minutes, manual)"
+assert_eq "it prints one line per step" "$(grep -cE '^(done|next|todo|asked: done) ' "$OUT")" "$NSTEPS"
+assert_eq "without fleet.env it calls gh not at all" "$(log_lines "$ST/gh.log")" 0
+new_config "$ST/fleet.env" free
+status; rc=$?
+assert_eq "with fleet.env and no repos, status exits 0" "$rc" 0
+assert_eq "step 0 is done" "$(line_for 0)" done
+assert_eq "and step 1 is next" "$(line_for 1)" next
+assert "the next step shows what to run" has "$OUT" "Run: bootstrap/create-repos.sh"
+assert "and its guide section" has "$OUT" "Guide: README.md#3-phase-1-protect-the-repos"
+assert "and what is missing" has "$OUT" "FAIL: acme-example/agent-guidance exists (HTTP 404)"
+fresh bash "$B/create-repos.sh"
+status
+assert_eq "after create-repos.sh, step 1 is done" "$(line_for 1)" done
+assert_eq "and step 2 is next" "$(line_for 2)" next
+fresh bash "$B/apply-rulesets.sh" --all
+fresh bash "$B/create-environments.sh"
+fresh bash "$B/set-secrets.sh" --only privacy --denylist "$T/private/denylist"
+status
+assert_eq "after phase 1's scripts, step 5 is next" "$(line_for 5)" next
+assert "a starter step waits for its pull request" has "$OUT" "missing on acme-example/repo-settings's default branch: bin/apply-rulesets.sh (HTTP 404); merge the starter pull request"
+assert "it read the file through the contents API" grep -qF '"api", "repos/acme-example/repo-settings/contents/bin/apply-rulesets.sh"' "$ST/gh.log"
+jq '.repos["acme-example/repo-settings"].files = {"bin/apply-rulesets.sh": true}' "$ST/state.json" > "$T/s" && mv "$T/s" "$ST/state.json"
+status
+assert_eq "once the file is on the default branch, step 5 is done" "$(line_for 5)" done
+assert_eq "and 6a is next" "$(line_for 6a)" next
+printf 'https://example.com/?code=code21\n' | GH_STUB_STATE="$ST/state.json" GH_LOG="$ST/gh.log" \
+  bash "$B/create-apps.sh" --config "$ST/fleet.env" --out "$ST/man" guidance-sync >/dev/null 2>&1
+status
+assert_eq "after create-apps.sh guidance-sync, 6a is done" "$(line_for 6a)" done
+assert_eq "and the rulesets expect its bypass, so step 2 is next again" "$(line_for 2)" next
+fresh bash "$B/apply-rulesets.sh" --all
+fresh bash "$B/create-environments.sh"
+status
+assert_eq "an ask step is next when nothing can see it" "$(line_for 6b)" next
+assert_eq "and 6c, whose check passes, is done" "$(line_for 6c)" done
+assert "it says how to record it" has "$OUT" "Once it is done: bootstrap/status.sh --mark 6b"
+assert_not "status.sh did not write a state file by itself" test -e "$ST/adopt/acme-example.json"
+status --mark 6b --dry-run
+assert_not "--mark --dry-run writes no state file" test -e "$ST/adopt/acme-example.json"
+status --mark 6b; rc=$?
+assert_eq "--mark 6b exits 0" "$rc" 0
+assert_eq "a marked ask step reads asked: done" "$(line_for 6b)" "asked: done"
+assert_eq "and the next step moves on" "$(line_for 6d)" next
+assert_eq "the answer is in the state file" "$(jq -c .done "$ST/adopt/acme-example.json")" '["6b"]'
+status
+assert_eq "the answer persists" "$(line_for 6b)" "asked: done"
+status --unmark 6b
+assert_eq "--unmark 6b undoes it" "$(line_for 6b)" next
+assert_eq "and the state file says so" "$(jq -c .done "$ST/adopt/acme-example.json")" '[]'
+status --mark 1; rc=$?
+assert_eq "--mark on a step status.sh checks itself is refused" "$rc" 1
+status --mark 99; rc=$?
+assert_eq "--mark on an unknown step is refused" "$rc" 1
+SFILE="$T/inrepo/adopt.json" status --mark 8; rc=$?
+assert_eq "a state file inside a git work tree is refused" "$rc" 1
+assert "and the refusal says why" has "$ERR" "outside every git work tree"
+assert_not "and nothing is written there" test -e "$T/inrepo/adopt.json"
+SFILE="$B/adopt-state.json" status; rc=$?
+assert_eq "a state file inside the kit is refused" "$rc" 1
+assert "and the refusal names the kit" has "$ERR" "outside this kit"
+SFILE="" XDG_STATE_HOME="$T/xdg" bash -c 'unset ADOPT_STATE_FILE; GH_STUB_STATE="$1/state.json" GH_LOG="$1/gh.log" bash "$2/status.sh" --config "$1/fleet.env" --mark 8' _ "$ST" "$B" >"$OUT" 2>"$ERR" </dev/null; rc=$?
+assert_eq "--mark with the default state path exits 0" "$rc" 0
+assert "the default state file is under XDG_STATE_HOME, named for the owner" jq -e '.done == ["8"]' "$T/xdg/adopt-the-whole-system/acme-example.json"
+mv "$ST/fleet.env" "$ST/fleet.env.off"; status --mark 6b; rc=$?; mv "$ST/fleet.env.off" "$ST/fleet.env"
+assert_eq "--mark without a fleet.env is refused" "$rc" 1
+status --bogus; rc=$?
+assert_eq "an unknown argument is refused" "$rc" 1
+assert_not "status.sh prints no secret" grep -qF -- "$PEM_MARK" "$OUT"
+
+# ======================================================== the quick start table
+python3 "$B/render-quickstart.py" --check > "$T/qs.out" 2>&1; rc=$?
+assert_eq "render-quickstart.py --check: README.md's table matches steps.json" "$rc" 0
+[ "$rc" = 0 ] || sed 's/^/    /' "$T/qs.out"
+assert_eq "the table has one row per step, plus the any row" \
+  "$(sed -n '/<!-- quickstart:begin -->/,/<!-- quickstart:end -->/p' "$B/../README.md" | grep -cE '^\| [0-9a-z]+ \| ')" "$((NSTEPS + 1))"
+cp "$B/../README.md" "$T/README.stale.md"
+sed -i '0,/^| 1 | `bootstrap\/create-repos.sh` |/s//| 1 | `bootstrap\/create-repos.sh --old` |/' "$T/README.stale.md"
+assert_not "the stale copy really differs" cmp -s "$T/README.stale.md" "$B/../README.md"
+python3 "$B/render-quickstart.py" --check --readme "$T/README.stale.md" > "$T/qs.out" 2>&1; rc=$?
+assert_eq "render-quickstart.py --check fails on a stale table" "$rc" 1
+assert_eq "with one line" "$(log_lines "$T/qs.out")" 1
+assert "that says it is stale" has "$T/qs.out" "stale"
+python3 "$B/render-quickstart.py" --readme "$T/README.stale.md" >/dev/null 2>&1
+assert "rendering fixes the stale copy" cmp -s "$T/README.stale.md" "$B/../README.md"
+sed '/<!-- quickstart:end -->/d' "$B/../README.md" > "$T/README.nomark.md"
+python3 "$B/render-quickstart.py" --check --readme "$T/README.nomark.md" > "$T/qs.out" 2>&1; rc=$?
+assert_eq "a README without both markers is refused" "$rc" 1
+python3 "$B/tests/check-steps.py" "$B/.." > "$T/steps.out" 2>&1; rc=$?
+assert_eq "check-steps.py: steps.json is well formed and its scripts and links exist" "$rc" 0
+[ "$rc" = 0 ] || sed 's/^/    /' "$T/steps.out"
+assert "check-steps.py checked something" grep -qE '^[1-9][0-9]* assertions passed, 0 failed$' "$T/steps.out"
+
+# ======================================================== the /adopt skill
+SK="$B/../.claude/skills/adopt/SKILL.md"
+assert "the adopt skill exists" test -f "$SK"
+assert "its frontmatter names it adopt and has a one-line description" python3 -I - "$SK" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+assert m, "no frontmatter"
+fields = dict(l.split(": ", 1) for l in m.group(1).splitlines())
+assert fields.get("name") == "adopt", fields
+assert fields.get("description", "").strip(), fields
+assert set(fields) == {"name", "description"}, fields
+PY
+assert_not "the skill has no !-prefixed shell line" grep -qE '^[[:space:]]*!`' "$SK"
+assert_not "nor any !\` anywhere" grep -qF '!`' "$SK"
+assert "the skill runs status.sh" has "$SK" "bootstrap/status.sh"
 
 # ======================================================== workflow variables and secrets
 # Every vars./secrets. name the kit's workflows read is set by a script here
