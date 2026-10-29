@@ -165,6 +165,40 @@ def api(args):
         if (p == "README.md" and r["has_commits"]) or p in r.get("files", {}):
             return out({"type": "file", "path": p, "name": p.split("/")[-1]})
         return err(404, "Not Found")
+    # The git data API, enough to make an orphan branch: a tree, a commit with
+    # no parent, a ref. A branch reads back as its commit; the default branch
+    # reads back once the repo has a first commit.
+    m2 = re.fullmatch(r"/git/ref/heads/(.+)", rest)
+    if m2 and method == "GET":
+        b = m2.group(1)
+        sha = r.setdefault("branches", {}).get(b) or ("main-sha" if b == r["default_branch"] and r["has_commits"] else None)
+        if sha is None:
+            return err(404, "Not Found")
+        return out({"ref": f"refs/heads/{b}", "object": {"sha": sha}})
+    if rest == "/git/trees" and method == "POST":
+        if not body.get("tree"):
+            return err(422, "Invalid tree")
+        sha = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        r.setdefault("trees", {})[sha] = body["tree"]
+        return out({"sha": sha})
+    if rest == "/git/commits" and method == "POST":
+        if body.get("tree") not in r.get("trees", {}):
+            return err(422, "Tree SHA does not exist")
+        sha = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        r.setdefault("commits", {})[sha] = {"tree": body["tree"], "parents": body.get("parents", []),
+                                            "message": body.get("message")}
+        return out({"sha": sha})
+    if rest == "/git/refs" and method == "POST":
+        b = body.get("ref", "")
+        if not b.startswith("refs/heads/"):
+            return err(422, "Invalid reference")
+        b = b[len("refs/heads/"):]
+        if b in r.setdefault("branches", {}):
+            return err(422, "Reference already exists")
+        if body.get("sha") not in r.get("commits", {}):
+            return err(422, "Object does not exist")
+        r["branches"][b] = body["sha"]
+        return out({"ref": f"refs/heads/{b}", "object": {"sha": body["sha"]}})
     if rest == "/actions/permissions":
         if method == "PUT":
             r["actions"] = body

@@ -100,6 +100,51 @@ edits:
       .pytest_cache/, node_modules/, .DS_Store); the lines already present
       are not repeated.
 
+  # ---- Cold-start fixes (2026-10-29): C3's invented example platform is not checked out
+  - path: .github/workflows/skills-lock-bump.yml
+    stage: output
+    old: |2
+            # A federated consumer's lock names this one too (example-site-a and
+            # example-site-b both federate it). Without its checkout those two are
+            # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
+            # because anything in this run bumps example-site-platform's own pin.
+            - name: Check out the federated source registry
+              uses: actions/checkout@v7.0.1
+              with:
+                repository: example-adopter/example-site-platform
+                path: registries/example-site-platform
+                fetch-depth: 0
+                token: ${{ steps.token_example_adopter.outputs.token || github.token }}
+
+            - name: Bump consumer locks
+    new: |2
+            - name: Bump consumer locks
+    why: >-
+      Cold start. The step checked out the invented example platform (C3), a
+      repo an adopter does not have, so the nightly bump failed at checkout.
+      A federated consumer whose source has no checkout is skipped by
+      bump-consumer-locks.sh, not half-re-pinned, so dropping it is safe; an
+      adopter who federates a registry adds its checkout and BUMP_CHECKOUTS
+      entry back.
+  - path: .github/workflows/skills-lock-bump.yml
+    stage: output
+    old: "            example-adopter/example-site-platform=${{ github.workspace }}/registries/example-site-platform\n"
+    new: ""
+    count: 2
+    why: Cold start. The matching BUMP_CHECKOUTS entry of the dropped checkout, in both passes that set it.
+  - path: .github/workflows/skills-lock-bump.yml
+    stage: output
+    old: |2
+                # Only the registry that owns the hook is needed here — the
+                # federated source has no `skills_bootstrap` pin — but the same
+                # string is passed as above so there is one spelling of "where the
+                # checkouts are" in this file rather than two that can drift.
+    new: |2
+                # Only the registry that owns the hook is needed here; the same
+                # string is passed as above so there is one spelling of "where the
+                # checkouts are" in this file rather than two that can drift.
+    why: Cold start. The comment described the dropped federated checkout.
+
 # DECISIONS X9: the content starts with one real item of each kind and a
 # template (see the patch's docstring).
 patches:

@@ -533,6 +533,9 @@ def _load_registries_config(path: Path = REGISTRIES_YML) -> list[dict]:
         except ValueError as exc:
             raise ValueError(
                 f"{path} entry {name!r} has layout {layout!r}: {exc}") from exc
+        if not isinstance(entry.get("may_be_empty", False), bool):
+            raise ValueError(
+                f"{path} entry {name!r}: 'may_be_empty' must be true or false")
         if Path(layout).is_absolute():
             raise ValueError(
                 f"{path} entry {name!r} has an absolute layout {layout!r} — "
@@ -664,7 +667,8 @@ def resolve_registries(cli_values: list[str] | None, env_value: str | None,
             path = (base_dir / ".." / name).resolve()
             source = "sibling default"
         resolved[name] = {"name": name, "path": path, "layout": entry["layout"],
-                          "url": entry["url"], "source": source}
+                          "url": entry["url"], "source": source,
+                          "may_be_empty": entry.get("may_be_empty", False)}
     return resolved
 
 

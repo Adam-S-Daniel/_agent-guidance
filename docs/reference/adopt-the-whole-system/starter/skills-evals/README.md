@@ -367,8 +367,8 @@ where both name the same one. `$AGENTSKILLS_DIR` (name kept unchanged since
 the `agentskills` -> `acsi-agentskills` rename) covers the `acsi-agentskills`
 entry specifically (its older, single-registry override), and any name still
 unresolved after all of the above falls back to a sibling checkout
-`../<name>` next to this repo — so `acsi-agentskills`, `example-site-platform`, and
-`example-site-a` checkouts next to `skills-evals/` resolve with no flags at
+`../<name>` next to this repo — so `acsi-agentskills` and
+`acsi-agentskills-private` checkouts next to `skills-evals/` resolve with no flags at
 all. (The harness's older `~/repos/agentskills` last-resort default is gone;
 a sibling `../acsi-agentskills` checkout is the default now, which is what
 the invocations above rely on.) An unknown registry name, an empty `PATH`, or
@@ -380,8 +380,8 @@ with the skill name substituted for its second-to-last path segment — the
 `*` immediately before `SKILL.md` (the first sorted match wins), which is
 what lets `plugins/*/skills/<skill>` (acsi-agentskills' own
 mix of the legacy `plugins/<skill>/skills/<skill>/` shape and the bundled
-`plugins/<bundle>/skills/<skill>/` shape), `skills/<skill>` (example-site-platform),
-and `.claude/skills/<skill>` (example-site-a) all resolve through the same
+`plugins/<bundle>/skills/<skill>/` shape), `skills/<skill>` (a flat registry),
+and `.claude/skills/<skill>` (a dot-dir registry) all resolve through the same
 code path. It then copies that resolved directory (the one containing
 `SKILL.md`) into the workspace's `.claude/skills/<skill>/`.
 
@@ -1044,11 +1044,11 @@ Trust model: the badge reflects exactly what a scheduled or
 maintainer-dispatched run of this repo's **committed** fixtures
 produced — the workflow never runs on pull requests (it holds an API key and
 runs the agent with `bypassPermissions`, so it must never see untrusted
-fixture content; fixtures here — and the three checked-out registries
-(acsi-agentskills, example-site-platform, example-site-a) whose skill content the
+fixture content; fixtures here — and the checked-out registry
+(acsi-agentskills) whose skill content the
 with-skill arm executes — are trusted because only maintainers can push to
-any of the four repos involved, directly or through an automated lane such
-as example-site-platform's Decap CMS publish loop or dependabot auto-merge; see
+either of the two repos involved, directly or through an automated lane such
+as dependabot auto-merge; see
 `.github/workflows/eval.yml`'s security header), and the badge JSON is
 served raw from the default branch, so it can only change via a commit to
 this repo.

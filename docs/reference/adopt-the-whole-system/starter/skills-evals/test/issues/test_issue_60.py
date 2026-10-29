@@ -157,7 +157,7 @@ class DraftTests(unittest.TestCase):
 
     def test_redacted_artifact_requires_complete_consistent_denominator(self):
         census, _ = world()
-        self.assertEqual(len(gaps.public_gaps(census)), 7)
+        self.assertEqual(len(gaps.public_gaps(census)), 5)
         private = next(reg for reg in census["registries"] if reg["private"])
         private["skills"] = [{"skill": "private-marker"}]
         with self.assertRaises(gaps.GapError):
@@ -202,7 +202,7 @@ class DraftTests(unittest.TestCase):
                   mock.patch.object(gaps, "_revision", return_value="a" * 40)):
                 gaps.census([], Path(tmp), Path(tmp) / "out")
             out = json.loads((Path(tmp) / "out" / "coverage.json").read_text())
-            self.assertEqual(len(gaps.public_gaps(out)), 7)
+            self.assertEqual(len(gaps.public_gaps(out)), 5)
             self.assertNotIn("private-marker", json.dumps(out))
 
 
@@ -269,7 +269,7 @@ class AutomationTests(unittest.TestCase):
         self.assertNotIn(tag, selected)
 
     def test_pr_only_resumes_and_unproven_issue_only_is_ignored(self):
-        census, sources = world(public_gaps=2)
+        census, sources = world(public_gaps=3)
         pr_tag = gaps.marker("acsi-agentskills", "public-0")
         issue_tag = gaps.marker("acsi-agentskills", "public-1")
         api = FakeGitHub(prs=[canonical_pr()],
@@ -602,7 +602,7 @@ class WorkflowTests(unittest.TestCase):
         census_steps = self.workflow["jobs"]["census"]["steps"]
         checkouts = [step for step in census_steps if step.get("uses", "").startswith(
             "actions/checkout@")]
-        self.assertEqual(len(checkouts), 6)
+        self.assertEqual(len(checkouts), 4)
         self.assertTrue(all(step["with"]["persist-credentials"] == "false"
                             for step in checkouts))
         names = [step.get("name") for step in census_steps]

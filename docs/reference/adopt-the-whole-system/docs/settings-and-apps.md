@@ -8,7 +8,13 @@ under `OWNER` ([free or paid](before-you-start.md#free-or-paid-github-plan)
 decides which are private), gives each a first commit (a generated README
 that `copy-starter.sh` later replaces), and creates the two labels no
 settings file declares: `agent-ready` (the fleet worker's queue) and
-`on-hold` (paused by you; only you add or remove it). `--with-optional` also
+`on-hold` (paused by you; only you add or remove it). In `skills-evals` it also
+creates the branch `persistent/eval-results` as an orphan commit holding only a
+README: the weekly plan, the ingest, the fixture supply, the coverage census and
+the usage census all fetch it, none of them creates it, and they fail on a brand-new
+account without it (`verify.sh --only branches` checks it; the other
+`persistent/*` branches are created by the script or routine that writes them).
+`--with-optional` also
 creates `waiting-feed`, the private repo the waiting-on-you feed publishes
 to ([machines](machine.md#scheduled-jobs-wsl-automation)).
 

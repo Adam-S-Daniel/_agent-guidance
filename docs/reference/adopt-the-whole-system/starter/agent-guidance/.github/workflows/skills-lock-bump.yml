@@ -180,18 +180,6 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.token_example_adopter.outputs.token || github.token }}
 
-      # A federated consumer's lock names this one too (example-site-a and
-      # example-site-b both federate it). Without its checkout those two are
-      # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
-      # because anything in this run bumps example-site-platform's own pin.
-      - name: Check out the federated source registry
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-platform
-          path: registries/example-site-platform
-          fetch-depth: 0
-          token: ${{ steps.token_example_adopter.outputs.token || github.token }}
-
       - name: Bump consumer locks
         env:
           # Per-owner installation tokens minted above, consumed by the
@@ -206,7 +194,6 @@ jobs:
           # a workflow that can disagree with it.
           BUMP_CHECKOUTS: >-
             example-adopter/acsi-agentskills=${{ github.workspace }}/registries/acsi-agentskills
-            example-adopter/example-site-platform=${{ github.workspace }}/registries/example-site-platform
           # Read through the environment, never interpolated into the command
           # below. `${{ inputs.* }}` inside a `run:` body is rendered into the
           # shell line that Actions echoes to the log, and this account has a
@@ -256,13 +243,11 @@ jobs:
           # opened on. Taken from the run rather than written out, so a fork or
           # a rename does not leave this pointing at the original.
           HOOK_PIN_REPO: ${{ github.repository }}
-          # Only the registry that owns the hook is needed here — the
-          # federated source has no `skills_bootstrap` pin — but the same
+          # Only the registry that owns the hook is needed here; the same
           # string is passed as above so there is one spelling of "where the
           # checkouts are" in this file rather than two that can drift.
           BUMP_CHECKOUTS: >-
             example-adopter/acsi-agentskills=${{ github.workspace }}/registries/acsi-agentskills
-            example-adopter/example-site-platform=${{ github.workspace }}/registries/example-site-platform
           # Through the environment, never interpolated into the `run:` body —
           # same rule, same incident, as the step above.
           DRY_RUN: ${{ inputs.dry_run }}

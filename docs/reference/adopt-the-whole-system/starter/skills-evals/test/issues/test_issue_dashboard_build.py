@@ -215,6 +215,24 @@ class DashboardBuildTests(unittest.TestCase):
         waiting = json.loads((out / "waiting.json").read_text())
         self.assertNotIn("Paused idea", [r["item"] for r in waiting])  # labeled on-hold
 
+    def test_builds_from_fully_empty_inputs(self):
+        # Cold start: a new adopter has no thread list, no dumps and no
+        # loop_status.json. The example config builds anyway, and the two
+        # datasets that would be empty carry one placeholder row.
+        empty_results, empty_inputs, out = self.tmp / "r0", self.tmp / "i0", self.tmp / "ds0"
+        empty_results.mkdir()
+        empty_inputs.mkdir()
+        build.main(["--results", str(empty_results), "--inputs", str(empty_inputs),
+                    "--config", str(DASH / "config.example"), "--out", str(out), "--now", NOW.isoformat()])
+        threads = json.loads((out / "threads.json").read_text())
+        gaps = json.loads((out / "loop_gaps.json").read_text())
+        self.assertEqual([r["id"] for r in threads], ["none"])
+        self.assertEqual([r["gap"] for r in gaps], ["none"])
+        for name in {p.stem for p in out.glob("*.json")}:
+            self.assertTrue(json.loads((out / f"{name}.json").read_text()), name)
+        page = (DASH / "page" / "index.html").read_text()
+        self.assertIn("threads: 'id', loop_gaps: 'gap'", page)  # the page hides both placeholders
+
     def test_the_page_names_no_owner(self):
         page = (DASH / "page" / "index.html").read_text()
         defined = json.loads((DASH / "page" / "datasets.json").read_text())

@@ -76,7 +76,7 @@ bash bootstrap/status.sh --unmark 23   # if you marked it by mistake
 Your answers live in a state file outside every repo
 (`~/.local/state/adopt-the-whole-system/<owner>.json`).
 
-`bash bootstrap/verify.sh` checks the fast groups (repos, labels,
+`bash bootstrap/verify.sh` checks the fast groups (repos, labels, branches,
 environments, variables, Apps and their installations, secrets by name);
 `--only settings` and `--only regen:<task>` clone repos to check the
 settings engine's drift and the regenerated files.

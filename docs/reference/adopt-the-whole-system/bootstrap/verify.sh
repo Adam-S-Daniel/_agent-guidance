@@ -6,6 +6,9 @@
 #
 #   repos           the six repos exist, with the visibility the kit wants
 #   labels          agent-ready and on-hold (LABELS in lib/common.sh)
+#   branches        skills-evals has its persistent/eval-results branch
+#                   (EVAL_RESULTS_BRANCH in lib/common.sh), which the eval
+#                   loop's workflows fetch and nothing but create-repos.sh creates
 #   environments    fleet-apply, plugin-runtime-review, routine-fire exist,
 #                   with their reviewer and branch policy (ENVIRONMENTS)
 #   variables       repo-settings' GUIDANCE_SYNC_APP_ID and
@@ -24,7 +27,7 @@
 #   regen:<task>    a regenerate.sh task is done on your default branches
 #                   (regenerate.sh --check <task>, which clones the repos)
 #
-# Without --only: repos, labels, environments, variables, every App, its
+# Without --only: repos, labels, branches, environments, variables, every App, its
 # installation and every values group (the fast ones; settings and regen:* clone repos, so
 # name them, and federation is optional, so name it too). Secret and variable values are never read or printed; the
 # variables group compares a value to fleet.env's without printing either.
@@ -56,12 +59,12 @@ if [ -n "$ONLY" ]; then
   IFS=',' read -r -a only_list <<<"$ONLY"
   for g in "${only_list[@]}"; do
     case $g in
-      repos|labels|environments|variables|federation|settings) ;;
+      repos|labels|branches|environments|variables|federation|settings) ;;
       apps:*) app_known "${g#apps:}" || die "unknown App in --only: ${g#apps:}" ;;
       installs:*) app_known "${g#installs:}" || die "unknown App in --only: ${g#installs:}" ;;
       values:*) group_known "${g#values:}" || die "unknown values group in --only: ${g#values:}" ;;
       regen:*) task_known "${g#regen:}" || die "unknown regenerate task in --only: ${g#regen:}" ;;
-      *) die "unknown group in --only: $g (repos, labels, environments, variables, federation, apps:<app>, installs:<app>, values:<group>, settings, regen:<task>)" ;;
+      *) die "unknown group in --only: $g (repos, labels, branches, environments, variables, federation, apps:<app>, installs:<app>, values:<group>, settings, regen:<task>)" ;;
     esac
     SEL[$g]=1
   done
@@ -100,6 +103,13 @@ for r in "${FLEET_REPOS[@]}"; do
     if gh_read "repos/$O/$r/labels?per_page=100"; then
       for entry in "${LABELS[@]}"; do l=${entry%%|*}; check "$O/$r has label $l" "any(.[]; .name == \"$l\")"; done
     else fail "$O/$r labels readable (HTTP $GH_HTTP)"; fi
+  fi
+  if sel branches && [ "$r" = "$EVAL_RESULTS_REPO" ]; then
+    if gh_read "repos/$O/$r/git/ref/heads/$EVAL_RESULTS_BRANCH"; then
+      pass "$O/$r has the $EVAL_RESULTS_BRANCH branch"
+    else
+      fail "$O/$r has the $EVAL_RESULTS_BRANCH branch (HTTP $GH_HTTP; run create-repos.sh)"
+    fi
   fi
 done
 

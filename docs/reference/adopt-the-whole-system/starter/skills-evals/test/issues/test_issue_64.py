@@ -116,15 +116,14 @@ class World:
         for skill in ("alpha", "beta", "gamma", "delta"):
             self.add_skill("acsi-agentskills", skill, "plug-a")
         self.add_skill("acsi-agentskills", "epsilon", "plug-b")
-        self.add_skill("example-site-platform", "cms-covered")
-        self.add_skill("example-site-platform", "cms-gap")
-        self.add_skill("example-site-a", "site-skill")
+        self.add_skill("acsi-agentskills", "zeta", "plug-b")
+        self.add_skill("acsi-agentskills", "eta", "plug-b")
         self.add_skill(PRIVATE, PRIVATE_COVERED, "plug-p")
         self.add_skill(PRIVATE, PRIVATE_GAP, "plug-p")
         self.add_fixture("alpha", "alpha", "acsi-agentskills")          # flat
         self.add_fixture("beta/one", "beta", "acsi-agentskills")        # nested
         self.add_fixture("beta/two", "beta", "acsi-agentskills")
-        self.add_fixture("cms-covered", "cms-covered", "example-site-platform")
+        self.add_fixture("zeta", "zeta", "acsi-agentskills")
         self.add_fixture(PRIVATE_COVERED, PRIVATE_COVERED, PRIVATE)
         # a non-skill subject: ignored, not refused
         self.add_fixture("guidance/_delivery", None, None,
@@ -134,8 +133,7 @@ class World:
     def clear_all_gaps(self):
         self.skip("acsi-agentskills", "delta")
         self.skip("acsi-agentskills", "epsilon")
-        self.skip("example-site-platform", "cms-gap")
-        self.skip("example-site-a", "site-skill")
+        self.skip("acsi-agentskills", "eta")
         self.skip(PRIVATE, PRIVATE_GAP, private=True)
 
     @staticmethod
@@ -220,39 +218,35 @@ class StatusesAndCounts(unittest.TestCase):
              "beta": ("covered", 2, "plug-a"),       # nested fixtures count
              "gamma": ("skipped", 0, "plug-a"),
              "delta": ("gap", 0, "plug-a"),
-             "epsilon": ("gap", 0, "plug-b")})
+             "epsilon": ("gap", 0, "plug-b"),
+             "zeta": ("covered", 1, "plug-b"),
+             "eta": ("gap", 0, "plug-b")})
         self.assertEqual(a["gamma"]["reason"], "machine-bound | WSL")
         self.assertIsNone(a["alpha"]["reason"])
-        # flat and dot-dir layouts resolve too, with no bundle
-        cms = rows(doc, "example-site-platform")
-        self.assertEqual(cms["cms-covered"]["status"], "covered")
-        self.assertEqual(cms["cms-gap"]["status"], "gap")
-        self.assertIsNone(cms["cms-gap"]["bundle"])
-        self.assertEqual(rows(doc, "example-site-a")["site-skill"]["status"], "gap")
         counts = {r["name"]: r["counts"] for r in doc["registries"]}
         self.assertEqual(counts["acsi-agentskills"],
-                         {"total": 5, "covered": 2, "skipped": 1, "gap": 2})
+                         {"total": 7, "covered": 3, "skipped": 1, "gap": 3})
         self.assertEqual(doc["totals"],
-                         {"total": 10, "covered": 4, "skipped": 1, "gap": 5})
+                         {"total": 9, "covered": 4, "skipped": 1, "gap": 4})
         self.assertEqual(doc["problems"], [])
 
     def test_a_fixture_covers_by_its_own_fields_not_its_directory_name(self):
         w = World(self)
-        # same skill name in a different registry must not cover cms-gap's
+        # same skill name in a different registry must not cover eta's
         # namesake, and a misleadingly named directory still covers `delta`
         w.add_fixture("misc/anything", "delta", "acsi-agentskills")
-        w.add_fixture("cms-gap", "cms-gap", "acsi-agentskills")  # wrong registry
+        w.add_fixture("eta-elsewhere", "eta", PRIVATE)  # wrong registry
         doc = w.json()
         self.assertEqual(rows(doc, "acsi-agentskills")["delta"]["fixtures"], 1)
-        self.assertEqual(rows(doc, "example-site-platform")["cms-gap"]["status"], "gap")
+        self.assertEqual(rows(doc, "acsi-agentskills")["eta"]["status"], "gap")
         self.assertIn("orphan_fixture", [p["kind"] for p in doc["problems"]])
 
     def test_markdown_table_has_status_counts_and_escapes_the_reason(self):
         proc = World(self).run()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         md = proc.stdout
-        self.assertIn("| acsi-agentskills | 5 | 2 | 1 | 2 |", md)
-        self.assertIn("| **Total** | 10 | 4 | 1 | 5 |", md)
+        self.assertIn("| acsi-agentskills | 7 | 3 | 1 | 3 |", md)
+        self.assertIn("| **Total** | 9 | 4 | 1 | 4 |", md)
         self.assertIn("| plug-a | gamma | skipped | 0 | machine-bound \\| WSL |", md)
         self.assertIn("| plug-a | delta | GAP | 0 |  |", md)
         self.assertIn("| plug-a | beta | covered | 2 |", md)
@@ -289,19 +283,19 @@ class Refusals(unittest.TestCase):
 
     def test_a_missing_registry_path_is_refused_not_counted_as_zero(self):
         w = World(self)
-        proc = w.run("--check", paths={"example-site-platform": w.root / "nope"})
+        proc = w.run("--check", paths={"acsi-agentskills": w.root / "nope"})
         self.assert_refused(proc, "does not resolve to a directory")
-        self.assertIn("example-site-platform", proc.stderr)
+        self.assertIn("acsi-agentskills", proc.stderr)
 
     def test_a_registry_with_no_checkout_given_is_refused(self):
         # no fallback to a sibling directory
-        self.assert_refused(World(self).run(omit=("example-site-a",)),
-                            "has no --registry example-site-a=PATH")
+        self.assert_refused(World(self).run(omit=("acsi-agentskills",)),
+                            "has no --registry acsi-agentskills=PATH")
 
     def test_a_registry_that_yields_no_skills_is_refused(self):
         w = World(self)
-        shutil.rmtree(w.registry_dirs["example-site-platform"])
-        w.registry_dirs["example-site-platform"].mkdir()
+        shutil.rmtree(w.registry_dirs["acsi-agentskills"])
+        w.registry_dirs["acsi-agentskills"].mkdir()
         self.assert_refused(w.run("--check"), "yields no skills")
 
     def test_an_unknown_registry_name_is_refused(self):
@@ -380,15 +374,15 @@ class Refusals(unittest.TestCase):
         for bad, needle in (
             ("skips: []\nextra: 1\n", "exactly one key"),
             ("- not a mapping\n", "exactly one key"),
-            ("skips:\n  - {registry: example-site-platform, skill: cms-gap, "
+            ("skips:\n  - {registry: acsi-agentskills, skill: eta, "
              "decision: skip, reasn: typo}\n", "exactly the fields"),
-            ("skips:\n  - {registry: example-site-platform, skill: cms-gap, "
+            ("skips:\n  - {registry: acsi-agentskills, skill: eta, "
              "decision: skip, reason: ''}\n", "non-blank"),
             ("skips:\n  - {registry: nowhere, skill: x, decision: skip, "
              "reason: r}\n", "not in harness/registries.yml"),
-            ("skips:\n  - {registry: example-site-platform, skill: cms-gap, "
-             "decision: skip, reason: r}\n  - {registry: example-site-platform, "
-             "skill: cms-gap, decision: skip, reason: r}\n", "second row"),
+            ("skips:\n  - {registry: acsi-agentskills, skill: eta, "
+             "decision: skip, reason: r}\n  - {registry: acsi-agentskills, "
+             "skill: eta, decision: skip, reason: r}\n", "second row"),
         ):
             with self.subTest(bad=bad):
                 self.assert_refused(World(self).run(raw_non_coverage=bad), needle)
@@ -401,9 +395,9 @@ class Problems(unittest.TestCase):
     def test_a_stale_skip_is_reported_and_fails_check(self):
         w = World(self)
         w.clear_all_gaps()
-        w.skip("example-site-platform", "renamed-away")
+        w.skip("acsi-agentskills", "renamed-away")
         self.assertEqual(w.json()["problems"],
-                         [{"kind": "stale_skip", "registry": "example-site-platform",
+                         [{"kind": "stale_skip", "registry": "acsi-agentskills",
                            "skill": "renamed-away"}])
         self.assertEqual(w.run("--check").returncode, 1)
 
@@ -417,7 +411,7 @@ class Problems(unittest.TestCase):
     def test_a_fixture_for_a_vanished_skill_is_reported(self):
         w = World(self)
         w.clear_all_gaps()
-        w.add_fixture("old", "renamed-away", "example-site-platform")
+        w.add_fixture("old", "renamed-away", "acsi-agentskills")
         self.assertEqual(self.kinds(w.json()), {("orphan_fixture", "renamed-away")})
         self.assertEqual(w.run("--check").returncode, 1)
 
@@ -505,7 +499,7 @@ class PrivateNames(unittest.TestCase):
             ("broken YAML", f"skips: [{marker}: : :\n", "not valid YAML"),
             # PyYAML's own message quotes an unknown tag from the file
             ("unknown YAML tag", f"skips: !{marker} x\n", "not valid YAML"),
-            ("public registry row", row % ("example-site-platform", marker),
+            ("public registry row", row % ("acsi-agentskills", marker),
              "private registries only"),
         ):
             with self.subTest(f"private file, {label}"):
@@ -531,7 +525,7 @@ class PrivateNames(unittest.TestCase):
 
     def test_the_operator_held_file_takes_private_rows_only(self):
         w = World(self)
-        w.private_skips.append({"registry": "example-site-platform", "skill": "cms-gap",
+        w.private_skips.append({"registry": "acsi-agentskills", "skill": "eta",
                                 "decision": "skip", "reason": "r"})
         proc = w.run()
         self.assertEqual((proc.returncode, proc.stdout), (2, ""))
@@ -618,14 +612,14 @@ class Publication(unittest.TestCase):
         self.assertEqual(proc.stdout, "")
         self.assertEqual(report["status"], "complete")
         self.assertEqual(report["totals"],
-                         {"total": 10, "covered": 4, "skipped": 1, "gap": 5})
+                         {"total": 9, "covered": 4, "skipped": 1, "gap": 4})
         self.assertEqual(report["fixture_readiness"],
                          {"total": 7, "draft": 1, "context_declared": 1,
                           "context_missing": 6, "guidance_unproven": 1,
                           "paired_context_delivery_verified": False})
         badge = json.loads((directory / "badge.json").read_text(encoding="utf-8"))
         self.assertEqual(badge["schemaVersion"], 1)
-        self.assertEqual(badge["message"], "4 covered · 1 skipped · 5 gap · 2026-10-08")
+        self.assertEqual(badge["message"], "4 covered · 1 skipped · 4 gap · 2026-10-08")
         self.assertEqual(badge["color"], "orange")
         self.assertIn("Paired context delivery verified: no",
                       (directory / "latest.md").read_text(encoding="utf-8"))
@@ -635,18 +629,18 @@ class Publication(unittest.TestCase):
             with self.subTest(empty=empty):
                 w = World(self)
                 if empty:
-                    shutil.rmtree(w.registry_dirs["example-site-platform"])
-                    w.registry_dirs["example-site-platform"].mkdir()
+                    shutil.rmtree(w.registry_dirs["acsi-agentskills"])
+                    w.registry_dirs["acsi-agentskills"].mkdir()
                     kwargs = {}
                 else:
-                    kwargs = {"paths": {"example-site-platform": w.root / "missing"}}
+                    kwargs = {"paths": {"acsi-agentskills": w.root / "missing"}}
                 proc, report, directory = self.publish(w, **kwargs)
                 self.assertEqual(proc.returncode, 2)
                 self.assertEqual(report["status"], "unresolved")
                 self.assertIsNone(report["totals"])
-                self.assertIn("example-site-platform", report["unresolved"])
+                self.assertIn("acsi-agentskills", report["unresolved"])
                 self.assertEqual(next(r for r in report["registries"]
-                                      if r["name"] == "example-site-platform")["status"],
+                                      if r["name"] == "acsi-agentskills")["status"],
                                  "unresolved")
                 self.assertFalse((directory / "badge.json").exists())
                 self.assertNotIn("**Total**", (directory / "latest.md").read_text())
@@ -682,7 +676,7 @@ class Publication(unittest.TestCase):
         self.assertEqual(report["totals"]["gap"], 0)
         self.assertEqual(json.loads((directory / "badge.json").read_text())["color"],
                          "green")
-        w.skip("example-site-platform", "renamed-away")
+        w.skip("acsi-agentskills", "renamed-away")
         proc, report, directory = self.publish(w)
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(report["totals"]["gap"], 0)
@@ -851,7 +845,7 @@ class PublicationWorkflow(unittest.TestCase):
         self.assertNotIn("permissions", jobs["coverage"])
         steps = jobs["coverage"]["steps"]
         checkouts = [s for s in steps if s.get("uses", "").startswith("actions/checkout@")]
-        self.assertEqual(len(checkouts), 5)
+        self.assertEqual(len(checkouts), 3)
         self.assertTrue(all(s["with"]["persist-credentials"] == "false"
                             for s in checkouts))
         private = next(s for s in checkouts if s["with"].get("repository", "").endswith("-private"))
@@ -950,7 +944,7 @@ class PublicationWorkflow(unittest.TestCase):
             for document in (
                 {"status": "unresolved", "unresolved": [],
                  "totals": {"total": 2}, "generated_at": PUBLISH_TIME},
-                {"status": "complete", "unresolved": ["example-site-platform"],
+                {"status": "complete", "unresolved": ["acsi-agentskills"],
                  "totals": {"total": 2}, "generated_at": PUBLISH_TIME},
                 {"status": "complete", "unresolved": [],
                  "totals": {"total": "2"}, "generated_at": PUBLISH_TIME},

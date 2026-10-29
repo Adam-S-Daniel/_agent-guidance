@@ -18,6 +18,12 @@
 #   * Labels agent-ready and on-hold (LABELS in lib/common.sh): the fleet
 #     worker reads both and no fleet.yml entry declares them.
 #
+#   * skills-evals gets its persistent/eval-results branch (EVAL_RESULTS_BRANCH
+#     in lib/common.sh) as an orphan commit holding a short README. The eval
+#     loop's workflows and the usage census fetch it and fail when it is absent,
+#     and nothing else creates it. No other persistent/* branch needs this: the
+#     script or routine that writes each one creates it when missing.
+#
 # Everything else a repo's settings hold (merge methods, Actions policy,
 # security features, the rulesets and the agent-authored label) is
 # repo-settings' fleet.yml, applied by apply-settings.sh with the exported
@@ -95,6 +101,35 @@ ensure_first_commit() { # name
   did "added a README to the empty repo $O/$r"
 }
 
+results_body() { # kind arg...: the git data API body of one step of an orphan commit
+  case $1 in
+    tree) jq -n --arg c "$(eval_results_readme)" \
+            '{tree: [{path: "README.md", mode: "100644", type: "blob", content: $c}]}' ;;
+    commit) jq -n --arg t "$2" '{message: "Create the results branch", tree: $t, parents: []}' ;;
+    ref) jq -n --arg r "refs/heads/$EVAL_RESULTS_BRANCH" --arg s "$2" '{ref: $r, sha: $s}' ;;
+  esac
+}
+
+ensure_results_branch() { # name: the orphan EVAL_RESULTS_BRANCH, when it does not exist
+  local r=$1 b=$EVAL_RESULTS_BRANCH tree commit
+  if [ "$FRESH" = 0 ]; then
+    if gh_read "repos/$O/$r/git/ref/heads/$b"; then
+      skip "$O/$r has the $b branch"; return 0
+    fi
+    [ "$GH_HTTP" = 404 ] || die "could not read the $b branch of $O/$r (HTTP $GH_HTTP)"
+  fi
+  gh_write_api POST "repos/$O/$r/git/trees" "$(results_body tree)"
+  tree=$(printf '%s' "$GH_OUT" | jq -r '.sha // empty')
+  [ "$DRY_RUN" = 0 ] || tree=${tree:-"<tree sha>"}
+  [ -n "$tree" ] || die "creating the tree of $b in $O/$r returned no sha"
+  gh_write_api POST "repos/$O/$r/git/commits" "$(results_body commit "$tree")"
+  commit=$(printf '%s' "$GH_OUT" | jq -r '.sha // empty')
+  [ "$DRY_RUN" = 0 ] || commit=${commit:-"<commit sha>"}
+  [ -n "$commit" ] || die "creating the commit of $b in $O/$r returned no sha"
+  gh_write_api POST "repos/$O/$r/git/refs" "$(results_body ref "$commit")"
+  did "created the orphan branch $b in $O/$r"
+}
+
 ensure_labels() { # name
   local r=$1 names="" entry name color desc body
   if [ "$FRESH" = 0 ]; then
@@ -118,6 +153,7 @@ for r in "${REPOS[@]}"; do
   log "== $O/$r"
   ensure_repo "$r"
   if is_fleet_repo "$r"; then ensure_labels "$r"; fi
+  if [ "$r" = "$EVAL_RESULTS_REPO" ]; then ensure_results_branch "$r"; fi
 done
 finish
 if [ "$PROBLEMS" -gt 0 ]; then

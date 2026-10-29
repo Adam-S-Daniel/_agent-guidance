@@ -117,6 +117,12 @@ while `fleet.yml` names a repo that does not exist, and a missing
 `cron_coverage.fleet` repo is an error for the coverage check. Add your own
 consumers the same way later.
 
+These are the only places the invented example repos remain in live config.
+`skills-evals` does not check them out, pass them to the coverage census or
+list them in `harness/registries.yml`, which names only your two registries;
+the private one may be empty (`may_be_empty: true`), so the census runs on day
+one.
+
 ## The eval.yml fixture default
 
 `skills-evals`' `.github/workflows/eval.yml` takes a `fixture` input whose

@@ -52,7 +52,7 @@ The per-file detail is in the manifests beside this file.
 | C8 | Tests that read excluded fixtures (about 40 in skills-evals) are pointed at a small invented seed, and their expected values are updated; no test is deleted unless what it tests was itself left out. | Keep the tests' lessons without the excluded data. | n/a |
 | C9 | The repo-settings workflow's two hardcoded owner steps (one per source owner) become the adopter's owner and the optional second owner. | Owner names. | n/a |
 | C10 | Text that tells a story about the owner by name (for example "<name>'s standing rule", "<name>'s decision on 2026-10-06") says "the owner" instead, capitalized only where a sentence starts. Dates and measurements stay. | Names. | n/a |
-| C11 | **Live registries list only the kit's repos.** `repos.yml`, `fleet.yml`, `dependabot.yml` entries, workflow repo lists and any other config the code acts on name only the kit's own repos (and the invented example platform of C3). The owner's other repos (personal tools, sites, scratch repos) are dropped from config, and tests that pin those lists are updated. Mentions of those repos in history (ADRs, evidence, changelog analysis, routine findings) stay, like P2 citations. | Config that names repos an adopter doesn't have would sync into, or report on, repos that don't exist. History mentions are what lessons were learned on. | Keep the full list; the adopter trims it. |
+| C11 | **Live registries list only the kit's repos.** `repos.yml`, `fleet.yml`, `dependabot.yml` entries, workflow repo lists and any other config the code acts on name only the kit's own repos (and, in `repo-settings`' `fleet.yml` and `_agent-guidance`'s `repos.yml` only, the invented example repos of C3, which steps 8 and 10 trim; skills-evals' workflows and `harness/registries.yml` do not name them, see "Cold-start fixes"). The owner's other repos (personal tools, sites, scratch repos) are dropped from config, and tests that pin those lists are updated. Mentions of those repos in history (ADRs, evidence, changelog analysis, routine findings) stay, like P2 citations. | Config that names repos an adopter doesn't have would sync into, or report on, repos that don't exist. History mentions are what lessons were learned on. | Keep the full list; the adopter trims it. |
 | C12 | **Account-specific numbers become config.** GitHub App ids (the source's two bypass Apps' and any others), installation ids and similar numbers that differ per account are read from a variable or a single config file the bootstrap fills, never hardcoded in the kit. | They are the owner's App ids; an adopter's Apps have different ones. | n/a |
 
 ## Kept on purpose (questions an inventory raised)
@@ -1174,3 +1174,69 @@ runs the repo's real file on a scratch repo (it fails on the old one).
   replacement now (BSD `sed -i` takes a suffix argument).
 - The line above listing the owner's private details was cut to a generic
   sentence, and its pointer to a public test dropped.
+
+## Cold-start fixes (2026-10-29)
+
+Five findings from running the exported system against an empty account. Each
+departure is made through the export (a manifest edit or a patch), so
+`export.py --check` reproduces it.
+
+### The `persistent/eval-results` branch is created by `create-repos.sh`
+
+Nothing created skills-evals' `persistent/eval-results` branch, which the
+coverage census, the ingest and the publishers read and write, so the first
+scheduled run failed on a missing ref. `bootstrap/create-repos.sh` now creates
+it, idempotently, as an orphan commit holding one `README.md` (git data API:
+tree, parentless commit, ref), through `gh_write_api`, so `--dry-run` prints
+and writes nothing. `verify.sh` has a `branches` group (on by default) and
+`status.sh` keeps step 1 as next while the branch is missing. No other
+`persistent/*` branch needed this: the code creates the rest on first write.
+Not an export departure (the bootstrap scripts are kit files). Reverse: drop
+`ensure_results_branch` and the `branches` group.
+
+### A registry may be declared empty (`may_be_empty: true`)
+
+The census refused a registry that matched no skill, so the kit's empty
+private registry failed it every day. `harness/registries.yml` entries take an
+optional boolean `may_be_empty`; `run_eval._load_registries_config` validates
+it, `resolve_registries` carries it, and `eval_coverage.enumerate_skills`
+returns 0 skills for a declared registry. It is set for
+`acsi-agentskills-private` only; every other registry keeps the refusal.
+Patch `cold_start_registries.py`; tests in the overlay file
+`test_issue_cold_start_registries.py`. Reverse: drop the patch's registry
+and census parts, and seed one skill in the private registry before the first
+census.
+
+### The invented example sites are not live config in skills-evals
+
+C3's `example-site-platform` and `example-site-a` were checked out by four live
+workflows (`routine-eval-weekly`, `skill-coverage`, `propagation`, `eval`),
+passed as `--registry` flags, and listed in `harness/registries.yml`. Repos an
+adopter does not have: a checkout of a missing repo fails the job, and a
+registry with no flag is unresolved. Their checkouts, flags and registry
+entries are dropped, as is the matching federated checkout in
+`_agent-guidance`'s `skills-lock-bump.yml` (manifest edits). The code that
+handles a platform repo stays (C3), and `fleet.yml` and `repos.yml` keep the
+example entries for steps 8 and 10 to trim. Tests that used the sites as a
+second public registry move to `acsi-agentskills` or
+`acsi-agentskills-private` (patch `cold_start_tests.py`: test_issue_60, 64,
+70_retire, adr0012_delivery and TestIssue63) with counts that follow the new
+denominator. Lost with them: the census-level checks that a flat and a dot-dir
+registry resolve; TestIssue63 still resolves both layouts, passing the layout
+directly. Reverse: drop both patches and the `skills-lock-bump.yml` edits.
+
+### The dashboard builds from empty inputs
+
+`dashboard/build.py` required `loop_status.json`, so a build with no inputs
+failed, and the `threads` and `loop_gaps` datasets had no placeholder row. It now defaults
+`loop_status.json` to `{"gaps": []}` and gives `threads` and `loop_gaps` a
+placeholder row, as the other datasets have (key field `none`, hidden by the
+page's placeholder map). New test
+`test_builds_from_fully_empty_inputs`. Manifest edits on `dashboard/`.
+Reverse: drop those edits.
+
+### Improve fires are refused at first (docs only)
+
+`docs/evals-and-loop.md` says so: the allowance guard reserves an improve fire
+at 12 times the average ingested run, 42 points on day one against the
+30-point cap, until ingested runs average 2.5 points or less. No code changed.

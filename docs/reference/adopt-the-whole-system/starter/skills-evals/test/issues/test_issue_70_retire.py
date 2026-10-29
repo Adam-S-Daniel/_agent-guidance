@@ -543,7 +543,7 @@ class AutoTests(Base):
             "two plugins": [f"acsi-agentskills={make_registry(self.tmp / 'a', skills=((PLUGIN, SKILL), ('acsi-coding-local', SKILL)))}"],
             "absent": [f"acsi-agentskills={make_registry(self.tmp / 'b', skills=((PLUGIN, 'another-skill'),))}"],
             "another registry": [f"acsi-agentskills={self.registry}",
-                                 f"example-site-platform={self.make_flat(self.tmp / 'c')}"],
+                                 f"acsi-agentskills-private={make_registry(self.tmp / 'c', skills=((PLUGIN, SKILL),))}"],
         }
         for name, flags in cases.items():
             with self.subTest(name):
@@ -564,7 +564,7 @@ class AutoTests(Base):
 
     def test_no_acsi_agentskills_checkout_is_refused(self):
         code, _, err, fake = self.run_main(
-            gates_doc("auto"), registries=[f"example-site-platform={self.make_flat(self.tmp / 'e')}"])
+            gates_doc("auto"), registries=[f"acsi-agentskills-private={self.make_flat(self.tmp / 'e')}"])
         self.assertEqual(code, 2)
         self.assertEqual(fake.pushes, [])
 

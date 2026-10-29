@@ -117,6 +117,13 @@ weekly plan, which spends only the room left.
 [What it costs](before-you-start.md#what-it-costs) turns these into calendar
 time.
 
+Expect improve fires to be refused at first. The guard reserves an improve fire
+at 12 times the average cost of an ingested run, and on day one, with no run
+ingested, each run counts at the 3.5-point cap (0.03 plus the 0.005 overrun),
+so that reserve is 42 allowance points against the 30-point weekly cap. It
+clears once the ingested runs average at most 2.5 points, which takes a few
+weekly eval runs; until then a refused improve fire is expected, not a fault.
+
 ## The loop
 
 - **The weekly plan** (`routine-eval-weekly.yml`, Tuesdays 07:00 UTC):

@@ -14,16 +14,17 @@
 # path segment) is the skill-name placeholder substituted by `_skill_md_glob`
 # in harness/run_eval.py, any earlier `*` (a bundle/plugin name) stays a
 # wildcard.
+#
+# `may_be_empty: true` (optional, a boolean, false when absent) says the
+# registry may hold no skill yet: the coverage census then resolves it with
+# 0 skills instead of refusing a layout that matches nothing (the kit's
+# private registry starts that way). Without the key an empty registry is
+# still refused as a wrong path or a wrong layout.
 registries:
   - name: acsi-agentskills
     url: https://github.com/example-adopter/acsi-agentskills
     layout: "plugins/*/skills/*/SKILL.md"
-  - name: example-site-platform
-    url: https://github.com/example-adopter/example-site-platform
-    layout: "skills/*/SKILL.md"
-  - name: example-site-a
-    url: https://github.com/example-adopter/example-site-a
-    layout: ".claude/skills/*/SKILL.md"
   - name: acsi-agentskills-private
     url: https://github.com/example-adopter/acsi-agentskills-private
     layout: "plugins/*/skills/*/SKILL.md"
+    may_be_empty: true

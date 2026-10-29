@@ -130,22 +130,6 @@ jobs:
           path: acsi-agentskills
           persist-credentials: false
 
-      - name: Check out example-site-platform for census
-        uses: actions/checkout@v7.0.1
-        continue-on-error: true
-        with:
-          repository: example-adopter/example-site-platform
-          path: example-site-platform
-          persist-credentials: false
-
-      - name: Check out example-site-a for census
-        uses: actions/checkout@v7.0.1
-        continue-on-error: true
-        with:
-          repository: example-adopter/example-site-a
-          path: example-site-a
-          persist-credentials: false
-
       # The private registry is read with a short-lived installation token from
       # a dedicated read-only GitHub App (owner's 2026-10-20 decision, replacing
       # a never-set personal access token, issue #292): repository variable
@@ -192,8 +176,6 @@ jobs:
           set +e
           python3 scripts/eval_coverage.py \
             --registry acsi-agentskills=../acsi-agentskills \
-            --registry example-site-platform=../example-site-platform \
-            --registry example-site-a=../example-site-a \
             --registry acsi-agentskills-private=../acsi-agentskills-private \
             --publish-dir "$RUNNER_TEMP/coverage" \
             --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

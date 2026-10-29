@@ -60,7 +60,7 @@ check(f"the registries were read: {FLEET}", len(FLEET) == 6 and all(TREE.values(
 def group_known(g):
     kind, _, arg = g.partition(":")
     if not arg:
-        return g in {"repos", "labels", "environments", "variables", "federation", "settings"}
+        return g in {"repos", "labels", "branches", "environments", "variables", "federation", "settings"}
     return {"apps": arg in APPS, "installs": arg in APPS, "values": arg in VALUE_GROUPS,
             "regen": arg in TASKS}.get(kind, False)
 

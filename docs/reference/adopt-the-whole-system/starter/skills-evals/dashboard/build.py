@@ -304,7 +304,8 @@ def threads(dump, site):
              "last_active": s.get("last_activity_at"),
              "link": site["thread_url"] + s["thread_id"]} for s in dump]
     rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
-    return rows
+    return rows or [{"title": "No threads yet", "state": None, "last_active": None, "link": None,
+                     "id": PLACEHOLDER_ID}]
 
 
 def next_cron(expr, after):
@@ -476,7 +477,8 @@ def loop(cfg, status, site):
     lanes = [{"lane": ln["lane"], "thread": ln["thread"], "link": site["thread_url"] + ln["thread_id"],
               "does": ln["does"], "latest": ln["latest"], "latest_link": ln.get("latest_link")}
              for ln in cfg["lanes"]]
-    return stages, cfg["grid"], lanes, gaps
+    return stages, cfg["grid"], lanes, gaps or [
+        {"gap": PLACEHOLDER_ID, "title": "No loop gaps yet", "status": "", "owner": "", "link": None}]
 
 
 # --- main ----------------------------------------------------------------------
@@ -505,7 +507,7 @@ def build(results, inputs, config, now):
     loop_cfg = os.path.join(config, "loop.json")
     if os.path.exists(loop_cfg):
         (out["loop_stages"], out["loop_grid"], out["loop_lanes"],
-         out["loop_gaps"]) = loop(load(loop_cfg), inp("loop_status.json"), site)
+         out["loop_gaps"]) = loop(load(loop_cfg), inp("loop_status.json", {"gaps": []}), site)
     return out
 
 

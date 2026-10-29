@@ -808,7 +808,7 @@ class EndToEndTests(Base):
         super().setUp()
         self.results = self.root / "results"
         self.registry_dirs = {}
-        for name in ("example-site-platform", "example-site-a", "acsi-agentskills-private"):
+        for name in ("acsi-agentskills-private",):
             path = self.root / "registries" / name
             path.mkdir(parents=True)
             self.registry_dirs[name] = path

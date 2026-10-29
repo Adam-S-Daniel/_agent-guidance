@@ -8489,8 +8489,8 @@ class TestIssue84Review(Issue84Fixture, unittest.TestCase):
 class TestIssue63(unittest.TestCase):
     """Issue #63: resolve the with_skill arm's skill dir against any registry
     layout named in harness/registries.yml, not just acsi-agentskills'
-    plugins/*/skills/*/SKILL.md — example-site-platform's flat skills/*/SKILL.md and
-    example-site-a's .claude/skills/*/SKILL.md must resolve too, and an
+    plugins/*/skills/*/SKILL.md — a flat skills/*/SKILL.md and a
+    .claude/skills/*/SKILL.md layout must resolve too, and an
     unknown registry: URL must fail loudly naming the file to fix.
     """
 
@@ -8530,7 +8530,7 @@ class TestIssue63(unittest.TestCase):
             return install_and_run(workspace, "audit the workflows", arm)
 
     def test_resolves_flat_skills_layout(self):
-        # example-site-platform-shaped: skills/<skill>/SKILL.md. Two skills present —
+        # flat-shaped: skills/<skill>/SKILL.md. Two skills present —
         # see _fake_registry_many's docstring for why one isn't enough.
         # Requests "some-skill" specifically because it sorts AFTER
         # "other-skill": a mutant that drops the skill-name substitution
@@ -8562,7 +8562,7 @@ class TestIssue63(unittest.TestCase):
             self.assertIn("name: some-skill", skill_md.read_text(encoding="utf-8"))
 
     def test_resolves_dotclaude_skills_layout(self):
-        # example-site-a-shaped: .claude/skills/<skill>/SKILL.md. Two skills
+        # dot-dir-shaped: .claude/skills/<skill>/SKILL.md. Two skills
         # present, same reason as the flat-layout test above.
         with tempfile.TemporaryDirectory() as tmp:
             registry = self._fake_registry_many(
@@ -8666,26 +8666,28 @@ class TestIssue63(unittest.TestCase):
 
     def test_registry_name_equals_path_flag_targets_that_name(self):
         with tempfile.TemporaryDirectory() as tmp:
-            registry = self._fake_registry(tmp, "skills/some-skill/SKILL.md")
+            registry = self._fake_registry(
+                tmp, "plugins/a-bundle/skills/some-skill/SKILL.md")
             registries = run_eval.resolve_registries(
-                [f"example-site-platform={registry}"], None, REPO_ROOT)
+                [f"acsi-agentskills-private={registry}"], None, REPO_ROOT)
             entry = run_eval.registry_for_url(
-                registries, "https://github.com/example-adopter/example-site-platform")
+                registries, "https://github.com/example-adopter/acsi-agentskills-private")
             self.assertEqual(entry["path"], registry)
-            self.assertEqual(entry["layout"], "skills/*/SKILL.md")
+            self.assertEqual(entry["layout"], "plugins/*/skills/*/SKILL.md")
 
     def test_env_var_supplies_registry_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
-            registry = self._fake_registry(tmp, ".claude/skills/some-skill/SKILL.md")
-            env_value = f"example-site-a={registry}"
+            registry = self._fake_registry(
+                tmp, "plugins/a-bundle/skills/some-skill/SKILL.md")
+            env_value = f"acsi-agentskills-private={registry}"
             registries = run_eval.resolve_registries(None, env_value, REPO_ROOT)
             entry = run_eval.registry_for_url(
-                registries, "https://github.com/example-adopter/example-site-a")
+                registries, "https://github.com/example-adopter/acsi-agentskills-private")
             self.assertEqual(entry["path"], registry)
 
     def test_no_override_falls_back_to_sibling_directory(self):
         registries = run_eval.resolve_registries(None, None, REPO_ROOT)
-        entry = registries["example-site-platform"]
+        entry = registries["acsi-agentskills-private"]
         self.assertEqual(entry["source"], "sibling default")
         # Derived independently of resolve_registries' own (base_dir / ".." /
         # name).resolve() expression, rather than restating it verbatim.
@@ -8693,7 +8695,7 @@ class TestIssue63(unittest.TestCase):
         # .resolve() (which follows symlinks), so comparing it to an
         # unresolved expression is the suite's only failure on otherwise
         # correct code when a sibling checkout sits behind a symlink.
-        self.assertEqual(entry["path"], (REPO_ROOT.parent / "example-site-platform").resolve())
+        self.assertEqual(entry["path"], (REPO_ROOT.parent / "acsi-agentskills-private").resolve())
         self.assertTrue(entry["path"].is_absolute())
 
     def test_registries_agree_with_agentskills_own_file(self):
@@ -8846,8 +8848,8 @@ class TestIssue63(unittest.TestCase):
     def test_repeated_env_var_entry_for_same_name_raises(self):
         with self.assertRaises(ValueError) as ctx:
             run_eval.resolve_registries(
-                None, "example-site-platform=/a,example-site-platform=/b", REPO_ROOT)
-        self.assertIn("example-site-platform", str(ctx.exception))
+                None, "acsi-agentskills-private=/a,acsi-agentskills-private=/b", REPO_ROOT)
+        self.assertIn("acsi-agentskills-private", str(ctx.exception))
 
     def test_repeated_bare_env_entry_raises(self):
         with self.assertRaises(ValueError) as ctx:
@@ -8931,7 +8933,7 @@ class TestIssue63Review(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("example_site_platform", msg)
         self.assertIn("harness/registries.yml", msg)
-        for name in ("acsi-agentskills", "example-site-platform", "example-site-a"):
+        for name in ("acsi-agentskills", "acsi-agentskills-private"):
             self.assertIn(name, msg)
 
     def test_unknown_env_override_name_is_rejected(self):
@@ -8964,11 +8966,11 @@ class TestIssue63Review(unittest.TestCase):
     def test_nonexistent_explicit_override_is_rejected_before_any_arm_runs(self):
         bad_path = REPO_ROOT / "does-not-exist-anywhere"
         registries = run_eval.resolve_registries(
-            [f"example-site-platform={bad_path}"], None, REPO_ROOT)
+            [f"acsi-agentskills-private={bad_path}"], None, REPO_ROOT)
         with self.assertRaises(ValueError) as ctx:
             run_eval._validate_registry_paths(registries)
         msg = str(ctx.exception)
-        self.assertIn("example-site-platform", msg)
+        self.assertIn("acsi-agentskills-private", msg)
         self.assertIn("--registry flag", msg)
         # The resolved absolute PATH must not reach the message (item 6,
         # #129 review round 4's treatment of this same class of detail,
@@ -9024,8 +9026,8 @@ class TestIssue63Review(unittest.TestCase):
         # override only called .expanduser(), so a relative --registry value
         # stayed relative.
         registries = run_eval.resolve_registries(
-            ["example-site-platform=../example-site-platform"], None, REPO_ROOT)
-        self.assertTrue(registries["example-site-platform"]["path"].is_absolute())
+            ["acsi-agentskills-private=../acsi-agentskills-private"], None, REPO_ROOT)
+        self.assertTrue(registries["acsi-agentskills-private"]["path"].is_absolute())
 
     def test_agentskills_dir_is_injected_not_read_from_os_environ(self):
         # resolve_registries must not reach into os.environ itself for
@@ -9260,8 +9262,7 @@ class TestIssue63Review(unittest.TestCase):
     def test_real_registries_yml_passes_shape_validation(self):
         entries = run_eval._load_registries_config()
         names = {e["name"] for e in entries}
-        self.assertEqual(names, {"acsi-agentskills", "example-site-platform", "example-site-a",
-                                 "acsi-agentskills-private"})
+        self.assertEqual(names, {"acsi-agentskills", "acsi-agentskills-private"})
 
 
 class TestIssue63Round2(unittest.TestCase):
@@ -9616,8 +9617,8 @@ class TestIssue63Round2(unittest.TestCase):
     def test_repeated_cli_flag_for_same_name_raises(self):
         with self.assertRaises(ValueError) as ctx:
             run_eval.resolve_registries(
-                ["example-site-platform=/a", "example-site-platform=/b"], None, REPO_ROOT)
-        self.assertIn("example-site-platform", str(ctx.exception))
+                ["acsi-agentskills-private=/a", "acsi-agentskills-private=/b"], None, REPO_ROOT)
+        self.assertIn("acsi-agentskills-private", str(ctx.exception))
 
     def test_repeated_bare_legacy_flag_raises(self):
         with self.assertRaises(ValueError) as ctx:

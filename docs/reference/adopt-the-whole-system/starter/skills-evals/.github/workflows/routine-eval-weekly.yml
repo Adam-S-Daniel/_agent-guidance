@@ -82,18 +82,6 @@ jobs:
           path: registry-agentskills
           fetch-depth: 0
           persist-credentials: false
-      - name: Check out example-site-platform
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-platform
-          path: registry-cms
-          persist-credentials: false
-      - name: Check out example-site-a
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-a
-          path: registry-site
-          persist-credentials: false
       - name: Check out _agent-guidance (the guidance sections' content)
         # Read for the sections' extents and digests, never run (#124). Full
         # history: a section's newest change lifts its three-rejection stop.
@@ -113,8 +101,6 @@ jobs:
           python3 scripts/plan_week.py plan --results-tree eval-results-branch \
             --as-of "$as_of" --max-fires 30 \
             --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
-            --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
-            --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --guidance "$GITHUB_WORKSPACE/agent-guidance" \
             --out "$RUNNER_TEMP/plan.json" \
             --ranking-out "$RUNNER_TEMP/improve-ranking.json"

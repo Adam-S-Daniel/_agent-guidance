@@ -24,7 +24,8 @@
         "type": "verify",
         "groups": [
           "repos",
-          "labels"
+          "labels",
+          "branches"
         ]
       },
       "minutes": 5

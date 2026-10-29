@@ -62,20 +62,6 @@ jobs:
           path: registry-agentskills
           persist-credentials: false
 
-      - name: Check out example-site-platform
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-platform
-          path: registry-cms
-          persist-credentials: false
-
-      - name: Check out example-site-a
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-a
-          path: registry-site
-          persist-credentials: false
-
       - name: Mint the GitHub App token for acsi-agentskills-private
         id: registry-token
         uses: actions/create-github-app-token@v3.2.0
@@ -114,8 +100,6 @@ jobs:
         run: |
           python3 scripts/scaffold_skill_gaps.py census \
             --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
-            --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
-            --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --registry "acsi-agentskills-private=$GITHUB_WORKSPACE/registry-private" \
             --guidance-dir "$GITHUB_WORKSPACE/guidance" \
             --out "$RUNNER_TEMP/skill-coverage"
@@ -229,20 +213,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out example-site-platform
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-platform
-          path: registry-cms
-          persist-credentials: false
-
-      - name: Check out example-site-a
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-a
-          path: registry-site
-          persist-credentials: false
-
       - name: Check out _agent-guidance
         # The guidance sections' source (#124): read for their extents and
         # digests, and edited on a removal branch. Not a skill registry, so
@@ -271,8 +241,6 @@ jobs:
             --roster evals/roster.yml --policy evals/gate-policy.yml \
             --as-of "$as_of" \
             --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
-            --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
-            --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --guidance "$GITHUB_WORKSPACE/agent-guidance" \
             --out "$RUNNER_TEMP/gates/latest.json"
 
@@ -327,8 +295,6 @@ jobs:
           python3 scripts/retire_skill.py \
             --gates "$RUNNER_TEMP/gates/latest.json" \
             --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
-            --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
-            --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --usage "$GITHUB_WORKSPACE/eval-results/usage/weekly-local.json" \
             --date "$(date -u +%F)" \
             "${modes[@]}"

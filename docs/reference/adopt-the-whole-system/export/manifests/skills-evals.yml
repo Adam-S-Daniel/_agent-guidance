@@ -488,6 +488,77 @@ edits:
       first row) before any fixture exists.
   # ---- substitution side effects
 
+  # ---- Cold-start fixes (2026-10-29): the dashboard builds from nothing
+  - path: dashboard/build.py
+    stage: output
+    old: |2
+          rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
+          return rows
+    new: |2
+          rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
+          return rows or [{"title": "No threads yet", "state": None, "last_active": None, "link": None,
+                           "id": PLACEHOLDER_ID}]
+    why: >-
+      Cold start. A project with no threads yet wrote an empty dataset and
+      main() exited ("threads: empty dataset; give it a placeholder row"). It
+      gets one placeholder row, key field `id` = "none", like the datasets
+      that already have one.
+  - path: dashboard/build.py
+    stage: output
+    old: "    return stages, cfg[\"grid\"], lanes, gaps\n"
+    new: |2
+          return stages, cfg["grid"], lanes, gaps or [
+              {"gap": PLACEHOLDER_ID, "title": "No loop gaps yet", "status": "", "owner": "", "link": None}]
+    why: >-
+      Cold start. A loop with no gaps yet wrote an empty `loop_gaps` and
+      main() exited. One placeholder row, key field `gap` = "none"; the
+      placeholder is added after the stages are derived, so no stage sees it.
+  - path: dashboard/build.py
+    stage: output
+    old: "         out[\"loop_gaps\"]) = loop(load(loop_cfg), inp(\"loop_status.json\"), site)\n"
+    new: "         out[\"loop_gaps\"]) = loop(load(loop_cfg), inp(\"loop_status.json\", {\"gaps\": []}), site)\n"
+    why: >-
+      Cold start. `loop_status.json` is the loop thread's own gap list, which
+      an adopter has no source for yet; build() exited "missing input". An
+      absent file builds as no gaps, like the other optional dumps.
+  - path: dashboard/page/index.html
+    stage: output
+    old: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file' };\n"
+    new: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file', threads: 'id', loop_gaps: 'gap' };\n"
+    why: >-
+      Cold start. The two new placeholder rows are hidden the way the other
+      key-field placeholders are, so the loop gap counts stay 0 of 0 and the
+      tables stay empty rather than showing a "none" row.
+  - path: dashboard/README.md
+    stage: output
+    old: "| `loop_status.json` | The loop's gap list (`gaps[]`: `gap`, `title`, `status`, `owner`, `pr`), kept by the loop thread |\n"
+    new: "| `loop_status.json` | Optional. The loop's gap list (`gaps[]`: `gap`, `title`, `status`, `owner`, `pr`), kept by the loop thread; without it the loop has no gaps |\n"
+    why: Cold start. Says the dump is optional now.
+  - path: test/issues/test_issue_dashboard_build.py
+    stage: output
+    old: "    def test_the_page_names_no_owner(self):\n"
+    new: |2
+          def test_builds_from_fully_empty_inputs(self):
+              # Cold start: a new adopter has no thread list, no dumps and no
+              # loop_status.json. The example config builds anyway, and the two
+              # datasets that would be empty carry one placeholder row.
+              empty_results, empty_inputs, out = self.tmp / "r0", self.tmp / "i0", self.tmp / "ds0"
+              empty_results.mkdir()
+              empty_inputs.mkdir()
+              build.main(["--results", str(empty_results), "--inputs", str(empty_inputs),
+                          "--config", str(DASH / "config.example"), "--out", str(out), "--now", NOW.isoformat()])
+              threads = json.loads((out / "threads.json").read_text())
+              gaps = json.loads((out / "loop_gaps.json").read_text())
+              self.assertEqual([r["id"] for r in threads], ["none"])
+              self.assertEqual([r["gap"] for r in gaps], ["none"])
+              for name in {p.stem for p in out.glob("*.json")}:
+                  self.assertTrue(json.loads((out / f"{name}.json").read_text()), name)
+              page = (DASH / "page" / "index.html").read_text()
+              self.assertIn("threads: 'id', loop_gaps: 'gap'", page)  # the page hides both placeholders
+
+          def test_the_page_names_no_owner(self):
+    why: Cold start. Regression test that build.py succeeds on fully empty inputs.
+
 patches:
   - file: owner_constants.py
     why: >-
@@ -524,6 +595,19 @@ patches:
       X9. evals/scheduled.yml keeps the rows of the two shipped fixtures and
       evals/non-coverage.yml keeps its header and key with an empty list;
       the dropped rows named fixtures and skills the kit does not ship.
+  - file: cold_start_registries.py
+    why: >-
+      Cold start (DECISIONS "Cold-start fixes"). A registry entry may declare
+      `may_be_empty: true` and the census resolves it with 0 skills (set for
+      the private registry, which starts empty); and the invented example
+      sites of C3 are no longer checked out, flagged or listed in
+      harness/registries.yml.
+  - file: cold_start_tests.py
+    why: >-
+      Cold start. Tests that used the dropped example sites as a second
+      public registry (test_issue_60, test_issue_64, test_issue_70_retire,
+      test_issue_adr0012_delivery and TestIssue63 in run_tests.py) move to the registries the kit ships;
+      the counts follow the new denominator.
 
 protect_except:
   - path: test/issues/test_issue_70_retire.py

@@ -141,6 +141,9 @@ assert_not "an unknown repo name is refused" bash "$B/create-repos.sh" --config 
 run bash "$B/create-repos.sh" --config "$CFG" --dry-run; rc=$?
 assert_eq "create-repos dry run exits 0" "$rc" 0
 assert_eq "create-repos dry run makes no write calls" "$(writes "$GH_LOG")" 0
+assert "dry run prints the results branch's tree, commit and ref" bash -c 'for u in git/trees git/commits git/refs; do grep -qF "DRY-RUN: gh api -X POST repos/acme-example/skills-evals/$u" "$1" || exit 1; done' _ "$OUT"
+assert "dry run says it would create the orphan results branch" has "$OUT" "would have: created the orphan branch persistent/eval-results in acme-example/skills-evals"
+assert_eq "dry run creates no branch" "$(jqs '[.repos[]? | .branches // {} | keys[]] | length')" 0
 assert "create-repos dry run prints the private repo create call" has "$OUT" "DRY-RUN: gh repo create acme-example/acsi-agentskills-private --private"
 assert "create-repos dry run says nothing was written" has "$OUT" "nothing was written"
 
@@ -157,6 +160,11 @@ done
 assert_eq "every repo has a first commit" "$(jqs '[.repos[] | select(.has_commits)] | length')" 6
 assert_eq "every README is the generated one, ending in the marker" \
   "$(jqs '[.repos[] | select(. as $r | ($r.readme // "") | startswith("# " + $r.name + "\n") and endswith("copy-starter.sh replaces this file while it is unchanged -->\n"))] | length')" 6
+# skills-evals alone gets persistent/eval-results, as an orphan commit (no parent) holding a README.
+assert_eq "persistent/eval-results exists on skills-evals only" "$(jqs '[.repos | to_entries[] | select(.value.branches["persistent/eval-results"] != null) | .key] | join(" ")')" "$O/skills-evals"
+assert_eq "the results branch is an orphan commit" "$(jqs '.repos["acme-example/skills-evals"] | .commits[.branches["persistent/eval-results"]].parents | length')" 0
+assert_eq "the results branch holds a README and nothing else" "$(jqs '.repos["acme-example/skills-evals"] | .trees[.commits[.branches["persistent/eval-results"]].tree] | map(.path) | join(",")')" README.md
+assert "the results README says what the branch holds" jq -e '.repos["acme-example/skills-evals"] | .trees[.commits[.branches["persistent/eval-results"]].tree][0].content | contains("never merges into main")' "$GH_STUB_STATE"
 assert_eq "labels agent-ready and on-hold on all six" "$(jqs '[.repos[] | select([.labels[].name] | index("agent-ready") and index("on-hold"))] | length')" 6
 assert_eq "it leaves merge and Actions settings to fleet.yml" "$(jqs '[.repos[] | select(.allow_squash_merge and (.actions.sha_pinning_required | not))] | length')" 6
 n=$(log_lines "$GH_LOG")
@@ -164,6 +172,20 @@ run bash "$B/create-repos.sh" --config "$CFG"; rc=$?
 assert_eq "create-repos second run exits 0" "$rc" 0
 assert_eq "create-repos second run makes no write calls" "$(since "$n")" 0
 assert "create-repos second run says nothing to change" has "$OUT" "Nothing to change"
+assert "create-repos second run sees the results branch" has "$OUT" "ok: acme-example/skills-evals has the persistent/eval-results branch"
+# The branch gone (say, a new account that never ran this step): a dry run
+# reports it and writes nothing; a real run makes it again, in three writes.
+jqset 'del(.repos["acme-example/skills-evals"].branches["persistent/eval-results"])'
+n=$(log_lines "$GH_LOG")
+run bash "$B/create-repos.sh" --config "$CFG" --dry-run skills-evals; rc=$?
+assert_eq "a dry run with the results branch missing exits 0" "$rc" 0
+assert_eq "a dry run with the results branch missing writes nothing" "$(since "$n")" 0
+assert "a dry run with the results branch missing would create it" has "$OUT" "would have: created the orphan branch persistent/eval-results"
+n=$(log_lines "$GH_LOG")
+run bash "$B/create-repos.sh" --config "$CFG" skills-evals; rc=$?
+assert_eq "create-repos recreates a missing results branch" "$rc" 0
+assert_eq "recreating the results branch is three writes (tree, commit, ref)" "$(since "$n")" 3
+assert_eq "the recreated results branch exists" "$(jqs '.repos["acme-example/skills-evals"].branches["persistent/eval-results"] != null')" true
 run bash "$B/create-repos.sh" --config "$CFG" --with-optional
 assert_eq "--with-optional adds the private waiting-feed" "$(jqs '.repos["acme-example/waiting-feed"].visibility')" private
 jqset 'del(.repos["acme-example/waiting-feed"])'
@@ -411,6 +433,18 @@ run bash "$B/verify.sh" --config "$CFGP" --only installs:guidance-sync; rc=$?
 assert_eq "verify fails an App missing from one repo" "$rc" 1
 assert "verify names the repo" has "$OUT" "FAIL: guidance-sync App is installed on acme-example/wsl-automation"
 jqset ".installations = $inst"
+run bash "$B/verify.sh" --config "$CFGP" --only branches; rc=$?
+assert_eq "verify --only branches passes with the results branch there" "$rc" 0
+assert "verify names the results branch" has "$OUT" "PASS: acme-example/skills-evals has the persistent/eval-results branch"
+jqset 'del(.repos["acme-example/skills-evals"].branches["persistent/eval-results"])'
+run bash "$B/verify.sh" --config "$CFGP" --only branches; rc=$?
+assert_eq "verify --only branches fails without it" "$rc" 1
+assert "verify points at create-repos.sh" has "$OUT" "FAIL: acme-example/skills-evals has the persistent/eval-results branch (HTTP 404; run create-repos.sh)"
+run bash "$B/status.sh" --config "$CFGP"
+assert "status leaves step 1 (create the repos) next while the results branch is missing" grep -q '^Next: 1 ' "$OUT"
+run bash "$B/create-repos.sh" --config "$CFGP" skills-evals
+run bash "$B/verify.sh" --config "$CFGP" --only branches; rc=$?
+assert_eq "create-repos puts the results branch back and verify passes" "$rc" 0
 assert_not "verify refuses an unknown group" bash "$B/verify.sh" --config "$CFGP" --only rulesets
 assert_not "verify refuses an unknown App" bash "$B/verify.sh" --config "$CFGP" --only apps:loop-writer
 run bash "$B/status.sh" --config "$CFGP" --mark 3; rc=$?

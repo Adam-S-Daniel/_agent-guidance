@@ -35,7 +35,8 @@ but null or blank is a malformed skill fixture and is refused, never ignored.
 THE DENOMINATOR IS THE PART THAT LIES, so local mode refuses (exit 2, nothing
 printed to stdout) rather than report a partial census: a registry in
 `harness/registries.yml` with no `--registry` path, a path that is not a
-directory, a layout that matches no skill, one skill name in two bundles of one
+directory, a layout that matches no skill (unless the registry's entry in
+`harness/registries.yml` says `may_be_empty: true`), one skill name in two bundles of one
 registry (`(registry, skill)` would be ambiguous and every count inflated), an
 `--evals-dir` with no `fixture.yaml` in it, a fixture whose `skill:` is null or
 blank or whose `registry:` is missing or unknown, a file that is not valid
@@ -189,6 +190,8 @@ def enumerate_skills(entry: dict) -> list[dict]:
                 "count inflated")
         seen.add(row["skill"])
     if not rows:
+        if entry.get("may_be_empty") is True:
+            return rows  # harness/registries.yml says this one may be empty
         raise CensusRefusal(
             f"registry {entry['name']!r} yields no skills for layout "
             f"{layout!r}: a registry with nothing in it is a wrong path or a "

@@ -15,17 +15,15 @@
 #   here are trusted because only maintainers can push to this repo; the only
 #   prompts ever run are this repo's committed fixtures. Never accept external
 #   fixture contributions into this path without dropping the key first.
-#   The trust boundary equally includes the three registries checked out
-#   below (acsi-agentskills, example-site-platform, example-site-a): the with_skill arm
+#   The trust boundary equally includes the registry checked out
+#   below (acsi-agentskills): the with_skill arm
 #   installs skill content from whichever registry the fixture names, from
 #   that registry's default branch, and executes it under bypassPermissions
-#   with the key in env — write access to any of the three checked-out
-#   registries is equivalent to key access here. All four repos (this one
+#   with the key in env — write access to the checked-out
+#   registry is equivalent to key access here. Both repos (this one
 #   included) are maintainer-only; keep it that way or drop the key.
-#   example-site-platform and example-site-a also land commits on their default
-#   branches through automated lanes — Decap CMS editorial publish loops,
-#   auto-merge nudges, dependabot auto-merge — not only direct maintainer
-#   pushes. A commit landed by one of those lanes is inside this trust
+#   A commit landed on the registry's default branch by one of the
+#   automated lanes (auto-merge nudges, dependabot auto-merge) is inside this trust
 #   boundary just the same as a maintainer's own push: treat it as trusted,
 #   or drop the key.
 #
@@ -119,7 +117,7 @@
 #   class name, and refresh_models.py is written to produce nothing else. The
 #   token-exchange failure output below is a separate pre-existing path.
 #
-# * All five checkouts (distinct repositories) use `persist-credentials: false`;
+# * All three checkouts (distinct repositories) use `persist-credentials: false`;
 #   the plan and publisher repeat this repo on fresh runners. Write auth is
 #   injected only in the steps that write — the `roster` job's
 #   roster-proposal step (its tracking issue only; since round 7 it pushes
@@ -1528,20 +1526,6 @@ jobs:
           path: acsi-agentskills
           persist-credentials: false
 
-      - name: Check out example-site-platform registry (side-by-side)
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-platform
-          path: example-site-platform
-          persist-credentials: false
-
-      - name: Check out example-site-a registry (side-by-side)
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: example-adopter/example-site-a
-          path: example-site-a
-          persist-credentials: false
-
       - name: Check out _agent-guidance (side-by-side)
         # NOT a skill registry: this is the guidance subject's source, read by
         # harness/guidance.py through --guidance. Its content is executed
@@ -1841,9 +1825,7 @@ jobs:
             --permission-mode bypassPermissions \
             --run-billing api --run-runner actions --run-location cloud \
             --guidance ../_agent-guidance \
-            --registry acsi-agentskills=../acsi-agentskills \
-            --registry example-site-platform=../example-site-platform \
-            --registry example-site-a=../example-site-a
+            --registry acsi-agentskills=../acsi-agentskills
 
       # Only successful legs provide a publishable payload. Partial output is
       # diagnostic, with a separate name publishers never download.
