@@ -1,0 +1,264 @@
+{
+  "about": "The quick start's steps, in order: the one source for README.md's Quick start table (render-quickstart.py) and for status.sh. Each step is at most one command or one browser visit, plus the check that says it is done. check.type is config (fleet.env exists with OWNER and PLAN), verify (verify.sh --only <groups> passes), files (each file is on the repo's default branch) or ask (status.sh --mark <id> after you say it is done). phase_label, when present, is what the table shows instead of the phase number.",
+  "steps": [
+    {
+      "id": "0",
+      "title": "Write fleet.env",
+      "run": "`cp bootstrap/fleet.env.example fleet.env`, fill in `OWNER` and `PLAN`",
+      "kind": "manual",
+      "phase": 0,
+      "phase_label": "before you start",
+      "section": "2",
+      "link": "README.md#the-config-file",
+      "check": {"type": "config"},
+      "minutes": 5
+    },
+    {
+      "id": "1",
+      "title": "Create the five repos",
+      "run": "`bootstrap/create-repos.sh`",
+      "kind": "script",
+      "phase": 1,
+      "section": "3.1, 3.3",
+      "link": "README.md#3-phase-1-protect-the-repos",
+      "check": {"type": "verify", "groups": ["repos", "settings", "labels"]},
+      "minutes": 5
+    },
+    {
+      "id": "2",
+      "title": "Apply the rulesets",
+      "run": "`bootstrap/apply-rulesets.sh --all`",
+      "kind": "script",
+      "phase": 1,
+      "section": "3.1",
+      "link": "README.md#31-rulesets-in-repo-settings",
+      "check": {"type": "verify", "groups": ["rulesets"]},
+      "minutes": 3
+    },
+    {
+      "id": "3",
+      "title": "Create the environments",
+      "run": "`bootstrap/create-environments.sh`",
+      "kind": "script",
+      "phase": 1,
+      "section": "3.4",
+      "link": "README.md#34-github-apps-and-environments-instead-of-tokens",
+      "check": {"type": "verify", "groups": ["environments"]},
+      "minutes": 3
+    },
+    {
+      "id": "4",
+      "title": "Store the privacy denylist",
+      "run": "`bootstrap/set-secrets.sh --only privacy --denylist <file outside every repo>`",
+      "kind": "script",
+      "phase": 1,
+      "phase_label": "1, before any sync",
+      "section": "6.5",
+      "link": "README.md#65-the-privacy-check",
+      "check": {"type": "verify", "groups": ["values:privacy"]},
+      "minutes": 10
+    },
+    {
+      "id": "5",
+      "title": "Copy the repo-settings starter",
+      "run": "`bootstrap/copy-starter.sh starter/repo-settings <you>/repo-settings`",
+      "kind": "script",
+      "phase": 1,
+      "section": "3.1",
+      "link": "README.md#31-rulesets-in-repo-settings",
+      "check": {"type": "files", "files": [{"repo": "repo-settings", "path": "bin/apply-rulesets.sh"}]},
+      "minutes": 15
+    },
+    {
+      "id": "6a",
+      "title": "Create the guidance-sync App",
+      "run": "`bootstrap/create-apps.sh guidance-sync` (GitHub's App manifest flow, in the browser)",
+      "kind": "script",
+      "phase": 2,
+      "section": "3.4, 4",
+      "link": "README.md#34-github-apps-and-environments-instead-of-tokens",
+      "check": {"type": "verify", "groups": ["apps:guidance-sync"]},
+      "minutes": 10
+    },
+    {
+      "id": "6b",
+      "title": "Install the guidance-sync App",
+      "run": "Install the App at the URL `create-apps.sh` printed (`https://github.com/apps/<slug>/installations/new`), on the repos it names",
+      "kind": "browser",
+      "phase": 2,
+      "section": "3.4",
+      "link": "README.md#34-github-apps-and-environments-instead-of-tokens",
+      "check": {"type": "ask"},
+      "minutes": 5
+    },
+    {
+      "id": "6c",
+      "title": "Re-apply rulesets and environments for guidance-sync",
+      "run": "`bootstrap/apply-rulesets.sh --all` and `bootstrap/create-environments.sh`",
+      "kind": "script",
+      "phase": 2,
+      "section": "3.1, 4.5",
+      "link": "README.md#45-the-sync",
+      "check": {"type": "verify", "groups": ["apps:guidance-sync", "rulesets", "variables"]},
+      "minutes": 3
+    },
+    {
+      "id": "6d",
+      "title": "Copy the agent-guidance starter",
+      "run": "`bootstrap/copy-starter.sh starter/agent-guidance <you>/agent-guidance`",
+      "kind": "script",
+      "phase": 2,
+      "section": "4",
+      "link": "README.md#4-phase-2-central-guidance-delivered-once-per-session",
+      "check": {"type": "files", "files": [{"repo": "agent-guidance", "path": "agents-md/base.md"}]},
+      "minutes": 30
+    },
+    {
+      "id": "7",
+      "title": "Copy the two skills starters",
+      "run": "`bootstrap/copy-starter.sh starter/agent-skills <you>/agent-skills` and `starter/agent-skills-private <you>/agent-skills-private`",
+      "kind": "script",
+      "phase": 3,
+      "section": "5",
+      "link": "README.md#5-phase-3-a-skills-registry",
+      "check": {"type": "files", "files": [
+        {"repo": "agent-skills", "path": ".claude-plugin/marketplace.json"},
+        {"repo": "agent-skills-private", "path": "lessons/README.md"}
+      ]},
+      "minutes": 30
+    },
+    {
+      "id": "8",
+      "title": "Set up each durable machine",
+      "run": "On each durable machine: `bootstrap/install-machine.sh` (it reads `starter/machine`)",
+      "kind": "machine",
+      "phase": 3,
+      "phase_label": "3, 4, 6",
+      "section": "5.3, 6.2, 8.1",
+      "link": "README.md#53-install-on-your-machines",
+      "check": {"type": "ask"},
+      "minutes": 15
+    },
+    {
+      "id": "9",
+      "title": "Require the checks",
+      "run": "Once `agent-checks` has reported on a pull request: `bootstrap/apply-rulesets.sh --all --with-required-check` (it records `REQUIRED_CHECKS=on` in `fleet.env`), then `bootstrap/create-environments.sh`",
+      "kind": "script",
+      "phase": 4,
+      "section": "6.3",
+      "link": "README.md#63-make-ci-enforce-it",
+      "check": {"type": "verify", "groups": ["required-checks", "variables"]},
+      "minutes": 5
+    },
+    {
+      "id": "10",
+      "title": "Paste the cloud setup script",
+      "run": "`bash starter/cloud/build-setup-script.sh --config fleet.env` (it fills your owner into the generated script only), then paste `starter/cloud/cloud-setup-script.sh` into the cloud environment",
+      "kind": "browser",
+      "phase": 5,
+      "section": "7.3",
+      "link": "README.md#73-the-setup-script",
+      "check": {"type": "ask"},
+      "minutes": 15
+    },
+    {
+      "id": "11a",
+      "title": "Create the loop-writer App",
+      "run": "`bootstrap/create-apps.sh loop-writer` (GitHub's App manifest flow, in the browser)",
+      "kind": "script",
+      "phase": 7,
+      "section": "3.4, 9",
+      "link": "README.md#34-github-apps-and-environments-instead-of-tokens",
+      "check": {"type": "verify", "groups": ["apps:loop-writer"]},
+      "minutes": 10
+    },
+    {
+      "id": "11b",
+      "title": "Install the loop-writer App",
+      "run": "Install the App at the URL `create-apps.sh` printed (`https://github.com/apps/<slug>/installations/new`), on the repos it names",
+      "kind": "browser",
+      "phase": 7,
+      "section": "3.4",
+      "link": "README.md#34-github-apps-and-environments-instead-of-tokens",
+      "check": {"type": "ask"},
+      "minutes": 5
+    },
+    {
+      "id": "11c",
+      "title": "Re-apply rulesets and environments for loop-writer",
+      "run": "`bootstrap/apply-rulesets.sh --all` and `bootstrap/create-environments.sh`",
+      "kind": "script",
+      "phase": 7,
+      "section": "3.1, 9.4",
+      "link": "README.md#94-where-runs-happen-a-routine-fired-by-actions",
+      "check": {"type": "verify", "groups": ["apps:loop-writer", "rulesets", "variables"]},
+      "minutes": 3
+    },
+    {
+      "id": "11d",
+      "title": "Copy the skills-evals starter",
+      "run": "`bootstrap/copy-starter.sh starter/skills-evals <you>/skills-evals`",
+      "kind": "script",
+      "phase": 7,
+      "section": "9",
+      "link": "README.md#9-phase-7-evals",
+      "check": {"type": "files", "files": [{"repo": "skills-evals", "path": "harness/run_eval.py"}]},
+      "minutes": 30
+    },
+    {
+      "id": "11e",
+      "title": "Create the eval runner routine",
+      "run": "At https://claude.ai/code/routines, create the eval runner routine by hand, with an API trigger; keep the bearer it shows once and the `trig_...` ID for the next step",
+      "kind": "browser",
+      "phase": 7,
+      "section": "9.4",
+      "link": "README.md#94-where-runs-happen-a-routine-fired-by-actions",
+      "check": {"type": "ask"},
+      "minutes": 20
+    },
+    {
+      "id": "11f",
+      "title": "Store the routine's bearer and trigger ID",
+      "run": "`bootstrap/set-secrets.sh --only routine-fire`",
+      "kind": "script",
+      "phase": 7,
+      "section": "9.4",
+      "link": "README.md#94-where-runs-happen-a-routine-fired-by-actions",
+      "check": {"type": "verify", "groups": ["values:routine-fire"]},
+      "minutes": 5
+    },
+    {
+      "id": "12",
+      "title": "Create the phase 8 Apps",
+      "run": "`bootstrap/create-apps.sh lessons-reader`; for the optional roster refresh, `bootstrap/create-environments.sh --with-optional` and then `bootstrap/create-apps.sh --with-optional roster-writer`; on a paid plan, `bootstrap/create-apps.sh settings-admin`",
+      "kind": "script",
+      "phase": 8,
+      "section": "10",
+      "link": "README.md#10-phase-8-close-the-loop",
+      "check": {"type": "verify", "groups": ["apps:lessons-reader", "apps:roster-writer", "apps:settings-admin"]},
+      "minutes": 30
+    },
+    {
+      "id": "13",
+      "title": "Create the standing routines",
+      "run": "Create the standing routines at claude.ai",
+      "kind": "browser",
+      "phase": 9,
+      "section": "11",
+      "link": "README.md#11-phase-9-standing-routines",
+      "check": {"type": "ask"},
+      "minutes": 60
+    },
+    {
+      "id": "14",
+      "title": "Build the dashboard",
+      "run": "`bash starter/skills-evals/scripts/build-dashboard-site.sh <results checkout>`",
+      "kind": "manual",
+      "phase": 10,
+      "section": "12",
+      "link": "README.md#12-phase-10-status-and-dashboard",
+      "check": {"type": "ask"},
+      "minutes": 15
+    }
+  ]
+}

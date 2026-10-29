@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify.sh [--config fleet.env] [--phase N] [--with-required-check | --without-required-check] [--with-optional]
+# verify.sh [--config fleet.env] [--phase N] [--only <group>[,<group>...]] [--with-required-check | --without-required-check] [--with-optional]
 #
 # Read-only. Reports PASS, FAIL or SKIP for every item the other scripts set.
 # --phase N (1 to 10, the guide's phases) checks only what should exist by the
@@ -10,6 +10,15 @@
 # routine-fire values from 7; lessons-reader, roster-writer (optional) and
 # settings-admin from 8. Anything later is reported SKIP. Without --phase it
 # expects everything, and takes the required checks from REQUIRED_CHECKS.
+# --only <group>[,<group>...] checks only those groups of items (status.sh
+# uses it to tell the quick start's steps apart): repos (exist, visibility),
+# settings (merge and Actions settings), labels, environments, rulesets,
+# required-checks (the rulesets, expecting the phase 4 checks unless a
+# --with/--without-required-check flag says otherwise), variables (the
+# repository variables), apps:<app> (one App's ID and credentials) and
+# values:<environment> (privacy or routine-fire's secrets and variables). A
+# missing repo always fails. An unknown group is refused. Without --only,
+# every group.
 # What it checks:
 #
 #   * each of the five repos exists with the visibility the guide wants;
@@ -36,7 +45,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/rulesets.sh
 . "$HERE/lib/rulesets.sh"
 
-WITH_CHECK="" WITH_OPTIONAL=0 PHASE=""
+WITH_CHECK="" WITH_OPTIONAL=0 PHASE="" ONLY=""
 parse_common_args "$@"
 set -- "${REST_ARGS[@]}"
 while [ $# -gt 0 ]; do
@@ -46,6 +55,8 @@ while [ $# -gt 0 ]; do
     --with-optional) WITH_OPTIONAL=1 ;;
     --phase) [ $# -ge 2 ] || die "--phase needs a number"; PHASE=$2; shift
       [[ $PHASE =~ ^([1-9]|10)$ ]] || die "--phase must be 1 to 10 (the guide's phases)" ;;
+    --only) [ $# -ge 2 ] || die "--only needs a group list"; ONLY=$2; shift ;;
+    --only=*) ONLY=${1#--only=} ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -57,6 +68,30 @@ declare -A VALUE_PHASE=([privacy]=1 [routine-fire]=7)
 REQUIRED_CHECKS_PHASE=4
 upto=${PHASE:-99}
 due() { [ "$1" -le "$upto" ]; }   # due <phase>: should it exist by now?
+# --only: the groups to check. sel <group> says whether one is selected.
+declare -A SEL
+if [ -n "$ONLY" ]; then
+  case ",$ONLY," in *,,*) die "--only has an empty group: $ONLY" ;; esac
+  IFS=',' read -r -a only_list <<<"$ONLY"
+  for g in "${only_list[@]}"; do
+    case $g in
+      repos|settings|labels|environments|rulesets|required-checks|variables) ;;
+      apps:*) known=0
+        for entry in "${APPS[@]}"; do [ "${entry%%|*}" = "${g#apps:}" ] && known=1; done
+        [ "$known" = 1 ] || die "unknown App in --only: ${g#apps:}" ;;
+      values:*) known=0
+        for entry in "${OTHER_VALUES[@]}"; do IFS='|' read -r _r e _rest <<<"$entry"; [ "$e" = "${g#values:}" ] && known=1; done
+        [ "$known" = 1 ] || die "unknown environment in --only: ${g#values:}" ;;
+      *) die "unknown group in --only: $g (repos, settings, labels, environments, rulesets, required-checks, variables, apps:<app>, values:<environment>)" ;;
+    esac
+    SEL[$g]=1
+  done
+  if [ -n "${SEL[required-checks]:-}" ]; then
+    [ "$WITH_CHECK" != 0 ] || die "--only required-checks and --without-required-check contradict each other"
+    WITH_CHECK=1
+  fi
+fi
+sel() { [ -z "$ONLY" ] || [ -n "${SEL[$1]:-}" ]; }
 [ "$DRY_RUN" = 0 ] || log "verify.sh is read-only; --dry-run changes nothing"
 require_tools jq "$GH"
 load_config "$CONFIG"
@@ -67,6 +102,7 @@ if [ -z "$WITH_CHECK" ]; then
   elif [ "$CFG_REQUIRED_CHECKS" = on ]; then WITH_CHECK=1; fi
 fi
 [ -z "$PHASE" ] || log "checking what should exist by the end of phase $PHASE"
+[ -z "$ONLY" ] || log "checking only: $ONLY"
 PASS=0 FAIL=0 SKIPPED=0
 pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$*"; }
 fail() { FAIL=$((FAIL + 1)); printf 'FAIL: %s\n' "$*"; }
@@ -84,30 +120,37 @@ for r in "${FLEET_REPOS[@]}"; do
   fi
   EXISTS[$r]=1
   DEFAULT_BRANCH[$r]=$(printf '%s' "$GH_OUT" | jq -r '.default_branch // "main"')
-  pass "$O/$r exists"
-  check "$O/$r is $want" "(if .visibility then .visibility elif .private then \"private\" else \"public\" end) == \"$want\""
-  check "$O/$r merge settings: merge commit only, auto-merge, delete branch on merge" \
-    '.allow_merge_commit == true and .allow_squash_merge == false and .allow_rebase_merge == false and .allow_auto_merge == true and .delete_branch_on_merge == true'
-  if [ "$CFG_SHA_PINNING_REQUIRED" = true ]; then
-    if gh_read "repos/$O/$r/actions/permissions"; then check "$O/$r requires SHA-pinned actions" '.sha_pinning_required == true'
-    else fail "$O/$r Actions permissions readable (HTTP $GH_HTTP)"; fi
+  if sel repos; then
+    pass "$O/$r exists"
+    check "$O/$r is $want" "(if .visibility then .visibility elif .private then \"private\" else \"public\" end) == \"$want\""
   fi
-  if gh_read "repos/$O/$r/actions/permissions/workflow"; then
-    check "$O/$r default workflow token is read-only and cannot approve" '.default_workflow_permissions == "read" and .can_approve_pull_request_reviews == false'
-  else fail "$O/$r workflow token settings readable (HTTP $GH_HTTP)"; fi
-  if [ "$want" = public ]; then
-    if gh_read "repos/$O/$r/actions/permissions/fork-pr-contributor-approval"; then
-      check "$O/$r fork runs need approval for all outside collaborators" '.approval_policy == "all_external_contributors"'
-    else fail "$O/$r fork approval readable (HTTP $GH_HTTP)"; fi
-  else
-    skp "$O/$r fork run approval (private repo)"
+  if sel settings; then
+    check "$O/$r merge settings: merge commit only, auto-merge, delete branch on merge" \
+      '.allow_merge_commit == true and .allow_squash_merge == false and .allow_rebase_merge == false and .allow_auto_merge == true and .delete_branch_on_merge == true'
+    if [ "$CFG_SHA_PINNING_REQUIRED" = true ]; then
+      if gh_read "repos/$O/$r/actions/permissions"; then check "$O/$r requires SHA-pinned actions" '.sha_pinning_required == true'
+      else fail "$O/$r Actions permissions readable (HTTP $GH_HTTP)"; fi
+    fi
+    if gh_read "repos/$O/$r/actions/permissions/workflow"; then
+      check "$O/$r default workflow token is read-only and cannot approve" '.default_workflow_permissions == "read" and .can_approve_pull_request_reviews == false'
+    else fail "$O/$r workflow token settings readable (HTTP $GH_HTTP)"; fi
+    if [ "$want" = public ]; then
+      if gh_read "repos/$O/$r/actions/permissions/fork-pr-contributor-approval"; then
+        check "$O/$r fork runs need approval for all outside collaborators" '.approval_policy == "all_external_contributors"'
+      else fail "$O/$r fork approval readable (HTTP $GH_HTTP)"; fi
+    else
+      skp "$O/$r fork run approval (private repo)"
+    fi
   fi
-  if gh_read "repos/$O/$r/labels?per_page=100"; then
-    for entry in "${LABELS[@]}"; do l=${entry%%|*}; check "$O/$r has label $l" "any(.[]; .name == \"$l\")"; done
-  else fail "$O/$r labels readable (HTTP $GH_HTTP)"; fi
+  if sel labels; then
+    if gh_read "repos/$O/$r/labels?per_page=100"; then
+      for entry in "${LABELS[@]}"; do l=${entry%%|*}; check "$O/$r has label $l" "any(.[]; .name == \"$l\")"; done
+    else fail "$O/$r labels readable (HTTP $GH_HTTP)"; fi
+  fi
 done
 
 for entry in "${ENVIRONMENTS[@]}"; do
+  sel environments || break
   IFS='|' read -r r e rev _src optional <<<"$entry"
   if [ "$optional" = yes ] && [ "$WITH_OPTIONAL" = 0 ]; then skp "$O/$r environment $e (optional)"; continue; fi
   if ! env_available "$r"; then skp "$O/$r environment $e (private repo on PLAN=free)"; continue; fi
@@ -129,6 +172,7 @@ for entry in "${ENVIRONMENTS[@]}"; do
 done
 
 for r in "${FLEET_REPOS[@]}"; do
+  sel rulesets || sel required-checks || break
   [ "${EXISTS[$r]:-0}" = 1 ] || continue
   if ! rulesets_apply_here "$r"; then skp "$O/$r rulesets (private repo on PLAN=free)"; continue; fi
   for name in "${RULESET_NAMES[@]}"; do
@@ -151,6 +195,7 @@ has_name() { # kind repo env name
 for entry in "${APPS[@]}"; do
   IFS='|' read -r app _perms _inst r e var sec key optional <<<"$entry"
   [ -n "${APP_PHASE[$app]:-}" ] || die "verify.sh has no phase for the $app App"
+  sel "apps:$app" || continue
   if ! due "${APP_PHASE[$app]}"; then skp "$app App (phase ${APP_PHASE[$app]}, after phase $PHASE)"; continue; fi
   cfg=CFG_$key
   if [ "$optional" = yes ] && [ -z "${!cfg}" ] && [ "$WITH_OPTIONAL" = 0 ]; then skp "$app App (optional)"; continue; fi
@@ -163,6 +208,7 @@ done
 for entry in "${OTHER_VALUES[@]}"; do
   IFS='|' read -r r e kind name _src <<<"$entry"
   [ -n "${VALUE_PHASE[$e]:-}" ] || die "verify.sh has no phase for environment $e's values"
+  sel "values:$e" || continue
   if ! due "${VALUE_PHASE[$e]}"; then skp "$O/$r environment $e $kind $name (phase ${VALUE_PHASE[$e]}, after phase $PHASE)"; continue; fi
   if ! env_available "$r"; then skp "$O/$r environment $e $kind $name (private repo on PLAN=free)"; continue; fi
   [ "${EXISTS[$r]:-0}" = 1 ] || continue
@@ -171,6 +217,7 @@ done
 
 declare -A REPO_VARS
 for entry in "${REPO_VARIABLES[@]}"; do
+  sel variables || break
   IFS='|' read -r r name src <<<"$entry"
   want=$(repo_variable_value "$src")
   if [ -z "$want" ]; then skp "$O/$r variable $name (${src#cfg:} is empty in fleet.env)"; continue; fi
