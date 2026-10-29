@@ -83,7 +83,10 @@ jobs:
       - name: Verify only manifest paths changed
         id: paths
         # Path allowlist: dependency manifests/lockfiles (any directory) plus
-        # workflow YAML. Dependabot never touches anything else, so a diff
+        # workflow YAML and the workflow action lockfile
+        # (.github/workflows/actions.lock, which Dependabot rewrites alongside
+        # each action bump since ADR 0024; #296 failed here on 2026-10-27
+        # without it). Dependabot never touches anything else, so a diff
         # outside this list means either a misconfiguration or a tampered
         # branch — either way, refuse to auto-merge. Inline port of
         # cms-platform's scripts/check-dependabot-manifest-paths.sh; keep in
@@ -125,6 +128,7 @@ jobs:
               pyproject.toml|*/pyproject.toml|poetry.lock|*/poetry.lock) ;;
               requirements*.txt|*/requirements*.txt) ;;
               .github/workflows/*.yml|.github/workflows/*.yaml) ;;
+              .github/workflows/actions.lock) ;;
               *)
                 echo "::error file=$f::Dependabot PR touches non-manifest path: $f"
                 REJECT=1
@@ -297,15 +301,60 @@ jobs:
             BLOCKED_CAUSE="the base branch policy refused the merge, and its pull_request rule does not set require_extra_approval_for_unattributed_changes -- so look instead for a required review, a required status check that nothing reports, or a second ruleset on this branch (GitHub enforces the union)."
           }
 
+          # Read a PR through `gh pr view --json <fields>` and re-read while
+          # GitHub still reports `mergeable` as UNKNOWN. GitHub computes
+          # `mergeable` (and with it `mergeStateStatus`) lazily: the first
+          # read after the base branch moves answers UNKNOWN and only
+          # STARTS the background computation. Treating that first answer
+          # as final stranded #296: the 2026-10-29 sweep logged
+          # "skip #296 — mergeable=UNKNOWN", and a read half an hour later
+          # answered at once. So: at most 6 re-reads, 10 seconds apart, then give
+          # up and let the caller treat it as not ready. Sets READ_JSON to
+          # the last read and READ_POLLS to the number of re-reads made.
+          # Port of skills-evals' read_pr; `sleep` is an external command
+          # so a test can stub it.
+          read_pr() {
+            local num="$1" fields="$2" state
+            READ_POLLS=0
+            READ_JSON=""
+            if ! READ_JSON=$(gh pr view "$num" --json "$fields"); then
+              READ_JSON=""
+              return 1
+            fi
+            while true; do
+              state=$(jq -r '.mergeable // empty' <<<"$READ_JSON" 2>/dev/null) || state=""
+              if [ "$state" != "UNKNOWN" ] || [ "$READ_POLLS" -ge 6 ]; then
+                break
+              fi
+              READ_POLLS=$((READ_POLLS + 1))
+              sleep 10
+              if ! READ_JSON=$(gh pr view "$num" --json "$fields"); then
+                READ_JSON=""
+                return 1
+              fi
+            done
+            return 0
+          }
+
           for num in "${PR_NUMBERS[@]}"; do
-            pr_json=$(gh pr view "$num" --json number,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup)
+            # An unreadable PR still fails the run loudly, as it did when
+            # this was a bare `gh pr view` under `set -e`.
+            if ! read_pr "$num" number,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup; then
+              echo "::error::could not read #${num} with gh pr view"
+              exit 1
+            fi
+            pr_json="$READ_JSON"
             mergeable=$(jq -r '.mergeable' <<<"$pr_json")
             merge_state=$(jq -r '.mergeStateStatus' <<<"$pr_json")
             base=$(jq -r '.baseRefName' <<<"$pr_json")
             head_sha=$(jq -r '.headRefOid' <<<"$pr_json")
 
             if [ "$mergeable" != "MERGEABLE" ]; then
-              echo "skip #${num} — mergeable=${mergeable} (not ready to merge; will be re-evaluated on the next sweep)"
+              unknown_note=""
+              if [ "$mergeable" = "UNKNOWN" ]; then
+                unknown_note="; still UNKNOWN after ${READ_POLLS} re-reads"
+              fi
+              echo "skip #${num} — mergeable=${mergeable} (not ready to merge; will be re-evaluated on the next sweep)${unknown_note}"
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
@@ -384,6 +433,7 @@ jobs:
                 pyproject.toml|*/pyproject.toml|poetry.lock|*/poetry.lock) ;;
                 requirements*.txt|*/requirements*.txt) ;;
                 .github/workflows/*.yml|.github/workflows/*.yaml) ;;
+                .github/workflows/actions.lock) ;;
                 *)
                   echo "::warning::#${num} touches non-manifest path on re-check: $f"
                   REJECT=1
