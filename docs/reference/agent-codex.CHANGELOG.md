@@ -30,6 +30,25 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-29 — 0.165.0 through 0.165.0
+
+- **Checked:** 2026-10-29T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.165.0](https://github.com/openai/codex/releases/tag/rust-v0.165.0), published 2026-10-27T20:09Z
+- **Window:** 0.165.0 (published 2026-10-27T20:09Z), the first stable release after 0.164.0: 1 stable release, 12 highlight bullets (only the one in group 1 is indexed). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.164.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep (local checkouts present).
+
+#### 1. Memory v2 default for fresh profiles
+
+- [0.165.0](https://github.com/openai/codex/releases/tag/rust-v0.165.0), published 2026-10-27T20:09Z (bullet 0.165.0/5)
+  ```text
+  Enabled memory v2 by default for fresh profiles and added support for importing external-agent memories into it. (#56211, #56414)
+  ```
+
+**Issues:** [_agent-guidance#363](https://github.com/Adam-S-Daniel/_agent-guidance/issues/363) (`agent-ready`).
+
+No other group met the name-the-surface bar. A fleet grep for `memory v2`, `memories_v2`, `model_provider` and `gpt-6` found Codex memory references only in `_agent-guidance` (`scripts/audit-codex-memory.py`, ADR 0015, `test/fixtures/build-codex-memory.py`, covered by group 1) and `wsl-automation`'s Codex cloud-environment sync, which names no changed setting. The other highlights (built-in Google Cloud Vertex AI provider, GPT-6.1 Terra in the model catalogs, session-picker repository filter, experimental attached thread forks, reasoning-effort changes mid-conversation, and fixes to TUI approval-reviewer defaults, MCP request cancellation, queued agent messages, model-not-found retries and marketplace URL validation) touch no command line, setting or documented behavior in the fleet. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not contradicted or fixed by any bullet (the import bullet concerns memory v2, not session availability) and stays open. Claude Code: no stable release after 2.1.312.
+
 ### 2026-10-24 — 0.164.0 through 0.164.0
 
 - **Checked:** 2026-10-24T01:20Z, [release log](https://github.com/openai/codex/releases)
