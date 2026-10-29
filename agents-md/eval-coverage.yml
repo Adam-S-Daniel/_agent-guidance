@@ -78,7 +78,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/read-before-you-start/
-  bytes: 491
+  bytes: 295
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection

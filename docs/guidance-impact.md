@@ -52,7 +52,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-29 — read-before-you-start — edit
 - Motivation: 2026-10-28/29, a cms-platform session got 403 from the code scanning alerts API and neither GitHub MCP server has a code scanning tool; the owner asked for the workaround to be recorded here.
-- Change: a third pointer, to docs/reference/code-scanning-alerts.md (first a read-only `gh api` call through a Remote Control session on the owner's device, then a pinned local CodeQL run as the fallback); section 342 -> 491 bytes.
+- Change: a third pointer, to docs/reference/code-scanning-alerts.md (first a read-only `gh api` call through a Remote Control session on the owner's device, then a pinned local CodeQL run as the fallback). The full build sat 2 bytes under the 29696-byte Codex budget, so the three pointers now share one base URL and name their files, instead of three full URLs; section 342 -> 295 bytes.
 - Eval: skills-evals fixture not re-run for this bullet; the technique itself was checked on cms-platform, device route 37/37 alerts read and the local CodeQL fallback matching 37/37 by rule and file.
 - Outcome: pending
 
