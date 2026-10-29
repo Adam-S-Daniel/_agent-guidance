@@ -61,11 +61,16 @@ def git(*args: str) -> None:
     subprocess.run(["git", *args], check=True, stdout=subprocess.DEVNULL)
 
 
+def _default_self():
+    """The checkout of the repo holding the kit; None in a copy too shallow to have one."""
+    return export.KIT.parents[2] if len(export.KIT.parents) > 2 else None
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--owner", required=True, help="the GitHub owner the sources are fetched from")
     ap.add_argument("--dest", required=True, type=Path, help="the folder to fetch into (export.py --sources)")
-    ap.add_argument("--self", dest="self_path", type=Path, default=export.KIT.parents[2],
+    ap.add_argument("--self", dest="self_path", type=Path, default=_default_self(),
                     help="the checkout of the repo holding the kit (default: this one)")
     ap.add_argument("--skip", nargs="*", default=[], help="manifest repo names to leave out")
     args = ap.parse_args(argv)
@@ -76,6 +81,9 @@ def main(argv=None) -> int:
         wanted = plan(export.load_manifests(), args.skip)
     except export.ExportError as exc:
         print(f"fetch_sources.py: {exc}", file=sys.stderr)
+        return 2
+    if args.self_path is None:
+        print("fetch_sources.py: this copy of the kit is not inside the repo it came from; pass --self", file=sys.stderr)
         return 2
     self_path = args.self_path.resolve()
     self_name = export.KIT.parents[2].name

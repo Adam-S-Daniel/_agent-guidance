@@ -90,7 +90,8 @@ The workflows mint short-lived tokens from six Apps; nothing uses a personal
 token. `bootstrap/create-apps.sh` creates each through GitHub's App
 manifest flow: it writes `app-manifests/<app>.html`, you open it in a
 browser signed in as the owner and click Create, and paste back the URL
-GitHub redirects to. The script records the App id in `fleet.env` first,
+GitHub redirects to (`http://127.0.0.1/?code=...`: the page cannot load, so
+copy it from the address bar; the one-time code never goes to another site). The script records the App id in `fleet.env` first,
 then stores the client id and private key where the workflows read them,
 on stdin, never printed.
 

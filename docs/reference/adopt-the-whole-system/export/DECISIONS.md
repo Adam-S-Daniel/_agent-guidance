@@ -713,18 +713,13 @@ or an overlay, never by editing a starter tree.
   than `0+`, the left-out platform repo's name and email addresses. Only
   P2 citation spans, `export/manifests/` (the substitution rules must spell
   what they replace) and two counted per-file allowances are exempt.
-- Private details (the owner's mail domain, family names, the source's
-  Anthropic organization id) are not in
-  the kit at all, so they cannot be in the test either. The test reads
+- Private details (personal details that appear in no source repo) are not
+  in the kit at all, so they cannot be in the test either. The test reads
   them at run time from `PRIVACY_DENYLIST` or `PRIVACY_DENYLIST_FILE`
   (outside the kit), the registry's `check_privacy_denylist.py` format, and
   reports hits as `path:line: pattern #N` only. With no list it fails when
   `CI=true` and is skipped locally; a planted-token test proves it can fail
-  and that it never prints the match. The manifest rules that spelled two
-  private literals were removed: the mail domain had no use left, and the
-  family member's first name in the skills-evals miner test is replaced by
-  an AST patch (`patches/skills-evals/owner_constants.py`) that renames
-  the test's owner constants without spelling them.
+  and that it never prints the match.
 - C12 gains three common substitution rules: a numeric noreply id before a
   source login becomes `0+`; the numeric id written beside the source
   owner's login becomes `<user id>`; and the short claude.ai artifact form
@@ -985,3 +980,104 @@ A bootstrap test holds the skill's `--mark` paragraphs to `ask` steps.
   unsearchable-child tests fail as well. The second also fails when the
   clone sits under a directory `nobody` cannot traverse, such as a 0700
   temp dir. Neither is a kit defect, so neither is excused.
+
+## Third review fixes (2026-10-29)
+
+What a third review found, and how each is carried out. Departures from
+the entries above are marked **Departure**.
+
+### A copy of the kit in a shallow folder works
+
+`export.py` computed `DEFAULT_SOURCES = KIT.parents[3]` at import, which
+raised `IndexError` in a copy with fewer than four ancestors (`~/adopt-kit`
+is `/home/u/adopt-kit`), and `run_suites.py` imports it, so every suite
+failed in the README's own copy-out path. `fetch_sources.py` (`parents[2]`)
+and `test_kit_tracked.py` had the same flaw. Now `DEFAULT_SOURCES` is
+`None` when the ancestor is missing; `export.py` with no `--sources` and no
+`KIT_EXPORT_SOURCES` exits 2 with a message saying so, and `fetch_sources.py`
+asks for `--self`. `run-all-tests.sh`'s export check still reports SKIP in a
+copy (it looks for the source checkouts itself). The LICENSE comparison runs
+only when the repo root is a git work tree holding the kit at
+`docs/reference/adopt-the-whole-system`, so a copy two folders below an
+unrelated `LICENSE` no longer compares against it.
+`test_a_copy_in_a_shallow_folder_still_imports` copies the entry points
+under `/tmp` and imports `export`, runs `export.py --check` (exit 2, the
+message) and `--help` of the other two scripts; it fails on the old code
+(`IndexError: 3`).
+
+### CI: a missing secret only fails when kit files changed
+
+GitHub passes no Actions secrets to a Dependabot- or fork-triggered
+`pull_request` run, and Dependabot's weekly github-actions bumps edit
+`ci.yml`, a salient path, so the step that failed closed on a blank
+`PRIVACY_DENYLIST` turned every such bump red. The detection step now also
+outputs `kit_changed` (files under the kit changed; true when it cannot
+tell). The check step, with the secret unset or blank:
+
+- fails closed when `kit_changed` is true (a leak scan over kit files that
+  checked nothing must not read as green), unless
+- the pull request's author is `dependabot[bot]` (read from
+  `$GITHUB_EVENT_PATH` with `jq`, never interpolated), which cannot add
+  personal data: warn;
+- when only `ci.yml` or `.gitignore` changed, warn.
+
+In both warning cases the public scan, the other export tests and
+`--check` still run; only the private half is skipped (`CI=false` for that
+run makes its test skip, as it does locally). `kit_changed` reaches the step
+through `env:`. **Departure:** a fork pull request that changes kit files
+still fails (it cannot be told from a maintainer's by anything but its
+secret), and is fixed by a maintainer pushing the branch. `test_ci_adoption_kit_step`
+locks the new output, the `env:` entry and each case on scratch event files.
+
+### No App id literal in the kit
+
+C12 says the kit spells neither of the source owner's App ids, but
+`patches/repo-settings/kit_config.py` and `manifests/skills-evals.yml` did.
+The patch now finds both from `fleet.yml`'s own comments by shape
+(`agents-md-sync GitHub App (App id N)`, `(App id N). GitHub checks
+--match-head-commit`) and puts them into its old texts at run time; the
+skills-evals ADR's id is a substitution rule matched by its context
+("-roster`, App id N) and"). The exported trees are byte-identical
+(`export.py --check`).
+
+### The App manifest redirects to this machine
+
+`create-apps.sh` used `https://example.com/` as `redirect_url`, which sends
+the one-time manifest `code` (convertible into the App's private key) to a
+host the adopter does not control. It is `http://127.0.0.1/` now: nothing
+listens, the browser shows a connection error, and the adopter copies the
+URL from the address bar. The prompt, the script header and
+`docs/settings-and-apps.md` say so; a bootstrap test holds the manifest's
+`redirect_url`.
+
+### Running the tests as root
+
+The README gave only the `--user --map-current-user` form, which as root
+leaves `nobody` unmapped (see "Not changed" above). It and the starter
+README give both forms and say `known-failures.txt` is calibrated for the
+root form (measured as root).
+
+### `OWNER_NAME` takes no apostrophe
+
+The name lands in single-quoted shell
+(`publish-waiting-feed.sh`) and PowerShell (`WslAutomation.psd1`) strings.
+`bootstrap/lib/common.sh` and `bootstrap/lib/substitute.py` now refuse
+`'`, with a message; bootstrap tests check both.
+
+### The root `.gitignore` clears the whole kit
+
+The two negations (`bin/*`, `*.log`) left the VisualStudio rules'
+`[Ll]ogs/`, `out/`, `artifacts/`, `x64/`, `Debug/` and others still
+dropping exported files. One negation, `!/docs/reference/adopt-the-whole-system/**`,
+re-includes everything (it matches the excluded directories themselves, so
+git looks inside them); four rules after it put the junk back
+(`__pycache__/`, `*.py[cod]`, `node_modules/`, `.pytest_cache/`). Each tree's
+own `.gitignore` still applies inside it. `test_the_real_root_gitignore_clears_everything_under_the_kit`
+runs the repo's real file on a scratch repo (it fails on the old one).
+
+### Smaller
+
+- agentskills' `skills.lock` step used GNU `sed -i`; it is a `python3 -I -c`
+  replacement now (BSD `sed -i` takes a suffix argument).
+- The line above listing the owner's private details was cut to a generic
+  sentence, and its pointer to a public test dropped.

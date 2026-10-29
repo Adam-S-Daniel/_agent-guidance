@@ -211,9 +211,20 @@ assert_eq "create-apps dry run makes no write calls" "$(since "$n")" 0
 assert_not "a dry run writes no manifest file, nor their folder" test -e "$T/manifests"
 for a in "${APPS[@]}"; do assert "dry run names the $a manifest form it would write" has "$OUT" "DRY-RUN: write $T/manifests/$a.manifest.json"; done
 assert_not "the dry run records no App id" grep -q '_APP_ID=[0-9]' "$CFGP"
+# OWNER_NAME lands in single-quoted shell and PowerShell strings in the starter,
+# so an apostrophe is refused (config loader and substitute.py both).
+CFGQ="$T/fleet-apostrophe.env"; new_config "$CFGQ" paid; sed -i "s/^OWNER_NAME=.*/OWNER_NAME=O'Brien/" "$CFGQ"
+run bash "$B/create-apps.sh" --config "$CFGQ" --dry-run --out "$T/manifests-q"; rc=$?
+assert_eq "an OWNER_NAME with an apostrophe is refused" "$rc" 1
+assert "the refusal names OWNER_NAME and the apostrophe" has "$ERR" "invalid value for OWNER_NAME"
+assert "the refusal says no apostrophe" has "$ERR" "no apostrophe"
+mkdir -p "$T/subst-q"; echo "Example Adopter" > "$T/subst-q/a.txt"
+run python3 -I "$B/lib/substitute.py" "$T/subst-q" --owner "$O" --name "O'Brien"; rc=$?
+assert_eq "substitute.py refuses a name with an apostrophe" "$rc" 1
+assert "substitute.py says why" has "$ERR" "no apostrophe"
 printf 'not a code!\n' | run bash "$B/create-apps.sh" --config "$CFGP" --out "$T/manifests" roster; rc=$?
 assert_eq "a malformed code is refused" "$rc" 1
-printf 'https://example.com/?code=abc&state=0000\n' | run bash "$B/create-apps.sh" --config "$CFGP" --out "$T/manifests" roster; rc=$?
+printf 'http://127.0.0.1/?code=abc&state=0000\n' | run bash "$B/create-apps.sh" --config "$CFGP" --out "$T/manifests" roster; rc=$?
 assert_eq "a redirect URL from another run's form is refused" "$rc" 1
 assert "the state mismatch is named" has "$ERR" "does not match this run's manifest"
 
@@ -225,6 +236,7 @@ assert_eq "a fleet-wide App is public when there are two owners" "$(jq -r .publi
 assert_eq "an App on one owner's repos stays private" "$(jq -r .public "$T/manifests/registry-read.manifest.json")" false
 assert_eq "settings-admin has the owner's permissions" "$(jq -c .default_permissions "$T/manifests/settings-admin.manifest.json")" \
   '{"administration":"write","actions":"write","issues":"write","metadata":"read"}'
+assert_eq "the manifest redirects to this machine, not a third-party host" "$(jq -r .redirect_url "$T/manifests/guidance-sync.manifest.json")" "http://127.0.0.1/"
 assert "the form escapes the manifest into an attribute" grep -q 'name="manifest" value="{&quot;name&quot;' "$T/manifests/guidance-sync.html"
 for k in GUIDANCE_SYNC SETTINGS_ADMIN SETTINGS_READ EVAL_IMPROVE ROSTER_WRITER REGISTRY_READ; do
   assert "fleet.env records ${k}_APP_ID" grep -qE "^${k}_APP_ID=9000[0-9]{2}$" "$CFGP"

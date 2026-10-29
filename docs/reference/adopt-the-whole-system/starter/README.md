@@ -30,7 +30,9 @@ account; [`../export/REGENERATE.md`](../export/REGENERATE.md) lists them and
 unshare --user --map-current-user --pid --fork --mount-proc -- bash run-all-tests.sh
 ```
 
-(As root, `unshare --pid --fork --mount-proc --`.) It runs each export's own
+(As root, `unshare --pid --fork --mount-proc --`; `known-failures.txt` is
+calibrated for that form, and under the mapped user namespace as root some
+ids report as `ERROR` instead of `FAIL`, so they are not excused.) It runs each export's own
 suite through `../export/run_suites.py`, which copies the folder to a
 temporary directory, makes it a git repo where the suite reads its history,
 runs the repo's own setup and test command in a PID namespace, and prints

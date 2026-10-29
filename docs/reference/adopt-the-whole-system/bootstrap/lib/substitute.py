@@ -49,7 +49,7 @@ import re
 import sys
 
 LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
-NAME = re.compile(r"[A-Za-z0-9 .'-]{1,80}")
+NAME = re.compile(r"[A-Za-z0-9 .-]{1,80}")   # no ': it lands in single-quoted shell and PowerShell strings
 NOREPLY = re.compile(r"[0-9]{1,12}\+[A-Za-z0-9-]{1,39}@users\.noreply\.github\.com")
 TWO_FORMS = ("example-adopter-two", "EXAMPLE_ADOPTER_TWO", "example_adopter_two")
 LEFTOVER = re.compile(r"(?i)example[-_ ]adopter")
@@ -249,7 +249,8 @@ def main(argv=None):
         sys.exit("ERROR: an owner must be a plain GitHub login")
     name = a.name or a.owner
     if not NAME.fullmatch(name):
-        sys.exit("ERROR: the name may hold only letters, digits, spaces and . ' -")
+        sys.exit("ERROR: the name may hold only letters, digits, spaces, . and - (no apostrophe: "
+                 "it would end a single-quoted string in the starter's scripts)")
     if a.noreply and not NOREPLY.fullmatch(a.noreply):
         sys.exit("ERROR: --noreply must be <id>+<login>@users.noreply.github.com")
     for login in (a.owner, a.owner_two):

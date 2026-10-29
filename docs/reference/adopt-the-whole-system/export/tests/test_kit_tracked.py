@@ -80,13 +80,25 @@ def test_an_ignored_file_is_reported(tmp_path):
     assert untracked_files(repo / "kit") == []
 
 
+def _kit_is_at_its_place_in(root: Path) -> bool:
+    top = _git(root, "rev-parse", "--show-toplevel")
+    return (top.returncode == 0 and Path(top.stdout.decode().strip()).resolve() == root.resolve()
+            and root.resolve() / "docs" / "reference" / "adopt-the-whole-system" == KIT.resolve())
+
+
 def test_the_kit_carries_its_repos_license():
     """The README links LICENSE inside the kit, so a copied-out kit keeps it.
 
     Inside the repo it came from, the copy must stay that repo's license.
     """
     assert (KIT / "LICENSE").is_file()
-    repo_license = KIT.parents[2] / "LICENSE"
+    root = KIT.parents[2] if len(KIT.parents) > 2 else None
+    # Only the repo the kit came in has a LICENSE worth comparing: its root is a
+    # git work tree and holds this kit at its place. An unrelated LICENSE two
+    # folders up from a copy is not that.
+    if root is None or not _kit_is_at_its_place_in(root):
+        pytest.skip("the kit is not inside the repo it came from")
+    repo_license = root / "LICENSE"
     if not repo_license.is_file():
         pytest.skip("the kit is not inside the repo it came from")
     assert (KIT / "LICENSE").read_bytes() == repo_license.read_bytes()
@@ -125,3 +137,61 @@ def test_check_reads_what_git_tracks_not_the_disk(tmp_path):
     assert "content differs: a.txt" in problems
     assert export.diff_trees({"gone.txt": export.Entry(data=b"x")}, {}) == ["only in the committed tree: gone.txt"]
     assert export.read_index_tree(tmp_path / "nowhere" / "t") is None
+
+
+def test_a_copy_in_a_shallow_folder_still_imports():
+    """KIT.parents[3] / [2] raised IndexError at import in a copy near the filesystem root.
+
+    The copy lives directly under /tmp (two ancestors), so the module-level
+    lookups would fail; every entry point must still start, and export.py must
+    say it has no sources instead of crashing.
+    """
+    import shutil
+    import sys
+    import tempfile
+    base = Path("/tmp")
+    if not base.is_dir() or not os.access(base, os.W_OK):
+        pytest.skip("/tmp is not available for a shallow copy")
+    copy = Path(tempfile.mkdtemp(dir=base, prefix="kit-shallow-"))
+    try:
+        assert len(copy.parents) <= 3
+        (copy / "export").mkdir()
+        for script in (KIT / "export").glob("*.py"):   # the entry points only; the overlay holds dangling links
+            shutil.copy2(script, copy / "export" / script.name)
+        env = {k: v for k, v in os.environ.items() if k != "KIT_EXPORT_SOURCES"}
+        py = [sys.executable, "-B"]
+        imp = subprocess.run([*py, "-c", "import sys; sys.path.insert(0, 'export'); import export; "
+                              "assert export.DEFAULT_SOURCES is None"],
+                             cwd=copy, capture_output=True, text=True, env=env)
+        assert imp.returncode == 0, imp.stderr
+        chk = subprocess.run([*py, "export/export.py", "--check"], cwd=copy, capture_output=True, text=True, env=env)
+        assert chk.returncode == 2 and "no source checkouts" in chk.stderr, (chk.returncode, chk.stderr)
+        for script in ("run_suites.py", "fetch_sources.py"):
+            h = subprocess.run([*py, f"export/{script}", "--help"], cwd=copy, capture_output=True, text=True, env=env)
+            assert h.returncode == 0, (script, h.stderr)
+    finally:
+        shutil.rmtree(copy, ignore_errors=True)
+
+
+def test_the_real_root_gitignore_clears_everything_under_the_kit(tmp_path):
+    """The repo's own .gitignore (VisualStudio rules and all) drops nothing under the kit but junk."""
+    top = _git(KIT, "rev-parse", "--show-toplevel")
+    root = Path(top.stdout.decode().strip()) if top.returncode == 0 else None
+    if root is None or not _kit_is_at_its_place_in(root) or not (root / ".gitignore").is_file():
+        pytest.skip("the kit is not inside the repo it came from")
+    rel = "docs/reference/adopt-the-whole-system"
+    repo = tmp_path / "repo"
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    (repo / ".gitignore").write_bytes((root / ".gitignore").read_bytes())
+    kept = ["starter/x/Logs/a.txt", "starter/x/log/a.txt", "out/a", "artifacts/a", "x64/a", "x86/a", "Debug/a",
+            "Release/a", "obj/a", "bin/a", "seed/bin/gh", "a.log", "Build/a", "starter/x/TestResults/a"]
+    junk = ["x/__pycache__/a.pyc", "a.pyc", "x/node_modules/p/i.js", "x/.pytest_cache/v"]
+    for name in kept + junk:
+        path = repo / rel / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+    tracked = {p.decode() for p in _git(repo, "ls-files", "-z").stdout.split(b"\0") if p}
+    assert {f"{rel}/{n}" for n in kept} - tracked == set(), "kit files the root .gitignore still drops"
+    assert not [t for t in tracked if "__pycache__" in t or t.endswith(".pyc") or "node_modules" in t or ".pytest_cache" in t]

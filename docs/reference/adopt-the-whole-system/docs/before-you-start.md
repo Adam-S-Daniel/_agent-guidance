@@ -55,7 +55,7 @@ cp bootstrap/fleet.env.example fleet.env
 | `OWNER_TYPE` | `user` or `org` (default `user`). An org creates Apps under `organizations/<OWNER>/settings/apps`. |
 | `PLAN` | `free` or `paid`. Required. |
 | `REVIEWER` | Who approves `fleet-apply` and `plugin-runtime-review` (default `OWNER`). |
-| `OWNER_NAME` | Fills `Example Adopter` and `<your name>` in public plugin manifests and notices (default `OWNER`). Use a public handle, never your legal name: the privacy check would trip on it. |
+| `OWNER_NAME` | Fills `Example Adopter` and `<your name>` in public plugin manifests and notices (default `OWNER`). Letters, digits, spaces, `.` and `-` only (no apostrophe). Use a public handle, never your legal name: the privacy check would trip on it. |
 | `VISIBILITY_AGENT_GUIDANCE`, `VISIBILITY_SKILLS_EVALS`, `VISIBILITY_WSL_AUTOMATION` | Paid plan only: `public` (default) or `private`. |
 | `APP_NAME_PREFIX` | Apps are named `<prefix>-<app>` (default `OWNER` lowercased). App names are unique across GitHub, at most 34 characters. |
 | `REPOS_DIR` | Where `install-machine.sh` keeps its clones (default `~/repos`). |

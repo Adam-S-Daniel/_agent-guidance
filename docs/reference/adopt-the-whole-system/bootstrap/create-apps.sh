@@ -31,8 +31,11 @@
 # For each App it writes DIR/<app>.manifest.json and DIR/<app>.html (default
 # DIR: ./app-manifests). Open the HTML file in a browser signed in as the
 # owner; it posts the manifest to GitHub's "new App" page. Click Create, and
-# GitHub redirects to https://example.com/?code=...&state=... Paste that URL
-# (or just the code) at the prompt. The script exchanges the code
+# GitHub redirects to http://127.0.0.1/?code=...&state=... Nothing listens
+# there, so the browser shows a connection error: copy the URL from the
+# address bar and paste it (or just the code) at the prompt. The redirect goes
+# to this machine, never to a third-party site, because the one-time code can
+# be converted into the App's private key. The script exchanges the code
 # (gh api -X POST app-manifests/<code>/conversions), records the numeric App
 # id in fleet.env first (so a rerun never makes a second App), stores the
 # client id and the private key where the workflows read them (both on stdin
@@ -97,7 +100,7 @@ write_manifest() { # app perms name state public
       name: $name,
       url: ("https://github.com/" + $owner),
       hook_attributes: {url: "https://example.com/", active: false},
-      redirect_url: "https://example.com/",
+      redirect_url: "http://127.0.0.1/",
       public: $pub,
       default_permissions: $perms,
       default_events: []
@@ -124,7 +127,7 @@ PY
 # read_code <state>: prompt for the redirect URL or the bare code; set CODE.
 read_code() {
   local state=$1 answer got_state=""
-  printf 'Paste the URL GitHub redirected to (https://example.com/?code=...), or the code: ' >&2
+  printf 'Paste the address-bar URL GitHub redirected to (http://127.0.0.1/?code=..., the page itself fails to load), or the code: ' >&2
   IFS= read -r answer || die "no code given"
   [ -t 0 ] || printf '\n' >&2
   answer=${answer//[[:space:]]/}

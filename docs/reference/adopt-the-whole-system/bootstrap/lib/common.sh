@@ -91,7 +91,8 @@ _valid_value() { # key value
     OWNER|OWNER_TWO|REVIEWER) [[ $v =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] ;;
     OWNER_TYPE) [[ $v == user || $v == org ]] ;;
     PLAN) [[ $v == free || $v == paid ]] ;;
-    OWNER_NAME) [[ $v =~ ^[A-Za-z0-9\ .\'-]{0,80}$ ]] ;;
+    # No apostrophe: the name lands inside single-quoted shell and PowerShell strings.
+    OWNER_NAME) [[ $v =~ ^[A-Za-z0-9\ .-]{0,80}$ ]] ;;
     VISIBILITY_*) [[ $v == public || $v == private ]] ;;
     APP_NAME_PREFIX) [[ $v =~ ^[a-z0-9][a-z0-9-]{0,19}$ ]] ;;
     REPOS_DIR) [[ $v =~ ^(~|/)[A-Za-z0-9._/~-]{0,200}$ ]] ;;
@@ -120,7 +121,7 @@ load_config() { # path
     known=0
     for k in "${CONFIG_KEYS[@]}"; do [ "$k" = "$key" ] && known=1; done
     [ "$known" = 1 ] || die "$path:$n: unknown key $key"
-    _valid_value "$key" "$val" || die "$path:$n: invalid value for $key"
+    _valid_value "$key" "$val" || die "$path:$n: invalid value for $key$([ "$key" != OWNER_NAME ] || echo " (letters, digits, spaces, . and - only; no apostrophe, it ends a single-quoted string in the starter's scripts)")"
     printf -v "CFG_$key" '%s' "$val"
   done < "$path"
   [ -n "$CFG_OWNER" ] || die "$path: OWNER is required"

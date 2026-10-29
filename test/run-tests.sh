@@ -19564,7 +19564,9 @@ test_check_ci_shards() {
 # PRIVACY_DENYLIST secret) and `export.py --check`; before this step nothing
 # ran either. Pinned here: the step exists in `checks` (so the required
 # `test` context covers it), it is gated by the kit-changed detection step,
-# the secret reaches it through `env:` only, a missing secret fails it, and
+# the secret reaches it through `env:` only, a missing secret fails it when kit
+# files changed (and only warns for a Dependabot author or a change outside the
+# kit, where GitHub withholds secrets), and
 # the detection step's verdict on real git ranges. Structural reads go
 # through the yaml package, never a line scan.
 test_ci_adoption_kit_step() {
@@ -19594,6 +19596,7 @@ out.push("python-if " + (py && py.if !== undefined ? String(py.if) : "-"));
 out.push("order " + (detect && py && check && steps.indexOf(detect) < steps.indexOf(py) && steps.indexOf(py) < steps.indexOf(check) ? "ok" : "bad"));
 out.push("denylist-env " + ((check && check.env && check.env.PRIVACY_DENYLIST) || "-"));
 out.push("interpolates " + (check && /\$\{\{/.test(check.run) ? "yes" : "no") + " " + (detect && /\$\{\{/.test(detect.run) ? "yes" : "no"));
+out.push("kit-changed-env " + ((check && check.env && check.env.KIT_CHANGED) || "-"));
 out.push("runs-tests " + (check && check.run.includes("pytest \"$kit/export/tests\"") ? "yes" : "no"));
 fs.writeFileSync(process.argv[3] + "/detect.sh", detect ? detect.run : "exit 99\n");
 fs.writeFileSync(process.argv[3] + "/check.sh", check ? check.run : "exit 99\n");
@@ -19605,7 +19608,8 @@ console.log(out.join("\n"));
     local want
     for want in "detect found" "detect-if -" "check found" "check-if steps.kit.outputs.run == 'true'" \
             "python-if steps.kit.outputs.run == 'true'" "order ok" \
-            'denylist-env ${{ secrets.PRIVACY_DENYLIST }}' "interpolates no no" "runs-tests yes"; do
+            'denylist-env ${{ secrets.PRIVACY_DENYLIST }}' 'kit-changed-env ${{ steps.kit.outputs.kit_changed }}' \
+            "interpolates no no" "runs-tests yes"; do
         if grep -qxF -- "$want" "$facts"; then
             pass "adoption kit step: $want"
         else
@@ -19629,9 +19633,13 @@ console.log(out.join("\n"));
         git -C "$repo" add -A >/dev/null && git -C "$repo" -c user.name=t -c user.email=t@example.com commit -q -m "touch $1"
         git -C "$repo" rev-parse HEAD
     }
-    local path expect
-    for path in "docs/reference/adopt-the-whole-system/README.md:true" "README.md:false" ".gitignore:true" \
-            ".github/workflows/ci.yml:true" "docs/reference/other.md:false"; do
+    kit_changed_verdict() {  # the kit_changed= value the last kit_verdict wrote
+        sed -n 's/^kit_changed=//p' "$out"
+    }
+    local path expect expect_kit kit_verdict_value
+    for path in "docs/reference/adopt-the-whole-system/README.md:true:true" "README.md:false:false" ".gitignore:true:false" \
+            ".github/workflows/ci.yml:true:false" "docs/reference/other.md:false:false"; do
+        expect_kit=${path##*:}; path=${path%:*}
         expect=${path##*:}; path=${path%:*}
         git -C "$repo" checkout -q "$base" 2>/dev/null
         head=$(commit_touching "$path")
@@ -19642,9 +19650,17 @@ console.log(out.join("\n"));
         else
             fail "adoption kit step: a pull request touching $path should give run=$expect, got '$verdict'"
         fi
+        kit_verdict_value=$(kit_changed_verdict)
+        if [[ "$kit_verdict_value" == "$expect_kit" ]]; then
+            pass "adoption kit step: a pull request touching $path → kit_changed=$expect_kit"
+        else
+            fail "adoption kit step: a pull request touching $path should give kit_changed=$expect_kit, got '$kit_verdict_value'"
+        fi
     done
     printf '{"before":"%s","after":"%s"}' "0000000000000000000000000000000000000000" "$head" > "$ev"
     verdict=$(kit_verdict push)
+    if [[ "$(kit_changed_verdict)" == true ]]; then pass "adoption kit step: a push it cannot diff treats the kit as changed"
+    else fail "adoption kit step: a push it cannot diff should give kit_changed=true, got '$(kit_changed_verdict)'"; fi
     if [[ "$verdict" == true ]]; then pass "adoption kit step: a push with no before sha runs the checks"
     else fail "adoption kit step: a push with no before sha should run the checks, got '$verdict'"; fi
     echo '{}' > "$ev"
@@ -19655,7 +19671,7 @@ console.log(out.join("\n"));
     # A missing or blank secret fails closed before anything runs.
     local stub="$dir/stub" called="$dir/python-called" rc secret
     mkdir -p "$stub"
-    printf '#!/usr/bin/env bash\necho called >> "%s"\n' "$called" > "$stub/python3"; chmod +x "$stub/python3"
+    printf '#!/usr/bin/env bash\necho "called CI=${CI-unset}" >> "%s"\n' "$called" > "$stub/python3"; chmod +x "$stub/python3"
     for secret in "" " "; do
         rm -f "$called"; rc=0
         PRIVACY_DENYLIST="$secret" PATH="$stub:$PATH" bash -e "$dir/check.sh" > "$dir/check.out" 2>&1 || rc=$?
@@ -19663,6 +19679,31 @@ console.log(out.join("\n"));
             pass "adoption kit step: a blank PRIVACY_DENYLIST ('$secret') fails closed before any test runs"
         else
             fail "adoption kit step: a blank PRIVACY_DENYLIST ('$secret') should fail before python runs — exit $rc, python $( [[ -e "$called" ]] && echo ran || echo 'did not run')"
+        fi
+    done
+    # GitHub gives a Dependabot or fork run no secrets: with the kit untouched
+    # (only ci.yml or .gitignore changed) or a Dependabot author, the step warns
+    # and still runs the public scan and the export check, with the private
+    # half switched off (CI=false). Kit files changed by anyone else still fail.
+    local case_name kit_flag author_name expect_run
+    for case_name in "only-workflow:false:octocat:run" "dependabot-kit:true:dependabot[bot]:run" \
+            "human-kit:true:octocat:fail" "unknown-kit::octocat:fail" "dependabot-lookalike:true:dependabot-bot:fail"; do
+        IFS=: read -r _ kit_flag author_name expect_run <<<"$case_name"
+        printf '{"pull_request":{"user":{"login":"%s"}}}' "$author_name" > "$ev"
+        rm -f "$called"; rc=0
+        KIT_CHANGED="$kit_flag" GITHUB_EVENT_PATH="$ev" PRIVACY_DENYLIST="" RUNNER_TEMP="$dir" GITHUB_WORKSPACE="$REPO_ROOT" \
+            SOURCE_OWNER=example-owner CI=true PATH="$stub:$PATH" bash -e "$dir/check.sh" > "$dir/check.out" 2>&1 || rc=$?
+        if [[ "$expect_run" == run ]]; then
+            if [[ "$rc" -eq 0 && "$(wc -l < "$called" 2>/dev/null | tr -d ' ')" == 4 ]] \
+                    && ! grep -qv '^called CI=false$' "$called" && grep -qF -- "::warning::" "$dir/check.out"; then
+                pass "adoption kit step: no secret, ${case_name%%:*} → warns, runs all four commands with CI=false"
+            else
+                fail "adoption kit step: no secret, ${case_name%%:*} should warn and run with CI=false — exit $rc, calls $(cat "$called" 2>/dev/null | tr '\n' ' ')"
+            fi
+        elif [[ "$rc" -ne 0 && ! -e "$called" ]] && grep -qF -- "::error::" "$dir/check.out"; then
+            pass "adoption kit step: no secret, ${case_name%%:*} → fails closed before any test runs"
+        else
+            fail "adoption kit step: no secret, ${case_name%%:*} should fail closed — exit $rc, python $( [[ -e "$called" ]] && echo ran || echo 'did not run')"
         fi
     done
     rm -f "$called"; rc=0

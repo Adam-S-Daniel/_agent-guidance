@@ -74,10 +74,15 @@ budget, not on you ([what it costs](docs/before-you-start.md#what-it-costs)).
 ## Test the kit
 
 ```bash
+# as an ordinary user:
 unshare --user --map-current-user --pid --fork --mount-proc -- bash run-all-tests.sh
+# as root (a mapped user namespace leaves `nobody` unmapped, which breaks the
+# tests that drop privileges):
+unshare --pid --fork --mount-proc -- bash run-all-tests.sh
 ```
 
-It runs every export's own test suite, the bootstrap tests, the export's
+`starter/known-failures.txt` is calibrated for the root form; run as an
+ordinary user, a few ids differ. It runs every export's own test suite, the bootstrap tests, the export's
 own tests (the leak scan, and that git tracks every kit file) and
 `export/export.py --check`, and prints one PASS or FAIL line each. The
 export check needs the source repos checked out beside the repo the kit

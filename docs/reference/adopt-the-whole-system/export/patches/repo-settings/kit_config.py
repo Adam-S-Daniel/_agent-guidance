@@ -20,6 +20,7 @@ fleet.yml declares is in `kit_repos` (manifests/_common.yml).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -35,8 +36,15 @@ def _cut(text: str, start: str, end: str, where: str) -> str:
     return text[:i] + text[j:]
 
 
-def _sub(text: str, pairs, where: str) -> str:
+def _sub(text: str, pairs, where: str, ids=None) -> str:
+    """Replace each old text (exactly once) with its new one.
+
+    `@SYNC_ID@` and `@ROSTER_ID@` in an old text stand for the source's two
+    App ids, which `_app_ids` found by shape, so this file spells neither.
+    """
     for old, new in pairs:
+        for token, value in (ids or {}).items():
+            old = old.replace(token, value)
         n = text.count(old)
         if n != 1:
             raise SystemExit(f"kit_config: {where}: expected 1 of {old[:70]!r}, found {n}")
@@ -66,15 +74,15 @@ FLEET_CUTS = [
 FLEET_EDITS = [
     ("  # agentskills: the new public skills registry replacing agentskills\n  # above. Same policy shape",
      "  # agentskills: the public skills registry. Same policy shape"),
-    ("      # agents-md-sync GitHub App (App id 4268639): pushes the managed\n",
+    ("      # agents-md-sync GitHub App (App id @SYNC_ID@): pushes the managed\n",
      "      # agents-md-sync GitHub App (its App id is the GUIDANCE_SYNC_APP_ID\n"
      "      # variable; the adoption kit's DECISIONS C12): pushes the managed\n"),
-    ("        actor_id: 4268639\n",
+    ("        actor_id: @SYNC_ID@\n",
      '        actor_id: "${GUIDANCE_SYNC_APP_ID}"\n'),
-    ("      # (App id 5116415). GitHub checks --match-head-commit only when\n",
+    ("      # (App id @ROSTER_ID@). GitHub checks --match-head-commit only when\n",
      "      # (its App id is the ROSTER_WRITER_APP_ID variable). GitHub checks\n"
      "      # --match-head-commit only when\n"),
-    ('            - {actor_type: Integration, actor_id: 5116415, bypass_mode: always}\n',
+    ('            - {actor_type: Integration, actor_id: @ROSTER_ID@, bypass_mode: always}\n',
      '            - {actor_type: Integration, actor_id: "${ROSTER_WRITER_APP_ID}", bypass_mode: always}\n'),
 ]
 
@@ -134,7 +142,7 @@ SCHEMA_EDITS = [
      "  #                \"${NAME}\" to read it from the environment variable NAME\n"
      "  #                when the ruleset is rendered (an id that differs per\n"
      "  #                account; unset or not a positive integer is refused)\n"),
-    ('      - {actor_type: Integration, actor_id: 5116415, bypass_mode: always}\n',
+    ('      - {actor_type: Integration, actor_id: @ROSTER_ID@, bypass_mode: always}\n',
      '      - {actor_type: Integration, actor_id: "${ROSTER_WRITER_APP_ID}", bypass_mode: always}\n'),
 ]
 
@@ -240,7 +248,7 @@ TEST_EDITS = {
         self.assertEqual(len(by_value[("all",)]), 6)  # the kit's fleet (DECISIONS C11)'''),
         ("import repo_settings as rs\n\n\nADMIN = ",
          "import repo_settings as rs\n" + MODULE_ENV + "\n\nADMIN = "),
-        ("ROSTER_APP_ID = 5116415\n", "ROSTER_APP_ID = 900003  # KIT_APP_IDS above\n"),
+        ("ROSTER_APP_ID = @ROSTER_ID@\n", "ROSTER_APP_ID = 900003  # KIT_APP_IDS above\n"),
     ],
     "tests/test_required_checks.py": [
         ("import repo_settings as rs  # noqa: E402\n",
@@ -249,13 +257,31 @@ TEST_EDITS = {
 }
 
 
+def _app_ids(fleet_text: str) -> dict:
+    """The source's two App ids, found by their shape in fleet.yml.
+
+    The guidance sync App's is the id in "agents-md-sync GitHub App (App id N)"
+    and its `actor_id`; the roster App's is the id in "(App id N). GitHub
+    checks --match-head-commit". Neither number is written in this file.
+    """
+    found = {}
+    for token, rx in (("@SYNC_ID@", r"agents-md-sync GitHub App \(App id ([1-9][0-9]{4,11})\)"),
+                      ("@ROSTER_ID@", r"\(App id ([1-9][0-9]{4,11})\)\. GitHub checks --match-head-commit")):
+        m = re.findall(rx, fleet_text)
+        if len(m) != 1:
+            raise SystemExit(f"kit_config: fleet.yml: expected 1 App id after {token}'s comment, found {len(m)}")
+        found[token] = m[0]
+    return found
+
+
 def apply(root: Path, ctx) -> None:
     kit = set(ctx["common"]["kit_repos"])
     fleet = root / "repo-settings" / "fleet.yml"
     text = fleet.read_text(encoding="utf-8")
+    ids = _app_ids(text)
     for start, end in FLEET_CUTS:
         text = _cut(text, start, end, "fleet.yml")
-    text = _sub(text, FLEET_EDITS, "fleet.yml")
+    text = _sub(text, FLEET_EDITS, "fleet.yml", ids)
     fleet.write_text(text, encoding="utf-8")
     names = [e["name"] for e in yaml.safe_load(text)["repos"]]
     stray = sorted(n for n in names if n.split("/", 1)[1] not in kit)
@@ -264,20 +290,19 @@ def apply(root: Path, ctx) -> None:
 
     tests = root / "tests" / "test_repo_settings.py"
     text = tests.read_text(encoding="utf-8")
-    n = text.count("4268639")
-    if n == 0:
+    if text.count(ids["@SYNC_ID@"]) == 0:
         raise SystemExit("kit_config: test_repo_settings.py no longer names the sync App id")
-    tests.write_text(text.replace("4268639", "900001") + ENV_ID_TESTS, encoding="utf-8")
+    tests.write_text(text.replace(ids["@SYNC_ID@"], "900001") + ENV_ID_TESTS, encoding="utf-8")
     text = tests.read_text(encoding="utf-8")
     for start, end in TEST_CUTS:
         text = _cut(text, start, end, "tests/test_repo_settings.py")
     tests.write_text(text, encoding="utf-8")
     for rel, pairs in TEST_EDITS.items():
         p = root / rel
-        p.write_text(_sub(p.read_text(encoding="utf-8"), pairs, rel), encoding="utf-8")
+        p.write_text(_sub(p.read_text(encoding="utf-8"), pairs, rel, ids), encoding="utf-8")
 
     for rel, pairs in (("scripts/repo_settings.py", ENGINE_EDITS),
                        (".github/workflows/repo-settings.yml", WORKFLOW_EDITS),
                        ("repo-settings/schema.md", SCHEMA_EDITS)):
         p = root / rel
-        p.write_text(_sub(p.read_text(encoding="utf-8"), pairs, rel), encoding="utf-8")
+        p.write_text(_sub(p.read_text(encoding="utf-8"), pairs, rel, ids), encoding="utf-8")

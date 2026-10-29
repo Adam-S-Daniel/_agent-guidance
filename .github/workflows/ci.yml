@@ -362,7 +362,9 @@ jobs:
         run: |
           set -euo pipefail
           salient='^(docs/reference/adopt-the-whole-system/|\.gitignore$|\.github/workflows/ci\.yml$)'
+          kitonly='^docs/reference/adopt-the-whole-system/'
           run=""
+          kit_changed=""
           case "$GITHUB_EVENT_NAME" in
             pull_request)
               base=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
@@ -370,20 +372,23 @@ jobs:
             push)
               base=$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")
               head=$(jq -r '.after // empty' "$GITHUB_EVENT_PATH") ;;
-            *) base=""; head=""; run=true ;;
+            *) base=""; head=""; run=true; kit_changed=true ;;
           esac
           if [ -z "$run" ]; then
             if [[ "$base" =~ ^[0-9a-f]{40}$ && "$head" =~ ^[0-9a-f]{40}$ && "$base" != 0000000000000000000000000000000000000000 ]] \
                 && from=$(git merge-base "$base" "$head" 2>/dev/null) \
                 && changed=$(git diff --name-only "$from" "$head" 2>/dev/null); then
               if grep -qE -- "$salient" <<<"$changed"; then run=true; else run=false; fi
+              if grep -qE -- "$kitonly" <<<"$changed"; then kit_changed=true; else kit_changed=false; fi
             else
               echo "::notice::could not diff this event's range; running the adoption kit checks"
               run=true
+              kit_changed=true
             fi
           fi
-          echo "adoption kit checks: $run"
+          echo "adoption kit checks: $run (kit files changed: $kit_changed)"
           echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "kit_changed=$kit_changed" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python for the adoption kit
         if: steps.kit.outputs.run == 'true'
@@ -394,8 +399,15 @@ jobs:
       # The denylist arrives through `env:` from the repository secret and is
       # read by the test from the environment; it is never interpolated into
       # the script, and the test prints a hit as `path:line: pattern #N`,
-      # never the text. A missing or empty secret FAILS this step when the kit
-      # changed: a leak scan that checked nothing must not read as green.
+      # never the text. A missing or empty secret FAILS this step when kit
+      # files changed: a leak scan that checked nothing must not read as green.
+      # Two cases warn instead, because GitHub passes no Actions secrets to a
+      # Dependabot- or fork-triggered `pull_request` run: only this workflow
+      # or the root .gitignore changed (a weekly github-actions bump edits
+      # ci.yml), or the pull request's author is `dependabot[bot]` (read from
+      # $GITHUB_EVENT_PATH; Dependabot cannot add personal data). The public
+      # scan and `--check` still run; only the private half is skipped
+      # (CI=false makes its test skip, as it does locally).
       # The sources are fetched at the manifests' pinned commits with no
       # credential, so the private registry's tree (its source is private) is
       # left out of `--check` here (`--skip`); its files are still scanned,
@@ -406,12 +418,21 @@ jobs:
         env:
           PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
           SOURCE_OWNER: ${{ github.repository_owner }}
+          KIT_CHANGED: ${{ steps.kit.outputs.kit_changed }}
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
           if [ -z "${PRIVACY_DENYLIST//[[:space:]]/}" ]; then
-            echo "::error::the adoption kit changed and the PRIVACY_DENYLIST repository secret is unset or empty, so its leak scan cannot run: set the secret (one regular expression per line), then re-run"
-            exit 1
+            author=$(jq -r '.pull_request.user.login // empty' "${GITHUB_EVENT_PATH:-/dev/null}" 2>/dev/null) || author=""
+            if [ "$author" = "dependabot[bot]" ]; then
+              echo "::warning::the PRIVACY_DENYLIST secret is not available to a Dependabot run, so the adoption kit's private leak scan was skipped; the public scan and the export check still ran"
+            elif [ "${KIT_CHANGED:-true}" != "true" ]; then
+              echo "::warning::the PRIVACY_DENYLIST secret is unset or empty (no secret reaches a fork run), and only this workflow or .gitignore changed, so the adoption kit's private leak scan was skipped; the public scan and the export check still ran"
+            else
+              echo "::error::the adoption kit changed and the PRIVACY_DENYLIST repository secret is unset or empty, so its leak scan cannot run: set the secret (one regular expression per line), then re-run"
+              exit 1
+            fi
+            export CI=false
           fi
           kit=docs/reference/adopt-the-whole-system
           python3 -m pip install --quiet pytest==9.1.1 pyyaml==6.0.3

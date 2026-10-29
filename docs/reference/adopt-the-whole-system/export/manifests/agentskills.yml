@@ -275,7 +275,7 @@ regenerate:
       git -c user.name=kit -c user.email=kit@example.com -c core.hooksPath=/dev/null commit -qm export;
       sha=$(git rev-parse HEAD);
       python3 -I -B scripts/generate_skills_lock.py --ref "$sha" >/dev/null; rm -rf .git;
-      sed -i "s/$sha/0000000000000000000000000000000000000000/g" skills.lock
+      python3 -I -c "import pathlib, sys; p = pathlib.Path('skills.lock'); p.write_text(p.read_text(encoding='utf-8').replace(sys.argv[1], '0' * 40), encoding='utf-8')" "$sha"
     why: >-
       P3. skills.lock is the repo's own generator's output: the cloud-safe
       bundles, with no skills (X9). The ref it pins is the adopter's first

@@ -65,7 +65,9 @@ OVERLAY = EXPORT_DIR / "overlay"
 PATCHES = EXPORT_DIR / "patches"
 STARTER = KIT / "starter"
 # KIT is <sources>/_agent-guidance/docs/reference/adopt-the-whole-system.
-DEFAULT_SOURCES = KIT.parents[3]
+# A copy of the kit in a shallow folder has no such ancestor: None, and the
+# caller says so (KIT.parents[3] used to raise IndexError at import).
+DEFAULT_SOURCES = KIT.parents[3] if len(KIT.parents) > 3 else None
 
 # Protected spans are swapped for these private-use code points while the
 # substitution runs, so no rule can match inside (or across) a citation.
@@ -714,7 +716,7 @@ def _strip_junk(tree: Tree) -> Tree:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="exit 1 if a committed starter tree differs from a fresh export")
-    ap.add_argument("--sources", default=os.environ.get("KIT_EXPORT_SOURCES", str(DEFAULT_SOURCES)),
+    ap.add_argument("--sources", default=os.environ.get("KIT_EXPORT_SOURCES") or (str(DEFAULT_SOURCES) if DEFAULT_SOURCES else None),
                     help="directory holding the source checkouts (default: the folder above this repo)")
     ap.add_argument("--only", nargs="*", help="manifest repo names to export (default: all)")
     ap.add_argument("--skip", nargs="*", default=[],
@@ -722,6 +724,10 @@ def main(argv=None) -> int:
                          "(refused when another exported repo needs it)")
     ap.add_argument("--report", action="store_true", help="print how often each substitution rule fired")
     args = ap.parse_args(argv)
+    if not args.sources:
+        print("export.py: no source checkouts to read: this copy of the kit is not inside the repo it came "
+              "from, so pass --sources DIR or set KIT_EXPORT_SOURCES", file=sys.stderr)
+        return 2
 
     try:
         common = load_common()

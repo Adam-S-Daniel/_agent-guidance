@@ -15,6 +15,7 @@ after: [_agent-guidance]
 # Run before _common.yml's rules (a manifest's own rules are listed first), so
 # these phrasings win over the generic owner-name rules at the same position.
 substitutions:
+  - {name: skills-evals roster App id in ADR 0003 (C12), regex: '(?<=-roster`, App id )[1-9][0-9]{4,11}(?=\) and)', to: '`<roster App id>`', paths: [docs/decisions/0003-roster-merges-automatically.md]}
   - {name: skills-evals sign-off in writing-style test data, literal: "Adam Daniel", to: "Alex Rivera", paths: [test/run_tests.py]}
   - {name: skills-evals one-word sign-off test data, literal: '        "Adam\n")', to: '        "Alex\n")', paths: [test/run_tests.py]}
   - {name: skills-evals one-word sign-off expected tail, literal: 'the meantime.\nAdam"', to: 'the meantime.\nAlex"', paths: [test/run_tests.py]}
@@ -414,12 +415,8 @@ edits:
     new: |
       weekly_cap: 0.30
     why: C6. The standing default (30 points a week); the dropped comment recorded one week's temporary raise, a spending decision of the source owner's.
-  # ---- C12: account-specific App ids are not the kit's
-  - path: docs/decisions/0003-roster-merges-automatically.md
-    stage: output
-    old: "(`example-adopter-skills-evals-roster`, App id 5116415) and"
-    new: "(`example-adopter-skills-evals-roster`, App id `<roster App id>`) and"
-    why: C12. The source owner's App id; an adopter's roster App has its own.
+  # ---- C12: account-specific App ids are not the kit's (a substitution rule,
+  # above, finds the roster App's id by its context, so this file spells none)
 
 
   - path: test/issues/test_issue_68_allowance_guard.py
