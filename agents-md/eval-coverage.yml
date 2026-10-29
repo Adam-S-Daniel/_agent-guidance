@@ -43,7 +43,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/anything-you-name-gets-its-link/
-  bytes: 920
+  bytes: 886
 
 - id: finding-your-unknowns
   heading: Finding your unknowns
@@ -92,7 +92,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/two-github-connectors/
-  bytes: 1259
+  bytes: 1267
 
 - id: agent-contribution-markers
   heading: Agent-made GitHub contributions carry a marker
@@ -106,42 +106,42 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/github-404-means-not-authorized/
-  bytes: 884
+  bytes: 875
 
 - id: fleet-spans-two-owners
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/fleet-spans-two-owners/
-  bytes: 986
+  bytes: 963
 
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/watch-finished-is-not-ci-passed/
-  bytes: 1375
+  bytes: 1364
 
 - id: git-push-does-not-mean-commit-exists
   heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/git-push-does-not-mean-commit-exists/
-  bytes: 1143
+  bytes: 1102
 
 - id: dependency-updates
   heading: Dependency updates
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/dependency-updates/
-  bytes: 546
+  bytes: 534
 
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/name-becomes-scanner-data/
-  bytes: 1022
+  bytes: 1003
 
 - id: pinning-github-actions
   heading: Pinning GitHub Actions
@@ -155,14 +155,14 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/test-that-can-signal-kills-every-session/
-  bytes: 943
+  bytes: 918
 
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/subagent-delegation/
-  bytes: 2554
+  bytes: 2515
 
 - id: skills-ecosystem
   heading: Skills ecosystem
@@ -183,35 +183,35 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/git-practices/
-  bytes: 1484
+  bytes: 1396
 
 - id: section-docker
   heading: Docker
   file: agents-md/sections/docker.md
   status: covered
   fixture: evals/guidance/section-docker/
-  bytes: 604
+  bytes: 447
 
 - id: section-dotnet
   heading: .NET / C#
   file: agents-md/sections/dotnet.md
   status: covered
   fixture: evals/guidance/section-dotnet/
-  bytes: 662
+  bytes: 278
 
 - id: section-go
   heading: Go
   file: agents-md/sections/go.md
   status: covered
   fixture: evals/guidance/section-go/
-  bytes: 553
+  bytes: 313
 
 - id: section-javascript
   heading: JavaScript
   file: agents-md/sections/javascript.md
   status: covered
   fixture: evals/guidance/section-javascript/
-  bytes: 495
+  bytes: 249
 
 - id: section-python
   heading: Python
@@ -225,7 +225,7 @@
   file: agents-md/sections/rust.md
   status: covered
   fixture: evals/guidance/section-rust/
-  bytes: 555
+  bytes: 305
 
 - id: section-typescript
   heading: TypeScript

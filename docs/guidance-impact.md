@@ -50,6 +50,102 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-29 — section-javascript — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed const/let over var, strict equality, async/await, no globals or prototype changes; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-go — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed check every error, return errors rather than panic, defer for cleanup; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-rust — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed Result over panic with ?, derive traits only when meaningful, borrow over clone; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-dotnet — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed async I/O without .Result/.Wait(), built-in DI, framework naming, using for disposal; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-docker — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed multi-stage builds, combined RUN layers; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — anything-you-name-gets-its-link — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — two-github-connectors — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — github-404-means-not-authorized — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — fleet-spans-two-owners — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — watch-finished-is-not-ci-passed — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — git-push-does-not-mean-commit-exists — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — dependency-updates — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — name-becomes-scanner-data — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — test-that-can-signal-kills-every-session — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — subagent-delegation — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — git-practices — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs inside always-loaded rules; same issue's 2026-10-28 finding, that the stub's merge floor lacked the squash exception this section states, was fixed in stub.md in the same PR.
+- Change: the squash-stranding date and the closing-keyword incident IDs moved to docs/evidence/base-md-incidents.md; mechanism and rules unchanged.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
 ## 2026-10-29 — read-before-you-start — edit
 - Motivation: 2026-10-28/29, a cms-platform session got 403 from the code scanning alerts API and neither GitHub MCP server has a code scanning tool; the owner asked for the workaround to be recorded here.
 - Change: a third pointer, to docs/reference/code-scanning-alerts.md (first a read-only `gh api` call through a Remote Control session on the owner's device, then a pinned local CodeQL run as the fallback). The full build sat 2 bytes under the 29696-byte Codex budget, so the three pointers now share one base URL and name their files, instead of three full URLs; section 342 -> 295 bytes.
