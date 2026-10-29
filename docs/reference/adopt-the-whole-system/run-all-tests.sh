@@ -18,11 +18,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 logs=$(mktemp -d)
 trap 'rm -rf "$logs"' EXIT
 failed=0
-suite() {  # suite <name> <command...>
-  local name=$1 rc summary
+# Every suite starts at once (suite_start); suite_report then prints them in a
+# fixed order.
+suite_start() {  # suite_start <name> <command...>
+  local name=$1
   shift
-  "$@" > "$logs/$name.log" 2>&1
-  rc=$?
+  ( "$@" > "$logs/$name.log" 2>&1; echo $? > "$logs/$name.rc" ) &
+}
+suite_report() {  # suite_report <name>
+  local name=$1 rc summary
+  rc=$(cat "$logs/$name.rc" 2>/dev/null || echo 1)
   if [ "$rc" = 0 ]; then
     summary=$(grep -E '^trees: |^[0-9]+ assertions passed|^[0-9]+ passed|^checked: ' "$logs/$name.log" | tail -n 1)
     echo "PASS $name: ${summary:-exit 0}"
@@ -60,8 +65,10 @@ PY
   echo "checked: $(grep -c '^OK ' <<<"$out") trees match a fresh export"
 }
 
-suite starter bash starter/run-all-tests.sh
-suite bootstrap bash bootstrap/tests/test-bootstrap.sh
-suite export-tests python3 -B -m pytest export/tests -q -p no:cacheprovider
-suite export-check export_check
+suite_start starter bash starter/run-all-tests.sh
+suite_start bootstrap bash bootstrap/tests/test-bootstrap.sh
+suite_start export-tests python3 -B -m pytest export/tests -q -p no:cacheprovider
+suite_start export-check export_check
+wait
+for name in starter bootstrap export-tests export-check; do suite_report "$name"; done
 exit "$failed"

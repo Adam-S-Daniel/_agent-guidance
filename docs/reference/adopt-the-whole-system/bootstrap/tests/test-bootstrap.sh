@@ -470,6 +470,12 @@ run env ADOPT_STATE_FILE="$T/state4.json" bash "$B/verify.sh" --config "$CFGP" -
 assert_eq "verify --only content fails with no record" "$rc" 1
 assert "it says to run add-content.sh" has "$OUT" "FAIL: content choices are recorded (run add-content.sh"
 assert_not "verify --only content reads no repo it does not need" has "$OUT" "exists"
+# A git hook is probed by its own `note_ran <id>` line, never by a line the
+# core runner already has (rules-dir's first fragment line is one).
+printf '{"installed": ["rules-dir"]}\n' > "$T/state5.content-choices.json"
+run env ADOPT_STATE_FILE="$T/state5.json" bash "$B/verify.sh" --config "$CFGP" --only content; rc=$?
+assert_eq "verify --only content fails while a git hook is not merged" "$rc" 1
+assert "it names the git hook" has "$OUT" "FAIL: rules-dir is on acme-example/_agent-guidance's default branch"
 run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$B/status.sh" --config "$CFGP"
 assert "the record closes the content step" grep -qE '^done +1 ' "$OUT"
 run env ADOPT_STATE_FILE="$T/state4.json" bash "$B/status.sh" --config "$CFGP"

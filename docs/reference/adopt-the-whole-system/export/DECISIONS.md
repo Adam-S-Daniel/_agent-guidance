@@ -1189,7 +1189,7 @@ scheduled run failed on a missing ref. `bootstrap/create-repos.sh` now creates
 it, idempotently, as an orphan commit holding one `README.md` (git data API:
 tree, parentless commit, ref), through `gh_write_api`, so `--dry-run` prints
 and writes nothing. `verify.sh` has a `branches` group (on by default) and
-`status.sh` keeps step 1 as next while the branch is missing. No other
+`status.sh` keeps step 2 as next while the branch is missing. No other
 `persistent/*` branch needed this: the code creates the rest on first write.
 Not an export departure (the bootstrap scripts are kit files). Reverse: drop
 `ensure_results_branch` and the `branches` group.
@@ -1217,7 +1217,7 @@ registry with no flag is unresolved. Their checkouts, flags and registry
 entries are dropped, as is the matching federated checkout in
 `_agent-guidance`'s `skills-lock-bump.yml` (manifest edits). The code that
 handles a platform repo stays (C3), and `fleet.yml` and `repos.yml` keep the
-example entries for steps 8 and 10 to trim. Tests that used the sites as a
+example entries for steps 9 and 11 to trim. Tests that used the sites as a
 second public registry move to `acsi-agentskills` or
 `acsi-agentskills-private` (patch `cold_start_tests.py`: test_issue_60, 64,
 70_retire, adr0012_delivery and TestIssue63) with counts that follow the new

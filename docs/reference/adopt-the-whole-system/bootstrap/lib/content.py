@@ -624,9 +624,16 @@ def probes(kit: Path, record: Path) -> int:
             op = next(o for o in load_ops(d / AG) if o["op"] == "insert-section")
             print(f"{item_id}\t{AG}\t{op['file']}\t{op['heading']}")
         else:
-            op = next(o for o in load_ops(d / AG) if o["op"] == "insert-before")
-            first = next(line for line in read(d / AG / "fragments" / op["fragment"]).splitlines() if line.strip())
-            print(f"{item_id}\t{AG}\t{op['file']}\t{first}")
+            # Probe for the hook's own `note_ran <id>` line: a fragment's
+            # first line can be one the core runner already has (rules-dir's
+            # `case "$path" in` is), which would pass before the hook merged.
+            want = f"note_ran {item_id}"
+            hits = [(o["file"], line) for o in load_ops(d / AG) if o["op"] == "insert-before"
+                    for line in read(d / AG / "fragments" / o["fragment"]).splitlines()
+                    if line.strip() == want]
+            if not hits:
+                raise Refused(f"{item_id}: no insert-before fragment adds `{want}`")
+            print(f"{item_id}\t{AG}\t{hits[0][0]}\t{hits[0][1]}")
     return 0
 
 
