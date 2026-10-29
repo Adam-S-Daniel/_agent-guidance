@@ -1,0 +1,8 @@
+{
+  "name": "<you>-coding-anywhere",
+  "version": "0.1.0",
+  "description": "Coding skills for Claude Code terminals and cloud sessions: a worked example (workflow-path-audit) and a template to copy (example-skill).",
+  "author": { "name": "<your name>" },
+  "license": "Apache-2.0",
+  "keywords": ["github-actions", "ci-cd", "template"]
+}

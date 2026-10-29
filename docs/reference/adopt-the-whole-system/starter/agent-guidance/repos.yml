@@ -1,0 +1,7 @@
+# Which repos the sync manages (guide 4.5). Replace <you> with your owner:
+# sync.sh stops before touching any repo if an entry is not name or owner/name.
+repos:
+  - <you>/agent-skills
+  - <you>/skills-evals
+  - <you>/repo-settings
+  - <you>/agent-skills-private

@@ -1,0 +1,59 @@
+name: sync
+# Save as .github/workflows/sync.yml in agent-guidance.
+# This is not a required check, so it may use paths and a concurrency group.
+on:
+  push:
+    branches: [main]
+    paths:
+      - agents-md/**
+      - templates/**
+      - scripts/**
+      - repos.yml
+  schedule:
+    - cron: "17 3 * * *"     # nightly: catches repos added to repos.yml and drift
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print what would change; push nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Two syncs at once would race on the same update branches. Queue, never cancel.
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # Holds the App's client ID (variable GUIDANCE_SYNC_CLIENT_ID) and private
+    # key (secret GUIDANCE_SYNC_PEM). Deployment branches: main only (section 3.4).
+    environment: guidance-sync
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>   # full history: the guidance version is a commit time
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # actions/create-github-app-token v2.2.0 or newer takes client-id.
+      # No repositories: input, because the token must reach every repo the
+      # App is installed on (the list is repos.yml, read by the script).
+      - id: token
+        uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
+        with:
+          client-id: ${{ vars.GUIDANCE_SYNC_CLIENT_ID }}
+          private-key: ${{ secrets.GUIDANCE_SYNC_PEM }}
+          owner: ${{ github.repository_owner }}
+      - name: Sync the guidance
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SYNC_OWNER: ${{ github.repository_owner }}
+          SYNC_SELF_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          bash scripts/sync.sh "${args[@]}"

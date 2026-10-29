@@ -1,0 +1,123 @@
+name: routine-improve-gate
+# Runs the DEFAULT branch's copy of this file (workflow_run). It validates the
+# routine's branch as data, builds the registry commit with no write
+# credential, and only then opens the pull request with the loop-writer App.
+on:
+  workflow_run:
+    workflows: [routine-improve-pushed]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: privacy          # holds PRIVACY_DENYLIST only; default branch only
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the branch's commit as data
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha"; exit 1; }
+          git fetch --no-tags origin "$HEAD_SHA"
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          repository: ${{ vars.REGISTRY_REPO }}   # public; no token needed
+          path: registry
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the gate's one dependency
+        run: python3 -m pip install --user 'pyyaml==6.0.3'
+      - name: Validate, then prepare the commit (no write credential here)
+        env:
+          DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist"
+          export PRIVACY_DENYLIST_FILE="$RUNNER_TEMP/denylist"
+          base=$(git -C registry rev-parse HEAD)
+          python3 scripts/improve_gate.py prepare \
+            --evals-repo . --sha "$HEAD_SHA" --head-branch "$HEAD_BRANCH" \
+            --registry-dir registry --base origin/main --out out
+          branch=$(jq -er .branch out/result.json)
+          [[ "$branch" =~ ^eval-improve/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]]
+          git -C registry bundle create ../out/loop.bundle "$base..$branch"
+      - uses: actions/upload-artifact@<sha-of-the-v-tag-you-chose>
+        with:
+          name: improve-commit
+          path: out/
+          retention-days: 3
+  open-pr:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: loop-writer      # App key lives here; default branch only
+    concurrency:
+      group: loop-open-pr         # every lane that opens a loop PR; not a required check
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@<sha-of-the-v-tag-you-chose>
+        with:
+          name: improve-commit
+          path: out
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          repository: ${{ vars.REGISTRY_REPO }}
+          path: registry
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Load the prepared commit
+        id: pre
+        run: |
+          set -euo pipefail
+          branch=$(jq -er .branch out/result.json)
+          [[ "$branch" =~ ^eval-improve/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]]
+          git -C registry fetch ../out/loop.bundle "refs/heads/$branch:refs/heads/$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "draft=$(jq -er .draft out/result.json)" >> "$GITHUB_OUTPUT"
+          echo "repo_name=${REGISTRY_REPO#*/}" >> "$GITHUB_OUTPUT"
+        env:
+          REGISTRY_REPO: ${{ vars.REGISTRY_REPO }}
+      - name: Mint the loop-writer token for the registry only
+        id: app
+        uses: actions/create-github-app-token@<sha-of-the-v-tag-you-chose>
+        with:
+          client-id: ${{ vars.LOOP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.LOOP_WRITER_PEM }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.pre.outputs.repo_name }}
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REGISTRY_REPO: ${{ vars.REGISTRY_REPO }}
+          BRANCH: ${{ steps.pre.outputs.branch }}
+          DRAFT: ${{ steps.pre.outputs.draft }}
+        run: |
+          set -euo pipefail
+          # One open loop pull request per target repo.
+          open=$(gh pr list --repo "$REGISTRY_REPO" --state open --limit 100 --json headRefName \
+            --jq '[.[] | select(.headRefName | test("^(eval-improve|eval-scaffold|eval-draft|retire-skill|eval-guidance-improve)/"))] | length')
+          if [ "$open" != 0 ]; then
+            echo "A loop pull request is already open; nothing opened."; exit 0
+          fi
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -C registry -c http.extraheader="AUTHORIZATION: basic $auth" \
+            push "https://github.com/$REGISTRY_REPO.git" "refs/heads/$BRANCH:refs/heads/$BRANCH"
+          gh label create agent-authored --repo "$REGISTRY_REPO" --force >/dev/null
+          args=(--repo "$REGISTRY_REPO" --head "$BRANCH" --label agent-authored
+                --title "$(jq -er .title out/result.json)" --body-file out/pr-body.md)
+          [ "$DRAFT" = true ] && args+=(--draft)
+          url=$(gh pr create "${args[@]}")
+          if [ "$DRAFT" != true ]; then
+            gh pr merge --auto --merge --repo "$REGISTRY_REPO" "$url"
+          fi
+          echo "opened a pull request (draft=$DRAFT)"

@@ -1,0 +1,16 @@
+# Retirement thresholds (guide 10.3; compute_gates.py reads it).
+# Schema: these keys only (compute_gates.py refuses any other), numbers as
+# written in the guide's reference values. A key left out takes the default
+# in compute_gates.py's DEFAULT_POLICY.
+insufficient_runs: 5            # fewer runs than this: insufficient
+insufficient_cli_versions: 2    # or runs from fewer CLI versions than this
+cannot_discriminate_below: 0.10 # both arms score under this: fix the fixture
+ceiling_pass_rate: 0.90         # both arms pass at least this share of checks: ceiling
+ceiling_judge: 9.0              # or the judge gives both at least this of 10
+no_benefit_pass_rate_bound: 0.05  # upper bound of the with-skill advantage below this ...
+no_benefit_judge_bound: 0.5       # ... and below this many judge points
+confidence: 0.975               # one-sided
+looks: [5, 10, 20]              # judged only after this many runs
+looks_required: 2               # no-benefit at both of the two largest looks reached
+bootstrap_resamples: 2000       # the bootstrap half of the no-benefit interval
+bootstrap_seed: 20261028        # fixed, so the same results always give the same verdict

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evals dashboard</title>
+<!--
+  A static page over the datasets scripts/dashboard-refresh.py writes into
+  dashboard/data/ (runs.json, allowance.json, gates.json). No external scripts
+  or styles. Serve the dashboard/ directory over HTTP (scripts/build-dashboard-site.sh
+  prints the command); opened as a file:// URL, the browser blocks the fetches.
+  Every value from a dataset is written with textContent, never as HTML.
+-->
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #63635e;
+    --border: #e2e1dc;
+    --accent: #2f5fb3;
+    --good: #2e7d4f;
+    --bad: #b3372f;
+    --warn: #9a6a00;
+    --bar-bg: #ecebe6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161615;
+      --surface: #1f1f1d;
+      --text: #ecebe6;
+      --muted: #a3a29b;
+      --border: #34332f;
+      --accent: #7fa6ec;
+      --good: #6cc093;
+      --bad: #ee857c;
+      --warn: #e0b452;
+      --bar-bg: #2c2b28;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161615;
+    --surface: #1f1f1d;
+    --text: #ecebe6;
+    --muted: #a3a29b;
+    --border: #34332f;
+    --accent: #7fa6ec;
+    --good: #6cc093;
+    --bad: #ee857c;
+    --warn: #e0b452;
+    --bar-bg: #2c2b28;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 0 0 12px; }
+  .meta { color: var(--muted); margin: 0 0 24px; }
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.85rem; white-space: nowrap; }
+  td.num, th.num { text-align: right; }
+  .sub { display: block; color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+  .nowrap { white-space: nowrap; }
+  .err { color: var(--bad); }
+  .none { color: var(--muted); }
+  .tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .tile { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; min-width: 140px; }
+  .tile .label { color: var(--muted); font-size: 0.8rem; }
+  .tile .value { font-size: 1.3rem; font-weight: 600; }
+  .bar { background: var(--bar-bg); border-radius: 4px; height: 10px; min-width: 120px; position: relative; overflow: hidden; }
+  .bar span { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+  .bar.over span { background: var(--bad); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 0.85rem; }
+  .verdict-retire { color: var(--bad); font-weight: 600; }
+  .verdict-keep { color: var(--good); }
+  .pos { color: var(--good); }
+  .neg { color: var(--bad); }
+  .status { color: var(--muted); }
+  .status.failed { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Evals dashboard</h1>
+  <p class="meta" id="meta">Loading datasets...</p>
+
+  <section id="runs" aria-labelledby="runs-h">
+    <h2 id="runs-h">Runs per fixture and model</h2>
+    <p class="status" data-status>Loading...</p>
+    <div class="tiles" id="overall"></div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Fixture</th><th>Model</th><th class="num">Runs</th>
+            <th class="num">With skill</th><th class="num">Without skill</th><th class="num">Bare</th>
+            <th class="num">Advantage</th><th>CLI versions</th><th>Last run</th>
+          </tr>
+        </thead>
+        <tbody id="runs-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="allowance" aria-labelledby="allowance-h">
+    <h2 id="allowance-h">Allowance used per week</h2>
+    <p class="status" data-status>Loading...</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Week resets at</th><th class="num">Runs</th><th class="num">Used</th>
+            <th class="num">Of cap</th><th>Against the cap</th>
+          </tr>
+        </thead>
+        <tbody id="allowance-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="gates" aria-labelledby="gates-h">
+    <h2 id="gates-h">Gate status</h2>
+    <p class="status" data-status>Loading...</p>
+    <div class="chips" id="gate-classes"></div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Skill</th><th class="num">Cells</th><th>Verdict</th></tr></thead>
+        <tbody id="gates-body"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// The datasets this page reads, all written by scripts/dashboard-refresh.py.
+const DATA_DIR = "data/";
+const DATASETS = ["runs.json", "allowance.json", "gates.json"];
+const ARMS = ["with_skill", "without_skill", "bare"];
+const ARM_LABELS = { with_skill: "With skill", without_skill: "Without skill", bare: "Bare" };
+const CLASSES = ["insufficient", "cannot-discriminate", "benefit", "ceiling", "no-benefit", "inconclusive"];
+
+// Display formatting only; the datasets keep their precision.
+function pct(x) { return (typeof x === "number" && isFinite(x)) ? (x * 100).toFixed(1) + "%" : "—"; }
+function signedPct(x) {
+  if (typeof x !== "number" || !isFinite(x)) return "—";
+  return (x > 0 ? "+" : "") + (x * 100).toFixed(1) + " pts";
+}
+function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
+function judge(x) { return (typeof x === "number" && isFinite(x)) ? x.toFixed(1) + " / 10" : null; }
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  if (cls) e.className = cls;
+  return e;
+}
+
+function setStatus(section, text, failed) {
+  const s = document.querySelector("#" + section + " [data-status]");
+  s.textContent = text;
+  s.classList.toggle("failed", !!failed);
+  s.hidden = !text;
+}
+
+function armCell(arm, a) {
+  const td = el("td", null, "num");
+  td.dataset.arm = arm;
+  if (!a) { td.append(el("span", "—", "none")); return td; }
+  td.dataset.passRate = String(a.pass_rate);
+  td.append(el("span", pct(a.pass_rate)));
+  const j = judge(a.judge);
+  if (j) td.append(el("span", "judge " + j, "sub"));
+  td.append(el("span", plural(a.runs, "run", "runs"), "sub"));
+  if (a.errors > 0) td.append(el("span", plural(a.errors, "errored trial", "errored trials"), "sub err"));
+  return td;
+}
+
+function renderRuns(doc) {
+  const overall = document.getElementById("overall");
+  overall.replaceChildren();
+  for (const arm of ARMS) {
+    const t = el("div", null, "tile");
+    t.dataset.overall = arm;
+    t.append(el("div", ARM_LABELS[arm] + ", overall", "label"), el("div", pct((doc.overall_pass_rate || {})[arm]), "value"));
+    overall.append(t);
+  }
+  const body = document.getElementById("runs-body");
+  body.replaceChildren();
+  for (const c of doc.cells || []) {
+    const tr = el("tr");
+    tr.dataset.fixture = c.fixture;
+    tr.dataset.model = c.model;
+    tr.append(el("td", c.fixture), el("td", c.model), el("td", c.runs, "num"));
+    for (const arm of ARMS) tr.append(armCell(arm, (c.arms || {})[arm]));
+    const adv = el("td", signedPct(c.advantage), "num");
+    adv.dataset.advantage = c.advantage === null ? "" : String(c.advantage);
+    if (typeof c.advantage === "number") adv.classList.add(c.advantage > 0 ? "pos" : c.advantage < 0 ? "neg" : "none");
+    tr.append(adv, el("td", (c.cli_versions || []).join(", ")), el("td", c.last_run, "nowrap"));
+    body.append(tr);
+  }
+  const n = (doc.cells || []).length;
+  let status = n ? "" : "No runs yet.";
+  if (doc.skipped_invalid) status = (status ? status + " " : "") + plural(doc.skipped_invalid, "run directory", "run directories") + " failed validation and " + (doc.skipped_invalid === 1 ? "was" : "were") + " skipped.";
+  setStatus("runs", status, false);
+}
+
+function renderAllowance(doc) {
+  const body = document.getElementById("allowance-body");
+  body.replaceChildren();
+  for (const w of doc.weeks || []) {
+    const tr = el("tr");
+    tr.dataset.week = w.week_resets_at;
+    const bar = el("div", null, "bar" + (w.over_cap ? " over" : ""));
+    const fill = el("span");
+    fill.style.width = Math.max(0, Math.min(100, w.fraction_of_cap * 100)) + "%";
+    bar.append(fill);
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label", pct(w.fraction_of_cap) + " of the weekly cap");
+    const barCell = el("td");
+    barCell.append(bar);
+    if (w.over_cap) barCell.append(el("span", "over the cap", "sub err"));
+    const used = el("td", pct(w.used), "num");
+    used.dataset.used = String(w.used);
+    tr.append(el("td", w.week_resets_at, "nowrap"), el("td", w.runs, "num"), used, el("td", pct(w.fraction_of_cap), "num"), barCell);
+    body.append(tr);
+  }
+  let status = "Weekly cap: " + pct(doc.weekly_cap) + " of the allowance.";
+  if (!(doc.weeks || []).length) status += " No measured runs yet.";
+  if (doc.unmeasured_runs) status += " " + plural(doc.unmeasured_runs, "run", "runs") + " had no usable meter reading.";
+  setStatus("allowance", status, false);
+}
+
+function renderGates(doc) {
+  const chips = document.getElementById("gate-classes");
+  const body = document.getElementById("gates-body");
+  chips.replaceChildren();
+  body.replaceChildren();
+  if (!doc.available) { setStatus("gates", "No gate status yet (gates/status.json is missing or invalid).", false); return; }
+  for (const c of CLASSES) {
+    const chip = el("span", c + ": " + ((doc.cell_classes || {})[c] || 0), "chip");
+    chip.dataset.class = c;
+    chips.append(chip);
+  }
+  for (const s of doc.skills || []) {
+    const tr = el("tr");
+    tr.dataset.skill = s.skill;
+    const v = el("td", s.verdict, "verdict-" + s.verdict);
+    v.dataset.verdict = s.verdict;
+    tr.append(el("td", s.skill), el("td", s.cells, "num"), v);
+    body.append(tr);
+  }
+  setStatus("gates", (doc.skills || []).length ? "" : "No skills judged yet.", false);
+}
+
+const RENDER = { "runs.json": ["runs", renderRuns], "allowance.json": ["allowance", renderAllowance], "gates.json": ["gates", renderGates] };
+
+async function load(name) {
+  const res = await fetch(DATA_DIR + name, { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+async function main() {
+  const generated = [];
+  await Promise.all(DATASETS.map(async (name) => {
+    const [section, render] = RENDER[name];
+    try {
+      const doc = await load(name);
+      render(doc);
+      if (doc.generated_at) generated.push(doc.generated_at);
+    } catch (e) {
+      setStatus(section, "Could not load " + name + " (" + e.message + "). Run scripts/build-dashboard-site.sh.", true);
+    }
+  }));
+  generated.sort();
+  document.getElementById("meta").textContent = generated.length
+    ? "Data as of " + generated[generated.length - 1] + " (the newest finished run)."
+    : "No dataset loaded.";
+  document.body.dataset.ready = "true";
+}
+
+main();
+</script>
+</body>
+</html>

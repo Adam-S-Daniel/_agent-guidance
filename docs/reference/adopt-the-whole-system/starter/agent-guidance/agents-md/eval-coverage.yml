@@ -1,0 +1,79 @@
+# Section manifest for the fleet guidance: one row per `##` heading in
+# agents-md/base.md and one per file under agents-md/sections/ (each of those
+# is a single `##`). `###` subsections are never rows of their own.
+#
+# `id` is the stable key (kebab-case, assigned once, never renamed when the
+# heading text changes). `heading` is the exact current heading text without
+# the leading "## "; a CI step compares it with the real file, so a reworded
+# heading that forgets this row fails as a stale row.
+#
+# status:
+#   gap      tracked, no fixture yet.
+#   covered  `fixture` (a path under skills-evals, such as
+#            evals/guidance/<id>/<fixture>/) names the eval that exercises it.
+#   skipped  deliberately not covered; `reason` and `since` are required.
+#
+# `bytes` is the section's byte extent, from its heading through the line
+# before the next `##` heading (or end of file). It is the per-session context
+# cost the evals weigh against a section's benefit. Regenerate it whenever a
+# section's body changes.
+#
+# Every row starts `skipped`: the starter kit ships no guidance fixtures.
+# Replace a row's status with `covered` and a `fixture` once you write one
+# (adoption guide, phase 8).
+
+- id: working-in-these-repos
+  heading: 'Working in these repos'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 568
+
+- id: anything-you-name-gets-its-link
+  heading: 'Anything you name gets its link'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 395
+
+- id: push-is-not-a-commit
+  heading: 'A successful `git push` does not mean your commit exists'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 511
+
+- id: watch-finished-is-not-ci-passed
+  heading: '"The watch finished" is not "CI passed"'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 319
+
+- id: branch-protection-and-merges
+  heading: 'Branch protection and merges'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 263
+
+- id: security-and-data-exposure-in-ci
+  heading: 'Security and data exposure in CI'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 575
+
+- id: your-lessons
+  heading: '<Your lessons>'
+  file: agents-md/base.md
+  status: skipped
+  reason: No guidance fixture in the starter kit yet; write one before an edit to this section is judged by evals.
+  since: 2026-10-28
+  bytes: 316

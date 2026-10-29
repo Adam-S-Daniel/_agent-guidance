@@ -1,0 +1,15 @@
+{
+  "name": "<you>-skills",
+  "owner": { "name": "<your name>" },
+  "description": "Reusable agent skills, packaged as Claude Code plugins.",
+  "plugins": [
+    {
+      "name": "<you>-coding-anywhere",
+      "source": "./plugins/<you>-coding-anywhere",
+      "description": "Coding skills for Claude Code terminals and cloud sessions: a worked example (workflow-path-audit) and a template to copy (example-skill).",
+      "category": "development",
+      "keywords": ["github-actions", "ci-cd", "template"],
+      "defaultEnabled": true
+    }
+  ]
+}

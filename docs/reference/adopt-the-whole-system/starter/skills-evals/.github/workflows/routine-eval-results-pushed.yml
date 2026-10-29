@@ -1,0 +1,20 @@
+name: Eval results pushed
+
+# Step 4 of guide 9.4. It exists only so that routine-eval-ingest.yml can run
+# on workflow_run with the DEFAULT branch's code. It holds no permissions and
+# runs nothing from the pushed branch: no checkout, no scripts.
+# Improve branches use claude/eval-improve-* and eval-improve/**, so the two
+# families can never collide.
+on:
+  push:
+    branches: ['claude/eval-results-*']
+    paths: ['eval-results/**']
+
+permissions: {}
+
+jobs:
+  noted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "results branch pushed"

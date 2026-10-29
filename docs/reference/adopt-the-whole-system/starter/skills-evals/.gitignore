@@ -1,0 +1,6 @@
+# Caches and local junk. bootstrap/copy-starter.sh skips the same paths.
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.DS_Store

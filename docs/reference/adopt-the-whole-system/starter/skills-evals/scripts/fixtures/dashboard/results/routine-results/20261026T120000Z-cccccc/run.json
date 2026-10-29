@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "run_id": "20261026T120000Z-cccccc",
+  "mode": "eval",
+  "fixture": "evals/workflow-path-audit/ci-skips-docs",
+  "skill": "workflow-path-audit",
+  "fixture_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "cli_version": "2.1.251",
+  "models": {
+    "arms": "claude-opus-4-7",
+    "judge": null,
+    "reported": [
+      "claude-opus-4-7"
+    ]
+  },
+  "arms": [
+    "with_skill",
+    "without_skill"
+  ],
+  "trials": 2,
+  "started_at": "2026-10-26T12:00:00Z",
+  "finished_at": "2026-10-26T12:30:00Z",
+  "meter_before": {
+    "seven_day": 0.02,
+    "resets_at": "2026-10-30T09:00:00Z"
+  },
+  "meter_after": {
+    "seven_day": 0.05,
+    "resets_at": "2026-10-30T09:00:00Z"
+  },
+  "meter_delta": 0.03,
+  "allowance_cost": 0.03,
+  "budget_stop": null,
+  "judged": false,
+  "guards": {
+    "config_dir_clean": true,
+    "sandbox_available": true,
+    "fixture_unchanged": true
+  }
+}

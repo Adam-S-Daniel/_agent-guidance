@@ -1,0 +1,82 @@
+name: routine-eval-weekly
+# The weekly sweep (guide 10.1). Plans the week's fires inside the allowance
+# room and dispatches them through routine-eval-fire.yml, which checks the
+# allowance guard again before each one fires.
+#
+# * Scheduled for Monday 18:17 UTC, after the "mon 17:00" reset in
+#   evals/budget.yml; move it if your allowance resets at another time.
+#   workflow_dispatch reruns the sweep when GitHub skips a schedule.
+# * allowance_guard.py room turns this week's fires and ingested runs into the
+#   guard file; scripts/loop_state.py state builds plan_week.py's state from
+#   persistent/eval-results and the registry's open pull requests.
+# * The plan (fires, work items, paused skills) is uploaded as the
+#   week-plan artifact before anything is dispatched.
+# * dispatch_fires.py keeps at most 3 fires in flight and never retries one.
+# * No secret here: GITHUB_TOKEN reads public data and dispatches workflows in
+#   this repo (actions: write). Reads the repository variable REGISTRY_REPO.
+on:
+  schedule:
+    - cron: '17 18 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write          # dispatch routine-eval-fire.yml and read its runs
+concurrency:
+  group: routine-eval-weekly
+  cancel-in-progress: false
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@<sha-of-the-v-tag-you-chose>
+        with:
+          python-version: "3.12"
+      - name: Install harness dependencies
+        run: python3 -m pip install --quiet -r requirements.txt
+      # The results branch may not exist before the first ingest.
+      - uses: actions/checkout@<sha-of-the-v-tag-you-chose>
+        continue-on-error: true
+        with:
+          ref: persistent/eval-results
+          path: results
+          persist-credentials: false
+      - name: Allowance room
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p results plan
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "NOW=$now" >> "$GITHUB_ENV"
+          start=$(python3 scripts/allowance_guard.py reset --results results \
+            --budget evals/budget.yml --now "$now" | jq -er .window_start)
+          bash scripts/list_fires.sh "$start" > plan/fires.json
+          python3 scripts/allowance_guard.py room --results results --fires plan/fires.json \
+            --budget evals/budget.yml --now "$now" > plan/guard.json
+      - name: State and plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_REPO: ${{ vars.REGISTRY_REPO }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$REGISTRY_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::the repository variable REGISTRY_REPO is not set (bootstrap/create-environments.sh sets it)"; exit 1
+          fi
+          gh pr list --repo "$REGISTRY_REPO" --state open --limit 100 --json headRefName > plan/open-prs.json
+          python3 scripts/loop_state.py state --results results --open-prs plan/open-prs.json \
+            --now "$NOW" > plan/state.json
+          python3 scripts/plan_week.py --state plan/state.json --guard plan/guard.json > plan/plan.json
+          jq -r '"planned \(.fires | length) fires, \(.work_items | length) work items, room \(.room)"' plan/plan.json
+      - uses: actions/upload-artifact@<sha-of-the-v-tag-you-chose>
+        with:
+          name: week-plan
+          path: plan/
+          retention-days: 30
+      - name: Dispatch the fires
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/dispatch_fires.py plan/plan.json

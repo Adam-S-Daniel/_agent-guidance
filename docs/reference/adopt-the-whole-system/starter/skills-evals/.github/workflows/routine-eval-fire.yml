@@ -1,0 +1,140 @@
+name: Fire eval routine
+
+# Starts the EVAL RUNNER routine (guide 9.4). Manual dispatch only: no
+# pull_request or push trigger, so nothing here spends allowance because a
+# pull request changed.
+#
+# * Inputs are read from $GITHUB_EVENT_PATH by scripts/fire_inputs.py, never
+#   interpolated into a run: block, and validated before the bearer is in any
+#   step's env.
+# * The run name is "fire <mode> <run id>". allowance_guard.py parses it; mode
+#   is a choice and run_id is regex-checked in the first step, which fails the
+#   run before anything is fired if it is malformed.
+# * Every lane fires through here: eval and improve (routine-eval-weekly.yml),
+#   scaffold (fixture-supply.yml), draft (routine-draft-skill.yml). The guard
+#   charges improve its improve_reservation and every other mode per_run_cap.
+# * scripts/dispatch_fires.py builds these inputs; tests/test_workflows.py
+#   holds the two in step.
+# * Callers supply run_id: date -u +%Y%m%dT%H%M%SZ-$(openssl rand -hex 3)
+# * environment: routine-fire holds EVAL_ROUTINE_FIRE_BEARER (secret) and
+#   ROUTINE_TRIGGER_ID (variable), limited to the default branch.
+run-name: fire ${{ inputs.mode }} ${{ inputs.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: eval, improve, scaffold or draft
+        type: choice
+        options: [eval, improve, scaffold, draft]
+        default: eval
+      run_id:
+        description: "Run id, 20261028T120000Z-1a2b3c"
+        type: string
+        required: true
+      fixture:
+        description: "eval mode: evals/<skill>/<fixture>"
+        type: string
+        default: ""
+      arms:
+        description: eval mode only
+        type: choice
+        options: [both, with, without, bare]
+        default: both
+      trials:
+        description: Trials per arm
+        type: choice
+        options: ["1", "2", "3"]
+        default: "3"
+      model:
+        description: "eval mode, optional: a roster seat"
+        type: string
+        default: ""
+      skill:
+        description: "improve mode: the skill"
+        type: string
+        default: ""
+      pr:
+        description: "scaffold mode: <owner>/<repo>#<number> of a merged pull request"
+        type: string
+        default: ""
+      lesson_id:
+        description: "draft mode: the lesson's opaque id (sha256 of its subject); never its text"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: routine-fire
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+
+      - name: Install harness dependencies
+        run: python3 -m pip install --quiet -r requirements.txt
+
+      - name: Validate inputs
+        id: inputs
+        run: >
+          python3 scripts/fire_inputs.py --event "$GITHUB_EVENT_PATH"
+          --payload-out "$RUNNER_TEMP/payload.json" --roster evals/roster.yml
+          --repo-root . --github-output "$GITHUB_OUTPUT"
+
+      # The results branch may not exist before the first ingest.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        id: results_checkout
+        continue-on-error: true
+        with:
+          ref: persistent/eval-results
+          path: results
+          persist-credentials: false
+
+      - name: Window and fires
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ steps.inputs.outputs.mode }}
+        run: |
+          mkdir -p results
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          start=$(python3 scripts/allowance_guard.py reset --results results \
+            --budget evals/budget.yml --now "$now" | jq -r .window_start)
+          # Every dispatch of this workflow since the reset, and whether it
+          # fired (scripts/list_fires.sh; the weekly sweep reads the same list).
+          bash scripts/list_fires.sh "$start" > fires.json
+
+      - name: Allowance guard
+        env:
+          MODE: ${{ steps.inputs.outputs.mode }}
+        run: |
+          python3 scripts/allowance_guard.py check --results results --fires fires.json \
+            --budget evals/budget.yml --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --kind "$MODE"
+
+      - name: Fire the routine
+        env:
+          EVAL_ROUTINE_FIRE_BEARER: ${{ secrets.EVAL_ROUTINE_FIRE_BEARER }}
+          ROUTINE_TRIGGER_ID: ${{ vars.ROUTINE_TRIGGER_ID }}
+        run: |
+          set +x
+          payload=$(jq -c . "$RUNNER_TEMP/payload.json")
+          body=$(jq -n --arg text "$payload" '{text: $text}')
+          status=$(printf 'Authorization: Bearer %s\n' "$EVAL_ROUTINE_FIRE_BEARER" \
+            | curl --silent --proto '=https' --max-time 60 \
+                --request POST "https://api.anthropic.com/v1/claude_code/routines/$ROUTINE_TRIGGER_ID/fire" \
+                --header @- --header 'anthropic-version: 2023-06-01' \
+                --header 'anthropic-beta: experimental-cc-routine-2026-04-01' \
+                --header 'Content-Type: application/json' \
+                --data-binary "$body" --output response.json --write-out '%{http_code}') || status=000
+          echo "fire API status: $status"   # never print the response body
+          # No retry: there is no idempotency key, so a retry could start a second run.
+          [ "$status" = 200 ] && jq -e '.claude_code_session_id | strings' response.json >/dev/null

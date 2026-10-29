@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "20261027T130000Z-eeeeee",
+  "mode": "eval",
+  "fixture": "evals/example-skill/basic",
+  "skill": "example-skill",
+  "fixture_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "cli_version": "2.1.251",
+  "models": {
+    "arms": "claude-sonnet-5-5",
+    "judge": null,
+    "reported": [
+      "claude-sonnet-5-5"
+    ]
+  },
+  "arms": [
+    "with_skill",
+    "without_skill"
+  ],
+  "trials": 1,
+  "started_at": "2026-10-27T13:00:00Z",
+  "finished_at": "2026-10-27T13:30:00Z",
+  "meter_before": null,
+  "meter_after": null,
+  "meter_delta": null,
+  "allowance_cost": null,
+  "budget_stop": null,
+  "judged": false,
+  "guards": {
+    "config_dir_clean": true,
+    "sandbox_available": true,
+    "fixture_unchanged": true
+  }
+}
