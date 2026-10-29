@@ -23,8 +23,8 @@ installing GitHub Apps, saving routines at claude.ai, pasting a cloud setup
 script, and a few repository settings. Each of those steps below names the
 page to visit.
 
-The reference implementation lives in four public repositories. You do not
-need them, but they show a part working at full size, and all four may be
+The reference implementation lives in three public repositories. You do not
+need them, but they show a part working at full size, and all three may be
 copied under their licenses:
 
 | Part | Reference repo | License |
@@ -32,7 +32,6 @@ copied under their licenses:
 | Guidance and its sync | [`_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | Apache-2.0: copy freely under its terms |
 | Skills registry | [`adam-agentskills`](https://github.com/Adam-S-Daniel/adam-agentskills) | Apache-2.0 (since 2026-10-28, [#88](https://github.com/Adam-S-Daniel/adam-agentskills/pull/88)) |
 | Evals and the loop | [`skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | Apache-2.0 (since 2026-10-28, [#469](https://github.com/Adam-S-Daniel/skills-evals/pull/469)) |
-| Memory viewer (optional) | [`claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | MIT |
 
 Everything below works from an empty account. Every part has starter code in
 the kit, tested on its own: the guidance hook and sync, the check runner and
@@ -246,8 +245,18 @@ broke something.
 
 ### What it costs
 
-- Building it: expect several weeks of agent work. Do it in the phase order
-  below and stop at each phase's acceptance check.
+- Hands-on setup: the 15 Quick start steps come to about 30 to 40 commands
+  and browser actions, roughly one to two days. The browser steps (creating
+  and installing GitHub Apps, saving routines) take most of that time. Do it
+  in the phase order below and stop at each phase's acceptance check.
+- Calendar time: most of the rest is waiting on the eval budget, not work.
+  With the starter's `evals/budget.yml`, automated evals get 30% of the
+  weekly allowance, one eval fire is charged 0.03 and an improve fire 0.12,
+  so a week holds at most two improve fires. The weekly planner runs on
+  Mondays, after the allowance resets. An improve fire needs four fixtures
+  for its skill, and a fixture the loop adds stays a draft until it has two
+  clean runs. Expect the phase 8 gate (the first improvement merged or
+  rejected) to take one to two weeks of calendar time.
 - Running it: evals run as routines on your plan, so they draw down the
   weekly allowance like any session. The reference system caps all automated
   evals at 30% of the weekly allowance, with a hard stop when the account
