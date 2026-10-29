@@ -1,0 +1,15 @@
+{
+  "number": 57,
+  "title": "ExampleCLI 4.2.0 hooks report source \"fork\": SessionStart matcher is startup|resume",
+  "state": "closed",
+  "state_reason": "not_planned",
+  "closed_at": "2026-07-21T16:40:00Z",
+  "created_at": "2026-07-15T08:12:00Z",
+  "labels": [
+    {
+      "name": "vendor-release"
+    }
+  ],
+  "html_url": "https://github.com/example-org/example-repo/issues/57",
+  "body": "Found in the ExampleCLI 4.2.0 review. Not yet verified against this repo.\n\n## ExampleCLI change(s)\n\n> Session-start hooks now report source `\"fork\"` for forked sessions instead of `\"resume\"`.\n>\n> \u2014 [v4.2.0](https://github.com/example-vendor/example-cli/releases/tag/v4.2.0), published 2026-07-14T09:47Z\n\n## Why it may matter here\n\n- `.example-cli/settings.json` matches SessionStart on `startup|resume`, so `hooks/session-start.sh` may stop running for forked sessions.\n"
+}

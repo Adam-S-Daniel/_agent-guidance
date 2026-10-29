@@ -1,0 +1,12 @@
+# `git ls-remote --tags <url>`, captured for this offline sandbox.
+
+## https://github.com/actions/checkout
+bd4aa0d1a48d757a118d3fe9d4f547b843d5a2ca	refs/tags/v4.2.2
+9459ac0c7a9a78b5ac15c6e471312de28ff87692	refs/tags/v4.2.2^{}
+
+## https://github.com/actions/setup-node
+87788e64c72e96ca086359b8905b54f0773dc96c	refs/tags/v4.1.0
+
+## https://github.com/example-org/shared-workflows
+79bc8bee3cd5e05f4413eb5b304dfcbbd68d6cad	refs/tags/v2.1.0
+cae41fe14d7f5fb304d6d7ffe14d22a168cab8c7	refs/tags/v2.1.0^{}

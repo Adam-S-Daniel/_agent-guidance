@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "installed": [
+    {
+      "name": "acsi-writing-style",
+      "registry": "https://github.com/example-adopter/agentskills.git",
+      "bundle": "acsi",
+      "digest": "18288219eb6f4a30722b3d9a35179660061a633dc566b2aa12934c6e85def054"
+    },
+    {
+      "name": "writing-adrs",
+      "registry": "https://github.com/example-adopter/agentskills.git",
+      "bundle": "acsi",
+      "digest": "88997e0e23beb1db0766707aa709e856d17a37eac9bb342639a476173722546a"
+    }
+  ]
+}

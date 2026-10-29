@@ -59,7 +59,7 @@ git config --global init.defaultBranch main
 git config --global protocol.file.allow always
 
 SCRIPTS=(create-repos.sh create-environments.sh create-apps.sh set-secrets.sh copy-starter.sh
-         regenerate.sh apply-settings.sh install-machine.sh verify.sh status.sh)
+         regenerate.sh apply-settings.sh install-machine.sh verify.sh status.sh add-content.sh)
 FLEET=(_agent-guidance repo-settings acsi-agentskills acsi-agentskills-private skills-evals wsl-automation)
 O=acme-example
 OUT="$T/out" ERR="$T/err"
@@ -102,8 +102,8 @@ for s in "${SCRIPTS[@]}"; do
   assert "$s uses set -euo pipefail" grep -qx 'set -euo pipefail' "$B/$s"
   assert "$s --help prints its usage" bash -c '"$1" "$2" --help | grep -qF "$3"' _ bash "$B/$s" "$s ["
 done
-for p in lib/substitute.py render-quickstart.py tests/check-refs.py tests/check-steps.py tests/check-links.py \
-         tests/check-guide-lists.py tests/check-branch-prefixes.py tests/check-one-owner.py tests/mdlinks.py tests/stubs/gh_stub.py; do
+for p in lib/substitute.py lib/content.py render-quickstart.py tests/check-refs.py tests/check-steps.py tests/check-links.py \
+         tests/check-catalog.py tests/check-guide-lists.py tests/check-branch-prefixes.py tests/check-one-owner.py tests/mdlinks.py tests/stubs/gh_stub.py; do
   assert "$p parses" python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$B/$p"
 done
 # The bash >= 4.4 guard: the version test, and that a too-old bash stops before anything runs.
@@ -401,16 +401,92 @@ run bash "$B/copy-starter.sh" --config "$CFGP" starter/agent-skills-private "$O/
 assert_eq "a differing file is refused" "$rc" 1
 assert "the refused path is listed" has "$ERR" "REFUSED: README.md exists on main"
 
-# ======================================================== status.sh (part 1) and verify.sh
+# ======================================================== add-content.sh
 export GH_STUB_GIT_REMOTES="$T/remotes"
 export ADOPT_STATE_FILE="$T/state/adopt.json"
+CHOICES="$T/state/adopt.content-choices.json"
+# A copy of the kit outside every git work tree, as the adopter runs it.
+KC="$T/ckit"; mkdir -p "$KC"; cp -R "$K/bootstrap" "$K/starter" "$K/library" "$KC/"
+fp() { (cd "$1" && find . -type f -not -path '*/__pycache__/*' -print0 | sort -z | xargs -0 sha256sum) | sha256sum; }
+start_fp=$(fp "$KC/starter")
+assert "the catalog matches the library and starter" python3 -I "$B/tests/check-catalog.py" "$K"
+run bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items security,no-such-item; rc=$?
+assert_eq "add-content refuses an unknown id" "$rc" 1
+assert "it names the unknown id" has "$ERR" "unknown item id(s): no-such-item"
+assert_not "add-content refuses none with other items" bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items none,security
+assert_not "add-content refuses an empty entry" bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items security,
+mkdir -p "$T/gitkit"; cp -R "$K/bootstrap" "$T/gitkit/"; git init -q "$T/gitkit"
+run bash "$T/gitkit/bootstrap/add-content.sh" --config "$CFGP" --items none; rc=$?
+assert_eq "add-content refuses a kit inside a git work tree" "$rc" 1
+assert "it says to copy the kit out" has "$ERR" "copy its folder outside every repository first"
+run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items recommended --dry-run; rc=$?
+assert_eq "add-content --dry-run exits 0" "$rc" 0
+assert "the dry run lists what it would add" has "$OUT" "would install debug-github-workflows"
+assert "the dry run names a file it would add" has "$OUT" "add: agent-skills/plugins/acsi-coding-anywhere/skills/review-bash-ci-reliability/SKILL.md"
+assert_eq "the dry run changes nothing in starter/" "$(fp "$KC/starter")" "$start_fp"
+assert_not "the dry run records nothing" test -e "$T/state2/x.content-choices.json"
+run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items recommended; rc=$?
+assert_eq "add-content recommended exits 0" "$rc" 0
+[ "$rc" = 0 ] || sed 's/^/    add-content: /' "$ERR"
+assert_eq "it records the nine recommended items" "$(jq -c '.installed | length' "$T/state2/x.content-choices.json")" 9
+assert_eq "the skill is in the registry's layout" \
+  "$(jq -c '.plugins["acsi-coding-anywhere"].skills | index("review-bash-ci-reliability") != null' "$KC/starter/agent-skills/scripts/plugin_layout.json")" true
+assert "the skill is in the registry's lock" grep -qF '"acsi-coding-anywhere/review-bash-ci-reliability": "sha256:' "$KC/starter/agent-skills/skills.lock"
+assert "the private registry's lock is the registry's" cmp -s "$KC/starter/agent-skills/skills.lock" "$KC/starter/agent-skills-private/skills.lock"
+assert "the section is in base.md" grep -qx '## Security' "$KC/starter/agent-guidance/agents-md/base.md"
+assert "the section has its eval-coverage row" grep -qx -- '- id: security' "$KC/starter/agent-guidance/agents-md/eval-coverage.yml"
+assert "every repo's guidance mirror is the new base.md" bash -c 'for t in "$1"/*/; do [ ! -e "$t.claude/hooks/fleet-guidance.md" ] || cmp -s "$t.claude/hooks/fleet-guidance.md" "$1/agent-guidance/agents-md/base.md" || exit 1; done' _ "$KC/starter"
+assert "the section's fixture is in skills-evals" test -f "$KC/starter/skills-evals/evals/guidance/security/search-query/fixture.yaml"
+assert "its weekly row is in scheduled.yml" grep -qx '  - path: evals/guidance/security/search-query' "$KC/starter/skills-evals/evals/scheduled.yml"
+assert "the existing repos are told to get a pull request" has "$OUT" "acme-example/_agent-guidance already exists, so this reached only starter/agent-guidance"
+assert_not "the joint test module waits for its second item" test -e "$KC/starter/skills-evals/test/issues/test_issue_71_trigger_set.py"
+after_fp=$(fp "$KC/starter")
+run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items recommended; rc=$?
+assert_eq "a second add-content run exits 0" "$rc" 0
+assert "a second run has nothing to change" has "$OUT" "nothing to change"
+assert_eq "a second run changes no file" "$(fp "$KC/starter")" "$after_fp"
+run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items writing-adrs,rules-dir,workflow-path-audit; rc=$?
+assert_eq "add-content adds opinionated items next to the others" "$rc" 0
+assert "a core id is named as already there" has "$OUT" "note: workflow-path-audit is a core item, already in starter/"
+assert "the joint test module arrives with its second item" test -f "$KC/starter/skills-evals/test/issues/test_issue_71_trigger_set.py"
+assert "the git hook check is in the runner, and in every repo's copy" bash -c 'grep -q "rules-dir" "$1/agent-guidance/templates/agent-checks/agent-checks" && for t in "$1"/*/.githooks/agent-checks; do cmp -s "$t" "$1/agent-guidance/templates/agent-checks/agent-checks" || exit 1; done' _ "$KC/starter"
+assert_eq "the record keeps the earlier items" "$(jq -c '.installed | length' "$T/state2/x.content-choices.json")" 11
+assert "the added Python test classes parse" python3 -I -c 'import ast, sys; [ast.parse(open(p, encoding="utf-8").read()) for p in sys.argv[1:]]' \
+  "$KC/starter/skills-evals/test/run_tests.py" "$KC/starter/skills-evals/test/issues/test_issue_124_guidance_gates.py"
+# verify.sh's content group reads the record and the default branches.
+run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$B/verify.sh" --config "$CFGP" --only content; rc=$?
+assert_eq "verify --only content fails while the items are not merged" "$rc" 1
+assert "it names the item and the repo" has "$OUT" "FAIL: security is on acme-example/_agent-guidance's default branch (agents-md/base.md lacks it"
+g="$T/remotes/$O/_agent-guidance.git"; old_main=$(git --git-dir="$g" rev-parse main)
+w="$T/tmp/content-merge"; git clone -q "$g" "$w"
+cp "$KC/starter/agent-guidance/agents-md/base.md" "$w/agents-md/base.md"
+git -C "$w" commit -qam "the security section" && git -C "$w" push -q origin HEAD:main; rm -rf "$w"
+printf '{"installed": ["security"]}\n' > "$T/state3.content-choices.json"
+run env ADOPT_STATE_FILE="$T/state3.json" bash "$B/verify.sh" --config "$CFGP" --only content; rc=$?
+assert_eq "verify --only content passes once the item is merged" "$rc" 0
+assert "it reads the section on the default branch" has "$OUT" "PASS: security is on acme-example/_agent-guidance's default branch"
+git --git-dir="$g" update-ref refs/heads/main "$old_main"
+run env ADOPT_STATE_FILE="$T/state4.json" bash "$B/verify.sh" --config "$CFGP" --only content; rc=$?
+assert_eq "verify --only content fails with no record" "$rc" 1
+assert "it says to run add-content.sh" has "$OUT" "FAIL: content choices are recorded (run add-content.sh"
+assert_not "verify --only content reads no repo it does not need" has "$OUT" "exists"
+run env ADOPT_STATE_FILE="$T/state2/x.json" bash "$B/status.sh" --config "$CFGP"
+assert "the record closes the content step" grep -qE '^done +1 ' "$OUT"
+run env ADOPT_STATE_FILE="$T/state4.json" bash "$B/status.sh" --config "$CFGP"
+assert "with no record the content step is next" grep -q '^Next: 1 ' "$OUT"
+# The state used below: the content step done, choosing nothing.
+run bash "$KC/bootstrap/add-content.sh" --config "$CFGP" --items none; rc=$?
+assert_eq "add-content --items none exits 0" "$rc" 0
+assert_eq "--items none records an empty choice" "$(jq -c .installed "$CHOICES")" '[]'
+
+# ======================================================== status.sh (part 1) and verify.sh
 run bash "$B/status.sh" --config "$T/none.env"; rc=$?
 assert_eq "status with no config exits 0" "$rc" 0
 assert "status with no config names step 0 next" grep -q '^Next: 0 ' "$OUT"
 run bash "$B/status.sh" --config "$CFGP"; rc=$?
 assert_eq "status exits 0" "$rc" 0
-assert "steps 0 to 5 are done" bash -c 'for i in 0 1 2 3 4 5; do grep -qE "^done +$i " "$1" || exit 1; done' _ "$OUT"
-assert "step 6, the App installations, is next" grep -q '^Next: 6 ' "$OUT"
+assert "steps 0 to 6 are done" bash -c 'for i in 0 1 2 3 4 5 6; do grep -qE "^done +$i " "$1" || exit 1; done' _ "$OUT"
+assert "step 7, the App installations, is next" grep -q '^Next: 7 ' "$OUT"
 assert "status names the section to read" grep -qF 'Read: docs/settings-and-apps.md#installing-the-apps' "$OUT"
 run bash "$B/verify.sh" --config "$CFGP" --only installs:guidance-sync; rc=$?
 assert_eq "verify fails an App that is not installed" "$rc" 1
@@ -441,15 +517,15 @@ run bash "$B/verify.sh" --config "$CFGP" --only branches; rc=$?
 assert_eq "verify --only branches fails without it" "$rc" 1
 assert "verify points at create-repos.sh" has "$OUT" "FAIL: acme-example/skills-evals has the persistent/eval-results branch (HTTP 404; run create-repos.sh)"
 run bash "$B/status.sh" --config "$CFGP"
-assert "status leaves step 1 (create the repos) next while the results branch is missing" grep -q '^Next: 1 ' "$OUT"
+assert "status leaves step 2 (create the repos) next while the results branch is missing" grep -q '^Next: 2 ' "$OUT"
 run bash "$B/create-repos.sh" --config "$CFGP" skills-evals
 run bash "$B/verify.sh" --config "$CFGP" --only branches; rc=$?
 assert_eq "create-repos puts the results branch back and verify passes" "$rc" 0
 assert_not "verify refuses an unknown group" bash "$B/verify.sh" --config "$CFGP" --only rulesets
 assert_not "verify refuses an unknown App" bash "$B/verify.sh" --config "$CFGP" --only apps:loop-writer
-run bash "$B/status.sh" --config "$CFGP" --mark 3; rc=$?
+run bash "$B/status.sh" --config "$CFGP" --mark 4; rc=$?
 assert_eq "status refuses to mark a step it checks itself" "$rc" 1
-run bash "$B/status.sh" --config "$CFGP" --mark 5; rc=$?
+run bash "$B/status.sh" --config "$CFGP" --mark 6; rc=$?
 assert_eq "status refuses to mark a browser step it verifies" "$rc" 1
 # The /adopt skill tells Claude to --mark only what status.sh accepts: every
 # paragraph naming --mark is about ask steps, and every browser step it names
@@ -464,7 +540,7 @@ named = re.search(r"Apps \(([\d, ]+)\)\s+and the federation step \((\d+)\)", tex
 ids = [i.strip() for i in named.group(1).split(",")] + [named.group(2)]
 assert all(steps[i]["kind"] == "browser" and steps[i]["check"]["type"] != "ask" for i in ids), ids
 PY
-run env ADOPT_STATE_FILE="$K/state.json" bash "$B/status.sh" --config "$CFGP" --mark 6; rc=$?
+run env ADOPT_STATE_FILE="$K/state.json" bash "$B/status.sh" --config "$CFGP" --mark 9; rc=$?
 assert_eq "status refuses a state file inside the kit" "$rc" 1
 assert_not "nothing was written inside the kit" test -e "$K/state.json"
 
@@ -535,18 +611,18 @@ assert_eq "verify regen:<task> passes for a done task" "$rc" 0
 
 # ======================================================== status.sh (part 2)
 # The steps no script can see are answered with --mark.
-for i in 8 10; do bash "$B/status.sh" --config "$CFGP" --mark "$i" >/dev/null 2>&1; done
-assert_eq "the marks are kept in the state file" "$(jq -c .done "$ADOPT_STATE_FILE")" '["8","10"]'
+for i in 9 11; do bash "$B/status.sh" --config "$CFGP" --mark "$i" >/dev/null 2>&1; done
+assert_eq "the marks are kept in the state file" "$(jq -c .done "$ADOPT_STATE_FILE")" '["9","11"]'
 run bash "$B/status.sh" --config "$CFGP"; rc=$?
-assert "the regenerate steps read as done after their merges" bash -c 'for i in 13 14 15 16 17; do grep -qE "^done +$i " "$1" || exit 1; done' _ "$OUT"
-assert "step 18, an ask step, is next" grep -q '^Next: 18 ' "$OUT"
-grep -q '^Next: 18 ' "$OUT" || sed 's/^/    status: /' "$OUT"
-assert "status says how to mark an ask step" has "$OUT" "bootstrap/status.sh --mark 18"
-assert "the optional dashboard step is labeled optional" grep -qE '^optional +31 ' "$OUT"
-assert "the optional federation step reads as done once its ids are set" grep -qE '^done +25 ' "$OUT"
-bash "$B/status.sh" --config "$CFGP" --unmark 8 >/dev/null 2>&1
+assert "the regenerate steps read as done after their merges" bash -c 'for i in 14 15 16 17 18; do grep -qE "^done +$i " "$1" || exit 1; done' _ "$OUT"
+assert "step 19, an ask step, is next" grep -q '^Next: 19 ' "$OUT"
+grep -q '^Next: 19 ' "$OUT" || sed 's/^/    status: /' "$OUT"
+assert "status says how to mark an ask step" has "$OUT" "bootstrap/status.sh --mark 19"
+assert "the optional dashboard step is labeled optional" grep -qE '^optional +32 ' "$OUT"
+assert "the optional federation step reads as done once its ids are set" grep -qE '^done +26 ' "$OUT"
+bash "$B/status.sh" --config "$CFGP" --unmark 9 >/dev/null 2>&1
 run bash "$B/status.sh" --config "$CFGP"
-assert "--unmark makes a step next again" grep -q '^Next: 8 ' "$OUT"
+assert "--unmark makes a step next again" grep -q '^Next: 9 ' "$OUT"
 
 # ======================================================== apply-settings.sh
 # A second invented owner whose repo-settings holds a fake engine that logs
@@ -676,7 +752,7 @@ done
 run python3 -I "$B/tests/check-one-owner.py" --no-collapse; rc=$?
 assert_eq "check-one-owner fails when substitute.py does not collapse the second owner" "$rc" 1
 assert "the failure is a duplicate key" has "$OUT" "duplicate key 'GH_TOKEN_ACME_SOLO'"
-for c in check-steps.py check-guide-lists.py check-links.py; do
+for c in check-steps.py check-guide-lists.py check-links.py check-catalog.py; do
   run python3 -I "$B/tests/$c" "$K"; rc=$?
   assert_eq "$c passes on the kit" "$rc" 0
 done
@@ -686,7 +762,7 @@ assert_eq "the quick start table matches steps.json" "$rc" 0
 mk_kit() {
   rm -rf "$T/kit"; mkdir -p "$T/kit"
   cp -a "$K/README.md" "$K/LICENSE" "$K/docs" "$K/bootstrap" "$K/.claude" "$T/kit/"
-  ln -s "$K/starter" "$T/kit/starter"; ln -s "$K/export" "$T/kit/export"
+  ln -s "$K/starter" "$T/kit/starter"; ln -s "$K/export" "$T/kit/export"; ln -s "$K/library" "$T/kit/library"
   ln -s "$K/run-all-tests.sh" "$T/kit/run-all-tests.sh"
 }
 kb() { python3 -I "$T/kit/bootstrap/$1" "${@:2}" >"$OUT" 2>&1; }
@@ -709,6 +785,14 @@ assert "check-steps names the old guide's field" has "$OUT" "step 4: no fields f
 assert "check-steps names the unknown verify group" has "$OUT" "verify group 'rulesets'"
 kb render-quickstart.py --check; rc=$?
 assert_eq "render-quickstart --check fails on a stale table" "$rc" 1
+mk_kit
+jq '(.items[] | select(.id == "security") | .tier) = "core" | del(.items[] | select(.id == "rules-dir"))' \
+  "$K/bootstrap/content-catalog.json" > "$T/kit/bootstrap/content-catalog.json"
+kb tests/check-catalog.py "$T/kit"; rc=$?
+assert_eq "check-catalog fails on a catalog that disagrees with the kit" "$rc" 1
+assert "check-catalog names a library folder the catalog does not offer" has "$OUT" "extra: ['rules-dir']"
+assert "check-catalog names an optional item turned core" has "$OUT" "extra: ['security']"
+assert "check-catalog names a core item that is not in starter/" has "$OUT" "security: the core section has its eval-coverage row"
 mk_kit
 grep -vF '| `wsl-automation` | The Codex Cloud bootstrap pin |' "$K/docs/generated-files.md" > "$T/kit/docs/generated-files.md"
 kb tests/check-guide-lists.py "$T/kit"; rc=$?

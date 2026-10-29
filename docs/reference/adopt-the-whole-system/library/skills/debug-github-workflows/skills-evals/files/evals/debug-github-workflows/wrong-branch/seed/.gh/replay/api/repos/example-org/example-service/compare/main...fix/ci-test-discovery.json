@@ -1,0 +1,32 @@
+{
+  "url": "https://example.net/repos/example-org/example-service/compare/main...fix/ci-test-discovery",
+  "html_url": "https://example.com/example-org/example-service/compare/main...fix/ci-test-discovery",
+  "status": "ahead",
+  "ahead_by": 1,
+  "behind_by": 0,
+  "total_commits": 1,
+  "base_commit": {
+    "sha": "1111111111111111111111111111111111111111"
+  },
+  "merge_base_commit": {
+    "sha": "1111111111111111111111111111111111111111"
+  },
+  "commits": [
+    {
+      "sha": "2222222222222222222222222222222222222222",
+      "commit": {
+        "message": "Use discovery for the current unit tests"
+      }
+    }
+  ],
+  "files": [
+    {
+      "filename": ".github/workflows/ci.yml",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "patch": "@@ -16,4 +16,4 @@ jobs:\n       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3\n       - name: Run unit tests\n-        run: python3 -m unittest test.test_legacy\n+        run: python3 -m unittest discover -s test"
+    }
+  ]
+}

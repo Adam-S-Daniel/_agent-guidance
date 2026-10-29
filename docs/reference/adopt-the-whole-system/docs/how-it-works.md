@@ -49,13 +49,14 @@ Every other repo you work in is a **consumer**; together they are your
 the owner's fleet spans two accounts; see
 [one owner or two](before-you-start.md#one-owner-or-two).
 
-**The content starts with one real item of each kind** (DECISIONS X9): one
-skill (`workflow-path-audit`), one guidance section (about `git push`) and
-one agent-checks check (`skill-shell`), each copied unchanged from the
-owner's setup, with its eval fixtures, plus an inert template beside it.
-Everything else is blank, and everything that delivers, measures, improves
-and retires content comes along. You grow your own content through the loop,
-using the three real items as worked examples.
+**The content starts in tiers** (DECISIONS, "Content tiers"): the core
+skills, guidance sections and agent-checks checks the system depends on,
+copied unchanged from the owner's setup with their eval fixtures, plus the
+recommended and opinionated items you choose in step 1 ([choosing optional
+content](skills.md#choosing-optional-content)), and an inert
+template of each kind. Everything that delivers, measures, improves and
+retires content comes along. You grow your own content through the loop,
+using the shipped items as worked examples.
 
 ## How the parts connect
 

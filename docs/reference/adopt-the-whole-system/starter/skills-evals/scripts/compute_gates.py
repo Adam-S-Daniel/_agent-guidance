@@ -552,12 +552,32 @@ def expected_guidance(evals_dir: Path, section: str, guidance_dir: Path | None) 
     return out
 
 
-def finalize(skills: dict) -> None:
+def load_exempt(evals_dir: Path) -> dict:
+    """The core items the retirement never removes: {"skills": set,
+    "guidance": set} from <evals_dir>/retirement-exempt.yml (none when the
+    file is absent). ValueError for a file that is not two lists of names."""
+    path = Path(evals_dir) / "retirement-exempt.yml"
+    if not path.is_file():
+        return {"skills": set(), "guidance": set()}
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(doc, dict) or set(doc) != {"skills", "guidance"} or not all(
+            isinstance(doc[k], list) and all(isinstance(n, str) for n in doc[k]) for k in doc):
+        raise ValueError(f"{path.name}: want two lists of names, skills and guidance")
+    return {k: set(doc[k]) for k in ("skills", "guidance")}
+
+
+def finalize(skills: dict, exempt=frozenset()) -> None:
     """One retirement per evaluation, in place: of the skills whose verdict
     is `retire`, the one with the most arm runs (then the first by name)
-    keeps it."""
+    keeps it. A core item (`exempt`, retirement-exempt.yml) never retires:
+    its `retire` becomes `retire-exempt` first."""
     for verdict in skills.values():
         verdict["raw_verdict"] = verdict["verdict"]
+    for name in sorted(skills):
+        if name in exempt and skills[name]["verdict"] == "retire":
+            skills[name]["verdict"] = "retire-exempt"
+            skills[name]["reason"] = (f"{name} is a core item (evals/retirement-exempt.yml), "
+                                      "which the automatic retirement never removes")
     retiring = [name for name, v in sorted(skills.items()) if v["verdict"] == "retire"]
     if not retiring:
         return
@@ -593,7 +613,7 @@ def compute(tree: Path, roster_path: Path, policy_path: Path, evals_dir: Path,
         except Exception as exc:  # noqa: BLE001 - one skill's failure is its own
             skills[skill] = {"verdict": "insufficient", "cells": [], "runs_used": [],
                              "reason": f"the verdict raised {type(exc).__name__}"}
-    finalize(skills)
+    finalize(skills, load_exempt(evals_dir)["skills"])
     doc = {"schema_version": 1, "as_of": as_of,
             "newest_run": max((r["timestamp"] for r in index["runs"]), default=None),
             "policy": policy, "retirement_mode": policy["retirement_mode"],
@@ -626,7 +646,7 @@ def guidance_section_verdicts(index: dict, models: list, policy: dict, evals_dir
         except Exception as exc:  # noqa: BLE001 - one section's failure is its own
             sections[section] = {"verdict": "insufficient", "cells": [], "runs_used": [],
                                  "reason": f"the verdict raised {type(exc).__name__}"}
-    finalize(sections)
+    finalize(sections, load_exempt(evals_dir)["guidance"])
     return {"guidance": sections, "guidance_policy": policy,
             "guidance_retirement_mode": policy["retirement_mode"],
             "guidance_checkout": guidance_dir is not None}

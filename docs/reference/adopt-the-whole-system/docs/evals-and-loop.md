@@ -30,13 +30,12 @@ objective checks, the judge rubric) and a `seed/` the agent starts from. The
 kit ships the fixtures that test the machinery: `evals/guidance/_delivery`
 (guidance delivery), `evals/guidance-bridge-canary`, `evals/propagation`,
 the orchestrator scenarios, and test-only fixtures under `test/fixtures/`;
-and the fixtures of its two real items (DECISIONS X9): the four of the
-`workflow-path-audit` skill (`evals/workflow-path-audit/`) and the one of the
-`git push` guidance section
-(`evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit`).
-`evals/scheduled.yml` starts with those two rows (the skill's
-`required-check-routing` and the section's fixture), so the weekly plan has
-something to run; add the rest as you write them: write a fixture for your
+and the fixtures of the core skills and guidance sections (`evals/<skill>/`,
+`evals/guidance/<section>/`). `evals/scheduled.yml` starts with a row for
+each core item's fixture, so the weekly plan has something to run;
+`bootstrap/add-content.sh` adds each optional item's fixtures and rows with
+it ([choosing optional content](skills.md#choosing-optional-content)). Add
+the rest as you write them: write a fixture for your
 next skill under `evals/<skill>/<name>/`, run it locally
 (`python3 harness/run_eval.py evals/<skill>/<name> --arm both --registry ../acsi-agentskills`, see the
 [README's "Running"](../starter/skills-evals/README.md#running)), and add it
@@ -137,7 +136,9 @@ weekly eval runs; until then a refused improve fire is expected, not a fault.
   auto-merge; `draft` leaves it for you.
 - **Retire:** every day `skill-coverage.yml` computes each skill's verdict;
   a skill with no benefit on every fixture and model at two fixed looks
-  gets a removal pull request (`retirement_mode: auto`), or an issue.
+  gets a removal pull request (`retirement_mode: auto`), or an issue. The
+  core items listed in `evals/retirement-exempt.yml` are never retired: their
+  verdict reads `retire-exempt` and nothing is opened.
 - **New skills:** `routine-draft-skill.yml` picks one new-skill lesson a day
   from `acsi-agentskills-private`'s `persistent/lessons`, hooks first.
 - **New fixtures:** `routine-fixture-supply.yml`, daily.

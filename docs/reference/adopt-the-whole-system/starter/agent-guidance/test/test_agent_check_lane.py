@@ -46,20 +46,6 @@ CONTENT_ARM = """check_lessons() {
 """
 
 
-# The kit's runner ships one fleet check, skill-shell (DECISIONS X9), which
-# these machinery tests leave alone. Those that need a check to refuse a plain
-# path use this test-only fixture: the template with PATH_ARM in its lesson
-# slot and the id listed.
-FIXTURE_CHECK = "lesson-example-path"
-
-# A repo-local check (.agent-checks/local.sh) that refuses *.draft files.
-DRAFT_LOCAL = ('status=0\n'
-               'while IFS= read -r -d "" path; do\n'
-               '  case "$path" in *.draft) echo "agent-checks (local): $path: drafts stay out of this repo." >&2; status=1 ;; esac\n'
-               'done\n'
-               'exit $status\n')
-
-
 def yq_usable():
     if shutil.which("yq") is None:
         return False
@@ -112,13 +98,6 @@ class LaneTestCase(unittest.TestCase):
         path.write_text(text.replace(EMPTY_LESSONS, arm), encoding="utf-8")
         return path
 
-    def fixture_runner(self):
-        path = self.candidate(PATH_ARM, name="fixture-runner")
-        text = path.read_text(encoding="utf-8")
-        self.assertEqual(text.count('lesson_checks=""'), 1)
-        path.write_text(text.replace('lesson_checks=""', f'lesson_checks="{FIXTURE_CHECK}"'), encoding="utf-8")
-        return path
-
     def runner(self, runner, repo, *args):
         return subprocess.run(["bash", str(runner), *args], cwd=str(repo), env=self.env,
                               capture_output=True, text=True)
@@ -143,19 +122,19 @@ class CasesTests(LaneTestCase):
 
     def test_wrong_expectation_is_reported(self):
         cases = self.cases_file(
-            '{"id": "notes-wrongly-passes", "event": "pre-commit", "files": {"a.notes-secret": "x\\n"}, "expect": "pass"}',
+            '{"id": "env-wrongly-passes", "event": "pre-commit", "files": {".env": "A=1\\n"}, "expect": "pass"}',
             include_default=False)
-        out = self.lane("cases", "--runner", str(self.fixture_runner()), "--cases", str(cases))
+        out = self.lane("cases", "--runner", str(RUNNER), "--cases", str(cases))
         self.assertEqual(out.returncode, 1, out.stdout)
-        self.assertIn("FAIL notes-wrongly-passes (expected pass, got exit 1)", out.stdout)
+        self.assertIn("FAIL env-wrongly-passes (expected pass, got exit 1)", out.stdout)
 
     def test_refusal_without_the_message_is_reported(self):
         cases = self.cases_file(
-            '{"id": "notes-other-message", "event": "tree", "files": {"a.notes-secret": "x\\n"}, "expect": "refuse", "message": "no such text"}',
+            '{"id": "env-other-message", "event": "tree", "files": {".env": "A=1\\n"}, "expect": "refuse", "message": "no such text"}',
             include_default=False)
-        out = self.lane("cases", "--runner", str(self.fixture_runner()), "--cases", str(cases))
+        out = self.lane("cases", "--runner", str(RUNNER), "--cases", str(cases))
         self.assertEqual(out.returncode, 1, out.stdout)
-        self.assertIn("FAIL notes-other-message (refused, but stderr lacks the expected message)", out.stdout)
+        self.assertIn("FAIL env-other-message (refused, but stderr lacks the expected message)", out.stdout)
 
 
 class RedGreenTests(LaneTestCase):
@@ -170,14 +149,12 @@ class RedGreenTests(LaneTestCase):
         self.assertIn("PASS green notes-near-miss", out.stdout)
 
     def test_case_that_already_refuses_under_base_fails(self):
-        case = {"id": "draft-tagged", "lesson": "example-path", "event": "pre-commit",
-                "files": {".agent-checks/local.sh": DRAFT_LOCAL, "plan.draft": "x\n"},
-                "expect": "refuse", "message": "plan.draft: drafts stay out"}
-        cases = self.cases_file(json.dumps(case))
+        cases = self.cases_file(
+            '{"id": "env-tagged", "lesson": "example-path", "event": "pre-commit", "files": {".env": "A=1\\n"}, "expect": "refuse", "message": ".env: looks like a secret"}')
         out = self.lane("red-green", "--base", str(RUNNER), "--candidate", str(self.candidate(PATH_ARM)),
                         "--lesson", "example-path", "--cases", str(cases))
         self.assertEqual(out.returncode, 1, out.stdout)
-        self.assertIn("FAIL red draft-tagged (already refuses under the base runner", out.stdout)
+        self.assertIn("FAIL red env-tagged (already refuses under the base runner", out.stdout)
 
     def test_no_tagged_case_fails(self):
         out = self.lane("red-green", "--base", str(RUNNER), "--candidate", str(self.candidate(PATH_ARM)),
@@ -205,17 +182,16 @@ class RedGreenTests(LaneTestCase):
 
 class RunnerTreeTests(LaneTestCase):
     def test_tree_checks_every_path_of_a_revision(self):
-        fixture = self.fixture_runner()
-        repo = self.new_repo("r", {"README.md": "# Example\n", "certs/site.notes-secret": "x\n"})
-        out = self.runner(fixture, repo, "tree")
+        repo = self.new_repo("r", {"README.md": "# Example\n", "certs/site.pem": "not a real cert\n"})
+        out = self.runner(RUNNER, repo, "tree")
         self.assertEqual(out.returncode, 1, out.stderr)
-        self.assertIn("agent-checks: certs/site.notes-secret: notes files", out.stderr)
-        self.git(repo, "rm", "-q", "certs/site.notes-secret")
+        self.assertIn("agent-checks: certs/site.pem: looks like a secret", out.stderr)
+        self.git(repo, "rm", "-q", "certs/site.pem")
         self.git(repo, "commit", "-q", "-m", "remove")
-        self.assertEqual(self.runner(fixture, repo, "tree", "HEAD").returncode, 0)
-        out = self.runner(fixture, repo, "tree", "HEAD~1")
+        self.assertEqual(self.runner(RUNNER, repo, "tree", "HEAD").returncode, 0)
+        out = self.runner(RUNNER, repo, "tree", "HEAD~1")
         self.assertEqual(out.returncode, 1, out.stderr)
-        self.assertIn("certs/site.notes-secret", out.stderr)
+        self.assertIn("certs/site.pem", out.stderr)
 
     def test_tree_refuses_an_unknown_revision(self):
         repo = self.new_repo("r", {"README.md": "# Example\n"})
@@ -267,11 +243,11 @@ class LocalChecksTests(LaneTestCase):
 
     def test_local_check_exiting_0_cannot_suppress_a_fleet_refusal(self):
         repo = self.new_repo("r")
-        self.write(repo, {".agent-checks/local.sh": "failed=0\nexit 0\n", "a.notes-secret": "x\n"})
-        self.git(repo, "add", ".agent-checks/local.sh", "a.notes-secret")
-        out = self.runner(self.fixture_runner(), repo, "pre-commit")
+        self.write(repo, {".agent-checks/local.sh": "failed=0\nexit 0\n", ".env": "A=1\n"})
+        self.git(repo, "add", ".agent-checks/local.sh", ".env")
+        out = self.runner(RUNNER, repo, "pre-commit")
         self.assertEqual(out.returncode, 1, out.stderr)
-        self.assertIn("agent-checks: a.notes-secret: notes files", out.stderr)
+        self.assertIn("agent-checks: .env: looks like a secret", out.stderr)
 
     def test_local_check_reads_paths_rev_and_event(self):
         script = ('rev=$AGENT_CHECKS_REV\n'
@@ -308,10 +284,8 @@ class FleetScanTests(LaneTestCase):
         self.root = self.tmp / "fleet"
         self.repos_yml = self.tmp / "repos.yml"
         self.repos_yml.write_text("cron_coverage:\n  fleet:\n    - alpha\n    - beta\n", encoding="utf-8")
-        # alpha already holds a file the base runner refuses (its own
-        # repo-local check refuses it): not new.
-        self.alpha = self.new_repo("fleet/alpha", {"README.md": "# Alpha\n", ".agent-checks/local.sh": DRAFT_LOCAL,
-                                                   "plan.draft": "x\n"})
+        # alpha already holds a file the base runner refuses: not new.
+        self.alpha = self.new_repo("fleet/alpha", {"README.md": "# Alpha\n", ".env": "A=1\n"})
         self.beta = self.new_repo("fleet/beta", {"README.md": "# Beta\n"})
         self.cand = self.candidate(PATH_ARM)
 
@@ -410,9 +384,7 @@ class RunLogTests(LaneTestCase):
 
     def run_logged(self, *args, log=None, stdin=None):
         env = dict(self.env, AGENT_CHECKS_LOG=str(log or self.log))
-        if not hasattr(self, "fixture"):
-            self.fixture = self.fixture_runner()
-        return subprocess.run(["bash", str(self.fixture), *args], cwd=str(self.repo), env=env,
+        return subprocess.run(["bash", str(RUNNER), *args], cwd=str(self.repo), env=env,
                               input=stdin, capture_output=True, text=True)
 
     def entries(self):
@@ -438,42 +410,42 @@ class RunLogTests(LaneTestCase):
         self.assertRegex(entry["ts"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
         self.assertEqual(entry["event"], "pre-commit")
         self.assertEqual(entry["repo"], "example-owner/widgets")
-        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK])
+        self.assertEqual(entry["checks"], ["secret-file", "skill-shell"])
         self.assertEqual(entry["failed"], [])
 
     def test_refused_pre_commit_lists_the_check_and_keeps_the_message(self):
-        self.stage({"a.notes-secret": "x\n"})
+        self.stage({".env": "A=1\n"})
         silent = self.run_logged("pre-commit", log="off")
         out = self.run_logged("pre-commit")
         self.assertEqual(out.returncode, 1)
         self.assertEqual((out.stdout, out.stderr), (silent.stdout, silent.stderr))
-        self.assertIn("agent-checks: a.notes-secret: notes files", out.stderr)
+        self.assertIn("agent-checks: .env: looks like a secret or credential file", out.stderr)
         [entry] = self.entries()
-        self.assertEqual(entry["failed"], [FIXTURE_CHECK])
+        self.assertEqual(entry["failed"], ["secret-file"])
 
     def test_refused_pre_push_is_logged_as_pre_push(self):
-        self.commit(self.repo, {"a.notes-secret": "x\n"})
+        self.commit(self.repo, {".env": "A=1\n"})
         head = self.git(self.repo, "rev-parse", "HEAD").strip()
         out = self.run_logged("pre-push", "origin", "https://github.com/example-owner/widgets.git",
                               stdin=f"refs/heads/feature {head} refs/heads/feature {'0' * 40}\n")
         self.assertEqual(out.returncode, 1, out.stderr)
-        self.assertIn("a.notes-secret: notes files", out.stderr)
+        self.assertIn("agent-checks: .env: looks like a secret", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK])
-        self.assertEqual(entry["failed"], [FIXTURE_CHECK])
+        self.assertEqual(entry["checks"], ["secret-file", "skill-shell"])
+        self.assertEqual(entry["failed"], ["secret-file"])
 
     def test_repo_local_check_is_logged(self):
         self.stage({".agent-checks/local.sh": "exit 3\n"})
         out = self.run_logged("pre-commit")
         self.assertEqual(out.returncode, 1, out.stderr)
         [entry] = self.entries()
-        self.assertEqual(entry["checks"], ["skill-shell", FIXTURE_CHECK, "repo-local"])
+        self.assertEqual(entry["checks"], ["secret-file", "skill-shell", "repo-local"])
         self.assertEqual(entry["failed"], ["repo-local"])
 
     def test_ci_tree_and_unknown_events_write_nothing(self):
         base = self.git(self.repo, "rev-parse", "HEAD").strip()
-        self.commit(self.repo, {"a.notes-secret": "x\n"})
+        self.commit(self.repo, {".env": "A=1\n"})
         self.assertEqual(self.run_logged("ci", base, "HEAD").returncode, 1)
         self.assertEqual(self.run_logged("tree", "HEAD").returncode, 1)
         self.assertEqual(self.run_logged("post-merge").returncode, 0)
@@ -499,7 +471,7 @@ class RunLogTests(LaneTestCase):
     def test_unwritable_log_changes_nothing(self):
         blocker = self.tmp / "blocker"
         blocker.write_text("a file, so no directory can be made under it\n", encoding="utf-8")
-        for files, rc in (({"README.md": "# Example\n"}, 0), ({"a.notes-secret": "x\n"}, 1)):
+        for files, rc in (({"README.md": "# Example\n"}, 0), ({".env": "A=1\n"}, 1)):
             self.stage(files)
             silent = self.run_logged("pre-commit", log="off")
             out = self.run_logged("pre-commit", log=blocker / "agent-checks" / "runs.jsonl")
@@ -588,8 +560,8 @@ class CheckIdTests(unittest.TestCase):
 
     def test_every_problem_call_passes_a_literal_kebab_case_id(self):
         calls = problem_calls(canonical_runner(RUNNER))
-        # The kit's runner has the machinery's own three and skill-shell (DECISIONS X9).
-        self.assertGreaterEqual(len(calls), 4)
+        # The kit's runner: the machinery's own three, secret-file and skill-shell (Content tiers).
+        self.assertGreaterEqual(len(calls), 5)
         for ident, raw in calls:
             self.assertIsNotNone(ident, raw)
             self.assertRegex(ident, KEBAB, raw)
@@ -598,7 +570,7 @@ class CheckIdTests(unittest.TestCase):
 
     def test_core_check_ids(self):
         ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
-        self.assertEqual({"skill-shell", "repo-local", "runner-error", "tree-rev"}, ids)
+        self.assertLessEqual({"secret-file", "skill-shell", "repo-local"}, ids)
 
     def test_lesson_arms_and_lesson_checks_agree(self):
         for arm in (None, PATH_ARM):

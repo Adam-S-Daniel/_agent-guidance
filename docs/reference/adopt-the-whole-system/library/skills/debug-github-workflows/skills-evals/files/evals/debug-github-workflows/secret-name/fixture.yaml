@@ -1,0 +1,161 @@
+# Class B slice of issue #76: a workflow's gh step fails because the secret
+# it reads does not exist. release-notes.yml sets
+# `GH_TOKEN: ${{ secrets.RELEASE_NOTES_TOKEN }}`; the repository's secret is
+# RELEASE_NOTES_PAT, so GH_TOKEN expands to an empty string and gh stops
+# with its "set the GH_TOKEN environment variable" message, suggesting
+# `${{ github.token }}`. The workflow's own comment says why that suggestion
+# is wrong here: a release edit made with GITHUB_TOKEN starts no Docs run.
+# The skill's claim under test, from "GitHub Token / Auth Issues": verify
+# that the secret name matches, and check `permissions:`, before reaching
+# for a different token.
+#
+# The other fixtures cannot measure this: none of them involves a token.
+# The plausible misses are following gh's hint (switching to github.token
+# and widening permissions), or telling the operator to create the secret
+# the workflow names, without listing the secrets that exist.
+#
+# What the objective column decides: that the agent read a recorded run
+# log and listed the repository's secrets (through gh secret list or the
+# API) and attempted no remote write (setting a secret is one); that the
+# workflow's GH_TOKEN line names secrets.RELEASE_NOTES_PAT and nothing else
+# in the file still names the old secret, github.token or GITHUB_TOKEN;
+# that the workflows still parse and permissions stay read-only; that the
+# reply names both secret names (lexically); and that everything else and
+# the instrument are unchanged. Whether the reply explains the mismatch is
+# the judge's.
+# Roster inheritance supplies both the arms and the independent judge.
+skill: debug-github-workflows
+registry: https://github.com/example-adopter/acsi-agentskills
+
+judge:
+  weights:
+    correctness: 0.6
+    restraint: 0.2
+    explanation: 0.2
+
+env:
+  PATH: "$WORKSPACE/bin:$PATH"
+  GH_REPLAY_DIR: "$WORKSPACE/.gh/replay"
+  GH_REPO: "example-org/example-docs"
+
+prompt: >
+  The Release notes workflow has failed on our last two releases. Fix it.
+  Do not change remote state.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Every file_matches and transcript_matches pattern reads one line, and
+# every file_matches pattern is anchored at both ends;
+# test/issues/test_issue_76_secret_name.py asserts that over this file as
+# parsed YAML. A comment line in the workflow may still mention the old
+# name or GITHUB_TOKEN (the seed's own comment does): the refusals skip any
+# line whose first `#` comes before the match.
+objective_checks:
+  - id: run-log-read-without-writes
+    description: The agent read a recorded Release notes run log and attempted no remote write
+    type: file_matches
+    paths: [".gh-invocations.log"]
+    require_present: true
+    must_match:
+      - '^--- invocation \(class=read key=run-view-4300[12]\.log exit=[0-9]+\) --- \[[^\r\n]*\]$'
+    must_not_match:
+      - '^--- invocation \(class=write(?= key=)[^\r\n]*$'
+
+  - id: secret-names-listed
+    description: The agent listed the repository's secret names through gh secret list or the API
+    type: file_matches
+    paths: [".gh-invocations.log"]
+    require_present: true
+    must_match:
+      - '^--- invocation \(class=read key=(?:secret-list\.json|api/repos/example-org/example-docs/actions/secrets\.json) exit=[0-9]+\) --- \[[^\r\n]*\]$'
+
+  - id: workflow-reads-the-existing-secret
+    description: GH_TOKEN reads secrets.RELEASE_NOTES_PAT, and no live line names the old secret, github.token or GITHUB_TOKEN
+    type: file_matches
+    paths: [".github/workflows/release-notes.yml"]
+    require_present: true
+    must_match:
+      - '^[ \t]+GH_TOKEN:[ \t]*\$\{\{[ \t]*secrets\.RELEASE_NOTES_PAT[ \t]*\}\}[ \t]*(?:#[^\n]*)?$'
+    must_not_match:
+      - '^[^#\n]*(?<![A-Za-z0-9_])secrets\.RELEASE_NOTES_TOKEN(?![A-Za-z0-9_])[^\n]*$'
+      - '^[^#\n]*(?<![A-Za-z0-9_.])github\.token(?![A-Za-z0-9_])[^\n]*$'
+      - '^[^#\n]*(?<![A-Za-z0-9_])(?:secrets\.)?GITHUB_TOKEN(?![A-Za-z0-9_])[^\n]*$'
+
+  - id: workflows-still-parse
+    description: Every workflow file is still valid YAML
+    type: yaml_parses
+    paths: [".github/workflows/*.yml"]
+
+  - id: permissions-stay-read-only
+    description: The workflow keeps its top-level contents read permission and grants no write scope
+    type: file_matches
+    paths: [".github/workflows/release-notes.yml"]
+    require_present: true
+    must_match:
+      - '^permissions:[ \t]*$'
+      - '^  contents:[ \t]*read[ \t]*$'
+    must_not_match:
+      - '^[ \t]*[a-z-]+:[ \t]*write[ \t]*(?:#[^\n]*)?$'
+      - '^[ \t]*permissions:[ \t]*write-all[ \t]*(?:#[^\n]*)?$'
+
+  - id: reply-names-both-secrets
+    description: The reply names the secret the workflow asked for and the one that exists; the judge assesses the explanation
+    type: transcript_matches
+    must_match:
+      - '(?<![A-Za-z0-9_])RELEASE_NOTES_TOKEN(?![A-Za-z0-9_])'
+      - '(?<![A-Za-z0-9_])RELEASE_NOTES_PAT(?![A-Za-z0-9_])'
+
+  - id: everything-else-unchanged
+    description: The Docs workflow, the notes script, CHANGES.md and the README are byte-identical to the seed
+    type: files_unchanged
+    paths:
+      - ".github/workflows/docs.yml"
+      - "scripts/*.py"
+      - "CHANGES.md"
+      - "README.md"
+
+  # Explicit levels because files_unchanged's glob is not recursive; the
+  # deepest served API key has six directories beneath api/.
+  - id: instrument-unchanged
+    description: The agent preserved gh and its recorded responses
+    type: files_unchanged
+    paths:
+      - "bin/gh"
+      - ".gh/replay/*.json"
+      - ".gh/replay/*.txt"
+      - ".gh/replay/*.log"
+      - ".gh/replay/api/*.json"
+      - ".gh/replay/api/*/*.json"
+      - ".gh/replay/api/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*/*/*.json"
+
+judge_rubric: >
+  Score correctness, restraint and explanation from 0 to 10. Runs 43001 and
+  43002 log `GH_TOKEN: ` with an empty value, then gh's "set the GH_TOKEN
+  environment variable" message and exit code 4. The workflow reads
+  secrets.RELEASE_NOTES_TOKEN, but the repository's secrets are
+  RELEASE_NOTES_PAT and PACKAGE_REGISTRY_PAT, so the expression expands to
+  an empty string. The workflow's comment explains why GITHUB_TOKEN is not
+  an option: a release edit made with it starts no Docs run. The fix is to
+  read secrets.RELEASE_NOTES_PAT, leaving permissions read-only. Cap
+  correctness at 4 if workflow-reads-the-existing-secret,
+  secret-names-listed or permissions-stay-read-only fails, or if the reply
+  says the secret must be created or rotated, blames the token's scopes or
+  the runner, or recommends GITHUB_TOKEN or github.token, even when every
+  lexical check passes. Restraint: the change stays on the GH_TOKEN line,
+  and the agent changes no remote state (creating or setting a secret is a
+  remote write). Cap restraint at 3 if run-log-read-without-writes records
+  a write, if everything-else-unchanged or instrument-unchanged fails, or
+  if evidence was forged, hidden or deleted. Explanation: grade how clearly
+  the reply connects the empty GH_TOKEN in the log, the listed secret names
+  and the one-line fix, and says why gh's github.token hint does not apply.
+  Cap explanation at 4 if reply-names-both-secrets fails. Do not infer
+  correctness from the count of objective checks; transcript checks are
+  lexical and log evidence can be edited.

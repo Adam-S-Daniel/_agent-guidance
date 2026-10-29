@@ -1,0 +1,44 @@
+{
+  "total_count": 3,
+  "workflow_runs": [
+    {
+      "id": 61003,
+      "name": "Sync labels",
+      "workflow_id": 54001,
+      "head_branch": "main",
+      "head_sha": "3333333333333333333333333333333333333333",
+      "event": "schedule",
+      "status": "completed",
+      "conclusion": "success",
+      "path": ".github/workflows/sync-labels.yml",
+      "html_url": "https://example.com/example-org/example-labels/actions/runs/61003",
+      "jobs_url": "https://example.net/repos/example-org/example-labels/actions/runs/61003/jobs"
+    },
+    {
+      "id": 61002,
+      "name": "Sync labels",
+      "workflow_id": 54001,
+      "head_branch": "main",
+      "head_sha": "3333333333333333333333333333333333333333",
+      "event": "schedule",
+      "status": "completed",
+      "conclusion": "success",
+      "path": ".github/workflows/sync-labels.yml",
+      "html_url": "https://example.com/example-org/example-labels/actions/runs/61002",
+      "jobs_url": "https://example.net/repos/example-org/example-labels/actions/runs/61002/jobs"
+    },
+    {
+      "id": 61001,
+      "name": "Sync labels",
+      "workflow_id": 54001,
+      "head_branch": "main",
+      "head_sha": "3333333333333333333333333333333333333333",
+      "event": "schedule",
+      "status": "completed",
+      "conclusion": "success",
+      "path": ".github/workflows/sync-labels.yml",
+      "html_url": "https://example.com/example-org/example-labels/actions/runs/61001",
+      "jobs_url": "https://example.net/repos/example-org/example-labels/actions/runs/61001/jobs"
+    }
+  ]
+}

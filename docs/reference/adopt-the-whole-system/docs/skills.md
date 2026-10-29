@@ -10,11 +10,14 @@ opt-in). A skill is a folder `plugins/<plugin>/skills/<skill>/` holding a
 `SKILL.md`, and the same file works in Codex and any agent that reads the
 Agent Skills format.
 
-The kit ships one real skill and a template (DECISIONS X9). The skill is
-`workflow-path-audit`, copied unchanged from the owner's registry into
-`acsi-coding-anywhere`, with its four eval fixtures in `skills-evals`
-(`evals/workflow-path-audit/`), so the loop has something to measure on day
-one. Every other plugin is empty. The template is `templates/skill/` in the
+The kit ships its skills in tiers ([choosing optional
+content](#choosing-optional-content)). The four core skills are always in
+the registry: `workflow-path-audit`, `skills-doctor`,
+`github-actions-repo-settings` and `vendor-release-impact-issues`, copied
+unchanged from the owner's registry into `acsi-coding-anywhere`, with their
+eval fixtures in `skills-evals` (`evals/<skill>/`), so the loop has
+something to measure on day one. The optional ones are added with
+`bootstrap/add-content.sh`. The template is `templates/skill/` in the
 registry (a `SKILL.md` and a `PURPOSE.md` with `<placeholders>`); it sits
 outside `plugins/`, so nothing loads, lists or locks it. To add your own
 skill:
@@ -37,6 +40,44 @@ keys on it, and the marketplace has no `renames` map. The registry's
 `install-machine.sh` runs the registry's `setup.sh --owner-machine`, which
 writes both marketplaces and the plugins into `~/.claude/settings.json`
 ([machines](machine.md#install-on-each-durable-machine)).
+
+## Choosing optional content
+
+Every skill, guidance section and git-hook check the kit ships is in one of
+three tiers, listed in
+[`bootstrap/content-catalog.json`](../bootstrap/content-catalog.json):
+
+- **Core**: what the rest of the system depends on. It is always in
+  `starter/`, and the automatic retirement never removes it
+  ([evals](evals-and-loop.md#the-loop)).
+- **Recommended**: skills and guidance most adopters want: three skills
+  (`review-bash-ci-reliability`, `debug-github-workflows`,
+  `disarm-inherited-reach`), four safety sections and two sections of
+  everyday working and git habits.
+- **Opinionated**: one way of working that may not match yours: two skills
+  (`writing-adrs`, `finding-unknowns`), four guidance sections and the
+  `rules-dir` git hook. Each has a `details` text that says what it does and
+  when it clashes with how you work.
+
+The optional items live in [`library/`](../library/README.md), each with
+everything it needs: the skill folder or the section's text or the check's
+code, its eval fixtures and weekly schedule rows, its eval-coverage row, its
+impact-log entry and its tests. Step 1 of the quick start adds the ones you
+choose to your copy of `starter/`, before any tree is copied to GitHub:
+
+```bash
+bash bootstrap/add-content.sh --items recommended --dry-run    # what would change
+bash bootstrap/add-content.sh --items recommended,writing-adrs # add them
+bash bootstrap/add-content.sh --items none                     # add nothing
+```
+
+It is idempotent, refuses an id the catalog does not offer, rebuilds the
+files generated from what it changed (the guidance mirror in every repo,
+`AGENTS.md`, the section byte counts, the registry's README table and
+`skills.lock`), and records your choices beside `status.sh`'s state file.
+Run later, once the repos exist, it changes only `starter/` and lists the
+repos that need a pull request. The `/adopt` skill asks the questions for
+you.
 
 ## Cloud sessions and skills.lock
 

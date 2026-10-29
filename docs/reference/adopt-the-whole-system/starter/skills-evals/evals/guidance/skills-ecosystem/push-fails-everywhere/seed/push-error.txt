@@ -1,0 +1,13 @@
+$ git push
+fatal: cannot exec '/home/dev/repos/skills-registry/hooks/sync-skills/pre-push': No such file or directory
+error: failed to push some refs to 'https://github.com/example-org/widgets.git'
+
+$ cd ../docs-site && git push
+fatal: cannot exec '/home/dev/repos/skills-registry/hooks/sync-skills/pre-push': No such file or directory
+error: failed to push some refs to 'https://github.com/example-org/docs-site.git'
+
+$ git config --global --get-regexp '^core\.hooks'
+core.hookspath /home/dev/repos/skills-registry/hooks/sync-skills
+
+$ ls /home/dev/repos/skills-registry/hooks/
+ls: cannot access '/home/dev/repos/skills-registry/hooks/': No such file or directory

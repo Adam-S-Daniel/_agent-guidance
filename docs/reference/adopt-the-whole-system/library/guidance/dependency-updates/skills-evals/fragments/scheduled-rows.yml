@@ -1,0 +1,2 @@
+  - path: evals/guidance/dependency-updates/dependabot-cooldown
+    readiness: "Isolation pair of four guidance arms (section vs none, full vs full-minus-section), unpinned (the committed roster then named arm claude-sonnet-5-5 and judge claude-fable-5-1). No paid run yet; hermetic: the seed's trap fails its checks and the fix passes them (test_issue_124_guidance_gates.py, 2026-10-27)."

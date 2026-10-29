@@ -1,0 +1,23 @@
+name: Release notes
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - name: Publish release notes
+        env:
+          # The release bot's token, not GITHUB_TOKEN: a release edit made
+          # with GITHUB_TOKEN would not start the Docs workflow.
+          GH_TOKEN: ${{ secrets.RELEASE_NOTES_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 scripts/render_notes.py "$TAG" > notes.md
+          gh release edit "$TAG" --notes-file notes.md

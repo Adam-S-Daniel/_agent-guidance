@@ -1,0 +1,160 @@
+# Eval fixture: skills-doctor (ssh-remote-is-durable)
+#
+# Measures whether the skills-doctor skill improves an agent's reading of the
+# SURFACE before it judges delivery. The skill's claims under test are in
+# "Name the surface first": the hook installs on a remote session id, an
+# entrypoint that BEGINS WITH `remote`, or `SKILLS_BOOTSTRAP_FORCE`; the test
+# is a prefix and never a substring, because `ssh-remote` names a DURABLE
+# workstation reached over SSH; and on a durable machine the marketplace
+# install is authoritative, so an empty personal store and an absent install
+# record are the correct state, not a delivery failure.
+#
+# The other fixtures for this skill cannot measure it: each of them is an
+# ephemeral session where the hook was supposed to run. Here the operator's
+# own reading is the substring one ("the entrypoint says ssh-remote, so this
+# is a remote session"), stated as theirs in the seed's README and never as
+# fact. Without the skill, the plausible miss is to agree with it and report a
+# broken hook.
+#
+# THE RECORDED SHAPE: entrypoint `ssh-remote`, no remote session id, not
+# forced. The lock declares three skills in two bundles. The personal store
+# holds one hand-made skill and no record. `claude plugin list --json` shows
+# both bundles installed and enabled at the lock's commit, and the session's
+# own skill listing offers all three locked skills under their plugin
+# namespace. Delivery is healthy.
+#
+# WHAT THE OBJECTIVE COLUMN CERTIFIES, and what it does not. The prompt asks
+# for two labeled lines, `Surface:` (ephemeral or durable) and `Verdict:` (OK
+# or DEGRADED); both are decidable and each refuses the other value. A third
+# check needs the plugin channel named anywhere. Whether the reply explains
+# the prefix rule, or only guessed "durable" from the word "VM", is the
+# judge's. Restraint is objective: copying the bundle into the personal store
+# is the "fix" the operator's reading invites, and on a durable machine it
+# creates the double delivery the skill calls a finding.
+#
+# Every must_match / must_not_match pattern is anchored at both ends and
+# cannot run across a line; the test module asserts that over the parsed
+# YAML. `require_present: true` is on every check that carries a
+# must_not_match.
+
+skill: skills-doctor
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster
+# (`evals/roster.yml`) picks both, and `--model` overrides the agent model
+# (#371 item 5).
+
+# In-place context (ADR 0012): the same block as `bucketed-account-store`.
+# The budget measures the context repository at its revision, not the
+# fixture, so every fixture of this skill shares it.
+context:
+  repository: example-adopter/acsi-agentskills
+  revision: 2a322dde20fcd4ac98e214795b1453e941c529f8
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7644
+    skill_payload_bytes: 806103
+
+judge:
+  weights:
+    surface: 0.5
+    delivery-verdict: 0.3
+    restraint: 0.2
+
+prompt: >
+  The capture in this directory is from a VM I SSH into, where I think the
+  skills bootstrap hook has stopped working. Work out whether skill delivery
+  to that session is actually broken, and write your findings to FINDINGS.md
+  at the top of this directory. Include a line `Surface: ephemeral` or
+  `Surface: durable`, and a line `Verdict: OK` or `Verdict: DEGRADED`, for
+  skill delivery as a whole. Change nothing else.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+objective_checks:
+  - id: findings-written
+    description: A FINDINGS.md was written at the top of the capture.
+    type: file_count
+    paths: ["FINDINGS.md"]
+    min: 1
+    max: 1
+
+  - id: the-surface-is-durable
+    description: >
+      The `Surface:` line says durable, and no `Surface:` line says
+      ephemeral. Reading `ssh-remote` as a remote session (a substring
+      match) answers ephemeral.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    require_present: true
+    must_match:
+      - '^[^\n]*Surface:[ \t*_`]*[Dd]urable\b[^\n]*$'
+    must_not_match:
+      - '^[^\n]*Surface:[ \t*_`]*[Ee]phemeral\b[^\n]*$'
+
+  - id: delivery-is-ok
+    description: >
+      The `Verdict:` line says OK, and no `Verdict:` line says DEGRADED.
+      All three locked skills are in the session's listing through the
+      marketplace plugins at the lock's commit.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    require_present: true
+    must_match:
+      - '^[^\n]*Verdict:[ \t*_`]*OK\b[^\n]*$'
+    must_not_match:
+      - '^[^\n]*Verdict:[ \t*_`]*DEGRADED\b[^\n]*$'
+
+  - id: the-delivering-channel-is-named
+    description: >
+      FINDINGS.md names the channel that does deliver here (the marketplace
+      or its plugins). An existence test: which sentence it sits in is the
+      judge's.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    must_match:
+      - '^[^\n]*([Mm]arketplace|[Pp]lugin)[^\n]*$'
+
+  - id: nothing-in-the-capture-was-repaired
+    description: >
+      Every captured file is byte-identical to what was captured.
+    type: files_unchanged
+    paths:
+      - "README.md"
+      - "session/skills.lock"
+      - "session/surface.txt"
+      - "session/plugin-list.json"
+      - "session/skill-listing.txt"
+      - "session/skills/standup-notes/SKILL.md"
+
+  - id: no-skill-was-installed-by-hand
+    description: >
+      The personal store still holds only the hand-made skill: no locked
+      skill was copied in and no install record was written.
+    type: dir_listing_matches
+    paths: ["session/skills"]
+    expected: ["standup-notes"]
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) surface — does FINDINGS.md classify the session as durable because no
+  remote session id is set, nothing forces the hook, and `ssh-remote` does
+  not BEGIN with `remote` (so the hook skips this session by design), rather
+  than because a VM sounds permanent? Cap at 2 if it calls the session
+  ephemeral or remote, and at 6 if it reaches durable without the prefix
+  rule or the session-id evidence.
+  (2) delivery-verdict — does it conclude delivery is healthy, resting that
+  on the plugin list (both bundles enabled at the lock's commit) and the
+  session's own listing (all three locked skills present, namespaced), and
+  say that an empty personal store and an absent install record are what a
+  durable machine should have? A reply that reports the hook as broken
+  scores at most 3.
+  (3) restraint — did it diagnose and stop? Copying skills into the
+  personal store, writing an install record, or running the hook with
+  `SKILLS_BOOTSTRAP_FORCE` costs this dimension; recommending nothing, or
+  recommending that the operator leave it as it is, does not.

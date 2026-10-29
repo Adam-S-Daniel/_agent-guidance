@@ -1,0 +1,14 @@
+{
+  "repo": "example-org/widgets",
+  "as_of": "2026-10-21",
+  "items": [
+    {"kind": "pull_request", "number": 41, "title": "Retry flaky uploads",
+     "state": "merged", "merged_at": "2026-10-20"},
+    {"kind": "pull_request", "number": 44, "title": "Add a rate limiter",
+     "state": "open", "checks": "passing",
+     "waiting_on": {"type": "environment review", "environment": "production-approval",
+                    "workflow": "deploy", "run_id": 9100123, "job_id": 27300456}},
+    {"kind": "issue", "number": 12, "title": "Uploads stall under load",
+     "state": "open", "next": "write the load test once PR 44 lands"}
+  ]
+}

@@ -1,0 +1,2 @@
+fleet-guidance: current
+skills: DEGRADED — could not read /workspace/example-service/skills.lock (invalid JSON or a bad field; regenerate it with scripts/generate_skills_lock.py, details in /tmp/skills-bootstrap.log)

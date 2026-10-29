@@ -161,15 +161,15 @@ they read a generated file that still holds the export's placeholder, or
 because they come from a workflow the base branch does not have yet:
 
 - `acsi-agentskills`' `pytest` (its `skills.lock` checks) and every check that
-  reads a `skills.lock`: fixed by step 13;
+  reads a `skills.lock`: fixed by step 14;
 - `acsi-agentskills`' `plugin-runtime-approval`: it runs on
   `pull_request_target`, which uses the base branch's workflow, and an empty
   repo has none, so it never reports on the first pull request;
 - anything that verifies `actions.lock` against GitHub, the hook pin or the
-  scheduled-run-health pin: steps 14 to 17.
+  scheduled-run-health pin: steps 15 to 18.
 
-Nothing is protected before step 19, so these do not block the merge. Any
+Nothing is protected before step 20, so these do not block the merge. Any
 other failure is a real one: read it before you merge.
 
-Until step 19, `repo-settings.yml`'s apply job waits for your approval on
+Until step 20, `repo-settings.yml`'s apply job waits for your approval on
 each merge to `repo-settings`; reject those deployments until then.

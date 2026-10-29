@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "installed": [
+    {
+      "name": "writing-adrs",
+      "registry": "https://github.com/example-adopter/acsi-agentskills.git",
+      "bundle": "acsi-anything-anywhere",
+      "digest": "e8cd86670c8590eac5c490595ca8ba695ac0b623f36266bda4d31d64ad87b89c"
+    }
+  ]
+}

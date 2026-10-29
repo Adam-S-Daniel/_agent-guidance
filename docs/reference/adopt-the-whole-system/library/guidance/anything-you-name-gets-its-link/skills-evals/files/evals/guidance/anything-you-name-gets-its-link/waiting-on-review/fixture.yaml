@@ -1,0 +1,50 @@
+# Guidance fixture: anything-you-name-gets-its-link / waiting-on-review
+#
+# A status line for a team channel, outside the repository, so a bare
+# `#44` links nowhere. What the pull request waits on is an environment
+# review, decided on the deploy job's page. Checked in the agent's reply.
+# One of four fixtures of this section.
+
+subject: guidance
+section: anything-you-name-gets-its-link
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Give me a two-line status update I can paste into the team chat about PR
+  44: what it is waiting on and who has to act. STATUS.json has the details.
+  Reply with just the update.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: waiting-item-links-its-job-page
+    description: The environment review is linked at its job page.
+    type: transcript_matches
+    must_match: ["https://github\\.com/example-org/widgets/actions/runs/9100877/job/27301190"]
+  - id: pull-request-linked-in-full
+    description: The pull request carries its full URL, not a bare number.
+    type: transcript_matches
+    must_match: ["https://github\\.com/example-org/widgets/pull/44\\b"]
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Links — does the update link the pull request in full and the review
+  at the deploy job's page? Cap at 3 if either is missing.
+  (2) Action — does it say who has to act (release-managers) and on what?
+  (3) Brevity — is it two pasteable lines with nothing else?

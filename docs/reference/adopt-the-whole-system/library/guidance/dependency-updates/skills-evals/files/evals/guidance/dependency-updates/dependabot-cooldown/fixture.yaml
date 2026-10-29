@@ -1,0 +1,78 @@
+
+# Guidance fixture: dependency-updates / dependabot-cooldown
+#
+# The section's Dependabot settings: `cooldown.default-days: 7` everywhere,
+# `semver-major-days: 30` where the ecosystem supports it (npm here) but not
+# for `github-actions`, and `semver-minor-days` / `semver-patch-days` left
+# undefined.
+#
+# What the section should change: the cooldown blocks in a new
+# .github/dependabot.yml. The prompt names none of them.
+
+subject: guidance
+section: dependency-updates
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Add a Dependabot config that keeps this repository's npm packages and its
+  GitHub Actions up to date, checking weekly.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: config-parses
+    description: .github/dependabot.yml is valid YAML with version 2.
+    type: parsed_config_values
+    paths: [".github/dependabot.yml"]
+    format: yaml
+    expected:
+      - path: [version]
+        equals: 2
+  - id: both-ecosystems
+    description: The config covers npm and github-actions.
+    type: file_matches_excluding_comments
+    paths: [".github/dependabot.yml"]
+    must_match:
+      - "package-ecosystem:\\s*[\"']?npm\\b"
+      - "package-ecosystem:\\s*[\"']?github-actions\\b"
+  - id: seven-day-cooldown
+    description: Each ecosystem's update entry waits seven days by default.
+    type: file_matches_excluding_comments
+    paths: [".github/dependabot.yml"]
+    must_match:
+      - "(?s)package-ecosystem:\\s*[\"']?npm\\b((?!package-ecosystem).)*default-days:\\s*7\\b"
+      - "(?s)package-ecosystem:\\s*[\"']?github-actions\\b((?!package-ecosystem).)*default-days:\\s*7\\b"
+  - id: major-cooldown-where-supported
+    description: >
+      npm waits 30 days for a major; github-actions sets no semver-major-days,
+      and no entry defines semver-minor-days or semver-patch-days.
+    type: file_matches_excluding_comments
+    paths: [".github/dependabot.yml"]
+    must_match: ["(?s)package-ecosystem:\\s*[\"']?npm\\b((?!package-ecosystem).)*semver-major-days:\\s*30\\b"]
+    must_not_match:
+      - "(?s)package-ecosystem:\\s*[\"']?github-actions\\b((?!package-ecosystem).)*semver-major-days"
+      - "semver-(minor|patch)-days"
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Cooldown — seven days by default for both, 30 for an npm major, none
+  of the unsupported or unwanted keys? Cap at 3 if there is no cooldown.
+  (2) Config — weekly updates for npm at the root and for github-actions,
+  valid Dependabot v2?
+  (3) Restraint — did the agent change nothing else?

@@ -1,0 +1,14 @@
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9459ac0c7a9a78b5ac15c6e471312de28ff87692
+      - run: python3 -m py_compile scripts/send_report.py

@@ -23528,22 +23528,18 @@ for g in doc["hooks"]["PreToolUse"]:
     fi
 
     # The delivered runner does its job in the delivered repo: a commit adding
-    # a file the repo's own check (.agent-checks/local.sh, a test fixture here:
-    # the kit's runner ships no checks) refuses fails the CI mode the workflow runs.
+    # a .env file fails the CI mode the workflow runs.
     local clone="$TEST_DIR/ac-clone"
     rm -rf "$clone"
     gattr_git clone -q "$bare/acorg_ac-none" "$clone"
-    mkdir -p "$clone/.agent-checks"
-    printf '%s\n' 'status=0' 'while IFS= read -r -d "" p; do case "$p" in *.draft) echo "local: $p is a draft" >&2; status=1 ;; esac; done' 'exit $status' \
-        > "$clone/.agent-checks/local.sh"
-    echo "x" > "$clone/plan.draft"
-    gattr_git -C "$clone" add .agent-checks/local.sh plan.draft
-    gattr_git -C "$clone" commit -q -m "add draft"
+    echo "TOKEN=x" > "$clone/.env"
+    gattr_git -C "$clone" add .env
+    gattr_git -C "$clone" commit -q -m "add env"
     rc=0; (cd "$clone" && bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
-    if [[ $rc -ne 0 ]] && grep -q 'plan\.draft' "$out-ci.log"; then
-        pass "agent-checks (sync): the delivered runner's ci mode runs the repo's own check"
+    if [[ $rc -ne 0 ]] && grep -q '\.env' "$out-ci.log"; then
+        pass "agent-checks (sync): the delivered runner's ci mode refuses a committed .env"
     else
-        fail "agent-checks (sync): the delivered runner's ci mode runs the repo's own check — exit $rc"
+        fail "agent-checks (sync): the delivered runner's ci mode refuses a committed .env — exit $rc"
     fi
 
     if [[ -z "$(ac_show ac-present "$wf")" ]]; then
@@ -23635,7 +23631,7 @@ test_agent_checks_guard() {
     fi
 }
 
-# pre-push with no check that refuses (the kit ships none, DECISIONS X9):
+# pre-push has no check of its own in the kit (DECISIONS X9, Content tiers):
 # deleting a branch and pushing to a persistent/* branch both pass.
 test_agent_checks_persistent_delete() {
     echo ""

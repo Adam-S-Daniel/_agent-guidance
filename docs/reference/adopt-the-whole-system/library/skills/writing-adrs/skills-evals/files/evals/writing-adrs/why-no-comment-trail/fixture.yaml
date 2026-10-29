@@ -1,0 +1,255 @@
+# Eval fixture: writing-adrs (why-no-comment-trail)
+# Measures whether the writing-adrs skill improves an agent's handling of
+# its "why did we do X" trigger: the user asks why a past choice was made,
+# nothing in the repo explains it, and the user has just learned the answer
+# from the person who made it. The skill's answer is to record that reason
+# retroactively as an ADR "so the next person doesn't have to ask", not
+# only to explain it in the reply or in a code comment, because the reason
+# comes with two rejected alternatives that a comment would not hold.
+#
+# The seed is a repo with a decision log in the same house format as
+# `supersede` (two accepted ADRs that do not concern this choice) and a
+# script that ends every CSV line with CRLF, with no comment, no ADR and no
+# CHANGELOG entry saying why. The prompt carries the reason and the
+# alternatives; the seed carries none of it.
+#
+# The other three fixtures for this skill all prompt "Record the <subject>
+# decision properly." (bootstrap and existing-convention share one prompt
+# word for word), so scripts/propose_skill_edit.py derives at most two
+# distinct should-trigger queries from them. This fixture's prompt is a
+# question in the user's words, a third distinct query and a different
+# trigger clause from the skill's description.
+#
+# What the objective column is: a floor, decided from the files alone by
+# line-anchored patterns, a file count, whether linked files exist, and byte
+# comparison. It checks that the new ADR is a house-format entry, that some
+# non-heading line names the line-ending rule and the importer constraint,
+# and that some non-heading line names each rejected alternative. Whether
+# those lines say anything true, in the right section, is the judge's.
+#
+# Scope note: the objective column only asserts on the paths named below. A
+# brand-new, unrelated file is not caught by any objective_check, and
+# neither is an edit to docs/decisions/README.md outside its index rows, or
+# to the script outside the lines `script-still-writes-crlf` names. The
+# behavior checks that read Markdown refuse an HTML comment anywhere in the
+# file they read.
+
+skill: writing-adrs
+registry: https://github.com/example-adopter/acsi-agentskills
+
+judge:
+  weights:
+    adr-records-the-reason: 0.5
+    next-reader-finds-it: 0.3
+    restraint: 0.2
+
+prompt: >
+  Why does scripts/export-ledger.sh end every CSV line with CRLF? There's no
+  comment on it and nothing in the history says. I asked Priya, who wrote
+  it: the bank's reconciliation importer rejects any file with bare LF line
+  endings, and it's their tool, so we can't change it. Before that we
+  exported LF and had finance run each file through a converter, but twice
+  someone forgot and the month-end import failed. Converting in our upload
+  job was ruled out too, because that job also uploads other exports that
+  have to stay LF. Make sure the next person who wonders doesn't have to
+  ask.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Every must_match / must_not_match pattern below is anchored at both ends
+# (`^`...`$`), carries no inline flag (case is spelled out with classes),
+# and its only wildcard runs are negated classes that exclude a newline, so
+# one pattern reads one line. test/issues/test_issue_80_why.py asserts that
+# property over this file as parsed YAML. `require_present: true` is set on
+# every check that carries a must_not_match, so none of them can pass on a
+# file that was never written.
+objective_checks:
+  - id: new-adr-0003-is-a-house-format-entry
+    description: >
+      docs/decisions/0003-*.md exists and has the shape this repo's
+      docs/decisions/README.md asks of an entry: a `# 0003. Title` line, a
+      Status line reading Accepted or Proposed, a Date line, and the four
+      section headings. It is not one of the seed's ADRs under a new
+      number: each seed ADR's title and every line of its Decision section
+      is refused. Section order is not asserted here (that is what
+      `existing-convention` measures).
+    type: file_matches
+    paths: ["docs/decisions/0003-*.md"]
+    require_present: true
+    must_match:
+      - '^# 0003\. [^\s][^\n]*$'
+      - '^- \*\*Status:\*\* (Accepted|Proposed)\b[^\n]*$'
+      - '^- \*\*Date:\*\* [0-9]{4}-[0-9]{2}-[0-9]{2}[ \t]*$'
+      - '^## Context[ \t]*$'
+      - '^## Decision[ \t]*$'
+      - '^## Consequences[ \t]*$'
+      - '^## Alternatives considered[ \t]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+      - '^# 0003\. Export after the ledger closes, not at midnight[ \t]*$'
+      - '^Run the export for a day at 02:00 UTC the following morning, after the$'
+      - '^ledger has closed\.$'
+      - '^# 0003\. Write amounts as integer cents, not decimal strings[ \t]*$'
+      - '^Write every amount in the export as an integer number of cents, in a column$'
+      - '^named `amount_cents`\.$'
+
+  - id: adr-0003-records-the-reason
+    description: >
+      Below its headings, the new ADR names the line-ending rule (CRLF,
+      `\r\n` or "carriage return") on some line and the bank's importer on
+      some line. Heading lines do not count, so a title alone does not
+      satisfy this. Whether the Context explains the constraint without
+      pre-announcing the decision is the judge's.
+    type: file_matches
+    paths: ["docs/decisions/0003-*.md"]
+    require_present: true
+    must_match:
+      - '^(?!#)[^\n]*(CRLF|\\r\\n|[Cc]arriage[ -]return)[^\n]*$'
+      - '^(?!#)[^\n]*[Ii]mporter[^\n]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+
+  - id: adr-0003-records-the-rejected-alternatives
+    description: >
+      Below its headings, the new ADR mentions each alternative the prompt
+      says was ruled out: converting the files after export (any line
+      saying convert, converter or conversion) and doing it in the upload
+      job (any line saying upload). Whether each sits under Alternatives
+      considered with its reason is the judge's.
+    type: file_matches
+    paths: ["docs/decisions/0003-*.md"]
+    require_present: true
+    must_match:
+      - '^(?!#)[^\n]*[Cc]onver(t|ter|ted|ting|sion)[^\n]*$'
+      - '^(?!#)[^\n]*[Uu]pload[^\n]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+
+  - id: index-gained-a-row-for-0003
+    description: >
+      docs/decisions/README.md has a table row whose first cell links
+      0003-<slug>.md and whose title and status cells are not empty.
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    require_present: true
+    must_match:
+      - '^\|[ \t]*\[0003\]\(0003-[a-z0-9-]+\.md\)[ \t]*\|[^|\n]*[^|\s][^|\n]*\|[^|\n]*[^|\s][^|\n]*\|[ \t]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+
+  - id: index-rows-for-0001-and-0002-kept
+    description: >
+      The index rows for the two ADRs this change does not concern keep
+      their link, title and status (cell padding may differ). Passes on the
+      pristine seed by design.
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    must_match:
+      - '^\|[ \t]*\[0001\]\(0001-export-after-the-ledger-closes\.md\)[ \t]*\|[ \t]*Export after the ledger closes, not at midnight[ \t]*\|[ \t]*Accepted[ \t]*\|[ \t]*$'
+      - '^\|[ \t]*\[0002\]\(0002-write-amounts-as-integer-cents\.md\)[ \t]*\|[ \t]*Write amounts as integer cents, not decimal strings[ \t]*\|[ \t]*Accepted[ \t]*\|[ \t]*$'
+
+  - id: decision-log-links-resolve
+    description: >
+      Every `](NNNN-slug.md)` link in docs/decisions/README.md and in the
+      ADR files names a file that exists in docs/decisions/. Catches an
+      index row that names a slug nothing has. Passes on the pristine seed
+      (its two index links resolve) and vacuously when no scanned file
+      exists. `link_pattern` is a token extractor matched per line, not an
+      assertion: every hit must resolve, so it is deliberately unanchored.
+    type: link_targets_exist
+    paths:
+      - "docs/decisions/README.md"
+      - "docs/decisions/[0-9][0-9][0-9][0-9]-*.md"
+    link_pattern: '\]\(([0-9]{4}-[a-z0-9-]+\.md)\)'
+    base: "docs/decisions"
+
+  - id: script-comment-points-at-0003
+    description: >
+      A comment in scripts/export-ledger.sh names the new ADR's path, so
+      the next reader of the script finds the reason. Where in the script
+      is not asserted here.
+    type: file_matches
+    paths: ["scripts/export-ledger.sh"]
+    must_match:
+      - '^[^#\n]*#[^\n]*docs/decisions/0003-[a-z0-9-]+\.md[^\n]*$'
+
+  - id: script-adr-pointers-resolve
+    description: >
+      Every docs/decisions/NNNN-slug.md path scripts/export-ledger.sh spells
+      out names a file that exists. Passes on the pristine seed (its pointer
+      at 0002 resolves) and vacuously when the script is missing
+      (script-comment-points-at-0003 is what fails then); same extractor
+      note as decision-log-links-resolve.
+    type: link_targets_exist
+    paths: ["scripts/export-ledger.sh"]
+    link_pattern: '(docs/decisions/[0-9]{4}-[a-z0-9-]+\.md)'
+    base: "."
+
+  - id: script-still-writes-crlf
+    description: >
+      Both of the script's CRLF-writing printf lines, and its pointer at
+      ADR 0002, are still there: the question was why, not a request to
+      change the line endings. Passes on the pristine seed by design; the
+      rest of the script is not asserted.
+    type: file_matches
+    paths: ["scripts/export-ledger.sh"]
+    must_match:
+      - '^  printf ''%s\\r\\n'' "date,account,amount_cents,memo"$'
+      - '^      printf ''%s\\r\\n'' "\$line"$'
+      - '^# Amounts are integer cents: docs/decisions/0002-write-amounts-as-integer-cents\.md$'
+
+  - id: exactly-one-new-adr-file
+    description: >
+      docs/decisions/ holds exactly three NNNN-*.md files (the seed has
+      two). A total count, not a presence check and not a diff: the checks
+      above decide which file it is and what is in it.
+    type: file_count
+    paths: ["docs/decisions/[0-9][0-9][0-9][0-9]-*.md"]
+    min: 3
+    max: 3
+
+  - id: nothing-else-touched
+    description: >
+      ADRs 0001 and 0002, CHANGELOG.md, AGENTS.md and the repo-root
+      README.md are byte-identical to the seed. The index and the script
+      are expected to change and are covered by their own checks.
+    type: files_unchanged
+    paths:
+      - "README.md"
+      - "CHANGELOG.md"
+      - "AGENTS.md"
+      - "docs/decisions/0001-*.md"
+      - "docs/decisions/0002-*.md"
+
+# The judge is left what a line pattern cannot decide: whether the ADR
+# states the reason the user relayed, whether the reply and the code send
+# the next reader to it, and whether the agent stopped there. Correctness
+# outweighs the guardrail, per DESIGN.md's harness-wide rule.
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) adr-records-the-reason — does the new ADR's Context describe the
+  constraint (the bank's reconciliation importer, which the team cannot
+  change, rejects files with bare LF line endings) without pre-announcing
+  the decision, does its Decision state what scripts/export-ledger.sh does
+  (write every line of the export with CRLF endings), does it discuss both
+  alternatives the user relayed (exporting LF and having finance convert
+  each file, which failed twice when someone forgot; converting in the
+  upload job, which also uploads exports that must stay LF) and why each
+  was rejected, with honest positive AND negative consequences, and is its
+  title an imperative decision statement rather than a question or a noun
+  phrase? Cap at 4 if the alternatives are missing entirely, or if the
+  reason lives only in a code comment or the reply and no ADR was written.
+  (2) next-reader-finds-it — would the next person who wonders about the
+  line endings find the answer where they look: is there a short comment at
+  the CRLF printf lines (or the script header) pointing at the new ADR,
+  does the index carry a row for it, and does the final reply answer the
+  user's question directly and say where the reason now lives?
+  (3) restraint — did the agent leave the export's behavior (its line
+  endings and everything else it writes), ADRs 0001 and 0002, their index
+  rows, CHANGELOG.md, README.md and AGENTS.md untouched, and avoid writing
+  any further ADR (for example one for the CHANGELOG's re-run argument or
+  its usage-message typo fix, which are routine changes, not decisions)?

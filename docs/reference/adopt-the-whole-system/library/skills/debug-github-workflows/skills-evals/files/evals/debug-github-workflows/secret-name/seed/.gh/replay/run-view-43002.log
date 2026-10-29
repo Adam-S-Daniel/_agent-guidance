@@ -1,0 +1,12 @@
+notes	Publish release notes	2026-01-12T16:00:05Z ##[group]Run python3 scripts/render_notes.py "$TAG" > notes.md
+notes	Publish release notes	2026-01-12T16:00:05Z python3 scripts/render_notes.py "$TAG" > notes.md
+notes	Publish release notes	2026-01-12T16:00:05Z gh release edit "$TAG" --notes-file notes.md
+notes	Publish release notes	2026-01-12T16:00:05Z shell: /usr/bin/bash -e {0}
+notes	Publish release notes	2026-01-12T16:00:05Z env:
+notes	Publish release notes	2026-01-12T16:00:05Z   GH_TOKEN: 
+notes	Publish release notes	2026-01-12T16:00:05Z   TAG: v1.4.0
+notes	Publish release notes	2026-01-12T16:00:05Z ##[endgroup]
+notes	Publish release notes	2026-01-12T16:00:05Z gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable. Example:
+notes	Publish release notes	2026-01-12T16:00:05Z   env:
+notes	Publish release notes	2026-01-12T16:00:05Z     GH_TOKEN: ${{ github.token }}
+notes	Publish release notes	2026-01-12T16:00:05Z ##[error]Process completed with exit code 4.

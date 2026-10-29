@@ -597,7 +597,7 @@ import example_evals  # noqa: E402
                 "--skill-allowlist-root", str(test_issue_skill_usage.example_evals.checkout())]
 @@@ end
 === test/run_tests.py
-# why: the harness tests read the invented fixtures under test/fixtures/evals, the fake gh tests drive the invented seed test/fixtures/fake-gh (expected payload strings updated, in-world allowlist empty), and the fixture-wide scans also cover test fixtures and nested evals.
+# why: the harness tests read the invented fixtures under test/fixtures/evals, the fake gh tests drive the invented seed test/fixtures/fake-gh (expected payload strings updated, in-world allowlist empty), and the fixture-wide scans also cover test fixtures and nested evals, except that the scan for checks that glob into .git/ passes over the optional debug-github-workflows/wrong-branch fixture, which reads .git/trace.log by design and which the source's top-level evals/*/fixture.yaml scan never reaches (Content tiers).
 @@@ old
 EVAL_DIR = REPO_ROOT / "evals" / "workflow-path-audit" / "required-check-routing"
 @@@ new
@@ -692,8 +692,11 @@ ADRS_BOOTSTRAP_DIR = FIXTURE_EVALS / "writing-adrs" / "bootstrap"
         for path in sorted(globlib.glob(str(REPO_ROOT / "evals" / "*" /
                                             "fixture.yaml"))):
 @@@ new
-        for path in sorted(globlib.glob(str(REPO_ROOT / "evals" / "**" / "fixture.yaml"),
-                                        recursive=True)
+        for path in sorted([p for p in globlib.glob(str(REPO_ROOT / "evals" / "**" / "fixture.yaml"),
+                                                    recursive=True)
+                            # The source scans evals/*/fixture.yaml only, which never reaches
+                            # debug-github-workflows/wrong-branch: it reads .git/trace.log by design.
+                            if "/debug-github-workflows/wrong-branch/" not in p]
                            + globlib.glob(str(REPO_ROOT / "test" / "fixtures" / "**" /
                                               "fixture.yaml"), recursive=True)):
 @@@ end

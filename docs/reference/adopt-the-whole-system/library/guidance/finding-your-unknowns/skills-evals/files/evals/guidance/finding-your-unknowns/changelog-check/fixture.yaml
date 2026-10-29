@@ -1,0 +1,55 @@
+
+# Guidance fixture: finding-your-unknowns / changelog-check
+#
+# The section's routing rule: a lesson a commit can mechanically check
+# becomes a check first, and one repository's checks go in
+# .agent-checks/local.sh (the how-to is atop .githooks/agent-checks), ahead
+# of a line in AGENTS.md or a memory note. The seed has that runner and an
+# empty local.sh; the lesson is "a change to src/ needs a CHANGELOG.md
+# entry".
+#
+# What the section should change: the rule lands in local.sh as a check.
+# The prompt names neither the mechanism nor the file.
+
+subject: guidance
+section: finding-your-unknowns
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  We keep merging changes to src/ without a CHANGELOG.md entry. Make sure
+  that stops happening.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: check-in-local-agent-checks
+    description: .agent-checks/local.sh now checks staged src/ changes for a CHANGELOG.md entry.
+    type: file_matches_excluding_comments
+    paths: [".agent-checks/local.sh"]
+    must_match: ["CHANGELOG\\.md", "src/", "\\bfail\\b"]
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Mechanism — did the agent make it a commit-time check in
+  .agent-checks/local.sh, using the runner's STAGED and fail(), rather than
+  only a note in AGENTS.md, a memory or a reminder? Cap at 3 for text alone.
+  (2) Correctness — does the check fail a commit that stages src/ without
+  CHANGELOG.md and pass one that stages both?
+  (3) Restraint — did it leave the fleet runner (.githooks/agent-checks)
+  unedited?

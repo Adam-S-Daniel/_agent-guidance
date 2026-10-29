@@ -25,6 +25,13 @@ into KIT/starter/<kit_name>/ by these steps, in order:
   8. run `regenerate` steps (P3: mirrors, digests, generated files), in the
      staged tree.
 
+The optional content (DECISIONS, Content tiers): a patch may move an item
+out of its tree into the library with ctx["library"] (a Library, below), and
+after every repo is exported the library is written to KIT/library/ (or
+compared, under --check) as one more tree, with export/library-README.md as
+its README. The library is written and checked only when every repo is
+exported (no --only or --skip), because an item can take parts from several.
+
 Everything that is specific to one repo lives in its manifest; the common
 substitution map and the protected-span rules live in manifests/_common.yml.
 The output is deterministic: running twice gives identical bytes. `--check`
@@ -64,6 +71,8 @@ MANIFESTS = EXPORT_DIR / "manifests"
 OVERLAY = EXPORT_DIR / "overlay"
 PATCHES = EXPORT_DIR / "patches"
 STARTER = KIT / "starter"
+LIBRARY = KIT / "library"
+LIBRARY_README = EXPORT_DIR / "library-README.md"
 # KIT is <sources>/_agent-guidance/docs/reference/adopt-the-whole-system.
 # A copy of the kit in a shallow folder has no such ancestor: None, and the
 # caller says so (KIT.parents[3] used to raise IndexError at import).
@@ -595,7 +604,8 @@ def _regenerate(repo: str, steps, root: Path, staged: dict, env_extra: dict, sou
             raise ExportError(f"{repo}: unknown regenerate step {step!r}")
 
 
-def export_repo(name: str, manifest, common, sources: Path, staging: Path, staged: dict, report=None) -> Path:
+def export_repo(name: str, manifest, common, sources: Path, staging: Path, staged: dict, report=None,
+                library: Library | None = None) -> Path:
     src_dir = sources / manifest.get("source", name)
     tree = read_git_tree(src_dir, manifest["source_sha"])
 
@@ -681,7 +691,8 @@ def export_repo(name: str, manifest, common, sources: Path, staging: Path, stage
 
     root = staging / manifest["kit_name"]
     write_tree(out, root)
-    ctx = {"repo": name, "manifest": manifest, "staged": dict(staged), "kit": KIT, "common": load_common()}
+    ctx = {"repo": name, "manifest": manifest, "staged": dict(staged), "kit": KIT, "common": load_common(),
+           "library": library if library is not None else Library(staging / "_library")}
     for spec in manifest.get("patches") or []:
         if not str(spec.get("why", "")).strip():
             raise ExportError(f"{name}: patch {spec.get('file')} has no `why`")
@@ -690,6 +701,78 @@ def export_repo(name: str, manifest, common, sources: Path, staging: Path, stage
     if report is not None:
         report[name] = counts
     return root
+
+
+class Library:
+    """The optional items a patch moves out of its tree (DECISIONS, Content
+    tiers). One folder per item, library/<kind folder>/<id>/, and in it one
+    folder per starter tree the item touches, <tree>/:
+
+      files/<path>     a file copied into the tree as it is;
+      fragments/<name> a piece of text an op inserts;
+      ops.json         {"ops": [...]}, the edits bootstrap/lib/content.py
+                       makes to files already in the tree (library-README.md
+                       lists the op types).
+    """
+
+    KIND_DIRS = {"skill": "skills", "guidance": "guidance", "git-hook": "git-hooks"}
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    def item(self, kind: str, item_id: str) -> Path:
+        if kind not in self.KIND_DIRS:
+            raise ExportError(f"library: unknown kind {kind!r}")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", item_id):
+            raise ExportError(f"library: bad item id {item_id!r}")
+        return self.root / self.KIND_DIRS[kind] / item_id
+
+    def write_file(self, kind: str, item_id: str, tree: str, rel: str, data: bytes, executable: bool = False) -> None:
+        dest = self.item(kind, item_id) / tree / "files" / rel
+        if dest.exists():
+            raise ExportError(f"library: {kind} {item_id} already has {tree}/files/{rel}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        dest.chmod(0o755 if executable else 0o644)
+
+    def move_tree(self, kind: str, item_id: str, tree: str, root: Path, rel: str) -> int:
+        """Move root/rel (a file or a folder) into the item's files; returns the file count."""
+        src = root / rel
+        if not src.exists() and not src.is_symlink():
+            raise ExportError(f"library: {tree}/{rel} not found for {kind} {item_id}")
+        moved = 0
+        paths = [src] if not src.is_dir() or src.is_symlink() else sorted(p for p in src.rglob("*") if not p.is_dir() or p.is_symlink())
+        for p in paths:
+            sub_rel = p.relative_to(root).as_posix()
+            dest = self.item(kind, item_id) / tree / "files" / sub_rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if p.is_symlink():
+                os.symlink(os.readlink(p), dest)
+            else:
+                shutil.copy2(p, dest)
+            moved += 1
+        if src.is_dir() and not src.is_symlink():
+            shutil.rmtree(src)
+        else:
+            src.unlink()
+        return moved
+
+    def write_fragment(self, kind: str, item_id: str, tree: str, name: str, text: str) -> str:
+        dest = self.item(kind, item_id) / tree / "fragments" / name
+        if dest.exists():
+            raise ExportError(f"library: {kind} {item_id} already has {tree}/fragments/{name}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+        return name
+
+    def add_ops(self, kind: str, item_id: str, tree: str, ops: list) -> None:
+        import json
+
+        path = self.item(kind, item_id) / tree / "ops.json"
+        doc = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"ops": []}
+        doc["ops"].extend(ops)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def diff_trees(a: Tree, b: Tree):
@@ -707,6 +790,12 @@ def diff_trees(a: Tree, b: Tree):
         elif x.executable != y.executable:
             problems.append(f"exec bit differs: {rel}")
     return problems
+
+
+def _library_tree(library: Library) -> Tree:
+    tree = read_dir_tree(library.root) if library.root.exists() else {}
+    tree["README.md"] = Entry(data=LIBRARY_README.read_bytes(), executable=False)
+    return tree
 
 
 def _strip_junk(tree: Tree) -> Tree:
@@ -738,8 +827,9 @@ def main(argv=None) -> int:
         with tempfile.TemporaryDirectory(prefix="kit-export-") as tmp:
             staging = Path(tmp)
             staged = {}
+            library = Library(staging / "_library")
             for name in order:
-                staged[name] = export_repo(name, manifests[name], common, sources, staging, staged, report)
+                staged[name] = export_repo(name, manifests[name], common, sources, staging, staged, report, library)
             failed = False
             for name in order:
                 if name not in wanted:
@@ -763,6 +853,26 @@ def main(argv=None) -> int:
                 else:
                     write_tree(fresh, dest)
                     print(f"wrote starter/{kit_name} ({name}): {len(fresh)} files")
+            if set(wanted) == set(manifests):
+                fresh = _library_tree(library)
+                if args.check:
+                    committed = read_index_tree(LIBRARY)
+                    if committed is None:
+                        print("note: library is not in a git work tree; comparing the files on disk")
+                        committed = _strip_junk(read_dir_tree(LIBRARY)) if LIBRARY.exists() else {}
+                    problems = diff_trees(committed, fresh)
+                    if problems:
+                        failed = True
+                        print(f"STALE library: {len(problems)} difference(s)")
+                        for p in problems[:50]:
+                            print(f"  {p}")
+                    else:
+                        print(f"OK library: {len(fresh)} files match a fresh export")
+                else:
+                    write_tree(fresh, LIBRARY)
+                    print(f"wrote library: {len(fresh)} files")
+            else:
+                print("note: library/ not written or checked: it takes parts from every repo, and --only or --skip left some out")
             if report is not None:
                 for name, counts in report.items():
                     print(f"substitutions in {name}:")

@@ -1,1 +1,5 @@
 * text=auto eol=lf
+# The skills-doctor bucketed-account-store fixture's account copies are CRLF on
+# purpose (its fixture.yaml: the account channel stores CRLF where the registry
+# is LF), so git must store their bytes as they are.
+skills-evals/evals/skills-doctor/bucketed-account-store/seed/session/skills/synced/** -text

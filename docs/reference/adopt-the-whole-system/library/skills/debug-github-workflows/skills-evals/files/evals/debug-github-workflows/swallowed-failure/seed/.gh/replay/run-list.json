@@ -1,0 +1,41 @@
+[
+  {
+    "databaseId": 61003,
+    "name": "Sync labels",
+    "workflowName": "Sync labels",
+    "headBranch": "main",
+    "headSha": "3333333333333333333333333333333333333333",
+    "event": "schedule",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://example.com/example-org/example-labels/actions/runs/61003",
+    "createdAt": "2026-01-07T03:00:00Z",
+    "updatedAt": "2026-01-07T03:00:08Z"
+  },
+  {
+    "databaseId": 61002,
+    "name": "Sync labels",
+    "workflowName": "Sync labels",
+    "headBranch": "main",
+    "headSha": "3333333333333333333333333333333333333333",
+    "event": "schedule",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://example.com/example-org/example-labels/actions/runs/61002",
+    "createdAt": "2026-01-06T03:00:00Z",
+    "updatedAt": "2026-01-06T03:00:08Z"
+  },
+  {
+    "databaseId": 61001,
+    "name": "Sync labels",
+    "workflowName": "Sync labels",
+    "headBranch": "main",
+    "headSha": "3333333333333333333333333333333333333333",
+    "event": "schedule",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://example.com/example-org/example-labels/actions/runs/61001",
+    "createdAt": "2026-01-05T03:00:00Z",
+    "updatedAt": "2026-01-05T03:00:08Z"
+  }
+]

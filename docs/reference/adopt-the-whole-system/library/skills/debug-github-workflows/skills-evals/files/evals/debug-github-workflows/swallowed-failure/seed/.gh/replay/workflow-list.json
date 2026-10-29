@@ -1,0 +1,8 @@
+[
+  {
+    "id": 54001,
+    "name": "Sync labels",
+    "path": ".github/workflows/sync-labels.yml",
+    "state": "active"
+  }
+]

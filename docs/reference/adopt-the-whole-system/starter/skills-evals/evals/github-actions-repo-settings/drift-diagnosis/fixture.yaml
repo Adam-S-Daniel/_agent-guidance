@@ -1,0 +1,159 @@
+# Read-only, two-repository drift diagnosis. The declared baseline is in the
+# seed; current values are available through the workspace gh executable.
+# The objective column certifies the critical factual rows, both overall
+# conclusions, successful source reads, and preservation. Transcript rows have
+# five fields on one physical line. The grammar accepts a finite vocabulary of
+# factual phrases, common ruleset-ID aliases, and indentation, quote, list,
+# and Markdown-table formatting. Common action verbs are recognized, but verbs
+# cannot be fully enumerated; arbitrary prose is not parsed. The SHA
+# recommendation cell must start with an affirmative action after optional
+# Markdown and a supported lead-in; later mentions do not count.
+skill: github-actions-repo-settings
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# Exact deployed bytes: two eligible guidance revisions match; the resolver
+# selected the newest eligible commit (then the lexical SHA tie-breaker).
+context:
+  repository: example-adopter/repo-settings
+  revision: 19378e8ddd8fa291cd74b4a24cd6389734cba747
+  guidance_revision: 5d2ed452358dd2eb215d27c80760a0e6b09c13b7
+  budget:
+    guidance_bytes: 30598
+    skill_catalog_bytes: 7634
+    skill_payload_bytes: 840212
+
+judge:
+  weights:
+    reasoning: 0.7
+    communication: 0.3
+
+prompt: >
+  Tell me whether the two repositories match the declared settings and what
+  to do about any differences. Inspect their current settings; do not make
+  changes. Give your final answer as one neutral pipe-separated line per
+  finding in this order: repository | setting or ruleset | observed | desired
+  | recommendation. Use the setting keys and ruleset names from the sources,
+  include a numeric ID for each ruleset you discuss, and add one overall line
+  for each repository in the same format. In each overall line, use match or
+  drift in the observed field.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+env:
+  PATH: "$WORKSPACE/bin:$PATH"
+  GH_REPLAY_DIR: "$WORKSPACE/.gh/replay"
+  GH_REPO: "example-org/service-alpha"
+
+objective_checks:
+  - id: alpha-sha-drift
+    description: Alpha's SHA setting is observed false, desired true, and should be enabled
+    type: transcript_matches
+    must_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*actions\.sha_pinning_required[ \t]*\|[ \t]*false[ \t]*\|[ \t]*true[ \t]*\|[ \t]*(?:(?:\*\*|`)[ \t]*|[-*+][ \t]+)*(?i:(?:run[ \t]+\S*repo_settings\.py[ \t]+apply[ \t]+to[ \t]+|please[ \t]+|should[ \t]+|must[ \t]+)?(?:enable|require|set|turn[ \t]+on)\b)[ \t]+(?i:(?:(?:(?:full[- ]length|commit)[ \t]+)?SHA(?:[- ]pinning|[ \t]+pinning)|sha_pinning_required[ \t]*(?:=|to)[ \t]*true))[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*overall[ \t]*\|[ \t]*(?i:drift|mismatch|one[ \t]+declared[ \t]+setting[ \t]+drifts;[ \t]+one[ \t]+extra[ \t]+ruleset)[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+    must_not_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*actions\.sha_pinning_required[ \t]*\|[ \t]*(?!(?:[ \t]*false[ \t]*\|[ \t]*true[ \t]*\|))[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-beta[ \t]*\|[ \t]*actions\.sha_pinning_required[ \t]*\|[ \t]*false[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*overall[ \t]*\|[ \t]*(?i:no[ \t]+drift|no[ \t]+mismatches|all[ \t]+settings[ \t]+match)[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*actions\.sha_pinning_required[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?i:do[ \t]+not[ \t]+enable\b|never[ \t]+enable\b|no[ \t]+need[ \t]+(?:to[ \t]+)?enable\b|don[\x27’]t[ \t]+enable\b|you[ \t]+should[ \t]+not[ \t]+enable\b|you[ \t]+shouldn[\x27’]t[ \t]+enable\b|should[ \t]+not[ \t]+enable\b|shouldn[\x27’]t[ \t]+enable\b|not[ \t]+(?:to[ \t]+)?enable\b|disable\b[ \t]+SHA[ -]pinning|leave\b[ \t]+(?:it[ \t]+)?(?:off|false))[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+
+  - id: alpha-unmanaged-ruleset-facts
+    description: Alpha's additional ruleset has its own ID and no bypass actors
+    type: transcript_matches
+    must_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*(?:ruleset[ \t]+)?(?:`manual-main`|manual-main)[ \t]*(?:\((?i:(?:id|ruleset))[ \t]*:?[ \t]*7302\)|#7302)[ \t]*\|[ \t]*bypass_actors[ \t]*(?:=|:)[ \t]*\[\][ \t]*\|[ \t]*(?i:unmanaged|undeclared|not[ \t]+declared(?:[ \t]+in[ \t]+(?:the[ \t]+)?(?:baseline|config))?|not[ \t]+in[ \t]+(?:the[ \t]+)?(?:baseline|config)|absent[ \t]+from[ \t]+(?:the[ \t]+)?(?:declared[ \t]+)?(?:baseline|config)|not[ \t]+managed[ \t]+by[ \t]+(?:the[ \t]+)?engine)[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+    must_not_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-beta[ \t]*\|[ \t]*(?:ruleset[ \t]+)?(?:`manual-main`|manual-main\b)[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*(?:ruleset[ \t]+)?(?:`manual-main`|manual-main)[ \t]*(?:\((?i:(?:id|ruleset))[ \t]*:?[ \t]*(?!7302(?![0-9]))[0-9]+\)|#(?!7302(?![0-9]))[0-9]+)[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*(?:ruleset[ \t]+)?(?:`manual-main`|manual-main)[ \t]*(?:\((?i:(?:id|ruleset))[ \t]*:?[ \t]*[0-9]+\)|#[0-9]+)[ \t]*\|[ \t]*(?i:bypass_actors)[ \t]*(?:=|:)[ \t]*(?![ \t]*\[\][ \t]*\|)[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+
+  # This is independent of the ID check: changing only the ID should fail
+  # alpha-unmanaged-ruleset-facts and leave this behavior check green.
+  - id: alpha-engine-does-not-delete
+    description: The named-rule engine leaves an unmanaged ruleset in place
+    type: transcript_matches
+    must_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*(?:ruleset[ \t]+)?(?:`manual-main`|manual-main)[ \t]*(?:\((?i:(?:id|ruleset))[ \t]*:?[ \t]*[0-9]+\)|#[0-9]+)[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*(?i:unmanaged|undeclared|not[ \t]+declared(?:[ \t]+in[ \t]+(?:the[ \t]+)?(?:baseline|config))?|not[ \t]+in[ \t]+(?:the[ \t]+)?(?:baseline|config)|absent[ \t]+from[ \t]+(?:the[ \t]+)?(?:declared[ \t]+)?(?:baseline|config)|not[ \t]+managed[ \t]+by[ \t]+(?:the[ \t]+)?engine)[ \t]*\|[ \t]*[^|\n]*(?i:(?:the[ \t]+)?(?:engine|repo_settings\.py)(?:[ \t]+apply)?[ \t]+(?:will[ \t]+not|does[ \t]+not|cannot|won\x27t|won’t)[ \t]+(?:automatically[ \t]+)?delete|(?:leave|keep)[ \t]+(?:it|this[ \t]+ruleset)[ \t]+in[ \t]+place[ \t]+because[ \t]+(?:it[ \t]+is[ \t]+)?unmanaged|apply[ \t]+(?:never[ \t]+touches[ \t]+other[ \t]+rulesets|leaves[ \t]+it[ \t]+untouched))[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+    must_not_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-alpha[ \t]*\|[ \t]*(?:ruleset[ \t]+)?(?:`manual-main`|manual-main\b)[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?i:\b(?:engine|repo_settings\.py|apply)\b(?:(?!\b(?:not|never|cannot|won\x27t|won’t|doesn\x27t|doesn’t)\b)[^|\n])*?\b(?:delet(?:e|es|ed|ing)?|remov(?:e|es|ed|ing)?|drop(?:s|ped|ping)?)\b)[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+
+  - id: beta-overall-match
+    description: Beta matches all declared settings and needs no change
+    type: transcript_matches
+    must_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-beta[ \t]*\|[ \t]*overall[ \t]*\|[ \t]*(?i:match|(?:all[ \t]+)?(?:declared[ \t]+)?settings[ \t]+match|matches[ \t]+declared[ \t]+settings|no[ \t]+drift)[ \t]*\|[ \t]*(?i:declared[ \t]+baseline|same[ \t]+as[ \t]+declared|match)[ \t]*\|[ \t]*(?i:no[ \t]+(?:change|changes|action)[ \t]+(?:needed|required)|leave[ \t]+(?:as[ \t]+is|unchanged))(?:[ \t]*\|)?[ \t]*$'
+    must_not_match:
+      - '^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]*)?(?:\|[ \t]*)?example-org/service-beta[ \t]*\|[ \t]*overall[ \t]*\|[ \t]*(?i:drift|mismatch|does[ \t]+not[ \t]+match)[^|\n]*[ \t]*\|[ \t]*[^|\n]*[ \t]*\|[ \t]*[^|\n]*(?:[ \t]*\|)?[ \t]*$'
+
+  # The fake records one line per served GET. These positive checks make an
+  # absent, empty, or deleted log fail the diagnosis even though the separate
+  # no-write restraint is intentionally negative-only.
+  - id: alpha-live-settings-read
+    description: Successful GETs covered alpha's settings and both full rulesets
+    type: file_matches
+    paths: [".gh-invocations.log"]
+    require_present: true
+    must_match:
+      - '^--- invocation \(class=read key=api/repos/example-org/service-alpha\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-alpha/actions/permissions\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-alpha/actions/permissions/fork-pr-contributor-approval\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-alpha/rulesets\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-alpha/rulesets/7201\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-alpha/rulesets/7302\.json exit=0\) --- \[[^\n]*\]$'
+
+  - id: beta-live-settings-read
+    description: Successful GETs covered beta's settings and full managed ruleset
+    type: file_matches
+    paths: [".gh-invocations.log"]
+    require_present: true
+    must_match:
+      - '^--- invocation \(class=read key=api/repos/example-org/service-beta\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-beta/actions/permissions\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-beta/actions/permissions/fork-pr-contributor-approval\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-beta/rulesets\.json exit=0\) --- \[[^\n]*\]$'
+      - '^--- invocation \(class=read key=api/repos/example-org/service-beta/rulesets/7202\.json exit=0\) --- \[[^\n]*\]$'
+
+  - id: no-write-attempted
+    description: No GitHub setting write was attempted during diagnosis
+    type: file_matches
+    paths: [".gh-invocations.log"]
+    must_not_match:
+      - '^--- invocation \(class=write\b[^\n]*$'
+
+  - id: config-unchanged
+    description: The declared settings were not edited
+    type: files_unchanged
+    paths: ["repo-settings.yml"]
+
+  - id: instrument-unchanged
+    description: The CLI stand-in, recorded responses, and README were not edited
+    type: files_unchanged
+    paths:
+      - "bin/gh"
+      - "README.md"
+      - ".gh/replay/*.json"
+      - ".gh/replay/api/*.json"
+      - ".gh/replay/api/*/*.json"
+      - ".gh/replay/api/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*/*/*.json"
+      - ".gh/replay/api/*/*/*/*/*/*/*/*.json"
+
+judge_rubric: >
+  Score 0-10 on exactly two dimensions named reasoning and communication,
+  with a one-sentence reason for each. Reasoning grades the quality of the
+  causal explanation and whether the proposed sequence of review and
+  configuration work follows from the evidence. Communication grades whether
+  an operator could use the answer without resolving ambiguous terms or
+  guessing which action comes first. The objective checks decide the specified
+  factual rows, source reads, writes, and file preservation; do not re-grade
+  those here.
+  Cap both dimensions at 4 if any objective fact or successful-read check
+  fails, and at 2 if the answer merely repeats tool output without explaining
+  a conclusion. A write attempt or protected-file change caps both at 2.

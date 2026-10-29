@@ -85,22 +85,6 @@ def apply(root: Path, ctx) -> None:
 '''),
     ])
 
-    # ── scripts/test_generate_skills_lock.py ───────────────────────────────
-    _sub(root, "scripts/test_generate_skills_lock.py", [
-        # The vendored bootstrap hook cites a test of the skills-doctor
-        # skill, which the kit does not ship (X9). The hook is byte for byte
-        # _agent-guidance's copy, so the citation stays and is declared here.
-        ('''    "test_bump_format_gate_empty_skills",
-}
-''', '''    "test_bump_format_gate_empty_skills",
-    # The source registry's skills-doctor skill (scripts/test_check_provenance.py),
-    # which the adoption kit does not ship (its DECISIONS X9); the bootstrap
-    # hook, vendored byte for byte, still cites it.
-    "test_the_source_limits_are_the_hooks_own",
-}
-'''),
-    ])
-
     # ── scripts/test_setup_owner_machine.py ────────────────────────────────
     # The legacy whole-directory home link pointed at plugins/acsi-coding-local/
     # skills/, which a registry with no skills does not have, so "the target
@@ -117,7 +101,7 @@ def apply(root: Path, ctx) -> None:
     ])
 
     # ── scripts/test_agent_checks.py ───────────────────────────────────────
-    # The runner the sync delivers ships one check, skill-shell (X9). Its machinery tests
+    # The runner the sync delivers ships the core checks only (X9, Content tiers). Its machinery tests
     # (events, ranges, the installer, real git) run against a TEST-ONLY copy
     # with a lesson in its slot that refuses the paths the source's fleet
     # checks refused, so each case keeps its shape. Removed, because each
@@ -128,10 +112,11 @@ def apply(root: Path, ctx) -> None:
         ('''ZERO = "0" * 40
 ''', '''ZERO = "0" * 40
 
-# The runner ships one check, skill-shell (the adoption kit's DECISIONS X9), so
-# each scratch repo gets a TEST-ONLY copy of it with this lesson in its lesson slot. It
-# refuses the paths the source registry's fleet checks refused, so the cases
-# below exercise the runner's events, ranges and hook wiring unchanged.
+# The runner ships only the core checks, secret-file and skill-shell (the
+# adoption kit's DECISIONS X9 and Content tiers), so each scratch repo gets a
+# TEST-ONLY copy of it with this lesson in its lesson slot. It refuses the paths
+# the source registry's fleet checks refused, so the cases below exercise the
+# runner's events, ranges and hook wiring unchanged.
 FIXTURE_LESSON = """check_lessons() {
   case "$1" in
     .claude/rules/*)

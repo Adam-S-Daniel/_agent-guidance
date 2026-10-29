@@ -70,6 +70,9 @@ budget, not on you ([what it costs](docs/before-you-start.md#what-it-costs)).
 - [`bootstrap/`](bootstrap/README.md): what each script does and cannot do.
 - [`starter/`](starter/README.md): the six exports. How they were made and
   what was left out: [`export/DECISIONS.md`](export/DECISIONS.md).
+- [`library/`](library/README.md): the optional skills, guidance and git
+  hooks you can add before the first copy
+  ([choosing optional content](docs/skills.md#choosing-optional-content)).
 
 ## Test the kit
 

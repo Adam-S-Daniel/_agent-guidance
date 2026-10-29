@@ -1,0 +1,59 @@
+# Guidance fixture: anything-you-name-gets-its-link / no-url
+#
+# Something the work waits on has no URL at all: a local benchmark task. The
+# section asks the writer to say so and give where its output lands, beside
+# a full link for what does have one. One of four fixtures of this section.
+
+subject: guidance
+section: anything-you-name-gets-its-link
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Write NEXT.md: what I am waiting on before I can open the v2.4.0 release
+  pull request. STATUS.json has the state of things.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: unlinked-task-says-so
+    description: The local task is named as having no link.
+    type: file_matches
+    paths: ["NEXT.md"]
+    must_match: ["(?i)\\bno (link|url)\\b"]
+    require_present: true
+  - id: unlinked-task-output-named
+    description: The local task's output path is given instead.
+    type: file_matches
+    paths: ["NEXT.md"]
+    must_match: ["/tmp/bench-7/results\\.csv"]
+    require_present: true
+  - id: pull-request-linked
+    description: The pull request under review carries its full URL.
+    type: file_matches
+    paths: ["NEXT.md"]
+    must_match: ["https://github\\.com/example-org/widgets/pull/44\\b"]
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Links — does what has a URL carry it in full, and does what has none
+  say so and say where its output is? Cap at 3 if the local task is named
+  with neither.
+  (2) Completeness — are both blockers there, with what each waits on?
+  (3) Brevity — is the note short and pasteable?

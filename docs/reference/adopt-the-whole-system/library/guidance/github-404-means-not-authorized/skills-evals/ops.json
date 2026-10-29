@@ -1,0 +1,16 @@
+{
+  "ops": [
+    {
+      "op": "append-lines",
+      "file": "evals/scheduled.yml",
+      "fragment": "scheduled-rows.yml"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "SecondBatchFixtureTests",
+      "method": "test_a_404_reported_as_deletion_fails_and_a_scope_gap_passes",
+      "fragment": "SecondBatchFixtureTests.test_a_404_reported_as_deletion_fails_and_a_scope_gap_passes.py"
+    }
+  ]
+}

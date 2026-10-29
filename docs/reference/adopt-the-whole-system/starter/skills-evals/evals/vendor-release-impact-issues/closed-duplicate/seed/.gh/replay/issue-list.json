@@ -1,0 +1,58 @@
+[
+  {
+    "number": 61,
+    "title": "CI: cache the npm install of ExampleCLI",
+    "state": "OPEN",
+    "stateReason": "",
+    "closedAt": null,
+    "createdAt": "2026-08-03T15:10:00Z",
+    "labels": [
+      {
+        "name": "ci"
+      }
+    ],
+    "url": "https://github.com/example-org/example-repo/issues/61"
+  },
+  {
+    "number": 59,
+    "title": "README: document where the session-start hook writes its log",
+    "state": "OPEN",
+    "stateReason": "",
+    "closedAt": null,
+    "createdAt": "2026-07-29T11:02:00Z",
+    "labels": [
+      {
+        "name": "docs"
+      }
+    ],
+    "url": "https://github.com/example-org/example-repo/issues/59"
+  },
+  {
+    "number": 57,
+    "title": "ExampleCLI 4.2.0 hooks report source \"fork\": SessionStart matcher is startup|resume",
+    "state": "CLOSED",
+    "stateReason": "NOT_PLANNED",
+    "closedAt": "2026-07-21T16:40:00Z",
+    "createdAt": "2026-07-15T08:12:00Z",
+    "labels": [
+      {
+        "name": "vendor-release"
+      }
+    ],
+    "url": "https://github.com/example-org/example-repo/issues/57"
+  },
+  {
+    "number": 44,
+    "title": "ExampleCLI 4.1.0 plugin resolver fix: move the CI pin to 4.1.0",
+    "state": "CLOSED",
+    "stateReason": "COMPLETED",
+    "closedAt": "2026-06-10T09:30:00Z",
+    "createdAt": "2026-06-03T10:00:00Z",
+    "labels": [
+      {
+        "name": "vendor-release"
+      }
+    ],
+    "url": "https://github.com/example-org/example-repo/issues/44"
+  }
+]

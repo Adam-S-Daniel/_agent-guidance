@@ -1,0 +1,297 @@
+{
+  "about": "Every skill, guidance section and git hook the kit ships, by tier (export/DECISIONS.md, Content tiers (2026-10-29)). core items are always installed: they are exported straight into starter/. recommended and opinionated items are optional: each lives in library/<kind folder>/<id>/ and bootstrap/add-content.sh copies the ones you choose into starter/. short is the one sentence a choice shows; details and clashes are printed before the opinionated items are offered. group splits the recommended guidance into two questions (safety, habits). source_link is the item's main file, relative to the kit. A guidance item's id is its row id in agents-md/eval-coverage.yml; a skill's is its folder name; a git hook's is the check id in .githooks/agent-checks. bootstrap/tests/test-bootstrap.sh checks this file against library/ and starter/.",
+  "items": [
+    {
+      "id": "workflow-path-audit",
+      "kind": "skill",
+      "tier": "core",
+      "title": "workflow-path-audit",
+      "short": "Checks that each GitHub Actions workflow runs only when files it depends on change, and still reports success when it skips.",
+      "source_link": "starter/agent-skills/plugins/acsi-coding-anywhere/skills/workflow-path-audit/SKILL.md"
+    },
+    {
+      "id": "skills-doctor",
+      "kind": "skill",
+      "tier": "core",
+      "title": "skills-doctor",
+      "short": "Reports which skills a session actually loaded and where each came from, and flags missing or overridden ones. It changes nothing.",
+      "source_link": "starter/agent-skills/plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md"
+    },
+    {
+      "id": "github-actions-repo-settings",
+      "kind": "skill",
+      "tier": "core",
+      "title": "github-actions-repo-settings",
+      "short": "Sets and checks repository security settings as code: pinned actions, approval for outside contributors' workflow runs, and default-branch rulesets.",
+      "source_link": "starter/agent-skills/plugins/acsi-coding-anywhere/skills/github-actions-repo-settings/SKILL.md"
+    },
+    {
+      "id": "vendor-release-impact-issues",
+      "kind": "skill",
+      "tier": "core",
+      "title": "vendor-release-impact-issues",
+      "short": "Turns a vendor's release notes into one GitHub issue per affected repo and change, with quotes, links and the checks to run.",
+      "source_link": "starter/agent-skills/plugins/acsi-coding-anywhere/skills/vendor-release-impact-issues/SKILL.md"
+    },
+    {
+      "id": "review-bash-ci-reliability",
+      "kind": "skill",
+      "tier": "recommended",
+      "title": "review-bash-ci-reliability",
+      "short": "Reviews shell scripts that run in CI for failures that pass silently, lost exit codes and environment assumptions.",
+      "library_path": "library/skills/review-bash-ci-reliability",
+      "source_link": "library/skills/review-bash-ci-reliability/agent-skills/files/plugins/acsi-coding-anywhere/skills/review-bash-ci-reliability/SKILL.md"
+    },
+    {
+      "id": "debug-github-workflows",
+      "kind": "skill",
+      "tier": "recommended",
+      "title": "debug-github-workflows",
+      "short": "Reads failing GitHub Actions runs and their logs and works out why they failed.",
+      "library_path": "library/skills/debug-github-workflows",
+      "source_link": "library/skills/debug-github-workflows/agent-skills/files/plugins/acsi-coding-anywhere/skills/debug-github-workflows/SKILL.md"
+    },
+    {
+      "id": "disarm-inherited-reach",
+      "kind": "skill",
+      "tier": "recommended",
+      "title": "disarm-inherited-reach",
+      "short": "When an agent copies or clones a repo to experiment in, it first cuts the copy's push path to the real repo.",
+      "library_path": "library/skills/disarm-inherited-reach",
+      "source_link": "library/skills/disarm-inherited-reach/agent-skills/files/plugins/acsi-coding-anywhere/skills/disarm-inherited-reach/SKILL.md"
+    },
+    {
+      "id": "writing-adrs",
+      "kind": "skill",
+      "tier": "opinionated",
+      "title": "writing-adrs",
+      "short": "Writes a short decision record under `docs/decisions/` when a choice needs more explanation than a code comment can hold.",
+      "details": "Writes a lightweight Architecture Decision Record (context, decision, consequences) under `docs/decisions/` when a decision is not obvious and would otherwise be explained only in a pull request description, and creates the folder's README and first record when there are none. Why: a pull request description is hard to find later, and a code comment cannot hold the background. It adds files to the repo, and it assumes the `docs/decisions/` layout and a plain numbered format.",
+      "clashes": "Clashes if you already record decisions somewhere else (a wiki, an RFC folder, or another ADR format such as MADR): the skill would start a second set of records beside yours.",
+      "library_path": "library/skills/writing-adrs",
+      "source_link": "library/skills/writing-adrs/agent-skills/files/plugins/acsi-anything-anywhere/skills/writing-adrs/SKILL.md"
+    },
+    {
+      "id": "finding-unknowns",
+      "kind": "skill",
+      "tier": "opinionated",
+      "title": "finding-unknowns",
+      "short": "Before non-trivial work, lists what isn't known yet (assumptions, unclear requirements, edge cases) and resolves each by asking or checking.",
+      "details": "Before non-trivial work, lists what isn't known yet (assumptions, unclear requirements, edge cases) and resolves each by asking or checking. During the work it flags surprises, and afterward it writes a short explanation of what changed and why it's right. It adds steps some people find slow. Pairs with the Finding your unknowns guidance rule.",
+      "clashes": "Clashes if you want agents to start coding at once on every task: the questions and the explanation add a step before and after the work.",
+      "library_path": "library/skills/finding-unknowns",
+      "source_link": "library/skills/finding-unknowns/agent-skills/files/plugins/acsi-anything-anywhere/skills/finding-unknowns/SKILL.md"
+    },
+    {
+      "id": "working-in-these-repos",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Working in these repos",
+      "short": "Leaves issues and pull requests labeled `on-hold` alone until the owner removes the label.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "data-exposure-in-ci",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Data exposure in CI and public repos",
+      "short": "Keeps personal and sensitive data out of CI logs, summaries and artifacts, which anyone can read on a public repo.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "automation-vs-branch-protection",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Automation vs branch protection",
+      "short": "Keeps bots from pushing to protected default branches and says how automation may write instead.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "agent-contribution-markers",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Agent-made GitHub contributions carry a marker",
+      "short": "Marks every pull request, issue and comment an agent writes under your account as written by an agent.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "watch-finished-is-not-ci-passed",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "\"The watch finished\" is not \"CI passed\"",
+      "short": "Reads CI results from the parsed check conclusions, never from a watch command's exit code.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "git-push-does-not-mean-commit-exists",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "A successful `git push` does not mean your commit exists",
+      "short": "Checks that a commit really reached the remote branch, because a refused commit still lets the push report success.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "pinning-github-actions",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Pinning GitHub Actions",
+      "short": "Pins every GitHub Action through the lockfile, so a workflow always runs a known commit.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "skills-ecosystem",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Skills ecosystem",
+      "short": "Says where skills come from, how each kind of session gets them and what to do when an install is broken.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "two-setup-gaps",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Two setup gaps you may close, and must not nag about",
+      "short": "Says when an agent should point out a missing setup step (the cloud skills hook, a machine's plugins) and when to stay quiet.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "git-practices",
+      "kind": "guidance",
+      "tier": "core",
+      "title": "Git practices",
+      "short": "Merges pull requests with a merge commit, because a squash strands commits a lockfile pins.",
+      "source_link": "starter/agent-guidance/agents-md/base.md"
+    },
+    {
+      "id": "security",
+      "kind": "guidance",
+      "tier": "recommended",
+      "group": "safety",
+      "title": "Security",
+      "short": "Checks input that crosses a trust boundary and never builds SQL, shell commands or HTML from untrusted data.",
+      "library_path": "library/guidance/security",
+      "source_link": "library/guidance/security/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "github-404-means-not-authorized",
+      "kind": "guidance",
+      "tier": "recommended",
+      "group": "safety",
+      "title": "A GitHub 404 means \"not authorized\", not \"not there\"",
+      "short": "Treats a GitHub 404 as \"this credential can't see it\" until another check says more, never as proof that something is gone.",
+      "library_path": "library/guidance/github-404-means-not-authorized",
+      "source_link": "library/guidance/github-404-means-not-authorized/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "test-that-can-signal-kills-every-session",
+      "kind": "guidance",
+      "tier": "recommended",
+      "group": "safety",
+      "title": "A test that can signal can kill every session",
+      "short": "Keeps code and tests that send signals from killing every process you own, as a mocked process id once did.",
+      "library_path": "library/guidance/test-that-can-signal-kills-every-session",
+      "source_link": "library/guidance/test-that-can-signal-kills-every-session/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "name-becomes-scanner-data",
+      "kind": "guidance",
+      "tier": "recommended",
+      "group": "safety",
+      "title": "A name you choose becomes data a scanner reads",
+      "short": "Avoids words like `secret` or `token` next to hashes in generated files, which secret scanners report as leaks.",
+      "library_path": "library/guidance/name-becomes-scanner-data",
+      "source_link": "library/guidance/name-becomes-scanner-data/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "working-habits",
+      "kind": "guidance",
+      "tier": "recommended",
+      "group": "habits",
+      "title": "Working habits",
+      "short": "Fixes only what was asked, tests what changes, keeps tests deterministic and numbers exact, and parses code with a real parser.",
+      "library_path": "library/guidance/working-habits",
+      "source_link": "library/guidance/working-habits/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "git-habits",
+      "kind": "guidance",
+      "tier": "recommended",
+      "group": "habits",
+      "title": "Git habits",
+      "short": "Writes commit messages that say why, never rewrites shared history, uses closing keywords with care and keeps one worktree per session.",
+      "library_path": "library/guidance/git-habits",
+      "source_link": "library/guidance/git-habits/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "finding-your-unknowns",
+      "kind": "guidance",
+      "tier": "opinionated",
+      "title": "Finding your unknowns",
+      "short": "Names what isn't known before, during and after a task, and keeps what was learned in the repo rather than in agent memory.",
+      "details": "Before work starts, the agent names what it doesn't know yet, pointing at code where it can. During the work it reports departures and edge cases, and afterward it explains what changed and why that is correct. Findings that last go into the repo: a rule a commit can check becomes a check first, otherwise a guidance rule, a repo fact in AGENTS.md or a skill. A note in agent memory only points at that copy. Why: what an agent learns is otherwise lost when the session ends, and the next session repeats the mistake. Pairs with the finding-unknowns skill.",
+      "clashes": "Clashes if you keep lasting notes in agent memory or a wiki rather than in the repo, or if you want agents to start coding at once without naming their unknowns first.",
+      "library_path": "library/guidance/finding-your-unknowns",
+      "source_link": "library/guidance/finding-your-unknowns/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "anything-you-name-gets-its-link",
+      "kind": "guidance",
+      "tier": "opinionated",
+      "title": "Anything you name gets its link",
+      "short": "Gives every pull request, run or issue an agent mentions its URL in the same sentence, or says there is none.",
+      "details": "Every pull request, run, issue or file an agent names that you might open gets its URL in the same sentence: what it hands over, what it is waiting on (every time it names it) and what it cites as done. It links the page that decides (a run's job page, not the pull request), adds a few words saying what the link is, says so when there is no URL, and stops naming a thing once it no longer blocks anything. Why: a bare name or number makes you search for it, and a number links to the wrong place outside its own repo.",
+      "clashes": "Clashes if you prefer short replies without links, or work mostly outside GitHub, where most of what an agent names has no URL and the rule adds a \"no link\" note to every reply.",
+      "library_path": "library/guidance/anything-you-name-gets-its-link",
+      "source_link": "library/guidance/anything-you-name-gets-its-link/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "subagent-delegation",
+      "kind": "guidance",
+      "tier": "opinionated",
+      "title": "Subagent delegation (model routing)",
+      "short": "Has the main session hand coding to subagents on cheaper models and accept their work only when a named test command passes.",
+      "details": "The main session does not write code itself: it hands exact edits to a subagent on the cheapest capable model, and a clear spec to a mid-tier one, and keeps the root cause, the design, the spec and the review of the diff. Delegated work counts as done only when a named test command exits 0 and reports how many tests ran, and that command is first shown to be able to fail. It also covers subagents that still hold the working tree, quiet subagents, credentials in live tests and scratch copies that can still push. Why: a cheaper model is good at a well-specified edit, and a report of success is not proof.",
+      "clashes": "Clashes if you work in a tool without subagents, use one model for everything, or want the main session to write code directly: every coding task would be routed through a hand-off it cannot make.",
+      "library_path": "library/guidance/subagent-delegation",
+      "source_link": "library/guidance/subagent-delegation/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "dependency-updates",
+      "kind": "guidance",
+      "tier": "opinionated",
+      "title": "Dependency updates",
+      "short": "Waits seven days before taking a new dependency release (thirty for a major version), by Dependabot cooldown or by hand.",
+      "details": "Dependabot waits 7 days before proposing a version update, and 30 days for a major version where it supports that; security advisories are not delayed. By hand, the agent takes the newest release that is at least 7 days old and pins it exactly. The Claude Code and Codex command-line tools are the exception: they are installed at the latest version and the version used is recorded. Why: a release that is a few days old is the one most likely to be pulled or found broken.",
+      "clashes": "Clashes if you want new releases as soon as they ship, or already use a different update policy (Renovate, a weekly batch, version ranges instead of exact pins).",
+      "library_path": "library/guidance/dependency-updates",
+      "source_link": "library/guidance/dependency-updates/agent-guidance/fragments/section.md"
+    },
+    {
+      "id": "skill-shell",
+      "kind": "git-hook",
+      "tier": "core",
+      "title": "skill-shell",
+      "short": "Refuses a skill or command file that would run a shell command as soon as it loads, before anyone has read it.",
+      "source_link": "starter/agent-guidance/templates/agent-checks/agent-checks"
+    },
+    {
+      "id": "secret-file",
+      "kind": "git-hook",
+      "tier": "core",
+      "title": "secret-file",
+      "short": "Refuses commits of files that look like secrets or keys (`.env`, `*.pem`, `*.key`, SSH private keys).",
+      "source_link": "starter/agent-guidance/templates/agent-checks/agent-checks"
+    },
+    {
+      "id": "rules-dir",
+      "kind": "git-hook",
+      "tier": "opinionated",
+      "title": "rules-dir",
+      "short": "Refuses commits to `.claude/rules/`, keeping every rule where all agents and the evals see it. Skip it if you keep path-scoped rules there.",
+      "details": "Refuses any commit that adds or changes a file under `.claude/rules/`. Why: only Claude Code reads that folder, and a rule there with a `paths:` filter loads only when a matching file is touched. Codex and other agents never see it, so the same repo can behave differently depending on the tool. The loop's evals measure guidance sections and skills, not rules files, so a rule kept there is never tested or improved. With this hook, every rule lives in AGENTS.md, a skill or a check, which every agent reads and the loop can measure.",
+      "clashes": "Clashes if your repos already keep rules in `.claude/rules/` (for example per-folder rules for a frontend and a backend), or if you use only Claude Code and rely on path-scoped rules to keep context small: every commit that touches one of those files would be refused until you move the rules or turn the hook off.",
+      "library_path": "library/git-hooks/rules-dir",
+      "source_link": "library/git-hooks/rules-dir/agent-guidance/fragments/check.sh"
+    }
+  ]
+}

@@ -6,10 +6,12 @@
 layer: the always-on rules, the machinery that delivers them to every repo
 and every session, and the specs the standing routines follow.
 
-- `agents-md/base.md` is the fleet guidance. It ships one real section,
-  "A successful `git push` does not mean your commit exists", copied
-  unchanged from the owner's guidance (its fixture is in `skills-evals`), and
-  an HTML-commented template of a section above it (DECISIONS X9; a new
+- `agents-md/base.md` is the fleet guidance. It ships the core sections,
+  copied unchanged from the owner's guidance (their fixtures are in
+  `skills-evals`), the recommended and opinionated sections you chose with
+  `bootstrap/add-content.sh` ([choosing optional
+  content](skills.md#choosing-optional-content)), and an HTML-commented
+  template of a section above them (DECISIONS X9; a new
   section also needs a row in `agents-md/eval-coverage.yml` and an entry in
   `docs/guidance-impact.md`). `agents-md/sections/` holds per-stack sections
   (python, javascript, typescript, go, dotnet, rust, docker), each empty; a
@@ -61,9 +63,11 @@ A rule that a commit can show is broken becomes a check, not text:
 
 - **agent-checks** is one runner, `templates/agent-checks/agent-checks`,
   delivered to every fleet repo as `.githooks/agent-checks` with its CI
-  workflow `agent-checks.yml`. It ships one check, `skill-shell` (it refuses
-  a `SKILL.md` or command file that runs a shell command when it loads),
-  with a commented-out example of a second beside it; a repo's own checks go
+  workflow `agent-checks.yml`. It ships two core checks, `skill-shell` (it
+  refuses a `SKILL.md` or command file that runs a shell command when it
+  loads) and `secret-file` (it refuses a committed `.env` or key file), the
+  optional `rules-dir` check when you choose it, and a commented-out example
+  of another; a repo's own checks go
   in `.agent-checks/local.sh`, and fleet-wide ones in the template.
   Each refusal says what is wrong, why, and how to fix it, so the rule does
   not need to sit in always-on guidance.

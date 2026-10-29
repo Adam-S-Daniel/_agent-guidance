@@ -1,0 +1,13 @@
+{
+  "id": 43002,
+  "name": "Release notes",
+  "workflow_id": 57001,
+  "head_branch": "v1.4.0",
+  "head_sha": "5555555555555555555555555555555555555555",
+  "event": "release",
+  "status": "completed",
+  "conclusion": "failure",
+  "path": ".github/workflows/release-notes.yml",
+  "html_url": "https://example.com/example-org/example-docs/actions/runs/43002",
+  "jobs_url": "https://example.net/repos/example-org/example-docs/actions/runs/43002/jobs"
+}

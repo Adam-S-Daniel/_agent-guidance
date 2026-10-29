@@ -26,13 +26,18 @@
 #                   (apply-settings.sh --check, which clones repo-settings)
 #   regen:<task>    a regenerate.sh task is done on your default branches
 #                   (regenerate.sh --check <task>, which clones the repos)
+#   content         add-content.sh recorded your choices, and each optional
+#                   item you installed is on its repo's default branch
+#                   (lib/content.py probes: a file it adds, or a line it
+#                   adds to one)
 #
 # Without --only: repos, labels, branches, environments, variables, every App, its
 # installation and every values group (the fast ones; settings and regen:* clone repos, so
-# name them, and federation is optional, so name it too). Secret and variable values are never read or printed; the
+# name them, and federation is optional, so name it too), and content once
+# add-content.sh has recorded your choices. Secret and variable values are never read or printed; the
 # variables group compares a value to fleet.env's without printing either.
 # Exit 0 when nothing failed, 1 otherwise. Makes no write call. Needs: gh, jq;
-# git and python3 for settings and regen:*.
+# git and python3 for settings and regen:*; python3 for content.
 
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -59,12 +64,12 @@ if [ -n "$ONLY" ]; then
   IFS=',' read -r -a only_list <<<"$ONLY"
   for g in "${only_list[@]}"; do
     case $g in
-      repos|labels|branches|environments|variables|federation|settings) ;;
+      repos|labels|branches|environments|variables|federation|settings|content) ;;
       apps:*) app_known "${g#apps:}" || die "unknown App in --only: ${g#apps:}" ;;
       installs:*) app_known "${g#installs:}" || die "unknown App in --only: ${g#installs:}" ;;
       values:*) group_known "${g#values:}" || die "unknown values group in --only: ${g#values:}" ;;
       regen:*) task_known "${g#regen:}" || die "unknown regenerate task in --only: ${g#regen:}" ;;
-      *) die "unknown group in --only: $g (repos, labels, branches, environments, variables, federation, apps:<app>, installs:<app>, values:<group>, settings, regen:<task>)" ;;
+      *) die "unknown group in --only: $g (repos, labels, branches, environments, variables, federation, apps:<app>, installs:<app>, values:<group>, settings, regen:<task>, content)" ;;
     esac
     SEL[$g]=1
   done
@@ -86,8 +91,16 @@ check() { # description jq-expression (against GH_OUT)
 }
 where() { if [ "$1" = - ]; then printf ''; else printf ' environment %s' "$1"; fi; }
 
+# The content choices, beside status.sh's state file (none when that path is refused).
+CHOICES=""
+if (choices_file) >/dev/null 2>&1; then choices_file; fi
+# --only content needs no repo: the content step comes before they exist.
+ONLY_CONTENT=0
+[ "$ONLY" != content ] || ONLY_CONTENT=1
+
 declare -A EXISTS DEFAULT_BRANCH
 for r in "${FLEET_REPOS[@]}"; do
+  [ "$ONLY_CONTENT" = 0 ] || break
   if ! gh_read "repos/$O/$r"; then
     EXISTS[$r]=0
     fail "$O/$r exists (HTTP $GH_HTTP)"; continue
@@ -222,6 +235,28 @@ for t in "${REGEN_TASKS[@]}"; do
   sel "regen:$t" off || continue
   sub_check "regenerate.sh $t is done" bash "$HERE/regenerate.sh" --config "$CONFIG" --check "$t"
 done
+
+if sel content off || { [ -z "$ONLY" ] && [ -n "$CHOICES" ] && [ -f "$CHOICES" ]; }; then
+  if [ -z "$CHOICES" ] || [ ! -f "$CHOICES" ]; then
+    fail "content choices are recorded (run add-content.sh: docs/skills.md#choosing-optional-content)"
+  elif ! python3 -I -B "$HERE/lib/content.py" probes --kit "$KIT" --record "$CHOICES" >"$BOOT_WORK/probes" 2>"$BOOT_WORK/probes.err"; then
+    fail "content choices readable: $(head -n 1 "$BOOT_WORK/probes.err")"
+  else
+    pass "content choices are recorded ($(wc -l < "$BOOT_WORK/probes" | tr -d ' ') optional item(s))"
+    while IFS=$'\t' read -r id tree path needle; do
+      repo=""
+      for r in "${FLEET_REPOS[@]}"; do [ "$(kit_tree "$r")" != "$tree" ] || repo=$r; done
+      if ! gh_read "repos/$O/$repo"; then skp "$id: $O/$repo is not created yet"; continue; fi
+      if ! gh_read "repos/$O/$repo/contents/$path"; then
+        fail "$id is on $O/$repo's default branch ($path: HTTP $GH_HTTP; merge its starter pull request)"; continue
+      fi
+      if [ -n "$needle" ] && ! grep -qxF -- "$needle" <<<"$(printf '%s' "$GH_OUT" | jq -r '.content // "" | gsub("\n"; "") | @base64d')"; then
+        fail "$id is on $O/$repo's default branch ($path lacks it; merge its pull request)"; continue
+      fi
+      pass "$id is on $O/$repo's default branch"
+    done < "$BOOT_WORK/probes"
+  fi
+fi
 
 printf '%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIPPED"
 [ "$FAIL" = 0 ]

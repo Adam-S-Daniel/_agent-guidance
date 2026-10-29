@@ -1,0 +1,20 @@
+defaults:
+  actions:
+    sha_pinning_required: true
+    fork_pr_approval: all_external_contributors
+  ruleset:
+    enabled: true
+    name: default branch protection
+    enforcement: active
+    require_pull_request:
+      required_approving_review_count: 0
+    block_force_pushes: true
+    block_deletions: true
+    admin_bypass: always
+    bypass_actors: []
+
+repos:
+  - name: example-org/service-alpha
+    manage: ["all"]
+  - name: example-org/service-beta
+    manage: ["all"]

@@ -1,0 +1,14 @@
+{
+  "id": 92001,
+  "name": "test",
+  "head_sha": "4f2a9c1e5b7d3f8a0c6e2b4d9f1a3c5e7b9d0f2a",
+  "status": "completed",
+  "conclusion": "failure",
+  "html_url": "https://example.com/example-org/example-changelog/actions/runs/52001/job/72001",
+  "output": {
+    "title": "Process completed with exit code 128.",
+    "summary": "There is 1 annotation",
+    "annotations_count": 1,
+    "annotations_url": "https://example.net/repos/example-org/example-changelog/check-runs/92001/annotations"
+  }
+}

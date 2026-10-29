@@ -12,6 +12,7 @@
 #   run_write_stdin <cmd...>  write command whose value arrives on stdin (secrets)
 #   value_names <secret|variable> <owner/repo> <env|->  names set (never values)
 #   finish                 the "changed N things" / "nothing to change" summary
+#   state_file / choices_file   status.sh's answers and add-content.sh's record (STATE, CHOICES)
 #
 # The registries below (ENVIRONMENTS, APPS, OTHER_VALUES, REPO_VARIABLES,
 # LABELS) list what the exported repos' workflows actually read. The kit's
@@ -69,6 +70,34 @@ BOOT_WORK=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap.XXXXXX")
 chmod 700 "$BOOT_WORK"
 cleanup_work() { rm -rf "$BOOT_WORK"; }
 trap cleanup_work EXIT
+
+# The kit: this file is <kit>/bootstrap/lib/common.sh.
+KIT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+
+# state_path_ok <path>: refuse a path inside this kit or any git work tree.
+state_path_ok() {
+  local p=$1 d
+  d=$(dirname "$p")
+  while [ ! -d "$d" ]; do d=$(dirname "$d"); done
+  d=$(cd "$d" && pwd -P)
+  case $d/ in "$KIT"/*) die "the state file must be outside this kit: $p" ;; esac
+  if git -C "$d" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    die "the state file must be outside every git work tree: $p"
+  fi
+}
+# state_file: sets STATE, status.sh's answers for CFG_OWNER (load_config first):
+# ${ADOPT_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/adopt-the-whole-system/<owner>.json}.
+state_file() {
+  STATE=${ADOPT_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/adopt-the-whole-system/$CFG_OWNER.json}
+  case $STATE in /*) ;; *) STATE=$PWD/$STATE ;; esac
+  state_path_ok "$STATE"
+}
+# choices_file: sets CHOICES, add-content.sh's record of the optional items
+# installed, beside the state file: <state file without .json>.content-choices.json.
+choices_file() {
+  state_file
+  CHOICES=${STATE%.json}.content-choices.json
+}
 
 # kit_tree <repo>: the starter folder that holds a repo's export.
 kit_tree() {

@@ -1,0 +1,4 @@
+example.com
+  Logged in to example.com as example-operator
+  Active account: true
+  Git operations protocol: https

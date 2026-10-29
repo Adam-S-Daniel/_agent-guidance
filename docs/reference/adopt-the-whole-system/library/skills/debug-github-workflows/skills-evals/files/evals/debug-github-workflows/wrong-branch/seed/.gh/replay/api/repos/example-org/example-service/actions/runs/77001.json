@@ -1,0 +1,13 @@
+{
+  "id": 77001,
+  "name": "CI",
+  "workflow_id": 55001,
+  "head_branch": "main",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure",
+  "path": ".github/workflows/ci.yml",
+  "html_url": "https://example.com/example-org/example-service/actions/runs/77001",
+  "jobs_url": "https://example.net/repos/example-org/example-service/actions/runs/77001/jobs"
+}

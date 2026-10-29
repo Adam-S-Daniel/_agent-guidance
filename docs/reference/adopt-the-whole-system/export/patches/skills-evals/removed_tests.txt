@@ -19,7 +19,8 @@
 #                                 normalisation tests, now on invented names)
 #   TestIssue85 (55)              keep removed: GHA_SHA_PINNING_DIR
 #   TestVendorReleaseImpactPublishTimesCheck (55)
-#                                 keep removed: VENDOR_RELEASE_DIR
+#                                 restored (Content tiers, 2026-10-29): its skill,
+#                                 vendor-release-impact-issues, is core
 #   TestIssue77 (39)              keep removed: DISARM_DIR
 #   TestIssue80 (39)              keep removed: ADRS_BOOTSTRAP_DIR, ADRS_EXISTING_DIR
 #   TestIssue83 (38)              keep removed: PDF_OCR_DIR
@@ -36,7 +37,7 @@
 #                                 source fixture again
 #   JudgeDiffTests                restored: its end-to-end case builds the invented
 #                                 nested-repo seed (retargets.txt)
-# 581 run_tests.py entries remain, every one tied to a left-out fixture.
+# 526 run_tests.py entries remain, every one tied to a fixture the starter leaves out.
 #
 # Restored for the kit's two real fixtures (the owner, 2026-10-29 12:29 UTC):
 # the three ObjectiveAsymmetryTests above and test_issue_124_guidance_gates.py's
@@ -46,39 +47,36 @@
 # left out by the manifest.
 # test_issue_80_supersede.py stays as a helper module with its one test class removed
 # (it locks the left-out writing-adrs/supersede fixture): test_issue_wpa_workflow_doc_in_step.py
-# imports its pattern-anchoring helpers. That makes 673 entries, one a whole class.
+# imports its pattern-anchoring helpers.
+#
+# Content tiers (2026-10-29): the tests of the core items' fixtures are no longer
+# listed (TestVendorReleaseImpactPublishTimesCheck above and eleven test_issue_124
+# methods). The tests of the recommended and opinionated items' fixtures stay
+# listed, so the starter leaves them out, and library_fixtures.py copies each into
+# its item first (TestIssue74, TestIssue77, TestIssue80, TestIssue80Supersede and
+# twelve test_issue_124 methods); add-content.sh puts them back with their item.
+# That makes 607 entries, one a whole class.
 test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_changelog_check
-test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_multi_repo_cloud_session
 test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_new_config_key
 test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_org_connector_ci
-test/issues/test_issue_124_guidance_gates.py::FifthBatchFixtureTests::test_push_fails_everywhere
 test/issues/test_issue_124_guidance_gates.py::FixtureLayoutTests::test_each_covered_section_has_fixtures_and_one_has_four
 test/issues/test_issue_124_guidance_gates.py::FourthBatchFixtureTests::test_clone_all
 test/issues/test_issue_124_guidance_gates.py::FourthBatchFixtureTests::test_fetch_user
 test/issues/test_issue_124_guidance_gates.py::FourthBatchFixtureTests::test_load_settings_async
 test/issues/test_issue_124_guidance_gates.py::FourthBatchFixtureTests::test_parse_port
-test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_merge_commit_mentioning_the_open_issue_passes
-test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_merge_trap_squashes_first_and_closes_the_issue
-test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_watch_rollup_names_the_legacy_failure
-test/issues/test_issue_124_guidance_gates.py::GhFixtureTests::test_watch_trap_merges_on_green_check_runs
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_a_404_reported_as_deletion_fails_and_a_scope_gap_passes
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_census_from_the_index_is_wrong_and_asking_each_repository_is_right
-test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_concurrency_trap_fails_and_disjoint_triggers_pass
-test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_dispatch_trap_interpolates_and_logs_the_address
-test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_on_hold_trap_merges_everything_and_the_hold_is_kept
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_secret_named_entry_fails_and_a_purpose_name_passes
 test/issues/test_issue_124_guidance_gates.py::SecondBatchFixtureTests::test_verifier_trap_accepts_the_report_and_the_runner_finds_the_failure
 test/issues/test_issue_124_guidance_gates.py::TextFixtureTests::test_done_summary_needs_every_link
 test/issues/test_issue_124_guidance_gates.py::TextFixtureTests::test_handoff_with_bare_numbers_fails_and_with_links_passes
 test/issues/test_issue_124_guidance_gates.py::TextFixtureTests::test_no_url_says_so
-test/issues/test_issue_124_guidance_gates.py::TextFixtureTests::test_pinning_tags_comments_and_tag_objects_fail
 test/issues/test_issue_124_guidance_gates.py::TextFixtureTests::test_waiting_on_review_is_read_from_the_reply
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_dependabot_cooldown
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_dockerfile
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_fetch_retry
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_load_settings
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_parse_event
-test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_pull_request_markers
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_search_query
 test/issues/test_issue_124_guidance_gates.py::ThirdBatchFixtureTests::test_stop_worker
 test/issues/test_issue_80_supersede.py::TestIssue80Supersede
@@ -565,61 +563,6 @@ test/run_tests.py::TestIssue92::test_parser_dependency_tamper_cannot_change_comm
 test/run_tests.py::TestIssue92::test_plausible_wrong_host_and_route_sequence_fail
 test/run_tests.py::TestIssue92::test_second_spec_cannot_borrow_first_specs_assertion
 test/run_tests.py::TestIssue92::test_seed_fails_every_behavior_and_passes_both_restraints
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_all_three_versions_correctly_stamped_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_alone_on_its_own_release_link_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_em_dash_before_published_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_link_mismatch_4_1_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_link_mismatch_4_1_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_link_mismatch_4_2_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_link_mismatch_4_3_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_link_mismatch_4_3_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_link_with_no_stamp_fails_even_with_a_correct_stamp_elsewhere
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_parenthesized_published_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_stamp_on_next_quoted_line_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_attribution_two_spaces_before_published_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_stamp_plus_4_1_0_tag_time_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_stamp_plus_4_3_0_npm_time_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_stamp_plus_4_3_0_tag_time_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_stamp_plus_npm_time_elsewhere_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_stamp_plus_tag_time_elsewhere_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_time_attached_to_the_wrong_release_link_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_time_attached_to_the_wrong_version_number_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_time_plus_npm_time_elsewhere_on_4_2_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_correct_time_with_neither_prefix_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_form_alone_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_mismatch_4_1_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_mismatch_4_1_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_mismatch_4_2_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_mismatch_4_2_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_mismatch_4_3_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_fenced_header_mismatch_4_3_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_no_time_at_all_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_npm_time_with_seconds_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_bracket_mismatch_4_1_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_bracket_mismatch_4_1_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_bracket_mismatch_4_2_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_bracket_mismatch_4_3_0_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_bracket_mismatch_4_3_0_isolated_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_stamp_form_alone_on_4_1_0_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_prose_stamp_form_alone_on_4_2_0_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_4_1_0_anchor_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_4_3_0_anchor_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_bare_comma_form_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_bracket_wrapped_published_word_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_dash_no_parens_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_outside_blockquote_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_published_with_colon_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_reference_style_link_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_proximity_trailing_slash_in_blockquote_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_quoted_releases_md_link_line_then_correct_attribution_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_quoted_vendor_bullet_with_release_link_then_correct_attribution_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_tag_time_in_space_format_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_tag_time_with_no_correct_time_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_timezone_confused_time_bare_comma_form_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_timezone_confused_time_fenced_header_colon_form_fails
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_two_versions_each_correctly_stamped_in_a_different_form_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_unrelated_trailing_timestamp_on_the_same_line_passes
-test/run_tests.py::TestVendorReleaseImpactPublishTimesCheck::test_version_range_each_own_correct_time_passes
 test/run_tests.py::WindowsElevationFixtureTests::test_a_chasing_run_fails_the_dodge_and_retry_checks
 test/run_tests.py::WindowsElevationFixtureTests::test_a_downgraded_principal_fails
 test/run_tests.py::WindowsElevationFixtureTests::test_a_skilled_run_passes_every_check

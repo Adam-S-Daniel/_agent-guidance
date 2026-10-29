@@ -1,0 +1,21 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - name: Collect changed packages
+        run: bash scripts/collect.sh
+      - name: Publish
+        run: bash scripts/publish.sh
+      - name: Bump version
+        run: bash scripts/bump.sh

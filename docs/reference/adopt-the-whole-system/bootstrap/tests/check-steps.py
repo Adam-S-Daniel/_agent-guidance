@@ -8,7 +8,8 @@
    link, a check and minutes > 0; `optional`, when present, is a boolean.
 2. Every check is config, verify (with groups verify.sh knows), files (with
    a fleet repo and a path) or ask; step 0 is the config check; a script
-   step is never an ask.
+   step is never an ask. Exactly one ask check carries "record": "content"
+   (status.sh also reads add-content.sh's record for it).
 3. Every script a step runs (the first word of a `code` span, or the one
    after `bash`) exists in the kit, and every starter/<folder> it names is a
    folder there. Every file a files check names exists in that repo's
@@ -69,6 +70,8 @@ check("steps.json lists steps", len(STEPS) > 0)
 ids = [s.get("id") for s in STEPS]
 check(f"step ids are unique: {ids}", len(ids) == len(set(ids)))
 check("the first step is 0", ids[:1] == ["0"])
+check("one step is closed by add-content.sh's record",
+      sum((s.get("check") or {}).get("record") == "content" for s in STEPS) == 1)
 for s in STEPS:
     sid = s.get("id")
     for field, kind in (("id", str), ("title", str), ("run", str), ("kind", str), ("part", str),
@@ -100,6 +103,8 @@ for s in STEPS:
                       bool(path) and (ROOT / "starter" / TREE[repo] / path).is_file())
     if s.get("kind") == "script":
         check(f"step {sid}: a script step is checked against the real state, not asked", t in ("verify", "files"))
+    if "record" in c:
+        check(f"step {sid}: record is \"content\", on an ask check", c.get("record") == "content" and t == "ask")
 
     # 3. what it runs exists
     for span in re.findall(r"`([^`]+)`", s.get("run", "")):

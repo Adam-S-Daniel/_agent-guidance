@@ -1,0 +1,19 @@
+{
+  "total_count": 1,
+  "check_runs": [
+    {
+      "id": 99001,
+      "name": "test",
+      "head_sha": "1111111111111111111111111111111111111111",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://example.com/example-org/example-service/actions/runs/77001/job/88001",
+      "output": {
+        "title": "Unit tests failed",
+        "summary": "ModuleNotFoundError: No module named 'test.test_legacy'",
+        "annotations_count": 1,
+        "annotations_url": "https://example.net/repos/example-org/example-service/check-runs/99001/annotations"
+      }
+    }
+  ]
+}

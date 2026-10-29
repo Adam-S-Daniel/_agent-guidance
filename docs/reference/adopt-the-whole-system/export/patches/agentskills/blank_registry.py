@@ -1,15 +1,16 @@
-"""DECISIONS X9 for the public registry: the plugins ship with one skill.
+"""DECISIONS X9 and Content tiers for the public registry: the core skills.
 
-Runs on the substituted tree (the manifest excludes every skill folder but
-`workflow-path-audit`, which the owner chose as the one real skill on
-2026-10-29 12:29 UTC), before the regenerate steps, which rebuild the README
-table and skills.lock from what this leaves.
+Runs on the substituted tree, after library_skills.py has moved the
+optional skills to the library (the manifest leaves out the skills that are
+not shipped), before the regenerate steps, which rebuild the README table
+and skills.lock from what this leaves. The skills that stay are the owner's
+four core skills (2026-10-29), all in the coding-anywhere plugin.
 
 The machinery stays and is made to accept a registry with empty plugins,
 because three of the four start that way:
 
 - scripts/plugin_layout.json keeps its four plugins and their defaultEnabled
-  values; the coding-anywhere plugin lists the one kept skill, the others
+  values; the coding-anywhere plugin lists the core skills, the others
   have empty skill lists (canonical json.dumps(indent=2) + newline).
 - generate_readme_table.py renders a plugin with no skills as ONE row that
   says so and names where its skills go. Its rule, "a published bundle is
@@ -79,8 +80,11 @@ PLUGINS = {
 }
 
 
-# The one real skill the kit ships (DECISIONS X9), per plugin.
-KEPT_SKILLS = {"acsi-coding-anywhere": ["workflow-path-audit"]}
+# The core skills the kit ships (DECISIONS X9 and Content tiers), per plugin.
+# The optional ones are in the library (library_skills.py), and
+# bootstrap/add-content.sh adds each chosen one to this list.
+KEPT_SKILLS = {"acsi-coding-anywhere": ["github-actions-repo-settings", "skills-doctor",
+                                        "vendor-release-impact-issues", "workflow-path-audit"]}
 
 
 def _inline(words) -> str:

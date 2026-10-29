@@ -1,0 +1,15 @@
+[
+  {
+    "databaseId": 77001,
+    "name": "CI",
+    "workflowName": "CI",
+    "headBranch": "main",
+    "headSha": "1111111111111111111111111111111111111111",
+    "event": "push",
+    "status": "completed",
+    "conclusion": "failure",
+    "url": "https://example.com/example-org/example-service/actions/runs/77001",
+    "createdAt": "2026-01-07T07:00:00Z",
+    "updatedAt": "2026-01-07T07:00:04Z"
+  }
+]

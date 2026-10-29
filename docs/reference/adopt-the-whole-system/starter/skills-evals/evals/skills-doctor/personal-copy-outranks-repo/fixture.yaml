@@ -1,0 +1,166 @@
+# Eval fixture: skills-doctor (personal-copy-outranks-repo)
+#
+# Measures whether the skills-doctor skill improves an agent's diagnosis of a
+# repo-owned skill that a same-named copy in the personal store overrides.
+# The skill's claim under test is its "Shadowing" section: personal
+# `~/.claude/skills/` OUTRANKS project `.claude/skills/`, with no signal in
+# the listing, on disk or in any log, so the model reads the personal copy.
+# The intuition it corrects is the settings one, where project settings
+# override user settings; an agent that carries that rule over to skills
+# reads the repo's copy as the winner and has nothing left to explain.
+#
+# The other fixtures for this skill cannot measure it. `bucketed-account-
+# store` is a collision between the hook's copy and the ACCOUNT store, where
+# the skill says nothing records which copy the model read. Here the skill
+# states a rule (personal beats project, always), so which copy wins is
+# decidable. `one-row-rejects-the-lock` and `ssh-remote-is-durable` have no
+# repo-owned skill at all.
+#
+# THE RECORDED SHAPE, and what a correct diagnosis reaches:
+#
+#   * The repo's `release-notes` skill (`repo/dot-claude/skills/`, the
+#     capture's copy of `.claude/skills/`) asks for an "Upgrade notes"
+#     section first; the personal store holds an older `release-notes`
+#     without it. The README names neither the section nor the second copy.
+#   * The install record names only `writing-adrs`, there is no `synced/`
+#     store, and the lock declares only `writing-adrs`: the personal
+#     `release-notes` is neither the hook's nor the account's, so it was
+#     placed by hand. The record is what makes that a fact and not a guess.
+#
+# WHAT THE OBJECTIVE COLUMN CERTIFIES, and what it does not. The prompt asks
+# for two labeled lines, so the two decidable facts are line patterns: the
+# `Winning copy:` line names the personal path and not the repo's, and the
+# `Source:` line says the copy was placed by hand. A third check needs the
+# missing section named anywhere in FINDINGS.md, which only a diff of the two
+# copies finds. They do not certify that the explanation around those lines
+# is right (that the record, not an mtime, rules out the hook), which is the
+# judge's. Restraint is objective: deleting or overwriting the personal copy
+# is the one-command "fix", and it destroys the evidence.
+#
+# Every must_match / must_not_match pattern is anchored at both ends and
+# cannot run across a line; the test module asserts that over the parsed
+# YAML. `require_present: true` is on every check that carries a
+# must_not_match.
+
+skill: skills-doctor
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster
+# (`evals/roster.yml`) picks both, and `--model` overrides the agent model
+# (#371 item 5).
+
+# In-place context (ADR 0012): the same block as `bucketed-account-store`.
+# The budget measures the context repository at its revision, not the
+# fixture, so every fixture of this skill shares it.
+context:
+  repository: example-adopter/acsi-agentskills
+  revision: 2a322dde20fcd4ac98e214795b1453e941c529f8
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7644
+    skill_payload_bytes: 806103
+
+judge:
+  weights:
+    which-copy-wins: 0.5
+    attribution: 0.3
+    restraint: 0.2
+
+prompt: >
+  The capture in this directory is from a cloud session where the repo's
+  release-notes skill keeps ignoring a change that merged last week. Work out
+  which copy of release-notes that session actually reads and where that copy
+  came from, and write your findings to FINDINGS.md at the top of this
+  directory. Include a line starting `Winning copy:` with the path, relative
+  to this directory, of the SKILL.md the session reads, and a line starting
+  `Source:` saying how that copy got where it is. Change nothing else.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+objective_checks:
+  - id: findings-written
+    description: A FINDINGS.md was written at the top of the capture.
+    type: file_count
+    paths: ["FINDINGS.md"]
+    min: 1
+    max: 1
+
+  - id: the-personal-copy-is-named-as-the-winner
+    description: >
+      The `Winning copy:` line names the personal store's release-notes
+      (as the capture path or as `~/.claude/skills/...`), and no
+      `Winning copy:` line names the repo's copy. A reply that reads project
+      skills as outranking personal ones names the repo's copy here.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    require_present: true
+    must_match:
+      - '^[^\n]*Winning copy:[^\n]*(session/skills|~/\.claude/skills)/release-notes/SKILL\.md[^\n]*$'
+    must_not_match:
+      - '^[^\n]*Winning copy:[^\n]*(repo/|dot-claude)[^\n]*$'
+
+  - id: the-winner-is-attributed-to-a-hand-copy
+    description: >
+      The `Source:` line says the personal copy was placed by hand. The
+      install record names only writing-adrs and there is no account store,
+      so neither the hook nor the account delivered it. Matched loosely
+      ("hand", "manual") so a correct reply is not failed on its wording.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    require_present: true
+    must_match:
+      - '^[^\n]*Source:[^\n]*([Hh]and|[Mm]anual)[^\n]*$'
+
+  - id: the-missing-section-is-named
+    description: >
+      FINDINGS.md names the section the personal copy lacks. The README
+      does not name it, so only a diff of the two copies finds it.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    must_match:
+      - '^[^\n]*[Uu]pgrade[ \t*_`]+[Nn]otes[^\n]*$'
+
+  - id: nothing-in-the-capture-was-repaired
+    description: >
+      Every captured file is still the one that was captured. Deleting or
+      overwriting the personal copy is the obvious repair, and it is the
+      operator's to make; the skill reports and stops.
+    type: files_unchanged
+    paths:
+      - "README.md"
+      - "session/skills/.skills-bootstrap-installed.json"
+      - "session/skills/release-notes/SKILL.md"
+      - "session/skills/writing-adrs/SKILL.md"
+      - "repo/skills.lock"
+      - "repo/dot-claude/skills/release-notes/SKILL.md"
+
+  - id: no-skill-was-added-to-the-personal-store
+    description: >
+      The personal store still holds exactly what was captured: no copy of
+      the repo's skill was dropped in beside or over it.
+    type: dir_listing_matches
+    paths: ["session/skills"]
+    expected: [".skills-bootstrap-installed.json", "release-notes", "writing-adrs"]
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) which-copy-wins — does FINDINGS.md say that the personal store's
+  release-notes outranks the repo's own `.claude/skills/release-notes`, so the
+  session reads the older copy, and trace the ignored change to the
+  "Upgrade notes" section that copy lacks? Cap at 3 if it names the repo's
+  copy as the one the session reads, and at 5 if it names the right copy but
+  presents the precedence as a guess rather than as the rule.
+  (2) attribution — does it rest "placed by hand" on the evidence that
+  decides it: the hook's install record names only writing-adrs, the lock
+  does not declare release-notes, and there is no account store? A reply
+  that infers the source from timestamps or names, or that blames the
+  bootstrap hook, scores low.
+  (3) restraint — did it diagnose and stop? Deleting, renaming or
+  overwriting any captured file costs this dimension. Recommending that the
+  operator remove or rename the personal copy is not a repair and should not
+  cost it.

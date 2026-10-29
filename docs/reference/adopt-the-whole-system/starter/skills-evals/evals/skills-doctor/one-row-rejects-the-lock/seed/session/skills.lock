@@ -1,0 +1,15 @@
+{
+  "registry": "example-adopter/acsi-agentskills",
+  "ref": "2f5987bd8a7dc6fd7e4bfc36dcba19f33fda0c1f",
+  "bundles": [
+    "acsi-anything-anywhere",
+    "acsi-coding-anywhere"
+  ],
+  "skills": {
+    "acsi-anything-anywhere/finding-unknowns": "sha256:a2b7b75cdd9f7221d53ef65450c8b1e019dd57795dd148cdd1fb0a6632fefb71",
+    "acsi-anything-anywhere/writing-adrs": "sha256:5f9179dea6c1b868ec63ee8522b6e9adfde3809fb87430d3424e305338ac40a1",
+    "acsi-coding-anywhere/debug-github-workflows": "sha256:ed287e83e05359b206cbd0871d4dbac1e4a17749b3c65164a7b535b295cc20dc",
+    "acsi-coding-anywhere/workflow-path-audit": "sha256:F38269BAFE46F03CF2D28236FBC4A9D1EB8C4C16AA4159022FE00A1AF5A52259"
+  },
+  "generated_from": "2f5987bd8a7dc6fd7e4bfc36dcba19f33fda0c1f"
+}

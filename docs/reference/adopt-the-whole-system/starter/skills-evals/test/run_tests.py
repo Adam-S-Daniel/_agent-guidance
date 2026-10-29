@@ -16648,6 +16648,601 @@ class TestIssue85(unittest.TestCase):
     # -- the judge weights must bind (review #133, S2) ------------------------
 
 
+class TestVendorReleaseImpactPublishTimesCheck(unittest.TestCase):
+    """evals/vendor-release-impact-issues/issue-hygiene fixture.yaml,
+    `publish-times-source-and-version-bound` (formerly
+    `publish-times-are-github-publish-not-tag-or-npm` — the id changed with
+    the semantics; see the fixture's own comment): tests the release-time
+    SOURCE (never a tag/created_at or npm time), the version BINDING (a
+    correct time attached to the wrong version's number or release link
+    fails), and the two prescribed stamp FORMS (SKILL.md's "Release publish
+    times" — attribution `published <time>`/fenced-header `<version>
+    (published <time>):`, and prose-marker `<version> [<time>]`). Coverage —
+    which versions got cited at all — is deliberately NOT this check's job;
+    it is the judge's Hygiene dimension (see the fixture's judge_rubric).
+
+    Loads the check straight out of the real fixture.yaml (never a copy of
+    its patterns) and runs the real `objective.file_matches` against a
+    seed-copy workspace carrying synthetic issues/*.md files, the same
+    pattern TestIssue85 uses for github-actions-sha-pinning.
+    """
+
+    CHECK_ID = "publish-times-source-and-version-bound"
+
+    def _seed_copy(self, tmp: str) -> Path:
+        ws = Path(tmp) / "ws"
+        shutil.copytree(VENDOR_RELEASE_DIR / "seed", ws)
+        return ws
+
+    def _write_issue(self, ws: Path, name: str, body: str) -> None:
+        issues = ws / "issues"
+        issues.mkdir(exist_ok=True)
+        (issues / name).write_text(body, encoding="utf-8")
+
+    def _check_result(self, ws: Path) -> dict:
+        fixture = run_eval.load_fixture(VENDOR_RELEASE_DIR)
+        checks = [c for c in fixture["objective_checks"]
+                 if c["id"] == self.CHECK_ID]
+        self.assertEqual(len(checks), 1, fixture["objective_checks"])
+        seed = str(VENDOR_RELEASE_DIR / "seed")
+        [result] = objective.run_checks({"objective_checks": checks}, str(ws), seed)
+        return result
+
+    def _run(self, body: str) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._seed_copy(tmp)
+            self._write_issue(ws, "01-example.md", body)
+            return self._check_result(ws)
+
+    # -- synthetic partial-coverage case: two versions, both correctly ------
+    # -- stamped, in two different prescribed forms --------------------------
+
+    def test_two_versions_each_correctly_stamped_in_a_different_form_passes(self):
+        """A synthetic case, not a claim about any real run: 4.2.0 gets a
+        full attribution quote and 4.1.0 is named only in prose-stamp form.
+        Coverage of all three versions is the judge's job, not this check's
+        — it must pass when each version present is correctly (and
+        unambiguously) stamped, even if not every version appears.
+        """
+        body = (
+            "# Hook source rename affects the startup|resume matcher\n\n"
+            "> Changed session hooks to report source \"fork\" for forked "
+            "sessions\n>\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0), published 2026-07-14T09:47Z\n\n"
+            "Also relevant: 4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # -- PASS: attribution alone, on the version's own release link ----------
+
+    def test_attribution_alone_on_its_own_release_link_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0), published 2026-07-14T09:47Z\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # -- PASS: prose stamp alone ----------------------------------------------
+
+    def test_prose_stamp_form_alone_on_4_1_0_passes(self):
+        body = "# Some finding\n\nSee 4.1.0 [2026-06-02T14:03Z] for detail.\n"
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_prose_stamp_form_alone_on_4_2_0_passes(self):
+        body = "# Some finding\n\nSee 4.2.0 [2026-07-14T09:47Z] for detail.\n"
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # -- PASS: fenced-quote header alone --------------------------------------
+
+    def test_fenced_header_form_alone_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "4.3.0 (published 2026-08-25T02:16Z):\n"
+            "```text\nSupport plugin manifests.\n```\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # -- PASS: a complete, correct issue covering all three versions ---------
+
+    def test_all_three_versions_correctly_stamped_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.1.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.1.0), published 2026-06-02T14:03Z\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nChanged session hooks.\n```\n\n"
+            "Also 4.3.0 [2026-08-25T02:16Z] added a stderr warning.\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # -- FAIL: correct stamp plus a tag/created_at time elsewhere -------------
+
+    def test_correct_stamp_plus_tag_time_elsewhere_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "The commit was tagged 2026-07-14T09:46Z.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: correct stamp plus a wrong-source (npm) time elsewhere ---------
+
+    def test_correct_stamp_plus_npm_time_elsewhere_fails(self):
+        """4.1.0's own npm time, `2026-06-02T14:08Z`, beside its correct stamp."""
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "npm shows 2026-06-02T14:08Z for the same release.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_correct_time_plus_npm_time_elsewhere_on_4_2_0_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "npm shows 2026-07-14T09:52Z for the same release.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: 4.3.0's correct time, attached to 4.2.0's number ---------------
+
+    def test_correct_time_attached_to_the_wrong_version_number_fails(self):
+        body = "# Some finding\n\nThe matcher broke in 4.2.0 [2026-08-25T02:16Z].\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: 4.1.0's correct time, attached to 4.2.0's release link ---------
+
+    def test_correct_time_attached_to_the_wrong_release_link_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0), published 2026-06-02T14:03Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: an npm time with seconds, next to a correct stamp --------------
+
+    def test_npm_time_with_seconds_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "npm shows 2026-07-14T09:52:00Z for the same release.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: a tag time in space-separated format, next to a correct stamp --
+
+    def test_tag_time_in_space_format_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "The tag was cut 2026-07-14 09:46 UTC.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: a correct time with neither prescribed prefix ------------------
+
+    def test_correct_time_with_neither_prefix_fails(self):
+        """Ties the check to the skill's two prescribed forms specifically —
+        a correct time written some other way (no `published ` attribution,
+        no `[` prose-stamp bracket) must not satisfy it. `unpublished` (a
+        real word a wrong-cased edit could introduce) must not count as
+        `published` either — `\\b` is what keeps that substring out.
+        """
+        body = "# Some finding\n\nThis release is unpublished 2026-07-14T09:47Z.\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: an attribution line with no stamp at all, beside a correct -----
+    # -- prose stamp elsewhere ------------------------------------------------
+
+    def test_attribution_link_with_no_stamp_fails_even_with_a_correct_stamp_elsewhere(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0)\n\n"
+            "Also 4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: a tag/created_at time, no correct time -------------------------
+
+    def test_tag_time_with_no_correct_time_fails(self):
+        body = "# Some finding\n\nTagged at 2026-07-14T09:46Z.\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # -- FAIL: no time at all --------------------------------------------------
+
+    def test_no_time_at_all_fails(self):
+        body = "# Some finding\n\nNo version time cited here.\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # == round 3 (review #2 REWORK): the unstamped-attribution ban only ======
+    # == fires on a real ATTRIBUTION line (one that opens with a dash), ======
+    # == and accepts the stamp on the very next quoted line ===================
+
+    def test_attribution_em_dash_before_published_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0) — published 2026-07-14T09:47Z\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_attribution_two_spaces_before_published_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0),  published 2026-07-14T09:47Z\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_attribution_parenthesized_published_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0) (published 2026-07-14T09:47Z)\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_attribution_stamp_on_next_quoted_line_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0)\n"
+            "> published 2026-07-14T09:47Z\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_quoted_releases_md_link_line_then_correct_attribution_passes(self):
+        """A quoted RELEASES.md link line (no leading dash — not an
+        attribution at all) must not itself be read as an unstamped
+        attribution, even though it names a release path.
+        """
+        body = (
+            "# Some finding\n\n"
+            "> [https://github.com/example-vendor/example-cli/releases/tag/v4.3.0]"
+            "(https://github.com/example-vendor/example-cli/releases/tag/v4.3.0)\n"
+            ">\n"
+            "> — [v4.3.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.3.0), published 2026-08-25T02:16Z\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_quoted_vendor_bullet_with_release_link_then_correct_attribution_passes(self):
+        body = (
+            "# Some finding\n\n"
+            "> Fixed a bug documented at https://github.com/example-vendor/"
+            "example-cli/releases/tag/v4.1.0 affecting resolvers.\n"
+            ">\n"
+            "> — [v4.1.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.1.0), published 2026-06-02T14:03Z\n"
+        )
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # == round 3: version-PROXIMITY bans — a wrong time bound to a version ===
+    # == regardless of exactly which shape it is written in ===================
+
+    def test_proximity_bare_comma_form_fails(self):
+        body = "# Some finding\n\n4.2.0, published 2026-06-02T14:03Z, changed hooks.\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_outside_blockquote_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "— [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0) (published 2026-06-02T14:03Z)\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_trailing_slash_in_blockquote_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0/), published 2026-06-02T14:03Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_bracket_wrapped_published_word_fails(self):
+        body = "# Some finding\n\n4.2.0 [published 2026-06-02T14:03Z]\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_dash_no_parens_fails(self):
+        body = "# Some finding\n\nv4.2.0 - published 2026-06-02T14:03Z:\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_published_with_colon_fails(self):
+        """This exact text fails independently of any must_not_match ban:
+        the colon in "published:" breaks must_match's own `\\bpublished `
+        literal (no bracket form either), so the check already lacks
+        must_match here regardless of which bans exist. Kept because it is
+        one of the review's literal instructed cases and it does correctly
+        report FAIL; `test_proximity_4_3_0_anchor_fails` below is the actual
+        isolator for the 4.3.0 proximity ban, added after the per-pattern
+        deletion table showed this one never depends on it (see the final
+        report's finding on this).
+        """
+        body = "# Some finding\n\n4.3.0 (published: 2026-07-14T09:47Z):\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_4_3_0_anchor_fails(self):
+        """A clean isolator for the 4.3.0 proximity ban: 4.2.0's correct
+        time, bound to 4.3.0's number in bare-comma form (no parens, no
+        brackets, no release-link URL), next to a correct stamp elsewhere so
+        must_match is independently satisfied.
+        """
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "4.3.0, published 2026-07-14T09:47Z, changed something else.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # == round 4 (review #3 SHIP-WITH-FIXES): a timezone-confused time is =====
+    # == still a WRONG time bound to a version, even though it isn't one of ==
+    # == the two literal "other version's correct time" strings the round-3 =
+    # == proximity bans enumerated ============================================
+
+    def test_timezone_confused_time_bare_comma_form_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] pins CI.\n\n"
+            "4.2.0, published 2026-07-14T05:47Z, changed hooks.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_timezone_confused_time_fenced_header_colon_form_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] pins CI.\n\n"
+            "4.2.0 (published: 2026-07-14T05:47Z):\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_reference_style_link_fails(self):
+        body = "# Some finding\n\n> — [v4.2.0][r], published 2026-06-02T14:03Z\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_proximity_4_1_0_anchor_fails(self):
+        """None of the seven cases above anchor on 4.1.0 itself, so this adds
+        the one the version-proximity ban for 4.1.0 needs to have any test
+        depend on it at all: 4.2.0's correct time, bound to 4.1.0's number.
+        """
+        body = "# Some finding\n\n4.1.0, published 2026-07-14T09:47Z, fixed a crash.\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_version_range_each_own_correct_time_passes(self):
+        body = "# Some finding\n\nFrom 4.1.0 [2026-06-02T14:03Z] to 4.3.0 [2026-08-25T02:16Z] things changed.\n"
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_unrelated_trailing_timestamp_on_the_same_line_passes(self):
+        """round 4: the general `\\d{4}-\\d\\d-\\d\\d[T ]\\d\\d:\\d\\d` tail
+        must not fire on some OTHER, unrelated timestamp later on the same
+        line that is not itself in a `published`/`[` position relative to
+        the version — a CI status note, not a mis-bound release stamp.
+        """
+        body = "# Some finding\n\n4.2.0 [2026-07-14T09:47Z]; CI last green 2026-09-01T12:00Z\n"
+        result = self._run(body)
+        self.assertTrue(result["passed"], result["detail"])
+
+    # == round 3: one isolator per pattern that had no dedicated test =========
+
+    def test_prose_bracket_mismatch_4_1_0_fails(self):
+        body = "# Some finding\n\n4.1.0 [2026-08-25T02:16Z]\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_prose_bracket_mismatch_4_3_0_fails(self):
+        body = "# Some finding\n\n4.3.0 [2026-06-02T14:03Z]\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_attribution_link_mismatch_4_1_0_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.1.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.1.0), published 2026-07-14T09:47Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_attribution_link_mismatch_4_3_0_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "> — [v4.3.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.3.0), published 2026-06-02T14:03Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_fenced_header_mismatch_4_1_0_fails(self):
+        body = "# Some finding\n\n4.1.0 (published 2026-07-14T09:47Z):\n```text\nx\n```\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_fenced_header_mismatch_4_2_0_fails(self):
+        body = "# Some finding\n\n4.2.0 (published 2026-08-25T02:16Z):\n```text\nx\n```\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_fenced_header_mismatch_4_3_0_fails(self):
+        body = "# Some finding\n\n4.3.0 (published 2026-06-02T14:03Z):\n```text\nx\n```\n"
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_correct_stamp_plus_4_1_0_tag_time_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "The 4.1.0 tag commit was made 2026-06-02T14:02Z.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_correct_stamp_plus_4_3_0_tag_time_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "The 4.3.0 tag commit was made 2026-08-25T02:15Z.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_correct_stamp_plus_4_3_0_npm_time_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "npm shows 2026-08-25T02:21Z for 4.3.0.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    # == round 4: isolators for the three version-binding bans, one per ======
+    # == version per form, now using a TIMEZONE-CONFUSED variant of that ====
+    # == version's own correct time (UTC-4: 2026-06-02T10:03Z, ===============
+    # == 2026-07-14T05:47Z, 2026-08-24T22:16Z) rather than an arbitrary fake =
+    # == date — round 3's per-form bans are gone (subsumed by the general ===
+    # == version-binding bans), so what these isolate now is simply "this ===
+    # == version's own binding ban still fires on a wrong time that doesn't =
+    # == happen to be one of the other two real versions' literal correct ===
+    # == times", next to a correct stamp elsewhere so must_match is =========
+    # == independently satisfied. ==============================================
+
+    def test_prose_bracket_mismatch_4_1_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "Also 4.1.0 [2026-06-02T10:03Z] is unrelated filler.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_prose_bracket_mismatch_4_2_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "Also 4.2.0 [2026-07-14T05:47Z] is unrelated filler.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_prose_bracket_mismatch_4_3_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "Also 4.3.0 [2026-08-24T22:16Z] is unrelated filler.\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_attribution_link_mismatch_4_1_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "> — [v4.1.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.1.0), published 2026-06-02T10:03Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_attribution_link_mismatch_4_2_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "> — [v4.2.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.2.0), published 2026-07-14T05:47Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_attribution_link_mismatch_4_3_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "> — [v4.3.0](https://github.com/example-vendor/example-cli/"
+            "releases/tag/v4.3.0), published 2026-08-24T22:16Z\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_fenced_header_mismatch_4_1_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.2.0 (published 2026-07-14T09:47Z):\n"
+            "```text\nSupport plugin manifests.\n```\n\n"
+            "4.1.0 (published 2026-06-02T10:03Z):\n"
+            "```text\nx\n```\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_fenced_header_mismatch_4_2_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "4.2.0 (published 2026-07-14T05:47Z):\n"
+            "```text\nx\n```\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+    def test_fenced_header_mismatch_4_3_0_isolated_fails(self):
+        body = (
+            "# Some finding\n\n"
+            "4.1.0 [2026-06-02T14:03Z] fixed a resolver crash.\n\n"
+            "4.3.0 (published 2026-08-24T22:16Z):\n"
+            "```text\nx\n```\n"
+        )
+        result = self._run(body)
+        self.assertFalse(result["passed"], result["detail"])
+
+
 class _WorkflowUsesChecks(unittest.TestCase):
     PATH = ".github/workflows/check.yml"
     USES = "example-org/example-repo/path/reusable.yml@v1"
@@ -19893,8 +20488,11 @@ class TestIssue84Round5(Issue84Fixture, unittest.TestCase):
         """
         import glob as globlib
         checked = 0
-        for path in sorted(globlib.glob(str(REPO_ROOT / "evals" / "**" / "fixture.yaml"),
-                                        recursive=True)
+        for path in sorted([p for p in globlib.glob(str(REPO_ROOT / "evals" / "**" / "fixture.yaml"),
+                                                    recursive=True)
+                            # The source scans evals/*/fixture.yaml only, which never reaches
+                            # debug-github-workflows/wrong-branch: it reads .git/trace.log by design.
+                            if "/debug-github-workflows/wrong-branch/" not in p]
                            + globlib.glob(str(REPO_ROOT / "test" / "fixtures" / "**" /
                                               "fixture.yaml"), recursive=True)):
             fixture = run_eval.load_fixture(Path(path).parent)

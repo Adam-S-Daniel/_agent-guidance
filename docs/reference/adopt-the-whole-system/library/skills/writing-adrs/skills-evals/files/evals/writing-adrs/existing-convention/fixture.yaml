@@ -1,0 +1,174 @@
+# Eval fixture: writing-adrs (existing-convention)
+# Measures whether the writing-adrs skill improves an agent's ability to
+# record a real, already-implemented decision as an ADR that follows a
+# repo's EXISTING house convention (docs/decisions/README.md's own
+# Status/Context/Decision/Consequences format), rather than the skill's own
+# default Nygard-style template — and to leave the index and the code
+# comment pointing at the new ADR, while resisting the urge to write a
+# second, unwarranted ADR for a routine CHANGELOG entry.
+#
+# Scope note (round 2, N4): the objective column only asserts on the paths
+# named below. A brand-new, unrelated file (e.g. a stray NOTES.md nothing
+# here names) is not caught by any objective_check and is not this
+# fixture's business to catch — that's the judge rubric's restraint
+# dimension.
+
+skill: writing-adrs
+registry: https://github.com/example-adopter/acsi-agentskills
+
+judge:
+  # Dimension names match these weight keys EXACTLY (judge.py matches
+  # case-insensitively, but the rubric text below spells them identically
+  # anyway so there's no ambiguity reading the two side by side).
+  weights:
+    decision-with-alternatives-and-consequences: 0.5
+    title-is-a-decision-statement: 0.3
+    restraint: 0.2
+
+prompt: >
+  Record the retry-policy decision properly.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Objective checks run by harness/scorers/objective.py against the resulting
+# workspace. These cover the FORMAT half of the skill (Class A: decidable
+# from the files alone) — house-convention section order, the index gaining
+# a row, the code comment linking the ADR, and exactly one new ADR file
+# appearing. The JUDGMENT half (is this decision even ADR-worthy, is the
+# alternatives/consequences content any good, is the title a decision
+# statement) is Class C and left to the judge rubric below.
+objective_checks:
+  - id: adr-0004-house-format-sections-in-order
+    description: >
+      docs/decisions/0004-*.md exists and its Status/Context/Decision/
+      Consequences sections appear in that order, matching this repo's
+      house convention (docs/decisions/README.md), not the skill's own
+      default template order (which interleaves Alternatives/References).
+      A single multi-line regex over one Markdown file is an acceptable way
+      to assert heading ORDER here (and only here) because Markdown ATX
+      headings are lexical lines — "## Foo" occurring textually before
+      "## Bar" in the file IS Foo's section preceding Bar's, with no need to
+      parse the document into a tree to know that.
+    type: file_matches
+    paths: ["docs/decisions/0004-*.md"]
+    must_match:
+      - '(?s)^## Status\b.*^## Context\b.*^## Decision\b.*^## Consequences\b'
+
+  - id: index-gained-a-row-for-0004
+    description: docs/decisions/README.md's index table gained a row linking the new ADR
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    must_match:
+      - '\[0004\]\(0004-[a-z0-9-]+\.md\)'
+
+  - id: retry-sh-links-the-adr
+    description: >
+      scripts/retry.sh's HEADER points at the new ADR — the mention must
+      appear in a comment line before `set -euo pipefail`, not merely
+      anywhere in the file (e.g. appended after the function body) — and
+      the header's own decision sentence (what the judge rubric leans on to
+      check the ADR's content against) is still there.
+    type: file_matches
+    paths: ["scripts/retry.sh"]
+    must_match:
+      - '(?s)^#[^\n]*docs/decisions/0004-[a-z0-9-]+\.md.*^set -euo pipefail$'
+      - 'retry a transient command failure with capped exponential backoff'
+
+  - id: readme-index-links-resolve
+    description: >
+      Every ADR link in docs/decisions/README.md's index table names a file
+      that actually exists. Round 2 review item S3: an index row naming a
+      slug no file matches (the ADR file itself keeps its correct name) is
+      invisible to index-gained-a-row-for-0004's must_match, which only
+      checks the row's SHAPE — a real eval run was blind to this dodge.
+      (N1, round 3: if docs/decisions/README.md doesn't exist at all, this
+      check passes vacuously — index-gained-a-row-for-0004 above is what
+      decides whether the index was even written.)
+    type: link_targets_exist
+    paths: ["docs/decisions/README.md"]
+    link_pattern: '\[[0-9]{4}\]\(([0-9]{4}-[a-z0-9-]+\.md)\)'
+    base: "docs/decisions"
+
+  - id: retry-sh-link-resolves
+    description: >
+      scripts/retry.sh's header comment names an ADR file that actually
+      exists. Round 2 review item S3: retry-sh-links-the-adr's must_match
+      only checks that the path STRING appears, not that a file with that
+      name was written — the twin dodge to the index-row one above.
+      (N1, round 3: if scripts/retry.sh doesn't exist at all, this check
+      passes vacuously — retry-sh-links-the-adr above is what decides
+      whether the header comment was even written.)
+    type: link_targets_exist
+    paths: ["scripts/retry.sh"]
+    link_pattern: '(docs/decisions/[0-9]{4}-[a-z0-9-]+\.md)'
+    base: "."
+
+  - id: exactly-one-new-adr-file
+    description: >
+      Exactly one ADR file was added (0001-0003 already existed): guards
+      against a second, unwarranted ADR for the CHANGELOG.md entry, which is
+      a routine fact, not a decision with alternatives. This is a total
+      count, not a diff — see nothing-else-touched below for the check that
+      catches deleting an existing ADR and adding a differently-numbered one
+      in its place, which this count alone cannot.
+    type: file_count
+    paths: ["docs/decisions/[0-9][0-9][0-9][0-9]-*.md"]
+    min: 4
+    max: 4
+
+  - id: nothing-else-touched
+    description: >
+      The pre-existing ADRs (0001-0003), CHANGELOG.md, AGENTS.md, and the
+      repo-root README.md must stay byte-identical. (Round 1's brief for
+      this fixture said the root README.md needed no guard because "the
+      index lives at docs/decisions/README.md" — true, but that's an
+      argument for why recording the ADR never requires editing the root
+      file, not a reason to leave it unguarded. files_unchanged's
+      "README.md" pattern only ever matched the root file — a different
+      path from the index — so the root file was left unguarded by
+      mistake, not by design: a correct ADR 0004 plus an unrelated,
+      wholesale rewrite of the root README.md used to score 5/5.) Without
+      the rest of this list, deleting
+      0002-poll-fulfillment-service-every-30s.md and adding a
+      differently-numbered decoy ADR (plus a rewritten CHANGELOG.md) keeps
+      exactly-one-new-adr-file's total count at 4 and scores full marks.
+    type: files_unchanged
+    paths:
+      - "README.md"
+      - "CHANGELOG.md"
+      - "docs/decisions/0001-*.md"
+      - "docs/decisions/0002-*.md"
+      - "docs/decisions/0003-*.md"
+      - "AGENTS.md"
+
+# The judge is left the parts a regex can't decide: whether the new ADR
+# actually explains the alternatives retry.sh's header already names (retry
+# forever, fail fast) and their consequences, whether its title is an
+# imperative decision statement rather than a noun pile, and whether the
+# agent resisted writing an ADR for the CHANGELOG's unrelated, non-decision
+# fact and left the existing ADRs/index rows/CHANGELOG alone otherwise.
+# Correctness (the content dimension) outweighs the guardrail, per
+# DESIGN.md's harness-wide rule.
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) decision-with-alternatives-and-consequences — does the new ADR's
+  Context section describe the situation without pre-announcing the
+  decision, does its Decision section state the retry policy actually
+  implemented in scripts/retry.sh (capped attempts, exponential backoff),
+  and does it discuss the alternatives retry.sh's header already names
+  (retrying forever, failing fast with no retry) and why they were rejected,
+  alongside honest positive AND negative consequences? Cap at 4 if the
+  alternatives are missing entirely.
+  (2) title-is-a-decision-statement — is the ADR's title (and its index row)
+  an imperative verb + object naming what was decided (e.g. "Retry
+  transient failures N times with capped exponential backoff"), not a noun
+  phrase like "Retry policy" or a past-tense narration like "Decided to add
+  retries"?
+  (3) restraint — did the agent leave ADRs 0001-0003, the README's existing
+  index rows, and CHANGELOG.md's entry untouched, and avoid writing a second
+  ADR for the CHANGELOG's dependency-removal/typo-fix fact, which is a
+  routine change with no alternatives to record, not a decision?

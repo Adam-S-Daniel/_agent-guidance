@@ -1,0 +1,6 @@
+{
+  "name": "widgets",
+  "private": true,
+  "dependencies": {"express": "4.21.2"},
+  "devDependencies": {"eslint": "9.17.0"}
+}

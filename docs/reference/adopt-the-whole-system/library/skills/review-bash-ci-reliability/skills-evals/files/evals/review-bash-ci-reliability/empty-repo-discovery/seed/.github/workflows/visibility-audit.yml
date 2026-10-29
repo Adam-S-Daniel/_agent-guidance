@@ -1,0 +1,19 @@
+name: Visibility audit
+
+on:
+  schedule:
+    - cron: "40 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - name: Flag public repositories that are not on the allowlist
+        env:
+          GH_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/audit-visibility.sh

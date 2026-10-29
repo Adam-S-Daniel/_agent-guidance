@@ -1,0 +1,28 @@
+{
+  "ops": [
+    {
+      "op": "insert-section",
+      "file": "agents-md/base.md",
+      "fragment": "section.md",
+      "heading": "## Working habits",
+      "follows": [
+        "## Working in these repos"
+      ]
+    },
+    {
+      "op": "coverage-row",
+      "file": "agents-md/eval-coverage.yml",
+      "fragment": "coverage-row.yml",
+      "id": "working-habits",
+      "follows": [
+        "working-in-these-repos"
+      ]
+    },
+    {
+      "op": "impact-entry",
+      "file": "docs/guidance-impact.md",
+      "fragment": "impact-entry.md",
+      "heading": "## 2026-10-29 — working-habits — create"
+    }
+  ]
+}

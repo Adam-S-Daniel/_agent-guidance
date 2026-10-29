@@ -1,0 +1,11 @@
+name: ci
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9459ac0c7a9a78b5ac15c6e471312de28ff87692
+      - uses: actions/setup-node@87788e64c72e96ca086359b8905b54f0773dc96c
+      - run: npm ci && npm test

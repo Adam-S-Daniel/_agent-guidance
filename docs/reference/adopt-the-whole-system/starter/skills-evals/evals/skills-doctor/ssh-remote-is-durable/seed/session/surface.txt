@@ -1,0 +1,2 @@
+$ echo "entry=$CLAUDE_CODE_ENTRYPOINT remote=$CLAUDE_CODE_REMOTE_SESSION_ID force=$SKILLS_BOOTSTRAP_FORCE env=$CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE"
+entry=ssh-remote remote= force= env=

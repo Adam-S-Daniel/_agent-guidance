@@ -1,0 +1,14 @@
+[
+  {
+    "enforcement": "active",
+    "id": 7201,
+    "name": "default branch protection",
+    "target": "branch"
+  },
+  {
+    "enforcement": "active",
+    "id": 7302,
+    "name": "manual-main",
+    "target": "branch"
+  }
+]

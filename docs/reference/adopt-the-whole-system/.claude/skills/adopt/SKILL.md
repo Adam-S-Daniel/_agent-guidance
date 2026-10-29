@@ -28,7 +28,7 @@ which step is next. Work from the kit's folder (the one holding
    then pass `--config <path>` to every script) and help the user fill in
    `OWNER`, `OWNER_TWO` (the same login when they have one account) and
    `PLAN`. `docs/before-you-start.md` explains each key and the costs; say
-   the costs out loud before step 1.
+   the costs out loud before step 2.
 3. Check the tools the scripts need: `gh` signed in as `OWNER`
    (`gh auth status`), `jq`, `git`, `python3` with PyYAML.
 
@@ -53,7 +53,7 @@ which step is next. Work from the kit's folder (the one holding
      `regenerate.sh <task>`): after the run, give each pull request's URL
      and say what to review, above all `.github/workflows/`. The user
      merges. `docs/settings-and-apps.md`, "Merging the starter pull
-     requests", lists the check failures to expect before step 19; anything
+     requests", lists the check failures to expect before step 20; anything
      else is a finding to look into, not to wave through.
    - **browser**: give the exact page and what to do there (the `Run:` line
      and the docs section; `docs/routines.md` has every routine's settings
@@ -71,8 +71,8 @@ which step is next. Work from the kit's folder (the one holding
    `files` or `config` step is never marked: status.sh reads the real state
    and refuses `--mark` for it, so run `bash bootstrap/status.sh` again (and
    `bash bootstrap/verify.sh --only <groups>` for the detail) until it
-   reads done. The browser steps that create or install the Apps (5, 6)
-   and the federation step (25) are `verify` steps.
+   reads done. The browser steps that create or install the Apps (6, 7)
+   and the federation step (26) are `verify` steps.
 4. When a script fails, read the error, find the cause in the script or the
    docs, and help fix it. Then run the step again, dry run first.
 5. At the end of each sitting, name the next step and its time estimate, so
@@ -80,16 +80,82 @@ which step is next. Work from the kit's folder (the one holding
 
 ## Steps with a catch
 
-- **Step 19** (`apply-settings.sh`) turns on the rulesets. With two owners,
+- **Step 1** (choose optional content) has its own flow: "The content
+  step" below.
+- **Step 20** (`apply-settings.sh`) turns on the rulesets. With two owners,
   the second owner's apply needs `gh` signed in as that account:
   `bash bootstrap/apply-settings.sh --owner <OWNER_TWO>`. Before it, say
   that from then on every change to a default branch needs a pull request.
-- **Steps 13 to 17** (`regenerate.sh`) need the starter pull requests
+- **Steps 14 to 18** (`regenerate.sh`) need the starter pull requests
   merged first; `regenerate.sh --check <task>` says what is still to do.
   `skills-locks` runs twice: once for the registry, then for the rest.
-- **The eval runner** (steps 23 and 24): the bearer is shown once. The
+- **The eval runner** (steps 24 and 25): the bearer is shown once. The
   user keeps it and the `trig_...` id and types both into
   `set-secrets.sh --only routine-fire` themselves.
+
+## The content step
+
+Step 1 picks the optional skills, guidance rules and git hooks before any
+starter tree is copied to GitHub. `bootstrap/content-catalog.json` lists
+every item: its `id`, `kind`, `tier`, `title`, `short` (the one sentence a
+choice shows), `source_link` (its file in the kit) and, for an opinionated
+item, `details` and `clashes`. Read it first, and keep the choices made so
+far in mind across every question below.
+
+Say one line about the core tier and nothing more: "A few skills, guidance
+rules and git hooks the system depends on are always included." Never list
+the core items, and never call an item "checked" or "unchecked": say which
+ones the user picked.
+
+The questions use Claude Code's AskUserQuestion tool. Its limits, from
+<https://code.claude.com/docs/en/agent-sdk/user-input> (read 2026-10-29):
+1 to 4 questions per call; 2 to 4 options per question, each a `label` and a
+`description`; a `header` of at most 12 characters; `multiSelect` to allow
+several answers; no way to preselect an option; the user can always type
+another answer. It is not available inside a subagent. The layout below fits
+those limits: no list holds more than 4 items, and a list with one item gets
+a second option.
+
+1. **Recommended.** One single-select question: "Add the N recommended
+   items?" (N is the number of `recommended` items), options "Add all
+   (Recommended)" and "Let me choose".
+2. **Let me choose.** First print a short list of links, one per
+   recommended item (its `title` and `source_link`). Then one call with one
+   multiSelect question per list, each option's label the item's `title`
+   and its description the item's `short`:
+   - header "Skills": "Skills that help anywhere. Pick the ones you want."
+   - header "Guidance 1" (`group` `safety`): "Guidance rules on safety. Pick
+     the ones you want."
+   - header "Guidance 2" (`group` `habits`): "Guidance rules on everyday
+     habits. Pick the ones you want."
+   - header "Git hooks", only when a recommended git hook exists.
+3. **Opinionated.** First print, for each `opinionated` item, its kind, its
+   `title`, a link to its `source_link`, its `details` and its `clashes`.
+   Then one call with one multiSelect question per kind, headers "Skills",
+   "Guidance" and "Git hooks", each asking "These reflect one way of working
+   and may not match yours. Pick any you want." Options as in step 2. A
+   kind with one item gets a second option, "No git hook" (or "No skill",
+   "No guidance rule"), described as "Add none of this kind for now."
+4. **Confirm.** Show the final list grouped by kind, each item with its
+   link, then one single-select question: "Install these" or "Change my
+   choices". On "Change my choices", ask steps 1 to 3 again, starting from
+   the choices already made. Repeat until "Install these".
+5. **Install.** Run
+   `bash bootstrap/add-content.sh --items <comma-separated ids> --dry-run`
+   (or `--items none` when nothing was picked) and show its summary: the
+   files it would add or change in each starter folder. Then run it without
+   `--dry-run`. It records the choices, which closes step 1; run
+   `bash bootstrap/status.sh` to show it.
+
+Without AskUserQuestion (Codex, another harness, a subagent), ask the same
+questions as plain numbered lists, one list per question, and let the user
+reply with the numbers of the items they want. Word every question as a
+choice of what to add: "Pick the ones you want", never a question about
+what to leave out.
+
+Later, once the repos exist, `add-content.sh` changes only the kit's
+`starter/` copy and prints which repos need a pull request; follow what it
+prints, as for any starter pull request.
 
 ## Never
 

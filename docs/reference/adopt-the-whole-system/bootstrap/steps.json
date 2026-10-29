@@ -1,5 +1,5 @@
 {
-  "about": "The quick start's steps, in order: the one source for docs/quick-start.md's table (render-quickstart.py) and for status.sh. Each step is at most one command or one visit to a page, plus the check that says it is done. check.type is config (fleet.env exists with OWNER and PLAN), verify (verify.sh --only <groups> passes), files (each file is on that repo's default branch, so its starter pull request is merged) or ask (status.sh --mark <id> once you say it is done). link is a kit-relative path to the docs section that explains the step. An optional step is listed but never blocks the next.",
+  "about": "The quick start's steps, in order: the one source for docs/quick-start.md's table (render-quickstart.py) and for status.sh. Each step is at most one command or one visit to a page, plus the check that says it is done. check.type is config (fleet.env exists with OWNER and PLAN), verify (verify.sh --only <groups> passes), files (each file is on that repo's default branch, so its starter pull request is merged) or ask (status.sh --mark <id> once you say it is done; an ask check with \"record\": \"content\" is also done once add-content.sh has recorded your choices). link is a kit-relative path to the docs section that explains the step. An optional step is listed but never blocks the next.",
   "steps": [
     {
       "id": "0",
@@ -15,6 +15,19 @@
     },
     {
       "id": "1",
+      "title": "Choose optional skills, guidance and git hooks",
+      "run": "`bootstrap/add-content.sh --items recommended --dry-run`, then the same without `--dry-run` (or name the items you want, or `--items none`)",
+      "kind": "manual",
+      "part": "skills",
+      "link": "docs/skills.md#choosing-optional-content",
+      "check": {
+        "type": "ask",
+        "record": "content"
+      },
+      "minutes": 10
+    },
+    {
+      "id": "2",
       "title": "Create the six repos",
       "run": "`bootstrap/create-repos.sh`",
       "kind": "script",
@@ -31,7 +44,7 @@
       "minutes": 5
     },
     {
-      "id": "2",
+      "id": "3",
       "title": "Store the privacy denylist",
       "run": "`bootstrap/set-secrets.sh --only privacy --denylist <file outside every repo>`",
       "kind": "script",
@@ -46,7 +59,7 @@
       "minutes": 10
     },
     {
-      "id": "3",
+      "id": "4",
       "title": "Copy repo-settings and merge it",
       "run": "`bootstrap/copy-starter.sh starter/repo-settings <you>/repo-settings`, then review and merge the pull request",
       "kind": "script",
@@ -68,7 +81,7 @@
       "minutes": 20
     },
     {
-      "id": "4",
+      "id": "5",
       "title": "Create the environments",
       "run": "`bootstrap/create-environments.sh`",
       "kind": "script",
@@ -83,7 +96,7 @@
       "minutes": 3
     },
     {
-      "id": "5",
+      "id": "6",
       "title": "Create the six GitHub Apps",
       "run": "`bootstrap/create-apps.sh` (GitHub's App manifest flow, once per App, in the browser)",
       "kind": "browser",
@@ -103,7 +116,7 @@
       "minutes": 30
     },
     {
-      "id": "6",
+      "id": "7",
       "title": "Install the Apps",
       "run": "Open each `https://github.com/apps/<slug>/installations/new` link `create-apps.sh` printed and pick the repos it names",
       "kind": "browser",
@@ -123,7 +136,7 @@
       "minutes": 15
     },
     {
-      "id": "7",
+      "id": "8",
       "title": "Copy the App ids into repo-settings",
       "run": "`bootstrap/create-environments.sh` again",
       "kind": "script",
@@ -138,7 +151,7 @@
       "minutes": 2
     },
     {
-      "id": "8",
+      "id": "9",
       "title": "Drop the example repos from fleet.yml",
       "run": "In a pull request on `<you>/repo-settings`, remove the `example-site-*` entries from `repo-settings/fleet.yml` and their rows in `tests/test_repo_settings.py` (unless you have those repos)",
       "kind": "manual",
@@ -150,7 +163,7 @@
       "minutes": 15
     },
     {
-      "id": "9",
+      "id": "10",
       "title": "Copy _agent-guidance and merge it",
       "run": "`bootstrap/copy-starter.sh starter/agent-guidance <you>/_agent-guidance`, then review and merge",
       "kind": "script",
@@ -172,7 +185,7 @@
       "minutes": 30
     },
     {
-      "id": "10",
+      "id": "11",
       "title": "Drop the example repos from repos.yml",
       "run": "In a pull request on `<you>/_agent-guidance`, remove the `example-site-*` names from `repos.yml` `cron_coverage.fleet` (unless you have those repos)",
       "kind": "manual",
@@ -184,7 +197,7 @@
       "minutes": 10
     },
     {
-      "id": "11",
+      "id": "12",
       "title": "Copy the two registries and merge them",
       "run": "`bootstrap/copy-starter.sh starter/agent-skills <you>/acsi-agentskills` and `bootstrap/copy-starter.sh starter/agent-skills-private <you>/acsi-agentskills-private`, then review and merge",
       "kind": "script",
@@ -206,7 +219,7 @@
       "minutes": 30
     },
     {
-      "id": "12",
+      "id": "13",
       "title": "Copy skills-evals and wsl-automation and merge them",
       "run": "`bootstrap/copy-starter.sh starter/skills-evals <you>/skills-evals` and `bootstrap/copy-starter.sh starter/wsl-automation <you>/wsl-automation`, then review and merge",
       "kind": "script",
@@ -228,7 +241,7 @@
       "minutes": 30
     },
     {
-      "id": "13",
+      "id": "14",
       "title": "Pin every skills.lock to your registry",
       "run": "`bootstrap/regenerate.sh skills-locks`, merge, then run it again for the other four repos",
       "kind": "script",
@@ -243,7 +256,7 @@
       "minutes": 15
     },
     {
-      "id": "14",
+      "id": "15",
       "title": "Pin the skills-bootstrap hook",
       "run": "`bootstrap/regenerate.sh hook-pin`, then merge",
       "kind": "script",
@@ -258,7 +271,7 @@
       "minutes": 5
     },
     {
-      "id": "15",
+      "id": "16",
       "title": "Pin the scheduled-run-health reusable",
       "run": "`bootstrap/regenerate.sh run-health-sha`, then merge the three pull requests",
       "kind": "script",
@@ -273,7 +286,7 @@
       "minutes": 5
     },
     {
-      "id": "16",
+      "id": "17",
       "title": "Pin the Codex Cloud bootstrap",
       "run": "`bootstrap/regenerate.sh codex-pin`, then merge",
       "kind": "script",
@@ -288,7 +301,7 @@
       "minutes": 5
     },
     {
-      "id": "17",
+      "id": "18",
       "title": "Regenerate the action lockfiles",
       "run": "`gh extension install github/gh-actions-lock`, then `bootstrap/regenerate.sh actions-lock` and merge what it opens",
       "kind": "script",
@@ -303,7 +316,7 @@
       "minutes": 10
     },
     {
-      "id": "18",
+      "id": "19",
       "title": "Decide eval.yml's default fixture",
       "run": "`.github/workflows/eval.yml`'s `fixture` default, `evals/workflow-path-audit/required-check-routing`, ships with the kit and runs as it is: keep it, or change it to a fixture of your own in a pull request on `<you>/skills-evals`",
       "kind": "manual",
@@ -315,7 +328,7 @@
       "minutes": 10
     },
     {
-      "id": "19",
+      "id": "20",
       "title": "Apply fleet.yml: protect every repo",
       "run": "`bootstrap/apply-settings.sh` (and `--owner <OWNER_TWO>` signed in as that account)",
       "kind": "script",
@@ -330,7 +343,7 @@
       "minutes": 5
     },
     {
-      "id": "20",
+      "id": "21",
       "title": "Set up each durable machine",
       "run": "On each one: `bootstrap/install-machine.sh` (add `--with-codex` if you use Codex)",
       "kind": "machine",
@@ -342,7 +355,7 @@
       "minutes": 15
     },
     {
-      "id": "21",
+      "id": "22",
       "title": "Schedule the machine jobs",
       "run": "Windows: `./scripts/register-tasks.ps1` in an elevated PowerShell 7, in your wsl-automation clone; Linux or macOS: `bash scripts/unix/install-schedule.sh <systemd|launchd|cron>`",
       "kind": "machine",
@@ -354,7 +367,7 @@
       "minutes": 30
     },
     {
-      "id": "22",
+      "id": "23",
       "title": "Set up your cloud environments",
       "run": "At https://claude.ai/code, give each cloud environment the setup script from acsi-agentskills' `docs/multi-repo-delivery.md` and the network allowlist from _agent-guidance's `docs/reference/network-allowlist-claude-environments.txt`",
       "kind": "browser",
@@ -366,7 +379,7 @@
       "minutes": 20
     },
     {
-      "id": "23",
+      "id": "24",
       "title": "Create the eval runner routine",
       "run": "At https://claude.ai/code/routines: an API-triggered routine with the prompt in skills-evals' `docs/routine-prompt.md`; keep the bearer it shows once and its `trig_...` id",
       "kind": "browser",
@@ -378,7 +391,7 @@
       "minutes": 20
     },
     {
-      "id": "24",
+      "id": "25",
       "title": "Store the eval runner's bearer and trigger id",
       "run": "`bootstrap/set-secrets.sh --only routine-fire`",
       "kind": "script",
@@ -393,7 +406,7 @@
       "minutes": 5
     },
     {
-      "id": "25",
+      "id": "26",
       "title": "Optional: let eval.yml trade OIDC for an Anthropic token",
       "run": "In the Anthropic Console, set up workload identity federation for `skills-evals`, put its four ids in fleet.env, then `bootstrap/create-environments.sh`",
       "kind": "browser",
@@ -409,7 +422,7 @@
       "optional": true
     },
     {
-      "id": "26",
+      "id": "27",
       "title": "Create the fleet worker routine",
       "run": "At https://claude.ai/code/routines: hourly at :20, the GitHub connector, the prompt in docs/routines.md",
       "kind": "browser",
@@ -421,7 +434,7 @@
       "minutes": 15
     },
     {
-      "id": "27",
+      "id": "28",
       "title": "Create the prompt-audit sweep routine",
       "run": "At https://claude.ai/code/routines: API trigger only; keep its fire URL and bearer for the next step",
       "kind": "browser",
@@ -433,7 +446,7 @@
       "minutes": 15
     },
     {
-      "id": "28",
+      "id": "29",
       "title": "Create the agent changelog watcher routine",
       "run": "At https://claude.ai/code/routines: daily at 01:03 UTC, in an environment that holds the sweep's fire URL and bearer",
       "kind": "browser",
@@ -445,7 +458,7 @@
       "minutes": 20
     },
     {
-      "id": "29",
+      "id": "30",
       "title": "Schedule memory curation",
       "run": "A weekly task from a claude.ai project thread, and the same on each durable machine (docs/routines.md has both prompts)",
       "kind": "browser",
@@ -457,7 +470,7 @@
       "minutes": 15
     },
     {
-      "id": "30",
+      "id": "31",
       "title": "Create the guidance centralization audit routine",
       "run": "At https://claude.ai/code/routines: daily at 08:00 UTC, the GitHub connector, the prompt in _agent-guidance's `docs/routines/guidance-centralization.routine.md`",
       "kind": "browser",
@@ -469,7 +482,7 @@
       "minutes": 20
     },
     {
-      "id": "31",
+      "id": "32",
       "title": "Optional: the project dashboard",
       "run": "Follow skills-evals' `dashboard/README.md` (Adopting it), then schedule its refresh every 2 hours",
       "kind": "browser",

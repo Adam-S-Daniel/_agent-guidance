@@ -8,26 +8,19 @@ source_sha: d2d81b00c51388baf51c3922a540ae27839adcde
 after: [_agent-guidance]
 
 exclude:
-  - path: plugins/adam-anything-anywhere/skills/
-    why: DECISIONS X9 (the content starts with one skill; the plugin keeps its manifests).
+  # Content tiers (2026-10-29): the core skills (skills-doctor,
+  # github-actions-repo-settings, vendor-release-impact-issues,
+  # workflow-path-audit) stay; the recommended and opinionated ones
+  # (review-bash-ci-reliability, debug-github-workflows,
+  # disarm-inherited-reach, writing-adrs, finding-unknowns) are exported and
+  # then moved to the library by patches/agentskills/library_skills.py; the
+  # rest are not shipped.
   - path: plugins/adam-coding-anywhere/skills/ci-job-performance/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
-  - path: plugins/adam-coding-anywhere/skills/debug-github-workflows/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
-  - path: plugins/adam-coding-anywhere/skills/disarm-inherited-reach/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
-  - path: plugins/adam-coding-anywhere/skills/github-actions-repo-settings/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
-  - path: plugins/adam-coding-anywhere/skills/review-bash-ci-reliability/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
-  - path: plugins/adam-coding-anywhere/skills/skills-doctor/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
-  - path: plugins/adam-coding-anywhere/skills/vendor-release-impact-issues/
-    why: DECISIONS X9 (one skill, workflow-path-audit, is kept; the rest start blank).
+    why: Content tiers (not shipped).
   - path: plugins/adam-coding-local/skills/
-    why: DECISIONS X9 (the plugin's hooks and bin/ are machinery and stay).
+    why: DECISIONS X9 and Content tiers (the plugin's hooks and bin/ are machinery and stay).
   - path: plugins/adam-non-coding-local/skills/
-    why: DECISIONS X9 (this also drops the Fastmail skills of X1).
+    why: DECISIONS X9 and Content tiers (this also drops the Fastmail skills of X1).
 
 substitutions:
   # C1, repo-specific. In this repo a bare `agentskills` (and
@@ -246,9 +239,14 @@ edits:
     new: "An example of a federated plugin: the skills of a separate platform repo, served from that repo rather than mirrored here. Point it at a repo of your own, or remove the entry. |"
     why: The README's generated plugin table repeats the marketplace description.
 
-# DECISIONS X9: the plugins ship with one skill, workflow-path-audit (see each
-# patch's docstring).
+# DECISIONS X9 and Content tiers: the plugins ship with the four core skills
+# (see each patch's docstring).
 patches:
+  - file: library_skills.py
+    why: >-
+      Content tiers. The recommended and opinionated skills move to
+      library/skills/<skill>/, with the plugin_layout.json and skill-impact.md
+      ops add-content.sh runs when one is chosen.
   - file: blank_registry.py
     why: >-
       X9. plugin_layout.json lists the one kept skill and gives the other

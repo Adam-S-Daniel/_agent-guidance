@@ -1,0 +1,8 @@
+{
+  "name": "fix/ci-test-discovery",
+  "commit": {
+    "sha": "2222222222222222222222222222222222222222",
+    "url": "https://example.net/repos/example-org/example-service/commits/2222222222222222222222222222222222222222"
+  },
+  "protected": false
+}

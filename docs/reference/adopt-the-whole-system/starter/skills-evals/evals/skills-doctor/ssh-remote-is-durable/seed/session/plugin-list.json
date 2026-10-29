@@ -1,0 +1,18 @@
+[
+  {
+    "id": "acsi-anything-anywhere@acsi-agentskills",
+    "version": "1.14.0",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "/home/builder/.claude/plugins/cache/acsi-agentskills/acsi-anything-anywhere/1.14.0",
+    "gitCommitSha": "2f5987bd8a7dc6fd7e4bfc36dcba19f33fda0c1f"
+  },
+  {
+    "id": "acsi-coding-anywhere@acsi-agentskills",
+    "version": "1.14.0",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "/home/builder/.claude/plugins/cache/acsi-agentskills/acsi-coding-anywhere/1.14.0",
+    "gitCommitSha": "2f5987bd8a7dc6fd7e4bfc36dcba19f33fda0c1f"
+  }
+]

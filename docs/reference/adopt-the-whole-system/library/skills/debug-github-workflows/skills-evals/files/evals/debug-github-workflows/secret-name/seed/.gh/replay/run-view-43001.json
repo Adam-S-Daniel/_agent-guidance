@@ -1,0 +1,56 @@
+{
+  "databaseId": 43001,
+  "name": "Release notes",
+  "workflowName": "Release notes",
+  "headBranch": "v1.3.0",
+  "headSha": "4444444444444444444444444444444444444444",
+  "event": "release",
+  "status": "completed",
+  "conclusion": "failure",
+  "url": "https://example.com/example-org/example-docs/actions/runs/43001",
+  "createdAt": "2026-01-02T16:00:00Z",
+  "updatedAt": "2026-01-02T16:00:06Z",
+  "jobs": [
+    {
+      "databaseId": 63001,
+      "name": "notes",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://example.com/example-org/example-docs/actions/runs/43001/job/63001",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "startedAt": "2026-01-02T16:00:01Z",
+          "completedAt": "2026-01-02T16:00:02Z"
+        },
+        {
+          "name": "Run actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "startedAt": "2026-01-02T16:00:02Z",
+          "completedAt": "2026-01-02T16:00:04Z"
+        },
+        {
+          "name": "Publish release notes",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 3,
+          "startedAt": "2026-01-02T16:00:04Z",
+          "completedAt": "2026-01-02T16:00:05Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "startedAt": "2026-01-02T16:00:05Z",
+          "completedAt": "2026-01-02T16:00:05Z"
+        }
+      ]
+    }
+  ]
+}

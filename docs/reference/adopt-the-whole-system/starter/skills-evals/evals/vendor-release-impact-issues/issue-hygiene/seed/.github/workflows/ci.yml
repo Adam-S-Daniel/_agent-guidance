@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install ExampleCLI
+        run: npm install -g example-cli@4.1.0
+      - name: Run checks
+        run: example-cli check --config .example-cli/settings.json

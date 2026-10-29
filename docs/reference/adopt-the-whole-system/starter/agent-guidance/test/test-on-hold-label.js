@@ -16,6 +16,9 @@ const documents = new Map();
 function tokens(name) {
   if (!documents.has(name)) {
     let source = read(name);
+    if (process.env.ON_HOLD_MUTATION === 'policy' && name === 'agents-md/base.md') {
+      source = source.replace('is paused by the owner', 'is ready for agent work');
+    }
     if (process.env.ON_HOLD_MUTATION === 'worker' && name.endsWith('agent-issue-worker.md')) {
       source = source.replace('before the 3-item limit', 'after the 3-item limit');
     }
@@ -54,9 +57,9 @@ const worker = 'docs/reference/agent-issue-worker.md';
 const issues = 'docs/reference/agent-changelog-issues.md';
 const routine = 'docs/reference/agent-changelog-routine.md';
 
-// The kit's base.md carries no rules (DECISIONS X9), so the on-hold rule's
-// wording is not checked here; the payload's budget and mirror still are.
-test('fleet payload stays under budget and matches its mirror', () => {
+test('fleet rule protects issues and PRs, with owner control and passive status', () => {
+  const body = prose(section('agents-md/base.md', 'Working in these repos'));
+  includes(body, ['issue or PR labeled `on-hold` is paused by the owner', 'no commits, reviews, merges, closing or follow-ups that do it', 'read, cite and list it as on hold without asking again', 'A held PR stays open', 'Only the owner adds or removes the label', 'an agent the owner directs in that session']);
   assert.ok(Buffer.byteLength(read('agents-md/base.md')) < 25600);
   assert.equal(read('agents-md/base.md'), read('.claude/hooks/fleet-guidance.md'));
 });

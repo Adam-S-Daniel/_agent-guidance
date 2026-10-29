@@ -91,6 +91,24 @@ edits:
     new: " * THE REMEDY. The `scheduled-run-health` reusable (this repo's\n * .github/workflows/scheduled-run-health-reusable.yml): a daily audit of\n"
     why: C4. Names where the reusable lives now.
 
+  # ---- Content tiers (2026-10-29): base.md's text as of 4cab855
+  - path: agents-md/base.md
+    old: |
+      - PR + auto-merge is not a sanctioned bot-write path, bar skills-evals' roster
+        PR (repo-settings ADR 0003); cms-platform-managed repos use it by design.
+    new: |
+      - PR + auto-merge is a sanctioned bot-write path only where a repo-settings
+        ADR declares the exception: the eval and guidance loops' PRs (ADRs 0003,
+        0012, 0014), lesson-check PRs (0013) and the changelog routine's (0015);
+        cms-platform-managed repos use it by design.
+    why: >-
+      Content tiers. The owner asked for "Automation vs branch protection" as
+      of commit 4cab855, which rewrote this one bullet. Its only base.md change
+      is applied here as an edit, word for word, instead of re-pinning
+      source_sha: the same range also changes this repo's ci.yml,
+      actions.lock, .gitignore and test/run-tests.sh for the kit's own CI,
+      which are not part of the exported repo's content.
+
   - path: .gitignore
     old: "drift-report-skills-orphans.txt\n"
     new: "drift-report-skills-orphans.txt\n# The adoption kit's copy-starter.sh skips these when it copies the tree;\n# ignoring them here keeps them out of the adopter's first commits too.\n__pycache__/\n.pytest_cache/\n.DS_Store\n"
@@ -150,20 +168,25 @@ edits:
 patches:
   - file: blank_content.py
     why: >-
-      X9. base.md keeps one real section (git push) and a commented template,
-      the sections carry no rule, eval-coverage.yml keeps the real section's
-      row, guidance-impact.md and the lessons ledger keep headers only, and
-      the agent-checks runner ships one check (skill-shell) and a commented
-      example.
+      X9 and Content tiers. base.md keeps the core sections (two of them split
+      into a core part under the original heading and a recommended part
+      under a new one) and a commented template; each recommended or
+      opinionated section goes to library/guidance/<id>/ with its
+      eval-coverage row and impact entry; the per-stack sections carry no
+      rule; guidance-impact.md and the lessons ledger keep headers only; the
+      agent-checks runner ships the core checks (secret-file, skill-shell)
+      and a commented example, and rules-dir goes to library/git-hooks/.
   - file: kit_repos.py
     why: >-
       C11. repos.yml (sync delivery, the registry partition, cron coverage)
       names only the kit's repos.
   - file: machinery_tests.py
     why: >-
-      X9. The tests that asserted on the removed content move to test-only
-      fixtures or, where they only locked it, are removed; the skill-shell
-      cases are kept (listed in DECISIONS.md X9).
+      X9 and Content tiers. The tests that asserted on left-out content move
+      to test-only fixtures or, where they only locked it, are removed; the
+      secret-file and skill-shell cases are kept, and the rules-dir cases and
+      assertions go to its library item, which puts them back on install
+      (listed in DECISIONS.md X9 and Content tiers).
   - file: routine_specs.py
     why: >-
       C11 and C7. The guidance-centralization audit's stored prompt and spec

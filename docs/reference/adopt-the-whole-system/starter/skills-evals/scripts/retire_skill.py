@@ -832,6 +832,9 @@ def plan(gates: dict, registries: dict, gh, run_url: str | None = None,
     mode = mode_of(gates)
     if skill is None:
         return {"action": "none", "mode": mode, "reason": "no skill has a retire verdict"}
+    if skill in compute_gates.load_exempt(REPO_ROOT / "evals")["skills"]:
+        return {"action": "none", "mode": mode, "skill": skill,
+                "reason": f"{skill} is a core item (evals/retirement-exempt.yml), never retired automatically"}
     mode_reason = None
     if mode == "auto" and "auto" not in allowed and fallback:
         mode_reason = NO_CREDENTIAL
@@ -1274,6 +1277,9 @@ def guidance_plan(gates: dict, checkout: Path | None, gh, run_url: str | None = 
             return {"action": "none", "mode": mode,
                     "reason": "no guidance section has a retire or shorten-or-merge verdict"}
         section, kind = shortening[0], "shorten"
+    elif section in compute_gates.load_exempt(REPO_ROOT / "evals")["guidance"]:
+        return {"action": "none", "mode": mode, "section": section,
+                "reason": f"{section} is a core item (evals/retirement-exempt.yml), never retired automatically"}
     else:
         kind = "retire"
         if mode == "auto" and "auto" not in allowed and fallback:

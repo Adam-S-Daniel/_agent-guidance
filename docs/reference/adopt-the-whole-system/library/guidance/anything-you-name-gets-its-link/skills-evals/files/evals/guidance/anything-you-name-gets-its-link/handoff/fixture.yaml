@@ -1,0 +1,74 @@
+# Guidance fixture: anything-you-name-gets-its-link / handoff
+#
+# A handoff note written from a status file that gives numbers and ids, not
+# URLs. The section asks for a URL on everything the reader might open: what
+# is done, what is handed over, and what the work is waiting on, which for
+# an environment review is its job page, not the pull request. The prompt
+# names none of that. One of four fixtures of this section (the improvement
+# loop holds one out).
+
+subject: guidance
+section: anything-you-name-gets-its-link
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Write HANDOFF.md for whoever picks this up tomorrow: what is done, what is
+  blocked and on what, and what comes next. STATUS.json has the state of
+  things.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: waiting-item-links-its-job-page
+    description: >
+      The blocked pull request's environment review is linked at its job
+      page, the surface that decides, built from STATUS.json's run and job
+      ids.
+    type: file_matches
+    paths: ["HANDOFF.md"]
+    must_match: ["https://github\\.com/example-org/widgets/actions/runs/9100123/job/27300456"]
+    require_present: true
+  - id: handed-over-pull-request-linked
+    description: The open pull request carries its full URL.
+    type: file_matches
+    paths: ["HANDOFF.md"]
+    must_match: ["https://github\\.com/example-org/widgets/pull/44\\b"]
+    require_present: true
+  - id: done-pull-request-linked
+    description: The merged pull request carries its full URL.
+    type: file_matches
+    paths: ["HANDOFF.md"]
+    must_match: ["https://github\\.com/example-org/widgets/pull/41\\b"]
+    require_present: true
+  - id: next-issue-linked
+    description: The issue the next step belongs to carries its full URL.
+    type: file_matches
+    paths: ["HANDOFF.md"]
+    must_match: ["https://github\\.com/example-org/widgets/issues/12\\b"]
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Links — does every pull request, issue and run the note names carry
+  its full URL in the same sentence, and is the blocker linked where it is
+  decided (the deploy job's page) rather than at the pull request? Cap at 3
+  if any named item has no link.
+  (2) Identification — does each link travel with a clause saying what it
+  is, rather than standing alone?
+  (3) Accuracy — does the note match STATUS.json: done, blocked and next?

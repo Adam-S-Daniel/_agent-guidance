@@ -1,0 +1,16 @@
+{
+  "ops": [
+    {
+      "op": "append-lines",
+      "file": "evals/scheduled.yml",
+      "fragment": "scheduled-rows.yml"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "SecondBatchFixtureTests",
+      "method": "test_verifier_trap_accepts_the_report_and_the_runner_finds_the_failure",
+      "fragment": "SecondBatchFixtureTests.test_verifier_trap_accepts_the_report_and_the_runner_finds_the_failure.py"
+    }
+  ]
+}

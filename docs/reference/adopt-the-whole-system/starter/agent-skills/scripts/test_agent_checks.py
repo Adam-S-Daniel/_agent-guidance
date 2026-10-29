@@ -92,10 +92,11 @@ def head(repo: Path, tmp_path: Path) -> str:
 
 ZERO = "0" * 40
 
-# The runner ships one check, skill-shell (the adoption kit's DECISIONS X9), so
-# each scratch repo gets a TEST-ONLY copy of it with this lesson in its lesson slot. It
-# refuses the paths the source registry's fleet checks refused, so the cases
-# below exercise the runner's events, ranges and hook wiring unchanged.
+# The runner ships only the core checks, secret-file and skill-shell (the
+# adoption kit's DECISIONS X9 and Content tiers), so each scratch repo gets a
+# TEST-ONLY copy of it with this lesson in its lesson slot. It refuses the paths
+# the source registry's fleet checks refused, so the cases below exercise the
+# runner's events, ranges and hook wiring unchanged.
 FIXTURE_LESSON = """check_lessons() {
   case "$1" in
     .claude/rules/*)

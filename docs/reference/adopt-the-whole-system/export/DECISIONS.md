@@ -52,7 +52,7 @@ The per-file detail is in the manifests beside this file.
 | C8 | Tests that read excluded fixtures (about 40 in skills-evals) are pointed at a small invented seed, and their expected values are updated; no test is deleted unless what it tests was itself left out. | Keep the tests' lessons without the excluded data. | n/a |
 | C9 | The repo-settings workflow's two hardcoded owner steps (one per source owner) become the adopter's owner and the optional second owner. | Owner names. | n/a |
 | C10 | Text that tells a story about the owner by name (for example "<name>'s standing rule", "<name>'s decision on 2026-10-06") says "the owner" instead, capitalized only where a sentence starts. Dates and measurements stay. | Names. | n/a |
-| C11 | **Live registries list only the kit's repos.** `repos.yml`, `fleet.yml`, `dependabot.yml` entries, workflow repo lists and any other config the code acts on name only the kit's own repos (and, in `repo-settings`' `fleet.yml` and `_agent-guidance`'s `repos.yml` only, the invented example repos of C3, which steps 8 and 10 trim; skills-evals' workflows and `harness/registries.yml` do not name them, see "Cold-start fixes"). The owner's other repos (personal tools, sites, scratch repos) are dropped from config, and tests that pin those lists are updated. Mentions of those repos in history (ADRs, evidence, changelog analysis, routine findings) stay, like P2 citations. | Config that names repos an adopter doesn't have would sync into, or report on, repos that don't exist. History mentions are what lessons were learned on. | Keep the full list; the adopter trims it. |
+| C11 | **Live registries list only the kit's repos.** `repos.yml`, `fleet.yml`, `dependabot.yml` entries, workflow repo lists and any other config the code acts on name only the kit's own repos (and, in `repo-settings`' `fleet.yml` and `_agent-guidance`'s `repos.yml` only, the invented example repos of C3, which steps 9 and 11 trim; skills-evals' workflows and `harness/registries.yml` do not name them, see "Cold-start fixes"). The owner's other repos (personal tools, sites, scratch repos) are dropped from config, and tests that pin those lists are updated. Mentions of those repos in history (ADRs, evidence, changelog analysis, routine findings) stay, like P2 citations. | Config that names repos an adopter doesn't have would sync into, or report on, repos that don't exist. History mentions are what lessons were learned on. | Keep the full list; the adopter trims it. |
 | C12 | **Account-specific numbers become config.** GitHub App ids (the source's two bypass Apps' and any others), installation ids and similar numbers that differ per account are read from a variable or a single config file the bootstrap fills, never hardcoded in the kit. | They are the owner's App ids; an adopter's Apps have different ones. | n/a |
 
 ## Kept on purpose (questions an inventory raised)
@@ -1240,3 +1240,187 @@ Reverse: drop those edits.
 `docs/evals-and-loop.md` says so: the allowance guard reserves an improve fire
 at 12 times the average ingested run, 42 points on day one against the
 30-point cap, until ingested runs average 2.5 points or less. No code changed.
+
+## Content tiers (2026-10-29)
+
+The owner's decision of 2026-10-29 replaces X9's "one real item of each
+kind" with four tiers. X9's machinery (the blanking patches, the template
+skill and section, the moved tests) stays; what it keeps changes.
+
+| Tier | Where it ships | Skills | Guidance sections | agent-checks checks |
+|---|---|---|---|---|
+| Core | `starter/`, always | `workflow-path-audit`, `skills-doctor`, `github-actions-repo-settings`, `vendor-release-impact-issues` | "A successful `git push`...", "The watch finished...", "Automation vs branch protection", "Agent-made GitHub contributions carry a marker", "Pinning GitHub Actions", "Data exposure in CI and public repos", "Skills ecosystem", "Two setup gaps...", and the core parts of "Working in these repos" and "Git practices" | `skill-shell`, `secret-file` |
+| Recommended | `library/`, optional | `review-bash-ci-reliability`, `debug-github-workflows`, `disarm-inherited-reach` | "Security", "A GitHub 404 means...", "A test that can signal...", "A name you choose...", "Working habits", "Git habits" | none |
+| Opinionated | `library/`, optional | `writing-adrs`, `finding-unknowns` | "Finding your unknowns", "Anything you name gets its link", "Subagent delegation (model routing)", "Dependency updates" | `rules-dir` |
+| Not shipped | nowhere | every other skill | "Workstation layout", "Two GitHub connectors...", "Read before you start", "The fleet spans TWO owners..."; the American English bullet; the writing-style bullet; the squash exception for the CMS repos | the pre-push checks (`staged-index`, `push-to-default`, `persistent-delete`) |
+
+`bootstrap/content-catalog.json` is the one list of every item, with its
+tier and the text the `/adopt` skill shows. `bootstrap/tests/check-catalog.py`
+holds it to `library/` and `starter/` (every optional item has its library
+folder and every folder an item; every core item is in `starter/`; the
+retirement list below equals the core items; no question the skill asks has
+more than four choices).
+
+### 4cab855's text, as an edit
+
+The owner asked for "Automation vs branch protection" as of
+`_agent-guidance` commit 4cab855, which rewrote one bullet ("PR + auto-merge
+is a sanctioned bot-write path only where a repo-settings ADR declares the
+exception..."). The `_agent-guidance` manifest applies that bullet as a
+stage-source edit, word for word, and keeps `source_sha` at 9404fe7.
+Re-pinning was the larger change: between the two commits the range also
+changes the repo's `ci.yml`, `actions.lock`, `.gitignore` and
+`test/run-tests.sh` (the kit's own CI), which would have entered the
+exported tree. `git diff 9404fe7 4cab855 -- agents-md/base.md` is that one
+bullet; the eval-coverage bytes and the mirror are regenerated as usual.
+
+### The two split sections
+
+Each keeps its core part under the source heading, and its other bullets,
+byte for byte and in source order, move to a recommended section with a new
+heading:
+
+| Section | Part | Bullets | Coverage row |
+|---|---|---|---|
+| "Working in these repos" (core) | the `on-hold` bullet | 1 | `working-in-these-repos`, covered by `evals/guidance/working-in-these-repos/on-hold-pull-request` |
+| "Working habits" (recommended) | fix what was asked; interface changes update tests; deterministic tests; full precision; AST for code shape; text to paste | 6 | `working-habits`, `gap` (no fixture tests these bullets) |
+| "Git practices" (core) | the merge-commit bullet, its squash exception dropped | 1 | `git-practices`, covered by `evals/guidance/git-practices/merge-method-and-closing-keyword` |
+| "Git habits" (recommended) | concise commits, never amend or force-push; the closing-keyword trap; `git log origin/<base>..HEAD` before a PR; one worktree per session | 4 | `git-habits`, `gap` |
+
+The `merge-method-and-closing-keyword` fixture also tests the closing-keyword
+trap, which now sits in "Git habits"; it stays on the core row because its
+merge-method half is the core rule, and a fixture can serve only one row.
+The "American English spelling" and writing-style bullets of "Working in
+these repos" are not shipped. The merge-commit bullet drops its clause excepting
+the three CMS-managed repos, kept for Decap publishing, and keeps the
+rest, ending "Squash strands commits a lockfile pins by sha
+(2026-08-15: `cannot resolve ref`)".
+
+### The library
+
+`export.py` writes `library/` beside the starter trees: one folder per
+optional item, `library/<skills|guidance|git-hooks>/<id>/<tree>/` with
+`files/` (copied as they are), `fragments/` (text an op inserts) and
+`ops.json` (edits to files already in the tree). The patches that used to
+delete an item now move it there (`export.py`'s `Library`, passed to every
+patch as `ctx["library"]`). `--check` compares `library/` with a fresh
+export like a starter tree, so it now prints seven `OK` lines; the library
+is written or checked only when every repo is exported.
+`library/README.md` (from `export/library-README.md`) lists the ops.
+
+- Each guidance item carries its section, its eval-coverage row and its
+  `docs/guidance-impact.md` entry. Its `insert-section` op names the
+  sections that precede it in the source, nearest first, so an installed
+  section lands where the source has it.
+- Each skill item carries its folder, its `scripts/plugin_layout.json`
+  entry and a `docs/skill-impact.md` entry.
+- Each item carries its eval fixtures, its `evals/scheduled.yml` rows, and
+  its tests: whole test modules, or (for tests inside shared modules) the
+  classes and methods, found by AST, that `removed_tests.txt` takes out of
+  the starter. `test_issue_71_trigger_set.py` tests two items' fixtures
+  (`writing-adrs`, `review-bash-ci-reliability`) and is copied only once
+  both are installed (`copy-if`). The `writing-adrs` copy of `TestIssue80`
+  reads the real fixture folders, not the invented ones its starter
+  retargets point at (a NAME-token rename, never inside strings).
+- The rules-dir item carries its runner arm, its `note_ran` line, its run-log
+  example, its two lane cases and the three assertions of
+  `test_agent_check_lane.py` that list it.
+
+The impact entries are dated 2026-10-29, the day of the decision, not the
+day of an install: an install must be reproducible, and the date says when
+the item entered the kit. Their `Eval:` line reads "not run at install
+(n=0)", which the touch gate's result pattern accepts and which is true.
+
+### Installing
+
+`bootstrap/add-content.sh --items <ids|recommended|none> [--dry-run]`
+(through `bootstrap/lib/content.py`) applies the chosen items to the kit
+copy's `starter/` in a scratch copy, rebuilds the generated files the
+export's `regenerate` steps build (the base.md mirror and agent-checks
+runner in every tree, each `AGENTS.md`, the section bytes, the registry's
+README table, `skills.lock` with the forty-zero ref and its private copy),
+then writes back what differs. Before any change it rebuilds the unchanged
+starter with the same recipes and stops if they do not reproduce it, so a
+recipe that drifts from the export cannot install silently. The byte counts
+are recomputed in Python (the extent rule of
+`scripts/lib/markdown-sections.js`, outside code fences) because an adopter
+need not have `node_modules`; the self-test checks them against the
+exported values. It refuses an unknown id and a kit inside a git work tree,
+and records the installed items in `<state file>.content-choices.json`,
+beside `status.sh`'s state file. Once the repos exist it lists the repos
+that need a pull request instead of suggesting `copy-starter.sh --force`,
+which would overwrite the pins `regenerate.sh` set on the default branch.
+
+- **Quick start.** A new ask step, 1, "Choose optional skills, guidance and
+  git hooks", comes after the config and before the repos are created, so
+  every starter pull request already carries the choices. Its check carries
+  `"record": "content"`: `status.sh` reads it as done once the record
+  exists (or once marked). The later steps are renumbered 2 to 32, and every
+  reference to a step number (the quick start, `settings-and-apps.md`,
+  `/adopt`, `test-bootstrap.sh`, C11 above) follows; the dated entries
+  above keep the numbers of their day. A state file written before this
+  change names the old numbers: mark the ask steps again.
+- **verify.sh** gains a `content` group (run when named, or by default once
+  a record exists): the record is readable, and each installed item is on
+  its repo's default branch (a file it adds, or the line it adds to
+  `base.md` or the runner, read through the contents API).
+- **The `/adopt` skill** asks the questions with AskUserQuestion. Its limits,
+  read 2026-10-29 at <https://code.claude.com/docs/en/agent-sdk/user-input>
+  (and <https://code.claude.com/docs/en/tools-reference>): 1 to 4 questions
+  per call, 2 to 4 options each (a `label` and a `description`), a `header`
+  of at most 12 characters, `multiSelect`, no preselection, an "Other"
+  answer always available, not available in subagents. The owner's layout
+  fits: the largest list has four items, and the one-item list (opinionated
+  git hooks) gets a second option, "No git hook".
+- **Catalog texts.** The owner gave the rules-dir short and details and the
+  finding-unknowns details word for word. The rules-dir text is stored
+  split: `details` up to "...the loop can measure." and `clashes` from
+  "Clashes if your repos...", printed one after the other, so it reads as
+  given. finding-unknowns' `short` is the first sentence of the given text;
+  its `clashes` and every other item's texts are new, in the same style.
+
+### Retirement never removes a core item
+
+`evals/retirement-exempt.yml` in `skills-evals`, written from the catalog
+(`patches/skills-evals/retirement_exempt.py`), names the core skills and
+guidance sections. `compute_gates.py`'s `finalize()` turns a core item's
+`retire` verdict into `retire-exempt` (keeping `raw_verdict`) before it
+picks the one retirement per evaluation, so a core item never takes the
+slot of an item that may retire; `retire_skill.py`'s `plan()` and
+`guidance_plan()` open nothing for a core item, as a second guard. A
+guidance section's shorten-or-merge proposal, an issue, is unchanged.
+`test/issues/test_issue_retirement_exempt.py` (overlay, 9 tests) shows a
+core skill and a core section with a `retire` verdict open nothing while a
+non-core one still files its issue.
+
+### Tests
+
+- `skills-evals`: the core items' tests are no longer removed (66 lines out
+  of `removed_tests.txt`, among them `TestVendorReleaseImpactPublishTimesCheck`
+  and the core sections' `test_issue_124` methods; 607 entries remain), and
+  their fixtures and module excludes are gone from the manifest.
+  `empty_config.py` keeps the 12 core rows of `scheduled.yml`.
+  `skills-doctor`'s `bucketed-account-store` fixture stores two account
+  copies with CRLF line endings on purpose (its `fixture.yaml`), so
+  `starter/.gitattributes` marks that folder `-text` and git keeps the bytes.
+- `skills-evals`' `TestIssue84Round5::test_no_objective_check_anywhere_globs_into_the_git_directory`
+  scanned every nested fixture in the kit (an X9 retarget, so it had
+  something to scan). Installing `debug-github-workflows` made it fail: that
+  item's `wrong-branch` fixture reads `.git/trace.log` on purpose, and the
+  source's test never sees it because it scans only `evals/*/fixture.yaml`.
+  The retarget keeps its recursive scan (the core starter has too few
+  top-level fixtures for the test's `checked > 20`) and passes over that one
+  fixture by path, with a comment saying why.
+- `agentskills`: `test_generate_skills_lock.py` is no longer patched (its
+  `skills-doctor` citation exists again).
+- `_agent-guidance`: `secret-file` returns with its cases. The rules-dir
+  cases and assertions move to its library item. The pre-push test, whose
+  check (`push-to-default`) is not shipped, becomes
+  `test_refused_pre_push_is_logged_as_pre_push`: a feature-branch push whose
+  commit `secret-file` refuses, which still shows the `pre-push` event in the
+  run log. `run-tests.sh` keeps only the two `persistent-delete` hunks. The
+  on-hold test is the source's again.
+- `bootstrap/tests/test-bootstrap.sh` tests the installer (refusals, the dry
+  run, a real run, idempotence, the joint module, the record, `verify.sh`'s
+  `content` group before and after a merge, `status.sh`'s step 1) and
+  `check-catalog.py`, including one run that must fail.

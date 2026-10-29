@@ -159,9 +159,14 @@ def api(args):
         remotes = os.environ.get("GH_STUB_GIT_REMOTES")
         if remotes:  # the default branch of the test's bare repo is the truth
             import subprocess
-            ok = subprocess.run(["git", f"--git-dir={remotes}/{full}.git", "cat-file", "-e",
-                                 f"{r['default_branch']}:{p}"], capture_output=True).returncode == 0
-            return out({"type": "file", "path": p, "name": p.split("/")[-1]}) if ok else err(404, "Not Found")
+            got = subprocess.run(["git", f"--git-dir={remotes}/{full}.git", "show",
+                                  f"{r['default_branch']}:{p}"], capture_output=True)
+            if got.returncode != 0:
+                return err(404, "Not Found")
+            # GitHub's shape: the file's bytes in base64, wrapped at 60 characters.
+            b64 = base64.b64encode(got.stdout).decode("ascii")
+            return out({"type": "file", "path": p, "name": p.split("/")[-1], "encoding": "base64",
+                        "content": "\n".join(b64[i:i + 60] for i in range(0, len(b64), 60))})
         if (p == "README.md" and r["has_commits"]) or p in r.get("files", {}):
             return out({"type": "file", "path": p, "name": p.split("/")[-1]})
         return err(404, "Not Found")

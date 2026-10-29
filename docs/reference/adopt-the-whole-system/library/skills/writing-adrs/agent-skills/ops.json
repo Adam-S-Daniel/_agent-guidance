@@ -1,0 +1,16 @@
+{
+  "ops": [
+    {
+      "op": "layout-skill",
+      "file": "scripts/plugin_layout.json",
+      "plugin": "acsi-anything-anywhere",
+      "skill": "writing-adrs"
+    },
+    {
+      "op": "impact-entry",
+      "file": "docs/skill-impact.md",
+      "fragment": "impact-entry.md",
+      "heading": "## 2026-10-29 — acsi-anything-anywhere/writing-adrs — create"
+    }
+  ]
+}

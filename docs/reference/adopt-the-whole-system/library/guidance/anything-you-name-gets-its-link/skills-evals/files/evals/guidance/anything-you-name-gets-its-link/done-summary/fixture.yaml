@@ -1,0 +1,57 @@
+# Guidance fixture: anything-you-name-gets-its-link / done-summary
+#
+# A weekly summary of what landed, from a status file of numbers and ids.
+# What is cited as done gets its link too. One of four fixtures of this
+# section.
+
+subject: guidance
+section: anything-you-name-gets-its-link
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Write DONE.md, a short summary of what landed this week, from STATUS.json.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: merged-pull-requests-linked
+    description: Both merged pull requests carry their full URLs.
+    type: file_matches
+    paths: ["DONE.md"]
+    must_match: ["https://github\\.com/example-org/widgets/pull/38\\b", "https://github\\.com/example-org/widgets/pull/41\\b"]
+    require_present: true
+  - id: closed-issue-linked
+    description: The closed issue carries its full URL.
+    type: file_matches
+    paths: ["DONE.md"]
+    must_match: ["https://github\\.com/example-org/widgets/issues/9\\b"]
+    require_present: true
+  - id: release-run-linked
+    description: The finished release run is linked at its run page.
+    type: file_matches
+    paths: ["DONE.md"]
+    must_match: ["https://github\\.com/example-org/widgets/actions/runs/9099001\\b"]
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Links — does every item cited as done carry its full URL? Cap at 3 if
+  any has none.
+  (2) Identification — does each link carry a clause saying what it is?
+  (3) Accuracy — does the summary match STATUS.json?

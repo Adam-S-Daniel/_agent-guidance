@@ -11,7 +11,9 @@
 #           contents read), so the starter's pull request has been merged;
 #   ask     what nothing here can see (an App installation, a routine saved
 #           at claude.ai, a pasted setup script, another machine): done once
-#           you say so with --mark <id>, undone with --unmark <id>.
+#           you say so with --mark <id>, undone with --unmark <id>. The
+#           content step is also done once add-content.sh has recorded your
+#           choices (<state file without .json>.content-choices.json).
 #
 # Answers to ask steps live in one JSON file per owner, outside every repo:
 # ${ADOPT_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/adopt-the-whole-system/<owner>.json}.
@@ -32,7 +34,6 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$HERE/lib/common.sh"
 
 STEPS_FILE=$HERE/steps.json
-KIT=$(cd "$HERE/.." && pwd -P)
 MARKS=() UNMARKS=()
 parse_common_args "$@"
 set -- "${REST_ARGS[@]}"
@@ -50,12 +51,12 @@ require_tools jq
 [ -f "$STEPS_FILE" ] || die "steps file not found: $STEPS_FILE"
 jq -e '.steps | type == "array" and length > 0' "$STEPS_FILE" >/dev/null 2>&1 || die "$STEPS_FILE: no steps list"
 IDS=()
-declare -A TITLE KIND RUN LINK MIN CTYPE CARG OPT
-while IFS=$'\t' read -r id title kind run link minutes ctype opt carg; do
+declare -A TITLE KIND RUN LINK MIN CTYPE CARG OPT CTAG
+while IFS=$'\t' read -r id title kind run link minutes ctype opt ctag carg; do
   [ -z "${TITLE[$id]+set}" ] || die "$STEPS_FILE: step id $id appears twice"
   case $ctype in config|verify|files|ask) ;; *) die "$STEPS_FILE: step $id has an unknown check type: $ctype" ;; esac
-  IDS+=("$id") TITLE[$id]=$title KIND[$id]=$kind RUN[$id]=$run LINK[$id]=$link MIN[$id]=$minutes CTYPE[$id]=$ctype CARG[$id]=$carg OPT[$id]=$opt
-done < <(jq -r '.steps[] | [.id, .title, .kind, (.run | gsub("`"; "")), .link, (.minutes | tostring), .check.type, (if .optional then "yes" else "no" end),
+  IDS+=("$id") TITLE[$id]=$title KIND[$id]=$kind RUN[$id]=$run LINK[$id]=$link MIN[$id]=$minutes CTYPE[$id]=$ctype CARG[$id]=$carg OPT[$id]=$opt CTAG[$id]=$ctag
+done < <(jq -r '.steps[] | [.id, .title, .kind, (.run | gsub("`"; "")), .link, (.minutes | tostring), .check.type, (if .optional then "yes" else "no" end), (.check.record // "-"),
   (if .check.type == "verify" then (.check.groups | join(","))
    elif .check.type == "files" then ([.check.files[] | .repo + ":" + .path] | join(" "))
    else "" end)] | @tsv' "$STEPS_FILE")
@@ -77,22 +78,9 @@ if [ "$CONFIG_OK" = 0 ] && [ $((${#MARKS[@]} + ${#UNMARKS[@]})) -gt 0 ]; then
 fi
 
 # ------------------------------------------------------------------ state file
-# state_path_ok <path>: refuse a path inside this kit or any git work tree.
-state_path_ok() {
-  local p=$1 d
-  d=$(dirname "$p")
-  while [ ! -d "$d" ]; do d=$(dirname "$d"); done
-  d=$(cd "$d" && pwd -P)
-  case $d/ in "$KIT"/*) die "the state file must be outside this kit: $p" ;; esac
-  if git -C "$d" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    die "the state file must be outside every git work tree: $p"
-  fi
-}
 declare -A ASKED
 if [ "$CONFIG_OK" = 1 ]; then
-  STATE=${ADOPT_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/adopt-the-whole-system/$CFG_OWNER.json}
-  case $STATE in /*) ;; *) STATE=$PWD/$STATE ;; esac
-  state_path_ok "$STATE"
+  choices_file
   if [ -f "$STATE" ]; then
     jq -e '.done | type == "array" and all(.[]; type == "string")' "$STATE" >/dev/null 2>&1 \
       || die "$STATE is not a status state file (want {\"done\": [<step id>, ...]})"
@@ -141,7 +129,8 @@ for id in "${IDS[@]}"; do
     config) if [ "$CONFIG_OK" = 1 ]; then DONE[$id]=1; else DETAIL[$id]=$CONFIG_ERR; fi ;;
     verify) [ "$CONFIG_OK" = 0 ] || check_verify "$id" "${CARG[$id]}" ;;
     files)  [ "$CONFIG_OK" = 0 ] || check_files "$id" "${CARG[$id]}" ;;
-    ask)    [ -z "${ASKED[$id]:-}" ] || DONE[$id]=1 ;;
+    ask)    if [ -n "${ASKED[$id]:-}" ]; then DONE[$id]=1
+            elif [ "${CTAG[$id]}" = content ] && [ "$CONFIG_OK" = 1 ] && [ -f "$CHOICES" ]; then DONE[$id]=1; fi ;;
   esac
 done
 
@@ -150,7 +139,7 @@ NEXT="" N=0
 for id in "${IDS[@]}"; do
   if [ -n "${DONE[$id]:-}" ]; then
     N=$((N + 1))
-    if [ "${CTYPE[$id]}" = ask ]; then label="asked: done"; else label=done; fi
+    if [ "${CTYPE[$id]}" = ask ] && [ -n "${ASKED[$id]:-}" ]; then label="asked: done"; else label=done; fi
   elif [ "${OPT[$id]}" = yes ]; then
     label=optional
   elif [ -z "$NEXT" ]; then

@@ -1,0 +1,82 @@
+[
+  {
+    "query": "add an ADR for moving the job queue from Redis lists to Postgres with SELECT ... FOR UPDATE SKIP LOCKED. we looked at SQS too but the jobs need to commit in the same transaction as the order rows, and running Redis just for the queue was another thing to page on",
+    "should_trigger": true
+  },
+  {
+    "query": "I just changed the default HTTP timeout in client/config.go from 30s to 90s because the vendor's batch endpoint takes about 70s at month end. should I document this somewhere or is the commit message enough?",
+    "should_trigger": true
+  },
+  {
+    "query": "why do we pin node to 18 in .nvmrc when every other service is on 22? git blame just says 'pin node' from 2023 and there's no comment anywhere. Dana says the PDF renderer's native addon segfaults on 20+ and nobody has fixed it upstream. make sure the next person doesn't bump it blindly",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm writing the PR description for a one-line change that drops the connection pool max in db/pool.py from 50 to 8. It's turned into four paragraphs explaining why that isn't a downgrade: pgbouncer runs in transaction mode, RDS caps us at 100 connections across 12 pods, and we tried 50 in March and fell over. Can you help me get this into shape before I open it?",
+    "should_trigger": true
+  },
+  {
+    "query": "we don't have a docs/decisions folder yet. set one up with an index, and make the first record the choice of SQLite over Postgres for the desktop app's local store (offline-first, single user, no server process to install)",
+    "should_trigger": true
+  },
+  {
+    "query": "document this decision so nobody undoes it: the monorepo stays on yarn 1 instead of pnpm, because electron-builder's native rebuild step breaks on pnpm's symlinked node_modules. we tried twice",
+    "should_trigger": true
+  },
+  {
+    "query": "a reviewer on my PR asked why the retries in payments/charge.ts stop at 2 when everything else uses 5. the reason is the card processor treats a third attempt inside 60 seconds as a duplicate charge and flags the merchant account. a code comment saying 'don't raise this' doesn't feel like enough. where should this reasoning live?",
+    "should_trigger": true
+  },
+  {
+    "query": "we're reversing docs/decisions/0004-use-memcached.md and moving the session cache to Redis, because sessions now have to survive deploys and memcached loses everything on restart. write up the new decision and retire the old one the way the folder expects",
+    "should_trigger": true
+  },
+  {
+    "query": "ugh, third time someone has tried to 'fix' the hard-coded America/New_York cutoff in reports/schedule.py. it's intentional: the client's fiscal day closes at 5pm eastern, and their auditors reconcile against that. write this down somewhere durable",
+    "should_trigger": true
+  },
+  {
+    "query": "is vendoring the protobuf definitions instead of using a git submodule worth an ADR? we ran submodules for six months and CI kept breaking on detached heads, and two people have already asked why the proto files are copied in",
+    "should_trigger": true
+  },
+  {
+    "query": "write a README section for the new `sync` subcommand in cli/sync.py: what each flag does (--dry-run, --since, --prune) and two usage examples",
+    "should_trigger": false
+  },
+  {
+    "query": "add a code comment above the regex in parse_dates() in ingest/dates.py explaining why it accepts two-digit years. short is fine, it's because the legacy export writes 24 instead of 2024",
+    "should_trigger": false
+  },
+  {
+    "query": "write the PR description for this: it renames getUser to fetchUser across 14 files and updates the imports. no behavior change",
+    "should_trigger": false
+  },
+  {
+    "query": "what's the difference between an ADR and an RFC? our team lead keeps using the two words interchangeably and I want to explain it in standup tomorrow",
+    "should_trigger": false
+  },
+  {
+    "query": "update CHANGELOG.md for the 2.4.0 release: added CSV export, fixed the timezone bug in the weekly report, dropped Python 3.8 support",
+    "should_trigger": false
+  },
+  {
+    "query": "docs/decisions/0007-use-celery.md has a dead link to the old wiki. point it at https://wiki.example.com/queues instead, nothing else in the file needs to change",
+    "should_trigger": false
+  },
+  {
+    "query": "why does load_config() in app/settings.py return an empty dict when the file is missing instead of raising? the docstring says it's so a first run works without a config file. is that the only reason, or does anything else depend on it?",
+    "should_trigger": false
+  },
+  {
+    "query": "write docs/architecture.md: an overview of the three services (api, worker, scheduler), how they talk over NATS, and where each one keeps its state. include a mermaid diagram",
+    "should_trigger": false
+  },
+  {
+    "query": "rename the variable `tmp` to `pending_rows` in importer/batch.py and add a docstring to flush_batch() describing its arguments and return value",
+    "should_trigger": false
+  },
+  {
+    "query": "write a commit message for this change: bumped eslint from 8.56.0 to 8.57.0 and fixed the two new no-unused-vars warnings it raised",
+    "should_trigger": false
+  }
+]

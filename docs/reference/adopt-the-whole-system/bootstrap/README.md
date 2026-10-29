@@ -30,6 +30,7 @@ session.
 | Script | Does | Cannot |
 |---|---|---|
 | `fleet.env.example` | The one file you fill in: owners, plan, visibility, `REPOS_DIR`, and the App ids `create-apps.sh` records. No secrets, ever. | |
+| `add-content.sh` | Adds the recommended and opinionated items you name (`--items <ids\|recommended\|none>`, from `content-catalog.json`) to the kit copy's `../starter/` from `../library/`, rebuilds the generated files they feed (through `lib/content.py`), and records your choices beside `status.sh`'s state file. Idempotent; `--dry-run` lists the files it would add or change. | Write to GitHub: once the repos exist it lists the repos that need a pull request. Run inside a git work tree. |
 | `create-repos.sh` | The six repos (`FLEET_REPOS` in `lib/common.sh`), with the owner's visibility, a generated README as the first commit, the labels `agent-ready` and `on-hold`, and, in `skills-evals`, the orphan branch `persistent/eval-results` (a README only) that the eval loop's workflows fetch and nothing else creates. `--with-optional` adds the private `waiting-feed`. | Change an existing repo's visibility (it reports the mismatch and exits 1). Every other setting is `fleet.yml`'s, applied by `apply-settings.sh`. |
 | `copy-starter.sh` | Clones one of your repos, copies an export from `../starter/` into it with your names (every form of the invented owners, and `<your name>`, through `lib/substitute.py`), commits on `starter/<folder>`, pushes, checks the commit is on the remote branch, and opens a pull request. Refuses to overwrite a file that differs unless `--force`, except the README `create-repos.sh` generated. | Merge it: review it yourself, above all `.github/workflows/`. |
 | `create-environments.sh` | The three environments (`ENVIRONMENTS`): `fleet-apply` in `repo-settings` and `routine-fire` in `skills-evals`, limited to the default branch, and `plugin-runtime-review` in `acsi-agentskills` with you as reviewer. Then the repository variables in `REPO_VARIABLES` (`repo-settings`' `GUIDANCE_SYNC_APP_ID` and `ROSTER_WRITER_APP_ID`, and, when you fill them in, `skills-evals`' four optional `ANTHROPIC_*` federation ids, all from `fleet.env`). | Create an environment in a private repo on GitHub Free (it says so and skips it). Delete an extra branch policy (it reports it). |
@@ -38,15 +39,16 @@ session.
 | `regenerate.sh <task>` | Rebuilds a generated file the export could not (`skills-locks`, `hook-pin`, `run-health-sha`, `codex-pin`, `actions-lock`) with the repo's own tooling, on a clone, and proposes it as a pull request on `regenerate/<task>`. `--check` reads the default branches and exits 1 while it is not done. | Merge what it opens. |
 | `apply-settings.sh` | Clones your `repo-settings` and runs its own engine, `scripts/repo_settings.py`, on `repo-settings/fleet.yml` for one owner: `apply`, then `diff`, which must report no drift. Refuses while `fleet.yml` names a repo that does not exist. `--dry-run` is the engine's preview, `--check` the `diff` alone. | Apply for the second owner while `gh` is signed in as the first (sign in as that account and pass `--owner`). |
 | `install-machine.sh` | On one durable machine: clones or fast-forwards `acsi-agentskills` and `_agent-guidance` into `REPOS_DIR` and runs their installers: `setup.sh --owner-machine`, `scripts/install-agent-hooks.sh`, `scripts/register-memory-home-hook.sh`, and with `--with-codex` `scripts/register-codex-hook.sh`. | Install git 2.54+, PyYAML or Codex. Trust the Codex hook (`/hooks` in Codex). |
-| `verify.sh` | Read-only PASS, FAIL or SKIP per group: `repos`, `labels`, `branches`, `environments`, `variables`, `apps:<app>`, `installs:<app>`, `values:<group>`; `settings` (the engine's `diff`) and `regen:<task>` only when named with `--only`. Names of variables and secrets only, never a value. | See a secret's value, or anything outside GitHub (routines, cloud environments, machines). |
+| `verify.sh` | Read-only PASS, FAIL or SKIP per group: `repos`, `labels`, `branches`, `environments`, `variables`, `apps:<app>`, `installs:<app>`, `values:<group>`; `settings` (the engine's `diff`) and `regen:<task>` only when named with `--only`; `content` (each installed optional item is on its repo's default branch) once `add-content.sh` has recorded your choices. Names of variables and secrets only, never a value. | See a secret's value, or anything outside GitHub (routines, cloud environments, machines). |
 | `status.sh` | Read-only: one line per step (done, next, todo, optional, asked: done), then the next step with its time, kind, what to run and the section to read. `--mark`/`--unmark` record the steps nothing can see, in a state file outside every repo. | Decide an ask step for you. |
 | `render-quickstart.py` | Writes the steps table into `../docs/quick-start.md`; `--check` fails when it is stale. | |
 
 The libraries: `lib/common.sh` (config parsing, the registries of repos,
 environments, Apps, values and variables, and the `gh` wrappers that honor
 `--dry-run`), `lib/pr.sh` (branch, commit, push, verify and open a pull
-request; never a default branch, never a force push) and
-`lib/substitute.py` (the owner names).
+request; never a default branch, never a force push),
+`lib/substitute.py` (the owner names) and `lib/content.py` (the library
+installer `add-content.sh` runs).
 
 ## Variables and secrets set by hand
 

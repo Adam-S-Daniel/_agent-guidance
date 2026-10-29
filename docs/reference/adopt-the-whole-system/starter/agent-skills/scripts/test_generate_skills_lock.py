@@ -4630,10 +4630,6 @@ _TESTS_IN_ANOTHER_REPO = {
     # `report_digest_format`'s docstring as the far end of a contract this
     # repo cannot run.
     "test_bump_format_gate_empty_skills",
-    # The source registry's skills-doctor skill (scripts/test_check_provenance.py),
-    # which the adoption kit does not ship (its DECISIONS X9); the bootstrap
-    # hook, vendored byte for byte, still cites it.
-    "test_the_source_limits_are_the_hooks_own",
 }
 
 

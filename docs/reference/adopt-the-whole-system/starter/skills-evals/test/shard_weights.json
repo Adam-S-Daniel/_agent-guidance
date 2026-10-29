@@ -10,6 +10,7 @@
   "run_tests::TestTheRunnerItself::test_every_suite_forking_test_in_this_repo_stands_down_in_a_child": 69.0,
   "test_issue_202::TestProbeScript::test_a_cli_that_ignores_sigterm_is_killed": 5.2,
   "test_issue_66::TestIssue66Trials::test_the_largest_trial_count_allowed_is_accepted": 5.9,
+  "test_issue_75::TestIssue75::test_each_check_has_an_isolated_failure_and_restoration": 10.4,
   "test_issue_97::TestIssue97::test_a_timeout_at_or_below_the_job_budget_still_runs_the_arm": 6.1,
   "test_issue_97::TestIssue97::test_every_fixture_fits_inside_the_workflow_job_timeout": 6.2,
   "test_issue_97::TestIssue97::test_the_fixture_match_survives_a_committed_list_far_larger_than_a_pipe": 9.6,

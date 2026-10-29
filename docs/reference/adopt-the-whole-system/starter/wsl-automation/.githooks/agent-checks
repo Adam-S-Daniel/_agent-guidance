@@ -34,7 +34,7 @@
 # ${XDG_STATE_HOME:-$HOME/.local/state}/agent-checks/runs.jsonl, so a dashboard
 # can show how often each check runs and refuses, per repo, over time:
 #   {"v":1,"ts":"2026-10-26T12:00:00Z","event":"pre-commit","repo":"owner/name",
-#    "checks":["repo-local"],"failed":["repo-local"]}
+#    "checks":["secret-file","skill-shell"],"failed":["secret-file"]}
 # `repo` is origin's GitHub owner/name, or null for any other remote. `checks`
 # are the ids of the checks that ran, `failed` the ones that refused. The line
 # holds no paths, messages, branch names or user names. AGENT_CHECKS_LOG=off
@@ -102,13 +102,18 @@ check_lessons() {
 }
 
 # Reads NUL-separated paths on stdin and refuses the ones that must never be
-# committed. The kit ships one fleet check, skill-shell; each lesson becomes
-# a `case` arm in check_lessons, and a check of your own goes beside
-# skill-shell (the commented example below).
+# committed: the fleet checks below, then each lesson (a `case` arm in
+# check_lessons). A check of your own goes beside the fleet checks (the
+# commented example below).
 check_paths() {
   local path
   while IFS= read -r -d '' path; do
     [ -n "$path" ] || continue
+    case "${path##*/}" in
+      .env.example|.env.sample|.env.template) ;;
+      .env|.env.*|*.pem|*.key|*.p12|*.pfx|id_rsa|id_ecdsa|id_ed25519)
+        problem secret-file "$path: looks like a secret or credential file, and git history in a public repo is public. Unstage it (git restore --staged -- '$path') and add it to .gitignore." ;;
+    esac
     # A skill or command file that runs a shell command when it loads.
     is_skill_file=false
     case "${path##*/}" in SKILL.md) is_skill_file=true ;; esac
@@ -174,6 +179,7 @@ run_local_checks() {
 # NUL-separated path list on stdin.
 run_checks() {
   local list id
+  note_ran secret-file
   note_ran skill-shell
   for id in $lesson_checks; do note_ran "$id"; done
   list=$(mktemp) || { problem runner-error "could not create a temp file, so nothing was checked."; return; }
