@@ -33,6 +33,13 @@
  * carry counts only, and an API error is reduced to its HTTP status and type
  * (gh's stderr names the URL, which names the repo).
  *
+ * SPEED. Most calls are the one check-run lookup per merged PR (about 2,000
+ * over the window in late 2026), and run one after another they outgrew the
+ * job's timeout. Repos and lookups now run concurrently, but every gh call
+ * goes through one limiter of CONCURRENCY slots: enough to finish in a few
+ * minutes, few enough to stay under GitHub's secondary rate limit of 900
+ * REST points a minute.
+ *
  * Counts are exact or absent: any listing failure, truncated pagination or
  * unparseable timestamp fails the run (exit 1) and nothing is written, so the
  * dashboard never shows a partial week as a real one.
@@ -47,12 +54,13 @@
  * nothing written; 2 bad invocation.
  */
 const fs = require("node:fs");
-const { execFileSync } = require("node:child_process");
+const { execFile } = require("node:child_process");
 
 const WEEKS = 8;
 const DAY_MS = 86400000;
 const REFRESH_DAYS = 6;
 const MAX_PAGES = 10;
+const CONCURRENCY = 6;
 const AGENT_LABEL = "agent-authored";
 const HOOK_NAME = "agent-checks";
 const HOOK_WORKFLOW_PATH = ".github/workflows/agent-checks.yml";
@@ -77,34 +85,55 @@ function describeError(e) {
   return e && e.name ? e.name : "Error";
 }
 
+// At most `n` of the returned function's tasks run at once; the rest wait in
+// arrival order. Each call resolves or rejects with its own task's result.
+function limiter(n) {
+  if (!Number.isInteger(n) || n < 1) throw new RangeError("limiter needs a positive integer");
+  let active = 0;
+  const queue = [];
+  const next = () => {
+    if (active >= n || !queue.length) return;
+    active++;
+    const { task, resolve, reject } = queue.shift();
+    Promise.resolve().then(task).then(resolve, reject).finally(() => { active--; next(); });
+  };
+  return (task) => new Promise((resolve, reject) => { queue.push({ task, resolve, reject }); next(); });
+}
+
 // ── gh plumbing: the only impure layer ─────────────────────────────────────
 
 function ownerTokenEnvName(owner) {
   return "GH_TOKEN_" + owner.toUpperCase().replace(/[-.]/g, "_");
 }
 
-function buildApi(env) {
-  const call = (owner, args) => {
+function buildApi(env, concurrency = CONCURRENCY) {
+  const slot = limiter(concurrency);
+  const call = (owner, args) => slot(() => new Promise((resolve, reject) => {
     const token = env[ownerTokenEnvName(owner)];
-    try {
-      return JSON.parse(execFileSync("gh", args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        maxBuffer: 64 * 1024 * 1024,
-        env: token ? { ...env, GH_TOKEN: token } : env,
-      }));
-    } catch (e) {
+    execFile("gh", args, {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: token ? { ...env, GH_TOKEN: token } : env,
+    }, (err, stdout, stderr) => {
       // Never the message: gh's stderr and stdout carry the URL and body.
-      const m = /HTTP (\d{3})/.exec(String(e.stderr || ""));
-      throw new ApiError(m ? Number(m[1]) : null);
-    }
-  };
+      if (err) {
+        const m = /HTTP (\d{3})/.exec(String(stderr || ""));
+        reject(new ApiError(m ? Number(m[1]) : null));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        reject(new ApiError(null));
+      }
+    });
+  }));
   return {
-    listRepos(owner) {
-      return call(owner, [
+    async listRepos(owner) {
+      return (await call(owner, [
         "repo", "list", owner, "--source", "--no-archived", "--limit", "1000",
         "--json", "nameWithOwner,isPrivate,defaultBranchRef",
-      ]).map((r) => ({
+      ])).map((r) => ({
         repo: r.nameWithOwner,
         private: Boolean(r.isPrivate),
         defaultBranch: (r.defaultBranchRef && r.defaultBranchRef.name) || null,
@@ -163,10 +192,10 @@ function emptyOutcome() {
 
 // Pages a list endpoint until a short page; MAX_PAGES full pages is a
 // truncation, never a silent stop. `stop(item)` ends early on sorted input.
-function collectPages(fetchPage, pick, stop) {
+async function collectPages(fetchPage, pick, stop) {
   const out = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const items = pick(fetchPage(page));
+    const items = pick(await fetchPage(page));
     if (!Array.isArray(items)) throw new TypeError("unexpected response shape");
     for (const item of items) {
       if (stop && stop(item)) return out;
@@ -177,14 +206,14 @@ function collectPages(fetchPage, pick, stop) {
   throw new RangeError("pagination ceiling reached");
 }
 
-function hasRedCheck(api, owner, repo, sha) {
-  const runs = collectPages((p) => api.checkRunsPage(owner, repo, sha, p), (d) => d && d.check_runs);
+async function hasRedCheck(api, owner, repo, sha) {
+  const runs = await collectPages((p) => api.checkRunsPage(owner, repo, sha, p), (d) => d && d.check_runs);
   return runs.some((r) => RED.has(r.conclusion));
 }
 
 // Counts for one repo, keyed by week. Throws on anything that would make a
 // count inexact; the caller turns that into a failed repo.
-function measureRepo(target, api, { weeks, fromMs, toMs }) {
+async function measureRepo(target, api, { weeks, fromMs, toMs }) {
   const { owner, repo, defaultBranch } = target;
   const inWindow = (ms) => ms >= fromMs && ms <= toMs;
   const outcome = Object.fromEntries(weeks.map((w) => [w, emptyOutcome()]));
@@ -192,11 +221,12 @@ function measureRepo(target, api, { weeks, fromMs, toMs }) {
 
   // Sorted by updated desc: anything opened, merged or closed in the window
   // was updated in it, so the first older PR ends the listing.
-  const pulls = collectPages(
+  const pulls = await collectPages(
     (p) => api.pullsPage(owner, repo, p),
     (d) => d,
     (pr) => parseTime(pr.updated_at) < fromMs,
   );
+  const redLookups = [];
   for (const pr of pulls) {
     bump(parseTime(pr.created_at), "prs_opened");
     if (pr.merged_at) {
@@ -206,22 +236,27 @@ function measureRepo(target, api, { weeks, fromMs, toMs }) {
       if (typeof pr.title === "string" && pr.title.startsWith('Revert "')) bump(merged, "prs_reverted");
       if ((pr.labels || []).some((l) => l && l.name === AGENT_LABEL)) bump(merged, "agent_prs_merged");
       const base = pr.base && pr.base.ref;
-      if (base && base === defaultBranch && pr.merge_commit_sha
-          && hasRedCheck(api, owner, repo, pr.merge_commit_sha)) {
-        bump(merged, "ci_red_after");
+      if (base && base === defaultBranch && pr.merge_commit_sha) {
+        redLookups.push(hasRedCheck(api, owner, repo, pr.merge_commit_sha)
+          .then((red) => { if (red) bump(merged, "ci_red_after"); }));
       }
     } else if (pr.closed_at) {
       bump(parseTime(pr.closed_at), "prs_closed_unmerged");
     }
   }
 
-  const workflows = collectPages((p) => api.workflowsPage(owner, repo, p), (d) => d && d.workflows);
+  // allSettled first, so no lookup is still running when this repo fails.
+  const settled = await Promise.allSettled(redLookups);
+  const rejected = settled.find((s) => s.status === "rejected");
+  if (rejected) throw rejected.reason;
+
+  const workflows = await collectPages((p) => api.workflowsPage(owner, repo, p), (d) => d && d.workflows);
   const wf = workflows.find((w) => w && w.path === HOOK_WORKFLOW_PATH);
   let hook = null;
   if (wf) {
     hook = Object.fromEntries(weeks.map((w) => [w, { runs: 0, failures: 0 }]));
     const since = weeks[0];
-    const runs = collectPages(
+    const runs = await collectPages(
       (p) => api.workflowRunsPage(owner, repo, wf.id, since, p),
       (d) => d && d.workflow_runs,
     );
@@ -280,7 +315,7 @@ function buildRows(measured, weeks) {
   return rows.sort((a, b) => compareRows(a, b) || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0));
 }
 
-function runReport({ owners, api, nowMs, env, requireOwnerTokens, out }) {
+async function runReport({ owners, api, nowMs, env, requireOwnerTokens, out }) {
   const log = out || console.log;
   const { weeks, fromMs } = windowFor(nowMs);
   const span = { weeks, fromMs, toMs: nowMs };
@@ -293,20 +328,23 @@ function runReport({ owners, api, nowMs, env, requireOwnerTokens, out }) {
       continue;
     }
     try {
-      for (const r of api.listRepos(owner)) targets.push({ ...r, owner });
+      for (const r of await api.listRepos(owner)) targets.push({ ...r, owner });
     } catch (e) {
       failures.push(`owner listing: ${describeError(e)}`);
     }
   }
 
-  const measured = [];
-  for (const target of targets) {
+  // Every repo at once; the api's limiter decides how many calls run. Results
+  // and failures keep the listing's order, so the log is stable.
+  const results = await Promise.all(targets.map(async (target) => {
     try {
-      measured.push({ repo: target.repo, private: target.private, ...measureRepo(target, api, span) });
+      return { ok: { repo: target.repo, private: target.private, ...(await measureRepo(target, api, span)) } };
     } catch (e) {
-      failures.push(`repo: ${describeError(e)}`);
+      return { failure: `repo: ${describeError(e)}` };
     }
-  }
+  }));
+  const measured = results.filter((r) => r.ok).map((r) => r.ok);
+  for (const r of results) if (r.failure) failures.push(r.failure);
 
   const priv = measured.filter((m) => m.private).length;
   log(`impact-report: ${measured.length} repo(s) measured (${priv} private, folded), ${measured.filter((m) => m.hook).length} with agent-checks, ${failures.length} failure(s)`);
@@ -337,7 +375,7 @@ function shouldPublish(previous, next, nowMs) {
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   const argv = process.argv.slice(2);
   const flags = { owners: (process.env.SYNC_OWNERS || "").split(/\s+/).filter(Boolean), requireOwnerTokens: false };
   for (let i = 0; i < argv.length; i++) {
@@ -353,7 +391,7 @@ function main() {
     process.exit(2);
   }
   const nowMs = Date.now(); // the only clock read in this file
-  const { exitCode, doc } = runReport({
+  const { exitCode, doc } = await runReport({
     owners: flags.owners, api: buildApi(process.env), nowMs,
     env: process.env, requireOwnerTokens: flags.requireOwnerTokens,
   });
@@ -371,10 +409,15 @@ function main() {
   console.log(`impact-report: wrote ${doc.rows.length} row(s)`);
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(`::error::impact-report: ${describeError(e)}`);
+    process.exit(1);
+  });
+}
 
 module.exports = {
-  WEEKS, REFRESH_DAYS, HOOK_NAME, HOOK_WORKFLOW_PATH, AGENT_LABEL,
+  WEEKS, REFRESH_DAYS, CONCURRENCY, HOOK_NAME, HOOK_WORKFLOW_PATH, AGENT_LABEL,
   ApiError, describeError, ownerTokenEnvName,
-  weekOf, windowFor, measureRepo, buildRows, runReport, shouldPublish, buildApi,
+  limiter, weekOf, windowFor, measureRepo, buildRows, runReport, shouldPublish, buildApi,
 };
