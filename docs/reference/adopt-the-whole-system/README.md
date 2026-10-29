@@ -23,8 +23,8 @@ installing GitHub Apps, saving routines at claude.ai, pasting a cloud setup
 script, and a few repository settings. Each of those steps below names the
 page to visit.
 
-The reference implementation lives in four public repositories. You do not
-need them, but they show a part working at full size, and all four may be
+The reference implementation lives in three public repositories. You do not
+need them, but they show a part working at full size, and all three may be
 copied under their licenses:
 
 | Part | Reference repo | License |
@@ -32,7 +32,6 @@ copied under their licenses:
 | Guidance and its sync | [`_agent-guidance`](https://github.com/Adam-S-Daniel/_agent-guidance) | Apache-2.0: copy freely under its terms |
 | Skills registry | [`adam-agentskills`](https://github.com/Adam-S-Daniel/adam-agentskills) | Apache-2.0 (since 2026-10-28, [#88](https://github.com/Adam-S-Daniel/adam-agentskills/pull/88)) |
 | Evals and the loop | [`skills-evals`](https://github.com/Adam-S-Daniel/skills-evals) | Apache-2.0 (since 2026-10-28, [#469](https://github.com/Adam-S-Daniel/skills-evals/pull/469)) |
-| Memory viewer (optional) | [`claude-memory-map`](https://github.com/Adam-S-Daniel/claude-memory-map) | MIT |
 
 Everything below works from an empty account. Every part has starter code in
 the kit, tested on its own: the guidance hook and sync, the check runner and
