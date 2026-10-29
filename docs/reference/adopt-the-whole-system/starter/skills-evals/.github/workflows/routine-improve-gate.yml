@@ -5,9 +5,9 @@ name: Gate routine improvement candidate
 # an ACCEPTED candidate only, pushes `claude/eval-improve-<run id>` holding
 # `eval-improve/<run id>/{summary.json, report.md, skill.patch}`. The routine
 # never opens a pull request; this workflow decides whether the candidate
-# becomes a pull request in example-adopter/agentskills, and whether that
+# becomes a pull request in example-adopter/acsi-agentskills, and whether that
 # pull request merges itself (evals/improve-policy.yml, ADR 0005's automatic
-# merge addendum, agentskills ADR 0021).
+# merge addendum, acsi-agentskills ADR 0021).
 #
 # * The branch is UNTRUSTED (a model run wrote it). This workflow runs on
 #   `workflow_run`, so GitHub always runs the DEFAULT BRANCH's copy of it,
@@ -18,7 +18,7 @@ name: Gate routine improvement candidate
 #   `git apply` in a registry checkout as data, after validation.
 # * The validator rejects the whole branch unless it ADDS exactly the three
 #   files, regular and non-executable, under its own run id: an accepted
-#   record for the agentskills registry at a full sha, a patch of that
+#   record for the acsi-agentskills registry at a full sha, a patch of that
 #   skill's SKILL.md only, and a report with the loop's title and no closing
 #   keyword or @mention.
 # * Three jobs. `validate` holds `contents: read` and no secret. `credential`
@@ -30,26 +30,26 @@ name: Gate routine improvement candidate
 #   `env:`.
 #
 # The credential (owner decision, the owner: "GitHub App (Recommended)"): this
-# repository's GITHUB_TOKEN cannot write agentskills, so the
+# repository's GITHUB_TOKEN cannot write acsi-agentskills, so the
 # registry-pr job mints a short-lived installation token with
 # actions/create-github-app-token from repository secrets
 # EVAL_IMPROVE_APP_CLIENT_ID and EVAL_IMPROVE_APP_PEM, scoped to owner
-# example-adopter, repository agentskills only, contents and
+# example-adopter, repository acsi-agentskills only, contents and
 # pull-requests write only. The token is revoked when the job ends. The App
 # must have Contents: write and Pull requests: write, be installed on
-# agentskills only, and both secrets must be set in skills-evals; while
+# acsi-agentskills only, and both secrets must be set in skills-evals; while
 # either is unset the job is SKIPPED with a job-summary note and the
 # validated candidate stays on its branch. A pull request the App opens
-# starts agentskills' own CI, which one opened with a GITHUB_TOKEN
+# starts acsi-agentskills' own CI, which one opened with a GITHUB_TOKEN
 # would not. Those two permissions also cover what auto mode adds: labeling
 # the pull request (the issues labels endpoint accepts Pull requests: write)
 # and enabling auto-merge (Contents and Pull requests: write). Both labels,
 # `agent-authored` and `eval-improve`, must already exist in
-# agentskills; a labeling failure fails the job before auto-merge is
+# acsi-agentskills; a labeling failure fails the job before auto-merge is
 # enabled.
 #
 # * `scripts/improve_gate.py prepare` builds the change on a checkout of
-#   agentskills' default branch tip: the patch, the plugin's patch
+#   acsi-agentskills' default branch tip: the patch, the plugin's patch
 #   version in both manifests, a docs/skill-impact.md entry, a PURPOSE.md
 #   stub if the skill has none, the README table, and a skills.lock re-pin
 #   commit when the lock covers the skill, which is what that repository's
@@ -66,7 +66,7 @@ name: Gate routine improvement candidate
 #   `draft-skill/*` or `retire-skill/*`) is open, it does nothing: they
 #   write the same files.
 #   It never approves, force-pushes or deletes anything, and merges only
-#   through auto-merge, after agentskills' required checks.
+#   through auto-merge, after acsi-agentskills' required checks.
 # * #71's gate stays: nothing here is scheduled (ADR 0010 decision 4).
 # * Branch names, shas and file content are never interpolated into a
 #   `run:` block: the event is read from $GITHUB_EVENT_PATH by the
@@ -233,14 +233,14 @@ jobs:
             > "$RUNNER_TEMP/revalidate.out"
           cat "$RUNNER_TEMP/revalidate.out"
 
-      # Built before any credential exists: agentskills is public, so
+      # Built before any credential exists: acsi-agentskills is public, so
       # it is fetched anonymously, and its own README and lock scripts run
       # here (its default branch's copies) with no token in reach.
       - name: Build the registry commits
         id: build
         working-directory: skills-evals
         env:
-          TARGET_REPO: example-adopter/agentskills
+          TARGET_REPO: example-adopter/acsi-agentskills
           RUN_ID: ${{ needs.validate.outputs.run_id }}
           REGISTRY_SHA: ${{ needs.validate.outputs.registry_sha }}
           SKILL_MD: ${{ needs.validate.outputs.skill_md }}
@@ -278,24 +278,24 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Minted only now, after re-validation and the build: an installation
-      # token for agentskills alone, with contents and pull-requests
+      # token for acsi-agentskills alone, with contents and pull-requests
       # write only.
-      - name: Mint the GitHub App token for agentskills
+      - name: Mint the GitHub App token for acsi-agentskills
         id: app-token
         uses: actions/create-github-app-token@v3.2.0
         with:
           client-id: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}
           private-key: ${{ secrets.EVAL_IMPROVE_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills
+          repositories: acsi-agentskills
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Open the pull request in agentskills
+      - name: Open the pull request in acsi-agentskills
         working-directory: skills-evals
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TARGET_REPO: example-adopter/agentskills
+          TARGET_REPO: example-adopter/acsi-agentskills
           BRANCH: ${{ needs.validate.outputs.branch }}
           RUN_ID: ${{ needs.validate.outputs.run_id }}
           SHA: ${{ needs.validate.outputs.sha }}

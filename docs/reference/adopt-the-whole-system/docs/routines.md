@@ -24,7 +24,7 @@ starts before you leave it on a schedule.
 | Trigger | API trigger only; no schedule |
 | Prompt | everything inside the fence in `skills-evals`' [`docs/routine-prompt.md`](../starter/skills-evals/docs/routine-prompt.md) |
 | Model | `claude-sonnet-5-5`, or a newer default |
-| Repos attached | the ones its RULES line names, default branches only: `skills-evals`, `_agent-guidance`, `agentskills`, `wsl-automation`, and the example platform and site unless you removed them (edit the RULES line to match) |
+| Repos attached | the ones its RULES line names, default branches only: `skills-evals`, `_agent-guidance`, `acsi-agentskills`, `wsl-automation`, and the example platform and site unless you removed them (edit the RULES line to match) |
 | Environment | the allowlist, plus nested `claude -p`, `node` and `npm` |
 
 The API trigger shows its bearer once. Keep it and the routine's

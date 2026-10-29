@@ -2,10 +2,10 @@
 
 ## The registry
 
-[`agentskills`](../starter/agent-skills/README.md) is a Claude Code plugin
+[`acsi-agentskills`](../starter/agent-skills/README.md) is a Claude Code plugin
 marketplace (`.claude-plugin/marketplace.json`) with four plugins, grouped by
-audience and runtime: `anything-anywhere` and `coding-anywhere` (cloud-safe,
-enabled by default), `coding-local` and `non-coding-local` (machine-bound,
+audience and runtime: `acsi-anything-anywhere` and `acsi-coding-anywhere` (cloud-safe,
+enabled by default), `acsi-coding-local` and `acsi-non-coding-local` (machine-bound,
 opt-in). A skill is a folder `plugins/<plugin>/skills/<skill>/` holding a
 `SKILL.md`, and the same file works in Codex and any agent that reads the
 Agent Skills format.
@@ -62,7 +62,7 @@ there. Never approve it for an agent.
 ## The privacy check
 
 The registries' predecessor was retired because its git history carried
-personal data, so `agentskills`' required `privacy` job scans every added
+personal data, so `acsi-agentskills`' required `privacy` job scans every added
 line and commit message of a change against a denylist of your real names,
 emails, hosts and account ids. The list is the repository secret
 `PRIVACY_DENYLIST`, never a file in a repo; the script prints only
@@ -70,7 +70,7 @@ emails, hosts and account ids. The list is the repository secret
 without the secret (a fork's pull request included).
 
 Write the list as a file outside every repo, one regular expression per
-line, and store it before the `agentskills` starter pull request:
+line, and store it before the `acsi-agentskills` starter pull request:
 
 ```bash
 bash bootstrap/set-secrets.sh --only privacy --denylist ~/private/denylist
@@ -79,12 +79,12 @@ bash bootstrap/set-secrets.sh --only privacy --denylist ~/private/denylist
 The script refuses a path inside a git work tree, checks every line
 compiles, and sends the file to `gh` on stdin. Run the same check locally
 with `PRIVACY_DENYLIST_FILE=<path> python3 scripts/check_privacy_denylist.py`
-in your `agentskills` clone. Everything the public repos hold uses invented
+in your `acsi-agentskills` clone. Everything the public repos hold uses invented
 data: `example.com`, made-up names, `<user>` placeholders.
 
 ## The private registry and lessons
 
-[`agentskills-private`](../starter/agent-skills-private/README.md) is
+[`acsi-agentskills-private`](../starter/agent-skills-private/README.md) is
 packaged the same way, for skills that are personal rather than reusable.
 Its branch `persistent/lessons` holds the lesson records the session miner
 writes from your transcripts on your machine

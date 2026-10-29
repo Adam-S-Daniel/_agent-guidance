@@ -72,7 +72,7 @@ NEW_DESCRIPTION = "Use this skill to record a non-obvious decision as an ADR."
 
 
 def make_registry(root: Path, text: str = ORIGINAL_SKILL_MD) -> Path:
-    """A one-commit git repo laid out like agentskills."""
+    """A one-commit git repo laid out like acsi-agentskills."""
     skill_dir = root / "plugins" / "demo" / "skills" / SKILL
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(text, encoding="utf-8")
@@ -287,7 +287,7 @@ class PipelineCase(unittest.TestCase):
     def argv(self, *extra):
         reviewed = (["--trigger-eval-set", str(self.reviewed_set)]
                     if self.reviewed_set else [])
-        return [SKILL, "--registry", f"agentskills={self.registry}",
+        return [SKILL, "--registry", f"acsi-agentskills={self.registry}",
                 "--skill-creator", str(self.skill_creator),
                 "--results-dir", str(self.results), *reviewed, *extra]
 
@@ -1609,7 +1609,7 @@ class HardeningPipelineTests(PipelineCase):
 
     def test_dry_run_pairwise_skill_names_no_judge_correction(self):
         argv = self.argv("--dry-run")
-        argv[0] = "my-writing-style"
+        argv[0] = "acsi-writing-style"
         err = io.StringIO()
         with mock.patch.dict(os.environ, self.env, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
@@ -1857,7 +1857,7 @@ class SubprocessRunnerContractTests(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()):
             rc = pse.Runner().run_eval(pse.run_eval_argv(
-                SKILL, "agentskills", scratch, results, TS, 2, True))
+                SKILL, "acsi-agentskills", scratch, results, TS, 2, True))
         self.assertIn(rc, (0, 1))
         self.assertTrue(log.is_file())
         self.assertTrue((results / "LOCAL_EXHIBIT").is_file())
@@ -1866,7 +1866,7 @@ class SubprocessRunnerContractTests(unittest.TestCase):
         self.assertEqual(invocation["trials"], 2)
         self.assertEqual(invocation["arm"], "with_skill")
         self.assertIs(invocation["no_judge"], True)
-        self.assertEqual(invocation["registries"], ["agentskills"])
+        self.assertEqual(invocation["registries"], ["acsi-agentskills"])
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertTrue(calls)
         for call in calls:
@@ -1914,7 +1914,7 @@ class SubprocessRunnerContractTests(unittest.TestCase):
                         json.dumps({"apiKeyHelper": "unused"}), encoding="utf-8")
                 with mock.patch.dict(os.environ, env, clear=True), \
                         contextlib.redirect_stderr(io.StringIO()):
-                    rc = pse.main([SKILL, "--registry", f"agentskills={registry}",
+                    rc = pse.main([SKILL, "--registry", f"acsi-agentskills={registry}",
                                    "--skill-creator", str(skill_creator),
                                    "--results-dir", str(self.tmp / "results"),
                                    "--rotation", "2", "--no-judge",
@@ -2101,7 +2101,7 @@ class GuardedRunnerTests(unittest.TestCase):
                 with self.child_context(), mock.patch.object(runner, method, side_effect=launch), \
                         contextlib.redirect_stdout(io.StringIO()), \
                         contextlib.redirect_stderr(io.StringIO()):
-                    rc = pse.main([SKILL, "--registry", f"agentskills={registry}",
+                    rc = pse.main([SKILL, "--registry", f"acsi-agentskills={registry}",
                                    "--skill-creator", str(self.plugin), "--results-dir",
                                    str(results), "--rotation", "2", "--no-judge",
                                    "--trigger-eval-set", str(reviewed)],

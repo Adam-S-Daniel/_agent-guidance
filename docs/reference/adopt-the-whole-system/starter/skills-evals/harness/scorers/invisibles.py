@@ -15,7 +15,7 @@ supplementary variation selector (U+E0100-U+E01EF), a musical format
 control (U+1D173-U+1D17A), an interlinear annotation mark (U+FFF9-U+FFFB)
 or a Hangul filler walked past both — one such character inside `leverage`
 switched the avoid-list ban off, and one mid-word in a pasted seed sentence
-defeated provenance. All three `my-writing-style` fixture headers assert
+defeated provenance. All three `acsi-writing-style` fixture headers assert
 that a paste "salted with invisibles" is covered, so the enumeration was
 also a documented property that was false.
 
@@ -41,7 +41,7 @@ The rule is a rule now, not a list:
 What is deliberately NOT dropped: anything with a width. A confusable — a
 Cyrillic `а` standing in for a Latin `a` — is a different letter, not an
 invisible one, and NFKC does not map confusables onto each other. See the
-`strip_seed` header in `evals/my-writing-style/recruiter-reply/
+`strip_seed` header in `evals/acsi-writing-style/recruiter-reply/
 fixture.yaml` for where that lands.
 
 One more residual, in the "every `Mn` goes" claim above: step 1 COMPOSES a

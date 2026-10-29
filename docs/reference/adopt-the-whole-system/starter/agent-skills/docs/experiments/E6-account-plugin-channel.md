@@ -154,12 +154,12 @@ plugin channel.
 
 | Bundle | Always-on | Skills already on the account | Skills it would add |
 |---|---|---|---|
-| `my` | ~1,895 | 3 | 6 CI/GitHub skills (~1,230 tokens) |
-| `my-local` | ~2,536 | 6 | 4 |
+| `acsi` | ~1,895 | 3 | 6 CI/GitHub skills (~1,230 tokens) |
+| `acsi-local` | ~2,536 | 6 | 4 |
 | `fastmail` | ~728 | 1 | 2 |
 
 Enabling the three bundles would add 12 skills the account deliberately does not
-carry, about 2,970 extra tokens on every surface. `my`'s six are exactly what
+carry, about 2,970 extra tokens on every surface. `acsi`'s six are exactly what
 ADR 0002 rejected putting on the account. Using this channel properly means a
 separate personal plugin. [ADR 0012](../decisions/0012-serve-the-account-skills-as-one-repo-synced-plugin.md)
 builds it as its own plugin folder whose skill entries are git symlinks to the

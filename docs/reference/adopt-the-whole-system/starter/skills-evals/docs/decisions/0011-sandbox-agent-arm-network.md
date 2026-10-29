@@ -80,7 +80,7 @@ tamper check; a flag needs none, and nothing lands in the workspace for
 
 The answer key is on the machine as well as on GitHub: this checkout's
 `checker/` and `solution.patch`, the sibling clones beside it (in the eval
-routine `skills-evals`, `_agent-guidance`, `agentskills`, `example-site-platform`
+routine `skills-evals`, `_agent-guidance`, `acsi-agentskills`, `example-site-platform`
 and `example-site-a` sit side by side, and example-site-platform `main` holds merged
 fixes) and, on a workstation, `~/repos`, `~/sprint-out/` and the original
 work's transcripts under `~/.claude/projects/`.

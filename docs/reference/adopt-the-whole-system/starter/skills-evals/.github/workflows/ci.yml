@@ -35,7 +35,7 @@ name: CI
 # suite never opens them, so a docs-only pull request touching only those has
 # nothing to prove here and should not pay for a runner. One
 # path this filter structurally cannot name: the suite also reads
-# agentskills' own scripts/skills_registries.yml from the side-by-side
+# acsi-agentskills' own scripts/skills_registries.yml from the side-by-side
 # checkout below, for
 # TestIssue63::test_registries_agree_with_agentskills_own_file — a file in a
 # different repo, outside anything a `paths:` filter here can match.
@@ -242,16 +242,16 @@ jobs:
 
       # Side-by-side, same convention as eval.yml and propagation.yml: this
       # is what makes the harness's sibling-directory default
-      # (`../agentskills` next to a skills-evals checkout) resolve to
+      # (`../acsi-agentskills` next to a skills-evals checkout) resolve to
       # something real here, which is what lets
       # TestIssue63::test_registries_agree_with_agentskills_own_file actually
       # run in CI instead of skipping every time.
-      - name: Check out agentskills registry (side-by-side)
+      - name: Check out acsi-agentskills registry (side-by-side)
         if: steps.salient.outputs.run == 'true'
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       # Also side-by-side, and for the same reason: the guidance-subject tests
@@ -282,7 +282,7 @@ jobs:
         # exact, same convention as eval.yml. pytest + pytest-xdist are what
         # `run_tests.py --jobs` fans the suite out with (#182); pinned exact
         # and more than 7 days old at adoption, same as every other pin here.
-        # These are the same two pins agentskills carries in its own
+        # These are the same two pins acsi-agentskills carries in its own
         # requirements-dev.txt for its own `-n auto` run
         # (https://github.com/Adam-S-Daniel/agentskills/pull/179) — kept in
         # step deliberately:

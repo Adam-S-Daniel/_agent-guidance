@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stand-in for agentskills' .claude/hooks/skills-bootstrap.sh.
+# Stand-in for acsi-agentskills' .claude/hooks/skills-bootstrap.sh.
 #
 # It honours the same contract the arms assert on — the surface guard, the
 # `skills: N/N from <repo>@<sha> — OK` verdict, the collision skip — so the

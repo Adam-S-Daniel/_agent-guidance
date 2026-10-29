@@ -103,7 +103,7 @@ jobs:
           client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills-private
+          repositories: acsi-agentskills-private
           permission-contents: read
       - name: Mine merged fleet pull requests
         env:

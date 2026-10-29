@@ -221,8 +221,8 @@ that stops before (b) could not have pushed at all; it must report the
 reason in its final message and its push notification.
 
 1. **Confirm the skill is loaded.** Step 4 below depends on the
-   `vendor-release-impact-issues` skill (`coding-anywhere`), which this
-   repo's `skills.lock` delivers only while it pins an `agentskills`
+   `vendor-release-impact-issues` skill (`acsi-coding-anywhere`), which this
+   repo's `skills.lock` delivers only while it pins an `acsi-agentskills`
    commit that contains it (it did not until 2026-09-28). Check the
    session's own skill listing before doing anything else. If the skill is
    not present, stop and report exactly:

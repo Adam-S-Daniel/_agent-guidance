@@ -99,7 +99,7 @@ empty.
 
 `create-repos.sh` applies this from `PLAN`:
 
-- **Free:** every repo is public except `agentskills-private`,
+- **Free:** every repo is public except `acsi-agentskills-private`,
   `repo-settings` (and the optional `waiting-feed`), which are private and,
   on Free, unprotected: GitHub does not enforce rulesets there and offers no
   environments, so the `fleet-apply` environment is skipped and you run the

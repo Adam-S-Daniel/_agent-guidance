@@ -312,7 +312,7 @@ class ValidateFollowupsTests(unittest.TestCase):
         (eval_dir / "seed").mkdir(parents=True)
         (eval_dir / "fixture.yaml").write_text(
             "skill: demo\nregistry: https://github.com/example-adopter/"
-            "agentskills\nmodel: model-a\nprompt: do it\n"
+            "acsi-agentskills\nmodel: model-a\nprompt: do it\n"
             "followups: auto\n", encoding="utf-8")
         argv = ["run_eval.py", str(eval_dir), "--arm", "without_skill",
                 "--results-dir", str(tmp / "results"), "--no-judge"]
@@ -389,7 +389,7 @@ class RenamePdfsFollowupRegressionTests(unittest.TestCase):
         (eval_dir / "seed" / "README.md").write_text("example seed\n", encoding="utf-8")
         (eval_dir / "fixture.yaml").write_text(
             "skill: example-followup\n"
-            "registry: https://github.com/example-adopter/agentskills\n"
+            "registry: https://github.com/example-adopter/acsi-agentskills\n"
             "prompt: Rename the files in inbox/ per my convention.\n"
             "followups:\n  - Yes, apply all of the proposed renames (auto).\n"
             "arms:\n  with_skill:\n    install: copy\n  without_skill:\n    install: none\n"
@@ -402,8 +402,8 @@ class RenamePdfsFollowupRegressionTests(unittest.TestCase):
         (skill_dir / "SKILL.md").write_text(
             f"---\nname: {fixture['skill']}\ndescription: Offline follow-up fixture.\n---\n",
             encoding="utf-8")
-        registries = {"agentskills": {
-            "name": "agentskills", "path": registry_dir,
+        registries = {"acsi-agentskills": {
+            "name": "acsi-agentskills", "path": registry_dir,
             "url": fixture["registry"],
             "layout": "plugins/*/skills/*/SKILL.md"}}
         seen = {}

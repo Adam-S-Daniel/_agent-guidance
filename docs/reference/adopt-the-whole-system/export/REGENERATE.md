@@ -15,11 +15,11 @@ a pull request with the result.
 
 - **`skills.lock`** names your registry's commit and each skill's digest.
   The digests change with your registry's content (the kit ships it empty,
-  DECISIONS X9). After your `agentskills` repo has its first commit:
+  DECISIONS X9). After your `acsi-agentskills` repo has its first commit:
 
   ```bash
-  python3 ../agentskills/scripts/generate_skills_lock.py --repo ../agentskills \
-    --registry <owner>/agentskills --bundles anything-anywhere,coding-anywhere -o skills.lock
+  python3 ../acsi-agentskills/scripts/generate_skills_lock.py --repo ../acsi-agentskills \
+    --registry <owner>/acsi-agentskills --bundles acsi-anything-anywhere,acsi-coding-anywhere -o skills.lock
   ```
 
   (`--repin` cannot do this first one: it checks the clone against the
@@ -31,7 +31,7 @@ a pull request with the result.
 - **`repos.yml` `skills_bootstrap.ref`** names the registry commit the
   vendored `.claude/hooks/skills-bootstrap.sh` came from. The export
   recomputes `sha256` from the exported hook; `ref` still names the source
-  commit. Set it to the commit of your `agentskills` that carries the same
+  commit. Set it to the commit of your `acsi-agentskills` that carries the same
   hook bytes:
 
   ```bash
@@ -95,11 +95,11 @@ a pull request with the result.
   `scripts/sync-codex-cloud-environments.sh` downloads your registry's
   `.claude/hooks/skills-bootstrap.sh` at a reviewed commit and checks its
   digest. The export ships both as zeros, which fail closed (setup reports
-  skills `DEGRADED`). After your `agentskills` repo has a reviewed commit:
+  skills `DEGRADED`). After your `acsi-agentskills` repo has a reviewed commit:
 
   ```bash
-  rev=$(git -C ../agentskills rev-parse HEAD)
-  sum=$(git -C ../agentskills show "$rev:.claude/hooks/skills-bootstrap.sh" | sha256sum | cut -d' ' -f1)
+  rev=$(git -C ../acsi-agentskills rev-parse HEAD)
+  sum=$(git -C ../acsi-agentskills show "$rev:.claude/hooks/skills-bootstrap.sh" | sha256sum | cut -d' ' -f1)
   sed -i -e "s/^readonly bootstrap_revision='0\{40\}'/readonly bootstrap_revision='$rev'/" \
     -e "s/^readonly bootstrap_sha256='0\{64\}'/readonly bootstrap_sha256='$sum'/" \
     scripts/sync-codex-cloud-environments.sh
@@ -146,27 +146,27 @@ a pull request with the result.
   the workflow's own fixture validation until you add that fixture or change
   the default to one you have.
 
-## `agentskills` and `agentskills-private`
+## `acsi-agentskills` and `acsi-agentskills-private`
 
 - **`skills.lock`** (both repos) is the public registry's own generator's
   output: the cloud-safe bundles with no skills (DECISIONS X9). Its `ref` and
   `generated_from` are forty zeros, because the commit they name is your
-  first `agentskills` commit. Until you replace them, CI's
+  first `acsi-agentskills` commit. Until you replace them, CI's
   `generate_skills_lock.py --check` and `--check-current` steps fail, and two
   dogfood tests skip ("pinned ref ... is not present"). After the starter
-  pull request merges, in your `agentskills` clone:
+  pull request merges, in your `acsi-agentskills` clone:
 
   ```bash
   python3 scripts/generate_skills_lock.py   # pins HEAD; writes skills.lock
   python3 scripts/generate_skills_lock.py --check && python3 scripts/generate_skills_lock.py --check-current
   ```
 
-  and copy the same `skills.lock` into `agentskills-private`. (Checked on
+  and copy the same `skills.lock` into `acsi-agentskills-private`. (Checked on
   the exported tree: after this both checks print OK with 0 skills, and the
   two dogfood tests pass.) `--check-format` refuses a lock with no skills by
   design; its dogfood test skips until your first skill is locked.
 
-- **`.github/workflows/scheduled-run-health.yml`** (agentskills) calls
+- **`.github/workflows/scheduled-run-health.yml`** (acsi-agentskills) calls
   `_agent-guidance`'s reusable at a placeholder sha, as in `repo-settings`
   above; the same `sed` command fixes it.
 

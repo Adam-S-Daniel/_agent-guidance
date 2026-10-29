@@ -695,13 +695,13 @@ class RequiredStatusChecksFleetConfigTests(unittest.TestCase):
         "example-adopter/repo-settings": ["agent-checks", "unit"],
     }
     PRE_EXISTING = {
-        # agentskills: new public registry replacing agentskills above,
+        # acsi-agentskills: new public registry replacing agentskills above,
         # onboarded with a required check from day one -- not part of the
         # cms-platform#437 batch this class otherwise tests, so it belongs in
         # this "allowed but not asserted exactly by the other tests" bucket
         # rather than EXPECTED. `plugin-runtime-approval` (2026-10-08) is its
         # owner-approval gate for plugin runtime changes (its ADR 0016/0017).
-        "example-adopter/agentskills": ["privacy", "pytest", "pytest-windows", "plugin-runtime-approval", "agent-checks"],
+        "example-adopter/acsi-agentskills": ["privacy", "pytest", "pytest-windows", "plugin-runtime-approval", "agent-checks"],
     }
     # The fleet default (_agent-guidance ADR 0021): every other managed repo
     # with a ruleset requires the delivered agent-checks job and nothing else.
@@ -3475,12 +3475,12 @@ class ActionsPoliciesFleetConfigTests(unittest.TestCase):
     def test_defaults_declare_none(self):
         self.assertNotIn("actions_policies", self.cfg["defaults"])
 
-    def test_only_agentskills_declares_policies(self):
+    def test_only_acsi_agentskills_declares_policies(self):
         repos = {t["repo"] for t in self.targets if t["declared"].get("actions_policies")}
-        self.assertEqual(repos, {"example-adopter/agentskills"})
+        self.assertEqual(repos, {"example-adopter/acsi-agentskills"})
 
-    def test_agentskills_allows_only_pull_request_target_on_its_review_workflow(self):
-        (t,) = [t for t in self.targets if t["repo"] == "example-adopter/agentskills"]
+    def test_acsi_agentskills_allows_only_pull_request_target_on_its_review_workflow(self):
+        (t,) = [t for t in self.targets if t["repo"] == "example-adopter/acsi-agentskills"]
         self.assertEqual(
             rs.build_actions_policy_bodies(t["declared"]),
             [{"name": "plugin-runtime-review: allow pull_request_target",

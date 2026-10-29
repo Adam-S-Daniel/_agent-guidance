@@ -4,7 +4,7 @@
 The owner's decisions: build automatic removal (2026-10-25); removal pull requests
 auto-merge with no human review (2026-10-25, ADR 0014); results are not
 signed, the gate guards against honest mistakes (2026-10-26); removal pull
-requests auto-merge with no human (2026-10-26, agentskills ADR 0021),
+requests auto-merge with no human (2026-10-26, acsi-agentskills ADR 0021),
 so the committed `retirement_mode` is `auto`, lowered to `proposal` (an
 issue) when the skill's plugin runs code or the workflow has no write token.
 
@@ -40,7 +40,7 @@ AUTO_ENV = {**SCHEDULE, "GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main
 BOT = "github-actions[bot]"
 MODELS = ["claude-opus-5-5", "claude-sonnet-5-5"]
 SKILL = "example-skill"
-PLUGIN = "coding-anywhere"
+PLUGIN = "acsi-coding-anywhere"
 IMPACT = """# skill-impact.md — the registry's skill-change audit trail
 
 Header text.
@@ -48,7 +48,7 @@ Header text.
 ---
 
 
-## 2026-10-23 — coding-anywhere/other-skill — edit
+## 2026-10-23 — acsi-coding-anywhere/other-skill — edit
 
 - Motivation: an earlier entry.
 """
@@ -84,9 +84,9 @@ def git(cwd, *args):
 
 
 KEPT = "other-skill"
-LOCKED = ("anything-anywhere", PLUGIN)
+LOCKED = ("acsi-anything-anywhere", PLUGIN)
 
-# Stand-ins for agentskills' own generators, which retire_skill.py runs in
+# Stand-ins for acsi-agentskills' own generators, which retire_skill.py runs in
 # the checkout. Each appends one JSON line to `<checkout>.calls` (outside the
 # checkout, so it never dirties it) and exits 3 while `<checkout>.fail-<name>`
 # exists. The README one rebuilds the table from the plugin directories; the
@@ -169,7 +169,7 @@ def make_registry(root: Path, skills=((PLUGIN, SKILL), (PLUGIN, KEPT)),
     subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
     if lock_bundles is not None:
         (root / "skills.lock").write_text(json.dumps(
-            {"registry": "example-adopter/agentskills", "ref": "", "bundles":
+            {"registry": "example-adopter/acsi-agentskills", "ref": "", "bundles":
              list(lock_bundles), "skills": {}, "generated_from": ""}, indent=2) + "\n")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "seed")
@@ -200,7 +200,7 @@ class FakeGitHub:
         if args[:2] == ["api", "--paginate"] and "/issues?" in args[2]:
             return "".join(json.dumps(i) + "\n" for i in self.issues)
         if args[:2] == ["pr", "create"]:
-            return "https://github.com/example-adopter/agentskills/pull/999\n"
+            return "https://github.com/example-adopter/acsi-agentskills/pull/999\n"
         return ""
 
     def push(self, checkout, branch):
@@ -224,7 +224,7 @@ class Base(unittest.TestCase):
     def run_main(self, doc, *extra, env=SCHEDULE, fake=None, registries=None):
         fake = fake or FakeGitHub()
         argv = ["--gates", str(self.write_gates(doc))]
-        for flag in registries or [f"agentskills={self.registry}"]:
+        for flag in registries or [f"acsi-agentskills={self.registry}"]:
             argv += ["--registry", flag]
         out, err = io.StringIO(), io.StringIO()
         with redirect_stderr(err):
@@ -294,9 +294,9 @@ class ProposalTests(Base):
 
     def test_a_skill_not_found_once_is_still_proposed_and_says_so(self):
         registry = make_registry(self.tmp / "two", skills=((PLUGIN, SKILL),
-                                                           ("coding-local", SKILL)))
+                                                           ("acsi-coding-local", SKILL)))
         code, _, err, fake = self.run_main(
-            gates_doc("proposal"), registries=[f"agentskills={registry}"])
+            gates_doc("proposal"), registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 0, err)
         self.assertIn("not located", fake.calls[-1][1])
         self.assertIn("found 2 time(s)", fake.calls[-1][1])
@@ -347,17 +347,17 @@ class AutoTests(Base):
                     f"plugins/{PLUGIN}/.claude-plugin/plugin.json"):
             self.assertEqual(json.loads((self.registry / rel).read_text())["version"], "2.0.0")
         self.assertEqual(fake.pushes, [(self.registry.resolve(), branch)])
-        url = "https://github.com/example-adopter/agentskills/pull/999"
+        url = "https://github.com/example-adopter/acsi-agentskills/pull/999"
         head = git(self.registry, "rev-parse", "HEAD").strip()
         writes = [args for args, _ in fake.calls if args[:2] != ["api", "--paginate"]]
         self.assertEqual(writes[0][:6], ["pr", "create", "-R",
-                                         "example-adopter/agentskills", "--base", "main"])
+                                         "example-adopter/acsi-agentskills", "--base", "main"])
         self.assertIn(branch, writes[0])
         self.assertNotIn("--draft", writes[0])
         self.assertEqual(writes[1], ["api", "-X", "POST",
-                                     "repos/example-adopter/agentskills/issues/999/labels",
+                                     "repos/example-adopter/acsi-agentskills/issues/999/labels",
                                      "-f", "labels[]=agent-authored"])
-        self.assertEqual(writes[2], ["pr", "merge", url, "-R", "example-adopter/agentskills",
+        self.assertEqual(writes[2], ["pr", "merge", url, "-R", "example-adopter/acsi-agentskills",
                                      "--auto", "--merge", "--match-head-commit", head])
         self.assertEqual(writes[3][:3], ["pr", "view", url])
         self.assertEqual(len(writes), 4)
@@ -377,7 +377,7 @@ class AutoTests(Base):
                      "draft-skill/new-skill"):
             with self.subTest(head=head):
                 fake = FakeGitHub(prs=[{"number": 3, "head": head, "url":
-                                        "https://github.com/example-adopter/agentskills/pull/3"}])
+                                        "https://github.com/example-adopter/acsi-agentskills/pull/3"}])
                 code, out, err, fake = self.run_main(gates_doc("auto"), fake=fake)
                 self.assertEqual(code, 0, err)
                 self.assertIn("already open", out)
@@ -389,7 +389,7 @@ class AutoTests(Base):
 
     def test_a_closed_removal_pr_means_the_skill_is_decided(self):
         fake = FakeGitHub(closed=[{"number": 8, "head": f"retire-skill/{SKILL}", "url":
-                                   "https://github.com/example-adopter/agentskills/pull/8"}])
+                                   "https://github.com/example-adopter/acsi-agentskills/pull/8"}])
         code, out, err, fake = self.run_main(gates_doc("auto"), fake=fake)
         self.assertEqual(code, 0, err)
         self.assertIn("already decided", out)
@@ -398,7 +398,7 @@ class AutoTests(Base):
         self.assertEqual(fake.pushes, [])
         self.assertUntouched()
         search = [args[2] for args, _ in fake.calls if "state=closed" in args[2]]
-        self.assertEqual(search, ["repos/example-adopter/agentskills/pulls?state=closed"
+        self.assertEqual(search, ["repos/example-adopter/acsi-agentskills/pulls?state=closed"
                                   f"&per_page=100&head=example-adopter:retire-skill/{SKILL}"])
 
     def test_a_closed_pr_from_another_head_does_not_decide(self):
@@ -422,7 +422,7 @@ class AutoTests(Base):
                 git(registry, "add", "-A")
                 git(registry, "commit", "-q", "--allow-empty", "-m", "runtime")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), *BOTH, registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), *BOTH, registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 0, err)
                 self.assertIn("lowered to proposal", err)
                 writes = fake.writes()
@@ -434,7 +434,7 @@ class AutoTests(Base):
                 self.assertEqual(git(registry, "branch", "--show-current").strip(), "main")
 
     def test_a_plugin_without_runtime_paths_is_not_lowered(self):
-        registries = compute_gates.flag_registries([f"agentskills={self.registry}"])
+        registries = compute_gates.flag_registries([f"acsi-agentskills={self.registry}"])
         action = retire_skill.plan(gates_doc("auto"), registries, FakeGitHub().gh,
                                    allowed=("auto", "proposal"))
         self.assertEqual(action["action"], "removal")
@@ -456,7 +456,7 @@ class AutoTests(Base):
         self.assertEqual(code, 0, err)
         self.assertIn("lowered to proposal", err)
         self.assertEqual([w[:2] for w in fake.writes()], [["issue", "create"]])
-        self.assertIn("no write credential for agentskills", fake.calls[-1][1])
+        self.assertIn("no write credential for acsi-agentskills", fake.calls[-1][1])
         self.assertEqual(fake.pushes, [])
         self.assertUntouched()
 
@@ -509,7 +509,7 @@ class AutoTests(Base):
     def test_registry_writes_go_through_registry_gh(self):
         reads, writes = FakeGitHub(), FakeGitHub()
         argv = ["--gates", str(self.write_gates(gates_doc("auto"))),
-                "--registry", f"agentskills={self.registry}", "--allow-mode", "auto"]
+                "--registry", f"acsi-agentskills={self.registry}", "--allow-mode", "auto"]
         code = retire_skill.main(argv, env=AUTO_ENV, gh=reads.gh, push=reads.push,
                                  registry_gh=writes.gh, out=io.StringIO())
         self.assertEqual(code, 0)
@@ -540,9 +540,9 @@ class AutoTests(Base):
 
     def test_basename_must_be_found_exactly_once(self):
         cases = {
-            "two plugins": [f"agentskills={make_registry(self.tmp / 'a', skills=((PLUGIN, SKILL), ('coding-local', SKILL)))}"],
-            "absent": [f"agentskills={make_registry(self.tmp / 'b', skills=((PLUGIN, 'another-skill'),))}"],
-            "another registry": [f"agentskills={self.registry}",
+            "two plugins": [f"acsi-agentskills={make_registry(self.tmp / 'a', skills=((PLUGIN, SKILL), ('acsi-coding-local', SKILL)))}"],
+            "absent": [f"acsi-agentskills={make_registry(self.tmp / 'b', skills=((PLUGIN, 'another-skill'),))}"],
+            "another registry": [f"acsi-agentskills={self.registry}",
                                  f"example-site-platform={self.make_flat(self.tmp / 'c')}"],
         }
         for name, flags in cases.items():
@@ -556,13 +556,13 @@ class AutoTests(Base):
 
     def test_a_directory_without_skill_md_still_counts_as_a_copy(self):
         registry = make_registry(self.tmp / "d")
-        (registry / "plugins" / "coding-local" / "skills" / SKILL).mkdir(parents=True)
+        (registry / "plugins" / "acsi-coding-local" / "skills" / SKILL).mkdir(parents=True)
         code, _, err, _ = self.run_main(gates_doc("auto"),
-                                        registries=[f"agentskills={registry}"])
+                                        registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("not exactly once", err)
 
-    def test_no_agentskills_checkout_is_refused(self):
+    def test_no_acsi_agentskills_checkout_is_refused(self):
         code, _, err, fake = self.run_main(
             gates_doc("auto"), registries=[f"example-site-platform={self.make_flat(self.tmp / 'e')}"])
         self.assertEqual(code, 2)
@@ -900,7 +900,7 @@ class InputTypeTests(Base):
                 git(registry, "commit", "-qam", "list")
                 code, _, err, fake = self.run_main(
                     gates_doc("auto"), "--allow-mode", "auto", env=AUTO_ENV,
-                    registries=[f"agentskills={registry}"])
+                    registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2, err)
                 self.assertEqual(fake.pushes, [])
 
@@ -938,7 +938,7 @@ class AllowModeTests(Base):
                 self.assertUntouched()
 
     def test_execute_itself_refuses_a_removal_off_actions(self):
-        registries = compute_gates.flag_registries([f"agentskills={self.registry}"])
+        registries = compute_gates.flag_registries([f"acsi-agentskills={self.registry}"])
         fake = FakeGitHub()
         action = retire_skill.plan(gates_doc("auto"), registries, fake.gh, allowed=("auto",))
         for env in (SCHEDULE, {**AUTO_ENV, "GITHUB_REF": "refs/heads/feature"}):
@@ -1035,7 +1035,7 @@ class MutationTests(Base):
         code, _, err, fake = self.run_main(gates_doc("auto"), "--allow-mode", "auto",
                                            env=AUTO_ENV)
         search = next(args for args, _ in fake.calls if args[0] == "api")
-        self.assertEqual(search[2], "repos/example-adopter/agentskills/pulls"
+        self.assertEqual(search[2], "repos/example-adopter/acsi-agentskills/pulls"
                                     "?state=open&per_page=100")
 
     def test_the_run_url_needs_this_repository_and_a_numeric_id(self):
@@ -1065,7 +1065,7 @@ class MutationTests(Base):
         git(registry, "commit", "-qam", "compact")
         code, _, err, fake = self.run_main(gates_doc("auto"), "--allow-mode", "auto",
                                            env=AUTO_ENV,
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("not written once", err)
         self.assertEqual(fake.pushes, [])
@@ -1076,13 +1076,13 @@ class MutationTests(Base):
         git(registry, "commit", "-qm", "drop")
         code, _, err, fake = self.run_main(gates_doc("auto"), "--allow-mode", "auto",
                                            env=AUTO_ENV,
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn(f"cannot read plugins/{PLUGIN}/.claude-plugin/plugin.json", err)
 
     def test_a_manifest_changed_under_the_plan_is_refused(self):
         gates = gates_doc("auto")
-        registries = compute_gates.flag_registries([f"agentskills={self.registry}"])
+        registries = compute_gates.flag_registries([f"acsi-agentskills={self.registry}"])
         action = retire_skill.plan(gates, registries, FakeGitHub().gh, allowed=("auto",))
         path = self.registry / "plugins" / PLUGIN / "plugin.json"
         path.write_text(json.dumps({"name": PLUGIN, "version": "9.9.9"}, indent=2) + "\n")
@@ -1158,7 +1158,7 @@ class SkillImpactTests(unittest.TestCase):
             f"20261025T120000Z, fixtures evals/{SKILL}/basic, evals/{SKILL}/edge, policy "
             "evals/gate-policy.yml; per-cell bounds in the pull request.\n"
             "- Outcome: pending merge; auto-merges once required checks pass, with no "
-            "human review ([ADR 0021](https://github.com/example-adopter/agentskills/"
+            "human review ([ADR 0021](https://github.com/example-adopter/acsi-agentskills/"
             "blob/main/docs/decisions/0021-automated-skill-changes-merge-without-review.md)).\n"))
 
     def test_entry_dates_default_to_as_of_and_flat_fixtures_name_the_skill(self):
@@ -1174,7 +1174,7 @@ class SkillImpactTests(unittest.TestCase):
         text = retire_skill.insert_entry(IMPACT, "## NEW — remove\n\n- x\n")
         head, rest = text.split("\n---\n", 1)
         self.assertEqual(rest, "\n## NEW — remove\n\n- x\n\n## 2026-10-23 — "
-                               "coding-anywhere/other-skill — edit\n\n"
+                               "acsi-coding-anywhere/other-skill — edit\n\n"
                                "- Motivation: an earlier entry.\n")
         self.assertTrue(head.endswith("Header text.\n"))
 
@@ -1189,7 +1189,7 @@ class SkillImpactTests(unittest.TestCase):
             path = Path(tmp) / "gates.json"
             path.write_text(json.dumps(gates_doc("auto")))
             code = retire_skill.main(
-                ["--gates", str(path), "--registry", f"agentskills={registry}",
+                ["--gates", str(path), "--registry", f"acsi-agentskills={registry}",
                  "--allow-mode", "auto"],
                 env={**AUTO_ENV, "GITHUB_RUN_ID": "77",
                      "GITHUB_REPOSITORY": "example-adopter/skills-evals"},
@@ -1245,14 +1245,14 @@ class GitHubCallTests(unittest.TestCase):
             err = io.StringIO()
             with redirect_stderr(err):
                 code = retire_skill.main(
-                    ["--gates", str(path), "--registry", f"agentskills={registry}",
+                    ["--gates", str(path), "--registry", f"acsi-agentskills={registry}",
                      "--allow-mode", "auto"], env=AUTO_ENV, gh=reads.gh, out=io.StringIO())
             self.assertEqual(code, 2)
             self.assertIn("no REGISTRY_TOKEN to push with", err.getvalue())
 
 
 class RegistryCheckTests(AutoTests):
-    """A removal pull request has to pass agentskills' required checks
+    """A removal pull request has to pass acsi-agentskills' required checks
     with no human edit, so the branch carries every file those checks read:
     the README skill table, the ADR 0013 layout pin in
     `scripts/plugin_layout.json`, and `skills.lock` when the plugin is locked.
@@ -1264,7 +1264,7 @@ class RegistryCheckTests(AutoTests):
         path = self.write_gates(doc)
         fake = FakeGitHub()
         registries = compute_gates.flag_registries(
-            [f"agentskills={registry or self.registry}"])
+            [f"acsi-agentskills={registry or self.registry}"])
         return retire_skill.plan(json.loads(path.read_text()), registries, fake.gh,
                                  None, ("auto", "proposal"))
 
@@ -1307,9 +1307,9 @@ class RegistryCheckTests(AutoTests):
         self.assertEqual(lock_calls, [["--repin"], ["--check-current"]])
 
     def test_an_unlocked_plugin_gets_no_repin_commit(self):
-        registry = make_registry(self.tmp / "unlocked", lock_bundles=("coding-local",))
+        registry = make_registry(self.tmp / "unlocked", lock_bundles=("acsi-coding-local",))
         code, _, err, _ = self.run_main(gates_doc("auto"),
-                                        registries=[f"agentskills={registry}"])
+                                        registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 0, err)
         self.assertEqual(len(git(registry, "log", "--format=%s", "main..HEAD").split("\n")), 2)
         self.assertEqual([c["script"] for c in calls(registry)], ["generate_readme_table"])
@@ -1317,7 +1317,7 @@ class RegistryCheckTests(AutoTests):
     def test_a_registry_with_no_lock_file_gets_no_repin(self):
         registry = make_registry(self.tmp / "nolock", lock_bundles=None)
         code, _, err, _ = self.run_main(gates_doc("auto"),
-                                        registries=[f"agentskills={registry}"])
+                                        registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 0, err)
         self.assertEqual([c["script"] for c in calls(registry)], ["generate_readme_table"])
 
@@ -1326,7 +1326,7 @@ class RegistryCheckTests(AutoTests):
         subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{self.registry}",
                         str(shallow)], check=True, capture_output=True)
         code, _, err, fake = self.run_main(gates_doc("auto"),
-                                           registries=[f"agentskills={shallow}"])
+                                           registries=[f"acsi-agentskills={shallow}"])
         self.assertEqual(code, 2)
         self.assertIn("shallow", err)
         self.assertEqual(fake.pushes, [])
@@ -1335,7 +1335,7 @@ class RegistryCheckTests(AutoTests):
     def test_a_plugins_last_skill_is_refused(self):
         registry = make_registry(self.tmp / "only", skills=((PLUGIN, SKILL),))
         code, _, err, fake = self.run_main(gates_doc("auto"),
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("last skill", err)
         self.assertEqual(fake.pushes, [])
@@ -1351,7 +1351,7 @@ class RegistryCheckTests(AutoTests):
                     json.dumps(broken, indent=2) + "\n")
                 git(registry, "commit", "-qam", "break the layout")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn("plugin_layout.json", err)
                 self.assertEqual(fake.pushes, [])
@@ -1361,7 +1361,7 @@ class RegistryCheckTests(AutoTests):
         (registry / "scripts" / "plugin_layout.json").unlink()
         git(registry, "commit", "-qam", "drop the layout")
         code, _, err, fake = self.run_main(gates_doc("auto"),
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("plugin_layout.json", err)
         self.assertEqual(fake.pushes, [])
@@ -1374,7 +1374,7 @@ class RegistryCheckTests(AutoTests):
                 (registry / rel).unlink()
                 git(registry, "commit", "-qam", f"drop {rel}")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn(rel, err)
                 self.assertEqual(fake.pushes, [])
@@ -1386,7 +1386,7 @@ class RegistryCheckTests(AutoTests):
                 registry = make_registry(self.tmp / f"fail-{name}")
                 Path(f"{registry}.fail-{name}").write_text("x")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn(f"scripts/{name}.py", err)
                 self.assertIn("exited 3", err)
@@ -1401,7 +1401,7 @@ class RegistryCheckTests(AutoTests):
             FAKE_COMMON + 'sys.exit(1 if sys.argv[1:] == ["--check-current"] else 0)\n')
         git(registry, "commit", "-qam", "a re-pin that does not take")
         code, _, err, fake = self.run_main(gates_doc("auto"),
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("--check-current exited 1", err)
         self.assertEqual(fake.pushes, [])
@@ -1446,7 +1446,7 @@ class RegistryCheckTests(AutoTests):
 
     def test_an_unlocked_plugins_plan_names_no_repin(self):
         registry = make_registry(self.tmp / "plan-unlocked",
-                                 lock_bundles=("coding-local",))
+                                 lock_bundles=("acsi-coding-local",))
         plan = self.plan_for(registry)
         self.assertFalse(plan["repin"])
         self.assertNotIn("skills.lock", plan["body"])
@@ -1457,7 +1457,7 @@ class RegistryCheckTests(AutoTests):
     def test_a_lock_whose_skills_name_the_plugin_counts_as_locked(self):
         # bundles and skills are read together: either one naming the plugin
         # makes the lock stale, and a malformed lock is refused.
-        registry = make_registry(self.tmp / "keyed", lock_bundles=("coding-local",))
+        registry = make_registry(self.tmp / "keyed", lock_bundles=("acsi-coding-local",))
         lock = json.loads((registry / "skills.lock").read_text())
         lock["skills"] = {f"{PLUGIN}/{SKILL}": "sha256:" + "0" * 64}
         (registry / "skills.lock").write_text(json.dumps(lock, indent=2) + "\n")
@@ -1468,7 +1468,7 @@ class RegistryCheckTests(AutoTests):
             retire_skill.lock_relevant(registry, PLUGIN)
 
     def test_a_skill_the_runtime_gate_would_hold_is_refused(self):
-        # agentskills' plugin-runtime-review gate (its ADR 0016) holds a
+        # acsi-agentskills' plugin-runtime-review gate (its ADR 0016) holds a
         # pull request that changes how a plugin runs code until the owner
         # approves the environment. Auto-merge cannot approve it, so such a
         # branch would sit open forever holding the one removal slot.
@@ -1485,7 +1485,7 @@ class RegistryCheckTests(AutoTests):
                 git(registry, "add", "-A")
                 git(registry, "commit", "-qm", name)
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn("plugin-runtime-review", err)
                 self.assertEqual(fake.pushes, [])
@@ -1494,7 +1494,7 @@ class RegistryCheckTests(AutoTests):
     # A hook in the skill's own plugin lowers the removal to an issue
     # (AutoTests.test_a_plugin_that_runs_code_falls_back_to_the_issue); one
     # in ANOTHER plugin that names a path inside the skill is still refused.
-    HOOKED = "coding-local"
+    HOOKED = "acsi-coding-local"
 
     def test_a_hook_naming_a_path_inside_the_skill_is_refused(self):
         for rel in (f"plugins/{self.HOOKED}/hooks/hooks.json",
@@ -1517,7 +1517,7 @@ class RegistryCheckTests(AutoTests):
                 git(registry, "add", "-A")
                 git(registry, "commit", "-qm", "a hook into the skill")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn("plugin-runtime-review", err)
                 self.assertIn(rel, err)
@@ -1536,20 +1536,20 @@ class RegistryCheckTests(AutoTests):
         git(registry, "add", "-A")
         git(registry, "commit", "-qm", "a hook into the kept skill")
         code, _, err, _ = self.run_main(gates_doc("auto"),
-                                        registries=[f"agentskills={registry}"])
+                                        registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 0, err)
 
     def test_a_waiver_under_the_skill_is_refused(self):
         registry = make_registry(self.tmp / "waived")
         (registry / "scripts" / "skills_waivers.yml").write_text(
             "# A comment naming %s, which is not a waiver.\nwaivers:\n"
-            "  - klass: british-spelling\n    registry: agentskills\n"
+            "  - klass: british-spelling\n    registry: acsi-agentskills\n"
             "    path: plugins/%s/skills/%s/SKILL.md\n    issue: 1\n"
             "    reason: invented\n" % (KEPT, PLUGIN, SKILL))
         git(registry, "add", "-A")
         git(registry, "commit", "-qm", "a waiver under the skill")
         code, _, err, fake = self.run_main(gates_doc("auto"),
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("skills_waivers.yml", err)
         self.assertEqual(fake.pushes, [])
@@ -1562,7 +1562,7 @@ class RegistryCheckTests(AutoTests):
                 ("empty", "waivers: []\n"),
                 ("comment only", "# %s was waived once.\nwaivers: []\n" % SKILL),
                 ("another skill", "waivers:\n  - klass: british-spelling\n"
-                                  "    registry: agentskills\n"
+                                  "    registry: acsi-agentskills\n"
                                   "    path: plugins/%s/skills/%s/SKILL.md\n"
                                   "    issue: 1\n    reason: invented\n" % (PLUGIN, KEPT))):
             with self.subTest(name):
@@ -1571,7 +1571,7 @@ class RegistryCheckTests(AutoTests):
                 git(registry, "add", "-A")
                 git(registry, "commit", "-qm", name)
                 code, _, err, _ = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 0, err)
 
     def test_a_malformed_waivers_file_is_refused(self):
@@ -1582,7 +1582,7 @@ class RegistryCheckTests(AutoTests):
                 git(registry, "add", "-A")
                 git(registry, "commit", "-qm", "a malformed waivers file")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn("skills_waivers.yml", err)
                 self.assertEqual(fake.pushes, [])
@@ -1603,7 +1603,7 @@ class RegistryCheckTests(AutoTests):
         return registry
 
     def test_a_citation_of_a_test_only_the_skill_defines_is_refused(self):
-        # agentskills' test_every_test_this_repo_cites_by_name_exists
+        # acsi-agentskills' test_every_test_this_repo_cites_by_name_exists
         # fails on a non-test source citing a test nothing defines. Measured:
         # removing skills-doctor leaves .claude/hooks/skills-bootstrap.sh
         # citing a test that lives only in that skill.
@@ -1612,7 +1612,7 @@ class RegistryCheckTests(AutoTests):
                 registry = self.cite(f"cited-{rel.count('hooks')}", rel,
                                      "# test_only_the_skill_defines_this pins this.\n")
                 code, _, err, fake = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 2)
                 self.assertIn(rel, err)
                 self.assertIn("test_only_the_skill_defines_this", err)
@@ -1636,7 +1636,7 @@ class RegistryCheckTests(AutoTests):
                 registry = self.cite(name.replace(" ", "-"), rel, text,
                                      define_elsewhere=elsewhere)
                 code, _, err, _ = self.run_main(
-                    gates_doc("auto"), registries=[f"agentskills={registry}"])
+                    gates_doc("auto"), registries=[f"acsi-agentskills={registry}"])
                 self.assertEqual(code, 0, err)
 
     def test_a_skill_python_file_that_does_not_parse_is_refused(self):
@@ -1646,7 +1646,7 @@ class RegistryCheckTests(AutoTests):
         git(registry, "add", "-A")
         git(registry, "commit", "-qm", "unparseable")
         code, _, err, fake = self.run_main(gates_doc("auto"),
-                                           registries=[f"agentskills={registry}"])
+                                           registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 2)
         self.assertIn("cannot parse", err)
         self.assertEqual(fake.pushes, [])
@@ -1657,7 +1657,7 @@ class RegistryCheckTests(AutoTests):
         registry = make_registry(self.tmp / "proposal-only", skills=((PLUGIN, SKILL),))
         code, out, err, fake = self.run_main(
             gates_doc("proposal"), "--allow-mode", "proposal",
-            registries=[f"agentskills={registry}"])
+            registries=[f"acsi-agentskills={registry}"])
         self.assertEqual(code, 0, err)
         self.assertEqual(fake.writes()[0][:2], ["issue", "create"])
         self.assertEqual(calls(registry), [])
@@ -1709,7 +1709,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(mint["with"], {
             "client-id": "${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}",
             "private-key": "${{ secrets.EVAL_IMPROVE_APP_PEM }}",
-            "owner": "example-adopter", "repositories": "agentskills",
+            "owner": "example-adopter", "repositories": "acsi-agentskills",
             "permission-contents": "write", "permission-pull-requests": "write"})
         credential = steps[steps.index(mint) - 1]
         self.assertEqual(credential["id"], "credential")
@@ -1721,7 +1721,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(named, [mint, act])
         self.assertNotIn("env", self.job)
         registry = next(s for s in steps if s.get("with", {}).get("repository")
-                        == "example-adopter/agentskills")
+                        == "example-adopter/acsi-agentskills")
         self.assertEqual(registry["with"]["fetch-depth"], 0)
         compute = next(s for s in self.job["steps"]
                        if "scripts/compute_gates.py" in s.get("run", ""))
@@ -1738,7 +1738,7 @@ class AdrTests(unittest.TestCase):
         text = (ROOT / "docs" / "decisions" / name).read_text()
         self.assertIn("2026-10-25", text)
         self.assertIn("repo-settings", text)
-        self.assertIn("agentskills", text)
+        self.assertIn("acsi-agentskills", text)
         self.assertEqual(len(list((ROOT / "docs" / "decisions").glob("0014-*.md"))), 1)
         self.assertIn(f"]({name})", (ROOT / "docs" / "decisions" / "README.md").read_text())
         self.assertTrue(retire_skill.ADR.endswith(name))

@@ -677,7 +677,7 @@ class TriggerLaneTests(unittest.TestCase):
             (evals / "example-prose").mkdir(parents=True)
             (evals / "example-prose" / "trigger-eval-set.json").write_text("[]")
             got = plan_week.trigger_contexts(
-                evals, {"agentskills": {"path": str(base / "registry")}})
+                evals, {"acsi-agentskills": {"path": str(base / "registry")}})
             self.assertEqual(got, {
                 "example-checks": {"trigger_set": False, "hook_candidate": True},
                 "example-prose": {"trigger_set": True, "hook_candidate": False}})

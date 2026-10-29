@@ -42,7 +42,7 @@ import ingest_routine_results as ingest  # noqa: E402
 import run_eval  # noqa: E402
 from arm_test_env import install_arm_test_environment  # noqa: E402
 
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 #: `IngestTests.edited`: remove the key instead of setting it.
 DROP = object()
 FAKE_VERSION = "fake-claude 0.0.0 (hermetic test stub)"
@@ -1037,10 +1037,10 @@ class RunLevelTests(Checks):
         self.assertIsNone(usage["concurrent_runs"])
         self.assertEqual(usage["reasons"]["concurrent_runs"],
                          "not knowable inside one run; computed at ingest")
-        run_eval._TELEMETRY.begin(flags(asserted_quiet="my"))
+        run_eval._TELEMETRY.begin(flags(asserted_quiet="acsi"))
         usage = self.read(self.write("without_skill"))["usage"]
         self.assertEqual(usage["other_account_activity"], "asserted_quiet")
-        self.assertEqual(usage["asserted_quiet_by"], "my")
+        self.assertEqual(usage["asserted_quiet_by"], "acsi")
 
     def test_the_outer_session_is_named_from_the_environment_and_not_measured(self):
         run_eval._TELEMETRY.begin(flags())
@@ -1187,7 +1187,7 @@ class EndToEndTests(Checks):
         return subprocess.run(
             [sys.executable, str(HARNESS_DIR / "run_eval.py"),
              str(self.eval_dir), "--arm", arm,
-             "--registry", f"agentskills={self.registry}",
+             "--registry", f"acsi-agentskills={self.registry}",
              "--results-dir", str(self.results), "--timeout", "30",
              "--timestamp", self.TS, "--budget", str(self.budget), *args],
             capture_output=True, text=True, env=env, cwd=str(ROOT), timeout=300)
@@ -1829,7 +1829,7 @@ class IngestTests(Checks):
                 (("usage", "schema_version"), 2),
                 (("usage", "started_at"), "yesterday"),
                 (("usage", "other_account_activity"), "quiet"),
-                (("usage", "asserted_quiet_by"), "my"),
+                (("usage", "asserted_quiet_by"), "acsi"),
                 (("usage", "outer_session", "note"), "x" * 5000),
                 (("usage", "extra"), 1),
                 (("usage", "measured", "meter", "snapshots"), snapshots * 7),

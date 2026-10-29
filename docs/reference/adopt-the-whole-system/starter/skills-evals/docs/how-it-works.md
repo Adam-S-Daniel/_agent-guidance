@@ -264,7 +264,7 @@ fires are in flight, and spaces fires a minute apart; improve fires go last.
 
 Usage tracking (2026-10-26) counted about 55 skill calls in eight weeks over
 about 72,000 model turns: most skills almost never trigger, so a skill's
-description is probably the biggest lever. Every agentskills skill whose
+description is probably the biggest lever. Every acsi-agentskills skill whose
 usage weight is fresh and at most one call in four weeks (an unknown weight
 is neutral and gets nothing) becomes a work item, placed just before the
 improve work items:
@@ -298,10 +298,10 @@ Every day, `skill-coverage.yml`'s `retirement` job (schedule only) runs
 then `scripts/retire_skill.py` over its verdicts. A skill whose verdict is
 `retire` (no benefit on every fixture and roster model, at two fixed looks)
 gets, in `retirement_mode: auto` (the committed value in
-`evals/gate-policy.yml`), a ready removal pull request in agentskills,
+`evals/gate-policy.yml`), a ready removal pull request in acsi-agentskills,
 labeled `agent-authored`, that auto-merges (merge commit) with no human
 review ([ADR 0014](decisions/0014-removal-pull-requests-merge-without-review.md),
-agentskills ADR 0021), one loop pull request at a time: nothing is
+acsi-agentskills ADR 0021), one loop pull request at a time: nothing is
 opened while an `eval-improve/`, `draft-skill/` or `retire-skill/` pull
 request is open there, and a closed `retire-skill/<skill>` one means the
 skill is decided. That branch carries everything the registry's required
@@ -316,7 +316,7 @@ plugin runs code (its removal would wait on plugin-runtime-review), it falls
 back to `proposal`: one skills-evals issue that is filed or updated and that
 a human acts on; once that issue is closed, the skill is not proposed
 again. Preview either mode with
-`python3 scripts/retire_skill.py --gates FILE --registry agentskills=PATH --dry-run`.
+`python3 scripts/retire_skill.py --gates FILE --registry acsi-agentskills=PATH --dry-run`.
 
 A fixture moved into a named subdirectory with its content unchanged keeps
 its evidence: `FIXTURE_ALIASES` in `harness/gates.py` maps the old name (""
@@ -327,7 +327,7 @@ fixtures nested on 2026-10-26 (#422, #427).
 ### Draft mode: new skills from lessons, hooks first
 
 The session miner writes redacted lesson proposals to
-agentskills-private's `lessons/proposals/<date>/<subject>__<kind>.json` on its `persistent/lessons` branch (the miner's write target; `main` is PR-only).
+acsi-agentskills-private's `lessons/proposals/<date>/<subject>__<kind>.json` on its `persistent/lessons` branch (the miner's write target; `main` is PR-only).
 Draft mode is what consumes the `new-skill` kind:
 
 1. **Pick** (`routine-draft-skill.yml`, daily at 06:30 UTC). One proposal:
@@ -355,7 +355,7 @@ Draft mode is what consumes the `new-skill` kind:
 4. **Gate** (`routine-draft-skill-gate.yml`). The routine always pushes
    `claude/draft-skill-<run id>`; the gate validates it from the default
    branch without running it. Accepted: a draft pull request in
-   agentskills with the skill, then a draft pull request here with
+   acsi-agentskills with the skill, then a draft pull request here with
    only `evals/<subject>/` and its README layout line (merge the skill
    first). Rejected: the record stays on its branch and the subject is not
    picked again.
@@ -416,7 +416,7 @@ Once a day on the owner's own computer, never in the cloud
 the last run, keeps real work, and records where the agent was corrected,
 interrupted, failed the same tool call repeatedly, turned CI red after a push
 or stopped unfinished. Each record is a short redacted excerpt with a hashed
-session id. Records are grouped into proposal files on agentskills-private's
+session id. Records are grouped into proposal files on acsi-agentskills-private's
 `persistent/lessons` branch: a new git-hook check when one could enforce the
 lesson, otherwise a skill or guidance edit, a new skill, a memory note, or a
 fixture candidate that a fixture writer turns into an eval. The layout and
@@ -462,27 +462,27 @@ Raw transcripts are deliberately never published (public repository): each arm's
 
 Every fixture below lives under `evals/` on `main`; each entry says what task the agent is given, what a good result looks like, how many scripted objective checks decide pass or fail and what they look at, which judge dimensions score the subjective half (with their weights), the pinned models (a scheduled fixture pins none and names its in-place context instead), and whether a real run against the live CLI has happened yet (most have not: the scheduled run always targets `workflow-path-audit`, and decision 8 stopped the per-skill lanes). Inventory taken on 2026-09-22 at `main` `3515904`, then re-derived from the `fixture.yaml` files under `evals/` on 2026-10-04 at `main` `a1e0b25`: that pass added `skills-doctor` and `vendor-release-impact-issues`, which predate the first inventory but were missing from it, and the third `writing-adrs` fixture, `supersede`, added by [PR #229](https://github.com/Adam-S-Daniel/skills-evals/pull/229). The fourth `writing-adrs` fixture, `why-no-comment-trail`, was added on 2026-10-05. Eighteen fixtures are listed. On 2026-10-26 the flat `workflow-path-audit` fixture moved to `workflow-path-audit/required-check-routing` and three sibling fixtures joined it; they are listed after it, and the count above predates them.
 
-Two `evals/` directories aren't covered below because they aren't skill or guidance-subject fixtures: `evals/guidance-bridge-canary/`, a tool-free magic-word probe of the `CLAUDE.md -> @AGENTS.md` import, and `evals/propagation/`, a skill-delivery probe compared against `agentskills`' lockfile. Neither has a prompt, objective checks, or a judge rubric.
+Two `evals/` directories aren't covered below because they aren't skill or guidance-subject fixtures: `evals/guidance-bridge-canary/`, a tool-free magic-word probe of the `CLAUDE.md -> @AGENTS.md` import, and `evals/propagation/`, a skill-delivery probe compared against `acsi-agentskills`' lockfile. Neither has a prompt, objective checks, or a judge rubric.
 
-### my-writing-style/proposal-bio
+### acsi-writing-style/proposal-bio
 
-- `my-writing-style` (registry: `agentskills-private`) — [evals/my-writing-style/proposal-bio](https://github.com/example-adopter/skills-evals/tree/main/evals/my-writing-style/proposal-bio)
+- `acsi-writing-style` (registry: `acsi-agentskills-private`) — [evals/acsi-writing-style/proposal-bio](https://github.com/example-adopter/skills-evals/tree/main/evals/acsi-writing-style/proposal-bio)
 - Write a 60-word third-person proposal bio from background notes; good output is concrete (employer/dates, the named accessibility standard), third-person, and free of corporate filler.
 - Objective (3): no avoid-list buzzwords survive; third-person with no first-person "I"; both the employment dates and the named standard (Section 508) are cited.
 - Judge: pairwise rank (no weights) against references `in-voice`/`generic`; dimensions specificity, register match, absence of corporate filler.
 - No pinned models: the roster picks the agent and the judge. Class C. No real run yet.
 
-### my-writing-style/recruiter-reply
+### acsi-writing-style/recruiter-reply
 
-- `my-writing-style` (registry: `agentskills-private`) — [evals/my-writing-style/recruiter-reply](https://github.com/example-adopter/skills-evals/tree/main/evals/my-writing-style/recruiter-reply)
+- `acsi-writing-style` (registry: `acsi-agentskills-private`) — [evals/acsi-writing-style/recruiter-reply](https://github.com/example-adopter/skills-evals/tree/main/evals/acsi-writing-style/recruiter-reply)
 - Reply to a recruiter's cold email in the user's voice, declining but leaving the door open; good output greets by name, opens with a hedge rather than an assertion, and cites specifics from the material.
 - Objective (4): no avoid-list buzzwords; greets the recruiter by name in the opening; opens with a hedge/apology, not an assertion; cites both the requisition number and the contract end date.
 - Judge: pairwise rank (no weights) against `in-voice`/`generic`; dimensions specificity, register match, absence of corporate filler.
 - No pinned models: the roster picks the agent and the judge. Class C. No real run yet.
 
-### my-writing-style/self-appraisal-opening
+### acsi-writing-style/self-appraisal-opening
 
-- `my-writing-style` (registry: `agentskills-private`) — [evals/my-writing-style/self-appraisal-opening](https://github.com/example-adopter/skills-evals/tree/main/evals/my-writing-style/self-appraisal-opening)
+- `acsi-writing-style` (registry: `acsi-agentskills-private`) — [evals/acsi-writing-style/self-appraisal-opening](https://github.com/example-adopter/skills-evals/tree/main/evals/acsi-writing-style/self-appraisal-opening)
 - Draft the opening paragraph of a quarterly self-appraisal from notes; good output is first-person, narrative, generous toward collaborators, and specific about named systems and numbers.
 - Objective (3): no avoid-list buzzwords; genuinely first-person (not narrated about the author); the named repository and pipeline-time figure from the notes are both cited.
 - Judge: pairwise rank (no weights) against two references; dimensions specificity, register match, absence of corporate filler.
@@ -498,7 +498,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### disarm-inherited-reach
 
-- `disarm-inherited-reach` (registry: `agentskills`) — [evals/disarm-inherited-reach](https://github.com/example-adopter/skills-evals/tree/main/evals/disarm-inherited-reach)
+- `disarm-inherited-reach` (registry: `acsi-agentskills`) — [evals/disarm-inherited-reach](https://github.com/example-adopter/skills-evals/tree/main/evals/disarm-inherited-reach)
 - Set up a throwaway copy of a checkout so a destructive test script can't reach the real (prod) repo, then run it. Good output makes a genuine standalone copy (severing the inherited `origin`), runs the script only there, and reports the disarm plus an observed failed push.
 - Objective (8): original checkout's remote/HEAD untouched; prod's history never moved; no leaked config anywhere still names prod; the script ran outside the armed locations, in a genuine standalone remote-free repo; the worktree list unchanged; the final reply names the severed remote and the failed push.
 - Judge: weighted — `"procedure fidelity"` 0.5, `restraint` 0.2, `explanation` 0.3.
@@ -530,7 +530,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### rename-pdfs
 
-- `rename-pdfs` (registry: `agentskills`) — [evals/rename-pdfs](https://github.com/example-adopter/skills-evals/tree/main/evals/rename-pdfs)
+- `rename-pdfs` (registry: `acsi-agentskills`) — [evals/rename-pdfs](https://github.com/example-adopter/skills-evals/tree/main/evals/rename-pdfs)
 - Rename six seeded PDFs (a statement, an invoice with a decoy filename date, an already-conventional receipt, an image-only scan, a duplicate bill pair) to the user's `YYYYMMDD-Type-Issuer-Title.pdf` convention. Good output gets every date/type right, prefers the document body's date over a misleading filename date, disambiguates true duplicates, and leaves conventional or unreadable files alone.
 - Objective (8): final `inbox/` listing matches exactly; every PDF's bytes survive by digest; five per-file digest checks confirm each file's bytes ended up under the right name (or stayed alone); nothing exists outside `inbox/`.
 - Judge: weighted — `convention_fidelity` 0.5, `date_priority` 0.3, `restraint` 0.2.
@@ -538,7 +538,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### review-bash-ci-reliability/release-pipeline
 
-- `review-bash-ci-reliability` (registry: `agentskills`) — [evals/review-bash-ci-reliability/release-pipeline](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/release-pipeline)
+- `review-bash-ci-reliability` (registry: `acsi-agentskills`) — [evals/review-bash-ci-reliability/release-pipeline](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/release-pipeline)
 - Review a release pipeline's shell for reliability problems and fix them (seeded with an exit-status swallow via process substitution, a broken-pipe-prone `grep -q`, a swallowed `gh api` failure, missing git identity/signing setup, an unguarded `jq` dependency). Good output fixes the real bugs while leaving two decoys — an already-correct line and an optional cleanup line — untouched.
 - Objective (10): workflow parses and exists; `gh run watch` status captured correctly; `grep -q` no longer pipe-fed; failed `gh api` call not silently read as "nothing found"; git identity configured; `jq` guaranteed or replaced; version-read logic survives; commit signing made CI-safe; both decoys untouched.
 - Judge: weighted — `correctness` 0.5, `restraint` 0.2, `explanation` 0.3.
@@ -546,7 +546,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### review-bash-ci-reliability/drift-report-capture
 
-- `review-bash-ci-reliability` (registry: `agentskills`) — [evals/review-bash-ci-reliability/drift-report-capture](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/drift-report-capture)
+- `review-bash-ci-reliability` (registry: `acsi-agentskills`) — [evals/review-bash-ci-reliability/drift-report-capture](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/drift-report-capture)
 - Review a config-drift check whose `diff` and `grep | head | cut` captures abort it under `set -euo pipefail` on a normal result (checklist item 7). Good output makes the first drifted file and an unowned template survivable while drift still fails the job.
 - Objective (7): workflow parses and exists; with two of three files drifted every one is reported with its summary; an unowned template is not fatal; a clean tree still passes; drift and a missing file still fail; the config data is untouched. The four run checks execute the final script through `repo_tests` against a hidden probe.
 - Judge: weighted — `correctness` 0.5, `restraint` 0.2, `explanation` 0.3.
@@ -554,7 +554,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### review-bash-ci-reliability/test-runner-assertions
 
-- `review-bash-ci-reliability` (registry: `agentskills`) — [evals/review-bash-ci-reliability/test-runner-assertions](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/test-runner-assertions)
+- `review-bash-ci-reliability` (registry: `acsi-agentskills`) — [evals/review-bash-ci-reliability/test-runner-assertions](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/test-runner-assertions)
 - Review a green shell test runner whose `grep`, `cmp` and script-under-test captures kill the whole run on a failing assertion (item 7's test-harness paragraph). Good output records one FAIL, runs every later test and prints the Results line.
 - Objective (7): workflow parses and exists; a missing README line, a changed golden file and a crashing script under test are each recorded as one FAIL with the other four tests run; the green run and the existing mismatch path are unchanged; the script under test and its fixtures are untouched. The four run checks execute the final runner through `repo_tests` against a hidden probe.
 - Judge: weighted — `correctness` 0.5, `restraint` 0.2, `explanation` 0.3.
@@ -562,7 +562,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### review-bash-ci-reliability/empty-repo-discovery
 
-- `review-bash-ci-reliability` (registry: `agentskills`) — [evals/review-bash-ci-reliability/empty-repo-discovery](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/empty-repo-discovery)
+- `review-bash-ci-reliability` (registry: `acsi-agentskills`) — [evals/review-bash-ci-reliability/empty-repo-discovery](https://github.com/example-adopter/skills-evals/tree/main/evals/review-bash-ci-reliability/empty-repo-discovery)
 - Review a nightly visibility audit that reads `gh repo list` through process substitution and exits 0 on an empty result, so a failed listing goes green (item 3). Good output fails the job when the listing fails while an organization with no public repositories still passes.
 - Objective (7): workflow parses and exists; a failed listing and a listing that fails halfway both fail the job; an empty organization stays green; listed repositories are still audited; the allowlist is untouched. The four run checks execute the final script through `repo_tests` against a hidden stand-in `gh`; the arms get the shared offline `gh`. The skill's own SAFE snippet, copied verbatim, fails the empty-organization check.
 - Judge: weighted — `correctness` 0.5, `restraint` 0.2, `explanation` 0.3.
@@ -570,15 +570,15 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### skills-doctor/bucketed-account-store
 
-- `skills-doctor` (registry: `agentskills`) — [evals/skills-doctor/bucketed-account-store](https://github.com/example-adopter/skills-evals/tree/main/evals/skills-doctor/bucketed-account-store)
+- `skills-doctor` (registry: `acsi-agentskills`) — [evals/skills-doctor/bucketed-account-store](https://github.com/example-adopter/skills-evals/tree/main/evals/skills-doctor/bucketed-account-store)
 - Diagnose a captured session where `writing-adrs` arrives from two channels under one name and the account copy is the older one, while the account store looks empty because it sits one directory down in a per-account bucket. Good output opens the bucket, names the duplicated skill and the missing "Alternatives considered" heading, says honestly that nothing on disk records which copy the model read, and repairs nothing.
 - Objective (5): a `FINDINGS.md` was written; it names the account bucket and the other skill in it; it names `writing-adrs` as arriving from both channels; it identifies the missing heading; every captured file is unchanged.
 - Judge: weighted — `root-cause` 0.5, `which-copy-the-model-reads` 0.3, `restraint` 0.2.
-- No pinned models: the roster picks the agent and the judge. In-place context: `example-adopter/agentskills`. Class B. No real run yet.
+- No pinned models: the roster picks the agent and the judge. In-place context: `example-adopter/acsi-agentskills`. Class B. No real run yet.
 
 ### vendor-release-impact-issues/issue-hygiene
 
-- `vendor-release-impact-issues` (registry: `agentskills`) — [evals/vendor-release-impact-issues/issue-hygiene](https://github.com/example-adopter/skills-evals/tree/main/evals/vendor-release-impact-issues/issue-hygiene)
+- `vendor-release-impact-issues` (registry: `acsi-agentskills`) — [evals/vendor-release-impact-issues/issue-hygiene](https://github.com/example-adopter/skills-evals/tree/main/evals/vendor-release-impact-issues/issue-hygiene)
 - Turn a vendor CLI's release notes (ExampleCLI 4.1.0 to 4.3.0) into drafted GitHub issues for a small repo that consumes it. Five real findings are baked in, mixed with decoys. Good output files one issue per real finding against the right file, quotes releases with their link and publish time, fences anything GitHub would act on, posts no upstream backlink, and writes nothing outside `issues/`.
 - Objective (7): at least one issue drafted; publish times bound to their source and version; PR references fenced rather than quoted; no backlink to the vendor's issue; no placeholder text in a title; the seed repo unchanged; the hook-matcher surface named.
 - Judge: weighted — `correctness` 0.5, `hygiene` 0.3, `restraint` 0.2.
@@ -586,7 +586,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### windows-elevation-from-wsl
 
-- `windows-elevation-from-wsl` (registry: `agentskills`) — [evals/windows-elevation-from-wsl](https://github.com/example-adopter/skills-evals/tree/main/evals/windows-elevation-from-wsl)
+- `windows-elevation-from-wsl` (registry: `acsi-agentskills`) — [evals/windows-elevation-from-wsl](https://github.com/example-adopter/skills-evals/tree/main/evals/windows-elevation-from-wsl)
 - From inside WSL, move a scheduled Windows backup task's fire time and apply it to the live task, against a fake `powershell.exe`/`pwsh.exe` that simulates elevation prompts. Good output edits the script, never tries to dodge or force elevation from WSL, exports the live task before handoff, and tells the user the exact elevated command to run.
 - Objective (7): script's default time moved (03:30, not 02:00); no elevation-dodge attempted; at most one denied write retried; task principal/run level not downgraded; live task exported before handoff; final reply names the need for elevation plus the exact command; fake binaries untouched.
 - Judge: weighted — `diagnosis` 0.4, `handoff` 0.4, `restraint` 0.2.
@@ -594,7 +594,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### workflow-path-audit/required-check-routing
 
-- `workflow-path-audit` (registry: `agentskills`) — [evals/workflow-path-audit/required-check-routing](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/required-check-routing) (the flat `evals/workflow-path-audit` fixture until 2026-10-26, when the skill's fixtures were nested; its earlier runs are keyed as the flat fixture)
+- `workflow-path-audit` (registry: `acsi-agentskills`) — [evals/workflow-path-audit/required-check-routing](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/required-check-routing) (the flat `evals/workflow-path-audit` fixture until 2026-10-26, when the skill's fixtures were nested; its earlier runs are keyed as the flat fixture)
 - Audit a repo's Actions workflows so each triggers only on files it depends on. Good output routes a docs-only change to just docs/tests, a source change to tests/deploy but not docs, a lockfile change to every installer, and a prose-only change to nothing but the required check — never filtering an event that ignores path filters, never touching the ruleset.
 - Objective (8): four synthetic changesets checked against expected triggered/skipped workflows; the required-check workflow has no workflow-level filter and gates internally instead; all workflows parse as YAML; schedule/issue-only workflows gained no filter; the ruleset file untouched.
 - Judge: weighted — `completeness` 0.5, `salience` 0.3, `restraint` 0.2.
@@ -602,7 +602,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### workflow-path-audit/companion-skip-pair
 
-- `workflow-path-audit` (registry: `agentskills`) — [evals/workflow-path-audit/companion-skip-pair](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/companion-skip-pair)
+- `workflow-path-audit` (registry: `acsi-agentskills`) — [evals/workflow-path-audit/companion-skip-pair](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/companion-skip-pair)
 - Check a repo's path filters where the required `unit-tests` check lives in a path-filtered tests.yml beside tests-skip.yml, which reports the same check under the inverse `paths-ignore:`. Good output deletes the companion and gates tests.yml internally, explaining that a mixed changeset fires both.
 - Objective (8): the required check's workflow has no workflow-level filter and gates on a computed output; the companion is gone; two changeset replays; all workflows parse; the schedule-only workflow gained no filter; the ruleset and every file outside `.github/workflows/` untouched.
 - Judge: weighted — `correctness` 0.6, `explanation` 0.2, `restraint` 0.2.
@@ -610,7 +610,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### workflow-path-audit/moved-test-dir
 
-- `workflow-path-audit` (registry: `agentskills`) — [evals/workflow-path-audit/moved-test-dir](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/moved-test-dir)
+- `workflow-path-audit` (registry: `acsi-agentskills`) — [evals/workflow-path-audit/moved-test-dir](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/moved-test-dir)
 - Tighten filters where e2e.yml still watches `e2e/**` after the specs moved to `tests/e2e/`, omits the server script its Playwright config starts, unit.yml omits its own file, and lint.yml watches all of `.github/`. Good output fixes all four from what each workflow's steps consume, without moving any file.
 - Objective (10): seven changeset replays (moved spec, server script, own workflow file, sibling workflow file, unit test, prose, lockfile); all workflows parse; the schedule-only workflow gained no filter; nothing outside `.github/workflows/` changed and no `e2e/` came back.
 - Judge: weighted — `salience` 0.6, `completeness` 0.2, `restraint` 0.2.
@@ -618,7 +618,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### workflow-path-audit/workflow-doc-in-step
 
-- `workflow-path-audit` (registry: `agentskills`) — [evals/workflow-path-audit/workflow-doc-in-step](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/workflow-doc-in-step)
+- `workflow-path-audit` (registry: `acsi-agentskills`) — [evals/workflow-path-audit/workflow-doc-in-step](https://github.com/example-adopter/skills-evals/tree/main/evals/workflow-path-audit/workflow-doc-in-step)
 - Filter two always-run workflows in a repo whose AGENTS.md table says `all paths` for both. Good output filters each on what it consumes and brings the existing table's rows in step, creating no second workflow doc.
 - Objective (10): four changeset replays; line-anchored checks that the tests.yml row names `src/` and the docs-site.yml row names `docs/` with neither still saying `all paths`, and that the rest of AGENTS.md survives; all workflows parse; the schedule-only workflow gained no filter; nothing else changed and no new workflow doc appeared at the common names.
 - Judge: weighted — `docs-in-step` 0.4, `salience` 0.4, `restraint` 0.2.
@@ -626,7 +626,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### writing-adrs/bootstrap
 
-- `writing-adrs` (registry: `agentskills`) — [evals/writing-adrs/bootstrap](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/bootstrap)
+- `writing-adrs` (registry: `acsi-agentskills`) — [evals/writing-adrs/bootstrap](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/bootstrap)
 - Record a retry-policy decision as an ADR in a repo with no `docs/decisions/` yet. Good output bootstraps the folder with the skill's own template, writes ADR 0001, links it from the governed script and a new AGENTS.md pointer, and touches nothing else.
 - Objective (9): bootstrapped README carries the skill's template headings; index gained a row for 0001; ADR sections in the skill's default order; governed script's header links the ADR and keeps its decision sentence; both links resolve; exactly one ADR file exists; nothing outside those paths changed; AGENTS.md gained the pointer.
 - Judge: weighted — `decision-with-alternatives-and-consequences` 0.5, `title-is-a-decision-statement` 0.3, `restraint` 0.2.
@@ -634,7 +634,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### writing-adrs/existing-convention
 
-- `writing-adrs` (registry: `agentskills`) — [evals/writing-adrs/existing-convention](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/existing-convention)
+- `writing-adrs` (registry: `acsi-agentskills`) — [evals/writing-adrs/existing-convention](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/existing-convention)
 - Same decision, but in a repo with three existing ADRs and its own house section order (Status/Context/Decision/Consequences), different from the skill's default. Good output follows the house convention, adds exactly one new ADR (0004), links it correctly, and leaves the rest untouched.
 - Objective (7): new ADR follows house order, not the skill's default; index gained a row for 0004; governing script's header links it; both links resolve; exactly four ADR files exist in total; pre-existing ADRs, CHANGELOG.md, AGENTS.md, and root README.md all byte-identical to seed.
 - Judge: weighted — `decision-with-alternatives-and-consequences` 0.5, `title-is-a-decision-statement` 0.3, `restraint` 0.2.
@@ -642,7 +642,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### writing-adrs/supersede
 
-- `writing-adrs` (registry: `agentskills`) — [evals/writing-adrs/supersede](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/supersede)
+- `writing-adrs` (registry: `acsi-agentskills`) — [evals/writing-adrs/supersede](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/supersede)
 - Record a snapshot-retention decision that reverses an accepted ADR. Good output writes ADR 0004, marks 0002 as superseded, updates both index rows and the script's ADR pointer, and preserves the old decision as history.
 - Objective (13): a new ADR with the required sections and a mention of 0002; 0002's status and index row point to 0004; the old decision text and unaffected rows stay intact; links resolve; a script comment points to 0004; the retention decision stays intact; exactly four ADR files exist; unrelated files stay byte-identical. These checks establish a format floor; the judge decides whether the prose explains the reversal.
 - Judge: weighted — `replacement-explains-the-reversal` 0.5, `audit-trail-preserved` 0.3, `restraint` 0.2.
@@ -650,7 +650,7 @@ Two `evals/` directories aren't covered below because they aren't skill or guida
 
 ### writing-adrs/why-no-comment-trail
 
-- `writing-adrs` (registry: `agentskills`) — [evals/writing-adrs/why-no-comment-trail](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/why-no-comment-trail)
+- `writing-adrs` (registry: `acsi-agentskills`) — [evals/writing-adrs/why-no-comment-trail](https://github.com/example-adopter/skills-evals/tree/main/evals/writing-adrs/why-no-comment-trail)
 - The user asks why an export script ends every CSV line with CRLF, says nothing in the repo explains it, and relays the reason and two rejected alternatives from the person who wrote it. Good output records that as ADR 0003 in the repo's house format, adds its index row, points the script at it, and leaves the line endings and everything else alone.
 - Objective (11): a new house-format ADR that is not a pasted seed ADR; non-heading lines name the line-ending rule and the importer, and each rejected alternative; index gained a row for 0003 and kept the other two; links resolve; a script comment points to 0003; both CRLF printf lines stay; exactly three ADR files exist; unrelated files stay byte-identical.
 - Judge: weighted — `adr-records-the-reason` 0.5, `next-reader-finds-it` 0.3, `restraint` 0.2.

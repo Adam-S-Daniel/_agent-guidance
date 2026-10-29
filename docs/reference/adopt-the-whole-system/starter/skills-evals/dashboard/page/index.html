@@ -395,7 +395,7 @@
 
   <!-- WORK -->
   <section class="pd-page" id="work" data-page-id="work" hidden>
-    <p class="pd-note">Live from GitHub through your GitHub connector, across skills-evals, _agent-guidance, agentskills and claude-memory-map. The private skills repo is not visible to that connector, so it is left out.</p>
+    <p class="pd-note">Live from GitHub through your GitHub connector, across skills-evals, _agent-guidance, acsi-agentskills and claude-memory-map. The private skills repo is not visible to that connector, so it is left out.</p>
     <div class="pd-card" id="card-open-prs">
       <h2>Open pull requests</h2>
       <input class="pd-search" id="search-prs" type="search" placeholder="Filter PRs" aria-label="Filter PRs">
@@ -529,7 +529,7 @@ dash.loader('merged_prs', {
   },
 });
 dash.loader('open_issues', {
-  description: 'Open issues in skills-evals, then the same call for _agent-guidance, agentskills and claude-memory-map, as one row per issue',
+  description: 'Open issues in skills-evals, then the same call for _agent-guidance, acsi-agentskills and claude-memory-map, as one row per issue',
   fn: async ({ answer, call, args }) => {
     const parse = (x) => {
       let a = x;
@@ -539,7 +539,7 @@ dash.loader('open_issues', {
       return a.issues;
     };
     const sets = [[args.repo, parse(answer)]];
-    for (const repo of ['_agent-guidance', 'agentskills', 'claude-memory-map']) {
+    for (const repo of ['_agent-guidance', 'acsi-agentskills', 'claude-memory-map']) {
       sets.push([repo, parse(await call('list_issues', { ...args, repo }))]);
     }
     const rows = [];

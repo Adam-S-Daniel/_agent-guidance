@@ -468,7 +468,7 @@ test("assessRepo(j): open-issue lookup 500 -> unknown, even though check+jobs ar
 
 // ── 7b. #194 — a missing check narrowed to healthy for a config's first-ever
 // commit ──────────────────────────────────────────────────────────────────
-// agentskills shape: created 2026-09-24T21:58Z with .github/dependabot.yml
+// acsi-agentskills shape: created 2026-09-24T21:58Z with .github/dependabot.yml
 // already in its first commit (559ceb7), pushed directly — no PR, no check
 // run at all — yet 7 successful update jobs ran, latest 2026-09-25T18:32Z.
 // nowMs below mirrors this repo's actual "today" so the fixture reads like a
@@ -487,7 +487,7 @@ test("assessRepo(k1): #194 — missing check, single commit, a successful job af
     newestSuccessfulWorkflowRun: () => ({ run_started_at: "2026-09-25T18:32:00Z", html_url: "https://x/runs/7" }),
   });
   const a = assessRepo(
-    { owner: "example-adopter", repo: "example-adopter/agentskills", private: false, defaultBranch: "main" },
+    { owner: "example-adopter", repo: "example-adopter/acsi-agentskills", private: false, defaultBranch: "main" },
     api, K_NOW, { label: "ci" },
   );
   assert.equal(a.verdict, "healthy");

@@ -179,7 +179,7 @@ class CallerTests(unittest.TestCase):
             "client-id": "${{ vars.REGISTRY_READ_APP_CLIENT_ID }}",
             "private-key": "${{ secrets.REGISTRY_READ_APP_PEM }}",
             "owner": "example-adopter",
-            "repositories": "agentskills-private",
+            "repositories": "acsi-agentskills-private",
             "permission-contents": "read"})
         secrets = [p for p, v in strings(self.doc) if "secrets." in v]
         self.assertEqual(len(secrets), 1)
@@ -192,21 +192,21 @@ class CallerTests(unittest.TestCase):
         self.assertEqual(len(users), 2)
         holders = [self.jobs["select"]["steps"][int(u[3])]["with"] for u in users]
         for holder in holders:
-            self.assertEqual(holder["repository"], "example-adopter/agentskills-private")
+            self.assertEqual(holder["repository"], "example-adopter/acsi-agentskills-private")
         # The miner writes proposals to persistent/lessons (main is PR-only);
         # the private skills come from the default branch.
         self.assertEqual(
             sorted((h.get("ref", ""), h["sparse-checkout"], h["path"]) for h in holders),
-            sorted([("persistent/lessons", "lessons", "agentskills-private-lessons"),
-                    ("", "plugins", "agentskills-private")]))
+            sorted([("persistent/lessons", "lessons", "acsi-agentskills-private-lessons"),
+                    ("", "plugins", "acsi-agentskills-private")]))
 
     def test_select_reads_drafted_branches_declines_and_both_registries(self):
         body = step(self.doc, "select", "Select one new-skill proposal")["run"]
         for needle in ("draft_new_skill.py drafted-subjects --repo .",
                        "draft_new_skill.py select",
-                       "--registry agentskills=../agentskills",
-                       "--registry agentskills-private=../agentskills-private",
-                       "--lessons ../agentskills-private-lessons/lessons",
+                       "--registry acsi-agentskills=../acsi-agentskills",
+                       "--registry acsi-agentskills-private=../acsi-agentskills-private",
+                       "--lessons ../acsi-agentskills-private-lessons/lessons",
                        "--evals evals --drafted",
                        '--hook-declined "$RUNNER_TEMP/hook-declined.txt"'):
             self.assertIn(needle, body)
@@ -292,9 +292,9 @@ class CallerStepTests(unittest.TestCase):
     def test_a_missing_lessons_branch_skips_the_checkout_without_failing(self):
         # persistent/lessons exists only after the miner's first push
         # (run 40404287379 failed checking it out).
-        checkout = step(self.doc, "select", "Check out the lessons (agentskills-private)")
+        checkout = step(self.doc, "select", "Check out the lessons (acsi-agentskills-private)")
         self.assertEqual(checkout["if"], "steps.lessons-branch.outputs.present == 'true'")
-        self.assertIn("mkdir -p ../agentskills-private-lessons/lessons",
+        self.assertIn("mkdir -p ../acsi-agentskills-private-lessons/lessons",
                       step(self.doc, "select", "Select one new-skill proposal")["run"])
         git = self.tmp / "bin" / "git"
         git.write_text('#!/bin/sh\necho "$*" >> "$FAKE_GIT_LOG"\nexit "$FAKE_GIT_EXIT"\n',
@@ -462,7 +462,7 @@ class GateTests(unittest.TestCase):
              "${{ secrets.EVAL_IMPROVE_APP_PEM }}"),
         ]))
         with_ = self.jobs["skill-pr"]["steps"][mint]["with"]
-        self.assertEqual(with_["repositories"], "agentskills")
+        self.assertEqual(with_["repositories"], "acsi-agentskills")
         self.assertEqual({k: v for k, v in with_.items() if k.startswith("permission-")},
                          {"permission-contents": "write", "permission-pull-requests": "write"})
         users = [p for p, v in strings(self.doc) if "steps.app-token.outputs" in v]
@@ -478,7 +478,7 @@ class GateTests(unittest.TestCase):
                 reval = steps[ids.index("revalidate")]
                 self.assertEqual(reval["env"]["SHA"], "${{ needs.validate.outputs.sha }}")
                 self.assertIn('--expect-sha "$SHA"', reval["run"])
-                self.assertIn("--registry agentskills=../agentskills", reval["run"])
+                self.assertIn("--registry acsi-agentskills=../acsi-agentskills", reval["run"])
                 actor = next(i for i, s in enumerate(steps)
                              if any(t in s.get("run", "") for t in
                                     ("gh pr create", "gh issue create"))
@@ -490,7 +490,7 @@ class GateTests(unittest.TestCase):
         validate = self.jobs["validate"]["steps"]
         gate = next(s for s in validate if s.get("id") == "gate")
         self.assertIn("draft_new_skill.py validate", gate["run"])
-        self.assertIn("--registry agentskills=../agentskills", gate["run"])
+        self.assertIn("--registry acsi-agentskills=../acsi-agentskills", gate["run"])
 
     def test_checkouts_are_default_branches(self):
         for name, job in self.jobs.items():
@@ -500,7 +500,7 @@ class GateTests(unittest.TestCase):
                 with self.subTest(job=name, step=s["name"]):
                     w = s["with"]
                     if "repository" in w:
-                        self.assertEqual(w["repository"], "example-adopter/agentskills")
+                        self.assertEqual(w["repository"], "example-adopter/acsi-agentskills")
                         self.assertNotIn("ref", w)
                     else:
                         self.assertEqual(w["ref"], "${{ github.event.repository.default_branch }}")
@@ -532,10 +532,10 @@ class GateTests(unittest.TestCase):
         self.assertLess(ids.index("mode"), mint)
         decide = steps[ids.index("mode")]
         self.assertIn("improve_gate.py merge-mode", decide["run"])
-        self.assertIn("--tree ../agentskills", decide["run"])
+        self.assertIn("--tree ../acsi-agentskills", decide["run"])
         self.assertNotIn("--policy", decide["run"])
         self.assertNotIn("secrets.", json.dumps(decide))
-        skill = step(self.doc, "skill-pr", "Open the skill's pull request in agentskills")
+        skill = step(self.doc, "skill-pr", "Open the skill's pull request in acsi-agentskills")
         self.assertEqual(skill["env"]["MODE"], "${{ steps.mode.outputs.mode }}")
         fixtures = step(self.doc, "fixtures-pr", "Open the fixtures' pull request")
         self.assertEqual(fixtures["env"]["AUTO"], "${{ needs.skill-pr.outputs.auto }}")
@@ -569,7 +569,7 @@ class GateTests(unittest.TestCase):
         self.assertIn('":(exclude)README.md"', body)
         self.assertIn("--diff-filter=a", body)
         self.assertIn("--repo skills-evals", body)
-        skill = step(self.doc, "skill-pr", "Open the skill's pull request in agentskills")["run"]
+        skill = step(self.doc, "skill-pr", "Open the skill's pull request in acsi-agentskills")["run"]
         self.assertIn('target="draft-skill/${SUBJECT}"', skill)
         self.assertIn("draft_new_skill.py apply", skill)
         # A bundle in the registry's skills.lock is re-pinned on a second
@@ -577,7 +577,7 @@ class GateTests(unittest.TestCase):
         self.assertIn('grep -qxF -- "relock=true"', skill)
         self.assertIn("python3 scripts/generate_skills_lock.py --repin", skill)
         self.assertIn('grep -qxF -- "relock=false"', skill)
-        self.assertIn("--repo agentskills", skill)
+        self.assertIn("--repo acsi-agentskills", skill)
 
     def test_the_guards_can_fail(self):
         self.assertIsNotNone(lock_problem("actions/checkout@v4", GATE))

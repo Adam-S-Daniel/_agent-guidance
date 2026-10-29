@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# setup.sh — one-time setup for the agentskills-private repo.
+# setup.sh — one-time setup for the acsi-agentskills-private repo.
 #
 # This repo is a *private* Claude Code plugin marketplace: every skill ships as a
 # plugin under plugins/<name>/. Claude Code users can install a bundle with one
 # command (Claude Code v2.1.275 or later)
 #
-#   /plugin install private-anything-anywhere --marketplace example-adopter/agentskills-private
+#   /plugin install acsi-private-anything-anywhere --marketplace example-adopter/acsi-agentskills-private
 #
 # which offers to add the marketplace before installing — or, on older CLIs,
 # with the two-step form
 #
-#   /plugin marketplace add example-adopter/agentskills-private
-#   /plugin install private-anything-anywhere@agentskills-private
+#   /plugin marketplace add example-adopter/acsi-agentskills-private
+#   /plugin install acsi-private-anything-anywhere@acsi-agentskills-private
 #
 # and don't need this script at all.
 #
@@ -25,13 +25,13 @@
 #   ~/.cursor/skills
 #
 # Claude Code is intentionally NOT in that list. It is served by the plugin
-# marketplace (/plugin marketplace add example-adopter/agentskills-private).
+# marketplace (/plugin marketplace add example-adopter/acsi-agentskills-private).
 # Linking the same skills into ~/.claude/skills as well would double-load them —
 # once as a namespaced marketplace plugin and once as a personal skill — which
 # wastes context and makes invocation ambiguous. This script removes any such
 # links it created in earlier versions (see dedup_claude_code_dir below). The
 # public counterpart and the public/private rule are documented in
-# example-adopter/agentskills (STRATEGY.md).
+# example-adopter/acsi-agentskills (STRATEGY.md).
 #
 # Safe to re-run (idempotent), and safe to run while a bundle has no skills yet.
 # On Windows (Git Bash) it uses `mklink /J` directory junctions — no admin

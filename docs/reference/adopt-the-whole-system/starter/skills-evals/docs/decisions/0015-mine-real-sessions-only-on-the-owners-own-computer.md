@@ -4,7 +4,7 @@
 - **Deciders:** the owner, directly: real session transcripts are read only on his
   own computer, never in the cloud (2026-10-24); proposal files, not issues,
   are the primary sink, because cloud readers hold only Contents: read on
-  agentskills-private (2026-10-26); a git hook is the first home for a
+  acsi-agentskills-private (2026-10-26); a git hook is the first home for a
   lesson whenever one can enforce it, ahead of a skill, guidance text or
   memory (2026-10-26, 14:21 UTC).
 - **Gaps:** G1 (nothing reads real sessions), G2 (no lesson records or
@@ -44,7 +44,7 @@ paths, names, addresses and tokens, and this repository is public.
    characters after redaction, and the suspected subject (a skill, a
    guidance section id from `_agent-guidance` `agents-md/eval-coverage.yml`,
    memory, or none). Redaction applies the privacy denylist (the format of
-   agentskills' `scripts/check_privacy_denylist.py`, from a file outside
+   acsi-agentskills' `scripts/check_privacy_denylist.py`, from a file outside
    every repo; without one nothing is mined) and scrubs emails, tokens,
    UUIDs and session ids, home-directory user names, and the local login and
    host names.
@@ -59,7 +59,7 @@ paths, names, addresses and tokens, and this repository is public.
    is what makes the loop improve the subject. `--classify` (off by default)
    lets the local `claude -p` replace the kind; it runs in `/tmp`, so its own
    session is dropped as noise on the next run.
-5. Records and proposals are committed to agentskills-private on its
+5. Records and proposals are committed to acsi-agentskills-private on its
    `persistent/lessons` branch, `lessons/records/<date>.jsonl` and
    `lessons/proposals/<date>/<subject>__<kind>.json`. That branch, not
    `main`, because `main` is PR-only; the schema is in that repo's
@@ -78,7 +78,7 @@ paths, names, addresses and tokens, and this repository is public.
   `--file-issues` is turned on.
 - The state file lives on the machine. Losing it re-reads every session;
   record ids are stable, so the router still counts each record once.
-- `persistent/lessons` has no deletion guard. agentskills-private is in
+- `persistent/lessons` has no deletion guard. acsi-agentskills-private is in
   repo-settings' `fleet.yml` private group, where the engine skips every
   ruleset without GitHub Pro (`extra_rulesets` included), and the owner affirmed
   running private repos without rulesets on 2026-08-29. The branch name keeps

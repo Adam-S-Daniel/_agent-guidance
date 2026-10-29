@@ -27,9 +27,9 @@ Two constraints shaped the redesign:
 Group all 17 skills into three bundle plugins, membership decided by where a
 skill can run:
 
-- `my` — usable in a headless cloud session of an arbitrary repo
+- `acsi` — usable in a headless cloud session of an arbitrary repo
   (default-enabled).
-- `my-local` — machine-bound / local-resource skills (opt-in).
+- `acsi-local` — machine-bound / local-resource skills (opt-in).
 - `fastmail` — the Fastmail email domain (opt-in).
 
 The 15 retired plugin names map to their bundle via the marketplace `renames`
@@ -40,10 +40,10 @@ version.
 
 ## Consequences
 
-- One `/plugin install my@retired-agentskills` gets every cloud-safe skill; new
+- One `/plugin install acsi@retired-agentskills` gets every cloud-safe skill; new
   skills in an installed bundle arrive on marketplace update with no extra
   install step.
-- **Lost per-skill enable granularity.** Enabling `my-local` is
+- **Lost per-skill enable granularity.** Enabling `acsi-local` is
   all-or-nothing: you cannot install `rename-pdfs` without also getting
   `bell-schedule`. If a skill ever needs independent enablement, it must move
   to its own plugin (via a new `renames` entry).
@@ -65,7 +65,7 @@ version.
   `claude plugin update fastmail@retired-agentskills` (plus
   `claude plugin enable fastmail@retired-agentskills` if it was disabled).
 - Invocations change from `/<skill>:<skill>` to `/<bundle>:<skill>`
-  (e.g. `/my:finding-unknowns`).
+  (e.g. `/acsi:finding-unknowns`).
 
 ## Alternatives considered
 
@@ -73,7 +73,7 @@ version.
 linearly, installs stay O(skills), and the cloud-safe/machine-bound
 distinction stays invisible at install time.
 
-**A single `my` mega-bundle.** Rejected: it forces machine-bound skills
+**A single `acsi` mega-bundle.** Rejected: it forces machine-bound skills
 (which need WSL paths, local browsers, PowerShell) into every cloud session
 that installs the bundle, where they can only misfire; `defaultEnabled` is
 per-plugin, so the split must be at plugin granularity.

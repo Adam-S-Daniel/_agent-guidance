@@ -3,7 +3,7 @@
 ## The six repos
 
 `bootstrap/create-repos.sh` creates `_agent-guidance`, `repo-settings`,
-`agentskills`, `agentskills-private`, `skills-evals` and `wsl-automation`
+`acsi-agentskills`, `acsi-agentskills-private`, `skills-evals` and `wsl-automation`
 under `OWNER` ([free or paid](before-you-start.md#free-or-paid-github-plan)
 decides which are private), gives each a first commit (a generated README
 that `copy-starter.sh` later replaces), and creates the two labels no
@@ -36,12 +36,12 @@ publish:
 
 | Repo | Required checks |
 |---|---|
-| `agentskills` | `privacy`, `pytest`, `pytest-windows`, `plugin-runtime-approval`, `agent-checks` |
+| `acsi-agentskills` | `privacy`, `pytest`, `pytest-windows`, `plugin-runtime-approval`, `agent-checks` |
 | `skills-evals` | `test`, `agent-checks` |
 | `_agent-guidance` | `test`, `agent-checks` |
 | `wsl-automation` | `shell`, `test`, `test-linux`, `agent-checks` |
 | `repo-settings` | `agent-checks`, `unit` |
-| `agentskills-private` | `agent-checks` |
+| `acsi-agentskills-private` | `agent-checks` |
 
 `skills-evals` also gets the `eval-scaffold` label, a ruleset on
 `roster/proposal` that only the `roster` App may push, and, with
@@ -50,7 +50,7 @@ publish:
 **`pull_request_target`.** GitHub blocks that event on public repos by
 default from 2026-11-02 unless an Actions policy allows it. `fleet.yml`
 allows it for exactly one workflow,
-`agentskills`' `.github/workflows/plugin-runtime-review.yml` (it publishes
+`acsi-agentskills`' `.github/workflows/plugin-runtime-review.yml` (it publishes
 the required `plugin-runtime-approval`), and the engine applies that policy with the
 rest. A trigger added to that workflow must be added to the policy first.
 
@@ -71,7 +71,7 @@ environment's approval with the `settings-admin` App.
 | Repo | Environment | Protection | Holds |
 |---|---|---|---|
 | `repo-settings` | `fleet-apply` | you approve; default branch only | `REPO_SETTINGS_APP_PRIVATE_KEY` |
-| `agentskills` | `plugin-runtime-review` | you approve; no branch policy (it runs on `pull_request_target`) | nothing: the approval is the gate |
+| `acsi-agentskills` | `plugin-runtime-review` | you approve; no branch policy (it runs on `pull_request_target`) | nothing: the approval is the gate |
 | `skills-evals` | `routine-fire` | default branch only | `EVAL_ROUTINE_FIRE_BEARER`, `ROUTINE_TRIGGER_ID` |
 
 It also sets `repo-settings`' variables `GUIDANCE_SYNC_APP_ID` and
@@ -100,9 +100,9 @@ on stdin, never printed.
 | `guidance-sync` | contents, pull requests, issues: write; actions, checks, metadata: read | every fleet repo | variable `APP_CLIENT_ID` in `_agent-guidance` | secret `APP_PRIVATE_KEY` in `_agent-guidance` |
 | `settings-admin` | administration, actions, issues: write; metadata: read | every fleet repo | variable `REPO_SETTINGS_APP_CLIENT_ID` in `repo-settings` | secret `REPO_SETTINGS_APP_PRIVATE_KEY` in `fleet-apply` |
 | `settings-read` | administration, actions, issues, metadata: read | every fleet repo | variable `REPO_SETTINGS_READ_APP_CLIENT_ID` in `repo-settings` | secret `REPO_SETTINGS_READ_APP_PRIVATE_KEY` in `repo-settings` |
-| `eval-improve` | contents, pull requests: write | `agentskills`, `_agent-guidance` | secret `EVAL_IMPROVE_APP_CLIENT_ID` in `skills-evals` | secret `EVAL_IMPROVE_APP_PEM` in `skills-evals` |
+| `eval-improve` | contents, pull requests: write | `acsi-agentskills`, `_agent-guidance` | secret `EVAL_IMPROVE_APP_CLIENT_ID` in `skills-evals` | secret `EVAL_IMPROVE_APP_PEM` in `skills-evals` |
 | `roster` | contents, pull requests: write | `skills-evals` | variable `ROSTER_APP_CLIENT_ID` in `skills-evals` | secret `ROSTER_APP_PRIVATE_KEY` in `skills-evals` |
-| `registry-read` | contents: read | `agentskills-private` | variable `REGISTRY_READ_APP_CLIENT_ID` in `skills-evals` | secret `REGISTRY_READ_APP_PEM` in `skills-evals` |
+| `registry-read` | contents: read | `acsi-agentskills-private` | variable `REGISTRY_READ_APP_CLIENT_ID` in `skills-evals` | secret `REGISTRY_READ_APP_PEM` in `skills-evals` |
 
 `guidance-sync` is the owner's `agents-md-sync` App: the sync, the nightly
 drift report, the skills-lock bumper and the Dependabot sweep all use it.
@@ -154,9 +154,9 @@ on merge. Some checks on a starter pull request cannot pass yet, because
 they read a generated file that still holds the export's placeholder, or
 because they come from a workflow the base branch does not have yet:
 
-- `agentskills`' `pytest` (its `skills.lock` checks) and every check that
+- `acsi-agentskills`' `pytest` (its `skills.lock` checks) and every check that
   reads a `skills.lock`: fixed by step 13;
-- `agentskills`' `plugin-runtime-approval`: it runs on
+- `acsi-agentskills`' `plugin-runtime-approval`: it runs on
   `pull_request_target`, which uses the base branch's workflow, and an empty
   repo has none, so it never reports on the first pull request;
 - anything that verifies `actions.lock` against GitHub, the hook pin or the

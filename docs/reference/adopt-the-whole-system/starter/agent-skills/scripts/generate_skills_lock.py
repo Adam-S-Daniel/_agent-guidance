@@ -46,7 +46,7 @@ ref, bundles and layout:
 
 That exists so example-site-platform can keep its skills in ITS repo, on its own cadence
 and review path, instead of rsyncing a vendored mirror into every consumer —
-one registry, several owners. A consumer wanting both this repo's `my` bundle
+one registry, several owners. A consumer wanting both this repo's `acsi` bundle
 and example-site-platform's gets them from one lock, in one session.
 
 `layout` says where a bundle's skills sit inside its own repo. It defaults to
@@ -143,7 +143,7 @@ comparison, where a wrong SHAPE comes out in the same words as content drift:
 `digest changed`.
 
 That combination is what stranded eight consumer locks (example-site-platform,
-GHA-bench, _agent-guidance, agentskills-private, claude-memory-map,
+GHA-bench, _agent-guidance, acsi-agentskills-private, claude-memory-map,
 fastmail-actions, repo-settings, wsl-automation — every one of them pinning
 94cdcc81). All eight store bare 64-hex where the canonical shape is
 `sha256:<hex>`. The fleet bumper (_agent-guidance's
@@ -153,7 +153,7 @@ re-pinning and `--repin` relabels — measured on a copy of one of those locks,
 `--check-current`, which answers `OK: the working tree still matches 94cdcc81
 (8 skills).` at exit 0: the bundle content genuinely has not moved, so the
 bumper skips, and the shape is never fixed. Silently, and for as long as the
-`my` bundle stands still.
+`acsi` bundle stands still.
 
 `--check` does fail on such a lock — exit 1, eight `digest changed` lines — and
 that is deliberately not the answer to borrow. The bumper's gate comment says
@@ -353,11 +353,11 @@ from typing import (Collection, Dict, Iterable, List, Mapping, NamedTuple, Optio
                     Sequence, Set, Tuple)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_REGISTRY = "example-adopter/agentskills"
-# The cloud-safe plugins (ADR 0013). `coding-local` and
-# `non-coding-local` are machine-bound and opt-in, so they have no business
+DEFAULT_REGISTRY = "example-adopter/acsi-agentskills"
+# The cloud-safe plugins (ADR 0013). `acsi-coding-local` and
+# `acsi-non-coding-local` are machine-bound and opt-in, so they have no business
 # in an ephemeral-surface bootstrap.
-DEFAULT_BUNDLES = ("anything-anywhere", "coding-anywhere")
+DEFAULT_BUNDLES = ("acsi-anything-anywhere", "acsi-coding-anywhere")
 DEFAULT_LOCK = REPO_ROOT / "skills.lock"
 # This repo's own shape, and therefore the layout a source that does not say
 # otherwise is assumed to have.
@@ -377,7 +377,7 @@ SOURCE_FIELDS = ("registry", "ref", "bundles", "layout")
 # paths.
 #
 #   * _NAME_RE requires a LEADING ALPHANUMERIC, so a bundle or skill name can
-#     never be '.' or '..'. A key like 'my/..' made the hook's $name '..' and
+#     never be '.' or '..'. A key like 'acsi/..' made the hook's $name '..' and
 #     turned its install `cp` into a write to $HOME/.claude.
 #   * _URL_RE is a real URL charset, not merely 'starts with https://'.
 #   * _CONTROL_RE is DEFENCE IN DEPTH, not the fix for anything. The framing
@@ -488,7 +488,7 @@ def digest_skill_dir(path: Path, skip: frozenset = frozenset()) -> str:
         #
         # Refusing rather than re-encoding is what makes this a NON-EVENT for
         # the fleet: measured across all three registries that feed a lock
-        # (agentskills `plugins/`, example-site-platform `skills/`, agentskills-private)
+        # (acsi-agentskills `plugins/`, example-site-platform `skills/`, acsi-agentskills-private)
         # there are ZERO symlinks under any skill directory, so no digest any
         # committed `skills.lock` names changes. That is what lets this land
         # without the coordinated fleet-wide re-pin a change to the digest
@@ -831,7 +831,7 @@ def collect_skills(
             # store there, and Win32 strips trailing dots and spaces from a path
             # component, so `synced.` opens `synced` — and all three pass
             # `_NAME_RE` above. Measured on the exact-equality version: this
-            # generator wrote `my/Synced` at exit 0, and the hook's own purge
+            # generator wrote `acsi/Synced` at exit 0, and the hook's own purge
             # then removed the canary planted at that name. The hook's reader
             # and its record-driven prune fold identically; a lock this
             # generator writes and that hook refuses is the gap all three exist
@@ -1850,7 +1850,7 @@ def report_digest_format(document: dict, output: Path, repo: Path,
     # to be sitting on. Measured on a copy of repo-settings' real lock before
     # this line carried a ref: the printed command moved the pin off 94cdcc81
     # onto the clone's HEAD and recomputed all eight digests from the NEW
-    # tree. They came out byte-identical only because the `my` bundle had not
+    # tree. They came out byte-identical only because the `acsi` bundle had not
     # moved between the two commits; re-pin that same lock at 283b2f0c, where
     # it had, and three of the eight differ (further back, at a9828bf, four
     # do). The count is whatever the two trees make it — the ref is named here

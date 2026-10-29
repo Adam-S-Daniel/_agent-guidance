@@ -11,7 +11,7 @@
 
 ## Context
 
-`pin-actions-to-sha` was a skill in the `my` bundle: audit every `uses:` in a
+`pin-actions-to-sha` was a skill in the `acsi` bundle: audit every `uses:` in a
 workflow, pin it to a full 40-character commit SHA, annotate it with
 `# vX.Y.Z (YYYY-MM-DD)`, and hold a 7-day cooling-off before adopting a new
 release. It carried both halves of the subject — the *rule* (what a correct pin
@@ -117,7 +117,7 @@ was promoted into the rule rather than left in the part being deleted.
   knowingly: see "kept and dropped" above.
 - **The marketplace `renames` entry stays.** ADR 0001 makes that map
   append-only forever, and its values are *bundle* names: `pin-actions-to-sha`
-  is a retired **plugin** name whose target, the `my` bundle, still exists
+  is a retired **plugin** name whose target, the `acsi` bundle, still exists
   and is still what a stale install must migrate onto. Deleting the entry would
   strand any user updating from a pre-consolidation marketplace — the exact
   harm the append-only rule exists to prevent — and would do so to save a
@@ -140,7 +140,7 @@ context *and* bundle weight) to buy one guarantee.
 every repo.** Rejected: it closes the installation half and leaves the
 trigger-match half wide open. A skill that is present but never surfaced is
 indistinguishable, at the point of failure, from one that was never installed.
-It also makes every repo carry the whole `my` bundle to secure one rule.
+It also makes every repo carry the whole `acsi` bundle to secure one rule.
 
 **Keep the skill unchanged and accept the gap.** Rejected on the enforcement
 asymmetry: `sha_pinning_required` turns a missed pin into a failed run, and the
@@ -162,7 +162,7 @@ load-bearing step was promoted into the rule anyway.
   the next sync clears the stale mentions still sitting in consumer `AGENTS.md`
   files rather than reintroducing them.
 - No repo tree contains a `plugins/*/skills/pin-actions-to-sha/` directory, and
-  `skills.lock` no longer keys `my/pin-actions-to-sha`.
+  `skills.lock` no longer keys `acsi/pin-actions-to-sha`.
 
 ## References
 

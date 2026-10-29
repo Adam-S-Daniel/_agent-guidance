@@ -115,12 +115,12 @@ once for each of the two definitions, and again whenever a definition in
 this repo's plugin-runtime review.
 
 **A scheduled task covers the time between sessions on Windows.**
-`Register-CloneSyncTask.ps1` registers the current user's `my-clone-sync`
+`Register-CloneSyncTask.ps1` registers the current user's `acsi-clone-sync`
 task, not elevated, every 30 minutes and at logon, running
 `conhost.exe --headless "<Git Bash>" "<launcher>"`. The launcher is a small,
 stable copy of `hooks/clone-sync/launcher.sh` in
-`%LOCALAPPDATA%\agentskills\`. At each run it resolves the CURRENTLY
-installed `coding-local@agentskills` from
+`%LOCALAPPDATA%\acsi-agentskills\`. At each run it resolves the CURRENTLY
+installed `acsi-coding-local@acsi-agentskills` from
 `~/.claude/plugins/installed_plugins.json` and runs that install's
 `clone-sync.sh --all`, so the task only ever runs released code that passed
 the plugin-runtime gate, and fixes arrive with plugin updates. It exits 0
@@ -154,7 +154,7 @@ under `hooks/`, and `hooks.json` names its scripts. `check_consistency.py`'s
 bare-`bash` rule covers `commandWindows` too, since cmd.exe resolves a bare
 `bash` to WSL's launcher as well.
 
-`coding-local` moves from 2.0.5 to 2.1.0 ([ADR 0009](0009-bump-bundle-versions-on-every-release.md)).
+`acsi-coding-local` moves from 2.0.5 to 2.1.0 ([ADR 0009](0009-bump-bundle-versions-on-every-release.md)).
 
 ## Consequences
 
@@ -197,6 +197,6 @@ bare-`bash` rule covers `commandWindows` too, since cmd.exe resolves a bare
 - [ADR 0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md) —
   the gate and the bare-`bash` rule this extends
 - [ADR 0009](0009-bump-bundle-versions-on-every-release.md) — the version bump
-- `plugins/coding-local/hooks/`, `scripts/test_clone_sync_hooks.py`,
+- `plugins/acsi-coding-local/hooks/`, `scripts/test_clone_sync_hooks.py`,
   `scripts/plugin_runtime_gate.py`, `scripts/test_plugin_runtime_gate.py`,
   `setup.sh`, `scripts/test_setup_owner_machine.py`

@@ -60,7 +60,7 @@ git config --global protocol.file.allow always
 
 SCRIPTS=(create-repos.sh create-environments.sh create-apps.sh set-secrets.sh copy-starter.sh
          regenerate.sh apply-settings.sh install-machine.sh verify.sh status.sh)
-FLEET=(_agent-guidance repo-settings agentskills agentskills-private skills-evals wsl-automation)
+FLEET=(_agent-guidance repo-settings acsi-agentskills acsi-agentskills-private skills-evals wsl-automation)
 O=acme-example
 OUT="$T/out" ERR="$T/err"
 run() { "$@" >"$OUT" 2>"$ERR"; }   # run a script, keep its stdout and stderr
@@ -141,17 +141,17 @@ assert_not "an unknown repo name is refused" bash "$B/create-repos.sh" --config 
 run bash "$B/create-repos.sh" --config "$CFG" --dry-run; rc=$?
 assert_eq "create-repos dry run exits 0" "$rc" 0
 assert_eq "create-repos dry run makes no write calls" "$(writes "$GH_LOG")" 0
-assert "create-repos dry run prints the private repo create call" has "$OUT" "DRY-RUN: gh repo create acme-example/agentskills-private --private"
+assert "create-repos dry run prints the private repo create call" has "$OUT" "DRY-RUN: gh repo create acme-example/acsi-agentskills-private --private"
 assert "create-repos dry run says nothing was written" has "$OUT" "nothing was written"
 
 run bash "$B/create-repos.sh" --config "$CFG"; rc=$?
 assert_eq "create-repos exits 0" "$rc" 0
 assert_eq "it creates exactly the six repos" "$(jqs '[.repos | keys[]] | sort | join(" ")')" \
-  "acme-example/_agent-guidance acme-example/agentskills acme-example/agentskills-private acme-example/repo-settings acme-example/skills-evals acme-example/wsl-automation"
-for r in _agent-guidance agentskills skills-evals wsl-automation; do
+  "acme-example/_agent-guidance acme-example/acsi-agentskills acme-example/acsi-agentskills-private acme-example/repo-settings acme-example/skills-evals acme-example/wsl-automation"
+for r in _agent-guidance acsi-agentskills skills-evals wsl-automation; do
   assert_eq "free: $r is public" "$(jqs ".repos[\"$O/$r\"].visibility")" public
 done
-for r in agentskills-private repo-settings; do
+for r in acsi-agentskills-private repo-settings; do
   assert_eq "free: $r is private" "$(jqs ".repos[\"$O/$r\"].visibility")" private
 done
 assert_eq "every repo has a first commit" "$(jqs '[.repos[] | select(.has_commits)] | length')" 6
@@ -179,8 +179,8 @@ jqset '.repos["acme-example/repo-settings"].visibility = "private" | .repos["acm
 run bash "$B/create-environments.sh" --config "$CFG"; rc=$?
 assert_eq "create-environments (free) exits 0" "$rc" 0
 assert "free: fleet-apply in the private repo-settings is skipped, pointing at apply-settings.sh" has "$OUT" "apply fleet.yml from your machine with apply-settings.sh"
-assert_eq "plugin-runtime-review has no branch policy" "$(jqs '.envs["acme-example/agentskills"]["plugin-runtime-review"].deployment_branch_policy')" null
-assert_eq "plugin-runtime-review requires the owner" "$(jqs '.envs["acme-example/agentskills"]["plugin-runtime-review"].protection_rules[0].reviewers[0].reviewer.id')" "$(uid_of "$O")"
+assert_eq "plugin-runtime-review has no branch policy" "$(jqs '.envs["acme-example/acsi-agentskills"]["plugin-runtime-review"].deployment_branch_policy')" null
+assert_eq "plugin-runtime-review requires the owner" "$(jqs '.envs["acme-example/acsi-agentskills"]["plugin-runtime-review"].protection_rules[0].reviewers[0].reviewer.id')" "$(uid_of "$O")"
 assert_eq "routine-fire has no reviewer" "$(jqs '.envs["acme-example/skills-evals"]["routine-fire"].protection_rules | length')" 0
 assert_eq "routine-fire deploys only from main" "$(jqs '[.envs["acme-example/skills-evals"]["routine-fire"].policies[].name] | join(",")')" main
 assert "the variables wait for the App ids" has "$OUT" "GUIDANCE_SYNC_APP_ID is empty in fleet.env"
@@ -298,7 +298,7 @@ chmod 644 "$T/private/denylist"
 run bash "$B/set-secrets.sh" --config "$CFGP" --only privacy --denylist "$T/private/denylist"; rc=$?
 assert_eq "set-secrets privacy exits 0" "$rc" 0
 assert "a denylist other users can read is warned about" has "$ERR" "the denylist is readable by other users"
-assert_eq "PRIVACY_DENYLIST is a repository secret in agentskills" "$(jqs '.values["acme-example/agentskills||secret"].PRIVACY_DENYLIST')" "$(sha256sum < "$T/private/denylist" | cut -d' ' -f1)"
+assert_eq "PRIVACY_DENYLIST is a repository secret in acsi-agentskills" "$(jqs '.values["acme-example/acsi-agentskills||secret"].PRIVACY_DENYLIST')" "$(sha256sum < "$T/private/denylist" | cut -d' ' -f1)"
 assert "set-secrets counts the write" has "$OUT" "Done: 1 change(s)"
 chmod 600 "$T/private/denylist"
 run bash "$B/set-secrets.sh" --config "$CFGP" --only privacy --rotate --denylist "$T/private/denylist"; rc=$?
@@ -362,20 +362,20 @@ done
 assert_eq "six starter pull requests are open" "$(jqs '[.prs[][] | select(.head | startswith("starter/"))] | length')" 6
 assert "your owner replaced the invented one in fleet.yml" bash -c 'git --git-dir="$1" show starter/repo-settings:repo-settings/fleet.yml | grep -q "name: acme-example/skills-evals"' _ "$T/remotes/$O/repo-settings.git"
 assert "the second owner is OWNER_TWO" bash -c 'git --git-dir="$1" show starter/repo-settings:.github/workflows/repo-settings.yml | grep -qF "acme-example-two"' _ "$T/remotes/$O/repo-settings.git"
-assert "<your name> became OWNER_NAME" bash -c 'git --git-dir="$1" show starter/agent-skills:.claude-plugin/marketplace.json | grep -qF "\"Acme Example\""' _ "$T/remotes/$O/agentskills.git"
+assert "<your name> became OWNER_NAME" bash -c 'git --git-dir="$1" show starter/agent-skills:.claude-plugin/marketplace.json | grep -qF "\"Acme Example\""' _ "$T/remotes/$O/acsi-agentskills.git"
 uid=$(uid_of "$O")
 assert "the waiting feed commits as your own noreply identity" bash -c 'git --git-dir="$1" show starter/wsl-automation:scripts/publish-waiting-feed.sh | grep -qF "$2+acme-example@users.noreply.github.com"' _ "$T/remotes/$O/wsl-automation.git" "$uid"
 n=$(log_lines "$GH_LOG")
-head_before=$(git --git-dir="$T/remotes/$O/agentskills-private.git" rev-parse starter/agent-skills-private)
-run bash "$B/copy-starter.sh" --config "$CFGP" starter/agent-skills-private "$O/agentskills-private"; rc=$?
+head_before=$(git --git-dir="$T/remotes/$O/acsi-agentskills-private.git" rev-parse starter/agent-skills-private)
+run bash "$B/copy-starter.sh" --config "$CFGP" starter/agent-skills-private "$O/acsi-agentskills-private"; rc=$?
 assert_eq "copy-starter second run exits 0" "$rc" 0
-assert_eq "copy-starter second run makes no commit" "$(git --git-dir="$T/remotes/$O/agentskills-private.git" rev-parse starter/agent-skills-private)" "$head_before"
+assert_eq "copy-starter second run makes no commit" "$(git --git-dir="$T/remotes/$O/acsi-agentskills-private.git" rev-parse starter/agent-skills-private)" "$head_before"
 assert_eq "copy-starter second run opens no second pull request" "$(since "$n")" 0
 for r in "${FLEET[@]}"; do merge "$r" "starter/$(tree_of "$r")"; done
 # A file on main that differs from the starter is refused without --force.
-w="$T/tmp/edit"; git clone -q "$BOOTSTRAP_GIT_BASE/$O/agentskills-private.git" "$w"
+w="$T/tmp/edit"; git clone -q "$BOOTSTRAP_GIT_BASE/$O/acsi-agentskills-private.git" "$w"
 printf 'mine\n' > "$w/README.md"; git -C "$w" commit -qam "my README" && git -C "$w" push -q origin HEAD:main; rm -rf "$w"
-run bash "$B/copy-starter.sh" --config "$CFGP" starter/agent-skills-private "$O/agentskills-private"; rc=$?
+run bash "$B/copy-starter.sh" --config "$CFGP" starter/agent-skills-private "$O/acsi-agentskills-private"; rc=$?
 assert_eq "a differing file is refused" "$rc" 1
 assert "the refused path is listed" has "$ERR" "REFUSED: README.md exists on main"
 
@@ -453,27 +453,27 @@ regen_and_merge() { # task
 regen_and_merge run-health-sha
 assert_eq "regenerate run-health-sha exits 0" "$RC" 0
 ag=$(git --git-dir="$T/remotes/$O/_agent-guidance.git" rev-parse main)
-for r in repo-settings skills-evals agentskills; do
+for r in repo-settings skills-evals acsi-agentskills; do
   assert "$r calls your _agent-guidance's reusable at its commit" bash -c 'git --git-dir="$1" show main:.github/workflows/scheduled-run-health.yml | grep -qF "scheduled-run-health-reusable.yml@$2"' _ "$T/remotes/$O/$r.git" "$ag"
 done
 regen_and_merge hook-pin
 assert_eq "regenerate hook-pin exits 0" "$RC" 0
-as=$(git --git-dir="$T/remotes/$O/agentskills.git" rev-parse main)
-assert "repos.yml pins your agentskills" bash -c 'git --git-dir="$1" show main:repos.yml | grep -qx "  ref: $2"' _ "$T/remotes/$O/_agent-guidance.git" "$as"
+as=$(git --git-dir="$T/remotes/$O/acsi-agentskills.git" rev-parse main)
+assert "repos.yml pins your acsi-agentskills" bash -c 'git --git-dir="$1" show main:repos.yml | grep -qx "  ref: $2"' _ "$T/remotes/$O/_agent-guidance.git" "$as"
 regen_and_merge codex-pin
 assert_eq "regenerate codex-pin exits 0 (the script's own test passed)" "$RC" 0
-assert "the Codex pin names your agentskills" bash -c 'git --git-dir="$1" show main:scripts/sync-codex-cloud-environments.sh | grep -qx "readonly bootstrap_revision=.$2."' _ "$T/remotes/$O/wsl-automation.git" "$as"
+assert "the Codex pin names your acsi-agentskills" bash -c 'git --git-dir="$1" show main:scripts/sync-codex-cloud-environments.sh | grep -qx "readonly bootstrap_revision=.$2."' _ "$T/remotes/$O/wsl-automation.git" "$as"
 regen_and_merge skills-locks
 assert_eq "regenerate skills-locks (registry) exits 0" "$RC" 0
 assert "the first run asks to merge the registry first" has "$OUT" "Merge that pull request, then run this again"
 assert_not "the first run leaves the consumers alone" git --git-dir="$T/remotes/$O/repo-settings.git" rev-parse -q --verify refs/heads/regenerate/skills-locks
-assert "agentskills' lock pins a real commit, not zeros" bash -c 'git --git-dir="$1" show main:skills.lock | jq -e ".ref | test(\"^[0-9a-f]{40}$\") and (test(\"^0+$\") | not)"' _ "$T/remotes/$O/agentskills.git"
+assert "acsi-agentskills' lock pins a real commit, not zeros" bash -c 'git --git-dir="$1" show main:skills.lock | jq -e ".ref | test(\"^[0-9a-f]{40}$\") and (test(\"^0+$\") | not)"' _ "$T/remotes/$O/acsi-agentskills.git"
 regen_and_merge skills-locks
 assert_eq "regenerate skills-locks (consumers) exits 0" "$RC" 0
 for r in _agent-guidance repo-settings wsl-automation; do
-  assert_eq "$r's lock names your registry" "$(on_main "$r" skills.lock | jq -r .registry)" acme-example/agentskills
+  assert_eq "$r's lock names your registry" "$(on_main "$r" skills.lock | jq -r .registry)" acme-example/acsi-agentskills
 done
-assert "agentskills-private's lock is the registry's copy" bash -c 'cmp -s <(git --git-dir="$1" show main:skills.lock) <(git --git-dir="$2" show main:skills.lock)' _ "$T/remotes/$O/agentskills-private.git" "$T/remotes/$O/agentskills.git"
+assert "acsi-agentskills-private's lock is the registry's copy" bash -c 'cmp -s <(git --git-dir="$1" show main:skills.lock) <(git --git-dir="$2" show main:skills.lock)' _ "$T/remotes/$O/acsi-agentskills-private.git" "$T/remotes/$O/acsi-agentskills.git"
 for task in skills-locks hook-pin run-health-sha codex-pin; do
   run bash "$B/regenerate.sh" --config "$CFGP" --check "$task"; rc=$?
   assert_eq "regenerate --check $task passes after the merges" "$rc" 0
@@ -520,7 +520,7 @@ assert "--unmark makes a step next again" grep -q '^Next: 8 ' "$OUT"
 F=acme-fake
 CFGF="$T/fleet-fake.env"; new_config "$CFGF" paid "$F"
 printf 'GUIDANCE_SYNC_APP_ID=111\nROSTER_WRITER_APP_ID=222\n' >> "$CFGF"
-for r in repo-settings one two agentskills _agent-guidance; do gh repo create "$F/$r" --private >/dev/null; done
+for r in repo-settings one two acsi-agentskills _agent-guidance; do gh repo create "$F/$r" --private >/dev/null; done
 gh repo create "$F-two/three" --private >/dev/null
 w="$T/tmp/fake-rs"; mkdir -p "$w/scripts" "$w/repo-settings"
 cat > "$w/scripts/repo_settings.py" <<'PY'
@@ -591,7 +591,7 @@ fake_installer() { printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "%s" "$*" >>
 w="$T/tmp/fake-as"; mkdir -p "$w/scripts"
 fake_installer setup.sh > "$w/setup.sh"; fake_installer install-agent-hooks.sh > "$w/scripts/install-agent-hooks.sh"
 git init -q "$w" && git -C "$w" add -A && git -C "$w" commit -qm fake
-git init -q --bare "$T/remotes/$F/agentskills.git" && git -C "$w" push -q "$T/remotes/$F/agentskills.git" HEAD:main; rm -rf "$w"
+git init -q --bare "$T/remotes/$F/acsi-agentskills.git" && git -C "$w" push -q "$T/remotes/$F/acsi-agentskills.git" HEAD:main; rm -rf "$w"
 w="$T/tmp/fake-ag"; mkdir -p "$w/scripts" "$w/.claude/hooks"
 fake_installer register-memory-home-hook.sh > "$w/scripts/register-memory-home-hook.sh"
 fake_installer register-codex-hook.sh > "$w/scripts/register-codex-hook.sh"
@@ -608,31 +608,31 @@ run bash "$B/install-machine.sh" --config "$CFGF"; rc=$?
 assert_eq "install-machine exits 0" "$rc" 0
 assert_eq "it runs the repos' own installers, in order, with their arguments" "$(cat "$INSTALL_LOG")" \
   "$(printf '%s\n' "setup.sh --owner-machine" "install-agent-hooks.sh " "register-memory-home-hook.sh --hook $RD/_agent-guidance/.claude/hooks/memory-home.sh")"
-assert "it cloned agentskills into REPOS_DIR" test -f "$RD/agentskills/setup.sh"
+assert "it cloned acsi-agentskills into REPOS_DIR" test -f "$RD/acsi-agentskills/setup.sh"
 : > "$INSTALL_LOG"
 run bash "$B/install-machine.sh" --config "$CFGF" --with-codex; rc=$?
 assert_eq "a second install-machine run exits 0" "$rc" 0
-assert "a current clone is left as it is" has "$OUT" "$RD/agentskills is current"
+assert "a current clone is left as it is" has "$OUT" "$RD/acsi-agentskills is current"
 assert "--with-codex without ~/.codex skips the Codex hook" has "$OUT" "there is no ~/.codex"
 mkdir -p "$HOME/.codex"; : > "$INSTALL_LOG"
 run bash "$B/install-machine.sh" --config "$CFGF" --with-codex; rc=$?
 assert "--with-codex with ~/.codex registers the Codex hook" grep -q '^register-codex-hook.sh' "$INSTALL_LOG"
-w="$T/tmp/push-as"; git clone -q "$BOOTSTRAP_GIT_BASE/$F/agentskills.git" "$w"
+w="$T/tmp/push-as"; git clone -q "$BOOTSTRAP_GIT_BASE/$F/acsi-agentskills.git" "$w"
 printf '# v2\n' >> "$w/setup.sh"; git -C "$w" commit -qam v2 && git -C "$w" push -q origin HEAD:main; rm -rf "$w"
-before=$(git -C "$RD/agentskills" rev-parse HEAD)
-fetch_head_before=$(cat "$RD/agentskills/.git/FETCH_HEAD" 2>/dev/null | md5sum)
+before=$(git -C "$RD/acsi-agentskills" rev-parse HEAD)
+fetch_head_before=$(cat "$RD/acsi-agentskills/.git/FETCH_HEAD" 2>/dev/null | md5sum)
 run bash "$B/install-machine.sh" --config "$CFGF" --dry-run; rc=$?
 assert_eq "an install-machine dry run over existing clones exits 0" "$rc" 0
-assert "the dry run says it would fetch" has "$OUT" "DRY-RUN: git -C $RD/agentskills fetch --quiet origin main"
-assert_eq "the dry run does not fetch (FETCH_HEAD unchanged)" "$(cat "$RD/agentskills/.git/FETCH_HEAD" 2>/dev/null | md5sum)" "$fetch_head_before"
-assert_eq "the dry run does not move the clone" "$(git -C "$RD/agentskills" rev-parse HEAD)" "$before"
-assert_not "the dry run has not fetched the new commit" git -C "$RD/agentskills" cat-file -e "$(git --git-dir="$T/remotes/$F/agentskills.git" rev-parse main)"
+assert "the dry run says it would fetch" has "$OUT" "DRY-RUN: git -C $RD/acsi-agentskills fetch --quiet origin main"
+assert_eq "the dry run does not fetch (FETCH_HEAD unchanged)" "$(cat "$RD/acsi-agentskills/.git/FETCH_HEAD" 2>/dev/null | md5sum)" "$fetch_head_before"
+assert_eq "the dry run does not move the clone" "$(git -C "$RD/acsi-agentskills" rev-parse HEAD)" "$before"
+assert_not "the dry run has not fetched the new commit" git -C "$RD/acsi-agentskills" cat-file -e "$(git --git-dir="$T/remotes/$F/acsi-agentskills.git" rev-parse main)"
 run bash "$B/install-machine.sh" --config "$CFGF"; rc=$?
-assert "a clean clone on its default branch is fast-forwarded" has "$OUT" "fast-forwarded $RD/agentskills"
-git -C "$RD/agentskills" remote set-url origin "$BOOTSTRAP_GIT_BASE/someone-else/agentskills.git"
+assert "a clean clone on its default branch is fast-forwarded" has "$OUT" "fast-forwarded $RD/acsi-agentskills"
+git -C "$RD/acsi-agentskills" remote set-url origin "$BOOTSTRAP_GIT_BASE/someone-else/acsi-agentskills.git"
 run bash "$B/install-machine.sh" --config "$CFGF"; rc=$?
 assert_eq "a clone of another owner's repo is refused" "$rc" 1
-assert "the wrong origin is named" has "$ERR" "not acme-fake/agentskills"
+assert "the wrong origin is named" has "$ERR" "not acme-fake/acsi-agentskills"
 
 # ======================================================== the checkers, and that each can fail
 for c in check-refs.py check-branch-prefixes.py check-one-owner.py; do
@@ -680,7 +680,7 @@ grep -vF '| `wsl-automation` | The Codex Cloud bootstrap pin |' "$K/docs/generat
 kb tests/check-guide-lists.py "$T/kit"; rc=$?
 assert_eq "check-guide-lists fails when a REGENERATE.md item has no step" "$rc" 1
 mk_kit
-grep -vF '"agentskills|-|secret|PRIVACY_DENYLIST|file"' "$K/bootstrap/lib/common.sh" > "$T/kit/bootstrap/lib/common.sh"
+grep -vF '"acsi-agentskills|-|secret|PRIVACY_DENYLIST|file"' "$K/bootstrap/lib/common.sh" > "$T/kit/bootstrap/lib/common.sh"
 kb tests/check-refs.py; rc=$?
 assert_eq "check-refs fails when a secret a workflow reads has no setter" "$rc" 1
 assert "check-refs names the secret" has "$OUT" "PRIVACY_DENYLIST"

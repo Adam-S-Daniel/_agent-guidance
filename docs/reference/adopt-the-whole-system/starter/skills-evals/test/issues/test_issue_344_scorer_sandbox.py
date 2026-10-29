@@ -154,7 +154,7 @@ class SandboxTests(unittest.TestCase):
             self.assertIn(flag, prefix)
 
     def test_seam_includes_registry_guidance_outputs_and_external_profile(self):
-        args = SimpleNamespace(registry=["agentskills=" + str(self.root / "registry")],
+        args = SimpleNamespace(registry=["acsi-agentskills=" + str(self.root / "registry")],
                                guidance=str(self.root / "guidance"),
                                results_dir=self.root / "results", read_deny=[self.root / "wrapper"],
                                context_repos={"example-adopter/example-site-platform": self.root / "context"})

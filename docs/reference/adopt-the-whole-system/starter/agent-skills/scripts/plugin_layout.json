@@ -1,18 +1,18 @@
 {
   "plugins": {
-    "anything-anywhere": {
+    "acsi-anything-anywhere": {
       "defaultEnabled": true,
       "skills": []
     },
-    "coding-anywhere": {
+    "acsi-coding-anywhere": {
       "defaultEnabled": true,
       "skills": []
     },
-    "coding-local": {
+    "acsi-coding-local": {
       "defaultEnabled": false,
       "skills": []
     },
-    "non-coding-local": {
+    "acsi-non-coding-local": {
       "defaultEnabled": false,
       "skills": []
     }

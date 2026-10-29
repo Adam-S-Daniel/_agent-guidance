@@ -14,7 +14,7 @@ name: Gate routine skill draft
 #   accepted    report.md, skill.patch and 4-8 fixtures under
 #               evals/<subject>/: the drafted skill beat no skill on its own
 #               fixtures. This gate opens a DRAFT pull request in
-#               agentskills with the skill, then a DRAFT pull request
+#               acsi-agentskills with the skill, then a DRAFT pull request
 #               here with only evals/<subject>/ and its README layout line;
 #               both bodies say to merge the skill first. In auto merge
 #               mode (below) both are ready instead, with auto-merge on.
@@ -26,7 +26,7 @@ name: Gate routine skill draft
 # * The branch is UNTRUSTED (a model run wrote it). This workflow runs on
 #   `workflow_run`, so GitHub always runs the DEFAULT BRANCH's copy of it,
 #   never one the branch carries (see routine-draft-skill-pushed.yml). Every
-#   checkout is the default branch (and agentskills' default branch,
+#   checkout is the default branch (and acsi-agentskills' default branch,
 #   which the validator reads to refuse a subject that is already a skill);
 #   the branch is only fetched into a private ref and read through git
 #   plumbing by scripts/draft_new_skill.py `validate`. Nothing from it is
@@ -42,7 +42,7 @@ name: Gate routine skill draft
 #     credential   nothing; learns only WHETHER the GitHub App's two secrets
 #                  exist (a boolean), as routine-improve-gate.yml does.
 #     skill-pr     contents: read; mints the EVAL_IMPROVE_APP installation
-#                  token (agentskills only, contents and pull-requests
+#                  token (acsi-agentskills only, contents and pull-requests
 #                  write) after re-validation, and one step uses it: `apply`
 #                  adds the skill and the registry's bookkeeping, and when
 #                  the bundle is in the registry's skills.lock a second
@@ -61,14 +61,14 @@ name: Gate routine skill draft
 #                  workflow, so `test` (ci.yml) runs once a person pushes.
 #     hook-issue   contents: read and issues: write on the job token.
 # * One proposal per subject: an existing `draft-skill/<subject>` branch in
-#   agentskills, `draft-skill-fixtures/<subject>` branch here or
+#   acsi-agentskills, `draft-skill-fixtures/<subject>` branch here or
 #   `Hook proposal: <subject>` issue (open or closed) means one is already
 #   waiting for a person, so nothing is opened. Nothing here approves,
 #   force-pushes or deletes anything.
 # * The merge mode is the improvement gate's one switch,
 #   evals/improve-policy.yml `improve_merge_mode`, read by
 #   `improve_gate.py merge-mode` (draft when the skill's plugin runs code).
-#   In `auto` (the owner, 2026-10-26; agentskills ADR 0021) the skill's pull
+#   In `auto` (the owner, 2026-10-26; acsi-agentskills ADR 0021) the skill's pull
 #   request is ready, labeled and auto-merges (merge commit) after its
 #   required checks, unless another loop pull request (`eval-improve/*`,
 #   `draft-skill/*`, `retire-skill/*`) is open there, which makes both
@@ -125,11 +125,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Set up Python
@@ -186,7 +186,7 @@ jobs:
           python3 scripts/draft_new_skill.py validate \
             --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
             --source refs/draft-skill/source --branch "$BRANCH" \
-            --expect-sha "$SHA" --registry agentskills=../agentskills \
+            --expect-sha "$SHA" --registry acsi-agentskills=../acsi-agentskills \
             --out "$RUNNER_TEMP/staged" > "$RUNNER_TEMP/gate.out"
           cat "$RUNNER_TEMP/gate.out" >> "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/gate.out"
@@ -237,11 +237,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Set up Python
@@ -268,7 +268,7 @@ jobs:
           python3 scripts/draft_new_skill.py validate \
             --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
             --source refs/draft-skill/source --branch "$BRANCH" \
-            --expect-sha "$SHA" --registry agentskills=../agentskills \
+            --expect-sha "$SHA" --registry acsi-agentskills=../acsi-agentskills \
             --out "$RUNNER_TEMP/staged" > "$RUNNER_TEMP/revalidate.out"
           cat "$RUNNER_TEMP/revalidate.out"
 
@@ -283,29 +283,29 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/improve_gate.py merge-mode \
-            --tree ../agentskills --plugin "$PLUGIN" > "$RUNNER_TEMP/mode.out"
+            --tree ../acsi-agentskills --plugin "$PLUGIN" > "$RUNNER_TEMP/mode.out"
           cat "$RUNNER_TEMP/mode.out"
           cat "$RUNNER_TEMP/mode.out" >> "$GITHUB_OUTPUT"
 
       # Minted only now, after re-validation: an installation token for
-      # agentskills alone, with contents and pull-requests write only.
-      - name: Mint the GitHub App token for agentskills
+      # acsi-agentskills alone, with contents and pull-requests write only.
+      - name: Mint the GitHub App token for acsi-agentskills
         id: app-token
         uses: actions/create-github-app-token@v3.2.0
         with:
           client-id: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}
           private-key: ${{ secrets.EVAL_IMPROVE_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills
+          repositories: acsi-agentskills
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Open the skill's pull request in agentskills
+      - name: Open the skill's pull request in acsi-agentskills
         id: open
         working-directory: skills-evals
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TARGET_REPO: example-adopter/agentskills
+          TARGET_REPO: example-adopter/acsi-agentskills
           BRANCH: ${{ needs.validate.outputs.branch }}
           SHA: ${{ needs.validate.outputs.sha }}
           RUN_ID: ${{ needs.validate.outputs.run_id }}
@@ -407,7 +407,7 @@ jobs:
           body="$RUNNER_TEMP/body.md"
           python3 scripts/draft_new_skill.py pr-body --staged "$RUNNER_TEMP/staged" \
             --run-id "$RUN_ID" --sha "$SHA" --branch "$BRANCH" \
-            --repo agentskills --mode "$MODE" > "$body"
+            --repo acsi-agentskills --mode "$MODE" > "$body"
           draft=()
           if [ "$MODE" = draft ]; then
             draft=(--draft)
@@ -460,11 +460,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Set up Python
@@ -488,7 +488,7 @@ jobs:
           python3 scripts/draft_new_skill.py validate \
             --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
             --source refs/draft-skill/source --branch "$BRANCH" \
-            --expect-sha "$SHA" --registry agentskills=../agentskills \
+            --expect-sha "$SHA" --registry acsi-agentskills=../acsi-agentskills \
             --out "$RUNNER_TEMP/staged" > "$RUNNER_TEMP/revalidate.out"
           cat "$RUNNER_TEMP/revalidate.out"
 
@@ -615,11 +615,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Set up Python
@@ -643,7 +643,7 @@ jobs:
           python3 scripts/draft_new_skill.py validate \
             --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
             --source refs/draft-skill/source --branch "$BRANCH" \
-            --expect-sha "$SHA" --registry agentskills=../agentskills \
+            --expect-sha "$SHA" --registry acsi-agentskills=../acsi-agentskills \
             --out "$RUNNER_TEMP/staged" > "$RUNNER_TEMP/revalidate.out"
           cat "$RUNNER_TEMP/revalidate.out"
 

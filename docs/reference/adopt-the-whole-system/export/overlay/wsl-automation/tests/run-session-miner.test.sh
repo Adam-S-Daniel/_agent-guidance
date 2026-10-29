@@ -194,26 +194,26 @@ done
 # 8. Defaults under HOME, then a config file read as data.
 mkdir -p "$HOME/.config" "$HOME/repos"
 cp -- "$denylist" "$HOME/.config/privacy-denylist.txt"
-git init --quiet "$HOME/repos/agentskills-private"
-git -C "$HOME/repos/agentskills-private" remote add origin 'https://example.com/registry.git'
+git init --quiet "$HOME/repos/acsi-agentskills-private"
+git -C "$HOME/repos/acsi-agentskills-private" remote add origin 'https://example.com/registry.git'
 run PYTHON="$test_root/bin/python-ok" bash "$script" --dry-run
 assert_eq "$rc" 0 'defaults run'
 assert_eq "$(record denylist)" "$HOME/.config/privacy-denylist.txt" 'default denylist path'
-assert_eq "$(record clone)" "$HOME/repos/agentskills-private" 'default registry clone'
+assert_eq "$(record clone)" "$HOME/repos/acsi-agentskills-private" 'default registry clone'
 
 config="$test_root/session-miner.env"
 cat >"$config" <<EOF
 # comment line
 
 PRIVACY_DENYLIST_FILE=$denylist
-LESSONS_CLONE=~/repos/agentskills-private
+LESSONS_CLONE=~/repos/acsi-agentskills-private
 PYTHON=$test_root/bin/python-ok
 WIN_HOME=~/win
 EOF
 run SESSION_MINER_CONFIG="$config" bash "$script" --dry-run
 assert_eq "$rc" 0 'config file run'
 assert_eq "$(record denylist)" "$denylist" 'config sets the denylist'
-assert_eq "$(record clone)" "$HOME/repos/agentskills-private" 'config expands a leading ~/'
+assert_eq "$(record clone)" "$HOME/repos/acsi-agentskills-private" 'config expands a leading ~/'
 assert_eq "$(record win_home)" "$HOME/win" 'config sets WIN_HOME'
 run SESSION_MINER_CONFIG="$config" WIN_HOME=/mnt/c/Users/example bash "$script" --dry-run
 assert_eq "$(record win_home)" /mnt/c/Users/example 'the environment wins over the config file'

@@ -14,8 +14,8 @@ surface the uploader existed for — and, unlike an upload, can be deleted.
 [Issue #23](https://github.com/Adam-S-Daniel/adam-agentskills/issues/23) step
 1 asked to confirm that on every surface before retiring the uploader.
 
-On 2026-09-27/28 the owner enabled `anything-anywhere`,
-`non-coding-local` and `private-anything-anywhere` on claude.ai (a
+On 2026-09-27/28 the owner enabled `acsi-anything-anywhere`,
+`acsi-non-coding-local` and `acsi-private-anything-anywhere` on claude.ai (a
 Claude Code terminal's synced manifest lists exactly those three from these
 marketplaces), enabled them in the Desktop app as well, and reported the
 plugin skills loading on local Cowork. The skills-evals account-store audit
@@ -28,7 +28,7 @@ removed the audit.
 ## Decision
 
 Delete the ZIP-upload channel: `sync-skills`
-(`plugins/coding-local/skills/sync-skills/`, including
+(`plugins/acsi-coding-local/skills/sync-skills/`, including
 `account-skills.txt`), `scripts/account_zip_selection.py`, the
 `account-skill-zips.yml` and
 `record-account-upload.yml`

@@ -435,14 +435,14 @@ test("runAlerts: creates an issue when findIssueByTitle returns null, passing la
     findIssueByTitle: () => null,
     createIssue: (args) => { created.push(args); return {}; },
   });
-  const result = runAlerts({ alerts: [{ title: "New one", body: "B" }], api, assignee: "my", label: "vendor-discrepancy", dryRun: false, log: () => {} });
+  const result = runAlerts({ alerts: [{ title: "New one", body: "B" }], api, assignee: "acsi", label: "vendor-discrepancy", dryRun: false, log: () => {} });
   assert.equal(result.created, 1);
   assert.equal(result.skipped, 0);
   assert.equal(created.length, 1);
   assert.equal(created[0].title, "New one");
   assert.equal(created[0].body, "B");
   assert.equal(created[0].label, "vendor-discrepancy");
-  assert.equal(created[0].assignee, "my");
+  assert.equal(created[0].assignee, "acsi");
 });
 
 test("runAlerts: skips (idempotent) when findIssueByTitle already finds a match, in any state", () => {
@@ -453,7 +453,7 @@ test("runAlerts: skips (idempotent) when findIssueByTitle already finds a match,
   });
   const result = runAlerts({
     alerts: [{ title: "Already filed", body: "B" }],
-    api, assignee: "my", label: "vendor-discrepancy", dryRun: false, log: () => {},
+    api, assignee: "acsi", label: "vendor-discrepancy", dryRun: false, log: () => {},
   });
   assert.equal(result.created, 0);
   assert.equal(result.skipped, 1);
@@ -465,7 +465,7 @@ test("runAlerts: ensureLabel is called exactly once for a multi-alert run", () =
   const api = fakeAlertApi({ ensureLabel: () => { ensureLabelCalls++; } });
   runAlerts({
     alerts: [{ title: "A", body: "a" }, { title: "B", body: "b" }, { title: "C", body: "c" }],
-    api, assignee: "my", label: "vendor-discrepancy", dryRun: false, log: () => {},
+    api, assignee: "acsi", label: "vendor-discrepancy", dryRun: false, log: () => {},
   });
   assert.equal(ensureLabelCalls, 1);
 });
@@ -473,7 +473,7 @@ test("runAlerts: ensureLabel is called exactly once for a multi-alert run", () =
 test("runAlerts: ensureLabel is NOT called when there are no alerts", () => {
   let ensureLabelCalls = 0;
   const api = fakeAlertApi({ ensureLabel: () => { ensureLabelCalls++; } });
-  const result = runAlerts({ alerts: [], api, assignee: "my", label: "vendor-discrepancy", dryRun: false, log: () => {} });
+  const result = runAlerts({ alerts: [], api, assignee: "acsi", label: "vendor-discrepancy", dryRun: false, log: () => {} });
   assert.equal(ensureLabelCalls, 0);
   assert.deepEqual(result, { planned: 0, created: 0, skipped: 0 });
 });
@@ -484,7 +484,7 @@ test("runAlerts: an api error (createIssue) propagates", () => {
     createIssue: () => { throw new Error("boom: gh issue create failed"); },
   });
   assert.throws(
-    () => runAlerts({ alerts: [{ title: "T", body: "B" }], api, assignee: "my", label: "vendor-discrepancy", dryRun: false, log: () => {} }),
+    () => runAlerts({ alerts: [{ title: "T", body: "B" }], api, assignee: "acsi", label: "vendor-discrepancy", dryRun: false, log: () => {} }),
     /boom: gh issue create failed/,
   );
 });
@@ -496,7 +496,7 @@ test("runAlerts: the final log line format", () => {
   });
   runAlerts({
     alerts: [{ title: "Filed already", body: "b1" }, { title: "Brand new", body: "b2" }],
-    api, assignee: "my", label: "vendor-discrepancy", dryRun: false, log: (l) => logs.push(l),
+    api, assignee: "acsi", label: "vendor-discrepancy", dryRun: false, log: (l) => logs.push(l),
   });
   const last = logs[logs.length - 1];
   assert.equal(last, "discrepancy-alert: 2 planned, 1 created, 1 already filed");
@@ -557,7 +557,7 @@ test("ghApi.createIssue: argv carries --label, --assignee and --body-file, and t
   };
   const api = ghApi("o/r", "vendor-discrepancy", fakeExec);
 
-  api.createIssue({ title: "Brand new alert", body: "body text", label: "vendor-discrepancy", assignee: "my" });
+  api.createIssue({ title: "Brand new alert", body: "body text", label: "vendor-discrepancy", assignee: "acsi" });
 
   const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create");
   assert.ok(createCall, "expected an issue create call");

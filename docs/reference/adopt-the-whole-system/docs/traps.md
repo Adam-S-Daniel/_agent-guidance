@@ -20,7 +20,7 @@ the system now does, or what you should do.
 | A `startup\|resume` matcher | Forked sessions got no guidance | Use `startup\|resume\|fork` |
 | A one-spelling entrypoint check | A cloud session reported itself as local and installed nothing | Test `CLAUDE_CODE_REMOTE`, not one entrypoint value |
 | Secret-looking names in generated files | A name with "secret" in it next to a hash tripped the secret scanner on every push | Name things after their purpose, not "secret" or "token" |
-| A reserved marketplace name | `agent-skills` is reserved, so the marketplace would not add | The registry's marketplace is `agentskills`; keep a name that is not reserved |
+| A reserved marketplace name | `agent-skills` is reserved, so the marketplace would not add | The registry's marketplace is `acsi-agentskills`; keep a name that is not reserved |
 | Repository-wide secrets | Any workflow on any branch can read them, including one an agent just pushed | Keep the powerful App keys in environments limited to the default branch ([environments](settings-and-apps.md#environments)) |
 | A GitHub 404 | Read as "it does not exist" | A 404 can mean "you may not see it"; check the repo with another credential before saying something is gone |
 | `GIT_CONFIG_GLOBAL=/dev/null` for a git call run as root | A `git config --global` write renames over its target, so `/dev/null` became a regular file for every process on the host | Never let a git call that can write config run as root with `/dev/null` as its config; give it a scratch `HOME` and an empty scratch config file |

@@ -27,7 +27,7 @@ name: Fire eval routine
 #   the routine runs the improvement loop on that skill. `skill` must pass
 #   the loop's own fixture resolution (`scripts/improve_gate.py
 #   fire-check`): nested evals/<skill>/<name> fixtures that all name it and
-#   agentskills, at least the loop's minimum of them, and `holdout`
+#   acsi-agentskills, at least the loop's minimum of them, and `holdout`
 #   empty or one of their names.
 #   `guidance-improve` (ADR 0005, "Routine guidance improve mode addendum")
 #   sends exactly five: run_id, mode, section, trials and holdout (null when
@@ -40,7 +40,7 @@ name: Fire eval routine
 #   (public, no credential kept), a manifest row that is not skipped.
 #   `draft` (turn a `new-skill` lesson into a drafted skill; caller
 #   routine-draft-skill.yml) takes one input, `proposal`, a path under
-#   agentskills-private's lessons/ matching
+#   acsi-agentskills-private's lessons/ matching
 #   proposals/<date>/<subject>__new-skill.json. A draft-only step mints the
 #   read-only registry App token (as propagation.yml does), sparse-checks
 #   out lessons/, and `scripts/draft_new_skill.py payload` re-validates the
@@ -203,7 +203,7 @@ on:
       proposal:
         description: >-
           Draft mode only (leave empty otherwise): the lesson proposal under
-          agentskills-private's lessons/, e.g.
+          acsi-agentskills-private's lessons/, e.g.
           proposals/2026-10-26/example-skill__new-skill.json.
         required: false
         type: string
@@ -488,7 +488,7 @@ jobs:
             # The loop's own resolution, read-only and offline: the nested
             # evals/<skill>/<name> fixtures must all name this skill and
             # one registry, harness/registries.yml must map it to
-            # agentskills (the one registry the routine checks out),
+            # acsi-agentskills (the one registry the routine checks out),
             # there must be at least the loop's MIN_FIXTURES, and a holdout
             # must be one of them. Only the registry-side SKILL.md lookup,
             # which needs the registry checkout, is left to the routine.
@@ -637,7 +637,7 @@ jobs:
           echo "file=${out}" >> "$GITHUB_OUTPUT"
 
       # Draft mode only. The read-only registry App token, minted exactly as
-      # propagation.yml mints it: agentskills-private alone, contents
+      # propagation.yml mints it: acsi-agentskills-private alone, contents
       # read, revoked when the job ends. It reaches only the checkout below.
       - name: Mint the read-only token for the lessons
         id: lessons-token
@@ -647,17 +647,17 @@ jobs:
           client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills-private
+          repositories: acsi-agentskills-private
           permission-contents: read
 
       # Only lessons/ (the miner's redacted proposals), from
       # persistent/lessons, where the miner writes (main is PR-only;
       # skills-evals#423, ADR 0015). Credentials not kept.
-      - name: Check out the lessons (agentskills-private)
+      - name: Check out the lessons (acsi-agentskills-private)
         if: steps.validate.outputs.mode == 'draft'
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills-private
+          repository: example-adopter/acsi-agentskills-private
           ref: persistent/lessons
           path: lessons-repo
           persist-credentials: false

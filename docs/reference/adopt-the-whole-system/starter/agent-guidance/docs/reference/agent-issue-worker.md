@@ -84,7 +84,7 @@ blocked comments. The on-hold stop overrides step 7 below.
    merged `Refs` PR already fixed some findings (the fleet worker comments
    which), do only the findings no merged PR fixed; when none are left,
    close the issue as completed with a comment naming the merged PRs. In
-   `agentskills`, an edit to a `SKILL.md` also raises the bundle's
+   `acsi-agentskills`, an edit to a `SKILL.md` also raises the bundle's
    `version` in both `plugin.json` files (only that value changes), adds a
    `docs/skill-impact.md` entry (add lines only) and a `PURPOSE.md` beside
    the `SKILL.md`, and the PR body states how the eval touch gate was met

@@ -758,8 +758,8 @@ def test_undeclared_duplicate_is_keyed_by_basename_for_waivers(tmp_path):
 
 def test_existing_but_empty_registry_scans_zero_skills_and_is_not_an_error(tmp_path):
     empty = tmp_path / "empty"
-    (empty / "plugins" / "my-private" / "skills").mkdir(parents=True)
-    (empty / "plugins" / "my-private" / "skills" / ".gitkeep").write_text("", encoding="utf-8")
+    (empty / "plugins" / "acsi-private" / "skills").mkdir(parents=True)
+    (empty / "plugins" / "acsi-private" / "skills" / ".gitkeep").write_text("", encoding="utf-8")
     report = run_tool(
         tmp_path,
         [registry_entry("private", "empty", layout="plugins/*/skills/*/SKILL.md")],

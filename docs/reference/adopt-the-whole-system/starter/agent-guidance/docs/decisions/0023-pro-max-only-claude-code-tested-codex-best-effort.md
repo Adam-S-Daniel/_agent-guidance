@@ -62,7 +62,7 @@ What was true when the decisions were made:
 6. **Memory mining stays local.** There is no cloud miner. Project memory is
    handled by hand.
 7. **Cleanup is a fixed list,** time-boxed to two weeks, then one small
-   sweep per repo. Items: this ADR; retiring agentskills' in-repo
+   sweep per repo. Items: this ADR; retiring acsi-agentskills' in-repo
    memory and the docs that teach it; duplicate ADR numbers (two `0015`
    here, two `0002` in skills-evals); committing the cloud setup script and
    fixing its hook matcher; leftover ZIP uploads in the account skill

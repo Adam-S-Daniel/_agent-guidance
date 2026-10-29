@@ -8,11 +8,11 @@ the pull-request body and the registry patch the loop writes). It never opens
 a pull request. `scripts/improve_gate.py` validates that branch from the
 default branch's checkout, through git plumbing only, and
 `.github/workflows/routine-improve-gate.yml` opens a pull request in
-example-adopter/agentskills, auto-merging or draft by
+example-adopter/acsi-agentskills, auto-merging or draft by
 evals/improve-policy.yml, but only when the owner-chosen credential exists. What is pinned here:
 
   * the branch contract: exactly the three files, additions only, under the
-    branch's own run id; an accepted record for agentskills whose
+    branch's own run id; an accepted record for acsi-agentskills whose
     SKILL.md path matches its skill; a single-file patch whose hunks parse;
     a report with the loop's own title and no closing keyword or @mention;
     every rejection names a path and a reason, never file content;
@@ -79,7 +79,7 @@ import propose_skill_edit as pse  # noqa: E402
 RUN_ID = "20261006T201500Z-0a1b2c"
 BRANCH = f"claude/eval-improve-{RUN_ID}"
 SKILL = "writing-adrs"
-SKILL_MD = f"plugins/anything-anywhere/skills/{SKILL}/SKILL.md"
+SKILL_MD = f"plugins/acsi-anything-anywhere/skills/{SKILL}/SKILL.md"
 REGISTRY_SHA = "1" * 40
 MARKER = "do-not-echo-this-marker"
 ROUTINE_ID = "ROUTINE_TRIGGER_ID"
@@ -114,8 +114,8 @@ def record(**changes) -> dict:
         "schema": 1, "skill": SKILL, "timestamp": "20261006T201733Z",
         "local_exhibit": "skills-evals ADR 0002 decision 4: operator login, "
                          "not badge input",
-        "registry": {"name": "agentskills",
-                     "url": "https://github.com/example-adopter/agentskills",
+        "registry": {"name": "acsi-agentskills",
+                     "url": "https://github.com/example-adopter/acsi-agentskills",
                      "sha": REGISTRY_SHA, "skill_md": SKILL_MD},
         "split": {"rotation": 0, "train": ["bootstrap", "supersede"],
                   "validation": "existing-convention"},
@@ -398,7 +398,7 @@ class RejectContentTests(GitCase):
     def test_rejects_another_registry_or_a_bad_sha(self):
         cases = [
             {"name": "example-site-platform"},
-            {"url": "https://github.com/example/agentskills"},
+            {"url": "https://github.com/example/acsi-agentskills"},
             {"sha": "abc"},
             {"skill_md": f"plugins/x/skills/other-skill/SKILL.md"},
             {"skill_md": f"plugins/../skills/{SKILL}/SKILL.md"},
@@ -719,14 +719,14 @@ class MergeModeTests(unittest.TestCase):
                 self.assertEqual(self.mode(text), "draft")
 
 
-PLUGIN = "anything-anywhere"
+PLUGIN = "acsi-anything-anywhere"
 FAKE_README = """import pathlib
 root = pathlib.Path(__file__).resolve().parent.parent
 md = root / "plugins/{plugin}/skills/{skill}/SKILL.md"
 description = md.read_text(encoding="utf-8").split("description: ", 1)[1].split(chr(10), 1)[0]
 (root / "README.md").write_text("table: " + description + chr(10), encoding="utf-8")
 """.format(plugin=PLUGIN, skill=SKILL)
-#: Stands in for agentskills' generate_skills_lock.py: `--check-current`
+#: Stands in for acsi-agentskills' generate_skills_lock.py: `--check-current`
 #: is current when the lock pins HEAD, `--repin` pins HEAD; LOCK_EXIT forces
 #: an exit code, STRAY makes it write a file nobody asked for.
 FAKE_LOCK = """import json, os, pathlib, subprocess, sys
@@ -752,7 +752,7 @@ IMPACT = ("# skill-impact.md\n\nEntry format here.\n\n---\n\n"
 
 
 class PrepareTests(unittest.TestCase):
-    """`prepare` builds what agentskills' required checks ask of a
+    """`prepare` builds what acsi-agentskills' required checks ask of a
     skill edit, against a scratch registry whose README and lock scripts
     are stand-ins."""
 
@@ -1163,7 +1163,7 @@ class WorkflowShapeTests(unittest.TestCase):
         step = self.mint_step()
         self.assertEqual(step["id"], "app-token")
         self.assertEqual(step["with"]["owner"], "example-adopter")
-        self.assertEqual(step["with"]["repositories"], "agentskills")
+        self.assertEqual(step["with"]["repositories"], "acsi-agentskills")
         self.assertEqual(
             {k: v for k, v in step["with"].items() if k.startswith("permission-")},
             {"permission-contents": "write", "permission-pull-requests": "write"})
@@ -1207,14 +1207,14 @@ class WorkflowShapeTests(unittest.TestCase):
         return next(s for s in self.jobs["registry-pr"]["steps"]
                     if "gh pr create" in s.get("run", ""))
 
-    def test_opens_one_pull_request_in_agentskills(self):
+    def test_opens_one_pull_request_in_acsi_agentskills(self):
         bodies = "\n".join(body for _, body in run_blocks(self.gate))
         creates = re.findall(r"gh pr create[^\n]*(?:\\\n[^\n]*)*", bodies)
         self.assertEqual(len(creates), 1)
         self.assertIn('--repo "$TARGET_REPO" "${draft[@]}"', creates[0])
         step = self.open_step()
         self.assertEqual(step["env"]["TARGET_REPO"],
-                         "example-adopter/agentskills")
+                         "example-adopter/acsi-agentskills")
         self.assertEqual(step["env"]["MODE"], "${{ steps.build.outputs.mode }}")
         self.assertIn('if [ "$MODE" = draft ]; then\n  draft=(--draft)\nfi',
                       step["run"].replace("          ", ""))
@@ -1351,11 +1351,11 @@ class FireCheckTests(unittest.TestCase):
                 self.assert_rejected(skill, gate.FIRE_NOT_A_SKILL)
 
     def test_refuses_a_skill_of_another_registry(self):
-        # Three nested fixtures, but for agentskills-private, which the
+        # Three nested fixtures, but for acsi-agentskills-private, which the
         # routine never checks out.
-        self.assertGreaterEqual(len(pse.skill_fixtures("my-writing-style")),
+        self.assertGreaterEqual(len(pse.skill_fixtures("acsi-writing-style")),
                                 pse.MIN_FIXTURES)
-        self.assert_rejected("my-writing-style", gate.FIRE_NOT_ROUTINE_REGISTRY)
+        self.assert_rejected("acsi-writing-style", gate.FIRE_NOT_ROUTINE_REGISTRY)
 
     def test_refuses_too_few_fixtures(self):
         # Synthetic layouts, so the case does not move when a real skill

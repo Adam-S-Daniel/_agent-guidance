@@ -2707,7 +2707,7 @@ class EvalWorkflowSecurityHeaderTests(unittest.TestCase):
                 self.assertNotIn("run_eval.py", run,
                                  "the `roster` job must never run the eval "
                                  "itself — that is the `eval` job's job alone")
-                self.assertNotIn("agentskills", run)
+                self.assertNotIn("acsi-agentskills", run)
                 self.assertNotIn("example-site-platform", run)
                 self.assertNotIn("example-site-a", run)
                 self.assertNotIn("_agent-guidance", run)
@@ -2772,7 +2772,7 @@ class EvalWorkflowSecurityHeaderTests(unittest.TestCase):
         # the header prose said. Scoped to just the file's LEADING comment
         # block (the run of lines at the top that start with '#' or are
         # blank) instead, and matched against the registry's basename
-        # (`agentskills`, not `example-adopter/agentskills`) — the
+        # (`acsi-agentskills`, not `example-adopter/acsi-agentskills`) — the
         # spelling the header prose actually uses.
         lines = self.WORKFLOW.read_text(encoding="utf-8").splitlines()
         header_lines = list(itertools.takewhile(
@@ -2837,7 +2837,7 @@ class EvalWorkflowSecurityHeaderTests(unittest.TestCase):
         # whether that checkout's `repository:` is the repo registries.yml
         # actually names for that flag's NAME — so a NAME/PATH pair
         # transposed between two registries (e.g.
-        # `--registry agentskills=../example-site-platform`) stayed green here and
+        # `--registry acsi-agentskills=../example-site-platform`) stayed green here and
         # died at runtime with skill_not_found. Now built from
         # {with.path: with.repository} and cross-checked against each
         # registry's own url in harness/registries.yml.
@@ -3142,7 +3142,7 @@ class CiDispatchTests(unittest.TestCase):
 
     def test_checks_out_agentskills_side_by_side_for_the_agreement_test(self):
         # TestIssue63::test_registries_agree_with_agentskills_own_file skips
-        # (with a printed reason) when no agentskills checkout is
+        # (with a printed reason) when no acsi-agentskills checkout is
         # present — which was EVERY run in CI, since ci.yml checked out only
         # this repo. A side-by-side checkout, matching eval.yml's and
         # propagation.yml's own pattern, is what lets that test actually
@@ -3152,7 +3152,7 @@ class CiDispatchTests(unittest.TestCase):
         steps = doc["jobs"]["suite"]["steps"]
         # Identified by with.path == "skills-evals", not positionally — a
         # reordering of the checkout steps must not make this compare the
-        # agentskills checkout's SHA against itself and pass vacuously.
+        # acsi-agentskills checkout's SHA against itself and pass vacuously.
         own_checkout = next(s for s in steps
                             if (s.get("uses") or "").startswith("actions/checkout@")
                             and (s.get("with") or {}).get("path") == "skills-evals")
@@ -3161,15 +3161,15 @@ class CiDispatchTests(unittest.TestCase):
         agentskills_checkouts = [
             s for s in steps
             if (s.get("uses") or "").startswith("actions/checkout@")
-            and (s.get("with") or {}).get("repository") == "example-adopter/agentskills"]
+            and (s.get("with") or {}).get("repository") == "example-adopter/acsi-agentskills"]
         self.assertEqual(len(agentskills_checkouts), 1,
-                         "expected exactly one agentskills checkout step")
+                         "expected exactly one acsi-agentskills checkout step")
         step = agentskills_checkouts[0]
         with_block = step.get("with") or {}
-        self.assertEqual(with_block.get("path"), "agentskills")
+        self.assertEqual(with_block.get("path"), "acsi-agentskills")
         self.assertIs(with_block.get("persist-credentials"), False)
         self.assertEqual(step["uses"].split("@", 1)[1], own_sha,
-                         "the agentskills checkout must name the same "
+                         "the acsi-agentskills checkout must name the same "
                          "release tag as ci.yml's own checkout (one "
                          "actions.lock entry locks both to a commit)")
 
@@ -5782,7 +5782,7 @@ class TestIssue67Review(unittest.TestCase):
         (eval_dir / "seed").mkdir(parents=True)
         (eval_dir / "seed" / "README.md").write_text("seed\n", encoding="utf-8")
         fixture = {"skill": "a-skill", "prompt": "do the thing",
-                   "registry": "https://github.com/example-adopter/agentskills",
+                   "registry": "https://github.com/example-adopter/acsi-agentskills",
                    "judge_rubric": "grade it",
                    "arms": {"without_skill": {"install": "none"}}}
         if pinned:
@@ -5935,7 +5935,7 @@ class TestIssue67Review(unittest.TestCase):
                              encoding="utf-8")
             argv = ["run_eval.py", str(eval_dir), "--arm", "both",
                     "--roster", str(path), "--results-dir", str(results),
-                    "--registry", f"agentskills={tmp}"]
+                    "--registry", f"acsi-agentskills={tmp}"]
 
             def fake_run_agent(workspace, prompt, arm):
                 return {"transcript": "done", "usage": {}, "cost_usd": 0.0,
@@ -8398,7 +8398,7 @@ class TestIssue84Review(Issue84Fixture, unittest.TestCase):
 
 class TestIssue63(unittest.TestCase):
     """Issue #63: resolve the with_skill arm's skill dir against any registry
-    layout named in harness/registries.yml, not just agentskills'
+    layout named in harness/registries.yml, not just acsi-agentskills'
     plugins/*/skills/*/SKILL.md — example-site-platform's flat skills/*/SKILL.md and
     example-site-a's .claude/skills/*/SKILL.md must resolve too, and an
     unknown registry: URL must fail loudly naming the file to fix.
@@ -8496,7 +8496,7 @@ class TestIssue63(unittest.TestCase):
 
     def test_flat_layout_missing_skill_names_the_skills_path(self):
         # A non-plugins layout's skill_not_found detail must name the actual
-        # glob searched (skills/<skill>/SKILL.md), not agentskills' own
+        # glob searched (skills/<skill>/SKILL.md), not acsi-agentskills' own
         # plugins/*/skills/<skill> shape.
         with tempfile.TemporaryDirectory() as tmp:
             registry = self._fake_registry(tmp, "skills/some-skill/SKILL.md")
@@ -8563,7 +8563,7 @@ class TestIssue63(unittest.TestCase):
             # The pre-#63 form: one bare path, no NAME= prefix.
             registries = run_eval.resolve_registries([str(registry)], None, REPO_ROOT)
             entry = run_eval.registry_for_url(
-                registries, "https://github.com/example-adopter/agentskills")
+                registries, "https://github.com/example-adopter/acsi-agentskills")
             self.assertEqual(entry["path"], registry)
             self.assertEqual(entry["layout"], "plugins/*/skills/*/SKILL.md")
 
@@ -8608,14 +8608,14 @@ class TestIssue63(unittest.TestCase):
 
     def test_registries_agree_with_agentskills_own_file(self):
         # Routed through resolve_registries (rather than a hardcoded
-        # "../agentskills") so $AGENTSKILLS_DIR / $SKILLS_EVALS_REGISTRIES
+        # "../acsi-agentskills") so $AGENTSKILLS_DIR / $SKILLS_EVALS_REGISTRIES
         # can steer which checkout this compares against, same as a real run.
         registries = run_eval.resolve_registries(
             None, os.environ.get("SKILLS_EVALS_REGISTRIES"), REPO_ROOT,
             os.environ.get("AGENTSKILLS_DIR"))
-        agentskills_file = registries["agentskills"]["path"] / "scripts" / "skills_registries.yml"
+        agentskills_file = registries["acsi-agentskills"]["path"] / "scripts" / "skills_registries.yml"
         if not agentskills_file.is_file():
-            reason = (f"no agentskills checkout at {agentskills_file} — "
+            reason = (f"no acsi-agentskills checkout at {agentskills_file} — "
                       "skipping the cross-repo registries.yml agreement check")
             # CI now runs `python3 test/run_tests.py --jobs auto` (#182), where
             # pytest's `-rfEs` prints skip reasons in its own summary; this
@@ -8633,17 +8633,17 @@ class TestIssue63(unittest.TestCase):
         self.assertEqual(ours, theirs)
 
     def test_parallel_pins_agree_with_agentskills_requirements(self):
-        # ci.yml checks agentskills out side by side for this run
-        # ("Check out agentskills registry (side-by-side)"), so this
+        # ci.yml checks acsi-agentskills out side by side for this run
+        # ("Check out acsi-agentskills registry (side-by-side)"), so this
         # test runs on every CI run, not just when someone happens to touch
-        # --jobs. A pin bump landing in agentskills' requirements-dev.txt
+        # --jobs. A pin bump landing in acsi-agentskills' requirements-dev.txt
         # first (agentskills#179's own -n auto run) turns THIS red until
         # skills-evals' PARALLEL_PINS follows — deliberate: the owner wants
         # the two repos' pins drifting apart to be loud, not silent (#182).
         registries = run_eval.resolve_registries(
             None, os.environ.get("SKILLS_EVALS_REGISTRIES"), REPO_ROOT,
             os.environ.get("AGENTSKILLS_DIR"))
-        requirements_file = registries["agentskills"]["path"] / "requirements-dev.txt"
+        requirements_file = registries["acsi-agentskills"]["path"] / "requirements-dev.txt"
         if not requirements_file.is_file():
             reason = (f"no requirements-dev.txt at {requirements_file} — "
                       "skipping the cross-repo parallel-pins agreement check")
@@ -8762,7 +8762,7 @@ class TestIssue63(unittest.TestCase):
     def test_repeated_bare_env_entry_raises(self):
         with self.assertRaises(ValueError) as ctx:
             run_eval.resolve_registries(None, "/a,/b", REPO_ROOT)
-        self.assertIn("agentskills", str(ctx.exception))
+        self.assertIn("acsi-agentskills", str(ctx.exception))
 
     # --- Review round 3, item G: a `**` layout segment passes the
     # "ends in '*/SKILL.md'" load-time check but lets a recursive glob at
@@ -8786,7 +8786,7 @@ class TestParallelPinAgreement(unittest.TestCase):
     """`parallel_pin_disagreements` in isolation (#182) — no sibling
     checkout, no filesystem. TestIssue63's own
     test_parallel_pins_agree_with_agentskills_requirements exercises it
-    against the real agentskills requirements-dev.txt when one is
+    against the real acsi-agentskills requirements-dev.txt when one is
     checked out; these pin the parsing rules the way build_suite() and CI
     never would on their own.
     """
@@ -8841,7 +8841,7 @@ class TestIssue63Review(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("example_site_platform", msg)
         self.assertIn("harness/registries.yml", msg)
-        for name in ("agentskills", "example-site-platform", "example-site-a"):
+        for name in ("acsi-agentskills", "example-site-platform", "example-site-a"):
             self.assertIn(name, msg)
 
     def test_unknown_env_override_name_is_rejected(self):
@@ -8849,27 +8849,27 @@ class TestIssue63Review(unittest.TestCase):
             run_eval.resolve_registries(None, "not-a-real-registry=/x", REPO_ROOT)
         self.assertIn("not-a-real-registry", str(ctx.exception))
 
-    def test_bare_env_entry_is_taken_as_agentskills_like_the_cli_flag(self):
+    def test_bare_env_entry_is_taken_as_acsi_agentskills_like_the_cli_flag(self):
         # A bare $SKILLS_EVALS_REGISTRIES entry (no "=") used to be silently
         # dropped, even though a bare --registry PATH is the documented
-        # legacy agentskills shorthand. The two are now consistent.
+        # legacy acsi-agentskills shorthand. The two are now consistent.
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp) / "registry"
             registry.mkdir()
             registries = run_eval.resolve_registries(None, str(registry), REPO_ROOT)
-        self.assertEqual(registries["agentskills"]["path"], registry.resolve())
-        self.assertEqual(registries["agentskills"]["source"], "$SKILLS_EVALS_REGISTRIES")
+        self.assertEqual(registries["acsi-agentskills"]["path"], registry.resolve())
+        self.assertEqual(registries["acsi-agentskills"]["source"], "$SKILLS_EVALS_REGISTRIES")
 
     def test_empty_path_after_equals_is_rejected_at_parse_time(self):
-        # --registry agentskills= used to resolve Path("") == the
+        # --registry acsi-agentskills= used to resolve Path("") == the
         # current working directory, silently.
         with self.assertRaises(ValueError) as ctx:
-            run_eval.resolve_registries(["agentskills="], None, REPO_ROOT)
-        self.assertIn("agentskills", str(ctx.exception))
+            run_eval.resolve_registries(["acsi-agentskills="], None, REPO_ROOT)
+        self.assertIn("acsi-agentskills", str(ctx.exception))
 
     def test_empty_env_path_after_equals_is_rejected_at_parse_time(self):
         with self.assertRaises(ValueError):
-            run_eval.resolve_registries(None, "agentskills=", REPO_ROOT)
+            run_eval.resolve_registries(None, "acsi-agentskills=", REPO_ROOT)
 
     def test_nonexistent_explicit_override_is_rejected_before_any_arm_runs(self):
         bad_path = REPO_ROOT / "does-not-exist-anywhere"
@@ -8888,7 +8888,7 @@ class TestIssue63Review(unittest.TestCase):
         self.assertNotIn("does-not-exist-anywhere", msg)
 
     def test_unoverridden_sibling_default_is_not_eagerly_validated(self):
-        # agentskills-private has no sibling checkout in this
+        # acsi-agentskills-private has no sibling checkout in this
         # environment and no fixture references it — validating every
         # registries.yml entry unconditionally would make eval.yml's real
         # run (which never checks it out) fail on every dispatch.
@@ -8897,31 +8897,31 @@ class TestIssue63Review(unittest.TestCase):
         # sibling default against REPO_ROOT (this repo's own checkout) and
         # asserted the resulting path is NOT a directory — an environment
         # fact, not a property of the code. It fails on any machine that
-        # happens to have the real fleet repo `agentskills-private`
+        # happens to have the real fleet repo `acsi-agentskills-private`
         # cloned beside `skills-evals` (this account's own workstation does).
         # Hermetic fix, mirroring `test_registry_not_found_ends_via_exit_2_
         # with_message_naming_path` above: resolve against a throwaway
         # base_dir instead of REPO_ROOT, and prove
         # `_validate_registry_paths` doesn't raise regardless of whether
         # that base_dir's sibling exists — by creating, then removing, a
-        # real `agentskills-private` directory beside a throwaway copy
+        # real `acsi-agentskills-private` directory beside a throwaway copy
         # (never beside the real checkout).
         with tempfile.TemporaryDirectory() as tmp:
             tmp_root = Path(tmp)
             fake_repo_root = tmp_root / "skills-evals"
             fake_repo_root.mkdir()
-            sibling = tmp_root / "agentskills-private"
+            sibling = tmp_root / "acsi-agentskills-private"
 
             # Condition 1: no sibling checkout present.
             self.assertFalse(sibling.is_dir())
             registries = run_eval.resolve_registries(None, None, fake_repo_root)
-            self.assertEqual(registries["agentskills-private"]["path"], sibling.resolve())
+            self.assertEqual(registries["acsi-agentskills-private"]["path"], sibling.resolve())
             run_eval._validate_registry_paths(registries)  # must not raise
 
             # Condition 2: a real sibling checkout now exists.
             sibling.mkdir()
             registries = run_eval.resolve_registries(None, None, fake_repo_root)
-            self.assertTrue(registries["agentskills-private"]["path"].is_dir())
+            self.assertTrue(registries["acsi-agentskills-private"]["path"].is_dir())
             run_eval._validate_registry_paths(registries)  # must not raise either way
 
             # Tear back down to condition 1, proving removal doesn't matter.
@@ -8944,14 +8944,14 @@ class TestIssue63Review(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {"AGENTSKILLS_DIR": tmp}):
                 registries = run_eval.resolve_registries(None, None, REPO_ROOT)
-        self.assertEqual(registries["agentskills"]["source"], "sibling default")
+        self.assertEqual(registries["acsi-agentskills"]["source"], "sibling default")
 
     def test_registry_url_match_normalizes_slash_git_suffix_and_case(self):
         registries = run_eval.resolve_registries(None, None, REPO_ROOT)
         for variant in (
-            "https://github.com/example-adopter/agentskills/",
-            "https://github.com/example-adopter/agentskills.git",
-            "https://GITHUB.COM/example-adopter/AgentSkills",
+            "https://github.com/example-adopter/acsi-agentskills/",
+            "https://github.com/example-adopter/acsi-agentskills.git",
+            "https://GITHUB.COM/example-adopter/Acsi-AgentSkills",
         ):
             with self.subTest(url=variant):
                 entry = run_eval.registry_for_url(registries, variant)
@@ -9049,7 +9049,7 @@ class TestIssue63Review(unittest.TestCase):
             path.mkdir(parents=True)
             (path / "fixture.yaml").write_text(yaml.safe_dump(
                 {"skill": "a-skill", "prompt": "do the thing",
-                 "registry": "https://github.com/example-adopter/agentskills"},
+                 "registry": "https://github.com/example-adopter/acsi-agentskills"},
                 sort_keys=False), encoding="utf-8")
         found = self._fixture_dirs(evals_root)
         self.assertIn(planted["nested"] / "fixture.yaml", found,
@@ -9170,8 +9170,8 @@ class TestIssue63Review(unittest.TestCase):
     def test_real_registries_yml_passes_shape_validation(self):
         entries = run_eval._load_registries_config()
         names = {e["name"] for e in entries}
-        self.assertEqual(names, {"agentskills", "example-site-platform", "example-site-a",
-                                 "agentskills-private"})
+        self.assertEqual(names, {"acsi-agentskills", "example-site-platform", "example-site-a",
+                                 "acsi-agentskills-private"})
 
 
 class TestIssue63Round2(unittest.TestCase):
@@ -9340,7 +9340,7 @@ class TestIssue63Round2(unittest.TestCase):
             seed_dir.mkdir(parents=True)
             (seed_dir / "placeholder.txt").write_text("x\n", encoding="utf-8")
             fixture = {"skill": "some-skill",
-                      "registry": "https://github.com/example-adopter/agentskills"}
+                      "registry": "https://github.com/example-adopter/acsi-agentskills"}
             import yaml
             (eval_dir / "fixture.yaml").write_text(yaml.safe_dump(fixture), encoding="utf-8")
 
@@ -9380,13 +9380,13 @@ class TestIssue63Round2(unittest.TestCase):
 
     def test_registry_not_found_ends_via_exit_2_with_message_naming_path(self):
         # Review round 3, item D: the original version of this test asserted
-        # the SIBLING DEFAULT for "agentskills-private" specifically
-        # (../agentskills-private next to THIS repo's own checkout) does
+        # the SIBLING DEFAULT for "acsi-agentskills-private" specifically
+        # (../acsi-agentskills-private next to THIS repo's own checkout) does
         # not resolve to a directory — which fails on entirely correct code
         # for any maintainer who has that real fleet repo cloned beside
         # skills-evals (`with_skill` then resolves it and hits
         # skill_not_found instead of registry_not_found; verified locally by
-        # creating a sibling `agentskills-private/` next to this
+        # creating a sibling `acsi-agentskills-private/` next to this
         # checkout).
         #
         # Hermetic fix: run a COPY of the harness rooted inside a fresh tmp
@@ -9532,7 +9532,7 @@ class TestIssue63Round2(unittest.TestCase):
     def test_repeated_bare_legacy_flag_raises(self):
         with self.assertRaises(ValueError) as ctx:
             run_eval.resolve_registries(["/a", "/b"], None, REPO_ROOT)
-        self.assertIn("agentskills", str(ctx.exception))
+        self.assertIn("acsi-agentskills", str(ctx.exception))
 
     # --- N5: registry resolution/validation must abort BEFORE any arm
     # starts, including --arm objective-only ---
@@ -11044,7 +11044,7 @@ class TestIssue67Review6(unittest.TestCase):
 
 
 class TestIssue81(unittest.TestCase):
-    """Issue #81: the `my-writing-style` fixtures (the Class C pilot) and
+    """Issue #81: the `acsi-writing-style` fixtures (the Class C pilot) and
     the pairwise judge mode they introduce.
 
     Class C means the judge carries the load and only the decidable bits are
@@ -11052,7 +11052,7 @@ class TestIssue81(unittest.TestCase):
     things are worth stating up front because they shape every test below:
 
     - The three fixtures are separate, individually runnable eval dirs
-      (`evals/my-writing-style/<fixture>/`), because the multi-fixture
+      (`evals/acsi-writing-style/<fixture>/`), because the multi-fixture
       runner (#66) has not landed. They sit one level deeper than the
       fixtures that predate them, so the repo-wide checks glob
       `evals/**/fixture.yaml`; a `*` there silently skipped these three.
@@ -11064,7 +11064,7 @@ class TestIssue81(unittest.TestCase):
       broken fixture (test_objective_only_on_the_pristine_seed_fails_loudly).
     """
 
-    STYLE_DIR = FIXTURE_EVALS / "my-writing-style"
+    STYLE_DIR = FIXTURE_EVALS / "acsi-writing-style"
     # Read off the disk, not written out here. The credential scan already
     # walked the whole directory while the marker test iterated a 3-tuple in
     # this file, so a fourth fixture directory with its markers stripped
@@ -11227,11 +11227,11 @@ class TestIssue81(unittest.TestCase):
 
     def _skill_md(self) -> str | None:
         """The skill's own SKILL.md text, or None (with a printed reason)
-        when no agentskills-private checkout is reachable.
+        when no acsi-agentskills-private checkout is reachable.
 
-        my-writing-style lives in the PRIVATE registry, not the public one
+        acsi-writing-style lives in the PRIVATE registry, not the public one
         (it is no longer shipped by any public registry) — so this is routed
-        through resolve_registries' `agentskills-private` entry, unlike
+        through resolve_registries' `acsi-agentskills-private` entry, unlike
         TestIssue63::test_registries_agree_with_agentskills_own_file, which
         reads the public one. $SKILLS_EVALS_REGISTRIES can still steer which
         checkout this reads, but there is no dedicated env var for the
@@ -11242,9 +11242,9 @@ class TestIssue81(unittest.TestCase):
         """
         registries = run_eval.resolve_registries(
             None, os.environ.get("SKILLS_EVALS_REGISTRIES"), REPO_ROOT, None)
-        skill_md = (registries["agentskills-private"]["path"] / "plugins"
-                    / "private-anything-anywhere" / "skills"
-                    / "my-writing-style" / "SKILL.md")
+        skill_md = (registries["acsi-agentskills-private"]["path"] / "plugins"
+                    / "acsi-private-anything-anywhere" / "skills"
+                    / "acsi-writing-style" / "SKILL.md")
         if not skill_md.is_file():
             return None
         return skill_md.read_text(encoding="utf-8")
@@ -11280,8 +11280,8 @@ class TestIssue81(unittest.TestCase):
         # not here.
         skill_md = self._skill_md()
         if skill_md is None:
-            reason = ("no my-writing-style SKILL.md in the resolved "
-                      "agentskills-private checkout (CI has no token "
+            reason = ("no acsi-writing-style SKILL.md in the resolved "
+                      "acsi-agentskills-private checkout (CI has no token "
                       "for the private repo) — skipping the avoid-list "
                       "drift check")
             # CI now runs `python3 test/run_tests.py --jobs auto` (#182), where
@@ -11317,8 +11317,8 @@ class TestIssue81(unittest.TestCase):
         # the term count cannot see. The two sets are compared both ways.
         skill_md = self._skill_md()
         if skill_md is None:
-            reason = ("no my-writing-style SKILL.md in the resolved "
-                      "agentskills-private checkout (CI has no token "
+            reason = ("no acsi-writing-style SKILL.md in the resolved "
+                      "acsi-agentskills-private checkout (CI has no token "
                       "for the private repo) — skipping the avoid-list "
                       "leftover check")
             print(reason)
@@ -11341,8 +11341,8 @@ class TestIssue81(unittest.TestCase):
         # from the registry for the same reason as above.
         skill_md = self._skill_md()
         if skill_md is None:
-            reason = ("no my-writing-style SKILL.md in the resolved "
-                      "agentskills-private checkout (CI has no token "
+            reason = ("no acsi-writing-style SKILL.md in the resolved "
+                      "acsi-agentskills-private checkout (CI has no token "
                       "for the private repo) — skipping the use-freely check")
             print(reason)
             self.skipTest(reason)
@@ -11621,7 +11621,7 @@ class TestIssue81(unittest.TestCase):
                 self.assertTrue([p for p in seed.rglob("*") if p.is_file()],
                                 f"{name}'s seed/ is empty")
                 fixture = self._fixture(name)
-                self.assertEqual(fixture["skill"], "my-writing-style")
+                self.assertEqual(fixture["skill"], "acsi-writing-style")
                 self.assertIsNotNone(
                     run_eval.registry_for_url(registries, fixture["registry"]))
                 # No pins: the arms and the judge follow evals/roster.yml.
@@ -11670,7 +11670,7 @@ class TestIssue81(unittest.TestCase):
     # the scheme been there.
     _URL_RE = re.compile(r"(?:https?://|(?<![\w.@-])www\.)([^\s/)\"'>]+)")
     # A host with neither a scheme nor a `www.` in front of it is still a
-    # link to a reader — "mirrored at notexample.com/my" names a real
+    # link to a reader — "mirrored at notexample.com/acsi" names a real
     # site as plainly as the same line with https:// on it, and the pattern
     # above saw nothing. Restricted to a fixed list of TLDs so it stays off
     # the filenames a repo is full of (`run_eval.py`, `background.md`,
@@ -12644,16 +12644,16 @@ class TestIssue81(unittest.TestCase):
                 encoding="utf-8")
             fixture = copy.deepcopy(self._fixture("recruiter-reply"))
             registries = run_eval.resolve_registries(None, None, REPO_ROOT)
-            # recruiter-reply's registry is agentskills-private, which CI
+            # recruiter-reply's registry is acsi-agentskills-private, which CI
             # has no token to clone. Give the pre-agent install a minimal
             # offline skill so the stubbed agent reaches the seed cap.
-            private_stub = Path(tmp) / "agentskills-private"
+            private_stub = Path(tmp) / "acsi-agentskills-private"
             skill = private_stub / "plugins/test-bundle/skills" / fixture["skill"] / "SKILL.md"
             skill.parent.mkdir(parents=True)
-            skill.write_text("---\nname: my-writing-style\ndescription: Offline seed cap fixture.\n---\n",
+            skill.write_text("---\nname: acsi-writing-style\ndescription: Offline seed cap fixture.\n---\n",
                              encoding="utf-8")
-            registries["agentskills-private"] = dict(
-                registries["agentskills-private"], path=private_stub)
+            registries["acsi-agentskills-private"] = dict(
+                registries["acsi-agentskills-private"], path=private_stub)
             args = argparse.Namespace(model=None, timeout=30,
                                       results_dir=Path(tmp) / "results",
                                       no_judge=True)
@@ -13144,7 +13144,7 @@ class TestIssue81(unittest.TestCase):
         # It is opt-in now, and this is the fence around the opt-in.
         elsewhere = []
         for path in sorted((REPO_ROOT / "evals").glob("**/fixture.yaml")):
-            if path.parent.parent.name == "my-writing-style":
+            if path.parent.parent.name == "acsi-writing-style":
                 continue
             fixture = run_eval.load_fixture(path.parent)
             for check in fixture.get("objective_checks") or []:
@@ -13488,8 +13488,8 @@ class TestIssue81(unittest.TestCase):
         # rather than asserted here.
         skill_md = self._skill_md()
         if skill_md is None:
-            reason = ("no my-writing-style SKILL.md in the resolved "
-                      "agentskills-private checkout (CI has no token "
+            reason = ("no acsi-writing-style SKILL.md in the resolved "
+                      "acsi-agentskills-private checkout (CI has no token "
                       "for the private repo) — skipping the register check")
             print(reason)
             self.skipTest(reason)
@@ -13522,7 +13522,7 @@ class TestIssue81(unittest.TestCase):
         (eval_dir / "seed").mkdir(parents=True)
         (eval_dir / "seed" / "placeholder.txt").write_text("x\n",
                                                           encoding="utf-8")
-        fixture = {"skill": "my-writing-style", "prompt": "do the thing",
+        fixture = {"skill": "acsi-writing-style", "prompt": "do the thing",
                    "judge_rubric": "rank them"}
         fixture.update(fields)
         (eval_dir / "fixture.yaml").write_text(yaml.safe_dump(fixture),
@@ -13819,7 +13819,7 @@ class TestIssue81(unittest.TestCase):
     _NOT_IPV6 = ("Date: Tue, 1 Sep 2026 09:14:00 -0400",
                  "the run fell from 26:00 to 9:00",
                  "Section 508 audit: 34 of 51 closed")
-    _BARE_HOSTS = ("mirrored at notexample.com/my",
+    _BARE_HOSTS = ("mirrored at notexample.com/acsi",
                    "see docs.notexample.org for the policy",
                    "notexample.co.uk hosts the archive")
     _NOT_BARE_HOSTS = ("run_eval.py", "background.md", "fixture.yaml",
@@ -15151,9 +15151,9 @@ Non-obvious decisions live in [`docs/decisions/`](docs/decisions/README.md)
         registries = run_eval.resolve_registries(
             None, os.environ.get("SKILLS_EVALS_REGISTRIES"), REPO_ROOT,
             os.environ.get("AGENTSKILLS_DIR"))
-        entry = registries["agentskills"]
+        entry = registries["acsi-agentskills"]
         if not entry["path"].is_dir():
-            reason = (f"no agentskills checkout at {entry['path']} — skipping "
+            reason = (f"no acsi-agentskills checkout at {entry['path']} — skipping "
                       "the live-template drift check")
             print(reason)
             self.skipTest(reason)
@@ -30709,7 +30709,7 @@ class TestPublishUsageCensus(unittest.TestCase):
         (seed / "evals" / "workflow-path-audit").mkdir()
         (seed / "evals" / "workflow-path-audit" / "fixture.yaml").write_text(
             "skill: workflow-path-audit\n"
-            "registry: https://github.com/example-adopter/agentskills\n",
+            "registry: https://github.com/example-adopter/acsi-agentskills\n",
             encoding="utf-8")
         self.git("add", ".", cwd=seed)
         self.git("commit", "--quiet", "-m", "seed", cwd=seed)

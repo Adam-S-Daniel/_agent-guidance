@@ -6,7 +6,7 @@
 # the evals — eval.yml's dispatch input, the coverage checks — ever sees it.
 # The skill name is the one test/fixtures/fake_registry ships.
 skill: fixture-primary-skill
-registry: https://github.com/example-adopter/agentskills
+registry: https://github.com/example-adopter/acsi-agentskills
 
 # Pinned, so the run needs no roster. Not real model ids: test/fake-claude
 # echoes whatever `--model` it is given back as the model that served it.

@@ -11,7 +11,7 @@ CLAUDE.md files, skills, agents and commands for prompting patterns written
 for older models, and lists stale paths, stale commands and contradicting
 instruction files first.
 
-One measured run (CLI 2.1.289, against `agentskills`, plan mode with
+One measured run (CLI 2.1.289, against `acsi-agentskills`, plan mode with
 read-only tools, 2026-10-04):
 
 - It runs headless and exits 0 whether or not it finds anything. Its output

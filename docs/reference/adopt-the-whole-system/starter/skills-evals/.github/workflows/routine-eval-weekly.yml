@@ -19,7 +19,7 @@ name: Weekly routine evals
 #   census) and the three public registries as data, computes the
 #   retirement verdicts as scripts/compute_gates.py does, and reads the
 #   GitHub evidence (fire runs, improve and guidance-improve branches,
-#   agentskills and _agent-guidance pull requests, open on-hold
+#   acsi-agentskills and _agent-guidance pull requests, open on-hold
 #   issues) with its read-only token. A read failure
 #   plans nothing (fail closed). When nothing fits, `count` is 0 and the
 #   dispatch job is skipped.
@@ -75,10 +75,10 @@ jobs:
           ref: persistent/eval-results
           path: eval-results-branch
           persist-credentials: false
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
+          repository: example-adopter/acsi-agentskills
           path: registry-agentskills
           fetch-depth: 0
           persist-credentials: false
@@ -112,7 +112,7 @@ jobs:
           as_of="$(git -C eval-results-branch log -1 --format=%cI)"
           python3 scripts/plan_week.py plan --results-tree eval-results-branch \
             --as-of "$as_of" --max-fires 30 \
-            --registry "agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
             --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
             --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --guidance "$GITHUB_WORKSPACE/agent-guidance" \

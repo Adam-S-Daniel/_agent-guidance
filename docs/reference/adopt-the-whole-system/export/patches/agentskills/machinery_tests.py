@@ -87,11 +87,6 @@ def apply(root: Path, ctx) -> None:
 
     # ── scripts/test_generate_skills_lock.py ───────────────────────────────
     _sub(root, "scripts/test_generate_skills_lock.py", [
-        # The bare owner-name bundle label became `my` (C1) and the platform repo became
-        # `example-site-platform` (C3), which sort the other way round.
-        ('''    assert sorted(lock["skills"]) == ["my/alpha", "example-site-platform/deploy"]
-''', '''    assert sorted(lock["skills"]) == ["example-site-platform/deploy", "my/alpha"]
-'''),
         # The vendored bootstrap hook cites a test of the skills-doctor
         # skill, which the kit does not ship (X9). The hook is byte for byte
         # _agent-guidance's copy, so the citation stays and is declared here.
@@ -107,17 +102,17 @@ def apply(root: Path, ctx) -> None:
     ])
 
     # ── scripts/test_setup_owner_machine.py ────────────────────────────────
-    # The legacy whole-directory home link pointed at plugins/coding-local/
+    # The legacy whole-directory home link pointed at plugins/acsi-coding-local/
     # skills/, which a registry with no skills does not have, so "the target
     # survives" could not be checked. It points at the same plugin's hooks/,
     # a real directory under plugins/ that ships: still "ours" to setup.sh,
     # still a target that must survive the sweep.
     _sub(root, "scripts/test_setup_owner_machine.py", [
-        ('''    (home / ".agents" / "skills").symlink_to(REPO / "plugins" / "coding-local" / "skills")
-''', '''    (home / ".agents" / "skills").symlink_to(REPO / "plugins" / "coding-local" / "hooks")
+        ('''    (home / ".agents" / "skills").symlink_to(REPO / "plugins" / "acsi-coding-local" / "skills")
+''', '''    (home / ".agents" / "skills").symlink_to(REPO / "plugins" / "acsi-coding-local" / "hooks")
 '''),
-        ('''    assert (REPO / "plugins" / "coding-local" / "skills").is_dir()
-''', '''    assert (REPO / "plugins" / "coding-local" / "hooks").is_dir()
+        ('''    assert (REPO / "plugins" / "acsi-coding-local" / "skills").is_dir()
+''', '''    assert (REPO / "plugins" / "acsi-coding-local" / "hooks").is_dir()
 '''),
     ])
 

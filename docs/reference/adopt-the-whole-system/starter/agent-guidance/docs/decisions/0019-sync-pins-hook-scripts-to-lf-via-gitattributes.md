@@ -45,7 +45,7 @@ synced repo's root `.gitattributes`:
   is added. If the line is there without the comment, nothing is added.
 - **Appending is enough.** For each attribute, git uses the last matching line.
   So the line at the end of a file that starts with `* -text` (as in
-  agentskills) applies to the hooks and changes nothing else.
+  acsi-agentskills) applies to the hooks and changes nothing else.
 - **Same delivery path as the hooks.** The change goes in the same commit as
   the rest of the repo's sync: a direct push, or the fallback PR. A repo that
   lacks only the line still gets a commit. A repo the sync skips gets nothing.

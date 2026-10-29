@@ -214,8 +214,8 @@ The rule itself — `powershell.exe` / `pwsh.exe` launched from WSL holds a
 filtered token, so reads succeed while elevation-requiring writes fail with
 "Access is denied", and no flag, retry or downgraded principal fixes it — and
 the hand-over procedure live in the **`windows-elevation-from-wsl`** skill
-(`coding-local` plugin in `agentskills`;
-`/coding-local:windows-elevation-from-wsl`). This section keeps only what
+(`acsi-coding-local` plugin in `acsi-agentskills`;
+`/acsi-coding-local:windows-elevation-from-wsl`). This section keeps only what
 is specific to this repo:
 
 - **Both writes this repo makes need elevation.** `scripts\register-tasks.ps1`

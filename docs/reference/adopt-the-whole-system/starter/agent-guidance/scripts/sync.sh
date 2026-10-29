@@ -1149,7 +1149,7 @@ for repo_name in "${REPOS[@]}"; do
     #   runner    missing | current | drifted | skipped (gitignored)
     #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
     #             "present" is ANY workflow that runs .githooks/agent-checks:
-    #             agentskills runs it as a job in ci.yml.
+    #             acsi-agentskills runs it as a job in ci.yml.
     #   guard     the PreToolUse hook; delivered only where fleet-memory can
     #             be (same .claude/ and settings.json refusals).
     #   eol       the `.githooks/* text eol=lf` line in .gitattributes.

@@ -60,7 +60,7 @@ here — which is the conversation ADR 0001 said belonged in those repos.
 **4. Two of ADR 0001's stated reasons did not survive checking.**
 `agentskills-private` was grouped with `agentskills` as *"they AUTHOR the hook
 and the lock"*. It does not: it authors **private skills**, it will consume an
-ordinary `my` lock like any other repo, and nothing in it is a source of
+ordinary `acsi` lock like any other repo, and nothing in it is a source of
 truth this sync could clobber. `scratch-claude-002` was shelved under *"scratch or unexamined"* on the
 strength of its name; it is a live portfolio site whose `main` deploys to
 sprites.dev — though not on *every* push: `deploy.yml` filters on `index.html`
@@ -163,7 +163,7 @@ the one place the fleet's own mechanism could not see.
   re-pinner promptly rather than to trust that nobody notices.
 - **Always-on context, in eight more repos.** Roughly 185 tokens per bundled
   skill in every ephemeral session that carries a bundle — about 1.5k for an
-  `my`-only lock's 8 skills, about 4.3k for a federated 23 (`example-site-a`,
+  `acsi`-only lock's 8 skills, about 4.3k for a federated 23 (`example-site-a`,
   `example-site-b`). Both figures are computed from that rate; ADR 0001 quoted
   ~3.1k for 23 skills, which does not reconcile with 185 and is not carried
   forward. That cost is the entire argument for opt-in, and widening spends it
@@ -189,11 +189,11 @@ the one place the fleet's own mechanism could not see.
 **Left open, deliberately.**
 
 - **`agentskills#87` (a `sha256:` prefix on lock digests) is not needed for this
-  widening.** The claim is scoped to what was measured, which is `my`-only
+  widening.** The claim is scoped to what was measured, which is `acsi`-only
   locks: gitleaks' `generic-api-key` rule wants a secret-ish keyword near the
-  high-entropy capture, and an `my`-only lock has no keyword-bearing line, so
+  high-entropy capture, and an `acsi`-only lock has no keyword-bearing line, so
   a repo adopting one needs no gitleaks change. All eight companion PRs commit
-  `my`-only locks, `cms-platform#275` included — which matters because
+  `acsi`-only locks, `cms-platform#275` included — which matters because
   `example-site-platform` owns the skill literally named `example-site-platform-secrets` and runs
   gitleaks itself. A FEDERATED lock is the other case and is not hypothetical:
   `example-site-b`, one of the ten, could not commit its federated lock without

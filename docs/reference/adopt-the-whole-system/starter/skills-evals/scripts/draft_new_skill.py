@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn a `new-skill` lesson into a drafted, measured skill, or a hook proposal.
 
-The consumer side of the session miner. The miner (agentskills-private,
+The consumer side of the session miner. The miner (acsi-agentskills-private,
 redacted at the source) writes one JSON proposal per lesson under
 `lessons/proposals/<YYYY-MM-DD>/<subject>__<kind>.json`. A daily caller,
 `.github/workflows/routine-draft-skill.yml`, picks one `new-skill` proposal
@@ -43,17 +43,17 @@ values only):
             -> the fire payload JSON on stdout
   fire-check --payload FILE        (no output; exit 0 or 1)
   hook-first --payload FILE --proposal-json FILE --results DIR
-  measure   --staging DIR --registry agentskills=DIR --ref SHA
+  measure   --staging DIR --registry acsi-agentskills=DIR --ref SHA
             --payload FILE --trials N --results DIR
             (exit 0 accepted, 1 rejected, 2 refused)
   resolve   --event-name NAME --event-path PATH
   validate  --repo DIR --base REF --source REF --branch NAME
-            [--expect-sha SHA] --registry agentskills=DIR --out DIR
+            [--expect-sha SHA] --registry acsi-agentskills=DIR --out DIR
             -> decision=, subject=, plugin=, run_id=, sha=
-  apply     --staged DIR --tree DIR         (in an agentskills checkout)
+  apply     --staged DIR --tree DIR         (in an acsi-agentskills checkout)
   fixtures-apply --staged DIR --tree DIR    (in a skills-evals checkout)
   pr-body   --staged DIR --run-id ID --sha SHA --branch NAME [--mode draft|auto]
-            --repo agentskills|skills-evals         (body on stdout)
+            --repo acsi-agentskills|skills-evals         (body on stdout)
   issue-body --staged DIR --run-id ID --sha SHA --branch NAME (body on stdout)
 
 `measure` lays `--results` out as the tree the branch adds:
@@ -145,8 +145,8 @@ DECISIONS = ("accepted", "rejected", "hook-first")
 
 REGISTRY_NAME = improve_gate.REGISTRY_NAME
 REGISTRY_URL = improve_gate.REGISTRY_URL
-PLUGINS = ("anything-anywhere", "coding-anywhere",
-           "coding-local", "non-coding-local")
+PLUGINS = ("acsi-anything-anywhere", "acsi-coding-anywhere",
+           "acsi-coding-local", "acsi-non-coding-local")
 #: anthropics/claude-plugins-official, the skill-creator the routine drafts with.
 SKILL_CREATOR_COMMIT = "2a40fd2e7c52207aa903bd33fc4c65716126966e"
 TOKENS_BASIS = "model_usage_total"
@@ -434,7 +434,7 @@ def fixture_problem(data: bytes, subject: str) -> str | None:
                 f"{list(FIXTURE_REQUIRED)} present (no context:, drafts run in "
                 "isolation pairing)")
     if doc["skill"] != subject or doc["registry"] != REGISTRY_URL:
-        return "fixture.yaml does not name the subject and agentskills"
+        return "fixture.yaml does not name the subject and acsi-agentskills"
     if not isinstance(doc["prompt"], str) or not doc["prompt"].strip():
         return "fixture.yaml has no prompt"
     if "arms" in doc and doc["arms"] != ARMS:
@@ -1324,7 +1324,7 @@ def regenerate_readme(tree: Path) -> None:
 
 
 def apply(staged: Path, tree: Path) -> dict:
-    """In an agentskills checkout: the patch, as data, then what the
+    """In an acsi-agentskills checkout: the patch, as data, then what the
     registry requires of a new skill (its pull-request template and CI):
     the bundle version bumped in both manifests (check_plugin_versions.py),
     the README skill table regenerated (generate_readme_table.py --check),
@@ -1447,7 +1447,7 @@ def pr_body(staged: Path, run_id: str, sha: str, branch: str, repo: str,
             "additions (bundle version, README table, `docs/skill-impact.md`).",
             "",
             ("This pull request merges itself (merge commit) once the "
-             "required checks pass, with no human review (agentskills "
+             "required checks pass, with no human review (acsi-agentskills "
              f"[ADR 0021]({improve_gate.REGISTRY_ADR}); the owner, 2026-10-26). "
              if mode == "auto" else
              "A person reviews and merges this, or closes it; nothing merges "
@@ -1460,7 +1460,7 @@ def pr_body(staged: Path, run_id: str, sha: str, branch: str, repo: str,
         head = [
             f"Eval fixtures for the drafted skill `{subject}`, from the draft "
             f"loop's {_provenance(run_id, sha, branch)}.", "",
-            "Merge this after the companion agentskills pull request "
+            "Merge this after the companion acsi-agentskills pull request "
             f"(branch `{TARGET_BRANCH.format(subject=subject)}`) adds the "
             "skill. Until then these fixtures name a skill the registry does "
             "not have: an eval dispatch fails `skill_not_found` and the "

@@ -616,7 +616,7 @@ class TestClosingIssues(_MinerCase):
                 self.assertEqual(refs(body, self.REPO), want)
 
     def test_only_real_issues_in_this_repo_are_recorded(self):
-        # agentskills#40 closes #24 then #12; GraphQL listed [12, 24].
+        # acsi-agentskills#40 closes #24 then #12; GraphQL listed [12, 24].
         body = "Closes #10, closes #8, closes #9 and fixes #7."
         self.gh_data(repos={self.REPO: _view(OWNER, "example-site-platform")},
                      prs={self.REPO: [_pr(1, body=body)]},

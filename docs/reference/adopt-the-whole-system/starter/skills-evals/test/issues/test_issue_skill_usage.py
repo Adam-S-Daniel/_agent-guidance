@@ -35,7 +35,7 @@ import example_evals  # noqa: E402
 NOW = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)   # ISO week 2026-W36
 NOW_TEXT = "2026-09-04T12:00:00Z"
 ALLOW = frozenset({"workflow-path-audit", "finding-unknowns"})
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 SECRET_PATH = "/home/example/repos/private-client-work"
 ARN = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcd1234"
 
@@ -139,8 +139,8 @@ class CountingTests(unittest.TestCase):
         self.assertEqual(self.skills([entry]), {})
 
     def test_a_plugin_prefix_is_stripped(self):
-        entries = [skill_call("coding-anywhere:workflow-path-audit"),
-                   typed("<command-name>/anything-anywhere:finding-unknowns"
+        entries = [skill_call("acsi-coding-anywhere:workflow-path-audit"),
+                   typed("<command-name>/acsi-anything-anywhere:finding-unknowns"
                          "</command-name>")]
         self.assertEqual(self.skills(entries),
                          {"workflow-path-audit": {"2026-W36": 1},
@@ -241,7 +241,7 @@ def make_allowlist_root(root: Path) -> Path:
                                                      encoding="utf-8")
     (evals / "non-coverage.yml").write_text(
         "skips:\n"
-        "  - registry: agentskills\n"
+        "  - registry: acsi-agentskills\n"
         "    skill: zz-skipped-skill\n"
         "    decision: defer\n"
         "    reason: invented for a test\n", encoding="utf-8")

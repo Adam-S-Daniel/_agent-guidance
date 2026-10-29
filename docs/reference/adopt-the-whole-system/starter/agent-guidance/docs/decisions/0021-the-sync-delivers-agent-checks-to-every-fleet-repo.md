@@ -4,7 +4,7 @@
 
 ## Context
 
-agentskills' ADR 0020 piloted commit-time checks for agents: one bash
+acsi-agentskills' ADR 0020 piloted commit-time checks for agents: one bash
 runner, `.githooks/agent-checks`, run by Git 2.54 config-based hooks on owner
 machines and cloud sessions, and by a CI job that is the real enforcement. The
 pilot merged and behaved on the owner's Windows and WSL machines and in all four
@@ -26,12 +26,12 @@ its files from `templates/agent-checks/`:
 
 1. **The runner** `.githooks/agent-checks` is **managed**: overwritten whenever
    it differs from the template, so a check added here reaches every repo on
-   the next sync. This repo now holds the canonical copy; agentskills'
+   the next sync. This repo now holds the canonical copy; acsi-agentskills'
    pilot copy is overwritten like any other.
 2. **The CI workflow** `.github/workflows/agent-checks.yml` is **added once**
    and never overwritten, so Dependabot can keep its pinned checkout current.
    It is not added where any workflow already runs `.githooks/agent-checks`
-   (agentskills runs it as a job in `ci.yml`), where `actions.lock` pins
+   (acsi-agentskills runs it as a job in `ci.yml`), where `actions.lock` pins
    the repo's actions as tags, in a example-site-platform consumer (a root
    `platform.lock`), or where the path is gitignored.
 3. **The guard** `.claude/hooks/agent-checks-guard.sh` is a Claude Code

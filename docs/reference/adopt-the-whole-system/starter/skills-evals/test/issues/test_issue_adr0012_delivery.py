@@ -37,7 +37,7 @@ import run_eval  # noqa: E402
 GUIDANCE_REPO = "example-adopter/_agent-guidance"
 PRIMARY = "example/registry"
 CONSUMER = "example/consumer"
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 BUDGET = {"guidance_bytes": 65536, "skill_catalog_bytes": 65536,
           "skill_payload_bytes": 8388608}
 # Non-ASCII before and inside the sections, a fenced `##` that is not a
@@ -212,8 +212,8 @@ class Base(unittest.TestCase):
                          "guidance_revision": self.guidance_sha, "budget": dict(BUDGET)}
         self.repositories = {CONSUMER: self.consumer, PRIMARY: self.registry,
                              GUIDANCE_REPO: self.guidance}
-        self.registries = {"agentskills": {
-            "name": "agentskills", "path": self.registry,
+        self.registries = {"acsi-agentskills": {
+            "name": "acsi-agentskills", "path": self.registry,
             "layout": "plugins/*/skills/*/SKILL.md", "url": REGISTRY_URL}}
 
     def git(self, repo, *args):
@@ -316,7 +316,7 @@ class SubjectTests(Base):
     def test_an_absent_skill_is_added_from_its_one_registry_copy(self):
         subject = delivery.resolve_skill_subject(self.frozen(), "fresh", self.registries)
         self.assertEqual((subject.registry, subject.bundle, subject.action),
-                         ("example-adopter/agentskills", "spare", "added"))
+                         ("example-adopter/acsi-agentskills", "spare", "added"))
         self.assertIsNone(subject.deployed_digest)
         self.assertEqual(subject.tested_digest, digest(FRESH))
 
@@ -808,7 +808,7 @@ class EndToEndTests(Base):
         super().setUp()
         self.results = self.root / "results"
         self.registry_dirs = {}
-        for name in ("example-site-platform", "example-site-a", "agentskills-private"):
+        for name in ("example-site-platform", "example-site-a", "acsi-agentskills-private"):
             path = self.root / "registries" / name
             path.mkdir(parents=True)
             self.registry_dirs[name] = path
@@ -835,7 +835,7 @@ class EndToEndTests(Base):
         repos = [f"--context-repo={k}={v}" for k, v in self.repositories.items()]
         return subprocess.run(
             [sys.executable, "harness/run_eval.py", str(directory),
-             "--registry", f"agentskills={self.registry}", "--results-dir", str(self.results),
+             "--registry", f"acsi-agentskills={self.registry}", "--results-dir", str(self.results),
              "--timeout", "60", "--no-judge", *repos, *flags],
             capture_output=True, text=True, env=env, cwd=str(ROOT), timeout=600)
 

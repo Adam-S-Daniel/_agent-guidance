@@ -17,7 +17,7 @@
 #                   (by NAME only)
 #   installs:<app>  that App is installed on OWNER's repos it needs (read
 #                   from your installations: GET user/installations)
-#   values:<group>  privacy (PRIVACY_DENYLIST in agentskills) or routine-fire
+#   values:<group>  privacy (PRIVACY_DENYLIST in acsi-agentskills) or routine-fire
 #                   (the eval routine's bearer and trigger id), by name only
 #   settings        repo-settings' engine reports no drift from fleet.yml
 #                   (apply-settings.sh --check, which clones repo-settings)

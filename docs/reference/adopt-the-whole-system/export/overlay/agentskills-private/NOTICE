@@ -1,5 +1,5 @@
 This tree is an export of the original author's private skills registry
-(`agentskills-private` here) at commit
+(`acsi-agentskills-private` here) at commit
 c4bf812e4703e7b9fdd3f5408ed9198cba9df9be. That repository is private and has
 no license file of its own; only the files its export manifest includes were
 copied (its export manifest, under export/manifests/): the marketplace and

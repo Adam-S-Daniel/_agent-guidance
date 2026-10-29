@@ -9,27 +9,27 @@
 #
 # Tasks, in the order the quick start runs them:
 #
-#   skills-locks   skills.lock in every repo. agentskills: its own generator
+#   skills-locks   skills.lock in every repo. acsi-agentskills: its own generator
 #                  pins its HEAD (`scripts/generate_skills_lock.py`), checked
-#                  with --check and --check-current. agentskills-private: the
+#                  with --check and --check-current. acsi-agentskills-private: the
 #                  same file, copied. _agent-guidance, repo-settings and
-#                  wsl-automation: agentskills' generator run with --repo on
-#                  a clone of your agentskills, keeping each lock's bundles.
-#                  Merge the agentskills pull request first, then rerun for
-#                  the copy in agentskills-private.
+#                  wsl-automation: acsi-agentskills' generator run with --repo on
+#                  a clone of your acsi-agentskills, keeping each lock's bundles.
+#                  Merge the acsi-agentskills pull request first, then rerun for
+#                  the copy in acsi-agentskills-private.
 #   hook-pin       _agent-guidance repos.yml skills_bootstrap.ref: the
-#                  agentskills commit whose .claude/hooks/skills-bootstrap.sh
+#                  acsi-agentskills commit whose .claude/hooks/skills-bootstrap.sh
 #                  has the sha256 repos.yml already records (the export
 #                  computed it). Refuses when your registry's hook bytes
 #                  differ. Afterwards the nightly skills-lock-bump.yml keeps it
 #                  current with scripts/bump-hook-pin.sh.
 #   run-health-sha the forty-zero placeholder in scheduled-run-health.yml
-#                  (repo-settings, skills-evals, agentskills) becomes your
+#                  (repo-settings, skills-evals, acsi-agentskills) becomes your
 #                  _agent-guidance default branch's commit: a cross-repo
 #                  reusable workflow takes a full sha.
 #   codex-pin      wsl-automation scripts/sync-codex-cloud-environments.sh:
 #                  bootstrap_revision and bootstrap_sha256 become your
-#                  agentskills HEAD and its hook's digest, then the script's
+#                  acsi-agentskills HEAD and its hook's digest, then the script's
 #                  own test (tests/sync-codex-cloud-environments.test.sh) runs.
 #   actions-lock   `gh actions-lock --no-narrow` in each repo that has
 #                  .github/workflows/actions.lock, proposing any change;
@@ -102,44 +102,44 @@ REG_GEN=scripts/generate_skills_lock.py
 lock_bundles() { jq -r '.bundles | join(",")' "$1"; }
 
 edit_registry_lock() {
-  (cd "$1" && python3 -I "$REG_GEN" --registry "$O/agentskills" --bundles "$(lock_bundles skills.lock)" -o skills.lock >/dev/null)
+  (cd "$1" && python3 -I "$REG_GEN" --registry "$O/acsi-agentskills" --bundles "$(lock_bundles skills.lock)" -o skills.lock >/dev/null)
 }
 edit_private_lock() { cp "$REG_DIR/skills.lock" "$1/skills.lock"; }
 edit_consumer_lock() {
-  python3 -I "$REG_DIR/$REG_GEN" --repo "$REG_DIR" --registry "$O/agentskills" \
+  python3 -I "$REG_DIR/$REG_GEN" --repo "$REG_DIR" --registry "$O/acsi-agentskills" \
     --bundles "$(lock_bundles "$1/skills.lock")" -o "$1/skills.lock" >/dev/null
 }
 
 task_skills_locks() {
   local r
-  need agentskills "$REG_GEN"; REG_DIR=$CLONE
+  need acsi-agentskills "$REG_GEN"; REG_DIR=$CLONE
   if [ "$CHECK" = 1 ]; then
     if (cd "$REG_DIR" && python3 -I "$REG_GEN" --check >/dev/null 2>&1 && python3 -I "$REG_GEN" --check-current >/dev/null 2>&1); then
-      current "$O/agentskills skills.lock pins a commit of its own and matches it"
-    else notdone "$O/agentskills skills.lock (still the export's forty zeros, or stale)"; fi
-    clone agentskills-private
+      current "$O/acsi-agentskills skills.lock pins a commit of its own and matches it"
+    else notdone "$O/acsi-agentskills skills.lock (still the export's forty zeros, or stale)"; fi
+    clone acsi-agentskills-private
     if cmp -s "$REG_DIR/skills.lock" "$CLONE/skills.lock" && ! grep -qF "$ZERO40" "$CLONE/skills.lock"; then
-      current "$O/agentskills-private skills.lock is agentskills' copy"
-    else notdone "$O/agentskills-private skills.lock differs from agentskills'"; fi
+      current "$O/acsi-agentskills-private skills.lock is acsi-agentskills' copy"
+    else notdone "$O/acsi-agentskills-private skills.lock differs from acsi-agentskills'"; fi
     for r in _agent-guidance repo-settings wsl-automation; do
       clone "$r"
       if python3 -I "$REG_DIR/$REG_GEN" --repo "$REG_DIR" --check -o "$CLONE/skills.lock" >/dev/null 2>&1; then
-        current "$O/$r skills.lock pins your agentskills"
+        current "$O/$r skills.lock pins your acsi-agentskills"
       else notdone "$O/$r skills.lock (still pins the source registry's commit)"; fi
     done
     return 0
   fi
-  local body="Regenerates skills.lock with agentskills' own scripts/generate_skills_lock.py, pinning your registry (the kit's export/REGENERATE.md). No skill content changes."
+  local body="Regenerates skills.lock with acsi-agentskills' own scripts/generate_skills_lock.py, pinning your registry (the kit's export/REGENERATE.md). No skill content changes."
   if grep -qF "$ZERO40" "$REG_DIR/skills.lock" || ! (cd "$REG_DIR" && python3 -I "$REG_GEN" --check >/dev/null 2>&1); then
-    propose agentskills "Pin skills.lock to this registry" "$body" edit_registry_lock skills.lock
-    log "Merge that pull request, then run this again for agentskills-private and the consumers."
+    propose acsi-agentskills "Pin skills.lock to this registry" "$body" edit_registry_lock skills.lock
+    log "Merge that pull request, then run this again for acsi-agentskills-private and the consumers."
     return 0
   fi
-  current "$O/agentskills skills.lock"
-  propose agentskills-private "Copy agentskills' skills.lock" "$body" edit_private_lock skills.lock
+  current "$O/acsi-agentskills skills.lock"
+  propose acsi-agentskills-private "Copy acsi-agentskills' skills.lock" "$body" edit_private_lock skills.lock
   for r in _agent-guidance repo-settings wsl-automation; do
     need "$r" skills.lock
-    propose "$r" "Pin skills.lock to your agentskills" "$body" edit_consumer_lock skills.lock
+    propose "$r" "Pin skills.lock to your acsi-agentskills" "$body" edit_consumer_lock skills.lock
   done
 }
 
@@ -173,20 +173,20 @@ PY
 }
 task_hook_pin() {
   local ref sum head
-  need agentskills "$HOOK"; REG_DIR=$CLONE
+  need acsi-agentskills "$HOOK"; REG_DIR=$CLONE
   need _agent-guidance repos.yml
   read -r ref sum < <(repos_yml_pin "$CLONE/repos.yml")
   [[ $sum =~ ^[0-9a-f]{64}$ ]] || die "repos.yml skills_bootstrap.sha256 is not a sha256"
   if git -C "$REG_DIR" cat-file -e "$ref^{commit}" 2>/dev/null && [ "$(hook_sha_at "$ref")" = "$sum" ]; then
-    current "$O/_agent-guidance repos.yml pins your agentskills hook"; return 0
+    current "$O/_agent-guidance repos.yml pins your acsi-agentskills hook"; return 0
   fi
-  if [ "$CHECK" = 1 ]; then notdone "$O/_agent-guidance repos.yml skills_bootstrap.ref is not a commit of your agentskills with that hook"; return 0; fi
+  if [ "$CHECK" = 1 ]; then notdone "$O/_agent-guidance repos.yml skills_bootstrap.ref is not a commit of your acsi-agentskills with that hook"; return 0; fi
   head=$(git -C "$REG_DIR" rev-parse HEAD)
   [ "$(hook_sha_at "$head")" = "$sum" ] \
-    || die "your agentskills $HOOK at $head does not have the sha256 repos.yml records; the two copies have drifted. Run _agent-guidance's scripts/bump-hook-pin.sh to re-pin both ref and sha256 after reviewing the hook."
+    || die "your acsi-agentskills $HOOK at $head does not have the sha256 repos.yml records; the two copies have drifted. Run _agent-guidance's scripts/bump-hook-pin.sh to re-pin both ref and sha256 after reviewing the hook."
   NEW_REF=$head
-  propose _agent-guidance "Pin the skills-bootstrap hook to your agentskills" \
-    "Sets repos.yml skills_bootstrap.ref to $head, the agentskills commit whose $HOOK has the sha256 repos.yml already records (the kit's export/REGENERATE.md)." \
+  propose _agent-guidance "Pin the skills-bootstrap hook to your acsi-agentskills" \
+    "Sets repos.yml skills_bootstrap.ref to $head, the acsi-agentskills commit whose $HOOK has the sha256 repos.yml already records (the kit's export/REGENERATE.md)." \
     edit_hook_pin repos.yml
 }
 
@@ -201,7 +201,7 @@ task_run_health_sha() {
   local r pinned
   need _agent-guidance .github/workflows/scheduled-run-health-reusable.yml
   AG_SHA=$(git -C "$CLONE" rev-parse HEAD); local ag=$CLONE
-  for r in repo-settings skills-evals agentskills; do
+  for r in repo-settings skills-evals acsi-agentskills; do
     need "$r" "$RH"
     pinned=$(grep -oE 'scheduled-run-health-reusable\.yml@[0-9a-f]{40}' "$CLONE/$RH" | head -n1 | cut -d@ -f2 || true)
     if [ -n "$pinned" ] && [ "$pinned" != "$ZERO40" ] && git -C "$ag" cat-file -e "$pinned^{commit}" 2>/dev/null; then
@@ -226,18 +226,18 @@ edit_codex_pin() {
 }
 task_codex_pin() {
   local rev sum
-  need agentskills "$HOOK"; REG_DIR=$CLONE
+  need acsi-agentskills "$HOOK"; REG_DIR=$CLONE
   need wsl-automation "$CX"
   rev=$(sed -n "s/^readonly bootstrap_revision='\([0-9a-f]\{40\}\)'$/\1/p" "$CLONE/$CX")
   sum=$(sed -n "s/^readonly bootstrap_sha256='\([0-9a-f]\{64\}\)'$/\1/p" "$CLONE/$CX")
   [ -n "$rev" ] && [ -n "$sum" ] || die "$CX has no bootstrap_revision/bootstrap_sha256 lines"
   if [ "$rev" != "$ZERO40" ] && git -C "$REG_DIR" cat-file -e "$rev^{commit}" 2>/dev/null && [ "$(hook_sha_at "$rev")" = "$sum" ]; then
-    current "$O/wsl-automation $CX pins your agentskills hook"; return 0
+    current "$O/wsl-automation $CX pins your acsi-agentskills hook"; return 0
   fi
   if [ "$CHECK" = 1 ]; then notdone "$O/wsl-automation $CX (bootstrap pin is $([ "$rev" = "$ZERO40" ] && echo 'still zeros' || echo 'not your registry'))"; return 0; fi
   CX_REV=$(git -C "$REG_DIR" rev-parse HEAD)
   CX_SUM=$(hook_sha_at "$CX_REV")
-  propose wsl-automation "Pin the Codex Cloud bootstrap to your agentskills" \
+  propose wsl-automation "Pin the Codex Cloud bootstrap to your acsi-agentskills" \
     "Sets bootstrap_revision to $CX_REV and bootstrap_sha256 to its $HOOK digest (the kit's export/REGENERATE.md). tests/sync-codex-cloud-environments.test.sh passes with it." \
     edit_codex_pin "$CX"
 }

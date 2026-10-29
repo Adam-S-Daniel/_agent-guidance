@@ -408,10 +408,10 @@ def test_every_spelling_of_the_plugin_root_is_read():
 
 
 def test_the_shipped_clone_sync_hooks_are_gated():
-    """coding-local's hooks.json names each clone-sync hook in both its
+    """acsi-coding-local's hooks.json names each clone-sync hook in both its
     `command` and its `commandWindows`, and every clone-sync file sits under
     hooks/, so a change to any of them waits for the owner."""
-    root = "plugins/coding-local"
+    root = "plugins/acsi-coding-local"
     config = json.loads((REPO_ROOT / root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     for key in ("command", "commandWindows"):
         only = json.loads(json.dumps(config))
@@ -436,7 +436,7 @@ def test_the_shipped_credit_lane_and_its_wrapper_are_gated():
     """The API-credit lane (ADR 0018): claude-code.json, named by the Claude
     manifest, names both lane hooks; every lane file sits under hooks/; and
     bin/claude-credit sits on the session PATH. A change to any waits."""
-    root = "plugins/coding-local"
+    root = "plugins/acsi-coding-local"
     manifest = json.loads((REPO_ROOT / root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert manifest["hooks"] == "./hooks/claude-code.json"
     config = json.loads((REPO_ROOT / root / "hooks" / "claude-code.json").read_text(encoding="utf-8"))

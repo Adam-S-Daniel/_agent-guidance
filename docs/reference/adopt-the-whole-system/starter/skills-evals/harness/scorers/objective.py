@@ -1245,7 +1245,7 @@ def _read_matched(workspace: str, patterns: list[str]) -> tuple[str, list[str]]:
 #   continuation, or a verbatim paste carrying no marker at all;
 # - a real Markdown parser sees all of those and still cannot tell a quoted
 #   seed from a deliverable the agent CHOSE to present as a blockquote —
-#   which is what every calibration example in `my-writing-style`'s
+#   which is what every calibration example in `acsi-writing-style`'s
 #   SKILL.md is, so the arm that read the skill is the arm most likely to
 #   hand its reply back inside one.
 #
@@ -1886,7 +1886,7 @@ def strip_seed_material(text: str, seed: str | None,
     real writing, and it is not wired into `run_eval` until #97.
 
     N4 (record-only): this docstring, and `_is_seed_material`'s, are not
-    PINNED the way `evals/my-writing-style/recruiter-reply/fixture.yaml`'s
+    PINNED the way `evals/acsi-writing-style/recruiter-reply/fixture.yaml`'s
     header and `README.md`'s "What it does not do" are — no test asserts a
     given sentence stays here, so a future edit that guts a clause out of
     either docstring leaves the suite green. Recorded rather than fixed
@@ -2241,7 +2241,7 @@ def transcript_matches(workspace: str, patterns: list[str], must_match=None,
     # (there is no bare "I" left) and passes once this second reading is
     # appended, because NFD recovers one. Nothing is wrong TODAY because of
     # it: 0 of the 10 committed `must_match` patterns across the three
-    # my-writing-style fixtures, 0 of the 6 committed references and 0 of
+    # acsi-writing-style fixtures, 0 of the 6 committed references and 0 of
     # the 3 committed seeds are altered by this reading — `fold_marks_again`
     # is a no-op on every one of those files. `must_match` still needs the
     # ordinary reading too (this one strips a genuine accent as well — see
@@ -3933,7 +3933,7 @@ _WORKFLOW_STEP_USES_KEYS = {
 # constraint keys at all: `workspace` + `paths` (+ the injected `seed`)
 # fully determine what it checks.
 #
-# my-writing-style round-6 N-c (record-only, pre-existing on `main`): six
+# acsi-writing-style round-6 N-c (record-only, pre-existing on `main`): six
 # types with no entry here, `pin_comment_absent` included, is not a gap
 # `run_checks` leaves open — every type gets validated against
 # `_CHECK_ALLOWED_KEYS.get(type, set())` regardless, so a check of one of

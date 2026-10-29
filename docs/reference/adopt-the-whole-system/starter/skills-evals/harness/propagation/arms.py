@@ -60,14 +60,14 @@ PASS = "PASS"
 FAIL = "FAIL"
 INCONCLUSIVE = "INCONCLUSIVE"
 
-# The three environment variables agentskills' skills-bootstrap.sh surface
+# The three environment variables acsi-agentskills' skills-bootstrap.sh surface
 # guard keys on. Absent from a leg unless that leg declares one: a control leg
 # that inherits CLAUDE_CODE_REMOTE_SESSION_ID from the session running the
 # probe arms the hook it is trying to observe declining to fire.
 SURFACE_VARS = ("CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT",
                 "SKILLS_BOOTSTRAP_FORCE")
 
-# `skills: 9/9 from file:///…/agentskills@9d024c3 — OK`. The two counts
+# `skills: 9/9 from file:///…/acsi-agentskills@9d024c3 — OK`. The two counts
 # must be the SAME number (backreference), so "8/9 — OK" can never match.
 HOOK_OK_RE = re.compile(r"^skills: (\d+)/\1 from \S+@[0-9a-f]{7,40} — OK$")
 
@@ -130,7 +130,7 @@ def digest_skill_dir(path: Path) -> str:
     """sha256 of a skill directory, byte-for-byte compatible with the lock.
 
     THIRD copy of this algorithm, deliberately not an independent one: the
-    other two are `digest_skill_dir` in agentskills'
+    other two are `digest_skill_dir` in acsi-agentskills'
     `scripts/generate_skills_lock.py` and `digest_dir` in its
     `.claude/hooks/skills-bootstrap.sh`. The manifest is
     `<relpath>\\0<sha256 of bytes>\\n` per file, sorted by relpath, hashed.
@@ -479,7 +479,7 @@ def arm_plugin_marketplace(ctx) -> ArmResult:
 
     marketplace = ctx.registry.resolve()
     # EVERY bundle the lock names, in lock order. The lock is the declared
-    # expectation this arm compares against, and agentskills' lock spans
+    # expectation this arm compares against, and acsi-agentskills' lock spans
     # two plugins; installing only `ctx.bundle` would report the other
     # plugin's skills as missing although the channel delivered them fine.
     bundles = list(dict.fromkeys(bundle for bundle, _ in lock_pairs(ctx.lock)))
@@ -529,7 +529,7 @@ def arm_plugin_marketplace(ctx) -> ArmResult:
 
 
 def arm_bootstrap_hook(ctx) -> ArmResult:
-    """The ephemeral/cloud channel: agentskills' skills-bootstrap SessionStart hook.
+    """The ephemeral/cloud channel: acsi-agentskills' skills-bootstrap SessionStart hook.
 
     Two legs, and the NEGATIVE one is the point. The hook no-ops unless the
     surface is ephemeral, and a GitHub runner is not — so a control leg that

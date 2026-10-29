@@ -259,7 +259,7 @@ labels:
 
 A sibling of `labels:` (a top-level key in single-repo configs; under a repo's
 `overrides:` in fleet configs) holding a LIST of repository Actions event
-policies (Settings -> Actions -> Policies). The first use is agentskills'
+policies (Settings -> Actions -> Policies). The first use is acsi-agentskills'
 `pull_request_target` allowance (docs/decisions/0009).
 
 ```yaml
@@ -292,7 +292,7 @@ actions_policies:
   guess which one to converge; delete the extras by hand.
 - **Removal does not delete.** Dropping an element leaves the live policy alone.
   To retire one, set `enforcement: disabled`, let it apply, delete the policy by
-  hand, then drop the element. For agentskills' policy, dropping it
+  hand, then drop the element. For acsi-agentskills' policy, dropping it
   re-exposes `plugin-runtime-review.yml` to the default block.
 - **Compared fields:** enforcement, `include` and `exclude` (as sets) and the
   rules (as a set of type and parameters, `allowed_events` as a set). Server
@@ -605,7 +605,7 @@ defaults:
 
 repos:
   # Inherits everything from defaults, incl. repo.allow_auto_merge.
-  - name: example-adopter/agentskills
+  - name: example-adopter/acsi-agentskills
     manage: ["all"]
 
   # Private repo: the engine auto-skips fork_pr_approval and the ruleset, but

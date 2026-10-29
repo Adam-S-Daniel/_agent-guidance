@@ -41,8 +41,8 @@ trigger a commit.
 - **What is counted.** Each `Skill` tool call (once per tool-use id per
   transcript), and each typed slash command whose name is a skill. A plugin
   prefix is dropped (everything up to the last `:`):
-  `coding-anywhere:workflow-path-audit`, and an old prefix such as
-  `my:` or `my-local:`, count as the bare skill name.
+  `acsi-coding-anywhere:workflow-path-audit`, and an old prefix such as
+  `acsi:` or `acsi-local:`, count as the bare skill name.
 - **Allowlist, then `other`.** A skill name is published only when this repo
   already names it publicly: a skill fixture under `evals/`, or an
   `evals/non-coverage.yml` row for a registry that is not private. Every other
@@ -102,7 +102,7 @@ and `USAGE_HOOK_LOGS` replaces the list) and adds `kind: "hook"` rows:
 
 Fine-grained records, kept for refined reporting later, live **only** in the
 private repository: branch `persistent/usage-events` of
-`example-adopter/agentskills-private`, as
+`example-adopter/acsi-agentskills-private`, as
 `events/<YYYY-MM>/<machine>.jsonl`. The census writes them with
 `--events-out`; the publish script merges them in after the public publish.
 
@@ -176,7 +176,7 @@ name alone.
 ## Setting it up (the owner does this once)
 
 Prerequisites on the machine: `git` with push access to
-`example-adopter/skills-evals` and `example-adopter/agentskills-private` over
+`example-adopter/skills-evals` and `example-adopter/acsi-agentskills-private` over
 HTTPS or SSH (the credentials you already use),
 `python3`, and PyYAML (`python3 -m pip install --user pyyaml`; the census reads
 the tier ladder from `evals/roster-policy.yml` through `harness/roster.py`).

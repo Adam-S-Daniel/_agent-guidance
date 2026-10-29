@@ -17,7 +17,7 @@ routine's `draft` mode. What is pinned here:
     one green with_skill fixture, summed with_skill pass rate strictly
     above without_skill's), the record, and the branch-ready results tree;
   * `validate` on a real git branch, never quoting the branch;
-  * `apply` against a copy of the sibling agentskills checkout, then
+  * `apply` against a copy of the sibling acsi-agentskills checkout, then
     the registry's own README and version checks, and `fixtures-apply`
     satisfying this repo's README layout rule;
   * both PR bodies and the issue body: marker line last, no closing
@@ -54,7 +54,7 @@ import run_eval  # noqa: E402
 RUN_ID = "20261026T143000Z-0a1b2c"
 BRANCH = f"claude/draft-skill-{RUN_ID}"
 SUBJECT = "lint-before-push"
-PLUGIN = "coding-anywhere"
+PLUGIN = "acsi-coding-anywhere"
 SHA = "2" * 40
 MARKER = "do-not-echo-this-marker"
 FIXTURE_NAMES = ("alpha", "bravo", "charlie", "delta")
@@ -250,7 +250,7 @@ class Select(Case):
     def select(self, *extra: str) -> dict:
         code, out, err = run_main(
             "select", "--lessons", str(self.lessons), "--registry",
-            f"agentskills={self.registry}", "--evals", str(self.evals),
+            f"acsi-agentskills={self.registry}", "--evals", str(self.evals),
             "--drafted", str(self.drafted), "--hook-declined", str(self.declined),
             *extra)
         self.assertEqual(code, 0, err)
@@ -515,7 +515,7 @@ class Measure(Case):
     def measure(self, runner, payload=None, trials=1):
         p = self.write(self.tmp / "payload.json", payload or payload_doc())
         return run_main("measure", "--staging", str(self.staging), "--registry",
-                        f"agentskills={self.registry}", "--ref", self.sha,
+                        f"acsi-agentskills={self.registry}", "--ref", self.sha,
                         "--payload", str(p), "--trials", str(trials),
                         "--results", str(self.results), runner=runner)
 
@@ -559,7 +559,7 @@ class Measure(Case):
                             ("--run-runner", "routine"), ("--run-location", "cloud"),
                             ("--run-id", RUN_ID), ("--fixture", "alpha")):
             self.assertEqual(argv[argv.index(flag) + 1], value)
-        self.assertTrue(argv[argv.index("--registry") + 1].startswith("agentskills="))
+        self.assertTrue(argv[argv.index("--registry") + 1].startswith("acsi-agentskills="))
         self.assertIn(str(self.staging.resolve()), argv)
 
     def test_rejections_write_the_record_alone(self):
@@ -716,7 +716,7 @@ class Validate(Case):
         args = ["validate", "--repo", str(self.repo), "--base", "main",
                 "--source", branch, "--branch", branch, "--out", str(out)]
         if registry:
-            args += ["--registry", f"agentskills={self.registry}"]
+            args += ["--registry", f"acsi-agentskills={self.registry}"]
         code, stdout, err = run_main(*args)
         self.assertNotIn(MARKER, stdout + err)
         return code, outputs(stdout), err
@@ -826,10 +826,10 @@ class Validate(Case):
 
     def test_an_existing_subject_is_rejected(self):
         with self.subTest("registry"):
-            (self.registry / "plugins" / "coding-local" / "skills" / SUBJECT).mkdir(
+            (self.registry / "plugins" / "acsi-coding-local" / "skills" / SUBJECT).mkdir(
                 parents=True)
             self.assert_rejected(self.accepted_files())
-            shutil.rmtree(self.registry / "plugins" / "coding-local")
+            shutil.rmtree(self.registry / "plugins" / "acsi-coding-local")
         with self.subTest("no registry checkout"):
             self.assert_rejected(self.accepted_files(), registry=False)
         with self.subTest("evals on base"):
@@ -855,7 +855,7 @@ class Validate(Case):
 def sibling_registry() -> Path | None:
     entry = run_eval.resolve_registries(
         None, os.environ.get("SKILLS_EVALS_REGISTRIES"), REPO_ROOT,
-        os.environ.get("AGENTSKILLS_DIR"))["agentskills"]
+        os.environ.get("AGENTSKILLS_DIR"))["acsi-agentskills"]
     path = entry["path"]
     return path if (path / "scripts" / "generate_readme_table.py").is_file() \
         and (path / ".git").exists() else None
@@ -892,7 +892,7 @@ class Apply(Staged):
         super().setUp()
         source = sibling_registry()
         if source is None:
-            reason = "no agentskills checkout beside this repo; skipping apply"
+            reason = "no acsi-agentskills checkout beside this repo; skipping apply"
             print(reason)
             self.skipTest(reason)
         self.tree = self.tmp / "registry"
@@ -931,7 +931,7 @@ class Apply(Staged):
         self.assertEqual(readme.render(True), 0)
         self.assertIn(f"/{PLUGIN}:{SUBJECT}", (self.tree / "README.md").read_text())
         # check_plugin_versions.py imports jsonschema at load time, which
-        # agentskills' CI installs and this repo's does not; the bump
+        # acsi-agentskills' CI installs and this repo's does not; the bump
         # itself is asserted above either way.
         if importlib.util.find_spec("jsonschema") is not None:
             versions = load_module(self.tree / "scripts/check_plugin_versions.py", "t_versions")
@@ -979,14 +979,14 @@ class Bodies(Staged):
         return code, out
 
     def test_both_pr_bodies_end_with_the_marker_and_close_nothing(self):
-        for repo in ("agentskills", "skills-evals"):
+        for repo in ("acsi-agentskills", "skills-evals"):
             with self.subTest(repo):
                 code, body = self.body("pr-body", "--repo", repo)
                 self.assertEqual(code, 0)
                 self.assertEqual(body.rstrip("\n").splitlines()[-1], dns.MARKER)
                 self.assertIsNone(dns.text_problem(body.replace(dns.MARKER, "")))
                 self.assertIn(f"# New skill: {SUBJECT}", body)
-        _, skill_body = self.body("pr-body", "--repo", "agentskills")
+        _, skill_body = self.body("pr-body", "--repo", "acsi-agentskills")
         self.assertIn("- [ ] Examples, fixtures and docs use invented data only", skill_body)
         _, fixtures_body = self.body("pr-body", "--repo", "skills-evals")
         self.assertIn(f"draft-skill/{SUBJECT}", fixtures_body)
@@ -994,7 +994,7 @@ class Bodies(Staged):
     def test_the_merge_mode_decides_what_both_bodies_promise(self):
         """improve_gate's one switch: in auto both pull requests merge
         themselves, the skill's first; draft (the default) keeps a person."""
-        for repo in ("agentskills", "skills-evals"):
+        for repo in ("acsi-agentskills", "skills-evals"):
             with self.subTest(repo):
                 code, auto = self.body("pr-body", "--repo", repo, "--mode", "auto")
                 self.assertEqual(code, 0)
@@ -1004,14 +1004,14 @@ class Bodies(Staged):
                 self.assertEqual(auto.rstrip("\n").splitlines()[-1], dns.MARKER)
                 self.assertIsNone(dns.text_problem(auto.replace(dns.MARKER, "")))
                 self.assertNotIn("nothing merges", auto)
-                self.assertIn("merge this one first" if repo == "agentskills"
+                self.assertIn("merge this one first" if repo == "acsi-agentskills"
                               else "Merge this after", auto)
-        _, skill = self.body("pr-body", "--repo", "agentskills", "--mode", "auto")
+        _, skill = self.body("pr-body", "--repo", "acsi-agentskills", "--mode", "auto")
         self.assertIn("merges itself (merge commit)", skill)
         self.assertIn(dns.improve_gate.REGISTRY_ADR, skill)
         _, fixtures = self.body("pr-body", "--repo", "skills-evals", "--mode", "auto")
         self.assertIn("Auto-merge (merge commit) is enabled", fixtures)
-        _, draft = self.body("pr-body", "--repo", "agentskills")
+        _, draft = self.body("pr-body", "--repo", "acsi-agentskills")
         self.assertIn("nothing merges itself", draft)
         with self.assertRaises(SystemExit):
             self.body("pr-body", "--repo", "skills-evals", "--mode", "yes")

@@ -238,7 +238,7 @@ jobs:
       # entry in that file.
       - name: Run the skills conformance census
         # Deliberately NO --private-registry, deviating from issue #55's checklist:
-        # agentskills-private is a private repo and public-repo CI has no token to
+        # acsi-agentskills-private is a private repo and public-repo CI has no token to
         # clone it, so pointing the flag at a nonexistent path would only exercise
         # check_consistency.py's silent-SKIP branch — the exact "green-by-default
         # when the path is absent" anti-pattern umbrella issue #54 criticises in
@@ -390,7 +390,7 @@ jobs:
       #
       # The same failure then recurred one directory over, which is why there is
       # a third target: the 12 tests in
-      # plugins/non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py
+      # plugins/acsi-non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py
       # ran NOWHERE, sitting in a skill's scripts/ dir and so matching neither
       # of the first two. The reason recorded here previously — that they need
       # the heavy optional `pypdf` — was wrong: all 12 exercise find_dates(), a
@@ -559,7 +559,7 @@ jobs:
           # empty set — a green step that checked nothing is the bug being fixed.
           #
           # -S error: two SC2088 (tilde-in-quotes) *warnings* exist today in
-          # plugins/coding-local/skills/migrate-claude-memory/scripts/memory-migrate.sh
+          # plugins/acsi-coding-local/skills/migrate-claude-memory/scripts/memory-migrate.sh
           # (lines 90, 93) — pre-existing, out of scope for this change. Errors still fail CI.
           #
           # Extensionless shell files matched NEITHER find when this step

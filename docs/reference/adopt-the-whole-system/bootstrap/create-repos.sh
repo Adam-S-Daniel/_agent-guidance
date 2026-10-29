@@ -3,13 +3,13 @@
 #
 # Creates the six repos the kit exports, under OWNER, with the names the
 # owner's own repos have (export/DECISIONS.md C1): _agent-guidance,
-# repo-settings, agentskills, agentskills-private, skills-evals and
+# repo-settings, acsi-agentskills, acsi-agentskills-private, skills-evals and
 # wsl-automation. Default: all six. --with-optional (or naming it) also
 # creates waiting-feed, the private repo the waiting-on-you feed publishes
 # to (export/REGENERATE.md, wsl-automation), which no starter tree fills.
 #
-#   * Visibility: agentskills-private, repo-settings and waiting-feed are
-#     always private, agentskills always public. On PLAN=free every other repo
+#   * Visibility: acsi-agentskills-private, repo-settings and waiting-feed are
+#     always private, acsi-agentskills always public. On PLAN=free every other repo
 #     is public; on PLAN=paid, _agent-guidance, skills-evals and
 #     wsl-automation follow VISIBILITY_* in fleet.env (default public).
 #   * A first commit (a README), so a clone has a default branch to branch

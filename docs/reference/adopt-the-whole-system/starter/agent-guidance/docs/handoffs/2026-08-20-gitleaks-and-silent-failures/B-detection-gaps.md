@@ -132,7 +132,7 @@ take either from the issue.
   applied at the document boundary: *"so every comparison BETWEEN builder
   outputs keeps working on bare hex. That is what leaves `--check-current`
   alone."* A shape defect is invisible to a content gate, by design.
-- **Outcome.** The `my` bundle has not moved since `94cdcc81`, so the gate
+- **Outcome.** The `acsi` bundle has not moved since `94cdcc81`, so the gate
   returned **exit 0** on all eight and the script logged
   `bundle content unchanged — no re-pin needed`. `--repin` on the same file DOES
   relabel (8 bare → 8 labelled), so the writer was never the problem.

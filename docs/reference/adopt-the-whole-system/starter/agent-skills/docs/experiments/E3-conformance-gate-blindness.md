@@ -28,7 +28,7 @@ and CI has been running the lenient mode by default rather than by decision.
 ## Result 2 — the gate is structurally blind to SKILL.md defects
 
 A throwaway copy of the whole marketplace was mutated so that
-`plugins/anything-anywhere/skills/writing-adrs/SKILL.md` carried **both** defect classes at
+`plugins/acsi-anything-anywhere/skills/writing-adrs/SKILL.md` carried **both** defect classes at
 once: (a) unparseable YAML frontmatter — an unquoted `: ` inside `description` —
 and (b) a frontmatter `name` of `TOTALLY-DIFFERENT-NAME`, not matching its
 directory.

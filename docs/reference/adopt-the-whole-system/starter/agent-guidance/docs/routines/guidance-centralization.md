@@ -2452,12 +2452,12 @@ Nine PRs are open in `_agent-guidance` — three new since the 2026-09-24
 measurement, all human-authored and none touching a `repos.yml`
 classify/remove entry this Routine proposed or a `base.md` promotion
 this Routine opened: **#167** ("Move the fleet onto the
-agentskills registry," branch `migrate-to-agentskills`, 11
+acsi-agentskills registry," branch `migrate-to-acsi-agentskills`, 11
 files including `agents-md/base.md` and `repos.yml` — a large in-flight
 registry-rename migration, unrelated to the `e6-probe-marketplace`
 finding above and confirmed by diffing its `repos.yml` directly, which
-touches only the `agentskills`→`agentskills`/
-`agentskills-private` rename, not the new repo); **#166** and
+touches only the `agentskills`→`acsi-agentskills`/
+`acsi-agentskills-private` rename, not the new repo); **#166** and
 **#165**, both titled "Remove references to OLD-WORKSTATION laptop"
 (`example-adopter-patch-2` / `-patch-1`, +2/-15 each, one file, both
 `mergeable_state: blocked`) — apparent operator-authored duplicates of
@@ -2509,15 +2509,15 @@ fourteenth run's own recommendation, and found the two prior findings
 resolved rather than new ones.** `drift-report.md` (`drift-report-latest`,
 generated 2026-09-25 11:20 UTC) still carried both blocks the
 fourteenth run had not yet seen fixed: "Unclassified for cron coverage /
-skills-bootstrap" naming `example-adopter/agentskills` and
-`example-adopter/agentskills-private`, and a example-adopter-two-side
+skills-bootstrap" naming `example-adopter/acsi-agentskills` and
+`example-adopter/acsi-agentskills-private`, and a example-adopter-two-side
 "Registry names discovery did not return" naming `agentskills-private`.
 Per §1's own rule, these were treated as a lead to verify against the
 repo, not as ground truth: `repos.yml` fetched directly from `main`
-showed both names already correctly classified (`agentskills` and
-`agentskills-private` both in `cron_coverage.fleet` and
+showed both names already correctly classified (`acsi-agentskills` and
+`acsi-agentskills-private` both in `cron_coverage.fleet` and
 `skills_bootstrap.repos`), because **`_agent-guidance#167` ("Move the
-fleet onto the agentskills registry") merged at
+fleet onto the acsi-agentskills registry") merged at
 2026-09-25T17:49:01Z — six and a half hours after the drift report that
 still shows the old state was generated.** So both blocks are stale, not
 live; the next drift-report generation should clear them.
@@ -2525,13 +2525,13 @@ live; the next drift-report generation should clear them.
 **One genuine, new set (b) finding came out of chasing that PR down: a
 new fleet member exists that this session is not attached to.** #167
 retired the old public registry `example-adopter/retired-agentskills` in favour of
-a freshly-created `example-adopter/agentskills` (that repo's own ADR
+a freshly-created `example-adopter/acsi-agentskills` (that repo's own ADR
 0013) and renamed the private registry `agentskills-private` to
-`agentskills-private` (a genuine GitHub-level rename, confirmed by
+`acsi-agentskills-private` (a genuine GitHub-level rename, confirmed by
 fetching the OLD url from this session's existing `agentskills-private`
 checkout and finding it resolves via redirect to content that
-self-identifies as `# agentskills-private` in its own README — no
-new attachment needed for that one). `agentskills` is different: it
+self-identifies as `# acsi-agentskills-private` in its own README — no
+new attachment needed for that one). `acsi-agentskills` is different: it
 is a **new repo**, non-fork, not in `exclude:`, now in
 `cron_coverage.fleet`, and it is **not** among this session's 19 attached
 repos. `add_repo` was absent from this run's probe (per the settled
@@ -2544,7 +2544,7 @@ documented trailing-newline trim), so it is already receiving the
 fleet's guidance despite never having been attached to this Routine.
 Per §0.5 Step 5 / the anti-nag rule, "unattached but readable" is a
 footer-level configuration note, not a lead finding: **the operator's
-own move is to attach `example-adopter/agentskills` to this Routine
+own move is to attach `example-adopter/acsi-agentskills` to this Routine
 on claude.ai**, the same way `example-adopter-two/squarespacetemp` was attached
 on 2026-08-28. This is, notably, exactly the kind of event the operator
 asked this section to catch — a real repo joining the fleet's scope that
@@ -2555,7 +2555,7 @@ Set (b) otherwise matched the settled substitute: this session's own
 GitHub "Repository Scope" declaration (19 repos, still under the OLD
 names `agentskills` / `agentskills-private`) mapped onto `repos.yml`'s
 now-**20**-repo non-structural AGENTS.md-sync universe (the prior 19 plus
-`agentskills`) with exactly the one gap above. The old, retiring
+`acsi-agentskills`) with exactly the one gap above. The old, retiring
 `agentskills` repo remains attached under its own unchanged name and
 continues to receive the sync normally (`exclude:` does not name it) —
 no action needed there until it is archived, per #167's own "not done
@@ -2564,7 +2564,7 @@ here" note.
 Set (c) computed via individual probes: the 19 previously-attached repos
 resolved via `git fetch origin <default-branch>` against their own local
 checkouts (all succeeded, including `agentskills-private` resolving via
-its GitHub rename redirect), `agentskills` resolved via a fresh
+its GitHub rename redirect), `acsi-agentskills` resolved via a fresh
 `https://` clone, and both forks (`OctopusDeploy-Api`, `SonosAmpJuicePi`)
 plus `example-third/example-third` resolved via direct
 `GIT_TERMINAL_PROMPT=0 git ls-remote` probes — all resolved on the first
@@ -2580,7 +2580,7 @@ names either the retired registry or a specific laptop hostname — the
 "Workstation layout" section now reads "the owner's Windows laptop"
 generically. A fresh `./scripts/build-agents-md.sh` stub build was
 diffed against the committed managed half of all 18 consumers (the prior
-19 minus self-hosted `_agent-guidance`) plus `agentskills`: all 19
+19 minus self-hosted `_agent-guidance`) plus `acsi-agentskills`: all 19
 matched exactly, modulo the documented trailing-newline trim, and
 `_agent-guidance`'s own self-hosted `AGENTS.md` passed
 `scripts/check-agents-md.sh` and matched a fresh regeneration exactly.
@@ -2644,11 +2644,11 @@ would clear them. Set (a) is 0 via this channel, on top of NOT COMPUTABLE
 via the primary mechanism.
 
 **`repos.yml`'s union grew from 22 to 23 names since the last measurement,
-and the growth is `agentskills` joining `fleet:` — the same gap the
+and the growth is `acsi-agentskills` joining `fleet:` — the same gap the
 fifteenth run found still stands, unattached, for a second consecutive
 fire.** On `main` (tip `7454ac9`, the fifteenth run's own self-merged
 record): `cron_coverage.fleet` is now 13 names including
-`agentskills` and `agentskills-private` (the old `agentskills`
+`acsi-agentskills` and `acsi-agentskills-private` (the old `agentskills`
 and `agentskills-private` entries moved out); `cron_coverage.out_of_scope`
 is 10, gaining the retiring `agentskills` alongside the prior nine.
 Structural exclusions (both forks plus `example-third`) are unchanged at
@@ -2656,21 +2656,21 @@ Structural exclusions (both forks plus `example-third`) are unchanged at
 every prior measurement. This session's own GitHub "Repository Scope"
 still lists 19 repos under the OLD names (`agentskills`,
 `agentskills-private`), so it maps onto 19 of the 20 — the same single gap
-the fifteenth run reported (`agentskills`, classified in `fleet:`,
+the fifteenth run reported (`acsi-agentskills`, classified in `fleet:`,
 not among the 19 attached). `add_repo` was again absent from this run's
 probe, so this run could not widen itself either. Per the anti-nag rule
 this is "unattached but readable, nothing else wrong" and does not get
 re-argued: readable by a plain `https://` clone, and its `AGENTS.md`
 (15,632 bytes, one marker, one bridge line) matched a fresh
 `./scripts/build-agents-md.sh` stub build exactly. The operator's own move
-is still to attach `example-adopter/agentskills` to this Routine on
+is still to attach `example-adopter/acsi-agentskills` to this Routine on
 claude.ai; nothing here has changed since the fifteenth run's finding.
 
 Set (c) computed via individual probes for all 23 `repos.yml` names: the
 19 previously-attached repos resolved via `git fetch origin
 <default-branch>` against their own local checkouts (all succeeded,
 including `agentskills-private` resolving via its GitHub rename
-redirect), `agentskills` resolved via a fresh `https://` clone, and
+redirect), `acsi-agentskills` resolved via a fresh `https://` clone, and
 both forks (`OctopusDeploy-Api`, `SonosAmpJuicePi`) plus
 `example-third/example-third` resolved via direct
 `GIT_TERMINAL_PROMPT=0 git ls-remote` probes — all 23 on the first try, no
@@ -2681,7 +2681,7 @@ unavailable, so this is single-source verification only.
 `CLAUDE.md` were diffed directly against their own `origin/<default-
 branch>` and found byte-identical on all 19 (exactly one `## Repo-specific
 additions` marker and one line-start `@AGENTS.md` bridge on each), and
-`agentskills` was read directly via the fresh clone above rather than
+`acsi-agentskills` was read directly via the fresh clone above rather than
 carried forward from the fifteenth run's read of it — its managed half
 also matched the stub build exactly. All 20 managed halves matched a
 fresh `./scripts/build-agents-md.sh` run exactly, modulo the documented
@@ -2696,11 +2696,11 @@ gotcha, the general AST-vs-regex rule) and still names the stale
 confirmed directly.
 
 A keyword grep over all 20 in-scope repos' `## Repo-specific additions`
-content (the 19 previously covered plus `agentskills`, newly in
+content (the 19 previously covered plus `acsi-agentskills`, newly in
 scope) for generalizing language and for restatements of the two promoted
 candidates surfaced only the same known non-findings prior runs recorded:
 `agentskills`'s "fails every `git push` from every repo" — now also
-present verbatim in `agentskills`, since that content moved with the
+present verbatim in `acsi-agentskills`, since that content moved with the
 registry rather than being freshly written — `example-site-a`'s
 correctly-scoped "never hand-roll" parser rule, `example-site-platform`'s
 correctly-scoped AST/regex file-pointer, and `repo-settings`'s own
@@ -2828,25 +2828,25 @@ Set (b) again used the session's own GitHub "Repository Scope" declaration
 (19 repos, still under the OLD names `agentskills`/`agentskills-private`); it
 mapped onto `repos.yml`'s 20-name non-structural union with the same single
 gap the fifteenth and sixteenth runs reported, now for a third consecutive
-fire: `agentskills`, classified in `fleet:`, not among the 19 attached.
+fire: `acsi-agentskills`, classified in `fleet:`, not among the 19 attached.
 `add_repo` was again absent from this run's probe, so this run could not
 widen itself. Per the anti-nag rule this stays a footer note: readable by a
 plain `https://` clone, `AGENTS.md` (15,632 bytes, one marker, one bridge
 line) matched a fresh stub build exactly. The operator's own move is still to
-attach `example-adopter/agentskills` to this Routine on claude.ai.
+attach `example-adopter/acsi-agentskills` to this Routine on claude.ai.
 
 Set (c) computed via individual probes for all 23 `repos.yml` names: the 19
 attached repos resolved via `git fetch origin <default-branch>` against their
 own local checkouts (all succeeded, including the now-archived `agentskills`,
 and `agentskills-private` resolving via its GitHub rename redirect),
-`agentskills` resolved via a fresh `https://` clone, and both forks
+`acsi-agentskills` resolved via a fresh `https://` clone, and both forks
 (`OctopusDeploy-Api`, `SonosAmpJuicePi`) plus
 `example-third/example-third` resolved via direct
 `GIT_TERMINAL_PROMPT=0 git ls-remote` probes — all 23 on the first try, no
 fallback owner needed. 0 unreadable. `gh repo list ... --json` remained
 unavailable, so this is single-source verification only.
 
-`repos.yml` on `main` (`f7bab41`, "Move the fleet onto the agentskills
+`repos.yml` on `main` (`f7bab41`, "Move the fleet onto the acsi-agentskills
 registry") was unchanged since the fifteenth/sixteenth runs' measurement — no
 new commit has landed there, PR #187 notwithstanding, since it is still open.
 All 19 attached repos' local checkouts were diffed directly against their own
@@ -2854,7 +2854,7 @@ All 19 attached repos' local checkouts were diffed directly against their own
 byte-identical on all 19; every repo carried exactly one `## Repo-specific
 additions` marker and exactly one line-start `@AGENTS.md` bridge (checked on
 all 19). All 20 non-structural repos' (the 19 attached plus
-`agentskills`) managed halves matched a fresh
+`acsi-agentskills`) managed halves matched a fresh
 `./scripts/build-agents-md.sh` stub build exactly, modulo the documented
 trailing-newline trim; `_agent-guidance`'s own self-hosted `AGENTS.md` passed
 `scripts/check-agents-md.sh` with no output (exit 0) and matched the same

@@ -167,7 +167,7 @@ Nothing else in the payload is read. Absent both, the run covers every repo.
 Before the changelog routine is allowed to fire this one (the owner enables
 its step 4a by giving it the fire token):
 
-1. **`DRY_RUN` with `SCOPE=agentskills`**, started by **Run now**.
+1. **`DRY_RUN` with `SCOPE=acsi-agentskills`**, started by **Run now**.
    Check: step 0's four probes all answered and are in the log; the audit
    ran through the executor step 0 chose; the commits on
    `persistent/prompt-audit-runs` touch only the run log; no issue or comment
@@ -175,7 +175,7 @@ its step 4a by giving it the fire token):
    follows **Each run**, step 4.
 2. **A negative control:** `DRY_RUN SCOPE=not-a-fleet-repo`. The run must
    stop with the `BLOCKED` line above, before any audit.
-3. **One live pass,** `SCOPE=agentskills`, no `DRY_RUN`. Read the filed
+3. **One live pass,** `SCOPE=acsi-agentskills`, no `DRY_RUN`. Read the filed
    issue back (step 5) before any unscoped run.
 
 All three ran on 2026-10-05 and were merged as trial runs, each from its

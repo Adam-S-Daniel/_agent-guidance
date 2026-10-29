@@ -77,7 +77,7 @@ def resolve_registry(cli_value: Path | None) -> Path:
     """This script's OWN convention: --registry, $AGENTSKILLS_DIR, ~/repos.
 
     Unlike run_eval.py (issue #63), this probe only ever targets the
-    agentskills registry, so it keeps its own single-path resolution
+    acsi-agentskills registry, so it keeps its own single-path resolution
     rather than harness/registries.yml's multi-registry NAME=PATH scheme —
     the two are deliberately NOT the same shape any more; don't assume parity.
 
@@ -90,14 +90,14 @@ def resolve_registry(cli_value: Path | None) -> Path:
     `bash: ../agentskills/.claude/hooks/skills-bootstrap.sh: No such file or
     directory`. It never reproduced locally because every local invocation had
     passed an absolute path — which is exactly how it reached CI. (Now
-    `../agentskills`; the failure mode is unchanged.)
+    `../acsi-agentskills`; the failure mode is unchanged.)
     """
     if cli_value:
         return Path(cli_value).expanduser().resolve()
     env = os.environ.get("AGENTSKILLS_DIR")
     if env:
         return Path(env).expanduser().resolve()
-    return (Path.home() / "repos" / "agentskills").resolve()
+    return (Path.home() / "repos" / "acsi-agentskills").resolve()
 
 
 def self_test(ctx: arms.ArmContext) -> tuple:
@@ -143,7 +143,7 @@ def build_context(fixture: dict, registry: Path, root: Path,
         if not path.exists():
             raise arms.ArmError(
                 f"{what} not found at {path} — pass --registry PATH (or set "
-                "$AGENTSKILLS_DIR) pointing at an agentskills checkout")
+                "$AGENTSKILLS_DIR) pointing at an acsi-agentskills checkout")
     return arms.ArmContext(
         root=root, registry=registry, lock_path=lock_path,
         lock=arms.load_lock(lock_path), hook=hook,
@@ -157,8 +157,8 @@ def main(argv=None) -> int:
     parser.add_argument("--arm", action="append", default=None,
                         help="run only this arm (repeatable); default: all")
     parser.add_argument("--registry", type=Path, default=None,
-                        help="agentskills checkout: this, else $AGENTSKILLS_DIR, "
-                             "else ~/repos/agentskills")
+                        help="acsi-agentskills checkout: this, else $AGENTSKILLS_DIR, "
+                             "else ~/repos/acsi-agentskills")
     parser.add_argument("--self-test", action="store_true",
                         help="also prove, against the real binary, that the "
                              "plugin arm still FAILS on a deliberately wrong lock")

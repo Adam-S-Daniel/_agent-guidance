@@ -388,7 +388,7 @@ up the new PATH.
      repository**: `~/.config/privacy-denylist.txt` (`PRIVACY_DENYLIST_FILE`).
      Without a readable one the wrapper exits 2 and nothing is mined.
   2. A clone of your private skills registry whose `origin` receives
-     `persistent/lessons`: `~/repos/agentskills-private` (`LESSONS_CLONE`).
+     `persistent/lessons`: `~/repos/acsi-agentskills-private` (`LESSONS_CLONE`).
      Its git credential must work with no desktop session: `gh auth setup-git`
      with a file-stored token, as for the census.
   3. python3 with PyYAML (`sudo apt install python3-yaml`).

@@ -33,13 +33,13 @@ Three properties of the switch decide the shape of any answer:
   moves it to `~/.claude/skills/.trash/`.
 - `setup.sh` deliberately leaves `~/.claude/skills` alone — "the marketplace
   owns Claude Code" — and converges only `extraKnownMarketplaces` and
-  `enabledPlugins: {"my@retired-agentskills": true}`.
+  `enabledPlugins: {"acsi@retired-agentskills": true}`.
 
 ### What a converged laptop terminal now loads
 
 | Source | Skills | Pinned / verified? |
 |---|---|---|
-| `my@retired-agentskills` (marketplace) | 9 | yes, by marketplace version |
+| `acsi@retired-agentskills` (marketplace) | 9 | yes, by marketplace version |
 | account sync, `custom` | 10 | **no** |
 | account sync, Anthropic | 11 | Anthropic's, unversioned here |
 
@@ -53,13 +53,13 @@ per token. Read from
 
 | Group | Skills | ~tokens |
 |---|---:|---:|
-| duplicates a skill `my@retired-agentskills` already delivers | 3 | **497** |
-| duplicates a skill `my-local` holds (not converged today) | 6 | 848 |
+| duplicates a skill `acsi@retired-agentskills` already delivers | 3 | **497** |
+| duplicates a skill `acsi-local` holds (not converged today) | 6 | 848 |
 | account-only `custom` (`fastmail`) | 1 | 173 |
 | Anthropic (`docx`, `pptx`, `xlsx`, `pdf`, `docs`, `learn`, `skill-creator`, `theme-factory`, `web-artifacts-builder`, `doc-coauthoring`, `import-memory`) | 11 | 1,718 |
 | **total** | **21** | **~3,236** |
 
-The three duplicates are `my-writing-style` (~175), `finding-unknowns` (~176)
+The three duplicates are `acsi-writing-style` (~175), `finding-unknowns` (~176)
 and `writing-adrs` (~146). The per-skill spread matters more than the average
 ADR 0002 used: `docx` alone is ~255 tokens, more than the three duplicates'
 smallest two combined, and old-registry #54 records that at the default budget the
@@ -70,7 +70,7 @@ it is which descriptions survive.
 
 1. **The drifting channel now serves the terminal**, `sync-skills` included.
    E5 measured that skill's account copy 127 lines behind the registry, and
-   unless `my-local` is installed by hand the account copy is the only
+   unless `acsi-local` is installed by hand the account copy is the only
    terminal copy of the one skill that must run on the laptop. E5 §7 called the
    exposure "the exact inverse of the delivery"; it is no longer inverse, it is
    everywhere.
@@ -129,7 +129,7 @@ have nothing else.**
   `--owner-machine`: the owner's machines, never a stranger's): converge
   `syncClaudeAiSkills: false` into `~/.claude/settings.json`, in the same deep-merge block that
   converges the marketplace registration, and converge
-  `"my-local@retired-agentskills": true` beside `"my@retired-agentskills": true` so the
+  `"acsi-local@retired-agentskills": true` beside `"acsi@retired-agentskills": true` so the
   machine-bound bundle arrives pinned from the marketplace, where it has been
   drifting on the account.
 - `fastmail` and `bell-schedule` stay account-only **on purpose**: the first
@@ -152,7 +152,7 @@ have nothing else.**
   there. The pinned way back is Anthropic's own marketplace plugin
   (`document-skills` in `anthropics/skills`). That is an owner call and out of
   scope here; this ADR does not make it.
-- **`my-local` becomes a marketplace install on the laptop**, so its skills
+- **`acsi-local` becomes a marketplace install on the laptop**, so its skills
   gain the digest-checked delivery they have never had and `sync-skills` stops
   being reachable only through the channel it exists to police.
 - **Two surfaces now behave differently on purpose.** A laptop terminal and a

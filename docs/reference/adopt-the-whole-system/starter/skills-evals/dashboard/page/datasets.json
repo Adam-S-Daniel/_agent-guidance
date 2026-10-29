@@ -192,7 +192,7 @@
     ],
     "order": "desc",
     "perPage": 30,
-    "query": "is:merged repo:example-adopter/skills-evals repo:example-adopter/_agent-guidance repo:example-adopter/agentskills repo:example-adopter/claude-memory-map",
+    "query": "is:merged repo:example-adopter/skills-evals repo:example-adopter/_agent-guidance repo:example-adopter/acsi-agentskills repo:example-adopter/claude-memory-map",
     "sort": "updated"
    },
    "connector": "github-mcp",
@@ -202,7 +202,7 @@
   "title": "Recently merged PRs"
  },
  "open_issues": {
-  "description": "Open issues in skills-evals, _agent-guidance, agentskills and claude-memory-map. Reads GitHub issue lists, one call per repo.",
+  "description": "Open issues in skills-evals, _agent-guidance, acsi-agentskills and claude-memory-map. Reads GitHub issue lists, one call per repo.",
   "source": {
    "args": {
     "fields": [
@@ -224,7 +224,7 @@
   "title": "Open issues"
  },
  "open_prs": {
-  "description": "Open pull requests in skills-evals, _agent-guidance, agentskills and claude-memory-map. Reads GitHub pull request search.",
+  "description": "Open pull requests in skills-evals, _agent-guidance, acsi-agentskills and claude-memory-map. Reads GitHub pull request search.",
   "source": {
    "args": {
     "fields": [
@@ -240,7 +240,7 @@
      "user"
     ],
     "perPage": 100,
-    "query": "is:open repo:example-adopter/skills-evals repo:example-adopter/_agent-guidance repo:example-adopter/agentskills repo:example-adopter/claude-memory-map"
+    "query": "is:open repo:example-adopter/skills-evals repo:example-adopter/_agent-guidance repo:example-adopter/acsi-agentskills repo:example-adopter/claude-memory-map"
    },
    "connector": "github-mcp",
    "kind": "query",

@@ -41,11 +41,11 @@ field_types:
   metadata: map-of-str
 payload_dirs: [scripts, references, assets, templates, hooks, tests, examples]
 registries:
-  - name: agentskills
+  - name: acsi-agentskills
     path: .
     layout: "plugins/*/skills/*/SKILL.md"
-  - name: agentskills-private
-    path: ../agentskills-private
+  - name: acsi-agentskills-private
+    path: ../acsi-agentskills-private
     layout: "plugins/*/skills/*/SKILL.md"
     optional: true
     reason: "private repo; public-repo CI has no token to clone it"

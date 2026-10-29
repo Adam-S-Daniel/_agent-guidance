@@ -29,7 +29,7 @@ orphan for either arm to carry.
 
 - The retired registry's marketplace kept its `renames` map entry for the
   skill's old standalone plugin name at the time. That map did not carry
-  over: the `agentskills` marketplace has no `renames` map at all
+  over: the `acsi-agentskills` marketplace has no `renames` map at all
   ([ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
 - The two `dangling-payload-ref` waivers in `scripts/skills_waivers.yml` are
   retired — there is no longer a `SKILL.md` for them to match, and a waiver

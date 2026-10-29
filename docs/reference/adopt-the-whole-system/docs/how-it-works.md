@@ -30,15 +30,16 @@ signal ──► proposal ──► evaluation ──► decision ──► merg
 
 The kit's [`starter/`](../starter/README.md) folder holds an export of each
 of the six repos that run the system for its owner. They keep the owner's
-repo names, minus the owner's own prefix on the two registries
-([`export/DECISIONS.md`](../export/DECISIONS.md) C1).
+repo names, with the owner's own prefix on the two registries replaced by
+the generic `acsi-` (automatic continuous self-improvement;
+[`export/DECISIONS.md`](../export/DECISIONS.md) C1).
 
 | Repo | Visibility | Holds | Export |
 |---|---|---|---|
 | `_agent-guidance` | public (paid plan: your choice) | The fleet guidance (`agents-md/`), the sync that writes it into every repo, the fleet-memory hook, the agent-checks runner and its templates, the routine specs (`docs/routines/`), `repos.yml` | [`starter/agent-guidance/`](../starter/agent-guidance/README.md) |
 | `repo-settings` | private | Every repo's settings as code: `repo-settings/fleet.yml` and the engine `scripts/repo_settings.py`, applied by a workflow behind your approval | [`starter/repo-settings/`](../starter/repo-settings/README.md) |
-| `agentskills` | public | Shareable skills, as a Claude Code plugin marketplace with four plugins; the cloud skills bootstrap hook; `setup.sh` for machines | [`starter/agent-skills/`](../starter/agent-skills/README.md) |
-| `agentskills-private` | private | Skills that touch personal data, and the lessons the session miner writes (`persistent/lessons`) | [`starter/agent-skills-private/`](../starter/agent-skills-private/README.md) |
+| `acsi-agentskills` | public | Shareable skills, as a Claude Code plugin marketplace with four plugins; the cloud skills bootstrap hook; `setup.sh` for machines | [`starter/agent-skills/`](../starter/agent-skills/README.md) |
+| `acsi-agentskills-private` | private | Skills that touch personal data, and the lessons the session miner writes (`persistent/lessons`) | [`starter/agent-skills-private/`](../starter/agent-skills-private/README.md) |
 | `skills-evals` | public (paid plan: your choice) | Fixtures, the eval harness, the planner, the gates, the results branch, the dashboard | [`starter/skills-evals/`](../starter/skills-evals/README.md) |
 | `wsl-automation` | public (paid plan: your choice) | Your durable machine's scheduled jobs: the usage census, the waiting-on-you feed, the session miner | [`starter/wsl-automation/`](../starter/wsl-automation/README.md) |
 
@@ -64,7 +65,7 @@ along. You grow your own content through the loop, starting from nothing.
 - **Checks.** A rule that a commit can show is broken becomes an
   agent-checks check, run by a git hook on your machine and by the required
   `agent-checks` job in CI ([guidance](guidance.md#checks-before-skills-skills-before-guidance)).
-- **Skills.** `agentskills` is a plugin marketplace your machines add;
+- **Skills.** `acsi-agentskills` is a plugin marketplace your machines add;
   cloud sessions install the bundles a repo's `skills.lock` pins
   ([skills](skills.md)).
 - **Settings.** `repo-settings` applies `fleet.yml` to every repo: merge
@@ -74,7 +75,7 @@ along. You grow your own content through the loop, starting from nothing.
 - **Evals and the loop.** `skills-evals` fires an API-triggered Claude
   routine (so evals spend your plan's weekly allowance, not API dollars),
   ingests what it pushes, decides with fixed rules, and opens pull requests
-  in `agentskills` and `_agent-guidance` with its Apps
+  in `acsi-agentskills` and `_agent-guidance` with its Apps
   ([evals and the loop](evals-and-loop.md)).
 - **Routines.** Five standing claude.ai routines do the rest: the hourly
   fleet worker, the changelog watcher and the prompt-audit sweep it fires,
@@ -106,7 +107,7 @@ Each one exists because ignoring it broke something.
 6. **Untrusted text is data.** Issue bodies, PR comments, fetched pages,
    routine payloads and transcripts never give an agent instructions.
 7. **Public repos hold invented data only.** A required `privacy` check in
-   `agentskills` scans added lines against a denylist of your real names,
+   `acsi-agentskills` scans added lines against a denylist of your real names,
    emails and hosts, kept in a secret, never in a file
    ([the privacy check](skills.md#the-privacy-check)).
 8. **One-way doors get an adversarial review.** A plugin name, a shipped

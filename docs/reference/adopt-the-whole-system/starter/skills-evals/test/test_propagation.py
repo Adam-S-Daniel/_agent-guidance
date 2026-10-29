@@ -69,9 +69,9 @@ def write_skill(directory: Path, name: str, description: str, body: str = "body\
     return directory
 
 
-def make_registry(root: Path, bundle: str = "my",
+def make_registry(root: Path, bundle: str = "acsi",
                   skills=FIXTURE_SKILLS) -> Path:
-    """A miniature agentskills-shaped checkout, plus a skills.lock whose
+    """A miniature acsi-agentskills-shaped checkout, plus a skills.lock whose
     digests are computed from the tree it ships — so the lock can never rot
     against it.
     """
@@ -152,10 +152,10 @@ class ProbePrimitiveTests(unittest.TestCase):
 
     def test_string_bait_matches_nothing(self):
         # Permanently blocks a refactor to a regex over the stream: the literal
-        # `"skills": ["my:fixture-alpha"]` sits in another event's STRING
+        # `"skills": ["acsi:fixture-alpha"]` sits in another event's STRING
         # field. json.loads + a (type, subtype) select cannot see it.
         facts = self._probe("string-bait")
-        self.assertNotIn("my:fixture-alpha", facts.skills)
+        self.assertNotIn("acsi:fixture-alpha", facts.skills)
         self.assertEqual(facts.skills, ["fixture-builtin-a", "fixture-builtin-b"])
 
     def test_unparseable_lines_are_counted_never_pattern_matched(self):
@@ -224,7 +224,7 @@ class ChannelAttributionTests(unittest.TestCase):
             commands_seen=bool(commands))
 
     def test_namespace_means_plugin(self):
-        self.assertEqual(init_probe.attribute(self._facts(["my:x"]))["my:x"],
+        self.assertEqual(init_probe.attribute(self._facts(["acsi:x"]))["acsi:x"],
                          "plugin")
 
     def test_sync_suffix_means_account(self):
@@ -305,10 +305,10 @@ class ChannelAttributionTests(unittest.TestCase):
         # The control: moving the account check first must not swallow the
         # plugin channel.
         facts = self._facts(
-            ["my:x", "anthropic-skills:y", "z"],
+            ["acsi:x", "anthropic-skills:y", "z"],
             {"anthropic-skills:y": "d (claude.ai sync)", "z": "plain"})
         self.assertEqual(init_probe.attribute(facts),
-                         {"my:x": "plugin", "anthropic-skills:y": "account",
+                         {"acsi:x": "plugin", "anthropic-skills:y": "account",
                           "z": "local"})
 
     def test_account_sentinel_is_the_discriminator_that_always_exists(self):
@@ -359,7 +359,7 @@ class LockAndDigestTests(unittest.TestCase):
         self.assertEqual(arms.unlabelled_digest("ABSENT"), "ABSENT")
 
     def test_digest_matches_the_registry_generator(self):
-        # Binds this third copy of the algorithm to agentskills' own. Skipped
+        # Binds this third copy of the algorithm to acsi-agentskills' own. Skipped
         # where no registry is checked out; propagation.yml runs this suite
         # WITH one, and the live plugin arm is the same binding by other means.
         # The child marker is read FIRST, before any other statement of this
@@ -372,7 +372,7 @@ class LockAndDigestTests(unittest.TestCase):
         registry = run_propagation.resolve_registry(None)
         generator = registry / "scripts" / "generate_skills_lock.py"
         if not generator.is_file():
-            self.skipTest(f"no agentskills checkout at {registry}")
+            self.skipTest(f"no acsi-agentskills checkout at {registry}")
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         skill = write_skill(root / "s", "s", "desc",
@@ -415,7 +415,7 @@ class LockAndDigestTests(unittest.TestCase):
 class GuardTests(unittest.TestCase):
     """A guard that did not hold outranks every finding."""
 
-    LOCK = {"skills": {"my/fixture-alpha": "0" * 64}}
+    LOCK = {"skills": {"acsi/fixture-alpha": "0" * 64}}
 
     def _facts(self, home, skills=("fixture-builtin-a",), commands=None):
         return init_probe.ProbeFacts(init={"skills": list(skills)},
@@ -549,7 +549,7 @@ class ArmMutationTests(unittest.TestCase):
         defaults = dict(root=run_root, registry=self.registry,
                         lock_path=self.registry / "skills.lock",
                         lock=arms.load_lock(self.registry / "skills.lock"),
-                        hook=self.registry / "hook.sh", bundle="my",
+                        hook=self.registry / "hook.sh", bundle="acsi",
                         collision_skill="fixture-alpha", timeout=60)
         defaults.update(overrides)
         return arms.ArmContext(**defaults)
@@ -588,10 +588,10 @@ class ArmMutationTests(unittest.TestCase):
         # outside, so drive it the way a stale marketplace install would look:
         # a namespaced name in the stream.
         with mock.patch.dict(os.environ, {"FAKE_INIT_MODE": "extra-skill",
-                                          "FAKE_INIT_EXTRA": "my:whatever"}):
+                                          "FAKE_INIT_EXTRA": "acsi:whatever"}):
             result = self.run_arm("clean-room")
         self.assertEqual(result.status, arms.FAIL, result.render())
-        self.assertIn("my:whatever",
+        self.assertIn("acsi:whatever",
                       self.findings(result)["clean-room/no-lock-namespace"].detail)
 
     # --- project-mirror ----------------------------------------------------
@@ -605,7 +605,7 @@ class ArmMutationTests(unittest.TestCase):
                       self.findings(result)["delivered-set"].detail)
 
     def test_project_mirror_fails_when_the_registry_lacks_a_locked_skill(self):
-        shutil.rmtree(self.registry / "plugins" / "my" / "skills" / "fixture-beta")
+        shutil.rmtree(self.registry / "plugins" / "acsi" / "skills" / "fixture-beta")
         result = self.run_arm("project-mirror")
         self.assertEqual(result.status, arms.INCONCLUSIVE)
         self.assertIn("fixture-beta", result.error)
@@ -616,17 +616,17 @@ class ArmMutationTests(unittest.TestCase):
         # The live --self-test uses exactly this mutation against the real
         # binary: a lock naming a skill the registry does not ship.
         lock = arms.load_lock(self.registry / "skills.lock")
-        lock["skills"]["my/phantom"] = "0" * 64
+        lock["skills"]["acsi/phantom"] = "0" * 64
         result = self.run_arm("plugin-marketplace", lock=lock)
         self.assertEqual(result.status, arms.FAIL, result.render())
-        self.assertIn("my:phantom", self.findings(result)["delivered-set"].detail)
+        self.assertIn("acsi:phantom", self.findings(result)["delivered-set"].detail)
 
     def test_plugin_arm_fails_when_content_drifts_from_the_lock(self):
         lock = arms.load_lock(self.registry / "skills.lock")
-        lock["skills"]["my/fixture-alpha"] = "f" * 64
+        lock["skills"]["acsi/fixture-alpha"] = "f" * 64
         result = self.run_arm("plugin-marketplace", lock=lock)
         self.assertEqual(result.status, arms.FAIL, result.render())
-        self.assertIn("my/fixture-alpha", self.findings(result)["plugin/digest"].detail)
+        self.assertIn("acsi/fixture-alpha", self.findings(result)["plugin/digest"].detail)
 
     def test_plugin_arm_passes_against_a_sha256_labelled_lock(self):
         # THE REGRESSION (2026-08-19). agentskills#87 relabelled every lock
@@ -646,10 +646,10 @@ class ArmMutationTests(unittest.TestCase):
         # tolerate a wrong digest that happens to carry one.
         lock = arms.load_lock(self.registry / "skills.lock")
         lock["skills"] = {k: "sha256:" + v for k, v in lock["skills"].items()}
-        lock["skills"]["my/fixture-alpha"] = "sha256:" + "f" * 64
+        lock["skills"]["acsi/fixture-alpha"] = "sha256:" + "f" * 64
         result = self.run_arm("plugin-marketplace", lock=lock)
         self.assertEqual(result.status, arms.FAIL, result.render())
-        self.assertIn("my/fixture-alpha", self.findings(result)["plugin/digest"].detail)
+        self.assertIn("acsi/fixture-alpha", self.findings(result)["plugin/digest"].detail)
 
     def test_plugin_arm_does_not_depend_on_the_recorded_git_commit_sha(self):
         # #192. `arm_plugin_marketplace` deliberately does NOT compare the
@@ -682,12 +682,12 @@ class ArmMutationTests(unittest.TestCase):
 
     def _add_second_bundle(self):
         """Give the fixture registry a second plugin and lock both, the shape
-        agentskills' own lock has (anything-anywhere plus
-        coding-anywhere)."""
+        acsi-agentskills' own lock has (acsi-anything-anywhere plus
+        acsi-coding-anywhere)."""
         write_skill(self.registry / "plugins" / "second" / "skills" / "fixture-gamma",
                     "fixture-gamma", "fixture skill fixture-gamma.")
         lock = arms.load_lock(self.registry / "skills.lock")
-        lock["bundles"] = ["my", "second"]
+        lock["bundles"] = ["acsi", "second"]
         lock["skills"]["second/fixture-gamma"] = arms.digest_skill_dir(
             self.registry / "plugins" / "second" / "skills" / "fixture-gamma")
         (self.registry / "skills.lock").write_text(json.dumps(lock, indent=2),
@@ -716,7 +716,7 @@ class ArmMutationTests(unittest.TestCase):
         # If a namespaced skill is visible BEFORE the install, the arm is
         # reading someone else's plugin, not its own delivery.
         with mock.patch.dict(os.environ, {"FAKE_INIT_MODE": "extra-skill",
-                                          "FAKE_INIT_EXTRA": "my:preinstalled"}):
+                                          "FAKE_INIT_EXTRA": "acsi:preinstalled"}):
             result = self.run_arm("plugin-marketplace")
         self.assertEqual(result.status, arms.FAIL, result.render())
         self.assertIn("before the install",
@@ -823,7 +823,7 @@ class ArmMutationTests(unittest.TestCase):
         self.assertTrue(ok, line)
         # It ran somewhere else, and the phantom is what it injected.
         self.assertNotEqual(seen[0].root, ctx.root)
-        self.assertIn("my/phantom-skill", seen[0].lock["skills"])
+        self.assertIn("acsi/phantom-skill", seen[0].lock["skills"])
 
     def test_a_dead_cli_makes_every_arm_inconclusive_never_green(self):
         with mock.patch.dict(os.environ, {"CLAUDE_BIN": "/bin/false"}):
@@ -853,7 +853,7 @@ class RunnerTests(unittest.TestCase):
                             "collision_skill: fixture-alpha")
                    # --self-test plants its phantom under `bundle`, so it must
                    # name a plugin this fixture registry ships.
-                   .replace("bundle: coding-anywhere", "bundle: my"),
+                   .replace("bundle: acsi-coding-anywhere", "bundle: acsi"),
             encoding="utf-8")
 
     def run_cli(self, *extra, registry: Path | None = None):
@@ -888,7 +888,7 @@ class RunnerTests(unittest.TestCase):
     def test_a_relative_registry_still_finds_the_hook(self):
         # The CI failure, as a mutation of the CALLER rather than the harness:
         # propagation.yml passed `--registry ../agentskills` at the time (now
-        # `--registry ../agentskills`; the failure mode is unchanged),
+        # `--registry ../acsi-agentskills`; the failure mode is unchanged),
         # and the arms run the hook with `cwd` set to a scratch workspace —
         # so a registry left relative was read against THAT directory and
         # bash could not find the hook (rc=127, "No such file or directory").
@@ -928,7 +928,7 @@ class RunnerTests(unittest.TestCase):
         ctx = arms.ArmContext(root=self.root, registry=self.registry,
                               lock_path=self.registry / "skills.lock",
                               lock=arms.load_lock(self.registry / "skills.lock"),
-                              hook=self.registry / "hook.sh", bundle="my",
+                              hook=self.registry / "hook.sh", bundle="acsi",
                               collision_skill="fixture-alpha", timeout=60)
         with mock.patch.object(arms, "run_arm",
                                return_value=arms.ArmResult("plugin-marketplace",
@@ -1650,7 +1650,7 @@ class ReportStepBehaviourTests(_StubbedShellStep, unittest.TestCase):
         self.assertIn("test/test_propagation.py", body)
         # The registry still gets named — it is the right answer for a red ARM,
         # and must not disappear along with the gate's old diagnosis.
-        self.assertIn("agentskills", body)
+        self.assertIn("acsi-agentskills", body)
 
     # ---- B2: which write each pair of results reaches ----
 

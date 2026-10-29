@@ -83,7 +83,7 @@ shows up — would bury the choice under an implementation.
 
 ### Which lock wins in a multi-repo session?
 
-Three repos carry locks; two pin the *same* `(example-adopter/retired-agentskills, my)`
+Three repos carry locks; two pin the *same* `(example-adopter/retired-agentskills, acsi)`
 bundle at *different* refs (`retired-agentskills@216e519c`, and both consumers at
 `b0518b8f`). A union is not well-defined, and the hook's own docs record the
 residual: two such repos each reap the other's installs. Latent today only
@@ -189,7 +189,7 @@ fix it from inside a repo.
 - old-registry issue 86 — the install
   loop no longer deletes what it did not install, which is what lifted the
   ordering constraint on the user-scope direction.
-- `plugins/coding-anywhere/skills/skills-doctor/scripts/check_provenance.py` —
+- `plugins/acsi-coding-anywhere/skills/skills-doctor/scripts/check_provenance.py` —
   `hook_wiring`, `user_settings_name`, `hook_findings`, `read_surface`,
   `discover_locks`.
 

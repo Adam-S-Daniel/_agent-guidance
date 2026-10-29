@@ -127,9 +127,9 @@ delivery block in `sync.sh`. Until then:
 
 ## Phase 2: a separate identity
 
-A GitHub App (for example `my-agent`) installed on both owners,
+A GitHub App (for example `acsi-agent`) installed on both owners,
 `example-adopter` and `example-adopter-two`, with `gh` and git using a token minted per
-session, so commits are authored as `my-agent[bot]` and the owner can approve an
+session, so commits are authored as `acsi-agent[bot]` and the owner can approve an
 agent's PR as a real second reviewer. Blockers, for the follow-up issue:
 
 - **The claude.ai `github-mcp` connector and the Claude Code cloud git proxy

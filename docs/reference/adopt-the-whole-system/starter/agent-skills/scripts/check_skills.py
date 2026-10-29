@@ -41,7 +41,7 @@ GITHUB_ACTIONS is set) and NEVER change the exit status unless `--strict` is pas
 Usage
 -----
   python3 scripts/check_skills.py
-  python3 scripts/check_skills.py --registry agentskills=/path/to/clone --json
+  python3 scripts/check_skills.py --registry acsi-agentskills=/path/to/clone --json
   python3 scripts/check_skills.py --list-findings      # also audit dismissed candidates
 
 Exit status

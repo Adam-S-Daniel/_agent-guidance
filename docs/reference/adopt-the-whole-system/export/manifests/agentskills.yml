@@ -1,5 +1,5 @@
-# Export of adam-agentskills (repo key `agentskills`) into starter/agent-skills/ (repo name
-# `agentskills`, DECISIONS C1). Built from the inventory (scratch
+# Export of adam-agentskills (manifest key `agentskills`) into starter/agent-skills/ (repo name
+# `acsi-agentskills`, DECISIONS C1). Built from the inventory (scratch
 # manifests/adam-agentskills.yml, 2026-10-29) as amended by DECISIONS.md.
 repo: agentskills
 kit_name: agent-skills
@@ -20,11 +20,12 @@ exclude:
 substitutions:
   # C1, repo-specific. In this repo a bare `agentskills` (and
   # `agentskills-private`) almost always names the RETIRED predecessor
-  # registry: its marketplace (`my@agentskills`), its checkout beside this one,
+  # registry: its marketplace (`acsi@agentskills`), its checkout beside this one,
   # its issues (`agentskills#55`), its history in the ADRs. The live registry
-  # is `adam-agentskills`, which C1 renames to `agentskills`, so the retired
-  # one takes `retired-agentskills` (as the common owner-qualified rule does)
-  # and the two never collide. Tried before the common rules; a name inside
+  # is `adam-agentskills`, which C1 renames to `acsi-agentskills`; the retired
+  # one takes `retired-agentskills` (as the common owner-qualified rule does),
+  # which stays distinct from the live name and reads as what it is. Tried
+  # before the common rules; a name inside
   # `adam-agentskills` or `owner/agentskills` starts earlier and is matched
   # there by the common rules first. `agentskills.io` and AGENTSKILLS_* are
   # untouched.
@@ -33,8 +34,8 @@ substitutions:
     to: 'retired-agentskills\1'
   # C1: the bare `adam` bundle label where the common rule's word boundary
   # does not reach it (after a hyphen).
-  - {name: C1 bare adam label (branch name), literal: e5-probe-adam-local, to: e5-probe-my-local}
-  - {name: C1 bare adam label (test id), literal: bundles-claims-adam, to: bundles-claims-my}
+  - {name: C1 bare adam label (branch name), literal: e5-probe-adam-local, to: e5-probe-acsi-local}
+  - {name: C1 bare adam label (test id), literal: bundles-claims-adam, to: bundles-claims-acsi}
 
 edits:
   # ---- Review fixes (2026-10-29)
@@ -103,7 +104,7 @@ edits:
     stage: output
     old: |2
         Exactly one test file in the repo does not:
-        `plugins/non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py`
+        `plugins/acsi-non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py`
         ends with `unittest.main()`, and running THAT one directly really does run
         its tests — which is why the habit to build is naming the runner rather than
         auditing each file for a footer. The one command that actually runs this
@@ -130,8 +131,8 @@ edits:
     why: X9. The same command as ci.yml and AGENTS.md.
   - path: README.md
     stage: output
-    old: "| `anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |\n| `coding-anywhere` | enabled | CI, GitHub and skill-delivery skills | Claude Code terminals and cloud sessions |\n| `coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser) | Claude Code on the owner's machines |\n"
-    new: "| `anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |\n| `coding-anywhere` | enabled | coding skills (CI, GitHub, skill delivery) | Claude Code terminals and cloud sessions |\n| `coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser), plus the clone-sync and API-credit-lane hooks | Claude Code on the owner's machines |\n"
+    old: "| `acsi-anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |\n| `acsi-coding-anywhere` | enabled | CI, GitHub and skill-delivery skills | Claude Code terminals and cloud sessions |\n| `acsi-coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser) | Claude Code on the owner's machines |\n"
+    new: "| `acsi-anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |\n| `acsi-coding-anywhere` | enabled | coding skills (CI, GitHub, skill delivery) | Claude Code terminals and cloud sessions |\n| `acsi-coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser), plus the clone-sync and API-credit-lane hooks | Claude Code on the owner's machines |\n"
     why: X9. Says what each plugin is for, not which skills the source registry happened to ship.
   - path: README.md
     stage: output

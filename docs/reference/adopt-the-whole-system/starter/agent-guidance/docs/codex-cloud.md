@@ -71,7 +71,7 @@ else
   bootstrap_file=$(mktemp)
   trap 'rm -f -- "$bootstrap_file"' EXIT
   curl --fail --silent --show-error --location --output "$bootstrap_file" \
-    'https://raw.githubusercontent.com/example-adopter/agentskills/1ecea2593bcbca6b6073eedf50bb4ffa90ee77e8/.claude/hooks/skills-bootstrap.sh'
+    'https://raw.githubusercontent.com/example-adopter/acsi-agentskills/1ecea2593bcbca6b6073eedf50bb4ffa90ee77e8/.claude/hooks/skills-bootstrap.sh'
   printf '%s  %s\n' \
     'e1c79a80a00bad2ade61c959115bf366366c34f5f7f616dcc236ad6e95dc5d19' \
     "$bootstrap_file" | sha256sum --check --status
@@ -136,7 +136,7 @@ keeps the legacy behavior: it writes Claude plus an already-existing Codex home
 and retains its exit-zero failure policy.
 
 The Claude multi-repo bootstrap in
-[agentskills' delivery guide](https://github.com/example-adopter/agentskills/blob/main/docs/multi-repo-delivery.md)
+[agentskills' delivery guide](https://github.com/example-adopter/acsi-agentskills/blob/main/docs/multi-repo-delivery.md)
 addresses hook discovery across child repositories. The reproduction in
 [issue #130](https://github.com/Adam-S-Daniel/_agent-guidance/issues/130) uses
 one repository, so the two gaps are separate.

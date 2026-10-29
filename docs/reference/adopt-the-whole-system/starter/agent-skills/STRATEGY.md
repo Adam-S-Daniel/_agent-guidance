@@ -10,7 +10,7 @@ old-registry issue 18. Background:
 
 ## The rule, in one line
 
-**`agentskills` is the single upstream registry for reusable skills.** Every other
+**`acsi-agentskills` is the single upstream registry for reusable skills.** Every other
 repo either *consumes* skills from here or *feeds* skills into here. Nothing else
 is a canonical skill home.
 
@@ -21,7 +21,7 @@ bloats the other:
 
 | Layer | What it is | Canonical home |
 | --- | --- | --- |
-| **Skills** | Reusable `SKILL.md` capabilities, packaged as Claude Code plugins + a marketplace, and as cross-agent skills (agentskills.io spec). | **`agentskills`** (this repo) — public — and **`agentskills-private`** for the sensitive subset. |
+| **Skills** | Reusable `SKILL.md` capabilities, packaged as Claude Code plugins + a marketplace, and as cross-agent skills (agentskills.io spec). | **`acsi-agentskills`** (this repo) — public — and **`acsi-agentskills-private`** for the sensitive subset. |
 | **Guidance / sync** | `AGENTS.md` + global instructions + the mechanism that propagates them (and selected skills) into consumer repos, with drift detection. | **`_agent-guidance`** (to move to `example-adopter` — see old-registry issue #18, Phase 3). |
 
 This repo owns the **skills** layer only. It deliberately does not carry
@@ -32,10 +32,10 @@ this registry as its upstream skill source rather than keeping a parallel copy.
 
 A skill's repo is decided by **sensitivity, not by how personal it is**:
 
-- **Public (`agentskills`)** — generally reusable and contains **no secrets,
+- **Public (`acsi-agentskills`)** — generally reusable and contains **no secrets,
   credentials, or PII**. "Personal" is fine here: a skill can be idiosyncratic to
   the owner and still be public, as long as it leaks nothing sensitive.
-- **Private (`agentskills-private`)** — anything that embeds or depends on
+- **Private (`acsi-agentskills-private`)** — anything that embeds or depends on
   secrets, credentials, tokens, private endpoints, or personal/identifying data;
   or that you simply don't want disclosed.
 
@@ -43,11 +43,11 @@ Both repos use the **same** plugin + marketplace structure
 (`plugins/<plugin>/skills/<skill>/`, `.claude-plugin/marketplace.json`,
 `defaultEnabled`, the `setup.sh` de-dup), so the installer behaves identically
 across them (Phase 2 in old-registry issue #18). Plugins are named by
-audience and runtime, `[my|my-private]-[coding|non-coding|anything]-[local|anywhere]`.
-The public registry has four: `anything-anywhere` and
-`coding-anywhere` (default-enabled), `coding-local` and
-`non-coding-local` (opt-in); the private registry holds
-`private-anything-anywhere` — see
+audience and runtime, `[acsi|acsi-private]-[coding|non-coding|anything]-[local|anywhere]`.
+The public registry has four: `acsi-anything-anywhere` and
+`acsi-coding-anywhere` (default-enabled), `acsi-coding-local` and
+`acsi-non-coding-local` (opt-in); the private registry holds
+`acsi-private-anything-anywhere` — see
 [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md).
 
 ### Placement audit (2026-06-05)
@@ -72,7 +72,7 @@ embed secrets or PII:
 
 No skill currently needs to move. Re-run this audit whenever a skill starts to
 embed a secret, token, private hostname, or personal data — at that point it moves
-to `agentskills-private`.
+to `acsi-agentskills-private`.
 
 ## Promotion path — when an embedded skill graduates
 
@@ -90,11 +90,11 @@ When a skill graduates:
    machine (local files, WSL/Windows homes, a signed-in browser, local
    Cowork), or does it run anywhere, including a headless cloud session of an
    arbitrary repo? Then add it as a real directory (never a symlink) under
-   that plugin's `skills/` — `plugins/anything-anywhere/skills/<skill>/`,
-   `plugins/coding-anywhere/skills/<skill>/`,
-   `plugins/coding-local/skills/<skill>/` or
-   `plugins/non-coding-local/skills/<skill>/`. A sensitive skill goes to
-   the matching `my-private-*` plugin in `agentskills-private` instead.
+   that plugin's `skills/` — `plugins/acsi-anything-anywhere/skills/<skill>/`,
+   `plugins/acsi-coding-anywhere/skills/<skill>/`,
+   `plugins/acsi-coding-local/skills/<skill>/` or
+   `plugins/acsi-non-coding-local/skills/<skill>/`. A sensitive skill goes to
+   the matching `acsi-private-*` plugin in `acsi-agentskills-private` instead.
    No new plugin.json or marketplace entry is needed — the plugin already has
    both. Skill directory basenames must be unique across the repo and must
    never change once the skill has shipped — uploaded to the claude.ai

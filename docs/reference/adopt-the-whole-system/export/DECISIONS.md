@@ -42,7 +42,7 @@ The per-file detail is in the manifests beside this file.
 
 | # | What | Why | Reverse by |
 |---|---|---|---|
-| C1 | The two registry repos, whose names start with the owner's first name, become `agentskills` and `agentskills-private`. Plugin names drop that prefix (`anything-anywhere`, `coding-anywhere`, `coding-local`, `non-coding-local`, `private-anything-anywhere`). The bare owner-name bundle label in fixtures becomes `my`. | They carry the owner's name. Plugin names are one-way once enabled, so an adopter must start with names they will keep. `_agent-guidance`, `skills-evals` and `repo-settings` keep their names. | Keep the names; an adopter could rename before first enabling. |
+| C1 | The two registry repos, whose names start with the owner's first name, become `acsi-agentskills` and `acsi-agentskills-private`: the owner's prefix is replaced by the generic `acsi-` (automatic continuous self-improvement). Plugin names take the same prefix (`acsi-anything-anywhere`, `acsi-coding-anywhere`, `acsi-coding-local`, `acsi-non-coding-local`, `acsi-private-anything-anywhere`), and so does the marketplace, which is named for its repo. The bare owner-name bundle label in fixtures becomes `acsi` (`acsi-writing-style`). | They carry the owner's name. A generic prefix keeps the names distinct from the source owner's and the set still reads as one set, which dropping the prefix would not. Plugin names are one-way once enabled, so an adopter must start with names they will keep. `_agent-guidance`, `skills-evals` and `repo-settings` keep their names. | Drop the prefix instead of replacing it (the first form of C1), or keep the `acsi-` names; an adopter could rename before first enabling. |
 | C2 | Owners: the source owner's login → the adopter's owner (`example-adopter`); the second source owner → an optional second owner (`example-adopter-two`), in every case and separator form (`GH_TOKEN_<OWNER>`, `token_<owner>`, ...); a third account's examples → an invented third owner. A one-owner fleet sets the second owner to the first, and `bootstrap/lib/substitute.py` then drops the second owner's legs (One-owner fleets, below). | Owner names. | n/a |
 | C3 | Code paths specific to the source platform repo are **kept**, with the repo names replaced by an invented example platform (`example-site-platform` and its consumers): the label-only allowlist in repo-settings (ADR 0016), the federated marketplace entry, the `platform.lock` branch in `sync.sh`, the release-tag carve-out in guidance and scorers. | They are generic mechanisms (a shared platform repo with consumer sites) that an adopter may grow into, and deleting them touches many tests. | Delete them and their tests. |
 | C4 | The `scheduled-run-health` reusable workflow is copied from the source platform repo into the kit's `_agent-guidance`, and the four callers point at that copy. | `_agent-guidance`'s cron-coverage gate requires it, and the platform repo is not part of the kit. | Drop the callers and the gate. |
@@ -80,10 +80,10 @@ than a substitution, and every test the X9 blanking changed or removed.
 ### Substitution details
 
 - **The retired registry.** The source owner's retired `agentskills` registry
-  would become `example-adopter/agentskills` under C1/C2, which is the name
-  of the adopter's live registry. It becomes
-  `example-adopter/retired-agentskills` instead, so history about the retired
-  repo never reads as the live one.
+  would become `example-adopter/agentskills` under C2 alone. It becomes
+  `example-adopter/retired-agentskills` instead, which stays distinct from the
+  live `example-adopter/acsi-agentskills` and reads as what it is, so history
+  about the retired repo never reads as the live one.
 - **C5 is narrowed to uses and links.** The source owner's `verify-actions-lock`
   is kept where it is used (`uses: ...@`), named in backticks, or linked
   (`github.com/...`). The same string as an element of a fleet registry
@@ -387,9 +387,9 @@ suite, ShellCheck over `ci.yml`'s list, and the ASCII check of every
 
 How `export.py` carries out the entries above for the source registry
 (pinned d2d81b00c51388baf51c3922a540ae27839adcde, kit tree
-`starter/agent-skills/`, repo name `agentskills`) and its private twin
+`starter/agent-skills/`, repo name `acsi-agentskills`) and its private twin
 (pinned c4bf812e4703e7b9fdd3f5408ed9198cba9df9be,
-kit tree `starter/agent-skills-private/`, repo name `agentskills-private`).
+kit tree `starter/agent-skills-private/`, repo name `acsi-agentskills-private`).
 Every edit, with its `why`, is in `manifests/agentskills.yml`,
 `manifests/agentskills-private.yml` and `patches/agentskills/` (each
 manifest's `source:` names the source repo).
@@ -404,24 +404,24 @@ manifest's `source:` names the source repo).
   `rename-pdfs`).
 - **X3:** `docs/credential-runbook.md` of the private registry. Never read
   into the kit.
-- The plugins keep their manifests and machinery: `coding-local` keeps its
+- The plugins keep their manifests and machinery: `acsi-coding-local` keeps its
   clone-sync and credit-lane hooks and `bin/claude-credit`, which are not
   skills.
 
 ### Substitution details
 
 - **The retired registry, bare.** In these two repos a bare `agentskills`
-  (`my@agentskills`, the checkout `../agentskills`, `agentskills#55`, the
-  marketplace key `"agentskills"`) names the retired predecessor, and the
-  live registry is now also `agentskills` (C1), so setup.sh would have
-  written the live marketplace over the retired one and swept the live
-  checkout as "retired". A manifest rule renames the bare word to
-  `retired-agentskills` (and `-private`), as the common rule already does
-  for the source owner's retired `agentskills`. `agentskills.io` and `AGENTSKILLS_*` are
+  (`acsi@agentskills`, the checkout `../agentskills`, `agentskills#55`, the
+  marketplace key `"agentskills"`) names the retired predecessor. A manifest
+  rule renames the bare word to `retired-agentskills` (and `-private`), as
+  the common rule already does for the source owner's retired `agentskills`,
+  so setup.sh sees the retired registry under a name of its own, distinct
+  from the live `acsi-agentskills`, which reads as what it is.
+  `agentskills.io` and `AGENTSKILLS_*` are
   untouched. The concatenated slug in `check_consistency.py`
   (`"<owner>/" + "agentskills"`) is caught by the same rule.
 - Two hyphenated owner-name bundle labels the common rule's word boundary
-  misses (a probe name and a test id) become `my`.
+  misses (a probe name and a test id) become `acsi`.
 - The sync-delivered files (`fleet-guidance.md`, `.githooks/agent-checks`,
   `agent-checks-guard.sh`, `fleet-memory.sh`, `skills-bootstrap.sh`) are
   copied from the exported `_agent-guidance`, so they carry its X9 blanking
@@ -475,16 +475,15 @@ Changed (the machinery is still tested):
   `test_problems_from_several_bundles_accumulate` and
   `test_build_rows_exits_nonzero_when_a_bundle_renders_nothing` use an
   unclassifiable (`gitlab`) entry as the bundle that renders nothing.
-- `test_generate_skills_lock.py`: one expected list re-sorted
-  (`example-site-platform/deploy` now sorts before `my/alpha`);
-  `test_the_source_limits_are_the_hooks_own` (cited by the vendored hook,
-  defined in the left-out skills-doctor skill) is declared in
+- `test_generate_skills_lock.py`: `test_the_source_limits_are_the_hooks_own`
+  (cited by the vendored hook, defined in the left-out skills-doctor skill)
+  is declared in
   `_TESTS_IN_ANOTHER_REPO`; `test_this_repos_committed_lock_passes_check_format`
   skips while the shipped lock lists no skills (`--check-format` refuses an
   empty lock by design) and runs again from the first skill.
 - `test_setup_owner_machine.py`:
   `test_a_whole_directory_home_link_is_removed_only_when_it_is_ours` links
-  the legacy home to `plugins/coding-local/hooks/` (a shipped folder under
+  the legacy home to `plugins/acsi-coding-local/hooks/` (a shipped folder under
   `plugins/`) instead of the absent `skills/`.
 - `test_agent_checks.py`: each scratch repo gets a test-only copy of the
   blank runner with a lesson in its slot that refuses the paths the source's
@@ -552,7 +551,7 @@ section records what is more than a substitution.
 as they would sit in a checkout, named after source skills only as test data
 (`workflow-path-audit/required-check-routing`, four `writing-adrs`, four
 `guidance/anything-you-name-gets-its-link` and one
-`guidance/finding-your-unknowns` fixture, three pairwise `my-writing-style`
+`guidance/finding-your-unknowns` fixture, three pairwise `acsi-writing-style`
 fixtures, two `github-actions-repo-settings` fixtures, one
 `real-work/example-real-work-1` whose seed holds only an npm and a bundler
 lockfile, example `non-coverage.yml` rows, and `fake-gh/`, a seed of invented
@@ -826,8 +825,10 @@ duplicate-key-rejecting loader; with the collapse turned off it fails.
 - **The federated marketplace example** describes an invented platform,
   not the source platform repo's stack.
 - **Manifest names.** The two registry manifests are `agentskills.yml` and
-  `agentskills-private.yml` (with their overlay and patch folders); each
-  keeps the source repo's name in `source:`.
+  `agentskills-private.yml` (with their overlay and patch folders). Those are
+  manifest keys, the names `--only` and `--skip` take, not the exported repo
+  names (`acsi-agentskills`, `acsi-agentskills-private`); each keeps the
+  source repo's name in `source:`.
 - **macOS.** `copy-starter.sh` and `regenerate.sh` use no GNU-only flag
   (`realpath -m`, `sed -i` without a suffix, `sha256sum`); the kit's own
   test suites assume GNU tools (`docs/before-you-start.md`).
@@ -879,7 +880,7 @@ Departures from the entries above are marked **Departure**.
 - `export/fetch_sources.py` fetches each manifest's source and import at
   its pinned commit (`git fetch --depth 1`, no credential) for that step.
   **Departure:** the private registry's source is private, so CI checks
-  every tree but `agent-skills-private` (`--skip agentskills-private`); that
+  every tree but `agent-skills-private` (`--skip agentskills-private`, the manifest key); that
   tree is still leak-scanned and checked as tracked there, and fully
   checked by `run-all-tests.sh` where its source is.
 - **Departure (the private scan):** the denylist scan skips exactly one
@@ -952,7 +953,7 @@ A bootstrap test holds the skill's `--mark` paragraphs to `ask` steps.
 - skills-evals: the judge-mode refusal's report cell and the propagation
   Routine's retirement plan no longer link the source owner's issues
   (manifest edits; the history header keeps its citation).
-- agentskills: `install-agent-hooks.sh`'s owner list named the first owner
+- acsi-agentskills: `install-agent-hooks.sh`'s owner list named the first owner
   twice (the source's two letter cases, folded by C2); one entry now, and
   `test_agent_checks.py` holds the list unique.
 - `starter/known-failures.txt` lists the three `codex_cloud` unittest

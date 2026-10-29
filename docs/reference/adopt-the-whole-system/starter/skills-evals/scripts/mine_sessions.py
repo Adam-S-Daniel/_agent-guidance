@@ -23,7 +23,7 @@ Subcommands:
               (off by default).
   file-issues optional: turn one day's proposal files that pass the redaction
               check into issues labeled `lesson-proposal` in
-              agentskills-private. Dry run unless `--apply`.
+              acsi-agentskills-private. Dry run unless `--apply`.
   locate      print the local transcript path(s) for a record's session hash,
               so a fixture writer on the same machine can open the session.
 
@@ -54,7 +54,7 @@ Never a path, never a raw session id. Redaction replaces emails, tokens and
 key=value secrets, UUIDs and session ids, home-directory user names, the
 local login and host names, and every match of the privacy denylist (one
 regex per line, `#` comments, case-insensitive: the format of
-agentskills' scripts/check_privacy_denylist.py). The denylist is
+acsi-agentskills' scripts/check_privacy_denylist.py). The denylist is
 required: without one this script refuses to mine or file.
 """
 
@@ -83,7 +83,7 @@ NEW_SKILL_MIN_SESSIONS = 3
 MAX_EXAMPLES = 5
 LABEL = "lesson-proposal"
 MARKER_LABEL = "agent-authored"
-DEFAULT_ISSUE_REPO = "example-adopter/agentskills-private"
+DEFAULT_ISSUE_REPO = "example-adopter/acsi-agentskills-private"
 MARKER = "<sub>🤖 Written by session-miner (skills-evals scripts/mine_sessions.py) on behalf of @example-adopter</sub>"
 
 LESSON_SIGNALS = ("rule", "correction", "redirection", "interrupted",
@@ -696,7 +696,7 @@ def proposal_filename(p: dict) -> str:
 def route(records: Iterable[dict], redactor: Redactor) -> list[dict]:
     """Cluster records into one proposal per (subject, kind). Deterministic:
     the same records give the same proposals, in the same order. The output
-    shape is the file schema in agentskills-private lessons/README.md."""
+    shape is the file schema in acsi-agentskills-private lessons/README.md."""
     unique: "OrderedDict[str, dict]" = OrderedDict()
     for r in records:
         if isinstance(r, dict) and r.get("schema_version") == SCHEMA and r.get("record_id"):

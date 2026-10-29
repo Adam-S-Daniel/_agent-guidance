@@ -25,11 +25,11 @@ section below.
 
 | | laptop (durable machine) | Claude Code on the web (cloud/ephemeral) |
 |---|---|---|
-| what delivers skills | the **marketplace plugin install** — `setup.sh`, `/plugin install coding-anywhere@agentskills` | the **`skills-bootstrap` hook**, from `skills.lock` |
+| what delivers skills | the **marketplace plugin install** — `setup.sh`, `/plugin install acsi-coding-anywhere@acsi-agentskills` | the **`skills-bootstrap` hook**, from `skills.lock` |
 | where they land | `~/.claude/plugins/` | `~/.claude/skills/<name>/` |
 | scope | **user-level, so cwd-independent** | per session, rebuilt each time |
 | multi-repo session | already works — nothing to do | needs the wiring below |
-| invoke a skill as | `/coding-anywhere:skills-doctor` — plugin-namespaced | `/skills-doctor` — **bare, no prefix** |
+| invoke a skill as | `/acsi-coding-anywhere:skills-doctor` — plugin-namespaced | `/skills-doctor` — **bare, no prefix** |
 
 **The invocation difference is not cosmetic and is easy to get backwards.**
 Plugin skills are namespaced `<plugin>:<skill>`; a skill installed as a
@@ -37,7 +37,7 @@ directory under `~/.claude/skills/` has no plugin to be namespaced by, so it is
 just its own name. Measured, not assumed: a probe skill planted at
 `~/.claude/skills/zz-invocation-probe/` and a hook-installed
 `~/.claude/skills/finding-unknowns/` were both reported by a fresh CLI session
-as `/zz-invocation-probe` and `/finding-unknowns`. So `/coding-anywhere:skills-doctor`
+as `/zz-invocation-probe` and `/finding-unknowns`. So `/acsi-coding-anywhere:skills-doctor`
 **does not exist in a cloud session**, and typing it there gets
 `Unknown command`.
 
@@ -370,7 +370,7 @@ reaches for a workaround, because it is the one thing a repo can still deliver
 into this shape on its own.
 
 Measured in a hosted two-repo session on Claude Code **2.1.245**, project dir
-`/home/user` with `example-site-a` and `agentskills` beneath it: the project skill
+`/home/user` with `example-site-a` and `acsi-agentskills` beneath it: the project skill
 committed at `example-site-a/.claude/skills/embeddable-tool-pages/` was live in
 that session's skill roster, while neither repo's `SessionStart` hook fired at
 all and no `skills:` verdict was printed. Established by elimination rather than
@@ -425,7 +425,7 @@ checks below as the way to see it.
 The verdict, when there is one:
 
 ```
-skills: 23/23 from example-adopter/agentskills@eb25bd6 across 3 locks (agentskills, example-site-platform, example-site-a) — OK
+skills: 23/23 from example-adopter/acsi-agentskills@eb25bd6 across 3 locks (acsi-agentskills, example-site-platform, example-site-a) — OK
 ```
 
 With several locks it names how many contributed and which repos they came from.
@@ -449,12 +449,12 @@ With exactly one lock the line is unchanged from what it has always been.
   installed them and `~/.claude/skills/` is not where they live.
 - **Run the skills-doctor skill** for the long form, once a plugin carrying it
   has actually loaded — **`/skills-doctor` in a cloud session**, where the hook
-  installs it as a bare directory, and `/coding-anywhere:skills-doctor` on
+  installs it as a bare directory, and `/acsi-coding-anywhere:skills-doctor` on
   a laptop, where the marketplace namespaces it by plugin. Typing the laptop spelling in the
   cloud gets `Unknown command`, which reads like the skill is missing when it is
   present under its other name. Note also the ordering trap: the diagnostic that
   explains why no skills loaded is itself a skill
-  (`plugins/coding-anywhere/skills/skills-doctor`), so it is unavailable in exactly the
+  (`plugins/acsi-coding-anywhere/skills/skills-doctor`), so it is unavailable in exactly the
   case you most want it.
 
 **Check the SECOND session too, not just the first.** The setup script runs only

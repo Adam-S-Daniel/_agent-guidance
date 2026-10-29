@@ -5,7 +5,7 @@ whatever PyYAML was newest. requirements.txt is now the one place a version is
 written (requirements-dev.txt adds the test-only packages on top); these tests
 keep it that way. The split is a secret boundary: repo-settings.yml holds the
 App private key and installs requirements.txt alone, so test-only packages
-(requirements-dev.txt, installed by tests.yml) never run beside that secret. Same approach as agentskills'
+(requirements-dev.txt, installed by tests.yml) never run beside that secret. Same approach as acsi-agentskills'
 scripts/test_workflow_dependency_pins.py, smaller: that one also covers
 composite actions and heredocs, which this repo does not have.
 

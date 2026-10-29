@@ -7,7 +7,7 @@
 #   repo-settings  fleet-apply            REVIEWER must approve; deploys from
 #                                         the default branch only. Holds the
 #                                         settings-admin App's key.
-#   agentskills    plugin-runtime-review  REVIEWER must approve; no branch
+#   acsi-agentskills plugin-runtime-review  REVIEWER must approve; no branch
 #                                         policy (it runs on pull_request_target).
 #                                         prevent_self_review is off: agents
 #                                         open pull requests as you (ADR 0016).

@@ -14,7 +14,7 @@ is **inconclusive** from the model's view alone").
 
 ## 1. Why a probe was needed at all — and why nothing had to be faked
 
-The three names that collide under every current lock — `my-writing-style`,
+The three names that collide under every current lock — `acsi-writing-style`,
 `finding-unknowns`, `writing-adrs` — are byte-identical to their registry
 copies, so they carry no discriminator: whichever copy loads, the text is the
 same. Marking them would have meant editing skill descriptions purely to run a
@@ -24,7 +24,7 @@ That was unnecessary, because one skill has genuinely drifted. `sync-skills`'
 account copy predates `2b97892` and is missing the whole `--report-issue`
 section: **610 lines and 0 occurrences** of `--report-issue`, against the
 registry's **737 lines and 6**. Making that collision reachable took a
-config-only change — adding `my-local` to this repo's `skills.lock`, pinned at
+config-only change — adding `acsi-local` to this repo's `skills.lock`, pinned at
 main's existing commit. No skill content was modified for the experiment.
 
 ## 2. Drift census (measured from a live session, not inferred)
@@ -35,10 +35,10 @@ normalisation, **except one**.
 
 | Skill | Bundle | Account vs registry | `updatedAt` | last registry commit |
 |---|---|---|---|---|
-| `sync-skills` | `my-local` | **DIFFERS — account behind** | 2026-08-18 | 2026-08-20 |
-| `pdf-ocr-audit` | `my-local` | same | 2026-04-05 | 2026-08-13 |
-| `bell-schedule` | `my-local` | same | 2026-05-11 | 2026-08-10 |
-| other 7 | my / my-local / fastmail | same | — | — |
+| `sync-skills` | `acsi-local` | **DIFFERS — account behind** | 2026-08-18 | 2026-08-20 |
+| `pdf-ocr-audit` | `acsi-local` | same | 2026-04-05 | 2026-08-13 |
+| `bell-schedule` | `acsi-local` | same | 2026-05-11 | 2026-08-10 |
+| other 7 | acsi / acsi-local / fastmail | same | — | — |
 
 **The timestamp heuristic is not a drift signal on its own.** `pdf-ocr-audit`
 and `bell-schedule` both carry an `updatedAt` months older than their last
@@ -52,8 +52,8 @@ pre-filter, never a verdict.
 
 | Bundle | Names also in the account store | Shipped by a lock today |
 |---|---|---|
-| `my` | 3 — `my-writing-style`, `finding-unknowns`, `writing-adrs` | yes — all 10 lock-carrying repos |
-| `my-local` | 6 — `ocr-pdfs`, `pdf-ocr-audit`, `rename-pdfs`, `sync-cc-settings-between-wsl-and-windows`, `sync-skills`, `bell-schedule` | **no** |
+| `acsi` | 3 — `acsi-writing-style`, `finding-unknowns`, `writing-adrs` | yes — all 10 lock-carrying repos |
+| `acsi-local` | 6 — `ocr-pdfs`, `pdf-ocr-audit`, `rename-pdfs`, `sync-cc-settings-between-wsl-and-windows`, `sync-skills`, `bell-schedule` | **no** |
 | `fastmail` | 1 — `fastmail` | **no** |
 | `example-site-platform` | 0 | yes — 2 repos |
 
@@ -62,7 +62,7 @@ Every lock collides on the same 3 names. example-site-a and example-site-b lock
 carry no lock and collide on nothing.
 
 **The one skill that has drifted sits in the one bundle nothing ships.** Not a
-coincidence: `my-local` is excluded from every lock because it is
+coincidence: `acsi-local` is excluded from every lock because it is
 machine-bound, so no digest ever re-verifies it, while the account store is the
 only channel carrying it. The bundle with no lock coverage is the bundle that
 rots.
@@ -70,7 +70,7 @@ rots.
 ## 4. The hook does not fire in a multi-repo session (old-registry #84, confirmed live)
 
 The parent session had 12 repos attached. It carried no
-`~/.claude/skills/.skills-bootstrap-installed.json` and none of the `my`
+`~/.claude/skills/.skills-bootstrap-installed.json` and none of the `acsi`
 bundle's skills, while the account store's 19 loaded normally. In a multi-repo
 session the collision count is zero — and the account store is the *only*
 channel.
@@ -81,7 +81,7 @@ channel.
 > ran. Since ADR 0007 the hook reads every discovered repo's lock and installs
 > the union, so the moment a session gets a `cwd`- or user-level settings file
 > (see [`docs/multi-repo-delivery.md`](../multi-repo-delivery.md)) every sentence
-> in this section and in §6 and §7 inverts: the record file appears, the `my`
+> in this section and in §6 and §7 inverts: the record file appears, the `acsi`
 > skills load, and the collision count stops being zero. Read the conditional,
 > not the heading — and note §6's unmeasured case (project `.claude/skills/` vs
 > account `synced/`) was tolerable precisely because the hook never ran here.
@@ -133,20 +133,20 @@ read; both saw `--report-issue`, which the account copy does not contain at all.
 - **Fix for the live gap:** re-upload `sync-skills` from the laptop and confirm
   with `sync_skills.py --verify`. Nothing in CI can do it or assert it happened
   ([ADR 0002](../decisions/0002-limit-account-store-to-repo-independent-skills.md)).
-- **`my-local` is not in a lock and should not be** — it is machine-bound. The
+- **`acsi-local` is not in a lock and should not be** — it is machine-bound. The
   point is not to ship it, but that its account copies are unverified by
   construction, so a periodic content diff from a machine that has both is the
   only control available.
 
 ## 8. Reproducing
 
-The probe lock (`my` + `my-local`, pinned at main's existing commit) was
+The probe lock (`acsi` + `acsi-local`, pinned at main's existing commit) was
 never merged. It lives on the throwaway branch
-`claude/e5-probe-my-local` (a branch of the old registry)
+`claude/e5-probe-acsi-local` (a branch of the old registry)
 (commit `7e63423`), which is what the two probe sessions actually ran against
-— `main` never carried `my-local` in its lock, and should not.
+— `main` never carried `acsi-local` in its lock, and should not.
 
-To re-run: regenerate with `--bundles my,my-local`, push to a temporary
+To re-run: regenerate with `--bundles acsi,acsi-local`, push to a temporary
 branch, open a single-repo cloud session against it, and ask the session to
 invoke a skill whose two copies differ and report the Skill tool's base
 directory. Keep it off any branch bound for `main`: the lock is a deliberate

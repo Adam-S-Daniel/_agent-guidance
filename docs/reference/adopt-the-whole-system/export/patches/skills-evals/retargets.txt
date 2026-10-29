@@ -341,7 +341,7 @@ CHECKOUT = example_evals.checkout()
         (eval_dir / "seed" / "README.md").write_text("example seed\n", encoding="utf-8")
         (eval_dir / "fixture.yaml").write_text(
             "skill: example-followup\n"
-            "registry: https://github.com/example-adopter/agentskills\n"
+            "registry: https://github.com/example-adopter/acsi-agentskills\n"
             "prompt: Rename the files in inbox/ per my convention.\n"
             "followups:\n  - Yes, apply all of the proposed renames (auto).\n"
             "arms:\n  with_skill:\n    install: copy\n  without_skill:\n    install: none\n"
@@ -734,11 +734,11 @@ ADRS_BOOTSTRAP_DIR = FIXTURE_EVALS / "writing-adrs" / "bootstrap"
         skill_dir = example_evals.FIXTURES / "workflow-path-audit" / "required-check-routing"
 @@@ end
 === test/run_tests.py
-# why: JudgeDiffTests' end-to-end case builds the invented nested-repo seed (test/fixtures/evals/nested-repo-diff). TestIssue81 reads the invented pairwise fixtures (test/fixtures/evals/my-writing-style), so its tests of judge.mode, strip_seed and the pairwise path run on real input; the judge-call pin drops the left-out README's warning, and the end-to-end rank uses an invented candidate.
+# why: JudgeDiffTests' end-to-end case builds the invented nested-repo seed (test/fixtures/evals/nested-repo-diff). TestIssue81 reads the invented pairwise fixtures (test/fixtures/evals/acsi-writing-style), so its tests of judge.mode, strip_seed and the pairwise path run on real input; the judge-call pin drops the left-out README's warning, and the end-to-end rank uses an invented candidate.
 @@@ old
-    STYLE_DIR = REPO_ROOT / "evals" / "my-writing-style"
+    STYLE_DIR = REPO_ROOT / "evals" / "acsi-writing-style"
 @@@ new
-    STYLE_DIR = FIXTURE_EVALS / "my-writing-style"
+    STYLE_DIR = FIXTURE_EVALS / "acsi-writing-style"
 @@@ end
 @@@ old
                 transcript = self._near_miss(name)

@@ -29,14 +29,14 @@ Two facts the table missed:
 
 The eval-improve App (skills-evals secrets `EVAL_IMPROVE_APP_CLIENT_ID`,
 `EVAL_IMPROVE_APP_PEM`) is installed on _agent-guidance as well as
-agentskills, and opens the guidance-loop PRs. No dedicated
+acsi-agentskills, and opens the guidance-loop PRs. No dedicated
 eval-guidance App is created.
 
 ADR 0012's _agent-guidance row becomes:
 
 | Repo | PRs | Paths the PR may touch | Opened by |
 |---|---|---|---|
-| _agent-guidance | guidance-section edits and removals | `agents-md/**`, `AGENTS.md`, `docs/guidance-impact.md`, `.claude/hooks/fleet-guidance.md` (only as a byte-identical copy of `agents-md/base.md`) | the eval-improve App, installed on agentskills and _agent-guidance |
+| _agent-guidance | guidance-section edits and removals | `agents-md/**`, `AGENTS.md`, `docs/guidance-impact.md`, `.claude/hooks/fleet-guidance.md` (only as a byte-identical copy of `agents-md/base.md`) | the eval-improve App, installed on acsi-agentskills and _agent-guidance |
 
 Every condition of ADR 0012 still holds, and the per-repo scoping moves into
 the token: each workflow step mints the App's token for **one** repository

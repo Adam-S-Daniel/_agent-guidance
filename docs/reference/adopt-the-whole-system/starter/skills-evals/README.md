@@ -2,7 +2,7 @@
 
 [![skill eval: workflow-path-audit](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fexample-adopter%2Fskills-evals%2Fpersistent%2Feval-results%2Fbadges%2Fworkflow-path-audit%2Frequired-check-routing.json)](https://github.com/example-adopter/skills-evals/actions/workflows/eval.yml)
 
-Evals for the [`agentskills`](https://github.com/example-adopter/agentskills)
+Evals for the [`acsi-agentskills`](https://github.com/example-adopter/acsi-agentskills)
 registry: for each skill, measure agent quality **with vs. without** the skill
 installed, so "this skill helps" is a number instead of an assertion.
 
@@ -169,7 +169,7 @@ evals/
   usage/
     CENSUS.md              # the usage census: contract, and how to schedule it
   roster-policy.yml        # model roster thresholds + the capability ladder
-  my-writing-style/      # Class C pilot (issue #81): three writing fixtures,
+  acsi-writing-style/      # Class C pilot (issue #81): three writing fixtures,
     README.md              # one dir each (recruiter-reply/, proposal-bio/,
     <fixture>/             # self-appraisal-opening/), every one a runnable
       fixture.yaml         # eval dir of its own — judge.mode: pairwise
@@ -186,7 +186,7 @@ scripts/
                            # --window newest run summaries (default 5)
   refresh_models.py        # GET /v1/models -> availability document (the one network call)
   model_usage_census.py    # local transcripts and hook logs -> weekly model, skill and hook counts
-  publish_usage_census.sh  # runs the census on the owner's machine: counts to persistent/eval-results, private events to agentskills-private
+  publish_usage_census.sh  # runs the census on the owner's machine: counts to persistent/eval-results, private events to acsi-agentskills-private
   local_eval.py            # guarded local runner: N trials of one skill fixture under the owner's /login,
                            # results outside every repo, a "local exhibit, not badge input"
   local_eval_guard.py      # the credential rules local_eval.py and its launch-time guard launcher share
@@ -288,19 +288,19 @@ the objective checks and the LLM judge, writes `results/<skill>/<timestamp>/`):
 
 ```bash
 python3 harness/run_eval.py evals/workflow-path-audit --arm both \
-  --registry ../agentskills
+  --registry ../acsi-agentskills
 ```
 
 Useful variations:
 
 ```bash
 # Only the with_skill or without_skill arm:
-python3 harness/run_eval.py evals/workflow-path-audit --arm with_skill --registry ../agentskills
+python3 harness/run_eval.py evals/workflow-path-audit --arm with_skill --registry ../acsi-agentskills
 
 # Skip the LLM judge (objective checks + cost/turns only):
 python3 harness/run_eval.py evals/workflow-path-audit --arm both --no-judge
 
-# Point at a different agent binary or output root (a sibling ../agentskills
+# Point at a different agent binary or output root (a sibling ../acsi-agentskills
 # checkout resolves with no --registry flag at all — see below):
 CLAUDE_BIN=/path/to/claude \
   python3 harness/run_eval.py evals/workflow-path-audit --arm both --results-dir /tmp/eval-out
@@ -359,18 +359,18 @@ A fixture's `registry:` field names which registry its skill lives in (by
 URL); [`harness/registries.yml`](harness/registries.yml) maps each registry
 named there to a layout glob. `--registry NAME=PATH` (repeatable) points a
 name at a local checkout; a bare `--registry PATH` (no `=`, legacy) is taken
-as the `agentskills` entry. `$SKILLS_EVALS_REGISTRIES` (same
+as the `acsi-agentskills` entry. `$SKILLS_EVALS_REGISTRIES` (same
 `NAME=PATH,NAME=PATH` shape; a bare entry there is likewise taken as
-`agentskills`) merges with `--registry` **by name** — a flag naming one
+`acsi-agentskills`) merges with `--registry` **by name** — a flag naming one
 registry does not suppress an env entry naming another, and a flag wins only
 where both name the same one. `$AGENTSKILLS_DIR` (name kept unchanged since
-the `agentskills` -> `agentskills` rename) covers the `agentskills`
+the `agentskills` -> `acsi-agentskills` rename) covers the `acsi-agentskills`
 entry specifically (its older, single-registry override), and any name still
 unresolved after all of the above falls back to a sibling checkout
-`../<name>` next to this repo — so `agentskills`, `example-site-platform`, and
+`../<name>` next to this repo — so `acsi-agentskills`, `example-site-platform`, and
 `example-site-a` checkouts next to `skills-evals/` resolve with no flags at
 all. (The harness's older `~/repos/agentskills` last-resort default is gone;
-a sibling `../agentskills` checkout is the default now, which is what
+a sibling `../acsi-agentskills` checkout is the default now, which is what
 the invocations above rely on.) An unknown registry name, an empty `PATH`, or
 an override that resolves to a nonexistent directory aborts the run before
 any arm starts — including `--arm objective-only` — rather than failing
@@ -378,7 +378,7 @@ partway through or silently ignoring the bad value. Within a registry, the
 `with_skill` arm resolves the skill dir by globbing that registry's layout
 with the skill name substituted for its second-to-last path segment — the
 `*` immediately before `SKILL.md` (the first sorted match wins), which is
-what lets `plugins/*/skills/<skill>` (agentskills' own
+what lets `plugins/*/skills/<skill>` (acsi-agentskills' own
 mix of the legacy `plugins/<skill>/skills/<skill>/` shape and the bundled
 `plugins/<bundle>/skills/<skill>/` shape), `skills/<skill>` (example-site-platform),
 and `.claude/skills/<skill>` (example-site-a) all resolve through the same
@@ -607,19 +607,19 @@ what lets these run on every pull request *and* again on a daily schedule
 (`.github/workflows/propagation.yml`) rather than behind `eval.yml`'s OIDC.
 
 ```bash
-# All five arms against a local agentskills checkout (~15s, no credential):
-python3 harness/run_propagation.py evals/propagation --registry ~/repos/agentskills
+# All five arms against a local acsi-agentskills checkout (~15s, no credential):
+python3 harness/run_propagation.py evals/propagation --registry ~/repos/acsi-agentskills
 
 # One arm, plus the live self-test that proves the assertions can still fail:
 python3 harness/run_propagation.py evals/propagation --arm plugin-marketplace \
-  --registry ~/repos/agentskills --self-test
+  --registry ~/repos/acsi-agentskills --self-test
 ```
 
 | Arm | Asserts |
 | --- | --- |
-| `clean-room` | none of the lock's skills, and no `my:` namespace, in an empty scratch surface |
+| `clean-room` | none of the lock's skills, and no `acsi:` namespace, in an empty scratch surface |
 | `project-mirror` | a repo-committed `.claude/skills/` mirror loads, exactly the locked set |
-| `plugin-marketplace` | `claude plugin install` delivers all 9 as `my:*`, and the resolved tree's content digests match `skills.lock` |
+| `plugin-marketplace` | `claude plugin install` delivers all 9 as `acsi:*`, and the resolved tree's content digests match `skills.lock` |
 | `bootstrap-hook` | the SessionStart hook installs 9/9 on an ephemeral surface — **and declines with a `skipped — durable session` verdict that names the marketplace install as authoritative, writing nothing, on a durable one** (an interpolated diagnostic clause in the middle is allowed and ignored) |
 | `collision-guard` | a repo-owned copy wins: the hook says it skipped, and the file really was not written |
 
@@ -1045,7 +1045,7 @@ maintainer-dispatched run of this repo's **committed** fixtures
 produced — the workflow never runs on pull requests (it holds an API key and
 runs the agent with `bypassPermissions`, so it must never see untrusted
 fixture content; fixtures here — and the three checked-out registries
-(agentskills, example-site-platform, example-site-a) whose skill content the
+(acsi-agentskills, example-site-platform, example-site-a) whose skill content the
 with-skill arm executes — are trusted because only maintainers can push to
 any of the four repos involved, directly or through an automated lane such
 as example-site-platform's Decap CMS publish loop or dependabot auto-merge; see

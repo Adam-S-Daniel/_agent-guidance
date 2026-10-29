@@ -263,7 +263,7 @@ class TestLocalEval(unittest.TestCase):
             for value in ("set", ""):
                 with self.subTest(name=name, value=value):
                     proc = self._run(str(EVAL_DIR), "--trials", "1",
-                                     "--registry", f"agentskills={registry}",
+                                     "--registry", f"acsi-agentskills={registry}",
                                      env_extra={name: value})
                     self._assert_nothing_ran(proc)
                     self.assertIn(name, proc.stderr)
@@ -285,7 +285,7 @@ class TestLocalEval(unittest.TestCase):
                 fixture["env"] = {name: "example-value", "HARMLESS": "1"}
                 fixture_path.write_text(yaml.safe_dump(fixture), encoding="utf-8")
                 proc = self._run(str(eval_dir), "--trials", "1",
-                                 "--registry", f"agentskills={registry}")
+                                 "--registry", f"acsi-agentskills={registry}")
                 self._assert_nothing_ran(proc)
                 self.assertIn(name, proc.stderr)
                 self.assertIn("env:", proc.stderr)
@@ -324,7 +324,7 @@ class TestLocalEval(unittest.TestCase):
                 self.log.unlink(missing_ok=True)
                 proc = self._run(str(self._guard_fixture(True, check_type)),
                                  "--trials", "1",
-                                 "--registry", f"agentskills={registry}",
+                                 "--registry", f"acsi-agentskills={registry}",
                                  env_extra={"PYTHONPATH": str(self._parser_blocker())})
                 self._assert_nothing_ran(proc)
                 for needle in ("tree-sitter==0.26.0", "tree-sitter-bash==0.25.1",
@@ -335,7 +335,7 @@ class TestLocalEval(unittest.TestCase):
     def test_a_fixture_without_a_parser_backed_check_does_not_need_the_parser(self):
         registry = self._registry()
         proc = self._run(str(self._guard_fixture(False)), "--trials", "1",
-                         "--registry", f"agentskills={registry}",
+                         "--registry", f"acsi-agentskills={registry}",
                          env_extra={"PYTHONPATH": str(self._parser_blocker())})
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
@@ -369,7 +369,7 @@ class TestLocalEval(unittest.TestCase):
         # black-holed endpoint; the version call, every arm and every judge
         # call see none, and nothing ever sees the OAuth token name.
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         calls = self._calls()
         self.assertEqual({c["role"] for c in calls},
@@ -444,7 +444,7 @@ class TestLocalEval(unittest.TestCase):
         self.out.mkdir()
         (self.out / "earlier.txt").write_text("x\n", encoding="utf-8")
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self._assert_nothing_ran(proc)
         self.assertIn("already exists", proc.stderr)
         self.assertEqual(sorted(p.name for p in self.out.iterdir()),
@@ -493,7 +493,7 @@ class TestLocalEval(unittest.TestCase):
     def test_a_user_level_copy_of_the_skill_fails_the_run(self):
         _plant_skill(self.home / ".claude" / "skills", SKILL)
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self._assert_contaminated(proc, SKILL)
 
     def test_a_plugin_copy_of_the_skill_fails_the_run(self):
@@ -506,7 +506,7 @@ class TestLocalEval(unittest.TestCase):
                 {"scope": "user", "installPath": str(install),
                  "version": "1.0.0"}]}}), encoding="utf-8")
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self._assert_contaminated(proc, f"some-bundle:{SKILL}")
 
     def test_a_skill_whose_name_only_contains_the_skill_under_test_is_not_contamination(self):
@@ -515,7 +515,7 @@ class TestLocalEval(unittest.TestCase):
         near_miss = f"{SKILL}-extra"
         _plant_skill(self.home / ".claude" / "skills", near_miss)
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         probe = self._json("manifest.json")["contamination_probe"]
         self.assertIn(near_miss, probe["visible_skills"])
@@ -527,7 +527,7 @@ class TestLocalEval(unittest.TestCase):
         stamp = "20261004T120000Z"
         proc = self._run(str(EVAL_DIR), "--trials", "2", "--no-judge",
                          "--timestamp", stamp,
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self._json("manifest.json")["invocation"]["timestamp"], stamp)
         for k in (1, 2):
@@ -545,7 +545,7 @@ class TestLocalEval(unittest.TestCase):
         registry = self._registry()
         # A RELATIVE registry path, resolved from the caller's cwd (the test
         # root), while run_eval itself runs from the repository root.
-        proc = self._run(str(EVAL_DIR), "--registry", "agentskills=registry")
+        proc = self._run(str(EVAL_DIR), "--registry", "acsi-agentskills=registry")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn(EXHIBIT, proc.stdout, "the console summary is labeled too")
 
@@ -599,7 +599,7 @@ class TestLocalEval(unittest.TestCase):
                          {"agent": arm_ids[0], "judge": judge})
         head = _git(registry, "rev-parse", "HEAD").stdout.strip()
         self.assertEqual(manifest["fixtures"][0]["registry"],
-                         {"name": "agentskills", "source": "--registry flag",
+                         {"name": "acsi-agentskills", "source": "--registry flag",
                           "sha": head, "dirty": False})
         own = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
                              capture_output=True, text=True)
@@ -668,7 +668,7 @@ class TestLocalEval(unittest.TestCase):
     def test_an_errored_trial_is_recorded_counted_and_fails_the_exit_code(self):
         # Agent call 3 is trial 2's with_skill arm (arms run with_skill first).
         proc = self._run(str(EVAL_DIR), "--trials", "3",
-                         "--registry", f"agentskills={self._registry()}",
+                         "--registry", f"acsi-agentskills={self._registry()}",
                          fail_agent_call=3)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         manifest = self._json("manifest.json")
@@ -747,7 +747,7 @@ class TestLocalEval(unittest.TestCase):
         path = os.pathsep.join([str(shims), self._env(self._dispatcher())["PATH"]])
         before = self._tree_snapshot()
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}",
+                         "--registry", f"acsi-agentskills={self._registry()}",
                          env_extra={"PATH": path})
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         calls = [json.loads(line) for line in
@@ -833,7 +833,7 @@ class TestLocalEval(unittest.TestCase):
                    # off, so no child writes into the real HOME.
                    "CLAUDE_CODE_DISABLE_AUTO_MEMORY"}
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}",
+                         "--registry", f"acsi-agentskills={self._registry()}",
                          env_extra={"SOME_UNLISTED_VAR": "1",
                                     "CLAUDECODE": "1", "LC_ALL": "C.UTF-8"})
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -889,7 +889,7 @@ class TestLocalEval(unittest.TestCase):
         self._settings({"theme": "dark", "env": {"EXAMPLE_FLAG": "1"},
                         "permissions": {"allow": ["Bash(ls:*)"]}})
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_the_settings_check_covers_this_checkout_and_managed_policy(self):
@@ -977,7 +977,7 @@ class TestLocalEval(unittest.TestCase):
                 shutil.rmtree(self.root / "registry", ignore_errors=True)
                 registry = self._registry(skill)
                 proc = self._run(str(eval_dir), "--trials", "1", "--no-judge",
-                                 "--registry", f"agentskills={registry}")
+                                 "--registry", f"acsi-agentskills={registry}")
                 self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
                 summaries = sorted(self.out.rglob("summary.json"))
                 self.assertEqual(len(summaries), 2)
@@ -993,7 +993,7 @@ class TestLocalEval(unittest.TestCase):
     def test_an_unstamped_summary_is_still_badge_input(self):
         registry = self._registry()
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={registry}")
+                         "--registry", f"acsi-agentskills={registry}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self._unstamp_summaries()
         self._remove_markers()  # now it looks like a published tree
@@ -1039,7 +1039,7 @@ class TestLocalEval(unittest.TestCase):
 
     def test_the_marker_alone_makes_a_trial_tree_unusable_as_badge_input(self):
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self._unstamp_summaries()  # a kill before the stamp: marker only
         for results in (self.out / "t1", self.out):
@@ -1051,7 +1051,7 @@ class TestLocalEval(unittest.TestCase):
 
     def test_a_marker_in_any_parent_directory_refuses_too(self):
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self._unstamp_summaries()
         # A copy of the trial tree with only the PARENT carrying the marker.
@@ -1173,7 +1173,7 @@ class TestLocalEval(unittest.TestCase):
 
     def test_a_flat_fixture_runs_clean_under_the_fixtures_key(self):
         proc = self._run(str(EVAL_DIR), "--trials", "2", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         aggregate = self._assert_clean(proc, 2, ["(flat)"])
         self.assertEqual(aggregate["arms"], aggregate["fixtures"]["(flat)"]["arms"])
 
@@ -1181,7 +1181,7 @@ class TestLocalEval(unittest.TestCase):
         nested = FIXTURE_EVALS / "writing-adrs" / "bootstrap"
         proc = self._run(str(nested), "--trials", "2", "--no-judge",
                          "--registry",
-                         f"agentskills={self._registry('writing-adrs')}")
+                         f"acsi-agentskills={self._registry('writing-adrs')}")
         aggregate = self._assert_clean(proc, 2, ["bootstrap"])
         self.assertEqual(sorted(aggregate["arms"]), ["with_skill", "without_skill"])
         self.assertEqual(
@@ -1191,7 +1191,7 @@ class TestLocalEval(unittest.TestCase):
         skill_dir = FIXTURE_EVALS / "writing-adrs"
         registry = self._registry("writing-adrs")
         proc = self._run(str(skill_dir), "--trials", "2", "--no-judge",
-                         "--registry", f"agentskills={registry}")
+                         "--registry", f"acsi-agentskills={registry}")
         aggregate = self._assert_clean(
             proc, 2, ["bootstrap", "existing-convention", "supersede",
                       "why-no-comment-trail"])
@@ -1205,7 +1205,7 @@ class TestLocalEval(unittest.TestCase):
         skill_dir = FIXTURE_EVALS / "writing-adrs"
         proc = self._run(str(skill_dir), "--fixture", "supersede", "--trials", "1",
                          "--no-judge", "--registry",
-                         f"agentskills={self._registry('writing-adrs')}")
+                         f"acsi-agentskills={self._registry('writing-adrs')}")
         self._assert_clean(proc, 1, ["supersede"])
 
     # -- review round 2 --------------------------------------------------
@@ -1216,7 +1216,7 @@ class TestLocalEval(unittest.TestCase):
         (hostile / "claude" / "settings.json").write_text(
             json.dumps({"apiKeyHelper": "/bin/example"}), encoding="utf-8")
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}",
+                         "--registry", f"acsi-agentskills={self._registry()}",
                          env_extra={"XDG_CONFIG_HOME": str(hostile),
                                     "XDG_DATA_HOME": str(hostile),
                                     "XDG_STATE_HOME": str(hostile),
@@ -1236,7 +1236,7 @@ class TestLocalEval(unittest.TestCase):
                   "SSL_CERT_FILE": "/x/ca.pem", "SSL_CERT_DIR": "/x/certs",
                   "USER": "someone", "LOGNAME": "someone", "SHELL": "/bin/sh"}
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}",
+                         "--registry", f"acsi-agentskills={self._registry()}",
                          env_extra=passed)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         for call in self._calls():
@@ -1270,7 +1270,7 @@ class TestLocalEval(unittest.TestCase):
             with self.subTest(seed_file=name):
                 (deep / name).write_text(json.dumps(content), encoding="utf-8")
                 proc = self._run(str(eval_dir), "--trials", "1",
-                                 "--registry", f"agentskills={registry}")
+                                 "--registry", f"acsi-agentskills={registry}")
                 self._assert_nothing_ran(proc)
                 self.assertIn(str(deep / name), proc.stderr)
                 self.assertIn(key, proc.stderr)
@@ -1287,7 +1287,7 @@ class TestLocalEval(unittest.TestCase):
                 path = registry / ".claude" / name
                 path.write_text(json.dumps(content), encoding="utf-8")
                 proc = self._run(str(EVAL_DIR), "--trials", "1",
-                                 "--registry", f"agentskills={registry}")
+                                 "--registry", f"acsi-agentskills={registry}")
                 self._assert_nothing_ran(proc)
                 self.assertIn(str(path), proc.stderr)
                 self.assertIn(key, proc.stderr)
@@ -1352,7 +1352,7 @@ class TestLocalEval(unittest.TestCase):
                 (eval_dir / "seed" / link).symlink_to(target,
                                                       target_is_directory=True)
                 proc = self._run(str(eval_dir), "--trials", "1", "--registry",
-                                 f"agentskills={registry}")
+                                 f"acsi-agentskills={registry}")
                 self._assert_nothing_ran(proc)
                 self.assertIn("settings", proc.stderr)
                 self.assertNotIn("sentinel-helper", proc.stderr)
@@ -1443,7 +1443,7 @@ class TestLocalEval(unittest.TestCase):
 
     def test_every_child_kind_reaches_the_cli_through_the_guard(self):
         proc = self._run(str(EVAL_DIR), "--trials", "1",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         calls = self._calls()
         self.assertEqual({c["role"] for c in calls},
@@ -1521,18 +1521,18 @@ class TestLocalEval(unittest.TestCase):
     def test_a_tool_toggle_in_the_use_family_is_not_a_provider(self):
         registry = self._registry()
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={registry}",
+                         "--registry", f"acsi-agentskills={registry}",
                          env_extra={"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self._settings({"env": {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"}})
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={registry}",
+                         "--registry", f"acsi-agentskills={registry}",
                          results_dir=self.root / "second")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_a_symlinked_results_dir_is_still_a_local_exhibit_to_make_badge(self):
         proc = self._run(str(EVAL_DIR), "--trials", "1", "--no-judge",
-                         "--registry", f"agentskills={self._registry()}")
+                         "--registry", f"acsi-agentskills={self._registry()}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self._unstamp_summaries()
         link = self.root / "innocent-looking"

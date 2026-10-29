@@ -108,7 +108,7 @@ def test_the_owner_machine_opt_in_runs_both_steps(tmp_path, how):
     settings = json.loads((tmp_path / "home" / ".claude" / "settings.json")
                           .read_text(encoding="utf-8"))
     assert settings["syncClaudeAiSkills"] is False
-    assert settings["enabledPlugins"]["coding-local@agentskills"] is True
+    assert settings["enabledPlugins"]["acsi-coding-local@acsi-agentskills"] is True
     # A fresh machine never had the retired hook registered, so there is
     # nothing to clean up and nothing gets written.
     assert global_hook(tmp_path) == ""
@@ -184,9 +184,9 @@ def test_every_link_setup_made_is_swept_from_every_retired_home(tmp_path):
         # the retired registry's checkout. Symlinks only; nothing is created
         # outside tmp_path.
         (d / "finding-unknowns").symlink_to(
-            plugins / "anything-anywhere" / "skills" / "finding-unknowns")
+            plugins / "acsi-anything-anywhere" / "skills" / "finding-unknowns")
         (d / "launch-wsl-claude-session").symlink_to(
-            plugins / "coding-local" / "skills" / "launch-wsl-claude-session")
+            plugins / "acsi-coding-local" / "skills" / "launch-wsl-claude-session")
         (d / "old-registry-skill").symlink_to(retired_registry / "skills" / "old")
         # The user's own: a live link elsewhere, a dangling link elsewhere, a
         # link into a directory that merely shares the name's prefix, and a
@@ -212,7 +212,7 @@ def test_a_retired_home_left_empty_is_removed(tmp_path):
     d = tmp_path / "home" / ".agents" / "skills"
     d.mkdir(parents=True)
     (d / "finding-unknowns").symlink_to(
-        REPO / "plugins" / "anything-anywhere" / "skills" / "finding-unknowns")
+        REPO / "plugins" / "acsi-anything-anywhere" / "skills" / "finding-unknowns")
     proc = run_setup(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not d.exists()
@@ -223,19 +223,19 @@ def test_a_retired_home_left_empty_is_removed(tmp_path):
 def test_a_whole_directory_home_link_is_removed_only_when_it_is_ours(tmp_path):
     home = tmp_path / "home"
     (home / ".agents").mkdir(parents=True)
-    (home / ".agents" / "skills").symlink_to(REPO / "plugins" / "coding-local" / "hooks")
+    (home / ".agents" / "skills").symlink_to(REPO / "plugins" / "acsi-coding-local" / "hooks")
     # A home that links to the USER's directory: neither the link nor any link
     # inside its target may be touched, even one that points into plugins/.
     users_dir = tmp_path / "users-skill-dir"
     users_dir.mkdir()
     (users_dir / "finding-unknowns").symlink_to(
-        REPO / "plugins" / "anything-anywhere" / "skills" / "finding-unknowns")
+        REPO / "plugins" / "acsi-anything-anywhere" / "skills" / "finding-unknowns")
     (home / ".cursor").mkdir()
     (home / ".cursor" / "skills").symlink_to(users_dir)
     proc = run_setup(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not os.path.lexists(home / ".agents" / "skills")
-    assert (REPO / "plugins" / "coding-local" / "hooks").is_dir()
+    assert (REPO / "plugins" / "acsi-coding-local" / "hooks").is_dir()
     assert (home / ".cursor" / "skills").is_symlink()
     assert (users_dir / "finding-unknowns").is_symlink()
 
@@ -311,7 +311,7 @@ def test_an_unknown_host_kind_is_refused(tmp_path):
 
 
 # =================================================================================
-# --owner-machine in Git Bash: the my-clone-sync task, through a STUB pwsh
+# --owner-machine in Git Bash: the acsi-clone-sync task, through a STUB pwsh
 # =================================================================================
 
 
@@ -333,9 +333,9 @@ def test_gitbash_owner_machine_runs_the_register_script_through_pwsh(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     args = (bin_dir / "pwsh.exe.args").read_text(encoding="utf-8").splitlines()
     assert args[:3] == ["-NoProfile", "-NonInteractive", "-File"], args
-    assert Path(args[3]) == (REPO / "plugins" / "coding-local" / "hooks" / "clone-sync"
+    assert Path(args[3]) == (REPO / "plugins" / "acsi-coding-local" / "hooks" / "clone-sync"
                              / "Register-CloneSyncTask.ps1"), args
-    assert (REPO / "plugins" / "coding-local" / "hooks" / "clone-sync"
+    assert (REPO / "plugins" / "acsi-coding-local" / "hooks" / "clone-sync"
             / "Register-CloneSyncTask.ps1").is_file()
 
 
@@ -344,7 +344,7 @@ def test_gitbash_owner_machine_fails_when_registration_fails(tmp_path):
     proc = run_setup(tmp_path, "--owner-machine", path_first=bin_dir,
                      env_extra={"AGENTSKILLS_HOST_KIND": "gitbash"})
     assert proc.returncode == 3, proc.stdout + proc.stderr
-    assert "registering the my-clone-sync task failed" in proc.stderr
+    assert "registering the acsi-clone-sync task failed" in proc.stderr
 
 
 def test_gitbash_owner_machine_warns_without_pwsh(tmp_path):

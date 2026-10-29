@@ -3,7 +3,7 @@
 # input. It measures nothing and no schedule names it.
 
 skill: github-actions-repo-settings
-registry: https://github.com/example-adopter/agentskills
+registry: https://github.com/example-adopter/acsi-agentskills
 
 prompt: >
   Tidy the README of this example service.

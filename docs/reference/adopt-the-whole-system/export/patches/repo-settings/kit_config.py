@@ -53,8 +53,8 @@ def _sub(text: str, pairs, where: str, ids=None) -> str:
 
 
 FLEET_CUTS = [
-    ("  # RETIRED: superseded by example-adopter/agentskills below.",
-     "  # agentskills: the new public skills registry"),
+    ("  # RETIRED: superseded by example-adopter/acsi-agentskills below.",
+     "  # acsi-agentskills: the new public skills registry"),
     ("  - name: example-adopter/claude-memory-map\n",
      "  # --- onboarded 2026-07-21"),
     ("  - name: example-adopter/fastmail-actions\n",
@@ -72,8 +72,8 @@ FLEET_CUTS = [
 ]
 
 FLEET_EDITS = [
-    ("  # agentskills: the new public skills registry replacing agentskills\n  # above. Same policy shape",
-     "  # agentskills: the public skills registry. Same policy shape"),
+    ("  # acsi-agentskills: the new public skills registry replacing agentskills\n  # above. Same policy shape",
+     "  # acsi-agentskills: the public skills registry. Same policy shape"),
     ("      # agents-md-sync GitHub App (App id @SYNC_ID@): pushes the managed\n",
      "      # agents-md-sync GitHub App (its App id is the GUIDANCE_SYNC_APP_ID\n"
      "      # variable; the adoption kit's DECISIONS C12): pushes the managed\n"),

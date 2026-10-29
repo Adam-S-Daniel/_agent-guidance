@@ -44,7 +44,7 @@ a path that exists in no consumer. So "push the hook everywhere" was never
 anyway", with the reach of a fleet-wide push and none of its benefit.
 
 **3. The lock cannot be fleet-synced, so it cannot be paired with the push.**
-It is per-repo by design: `agentskills`' own lock is `my`-only;
+It is per-repo by design: `agentskills`' own lock is `acsi`-only;
 `example-site-a`'s federates two registries (`agentskills@1e4fe9e` +
 `example-site-platform@679fb61`). Any canonical lock pushed fleet-wide would flatten the
 federated one.
@@ -64,7 +64,7 @@ aborts the *entire two-owner sync* at the first such repo, with a git hint as
 the only diagnostic.
 
 Cost, for completeness: roughly 185 tokens of always-on context per bundled
-skill, in every session that carries a bundle. The `my` bundle is 9 skills
+skill, in every session that carries a bundle. The `acsi` bundle is 9 skills
 (~1.3k); `example-site-a`'s federated 23 are ~3.1k per ephemeral session.
 
 ## Decision
@@ -118,7 +118,7 @@ Two asymmetries are deliberate:
 
 **Starting allowlist: `example-site-a`, `example-site-b`.** Both have heavy
 documented web-session workflows and are the repos #54's acceptance criterion
-is actually about. `example-site-platform` wants the `my` bundle but is blocked by its
+is actually about. `example-site-platform` wants the `acsi` bundle but is blocked by its
 own `.gitignore`; it is documented in `repos.yml` rather than listed, because an
 allowlist entry that can only ever render red is worse than a stated reason.
 

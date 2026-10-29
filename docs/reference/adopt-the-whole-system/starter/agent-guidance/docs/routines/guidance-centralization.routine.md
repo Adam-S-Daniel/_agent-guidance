@@ -55,8 +55,8 @@ spec's §0.5 is about.
 | Repository |
 |------------|
 | [`example-adopter/_agent-guidance`](https://github.com/example-adopter/_agent-guidance) |
-| [`example-adopter/agentskills`](https://github.com/example-adopter/agentskills) |
-| [`example-adopter/agentskills-private`](https://github.com/example-adopter/agentskills-private) |
+| [`example-adopter/acsi-agentskills`](https://github.com/example-adopter/acsi-agentskills) |
+| [`example-adopter/acsi-agentskills-private`](https://github.com/example-adopter/acsi-agentskills-private) |
 | [`example-adopter/skills-evals`](https://github.com/example-adopter/skills-evals) |
 | [`example-adopter/repo-settings`](https://github.com/example-adopter/repo-settings) |
 | [`example-adopter/wsl-automation`](https://github.com/example-adopter/wsl-automation) |

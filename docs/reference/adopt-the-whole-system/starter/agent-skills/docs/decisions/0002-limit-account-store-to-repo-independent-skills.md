@@ -98,7 +98,7 @@ without being deleted.
 - **Repo-scoped skills stay on channels that can scope them**, so the account
   store is not a fallback when a plugin install or the bootstrap hook is
   inconvenient. The cost of getting that wrong is measurable, not theoretical:
-  `claude plugin details my` reports ~1,479 always-on tokens for 8 skills
+  `claude plugin details acsi` reports ~1,479 always-on tokens for 8 skills
   (~185/skill), and account-synced skills feed the same per-session skill
   listing. A platform bundle on the account would be paid in every unrelated
   session while being outranked by the marketplace bundle in the repos it was
@@ -117,7 +117,7 @@ without being deleted.
 
 ## Alternatives considered
 
-**Push the platform / `my` bundle to the account store.** Rejected: account
+**Push the platform / `acsi` bundle to the account store.** Rejected: account
 skills cannot be repo-scoped, so every CI and workflow skill would load in every
 unrelated repo as pure context cost, while being outranked by the marketplace
 bundle exactly where it is useful.
@@ -144,7 +144,7 @@ orphan class this ADR exists to prevent.
   their deletion.
 - **Account arm:** refresh the local mirror with
   `CLAUDE_CODE_SYNC_SKILLS=1 claude -p 'ok'`, then run
-  `plugins/coding-local/skills/sync-skills/sync_skills.py --verify` (old-registry PR #61). It
+  `plugins/acsi-coding-local/skills/sync-skills/sync_skills.py --verify` (old-registry PR #61). It
   compares each account copy's file set against what the uploader would send and
   exits non-zero on any `MISMATCH` — the check that would have caught the
   truncation. It needs the owner's laptop; CI cannot reach the account store.

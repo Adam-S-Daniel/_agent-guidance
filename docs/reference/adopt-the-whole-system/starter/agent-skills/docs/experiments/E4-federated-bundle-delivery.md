@@ -13,7 +13,7 @@ records what was measured while actually building it. Run 2026-08-14, Claude Cod
 
 ### F1 — a plugin root can be a repo root, so example-site-platform needs no restructuring
 
-C4 federated `plugins/my` — a subdirectory laid out as a plugin. example-site-platform's
+C4 federated `plugins/acsi` — a subdirectory laid out as a plugin. example-site-platform's
 skills live at `skills/<name>/` at its **repo root**, and a prior analysis flagged
 "whether that shape installs" as the single unverified assumption under its
 recommendation to restructure.
@@ -71,7 +71,7 @@ Validation passing tells us the key is *tolerated*, not that it is *honoured* �
 there is no way to tell those apart from here. So none was added: a key that reads
 as a pin while nothing consumes it is worse than no key, because it is exactly what
 a reader checks when asking "is this pinned?". Pinning stays the lock's job, which
-is also how the `my` bundle has always worked. `check_consistency.py` now rejects
+is also how the `acsi` bundle has always worked. `check_consistency.py` now rejects
 any key outside the honoured set, so the next person cannot add one by copy-paste.
 
 ### F4 — a sparse, blobless fetch of the federated repo is SLOWER than a plain shallow one

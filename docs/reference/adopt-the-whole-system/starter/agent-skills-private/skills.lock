@@ -1,9 +1,9 @@
 {
-  "registry": "example-adopter/agentskills",
+  "registry": "example-adopter/acsi-agentskills",
   "ref": "0000000000000000000000000000000000000000",
   "bundles": [
-    "anything-anywhere",
-    "coding-anywhere"
+    "acsi-anything-anywhere",
+    "acsi-coding-anywhere"
   ],
   "skills": {},
   "generated_from": "0000000000000000000000000000000000000000"

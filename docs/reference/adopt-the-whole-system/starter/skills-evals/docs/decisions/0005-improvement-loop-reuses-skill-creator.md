@@ -149,7 +149,7 @@ this harness or it is not measured the way every other number here is.
   the dollar cost is not bounded by these call counts. A spend-cap guardrail
   remains part of [#71](https://github.com/Adam-S-Daniel/skills-evals/issues/71).
 - Only two skills qualify today: `writing-adrs` (three fixtures) and
-  `my-writing-style` (three, but its pairwise judge mode is refused by
+  `acsi-writing-style` (three, but its pairwise judge mode is refused by
   `run_eval.py`, so it needs `--no-judge`).
 - The trigger split and the fixture split are independent: skill-creator
   holds out 40% of its query set with its own seed; this script holds out a
@@ -511,7 +511,7 @@ routine's saved prompt is still unchanged.
   ingest: `routine-improve-pushed.yml` (no permissions) and
   `routine-improve-gate.yml` on its `workflow_run`, the default branch's copy
   only. `scripts/improve_gate.py` reads the branch through git plumbing and
-  accepts it only as an accepted schema-1 record for agentskills at a
+  accepts it only as an accepted schema-1 record for acsi-agentskills at a
   full sha, a patch of that skill's `SKILL.md` alone whose hunks parse, and
   a report with the loop's title and no closing keyword or @mention
   (checked with its Markdown emphasis and link syntax stripped). The
@@ -519,23 +519,23 @@ routine's saved prompt is still unchanged.
   matches the results signal's `claude/eval-*`, and the two path filters
   are what keep each push to its own gate.
 - **The draft pull request is opened with a GitHub App token.** It is
-  opened in example-adopter/agentskills, which this repository's
+  opened in example-adopter/acsi-agentskills, which this repository's
   `GITHUB_TOKEN` cannot write. The owner chose the credential on 2026-10-06:
   "GitHub App (Recommended)". After re-validating the judged sha, the
   `draft-pr` job mints an installation token with
   `actions/create-github-app-token` from repository secrets
   `EVAL_IMPROVE_APP_CLIENT_ID` and `EVAL_IMPROVE_APP_PEM`. The token is
-  limited to agentskills, with contents and pull-requests write only,
+  limited to acsi-agentskills, with contents and pull-requests write only,
   and one later step uses it. While either secret is unset the job is
   skipped with a summary note. It does not run until the owner creates the App
-  (Contents: write and Pull requests: write, installed on agentskills
+  (Contents: write and Pull requests: write, installed on acsi-agentskills
   only) and adds both secrets to skills-evals. When it runs, it checks the
-  measured registry sha is on agentskills' default branch and applies
+  measured registry sha is on acsi-agentskills' default branch and applies
   the patch there. It refuses any frontmatter change other than the
   description, and any second file. It pushes `eval-improve/<skill>`
   without force, or does nothing if that branch exists (one candidate per
   skill waits for a person), and opens a draft. It never merges. A pull
-  request the App opens starts agentskills' CI.
+  request the App opens starts acsi-agentskills' CI.
 - **#71's gate stays.** Nothing here is scheduled; a suite test fails if any
   workflow that fires the routine or handles an improve branch gains a
   schedule. The three human-reviewed loop pull requests are the draft pull
@@ -556,7 +556,7 @@ routine's saved prompt is still unchanged.
   `scripts/improve_gate.py fire-check`: the loop's own `skill_fixtures` and
   `load_fixtures` (every nested `evals/<skill>/<name>` fixture names this
   skill and one registry), `harness/registries.yml` mapping that registry
-  to agentskills (the one the routine checks out), and at least
+  to acsi-agentskills (the one the routine checks out), and at least
   `MIN_FIXTURES` fixtures. So `guidance`, `real-work`, a flat fixture and
   another registry's skill are refused before a session starts. Only the
   registry-side `SKILL.md` lookup needs the registry checkout and stays
@@ -574,10 +574,10 @@ human in the loop. This supersedes, for an accepted improvement, every
 "a person reviews and merges" above: the routine improve mode addendum's
 "opens a draft. It never merges", and the "Review before merging" line of the
 report `propose_skill_edit.py` writes (the gate's pull-request body says it is
-superseded). The registry side of the exception is agentskills
-[ADR 0021](https://github.com/example-adopter/agentskills/blob/main/docs/decisions/0021-automated-skill-changes-merge-without-review.md),
+superseded). The registry side of the exception is acsi-agentskills
+[ADR 0021](https://github.com/example-adopter/acsi-agentskills/blob/main/docs/decisions/0021-automated-skill-changes-merge-without-review.md),
 which covers removals ([ADR 0014](0014-removal-pull-requests-merge-without-review.md))
-too. Built red-first with fakes and against a real agentskills checkout;
+too. Built red-first with fakes and against a real acsi-agentskills checkout;
 no routine run and no real pull request.
 
 - **One setting.** `evals/improve-policy.yml` holds
@@ -587,10 +587,10 @@ no routine run and no real pull request.
   verdict's, parsed strictly by `harness/gates.py` and copied into every
   gates file.
 - **The gate builds the whole registry change, with no credential.**
-  `scripts/improve_gate.py prepare` works on a checkout of agentskills'
+  `scripts/improve_gate.py prepare` works on a checkout of acsi-agentskills'
   default branch tip (fetched anonymously, before the App token is minted):
   the validated patch, a `PURPOSE.md` stub when the skill has none, the
-  plugin's patch version in both manifests (agentskills ADR 0009), a
+  plugin's patch version in both manifests (acsi-agentskills ADR 0009), a
   `docs/skill-impact.md` `edit` entry carrying the record's objective scores
   per fixture, and the README table (the registry's own
   `scripts/generate_readme_table.py`); then, when the registry's
@@ -607,7 +607,7 @@ no routine run and no real pull request.
   pull request is labeled `agent-authored` and `eval-improve`, its body
   carries the record's report and ends with the fleet's agent marker, and
   `gh pr merge --auto --merge` is enabled after the labels and read back.
-  agentskills' required checks still gate the merge.
+  acsi-agentskills' required checks still gate the merge.
 - **Draft when the plugin runs code.** A skill whose plugin has a `hooks/`
   or `bin/` directory, a settings or package file, or a manifest `hooks` or
   `settings` key always gets a draft: a hook can name any file under the
@@ -619,16 +619,16 @@ no routine run and no real pull request.
   same bundle version, `docs/skill-impact.md` and `skills.lock`, so a
   second open one would conflict once the first merged. The gate opens
   nothing while any `eval-improve/*` or `retire-skill/*` pull request is
-  open in agentskills (`scripts/retire_skill.py` checks only its own
+  open in acsi-agentskills (`scripts/retire_skill.py` checks only its own
   prefix).
 - **The credential is unchanged.** Contents: write and Pull requests: write
-  on agentskills cover pushing, opening, labeling and enabling
+  on acsi-agentskills cover pushing, opening, labeling and enabling
   auto-merge. The `eval-improve` label must exist there first. While either App
   secret is unset, the job still skips.
 - **The same switch drives the draft-skill gate.** `improve_gate.py
   merge-mode` prints the same decision (`effective_mode`) for
   `routine-draft-skill-gate.yml`: in `auto` its skill pull request in
-  agentskills is ready, labeled and auto-merging (draft instead while
+  acsi-agentskills is ready, labeled and auto-merging (draft instead while
   another loop pull request is open there), and its fixtures pull request
   here is ready with auto-merge only when the skill's is. The fixtures pull
   request is opened with the job token, which starts no workflow, so its

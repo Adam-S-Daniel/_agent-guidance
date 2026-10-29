@@ -23,7 +23,7 @@
 #   than trusting someone to read the Actions tab, idempotently, because a
 #   steady-state red would otherwise file a fresh issue every morning. #17
 #   specifies Tier 2 as scheduled for a reason the arms make concrete: their
-#   one unpinned input is the agentskills registry at `main`, so real
+#   one unpinned input is the acsi-agentskills registry at `main`, so real
 #   delivery can break with no commit in this repo, and pull requests here are
 #   too infrequent to find out.
 #
@@ -37,7 +37,7 @@
 #   marked HISTORY, for what that layer did and why.
 #
 # * DELIBERATELY NO `paths:` filter, contrary to the fleet's usual rule. The
-#   arms probe an unpinned upstream registry — agentskills at `main` —
+#   arms probe an unpinned upstream registry — acsi-agentskills at `main` —
 #   so a pull request that touches nothing here can still be the first place
 #   real delivery drift shows up; filtering this workflow to its own paths
 #   would mean that drift only surfaces at the next 05:41 schedule. `gate`'s
@@ -52,7 +52,7 @@ on:
   push:
     branches: [main]
   # :41 rather than :00 because GitHub queues the whole platform's cron on the
-  # hour and delays it, and staggered off agentskills' 06:17 census so
+  # hour and delays it, and staggered off acsi-agentskills' 06:17 census so
   # the fleet's daily audits do not all land at once.
   schedule:
     - cron: "41 5 * * *" # daily, 05:41 UTC
@@ -122,12 +122,12 @@ jobs:
           path: skills-evals
           persist-credentials: false
 
-      - name: Check out agentskills for census
+      - name: Check out acsi-agentskills for census
         uses: actions/checkout@v7.0.1
         continue-on-error: true
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Check out example-site-platform for census
@@ -150,7 +150,7 @@ jobs:
       # a dedicated read-only GitHub App (owner's 2026-10-20 decision, replacing
       # a never-set personal access token, issue #292): repository variable
       # REGISTRY_READ_APP_CLIENT_ID and repository secret REGISTRY_READ_APP_PEM,
-      # Contents: read, installed on agentskills-private alone. It stays
+      # Contents: read, installed on acsi-agentskills-private alone. It stays
       # optional: without the variable the mint is skipped, and without a
       # token the checkout is skipped, so the census is simply unresolved with
       # the usual warning. A failed mint (say the PEM is missing) is also
@@ -164,7 +164,7 @@ jobs:
           client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills-private
+          repositories: acsi-agentskills-private
           permission-contents: read
 
       - name: Check out optional private registry for scheduled census
@@ -172,8 +172,8 @@ jobs:
         uses: actions/checkout@v7.0.1
         continue-on-error: true
         with:
-          repository: example-adopter/agentskills-private
-          path: agentskills-private
+          repository: example-adopter/acsi-agentskills-private
+          path: acsi-agentskills-private
           persist-credentials: false
           token: ${{ steps.registry-token.outputs.token }}
 
@@ -191,10 +191,10 @@ jobs:
         run: |
           set +e
           python3 scripts/eval_coverage.py \
-            --registry agentskills=../agentskills \
+            --registry acsi-agentskills=../acsi-agentskills \
             --registry example-site-platform=../example-site-platform \
             --registry example-site-a=../example-site-a \
-            --registry agentskills-private=../agentskills-private \
+            --registry acsi-agentskills-private=../acsi-agentskills-private \
             --publish-dir "$RUNNER_TEMP/coverage" \
             --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           result=$?
@@ -319,11 +319,11 @@ jobs:
           path: skills-evals
           persist-credentials: false
 
-      - name: Check out agentskills registry (side-by-side)
+      - name: Check out acsi-agentskills registry (side-by-side)
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Set up Python
@@ -340,7 +340,7 @@ jobs:
         # here (it binds this harness's digest to the registry's own
         # generator) instead of skipping.
         env:
-          AGENTSKILLS_DIR: ${{ github.workspace }}/agentskills
+          AGENTSKILLS_DIR: ${{ github.workspace }}/acsi-agentskills
         run: python3 test/test_propagation.py
 
   # The live arms, one CI job each so a red arm names itself in the checks list
@@ -360,14 +360,14 @@ jobs:
           path: skills-evals
           persist-credentials: false
 
-      - name: Check out agentskills registry (side-by-side)
+      - name: Check out acsi-agentskills registry (side-by-side)
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
+          repository: example-adopter/acsi-agentskills
           # Full history: the bootstrap-hook arm clones this checkout at the
           # commit skills.lock pins, which a shallow clone may not contain.
           fetch-depth: 0
-          path: agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Set up Node
@@ -442,7 +442,7 @@ jobs:
           extra=()
           if [ "$ARM" = "plugin-marketplace" ]; then extra=(--self-test); fi
           python3 harness/run_propagation.py evals/propagation \
-            --arm "$ARM" --registry ../agentskills \
+            --arm "$ARM" --registry ../acsi-agentskills \
             --json "$RUNNER_TEMP/propagation.json" "${extra[@]+"${extra[@]}"}"
 
       - name: Upload the run record on failure
@@ -516,7 +516,7 @@ jobs:
           # WHICH HALF FAILED, carried in as DATA so the body can state it
           # without a shell branch. Printing both rather than diagnosing one
           # from the other is deliberate: a red **gate** (the hermetic
-          # mutation suite) and a red **arm** (usually the agentskills
+          # mutation suite) and a red **arm** (usually the acsi-agentskills
           # registry moving under an unpinned checkout) are different faults
           # in different places, and a body that picked one to blame risks
           # sending the reader to audit whichever half it guessed wrong on.
@@ -563,7 +563,7 @@ jobs:
           caused it and nothing external can repair it.
 
           A failing **arm** is usually caused by something outside this
-          repository. The arms have two unpinned inputs: the agentskills
+          repository. The arms have two unpinned inputs: the acsi-agentskills
           registry, which they check out at main, and the Claude Code CLI,
           which every run installs at the npm latest tag and records in the
           step summary. A red arm most likely means a change in one of those

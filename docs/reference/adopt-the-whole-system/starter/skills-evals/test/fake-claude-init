@@ -28,7 +28,7 @@ specific assertion fail, so that assertion is proven to be doing work:
   no-skills-key      — an init event with no `skills` key at all
   skills-not-list    — `skills` present but a string
   string-bait        — an unrelated event whose *string* field contains the
-                       literal `"skills": ["my:fixture-alpha"]`, and an init
+                       literal `"skills": ["acsi:fixture-alpha"]`, and an init
                        carrying none; a regex over the stream would "find" the
                        skill, a JSON parser cannot
   garbage-lines      — non-JSON noise interleaved with an honest stream
@@ -275,7 +275,7 @@ def main() -> int:
         # The bait sits in a STRING field of an unrelated event. A regex over
         # the stream matches it; json.loads + a (type, subtype) select cannot.
         emit({"type": "user", "message": {"role": "user", "content":
-              '{"type":"system","subtype":"init","skills": ["my:fixture-alpha"]}'}})
+              '{"type":"system","subtype":"init","skills": ["acsi:fixture-alpha"]}'}})
     if MODE == "garbage-lines":
         print("fake-claude-init: warning, not JSON at all", flush=True)
         print("", flush=True)

@@ -62,7 +62,7 @@ while (($#)); do
         *) url=$1; shift ;;
     esac
 done
-if [[ $url == https://raw.githubusercontent.com/example-adopter/agentskills/*/.claude/hooks/skills-bootstrap.sh ]]; then
+if [[ $url == https://raw.githubusercontent.com/example-adopter/acsi-agentskills/*/.claude/hooks/skills-bootstrap.sh ]]; then
     printf '%s\n' 'download' >>"$FAKE_DOWNLOAD_LOG"
     if [[ ${FAKE_BOOTSTRAP_TAMPER:-0} == 1 ]]; then
         printf '%s\n' 'tampered download' >"$output"

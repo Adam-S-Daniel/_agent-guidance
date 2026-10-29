@@ -3,7 +3,7 @@
 # input. It measures nothing and no schedule names it.
 
 skill: workflow-path-audit
-registry: https://github.com/example-adopter/agentskills
+registry: https://github.com/example-adopter/acsi-agentskills
 
 # No `model:` or `judge.model:` pin: the committed roster picks both.
 context:

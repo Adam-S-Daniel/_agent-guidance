@@ -28,7 +28,7 @@ routines fire API. What is pinned here:
   * improve mode (ADR 0005, "Routine improve mode addendum"): `skill` must
     match the skill-name pattern and pass `improve_gate.py fire-check` (the
     loop's own resolution: nested `evals/<skill>/<name>` fixtures that all
-    name the skill and agentskills, at least `MIN_FIXTURES` of them),
+    name the skill and acsi-agentskills, at least `MIN_FIXTURES` of them),
     so `guidance`, `real-work` and other non-skill dirs are refused with
     their own message; `holdout` must be empty or one of those names; both
     must be empty in the other modes, and `fixture` and `candidate` must be
@@ -256,7 +256,7 @@ class WorkflowShapeTests(unittest.TestCase):
         names = [s.get("name") for s in self.steps]
         fire = names.index("Fire the eval routine")
         mint = ids.index("lessons-token")
-        checkout = names.index("Check out the lessons (agentskills-private)")
+        checkout = names.index("Check out the lessons (acsi-agentskills-private)")
         build = ids.index("draft-payload")
         self.assertLess(ids.index("validate"), mint)
         self.assertLess(mint, checkout)
@@ -271,10 +271,10 @@ class WorkflowShapeTests(unittest.TestCase):
             "client-id": "${{ vars.REGISTRY_READ_APP_CLIENT_ID }}",
             "private-key": "${{ secrets.REGISTRY_READ_APP_PEM }}",
             "owner": "example-adopter",
-            "repositories": "agentskills-private",
+            "repositories": "acsi-agentskills-private",
             "permission-contents": "read"})
         self.assertEqual(self.steps[checkout]["with"], {
-            "repository": "example-adopter/agentskills-private",
+            "repository": "example-adopter/acsi-agentskills-private",
             "ref": "persistent/lessons",
             "path": "lessons-repo", "persist-credentials": False,
             "sparse-checkout": "lessons",
@@ -520,7 +520,7 @@ class ValidateStepTests(unittest.TestCase):
         self.assertEqual(values["holdout"], holdout)
 
     def test_accepts_an_improve_run(self):
-        # writing-adrs: four nested agentskills fixtures.
+        # writing-adrs: four nested acsi-agentskills fixtures.
         cases = (
             ({"skill": SKILL, "holdout": HOLDOUT}, SKILL, HOLDOUT),
             ({"skill": SKILL, "holdout": ""}, SKILL, ""),
@@ -599,9 +599,9 @@ class ValidateStepTests(unittest.TestCase):
             "real_work": {"skill": "real-work"},
         }, expect="is not one skill's fixture set")
         self._refuse_all(no_holdout, {
-            # Three nested fixtures, but for agentskills-private.
-            "private_registry_skill": {"skill": "my-writing-style"},
-        }, expect="is not an agentskills skill")
+            # Three nested fixtures, but for acsi-agentskills-private.
+            "private_registry_skill": {"skill": "acsi-writing-style"},
+        }, expect="is not an acsi-agentskills skill")
         self._refuse_all(no_holdout, {
             # Two nested fixtures.
             "two_fixture_skill": {"skill": "github-actions-repo-settings"},

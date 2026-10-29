@@ -178,7 +178,7 @@ Discussion:
 
 [#194](https://github.com/Adam-S-Daniel/_agent-guidance/issues/194) found a
 gap the strict "missing check → unknown" rule above did not anticipate.
-`example-adopter/agentskills` was created 2026-09-24T21:58Z with
+`example-adopter/acsi-agentskills` was created 2026-09-24T21:58Z with
 `.github/dependabot.yml` already present in its first commit (`559ceb7`),
 pushed directly with no PR. That commit carries **no** `dependabot` check run
 at all — not failure, just absent — and with no PR there is no merge commit

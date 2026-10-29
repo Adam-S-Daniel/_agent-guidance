@@ -100,7 +100,7 @@ def make_registry(root: Path, skills: dict, layout: str = gsl.DEFAULT_LAYOUT) ->
 # one of this repo's real plugins: gsl.DEFAULT_BUNDLES is this repo's own
 # cloud-safe pair (ADR 0013), and a fixture that silently tracked it would
 # change shape every time the registry's plugin layout did.
-FIXTURE_BUNDLE = "my"
+FIXTURE_BUNDLE = "acsi"
 
 # Modes that inherit their bundles from the lock (or take none), and so must
 # never be handed one by the helper below.
@@ -161,19 +161,19 @@ def test_a_plain_generate_defaults_to_this_repos_cloud_safe_plugins(tmp_path):
     """ADR 0013: with no --bundles, the lock covers the two `-anywhere`
     plugins — the ones every ephemeral surface should get — and nothing
     machine-bound."""
-    assert gsl.DEFAULT_BUNDLES == ("anything-anywhere", "coding-anywhere")
+    assert gsl.DEFAULT_BUNDLES == ("acsi-anything-anywhere", "acsi-coding-anywhere")
     root = tmp_path / "registry"
-    make_registry(root, {"anything-anywhere/alpha": SKILL_A,
-                         "coding-anywhere/beta": SKILL_B,
-                         "coding-local/gamma": SKILL_A})
+    make_registry(root, {"acsi-anything-anywhere/alpha": SKILL_A,
+                         "acsi-coding-anywhere/beta": SKILL_B,
+                         "acsi-coding-local/gamma": SKILL_A})
     out = tmp_path / "skills.lock"
     proc = run_generator("--repo", str(root), "-o", str(out), fixture_bundle=False)
     assert proc.returncode == 0, proc.stderr
     lock = json.loads(out.read_text(encoding="utf-8"))
     assert lock["bundles"] == list(gsl.DEFAULT_BUNDLES)
-    assert lock["registry"] == "example-adopter/agentskills"
-    assert sorted(lock["skills"]) == ["anything-anywhere/alpha",
-                                      "coding-anywhere/beta"]
+    assert lock["registry"] == "example-adopter/acsi-agentskills"
+    assert sorted(lock["skills"]) == ["acsi-anything-anywhere/alpha",
+                                      "acsi-coding-anywhere/beta"]
 
 
 def _registry_shipping_the_generator(root: Path, skills: dict,
@@ -216,7 +216,7 @@ TRICKY_SKILL = {
 def registry(tmp_path):
     """A two-skill fixture registry plus its SHA."""
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     return root, sha
 
 
@@ -412,16 +412,16 @@ def test_generates_a_lock_for_every_skill_in_the_bundle(registry, tmp_path):
     root, sha = registry
     out = tmp_path / "skills.lock"
     proc = run_generator("--repo", str(root), "--registry", "owner/repo",
-                         "--bundles", "my", "-o", str(out))
+                         "--bundles", "acsi", "-o", str(out))
     assert proc.returncode == 0, proc.stderr
     lock = json.loads(out.read_text(encoding="utf-8"))
     assert lock["registry"] == "owner/repo"
     assert lock["ref"] == sha
     assert lock["generated_from"] == sha
-    assert lock["bundles"] == ["my"]
-    assert sorted(lock["skills"]) == ["my/alpha", "my/beta"]
-    assert lock["skills"]["my/alpha"] == gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(
-        root / "plugins" / "my" / "skills" / "alpha"
+    assert lock["bundles"] == ["acsi"]
+    assert sorted(lock["skills"]) == ["acsi/alpha", "acsi/beta"]
+    assert lock["skills"]["acsi/alpha"] == gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(
+        root / "plugins" / "acsi" / "skills" / "alpha"
     )
 
 
@@ -444,7 +444,7 @@ def test_every_emitted_digest_is_labelled_sha256(registry, tmp_path):
     root, sha = registry
     out = tmp_path / "skills.lock"
     proc = run_generator("--repo", str(root), "--registry", "owner/repo",
-                         "--bundles", "my", "-o", str(out))
+                         "--bundles", "acsi", "-o", str(out))
     assert proc.returncode == 0, proc.stderr
     skills = json.loads(out.read_text(encoding="utf-8"))["skills"]
     assert skills, "a lock with no skills would pass this vacuously"
@@ -462,7 +462,7 @@ def test_every_emitted_digest_is_labelled_sha256(registry, tmp_path):
 
 def test_an_empty_bundle_yields_an_empty_skills_map(tmp_path):
     root = tmp_path / "registry"
-    make_registry(root, {"my/alpha": SKILL_A})
+    make_registry(root, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
     proc = run_generator("--repo", str(root), "--bundles", "fastmail", "-o", str(out))
     assert proc.returncode == 0, proc.stderr
@@ -480,11 +480,11 @@ def test_content_comes_from_the_pinned_ref_not_the_working_tree(registry, tmp_pa
     root, sha = registry
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
-    pinned = json.loads(out.read_text(encoding="utf-8"))["skills"]["my/alpha"]
+    pinned = json.loads(out.read_text(encoding="utf-8"))["skills"]["acsi/alpha"]
 
-    _write(root / "plugins" / "my" / "skills" / "alpha" / "SKILL.md", "TAMPERED\n")
+    _write(root / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md", "TAMPERED\n")
     assert run_generator("--repo", str(root), "--ref", sha, "-o", str(out)).returncode == 0
-    assert json.loads(out.read_text(encoding="utf-8"))["skills"]["my/alpha"] == pinned
+    assert json.loads(out.read_text(encoding="utf-8"))["skills"]["acsi/alpha"] == pinned
 
 
 def test_the_lock_is_not_poisoned_by_build_artefacts_in_the_working_tree(registry, tmp_path):
@@ -500,7 +500,7 @@ def test_the_lock_is_not_poisoned_by_build_artefacts_in_the_working_tree(registr
     clean = tmp_path / "clean.lock"
     assert run_generator("--repo", str(root), "--ref", sha, "-o", str(clean)).returncode == 0
 
-    _write(root / "plugins" / "my" / "skills" / "alpha" / "__pycache__" / "x.pyc", "junk\n")
+    _write(root / "plugins" / "acsi" / "skills" / "alpha" / "__pycache__" / "x.pyc", "junk\n")
     dirty = tmp_path / "dirty.lock"
     assert run_generator("--repo", str(root), "--ref", sha, "-o", str(dirty)).returncode == 0
 
@@ -567,7 +567,7 @@ def federated(tmp_path):
     primary, so the default `../<repo-name>` checkout lookup is what finds it.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     return primary, primary_sha, extra, extra_sha
@@ -591,7 +591,7 @@ def federated_two(tmp_path):
     finds them, the same way the single-source `federated` fixture is.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     other = tmp_path / "other-platform"
@@ -604,7 +604,7 @@ def _federated_two_lock(out: Path, federated_two,
     primary, primary_sha, extra, extra_sha, other, other_sha = federated_two
     return run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "--source", f"other={other.resolve().as_uri()}@{other_sha}:skills",
         "-o", str(out), *extra_args,
@@ -615,7 +615,7 @@ def _federated_lock(out: Path, federated, *extra_args: str) -> subprocess.Comple
     primary, primary_sha, extra, extra_sha = federated
     return run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(out), *extra_args,
     )
@@ -636,7 +636,7 @@ def test_a_second_source_is_recorded_and_digested_from_its_own_layout(federated,
         "bundles": ["example-site-platform"],
         "layout": "skills",
     }]
-    assert sorted(lock["skills"]) == ["example-site-platform/deploy", "my/alpha"]
+    assert sorted(lock["skills"]) == ["acsi/alpha", "example-site-platform/deploy"]
     assert lock["skills"]["example-site-platform/deploy"] == gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(
         extra / "skills" / "deploy"
     )
@@ -645,13 +645,13 @@ def test_a_second_source_is_recorded_and_digested_from_its_own_layout(federated,
 def test_source_repo_overrides_the_sibling_checkout_lookup(tmp_path):
     """A registry name that is not the directory name — so only the flag can find it."""
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "checked-out-somewhere-else"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     out = tmp_path / "skills.lock"
 
     args = ["--repo", str(primary), "--registry", "owner/primary",
-            "--ref", primary_sha, "--bundles", "my",
+            "--ref", primary_sha, "--bundles", "acsi",
             "--source", f"example-site-platform=example-adopter/example-site-platform@{extra_sha}:skills",
             "-o", str(out)]
     missing = run_generator(*args)
@@ -669,14 +669,14 @@ def test_source_repo_overrides_the_sibling_checkout_lookup(tmp_path):
 def test_a_source_ref_is_recorded_resolved_to_a_commit_sha(tmp_path):
     """A branch name in a source would be the one unpinned half of the lock."""
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     out = tmp_path / "skills.lock"
 
     proc = run_generator(
         "--repo", str(primary), "--registry", "owner/primary", "--ref", primary_sha,
-        "--bundles", "my",
+        "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@main:skills",
         "-o", str(out))
     assert proc.returncode == 0, proc.stderr
@@ -686,33 +686,33 @@ def test_a_source_ref_is_recorded_resolved_to_a_commit_sha(tmp_path):
 def test_a_basename_shared_by_two_bundles_is_a_generator_error(tmp_path):
     """The flat install dir makes this an overwrite, so it must never be written."""
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/deploy": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/deploy": SKILL_A})
     extra = tmp_path / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     out = tmp_path / "skills.lock"
 
     proc = run_generator(
         "--repo", str(primary), "--registry", "owner/primary", "--ref", primary_sha,
-        "--bundles", "my",
+        "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(out))
     assert proc.returncode != 0
     assert "Traceback" not in proc.stderr
-    assert "my/deploy" in proc.stderr
+    assert "acsi/deploy" in proc.stderr
     assert "example-site-platform/deploy" in proc.stderr
     assert not out.exists()
 
 
 def test_the_same_bundle_claimed_by_two_sources_is_an_error(tmp_path):
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
-    extra_sha = make_registry(extra, {"my/beta": SKILL_B}, layout="skills")
+    extra_sha = make_registry(extra, {"acsi/beta": SKILL_B}, layout="skills")
 
     proc = run_generator(
         "--repo", str(primary), "--registry", "owner/primary", "--ref", primary_sha,
-        "--bundles", "my",
-        "--source", f"my={extra.resolve().as_uri()}@{extra_sha}:skills",
+        "--bundles", "acsi",
+        "--source", f"acsi={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(tmp_path / "skills.lock"))
     assert _rejected(proc)
     assert "claimed by both" in proc.stderr
@@ -732,10 +732,10 @@ def _rejected(proc: subprocess.CompletedProcess) -> bool:
 @pytest.mark.parametrize("layout", ["/etc", "../../etc", "..", "skills/../../etc", "sk{oops}"])
 def test_the_generator_rejects_a_layout_that_escapes_the_fetched_tree(tmp_path, layout):
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     proc = run_generator(
         "--repo", str(primary), "--registry", "owner/primary", "--ref", primary_sha,
-        "--bundles", "my",
+        "--bundles", "acsi",
         "--source", f"example-site-platform=owner/other@{primary_sha}:{layout}",
         "-o", str(tmp_path / "skills.lock"))
     assert _rejected(proc), proc.stderr
@@ -752,11 +752,11 @@ def test_the_generator_rejects_a_source_registry_git_would_execute(tmp_path, hos
     lock is not written.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
     proc = run_generator(
         "--repo", str(primary), "--registry", "owner/primary", "--ref", primary_sha,
-        "--bundles", "my",
+        "--bundles", "acsi",
         "--source", f"example-site-platform={hostile}@{primary_sha}:skills",
         "-o", str(out))
     assert _rejected(proc), proc.stderr
@@ -931,7 +931,7 @@ def test_the_federated_remediation_holds_the_primary_pin_when_only_a_source_drif
         federated, tmp_path):
     """The printed command, RUN VERBATIM, must do what the verdict said.
 
-    agentskills #108 fixed this exact class for `--check-format`: `--repin`
+    acsi-agentskills #108 fixed this exact class for `--check-format`: `--repin`
     deliberately does not inherit `ref`, so a remediation printed without one
     falls through to `resolve_ref(repo, "HEAD")` and advances the pin the
     verdict just said had not moved. The fleet bumper quotes these lines into a
@@ -979,7 +979,7 @@ def test_the_federated_remediation_drops_the_anchor_when_the_primary_drifted_too
     out = tmp_path / "skills.lock"
     assert _federated_lock(out, federated).returncode == 0
 
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nedited\n")
     _source_drifted(extra)
 
@@ -1005,7 +1005,7 @@ def test_check_current_names_both_when_primary_and_source_both_drift(
     out = tmp_path / "skills.lock"
     assert _federated_lock(out, federated).returncode == 0
 
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nedited\n")
     _write(extra / "skills" / "deploy" / "SKILL.md", "---\nname: deploy\n---\nedited\n")
 
@@ -1018,7 +1018,7 @@ def test_check_current_names_both_when_primary_and_source_both_drift(
         "nothing added or changed since then reaches an ephemeral surface. Re-pin it "
         "(after committing the content) with:")
     assert headlines[1].startswith(f"FAILED: {extra.resolve().as_uri()}'s bundles")
-    assert "my/alpha" in proc.stdout and "example-site-platform/deploy" in proc.stdout
+    assert "acsi/alpha" in proc.stdout and "example-site-platform/deploy" in proc.stdout
 
 
 def test_every_failed_line_is_followed_by_its_own_remediation_command(
@@ -1038,7 +1038,7 @@ def test_every_failed_line_is_followed_by_its_own_remediation_command(
     out = tmp_path / "skills.lock"
     assert _federated_two_lock(out, federated_two).returncode == 0
 
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nedited\n")
     _write(extra / "skills" / "deploy" / "SKILL.md", "---\nname: deploy\n---\nedited\n")
     _write(other / "skills" / "publish" / "SKILL.md", "---\nname: publish\n---\nedited\n")
@@ -1068,7 +1068,7 @@ def _bumper_slice(stdout: str, cap: int = _BUMPER_CAP) -> list:
 def _drift_the_primary_by(primary: Path, count: int) -> None:
     """`count` new skills in the working tree — one `added:` difference each."""
     for index in range(count):
-        _write(primary / "plugins" / "my" / "skills" / f"extra{index:02d}" / "SKILL.md",
+        _write(primary / "plugins" / "acsi" / "skills" / f"extra{index:02d}" / "SKILL.md",
                f"---\nname: extra{index:02d}\n---\nbody\n")
 
 
@@ -1214,7 +1214,7 @@ def test_check_current_verdict_still_starts_with_FAILED_at_column_zero(
     assert federated_drift.stdout.startswith("FAILED: ")
 
     _write(extra / "skills" / "deploy" / "SKILL.md", SKILL_B["SKILL.md"])
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nedited\n")
     primary_drift = run_generator("--repo", str(primary), "--check-current", "-o", str(out))
     assert primary_drift.returncode == 1
@@ -1246,7 +1246,7 @@ def test_check_current_only_scopes_the_question_to_one_federated_source(
     assert _federated_two_lock(out, federated_two).returncode == 0
     sources = json.loads(out.read_text(encoding="utf-8"))["sources"]
 
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nalpha body, edited\n")
 
     combined = run_generator("--repo", str(primary), "--check-current", "-o", str(out))
@@ -1308,11 +1308,11 @@ def test_check_current_only_refuses_a_registry_that_is_both_primary_and_source(
     check; the layouts here are identical and so are the refs.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A, "extras/beta": SKILL_B})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A, "extras/beta": SKILL_B})
     out = tmp_path / "skills.lock"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"extras={primary.resolve().as_uri()}@{primary_sha}",
         "--source-repo", f"extras={primary}", "-o", str(out)).returncode == 0
 
@@ -1698,7 +1698,7 @@ def test_the_reader_opens_one_spelling_of_a_lock_and_reports_the_other(
     if valid:
         real.write_text(json.dumps({
             "registry": "owner/repo", "ref": "0" * 40,
-            "bundles": ["my"], "skills": {},
+            "bundles": ["acsi"], "skills": {},
         }), encoding="utf-8")
     else:
         real.write_text("{ not json at all", encoding="utf-8")
@@ -1780,7 +1780,7 @@ def _lock_with_sources(count: int) -> dict:
     return {
         "registry": "owner/primary",
         "ref": "0" * 40,
-        "bundles": ["my"],
+        "bundles": ["acsi"],
         "sources": [
             {"registry": f"owner/extra{index}", "ref": "%040d" % index,
              "bundles": [f"b{index}"], "layout": "skills"}
@@ -1805,12 +1805,12 @@ def test_the_generator_refuses_more_sources_than_the_hook_accepts(tmp_path):
     sibling path), which is only true if it was not refused.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
 
     def attempt(count: int) -> subprocess.CompletedProcess:
         args = ["--repo", str(primary), "--registry", "owner/primary", "--ref", primary_sha,
-                "--bundles", "my", "-o", str(out)]
+                "--bundles", "acsi", "-o", str(out)]
         for index in range(1, count + 1):
             args += ["--source", f"b{index}=owner/extra{index}@{'%040d' % index}:skills"]
         return run_generator(*args)
@@ -1831,7 +1831,7 @@ def test_the_generator_refuses_more_sources_than_the_hook_accepts(tmp_path):
 # leading-dot names, and refs the hook's charset forbids.
 _VALIDATION_CASES = [
     ("registry", "owner/repo", True),
-    ("registry", "example-adopter/agentskills", True),
+    ("registry", "example-adopter/acsi-agentskills", True),
     ("registry", "https://github.com/o/r.git", True),
     ("registry", "file:///tmp/x/reg", True),
     ("registry", "ext::sh -c whoami", False),   # whitespace + helper shape
@@ -1882,13 +1882,13 @@ def _generator_accepts_skill_dir(name: str, tmp_path: Path) -> bool:
     landing in a lock the hook will then reject wholesale.
     """
     root = tmp_path / "skill-name-probe"
-    make_registry(root, {f"my/{name}": SKILL_A})
+    make_registry(root, {f"acsi/{name}": SKILL_A})
     out = tmp_path / "skill-name-probe.lock"
     proc = run_generator("--repo", str(root), "--registry", "owner/repo",
-                         "--bundles", "my", "-o", str(out))
+                         "--bundles", "acsi", "-o", str(out))
     if proc.returncode != 0 or not out.exists():
         return False
-    return f"my/{name}" in json.loads(out.read_text(encoding="utf-8"))["skills"]
+    return f"acsi/{name}" in json.loads(out.read_text(encoding="utf-8"))["skills"]
 
 
 @pytest.mark.parametrize("field,value,accept", _VALIDATION_CASES)
@@ -1916,16 +1916,16 @@ def test_the_two_validators_accept_the_same_set(field, value, accept, tmp_path):
     # claim is required and a skills key whose bundle nobody claims is refused
     # on its own — which would mask the field this case is actually probing.
     if field == "layout":
-        lock = {"registry": "owner/repo", "ref": "0" * 40, "bundles": ["my"], "skills": {},
+        lock = {"registry": "owner/repo", "ref": "0" * 40, "bundles": ["acsi"], "skills": {},
                 "sources": [{"registry": "owner/other", "ref": "1" * 40,
                              "bundles": ["example-site-platform"], "layout": value}]}
     elif field == "registry":
-        lock = {"registry": value, "ref": "0" * 40, "bundles": ["my"], "skills": {}}
+        lock = {"registry": value, "ref": "0" * 40, "bundles": ["acsi"], "skills": {}}
     elif field == "skill":
-        lock = {"registry": "owner/repo", "ref": "0" * 40, "bundles": ["my"],
-                "skills": {f"my/{value}": "0" * 64}}
+        lock = {"registry": "owner/repo", "ref": "0" * 40, "bundles": ["acsi"],
+                "skills": {f"acsi/{value}": "0" * 64}}
     else:  # ref
-        lock = {"registry": "owner/repo", "ref": value, "bundles": ["my"], "skills": {}}
+        lock = {"registry": "owner/repo", "ref": value, "bundles": ["acsi"], "skills": {}}
     hook_accepts = _hook_reader_accepts(lock, tmp_path)
 
     assert generator_accepts == accept, f"generator disagreed on {field}={value!r}"
@@ -1977,12 +1977,12 @@ def test_check_exits_one_on_a_hand_edited_digest(registry, tmp_path):
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
     lock = json.loads(out.read_text(encoding="utf-8"))
-    lock["skills"]["my/alpha"] = "0" * 64
+    lock["skills"]["acsi/alpha"] = "0" * 64
     out.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 
     proc = run_generator("--repo", str(root), "--check", "-o", str(out))
     assert proc.returncode == 1
-    assert "my/alpha" in proc.stdout
+    assert "acsi/alpha" in proc.stdout
 
 
 def test_check_exits_one_when_a_skill_was_added_at_the_pinned_ref(registry, tmp_path):
@@ -1991,7 +1991,7 @@ def test_check_exits_one_when_a_skill_was_added_at_the_pinned_ref(registry, tmp_
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
 
-    _write(root / "plugins" / "my" / "skills" / "gamma" / "SKILL.md", "gamma\n")
+    _write(root / "plugins" / "acsi" / "skills" / "gamma" / "SKILL.md", "gamma\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "add gamma")
     new_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -1999,7 +1999,7 @@ def test_check_exits_one_when_a_skill_was_added_at_the_pinned_ref(registry, tmp_
 
     proc = run_generator("--repo", str(root), "--check", "--ref", new_sha, "-o", str(out))
     assert proc.returncode == 1
-    assert "my/gamma" in proc.stdout
+    assert "acsi/gamma" in proc.stdout
 
 
 def test_check_inherits_the_locks_ref_so_a_moved_head_is_not_a_failure(registry, tmp_path):
@@ -2050,11 +2050,11 @@ def test_check_current_flags_a_skill_added_to_the_working_tree(registry, tmp_pat
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "gamma" / "SKILL.md", "gamma\n")
+    _write(root / "plugins" / "acsi" / "skills" / "gamma" / "SKILL.md", "gamma\n")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "my/gamma" in proc.stdout
+    assert "acsi/gamma" in proc.stdout
     assert "added" in proc.stdout
 
 
@@ -2063,11 +2063,11 @@ def test_check_current_flags_a_skill_removed_from_the_working_tree(registry, tmp
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _rmtree(root / "plugins" / "my" / "skills" / "beta")
+    _rmtree(root / "plugins" / "acsi" / "skills" / "beta")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "my/beta" in proc.stdout
+    assert "acsi/beta" in proc.stdout
     assert "removed" in proc.stdout
 
 
@@ -2076,15 +2076,15 @@ def test_check_current_flags_a_skill_whose_content_changed(registry, tmp_path):
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(root / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nalpha body, edited\n")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "my/alpha" in proc.stdout
+    assert "acsi/alpha" in proc.stdout
     assert "changed" in proc.stdout
     # The untouched skill must not be dragged in with it.
-    assert "my/beta" not in proc.stdout
+    assert "acsi/beta" not in proc.stdout
 
 
 def test_check_current_failure_names_the_re_pin_command(registry, tmp_path):
@@ -2099,7 +2099,7 @@ def test_check_current_failure_names_the_re_pin_command(registry, tmp_path):
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "gamma" / "SKILL.md", "gamma\n")
+    _write(root / "plugins" / "acsi" / "skills" / "gamma" / "SKILL.md", "gamma\n")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 1
@@ -2121,7 +2121,7 @@ def test_check_current_failure_names_the_merge_cause(registry, tmp_path):
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "gamma" / "SKILL.md", "gamma\n")
+    _write(root / "plugins" / "acsi" / "skills" / "gamma" / "SKILL.md", "gamma\n")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 1
@@ -2147,7 +2147,7 @@ def _registry_ignoring_pycache(root: Path) -> str:
     and no test here depends on whatever `core.excludesFile` the machine has.
     """
     _write(root / ".gitignore", "__pycache__/\n")
-    return make_registry(root, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    return make_registry(root, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
 
 
 def test_check_current_ignores_what_git_ignores(tmp_path):
@@ -2162,7 +2162,7 @@ def test_check_current_ignores_what_git_ignores(tmp_path):
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "alpha" / "__pycache__" / "x.pyc", "junk\n")
+    _write(root / "plugins" / "acsi" / "skills" / "alpha" / "__pycache__" / "x.pyc", "junk\n")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -2181,11 +2181,11 @@ def test_check_current_still_flags_an_untracked_file_git_does_not_ignore(tmp_pat
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "alpha" / "notes-draft.md", "draft\n")
+    _write(root / "plugins" / "acsi" / "skills" / "alpha" / "notes-draft.md", "draft\n")
 
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "my/alpha" in proc.stdout
+    assert "acsi/alpha" in proc.stdout
     assert "changed" in proc.stdout
 
 
@@ -2200,7 +2200,7 @@ def test_check_is_blind_to_what_check_current_catches(registry, tmp_path):
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "gamma" / "SKILL.md", "gamma\n")
+    _write(root / "plugins" / "acsi" / "skills" / "gamma" / "SKILL.md", "gamma\n")
 
     faithful = run_generator("--repo", str(root), "--check", "-o", str(out))
     current = run_generator("--repo", str(root), "--check-current", "-o", str(out))
@@ -2214,7 +2214,7 @@ def test_check_and_check_current_run_together_and_both_report(registry, tmp_path
     out = tmp_path / "skills.lock"
     _lock_for(root, out)
 
-    _write(root / "plugins" / "my" / "skills" / "gamma" / "SKILL.md", "gamma\n")
+    _write(root / "plugins" / "acsi" / "skills" / "gamma" / "SKILL.md", "gamma\n")
 
     proc = run_generator("--repo", str(root), "--check", "--check-current", "-o", str(out))
     assert proc.returncode == 1
@@ -2308,7 +2308,7 @@ def test_check_current_is_blind_to_what_check_format_catches(registry, tmp_path)
     pins perfectly: both sides of --check-current are freshly digested trees,
     so it answers OK. That is the fleet bumper's anti-churn gate, so the heal
     it would perform (--repin relabels) is never reached, and eight consumer
-    locks have sat in this state for as long as the `my` bundle has stood
+    locks have sat in this state for as long as the `acsi` bundle has stood
     still. Only a question asked directly of the STORED values sees it.
     """
     root, _ = registry
@@ -2350,8 +2350,8 @@ def test_check_format_fails_a_bare_lock_and_names_every_offender(registry, tmp_p
     proc = run_generator("--check-format", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "FAILED:" in proc.stdout
-    assert "my/alpha" in proc.stdout
-    assert "my/beta" in proc.stdout
+    assert "acsi/alpha" in proc.stdout
+    assert "acsi/beta" in proc.stdout
     # The remediation has to name the SAFE command. A reader told to "regenerate"
     # would rerun a plain generate, which takes `sources` off the command line
     # alone and de-federates any consumer lock that has them.
@@ -2367,13 +2367,13 @@ def test_check_format_fails_a_mixed_lock_and_names_only_the_bare_ones(registry, 
     root, _ = registry
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
-    _unlabel(out, only={"my/alpha"})
+    _unlabel(out, only={"acsi/alpha"})
 
     proc = run_generator("--check-format", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "1 of 2 digests" in proc.stdout
-    assert "my/alpha" in proc.stdout
-    assert "my/beta" not in proc.stdout
+    assert "acsi/alpha" in proc.stdout
+    assert "acsi/beta" not in proc.stdout
 
 
 def _without_commands(stdout: str) -> str:
@@ -2421,7 +2421,7 @@ def test_check_format_suggests_a_repin_pinned_to_the_locks_own_ref(registry, tmp
 
     # The bundle moves after the lock was pinned — the state the whole hazard
     # needs, and the one a stranded consumer lock is actually in.
-    _write(root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my") / "alpha" / "notes.md",
+    _write(root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi") / "alpha" / "notes.md",
            "a different note\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "move the bundle")
@@ -2588,7 +2588,7 @@ def test_only_malformed_digests_are_reported_as_failed(registry, tmp_path):
 _NOTHING_TO_CHECK = [
     ({}, "lists no skills at all"),           # nothing there
     ("not a map", "no usable 'skills' map"),  # nothing to read
-    (["my/alpha"], "no usable 'skills' map"),
+    (["acsi/alpha"], "no usable 'skills' map"),
     (7, "no usable 'skills' map"),
     (None, "no usable 'skills' map"),
 ]
@@ -2662,7 +2662,7 @@ def test_check_format_ignores_repo_entirely(registry, tmp_path):
     _unlabel(out)
 
     other = tmp_path / "other-registry"
-    make_registry(other, {"my/alpha": SKILL_B, "my/beta": SKILL_A})
+    make_registry(other, {"acsi/alpha": SKILL_B, "acsi/beta": SKILL_A})
     absent = tmp_path / "no-such-clone"
     assert not absent.exists()
 
@@ -2705,7 +2705,7 @@ def test_check_format_fails_on_an_empty_skills_map(tmp_path):
     inspected nothing.
     """
     root = tmp_path / "registry"
-    make_registry(root, {"my/alpha": SKILL_A})
+    make_registry(root, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "--bundles", "fastmail",
                          "-o", str(out)).returncode == 0
@@ -2747,12 +2747,12 @@ def test_check_format_rejects_a_digest_of_the_wrong_length_or_case(
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
     document = json.loads(out.read_text(encoding="utf-8"))
-    document["skills"]["my/alpha"] = digest
+    document["skills"]["acsi/alpha"] = digest
     out.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
     proc = run_generator("--check-format", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "my/alpha" in proc.stdout
+    assert "acsi/alpha" in proc.stdout
 
 
 @pytest.mark.parametrize("digest", [1, None, True, ["sha256:" + "a" * 64], {}])
@@ -2768,17 +2768,17 @@ def test_check_format_reports_a_type_confused_digest_rather_than_tracebacking(
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
     document = json.loads(out.read_text(encoding="utf-8"))
-    document["skills"]["my/alpha"] = digest
+    document["skills"]["acsi/alpha"] = digest
     out.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
     proc = run_generator("--check-format", "-o", str(out))
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "Traceback" not in proc.stderr
-    assert "my/alpha" in proc.stdout
+    assert "acsi/alpha" in proc.stdout
     assert type(digest).__name__ in proc.stdout
 
 
-@pytest.mark.parametrize("skills_value", ["not a map", ["my/alpha"], 7, None])
+@pytest.mark.parametrize("skills_value", ["not a map", ["acsi/alpha"], 7, None])
 def test_check_format_reports_a_skills_map_that_is_not_a_map(registry, tmp_path,
                                                              skills_value):
     root, _ = registry
@@ -2804,7 +2804,7 @@ def test_check_format_never_echoes_the_offending_digest(registry, tmp_path):
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
     _unlabel(out)
-    bare = json.loads(out.read_text(encoding="utf-8"))["skills"]["my/alpha"]
+    bare = json.loads(out.read_text(encoding="utf-8"))["skills"]["acsi/alpha"]
     assert re.fullmatch(r"[0-9a-f]{64}", bare), bare
 
     proc = run_generator("--check-format", "-o", str(out))
@@ -2817,7 +2817,7 @@ def test_check_format_bounds_the_names_it_prints(tmp_path):
     locks were, and a 22-skill consumer would be 22. An unbounded list scrolls
     its own remediation line off the top of a CI log."""
     root = tmp_path / "registry"
-    many = {f"my/skill-{index:02d}": SKILL_B for index in range(14)}
+    many = {f"acsi/skill-{index:02d}": SKILL_B for index in range(14)}
     make_registry(root, many)
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "-o", str(out)).returncode == 0
@@ -2827,7 +2827,7 @@ def test_check_format_bounds_the_names_it_prints(tmp_path):
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "14 of 14 digests" in proc.stdout
     listed = [line for line in proc.stdout.splitlines()
-              if line.startswith("  - my/skill-")]
+              if line.startswith("  - acsi/skill-")]
     assert len(listed) == gsl._FORMAT_REPORT_CAP, proc.stdout
     assert f"and {14 - gsl._FORMAT_REPORT_CAP} more" in proc.stdout
 
@@ -2930,7 +2930,7 @@ def _repin(root: Path, message: str) -> None:
 
 
 def _edit_and_commit(root: Path, skill: str) -> None:
-    _write(root / "plugins" / "my" / "skills" / skill / "SKILL.md",
+    _write(root / "plugins" / "acsi" / "skills" / skill / "SKILL.md",
            f"---\nname: {skill}\n---\n{skill} body, edited\n")
     _git(root, "commit", "-q", "-am", f"edit {skill}")
 
@@ -2948,7 +2948,7 @@ def _base_repo_with_a_committed_lock(tmp_path: Path) -> Path:
     """
     root = tmp_path / "registry"
     names = ("alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta")
-    make_registry(root, {f"my/{name}": {"SKILL.md": f"---\nname: {name}\n---\n{name} body\n"}
+    make_registry(root, {f"acsi/{name}": {"SKILL.md": f"---\nname: {name}\n---\n{name} body\n"}
                          for name in names})
     _repin(root, "pin the base")
     return root
@@ -2973,7 +2973,7 @@ def test_the_stale_remediation_restates_the_whole_identity_it_would_otherwise_de
 
     Measured before the fix on a lock at `Acme/private-registry`, bundles
     `['custom']`, one federated source: running the printed line took the
-    registry to `example-adopter/agentskills`, the bundles to `['my']`, and
+    registry to `example-adopter/acsi-agentskills`, the bundles to `['acsi']`, and
     lost `custom/alpha`.
 
     Every field is checked, not only `registry`: a test that watched one of
@@ -3040,7 +3040,7 @@ def test_a_merge_can_leave_the_lock_stale_with_no_conflict(tmp_path):
     assert run_generator("--repo", str(root), "--check", "-o", str(lock)).returncode == 0
     proc = run_generator("--repo", str(root), "--check-current", "-o", str(lock))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "my/theta" in proc.stdout
+    assert "acsi/theta" in proc.stdout
 
 
 def test_two_repinned_branches_conflict_in_the_lock(tmp_path):
@@ -3182,7 +3182,7 @@ def test_a_plain_generate_still_does_not_inherit_the_locks_sources(federated, tm
 
     advanced = _move_head(primary)
     proc = run_generator("--repo", str(primary), "--registry", primary.resolve().as_uri(),
-                         "--ref", advanced, "--bundles", "my", "-o", str(out))
+                         "--ref", advanced, "--bundles", "acsi", "-o", str(out))
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     de_federated = json.loads(out.read_text(encoding="utf-8"))
@@ -3193,7 +3193,7 @@ def test_a_plain_generate_still_does_not_inherit_the_locks_sources(federated, tm
 def test_repin_inherits_the_locks_registry_and_bundles(tmp_path):
     """Identity comes off the lock, so a re-pin needs no flag to stay itself.
 
-    The bundle is deliberately not `my`: inheriting DEFAULT_BUNDLES by
+    The bundle is deliberately not `acsi`: inheriting DEFAULT_BUNDLES by
     accident would be indistinguishable from inheriting the lock's own.
     """
     root = tmp_path / "registry"
@@ -3265,7 +3265,7 @@ def test_repin_on_a_missing_lock_refuses_rather_than_creating_one(tmp_path):
     the refusal says so instead of quietly guessing the defaults.
     """
     root = tmp_path / "registry"
-    make_registry(root, {"my/alpha": SKILL_A})
+    make_registry(root, {"acsi/alpha": SKILL_A})
     out = tmp_path / "absent.lock"
 
     proc = run_generator("--repo", str(root), "--repin", "-o", str(out))
@@ -3330,7 +3330,7 @@ def test_a_repinned_federated_lock_still_matches_the_source_stated_on_the_comman
     proc = run_generator(
         "--repo", str(primary), "--check",
         "--registry", primary.resolve().as_uri(), "--ref", repinned_ref,
-        "--bundles", "my",
+        "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(out))
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -3381,7 +3381,7 @@ def test_repin_still_accepts_source_repo_which_is_not_the_locks_identity(federat
     out = tmp_path / "skills.lock"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", _head(primary), "--bundles", "my",
+        "--ref", _head(primary), "--bundles", "acsi",
         "--source", f"example-site-platform={relocated.resolve().as_uri()}@{_head(relocated)}:skills",
         "--source-repo", f"example-site-platform={relocated}", "-o", str(out)).returncode == 0
 
@@ -3518,7 +3518,7 @@ def test_repin_source_redigests_the_advanced_sources_skills(federated, tmp_path)
     assert after["skills"]["example-site-platform/deploy"] != before["skills"]["example-site-platform/deploy"]
     assert after["skills"]["example-site-platform/deploy"] == gsl.LOCK_DIGEST_PREFIX + \
         gsl.digest_skill_dir(extra / "skills" / "deploy")
-    assert after["skills"]["my/alpha"] == before["skills"]["my/alpha"]
+    assert after["skills"]["acsi/alpha"] == before["skills"]["acsi/alpha"]
 
 
 def test_repin_source_leaves_the_primary_ref_alone_when_only_a_source_is_named(
@@ -3689,7 +3689,7 @@ def test_repin_source_on_a_plain_generate_is_refused_before_anything_is_written(
 
     proc = run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "--repin-source", f"{extra.resolve().as_uri()}@", "-o", str(out))
     assert proc.returncode == 2, proc.stdout + proc.stderr
@@ -3732,7 +3732,7 @@ def test_repin_source_honours_source_repo_for_an_out_of_tree_clone(
     out = tmp_path / "skills.lock"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"example-site-platform={relocated.resolve().as_uri()}@{_head(relocated)}:skills",
         "--source-repo", f"example-site-platform={relocated}", "-o", str(out)).returncode == 0
 
@@ -3753,7 +3753,7 @@ def _lock_federating_one_registry_twice(tmp_path) -> tuple:
     BASENAMES distinct as well, which `_reject_basename_collisions` requires.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
     first = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     _write(extra / "other" / "publish" / "SKILL.md", SKILL_C["SKILL.md"])
@@ -3766,7 +3766,7 @@ def _lock_federating_one_registry_twice(tmp_path) -> tuple:
     uri = extra.resolve().as_uri()
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"example-site-platform={uri}@{first}:skills",
         "--source", f"other={uri}@{second}:{{bundle}}",
         "-o", str(out)).returncode == 0
@@ -3914,7 +3914,7 @@ def test_repin_refuses_a_primary_pinned_at_a_branch(registry, tmp_path):
     root, _sha = registry
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "--registry", "Acme/registry",
-                         "--ref", "main", "--bundles", "my",
+                         "--ref", "main", "--bundles", "acsi",
                          "-o", str(out)).returncode == 0
     assert json.loads(out.read_text(encoding="utf-8"))["ref"] == "main"
     before = out.read_text(encoding="utf-8")
@@ -3939,7 +3939,7 @@ def test_repin_refuses_a_primary_pinned_at_a_branch(registry, tmp_path):
 
 def _primary_drifted(primary: Path) -> str:
     """Commit a real content change in the primary bundle. Returns its new sha."""
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nedited\n")
     _git(primary, "add", "-A")
     _git(primary, "commit", "-q", "-m", "the primary really moved")
@@ -4732,7 +4732,7 @@ def test_only_remediation_can_spell_this_scripts_invocation():
     MEASURED, generator restored byte-for-byte after each and `git status
     --short` empty: an early
     `return ("try python3 scripts/generate_skills_lock.py --repin "
-             f"--registry evil/repo --bundles my -o {output}")`
+             f"--registry evil/repo --bundles acsi -o {output}")`
     in `repin_unproven_sources_blocker` — a string both `report_drift` and
     `report_digest_format` print inside a verdict headline — left the placement
     gate green and fails here.
@@ -4852,10 +4852,10 @@ def test_no_report_path_writes_a_command_of_its_own():
 def _drifted_plain(tmp_path):
     """An ordinary lock whose primary bundle gained a commit."""
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(primary), "--registry", primary.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my", "-o", str(out)).returncode == 0
+                         "--ref", sha, "--bundles", "acsi", "-o", str(out)).returncode == 0
     _primary_drifted(primary)
     return primary, out, []
 
@@ -4877,13 +4877,13 @@ def _drifted_default_bundle(tmp_path):
 
 def _drifted_source_only(tmp_path):
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     out = tmp_path / "skills.lock"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", sha, "--bundles", "my",
+        "--ref", sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(out)).returncode == 0
     _source_drifted(extra)
@@ -4915,14 +4915,14 @@ def _source_at_a_non_default_checkout(tmp_path):
     that printed commands run verbatim.
     """
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "deep" / "elsewhere" / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     out = tmp_path / "skills.lock"
     assert not (tmp_path / "example-site-platform").exists(), "the default sibling must not exist"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", sha, "--bundles", "my",
+        "--ref", sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "--source-repo", f"{extra.resolve().as_uri()}={extra}",
         "-o", str(out)).returncode == 0
@@ -4959,13 +4959,13 @@ def _branch_primary_drifted(tmp_path):
     to report.
     """
     primary = tmp_path / "registry"
-    make_registry(primary, {"my/alpha": SKILL_A})
+    make_registry(primary, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(primary), "--registry", primary.resolve().as_uri(),
-                         "--ref", "main", "--bundles", "my",
+                         "--ref", "main", "--bundles", "acsi",
                          "-o", str(out)).returncode == 0
     assert json.loads(out.read_text(encoding="utf-8"))["ref"] == "main"
-    _write(primary / "plugins" / "my" / "skills" / "alpha" / "SKILL.md",
+    _write(primary / "plugins" / "acsi" / "skills" / "alpha" / "SKILL.md",
            "---\nname: alpha\n---\nedited\n")
     return primary, out, []
 
@@ -4974,12 +4974,12 @@ def _branch_primary_with_a_drifted_source(tmp_path):
     """Only the SOURCE drifted — but the line that repairs it is a --repin."""
     primary = tmp_path / "registry"
     extra = tmp_path / "example-site-platform"
-    make_registry(primary, {"my/alpha": SKILL_A})
+    make_registry(primary, {"acsi/alpha": SKILL_A})
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     out = tmp_path / "skills.lock"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", "main", "--bundles", "my",
+        "--ref", "main", "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(out)).returncode == 0
     _source_drifted(extra)
@@ -4994,7 +4994,7 @@ def _one_registry_as_both_halves(tmp_path):
     the unscoped run is the only one that reports this drift at all.
     """
     primary = tmp_path / "registry"
-    make_registry(primary, {"my/alpha": SKILL_A})
+    make_registry(primary, {"acsi/alpha": SKILL_A})
     _write(primary / "other" / "publish" / "SKILL.md", SKILL_C["SKILL.md"])
     _git(primary, "add", "-A")
     _git(primary, "commit", "-q", "-m", "a second bundle in the same repo")
@@ -5002,7 +5002,7 @@ def _one_registry_as_both_halves(tmp_path):
     uri = primary.resolve().as_uri()
     out = tmp_path / "skills.lock"
     assert run_generator(
-        "--repo", str(primary), "--registry", uri, "--ref", sha, "--bundles", "my",
+        "--repo", str(primary), "--registry", uri, "--ref", sha, "--bundles", "acsi",
         "--source", f"other={uri}@{sha}:{{bundle}}", "-o", str(out)).returncode == 0
     _write(primary / "other" / "publish" / "SKILL.md", "---\nname: gamma\n---\nedited\n")
     return primary, out, []
@@ -5023,7 +5023,7 @@ def _two_sources(tmp_path):
     could show anything about remediation.
     """
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     extra = tmp_path / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     other = tmp_path / "other-platform"
@@ -5031,7 +5031,7 @@ def _two_sources(tmp_path):
     out = tmp_path / "skills.lock"
     assert run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", sha, "--bundles", "my",
+        "--ref", sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "--source", f"other={other.resolve().as_uri()}@{other_sha}:skills",
         "-o", str(out)).returncode == 0
@@ -5051,7 +5051,7 @@ def _source_hand_pinned_at_a_branch(tmp_path):
 
 
 def _emptied_source_bundle(tmp_path):
-    """The registry deleted a bundle's last skill — agentskills #125.
+    """The registry deleted a bundle's last skill — acsi-agentskills #125.
 
     A re-pin here writes a lock that no longer installs those skills anywhere,
     at exit 0. The fleet bumper refuses to propose it; the generator did not
@@ -5077,9 +5077,9 @@ def _emptied_source_bundle_scoped(tmp_path):
 def _three_sources(tmp_path):
     """A primary and THREE federated sources, all sound. Returns (primary, out)."""
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     args = ["--repo", str(primary), "--registry", primary.resolve().as_uri(),
-            "--ref", sha, "--bundles", "my"]
+            "--ref", sha, "--bundles", "acsi"]
     for name, bundle, skill in (("example-site-platform", "example-site-platform", SKILL_B),
                                 ("other-platform", "other", SKILL_C),
                                 ("third-platform", "third", SKILL_D)):
@@ -5118,9 +5118,9 @@ def _a_bundle_claimed_twice_asked_with_only(tmp_path):
 def _more_sources_than_the_cap_asked_with_only(tmp_path):
     """The other whole-document refusal plan_sources gives, scoped the same way."""
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     args = ["--repo", str(primary), "--registry", primary.resolve().as_uri(),
-            "--ref", sha, "--bundles", "my"]
+            "--ref", sha, "--bundles", "acsi"]
     roots = []
     for index in range(gsl.MAX_SOURCES + 1):
         root = tmp_path / f"src{index}"
@@ -5172,7 +5172,7 @@ def _primary_bundle_gone_at_head_with_a_drifted_source(tmp_path):
     command the shrink guard then refuses.
     """
     primary, out = _two_sources(tmp_path)
-    _rmtree(primary / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my") / "alpha")
+    _rmtree(primary / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi") / "alpha")
     _write(primary / "README.md", "still a repository\n")
     _git(primary, "add", "-A")
     _git(primary, "commit", "-q", "-m", "the primary bundle is gone")
@@ -5208,11 +5208,11 @@ def _hand_broken_lock(field, value=None):
 
 def _emptied_primary_bundle(tmp_path):
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(primary), "--registry", primary.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my", "-o", str(out)).returncode == 0
-    _rmtree(primary / "plugins" / "my" / "skills" / "alpha")
+                         "--ref", sha, "--bundles", "acsi", "-o", str(out)).returncode == 0
+    _rmtree(primary / "plugins" / "acsi" / "skills" / "alpha")
     _write(primary / "README.md", "still a repository\n")
     _git(primary, "add", "-A")
     _git(primary, "commit", "-q", "-m", "the bundle is gone")
@@ -5592,9 +5592,9 @@ def test_the_report_quotes_the_refusal_the_flag_reaches_first(tmp_path):
     WHICH of two applies has nowhere to show up there.
     """
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     args = ["--repo", str(primary), "--registry", primary.resolve().as_uri(),
-            "--ref", sha, "--bundles", "my"]
+            "--ref", sha, "--bundles", "acsi"]
     roots = []
     for index in range(gsl.MAX_SOURCES):
         root = tmp_path / f"src{index}"
@@ -5738,7 +5738,7 @@ def test_check_format_reads_exactly_the_lock_fields_its_help_names(tmp_path):
     replacements = {
         "ref": "0" * 39 + "1",
         "registry": (tmp_path / "some-other-registry").resolve().as_uri(),
-        "bundles": ["my", "another"],
+        "bundles": ["acsi", "another"],
         "sources": [],
         "generated_from": {"changed": True},
     }
@@ -5926,14 +5926,14 @@ def test_no_caller_value_can_forge_a_line_in_the_stream_a_verdict_prints(tmp_pat
     spaced = tmp_path / "a dir with spaces"
     spaced.mkdir()
     roomy = spaced / "registry"
-    sha = make_registry(roomy, {"my/alpha": SKILL_A})
+    sha = make_registry(roomy, {"acsi/alpha": SKILL_A})
     extra = spaced / "not the sibling" / "example-site-platform"
     extra_sha = make_registry(extra, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     lock = spaced / "skills.lock"
     spec = f"{extra.resolve().as_uri()}={extra}"
     assert run_generator(
         "--repo", str(roomy), "--registry", roomy.resolve().as_uri(),
-        "--ref", sha, "--bundles", "my",
+        "--ref", sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "--source-repo", spec, "-o", str(lock)).returncode == 0
     _source_drifted(extra)
@@ -6128,7 +6128,7 @@ def _emptied_source_tree(tmp_path):
     pytest.param(False, id="a plain generate pinning that commit"),
 ])
 def test_an_empty_tree_at_a_pinned_ref_is_an_error_not_a_traceback(repin, tmp_path):
-    """agentskills #125: the one unusable input that escaped as a stack trace.
+    """acsi-agentskills #125: the one unusable input that escaped as a stack trace.
 
     `git archive` of a commit whose tree has no entries does NOT emit nothing:
     it writes its `pax_global_header` plus the usual padding — measured, 10240
@@ -6168,13 +6168,13 @@ def test_an_empty_tree_at_a_pinned_ref_is_an_error_not_a_traceback(repin, tmp_pa
 
 
 @pytest.mark.parametrize("build, emptied, federated", [
-    pytest.param(_emptied_primary_bundle, "my", False, id="a bare --repin"),
+    pytest.param(_emptied_primary_bundle, "acsi", False, id="a bare --repin"),
     pytest.param(_emptied_source_bundle, "example-site-platform", True,
                  id="--repin --repin-source"),
 ])
 def test_a_repin_that_would_empty_a_bundle_is_refused(
         build, emptied, federated, tmp_path):
-    """agentskills #125: the fleet bumper refusing this was never cover.
+    """acsi-agentskills #125: the fleet bumper refusing this was never cover.
 
     Measured on this branch before the guard, and identically for both forms:
     a registry that deleted a bundle's last skill re-pinned at exit 0, "Wrote
@@ -6208,17 +6208,17 @@ def test_a_repin_that_only_removes_some_skills_is_still_allowed(tmp_path):
     `_agent-guidance`'s `skills_shrink_reason` draws.
     """
     primary = tmp_path / "registry"
-    sha = make_registry(primary, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    sha = make_registry(primary, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(primary), "--registry", primary.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my", "-o", str(out)).returncode == 0
-    _rmtree(primary / "plugins" / "my" / "skills" / "beta")
+                         "--ref", sha, "--bundles", "acsi", "-o", str(out)).returncode == 0
+    _rmtree(primary / "plugins" / "acsi" / "skills" / "beta")
     _git(primary, "add", "-A")
     _git(primary, "commit", "-q", "-m", "one skill retired")
 
     proc = run_generator("--repo", str(primary), "--repin", "-o", str(out))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert sorted(json.loads(out.read_text(encoding="utf-8"))["skills"]) == ["my/alpha"]
+    assert sorted(json.loads(out.read_text(encoding="utf-8"))["skills"]) == ["acsi/alpha"]
 
 
 def test_an_uppercase_commit_sha_is_treated_as_the_commit_sha_it_is(registry, tmp_path):
@@ -6235,7 +6235,7 @@ def test_an_uppercase_commit_sha_is_treated_as_the_commit_sha_it_is(registry, tm
     root, sha = registry
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "--registry", "Acme/registry",
-                         "--ref", sha, "--bundles", "my",
+                         "--ref", sha, "--bundles", "acsi",
                          "-o", str(out)).returncode == 0
     document = json.loads(out.read_text(encoding="utf-8"))
     document["ref"] = sha.upper()
@@ -6279,7 +6279,7 @@ def test_a_source_ref_is_resolved_before_it_is_written_and_a_primarys_is_not(
     out = tmp_path / "skills.lock"
     proc = run_generator(
         "--repo", str(primary), "--registry", "Acme/registry",
-        "--ref", "main", "--bundles", "my",
+        "--ref", "main", "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@main:skills",
         "-o", str(out))
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -6367,7 +6367,7 @@ def test_repin_refuses_a_lock_with_no_usable_registry(registry, tmp_path, regist
     root, _ = registry
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "--registry", "owner/consumer",
-                         "--ref", _head(root), "--bundles", "my",
+                         "--ref", _head(root), "--bundles", "acsi",
                          "-o", str(out)).returncode == 0
     _edit_lock(out, registry=registry_value)
     before = out.read_text(encoding="utf-8")
@@ -6378,7 +6378,7 @@ def test_repin_refuses_a_lock_with_no_usable_registry(registry, tmp_path, regist
     assert out.read_text(encoding="utf-8") == before
 
 
-@pytest.mark.parametrize("bundles_value", [_DROP, [], "my,extras"])
+@pytest.mark.parametrize("bundles_value", [_DROP, [], "acsi,extras"])
 def test_repin_refuses_a_lock_with_no_usable_bundles(tmp_path, bundles_value):
     """Defaulting here silently stops delivering a whole bundle.
 
@@ -6389,10 +6389,10 @@ def test_repin_refuses_a_lock_with_no_usable_bundles(tmp_path, bundles_value):
     exactly when nobody is looking for a narrowing.
     """
     root = tmp_path / "registry"
-    make_registry(root, {"my/alpha": SKILL_A, "extras/zeta": SKILL_B})
+    make_registry(root, {"acsi/alpha": SKILL_A, "extras/zeta": SKILL_B})
     out = tmp_path / "skills.lock"
     assert run_generator("--repo", str(root), "--registry", "owner/consumer",
-                         "--ref", _head(root), "--bundles", "my,extras",
+                         "--ref", _head(root), "--bundles", "acsi,extras",
                          "-o", str(out)).returncode == 0
     _edit_lock(out, bundles=bundles_value)
     before = out.read_text(encoding="utf-8")
@@ -6437,14 +6437,14 @@ def test_repin_refuses_a_repo_that_is_not_the_registry_the_lock_names(tmp_path):
     that IS this registry has that commit.
     """
     registry_root = tmp_path / "registry"
-    make_registry(registry_root, {"my/alpha": SKILL_A})
+    make_registry(registry_root, {"acsi/alpha": SKILL_A})
     other = tmp_path / "other-registry"
-    make_registry(other, {"my/beta": SKILL_B})
+    make_registry(other, {"acsi/beta": SKILL_B})
 
     out = tmp_path / "consumer.lock"
     assert run_generator("--repo", str(registry_root),
                          "--registry", registry_root.resolve().as_uri(),
-                         "--ref", _head(registry_root), "--bundles", "my",
+                         "--ref", _head(registry_root), "--bundles", "acsi",
                          "-o", str(out)).returncode == 0
     before = out.read_text(encoding="utf-8")
 
@@ -6464,7 +6464,7 @@ def test_repin_refuses_the_consumer_checkout_rather_than_emptying_its_lock(tmp_p
     this workflow invites, since the two repositories differ by construction.
     """
     registry_root = tmp_path / "registry"
-    make_registry(registry_root, {"my/alpha": SKILL_A})
+    make_registry(registry_root, {"acsi/alpha": SKILL_A})
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     _write(consumer / "README.md", "a consumer that ships no bundles\n")
@@ -6476,7 +6476,7 @@ def test_repin_refuses_the_consumer_checkout_rather_than_emptying_its_lock(tmp_p
 
     out = consumer / "skills.lock"
     assert run_generator("--repo", str(registry_root), "--registry", "owner/registry",
-                         "--ref", _head(registry_root), "--bundles", "my",
+                         "--ref", _head(registry_root), "--bundles", "acsi",
                          "-o", str(out)).returncode == 0
     before = out.read_text(encoding="utf-8")
 
@@ -6870,7 +6870,7 @@ def make_project(project_dir: Path, registry_root: Path, sha: str) -> Path:
     lock = project_dir / "skills.lock"
     proc = run_generator("--repo", str(registry_root),
                          "--registry", registry_root.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my", "-o", str(lock))
+                         "--ref", sha, "--bundles", "acsi", "-o", str(lock))
     assert proc.returncode == 0, proc.stderr
     return lock
 
@@ -7102,7 +7102,7 @@ def test_codex_cloud_digest_failure_exits_nonzero_and_purges_stale_copy(
     assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
 
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["skills"]["my/alpha"] = "0" * 64
+    lock["skills"]["acsi/alpha"] = "0" * 64
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     failed = _run_hook(home, project, args=("--codex-cloud",))
     assert failed.returncode != 0, failed.stdout
@@ -7222,7 +7222,7 @@ def test_hook_reports_a_digest_mismatch(tmp_path, registry):
     project = tmp_path / "project"
     lock_path = make_project(project, root, sha)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["skills"]["my/alpha"] = "0" * 64
+    lock["skills"]["acsi/alpha"] = "0" * 64
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     home = tmp_path / "home"
 
@@ -7411,8 +7411,8 @@ _BAD_DIGESTS = (
 
 def _lock_with_digest(digest) -> dict:
     """A minimal, otherwise-valid one-skill lock carrying `digest`."""
-    return {"registry": "owner/primary", "ref": "0" * 40, "bundles": ["my"],
-            "skills": {"my/alpha": digest}}
+    return {"registry": "owner/primary", "ref": "0" * 40, "bundles": ["acsi"],
+            "skills": {"acsi/alpha": digest}}
 
 
 @pytest.mark.parametrize("digest", _GOOD_DIGESTS)
@@ -7478,10 +7478,10 @@ def test_a_digest_typed_as_a_number_does_not_delete_an_installed_skill(
     installed = _tree(home / ".claude" / "skills")
 
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["skills"]["my/alpha"] = int("1" * 64)
+    lock["skills"]["acsi/alpha"] = int("1" * 64)
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     # The fixture is only the case it names if the digest really is unquoted.
-    assert '"my/alpha": 1111' in lock_path.read_text(encoding="utf-8")
+    assert '"acsi/alpha": 1111' in lock_path.read_text(encoding="utf-8")
 
     second = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
     assert second.returncode == 0, second.stderr
@@ -7565,7 +7565,7 @@ def test_missing_lock_verdict_does_not_name_the_hooks_own_repo(tmp_path):
     `test_the_hooks_own_repo_is_the_fallback_only_when_no_project_dir_is_named`.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A})
     repo = tmp_path / "repo"
     script = _hook_copy(repo)
     make_project(repo, root, sha)          # the hook's own repo HAS a lock
@@ -7614,7 +7614,7 @@ def test_hook_verifies_using_the_registrys_own_generator(tmp_path):
     """
     root = tmp_path / "registry"
     # The registry ships the generator, as this repo does.
-    sha = _registry_shipping_the_generator(root, {"my/alpha": SKILL_A})
+    sha = _registry_shipping_the_generator(root, {"acsi/alpha": SKILL_A})
 
     project = tmp_path / "consumer"
     make_project(project, root, sha)
@@ -7647,7 +7647,7 @@ def test_a_federated_source_delivers_when_the_primary_is_unreachable(tmp_path):
     and it has to hold however the hook computes a digest.
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     # Left at the sibling `../example-site-platform`, which is what the generator's
     # default checkout lookup finds; it ships the generator as this repo does.
     extra = tmp_path / "example-site-platform"
@@ -7659,7 +7659,7 @@ def test_a_federated_source_delivers_when_the_primary_is_unreachable(tmp_path):
     lock_path = project / "skills.lock"
     proc = run_generator(
         "--repo", str(primary), "--registry", primary.resolve().as_uri(),
-        "--ref", primary_sha, "--bundles", "my",
+        "--ref", primary_sha, "--bundles", "acsi",
         "--source", f"example-site-platform={extra.resolve().as_uri()}@{extra_sha}:skills",
         "-o", str(lock_path))
     assert proc.returncode == 0, proc.stderr
@@ -7716,7 +7716,7 @@ def test_the_hooks_digest_agrees_with_the_generators_on_a_tricky_skill(tmp_path)
     # says on the machine running this, so `crlf.md` is still CRLF in the
     # fetched tree. It sits outside every skill directory, so it changes no digest.
     _write(root / ".gitattributes", "* -text\n")
-    sha = make_registry(root, {"my/tricky": TRICKY_SKILL})
+    sha = make_registry(root, {"acsi/tricky": TRICKY_SKILL})
     project = tmp_path / "project"
     make_project(project, root, sha)
     home = tmp_path / "home"
@@ -7738,7 +7738,7 @@ def test_the_hooks_digest_agrees_with_the_generators_on_a_tricky_skill(tmp_path)
 
     locked = json.loads(
         (project / "skills.lock").read_text(encoding="utf-8")
-    )["skills"]["my/tricky"]
+    )["skills"]["acsi/tricky"]
     assert gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(installed) == locked
 
 
@@ -7807,13 +7807,13 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     root = tmp_path / "registry"
     root.mkdir(parents=True)
     skill = {**SKILL_A, "payload/extra.md": "a subtree included in the locked digest\n"}
-    sha = make_registry(root, {"my/alpha": skill})
+    sha = make_registry(root, {"acsi/alpha": skill})
     project = tmp_path / "project"
     project.mkdir()
     lock_path = project / "skills.lock"
     proc = run_generator("--repo", str(root), "--registry",
                          root.resolve().as_uri(), "--ref", sha,
-                         "--bundles", "my", "-o", str(lock_path))
+                         "--bundles", "acsi", "-o", str(lock_path))
     assert proc.returncode == 0, proc.stderr
     clean_lock = json.loads(lock_path.read_text(encoding="utf-8"))
 
@@ -7826,11 +7826,11 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     # through tarfile, which refuses "a link to an absolute path" outright, so
     # a fixture built that way tests tarfile's guard and reports it as this
     # one. Measured while writing this test: the absolute form failed here with
-    # `'plugins/my/skills/alpha/link' is a link to an absolute path`, from
+    # `'plugins/acsi/skills/alpha/link' is a link to an absolute path`, from
     # `git archive`, before `digest_skill_dir` was ever called. A relative
     # symlink extracts cleanly and lands in the tree the digest walks, which is
     # exactly the gap in issue #24 is about.
-    skill_dir = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my") / "alpha"
+    skill_dir = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi") / "alpha"
     _make_symlink(skill_dir / "link", "payload", to_directory=True)
     assert (skill_dir / "link").is_symlink()
     _git(root, "add", "-A")
@@ -7848,7 +7848,7 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     refusal_path = project / "refusal.lock"
     proc = run_generator("--repo", str(root), "--registry",
                          root.resolve().as_uri(), "--ref", sha,
-                         "--bundles", "my", "-o", str(refusal_path))
+                         "--bundles", "acsi", "-o", str(refusal_path))
     assert proc.returncode != 0, proc.stdout
     assert "symlink in skill directory" in (proc.stderr + proc.stdout)
     assert not refusal_path.exists(), \
@@ -7895,18 +7895,18 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
 def test_hook_bundle_override_narrows_what_is_installed(tmp_path):
     """AGENTSKILLS_BUNDLE filters the lock; it never widens beyond it."""
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A, "fastmail/beta": SKILL_B})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A, "fastmail/beta": SKILL_B})
     project = tmp_path / "project"
     project.mkdir()
     proc = run_generator("--repo", str(root), "--registry", root.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my,fastmail",
+                         "--ref", sha, "--bundles", "acsi,fastmail",
                          "-o", str(project / "skills.lock"))
     assert proc.returncode == 0, proc.stderr
     home = tmp_path / "home"
 
     proc = _run_hook(home, project, {
         "SKILLS_BOOTSTRAP_FORCE": "1",
-        "AGENTSKILLS_BUNDLE": "my",
+        "AGENTSKILLS_BUNDLE": "acsi",
     })
     assert proc.returncode == 0
     assert _verdict(proc).startswith("skills: 1/1 ")
@@ -8091,7 +8091,7 @@ def test_hook_removes_a_stale_copy_when_the_source_is_unreachable(tmp_path, fede
 # had a DEFAULT — `claim.get(bundle, 0)`, the primary — the map only had to be
 # seeded wrongly for a row to be fetched from somewhere other than the registry
 # a reader would name, and seeding it from the primary's `bundles` list meant a
-# federated source could claim `my` unopposed whenever that list was omitted,
+# federated source could claim `acsi` unopposed whenever that list was omitted,
 # empty, or naming something else. All three installed an attacker's body under
 # a clean `skills: 1/1 … OK`.
 #
@@ -8104,17 +8104,17 @@ def test_hook_removes_a_stale_copy_when_the_source_is_unreachable(tmp_path, fede
 def _reroute_project(tmp_path: Path, bundles) -> Path:
     """A lock whose FEDERATED source claims the primary's bundle.
 
-    The attacking registry ships its own `my/alpha` and the lock carries THAT
+    The attacking registry ships its own `acsi/alpha` and the lock carries THAT
     digest: a reroute is only worth defending against when the rerouted bytes
     verify, which is what made the reproduction report `1/1 … OK` rather than a
     digest mismatch. `bundles` is the primary's claim, neutered here the three
     ways that evaded the collision check (absent when None).
     """
     primary = tmp_path / "registry"
-    primary_sha = make_registry(primary, {"my/alpha": SKILL_A})
+    primary_sha = make_registry(primary, {"acsi/alpha": SKILL_A})
     evil = tmp_path / "evil"
     evil_sha = make_registry(
-        evil, {"my/alpha": {"SKILL.md": "---\nname: alpha\n---\nEVIL BODY\n"}})
+        evil, {"acsi/alpha": {"SKILL.md": "---\nname: alpha\n---\nEVIL BODY\n"}})
 
     project = tmp_path / "project"
     project.mkdir(parents=True, exist_ok=True)
@@ -8122,9 +8122,9 @@ def _reroute_project(tmp_path: Path, bundles) -> Path:
         "registry": primary.resolve().as_uri(),
         "ref": primary_sha,
         "sources": [{"registry": evil.resolve().as_uri(), "ref": evil_sha,
-                     "bundles": ["my"], "layout": gsl.DEFAULT_LAYOUT}],
-        "skills": {"my/alpha": gsl.digest_skill_dir(
-            evil / "plugins" / "my" / "skills" / "alpha")},
+                     "bundles": ["acsi"], "layout": gsl.DEFAULT_LAYOUT}],
+        "skills": {"acsi/alpha": gsl.digest_skill_dir(
+            evil / "plugins" / "acsi" / "skills" / "alpha")},
     }
     if bundles is not None:
         lock["bundles"] = bundles
@@ -8132,13 +8132,13 @@ def _reroute_project(tmp_path: Path, bundles) -> Path:
     return project
 
 
-@pytest.mark.parametrize("bundles", [None, [], ["my"]],
-                         ids=["bundles-absent", "bundles-empty", "bundles-claims-my"])
+@pytest.mark.parametrize("bundles", [None, [], ["acsi"]],
+                         ids=["bundles-absent", "bundles-empty", "bundles-claims-acsi"])
 def test_a_federated_source_cannot_capture_a_bundle_from_the_primary(tmp_path, bundles):
-    """Whatever the primary's list says, `my` cannot be taken out from under it.
+    """Whatever the primary's list says, `acsi` cannot be taken out from under it.
 
     Absent and empty are refused because the primary's claim is required —
-    nothing is assumed for it — and the explicit `["my"]` is refused as a
+    nothing is assumed for it — and the explicit `["acsi"]` is refused as a
     collision. Reported as a lock the hook could not read, with NOTHING
     installed: the rerouted body must not reach ~/.claude/skills at all.
     """
@@ -8158,7 +8158,7 @@ def test_a_bundle_no_source_claims_is_refused_rather_than_sent_to_the_primary(
     """The default that is gone: `claim.get(bundle, 0)`.
 
     A lock whose `bundles` names something else entirely still resolved every
-    `my/*` row against source 0 and installed it, so the field that says where
+    `acsi/*` row against source 0 and installed it, so the field that says where
     a bundle comes from could disagree with where it came from and nothing said
     so. There is no registry, ref or layout to resolve such a row against —
     refuse the lock and name the bundle.
@@ -8167,7 +8167,7 @@ def test_a_bundle_no_source_claims_is_refused_rather_than_sent_to_the_primary(
     project = tmp_path / "project"
     lock_path = make_project(project, root, sha)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["bundles"] = ["my-local"]          # claims a bundle no skill row names
+    lock["bundles"] = ["acsi-local"]          # claims a bundle no skill row names
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     home = tmp_path / "home"
 
@@ -8181,7 +8181,7 @@ def test_narrowing_to_one_bundle_cannot_hide_an_unroutable_row(tmp_path, registr
     """AGENTSKILLS_BUNDLE filters what is INSTALLED, not what is VALIDATED.
 
     The claim check runs before the filter on purpose: a session narrowed to
-    `my` must not accept a lock whose other rows have no source, or the same
+    `acsi` must not accept a lock whose other rows have no source, or the same
     lock would be honest or malformed depending on an environment variable.
     """
     root, sha = registry
@@ -8194,7 +8194,7 @@ def test_narrowing_to_one_bundle_cannot_hide_an_unroutable_row(tmp_path, registr
 
     proc = _run_hook(home, project, {
         "SKILLS_BOOTSTRAP_FORCE": "1",
-        "AGENTSKILLS_BUNDLE": "my",
+        "AGENTSKILLS_BUNDLE": "acsi",
     })
     assert proc.returncode == 0, proc.stderr
     assert "DEGRADED" in _verdict(proc), _verdict(proc)
@@ -8251,7 +8251,7 @@ def test_a_hashlib_in_the_project_directory_is_not_the_hooks_hasher(tmp_path, re
     project = tmp_path / "project"
     lock_path = make_project(project, root, sha)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["skills"] = {"my/alpha": "0" * 64}
+    lock["skills"] = {"acsi/alpha": "0" * 64}
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     _write(project / "hashlib.py", _FAKE_HASHLIB)
     home = tmp_path / "home"
@@ -8276,13 +8276,13 @@ def test_a_json_in_the_project_directory_is_not_the_hooks_lock_reader(tmp_path, 
     make_project(project, root, sha)
 
     elsewhere = tmp_path / "elsewhere"
-    elsewhere_sha = make_registry(elsewhere, {"my/substituted": SKILL_B})
+    elsewhere_sha = make_registry(elsewhere, {"acsi/substituted": SKILL_B})
     substituted = {
         "registry": elsewhere.resolve().as_uri(),
         "ref": elsewhere_sha,
-        "bundles": ["my"],
-        "skills": {"my/substituted": gsl.digest_skill_dir(
-            elsewhere / "plugins" / "my" / "skills" / "substituted")},
+        "bundles": ["acsi"],
+        "skills": {"acsi/substituted": gsl.digest_skill_dir(
+            elsewhere / "plugins" / "acsi" / "skills" / "substituted")},
     }
     # Only load/loads: `emit`'s encoder wants json.dumps, and its absence sends
     # that one call down the documented printf fallback, which still prints a
@@ -8383,7 +8383,7 @@ def _seed_installed(home: Path, name: str) -> Path:
     record["installed"].append({
         "name": name,
         "registry": "https://example.test/registry",
-        "bundle": "my",
+        "bundle": "acsi",
         "digest": gsl.digest_skill_dir(path),
     })
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -8402,7 +8402,7 @@ def test_hook_removes_the_unverified_copy_on_a_digest_mismatch(tmp_path, registr
     project = tmp_path / "project"
     lock_path = make_project(project, root, sha)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["skills"]["my/alpha"] = "0" * 64
+    lock["skills"]["acsi/alpha"] = "0" * 64
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     home = tmp_path / "home"
     stale = _seed_installed(home, "alpha")
@@ -8442,7 +8442,7 @@ def test_hook_removes_a_stale_copy_when_the_skill_is_absent_at_the_pinned_ref(
     project = tmp_path / "project"
     lock_path = make_project(project, root, sha)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["skills"]["my/ghost"] = "0" * 64
+    lock["skills"]["acsi/ghost"] = "0" * 64
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     home = tmp_path / "home"
     stale = _seed_installed(home, "ghost")
@@ -8488,12 +8488,12 @@ def _duplicate_basename_project(tmp_path: Path) -> Path:
     exactly the lock shape the hook has to survive.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A, "fastmail/alpha": SKILL_B})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A, "fastmail/alpha": SKILL_B})
     project = tmp_path / "project"
     project.mkdir()
     lock_path = project / "skills.lock"
     proc = run_generator("--repo", str(root), "--registry", root.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my", "-o", str(lock_path))
+                         "--ref", sha, "--bundles", "acsi", "-o", str(lock_path))
     assert proc.returncode == 0, proc.stderr
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     lock["skills"]["fastmail/alpha"] = gsl.digest_skill_dir(
@@ -8523,7 +8523,7 @@ def test_hook_reports_two_lock_rows_that_want_the_same_destination(tmp_path):
     verdict = _verdict(proc)
     assert verdict.startswith("skills: 0/2 "), verdict
     assert "share a destination name" in verdict
-    assert "my/alpha" in verdict and "fastmail/alpha" in verdict
+    assert "acsi/alpha" in verdict and "fastmail/alpha" in verdict
     # Neither wins. Installing either one is the silent overwrite being caught.
     assert not (home / ".claude" / "skills" / "alpha").exists()
 
@@ -8845,7 +8845,7 @@ def _tarpit_project(tmp_path: Path, port: int) -> Path:
     project = tmp_path / "project"
     project.mkdir(parents=True, exist_ok=True)
     lock = {"registry": f"https://127.0.0.1:{port}/x.git", "ref": "0" * 40,
-            "bundles": ["my"], "skills": {"my/alpha": "0" * 64}}
+            "bundles": ["acsi"], "skills": {"acsi/alpha": "0" * 64}}
     (project / "skills.lock").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     return project
 
@@ -8918,13 +8918,13 @@ def _ci_shaped_checkout(tmp_path: Path, source_root: Path) -> Tuple[Path, Path]:
     (checkout / "scripts").mkdir()
     (checkout / "scripts" / "generate_skills_lock.py").write_bytes(GENERATOR.read_bytes())
     _hook_copy(checkout)
-    sha = make_registry(checkout, {"my/alpha": SKILL_A})
+    sha = make_registry(checkout, {"acsi/alpha": SKILL_A})
 
     extra_sha = make_registry(source_root, {"example-site-platform/deploy": SKILL_B}, layout="skills")
     lock = checkout / "skills.lock"
     proc = run_generator(
         "--repo", str(checkout), "--registry", checkout.resolve().as_uri(),
-        "--ref", sha, "--bundles", "my",
+        "--ref", sha, "--bundles", "acsi",
         "--source", f"example-site-platform={source_root.resolve().as_uri()}@{extra_sha}:skills",
         "--source-repo", f"example-site-platform={source_root}",
         "-o", str(lock))
@@ -9129,7 +9129,7 @@ def test_a_skill_the_hook_never_installed_is_never_removed(tmp_path, registry):
 def test_a_rename_leaves_only_the_new_name(tmp_path):
     """Old name out, new name in — the shape that used to load BOTH."""
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/oldname": SKILL_A, "my/newname": SKILL_B})
+    sha = make_registry(root, {"acsi/oldname": SKILL_A, "acsi/newname": SKILL_B})
     project = tmp_path / "project"
     lock_path = make_project(project, root, sha)
     full = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -9273,7 +9273,7 @@ def test_the_install_loop_still_replaces_its_own_untouched_install(tmp_path, reg
 
     # The same skill, new bytes, new commit, new lock — an ordinary upstream
     # update arriving over an install that is already there.
-    _write(root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my") / "alpha" / "SKILL.md",
+    _write(root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi") / "alpha" / "SKILL.md",
            SKILL_A["SKILL.md"] + "updated upstream\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "update alpha")
@@ -9295,7 +9295,7 @@ def test_the_install_loop_still_replaces_its_own_untouched_install(tmp_path, reg
 
 
 @pytest.mark.parametrize("only, note", [
-    ("my", "leaving 1 other-bundle skill alone (beta)"),
+    ("acsi", "leaving 1 other-bundle skill alone (beta)"),
     ("nothingmatches", "leaving 2 other-bundle skills alone (alpha, beta)"),
 ])
 def test_bundle_narrowing_prunes_nothing_from_other_bundles(tmp_path, only, note):
@@ -9308,11 +9308,11 @@ def test_bundle_narrowing_prunes_nothing_from_other_bundles(tmp_path, only, note
     nothing). What it must do instead is SAY what it left alone.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A, "fastmail/beta": SKILL_B})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A, "fastmail/beta": SKILL_B})
     project = tmp_path / "project"
     project.mkdir()
     proc = run_generator("--repo", str(root), "--registry", root.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my,fastmail",
+                         "--ref", sha, "--bundles", "acsi,fastmail",
                          "-o", str(project / "skills.lock"))
     assert proc.returncode == 0, proc.stderr
     home = tmp_path / "home"
@@ -9442,7 +9442,7 @@ def _bootstrap_log(home: Path) -> str:
 
 
 def _project_naming_synced(project_dir: Path, root: Path, ref: str) -> Path:
-    """A lock naming `my/synced`, assembled WITHOUT the generator.
+    """A lock naming `acsi/synced`, assembled WITHOUT the generator.
 
     Hand-built because the generator refuses to write one — that is the other
     half of this fix — but built from the fixture registry's own bytes, with the
@@ -9455,12 +9455,12 @@ def _project_naming_synced(project_dir: Path, root: Path, ref: str) -> Path:
     destructive path (the purge) instead of the install loop.
     """
     project_dir.mkdir(parents=True, exist_ok=True)
-    skills_root = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my")
+    skills_root = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi")
     lock = {
         "registry": root.resolve().as_uri(),
         "ref": ref,
-        "bundles": ["my"],
-        "skills": {f"my/{name}": gsl.digest_skill_dir(skills_root / name)
+        "bundles": ["acsi"],
+        "skills": {f"acsi/{name}": gsl.digest_skill_dir(skills_root / name)
                    for name in ("alpha", "synced")},
     }
     lock_path = project_dir / "skills.lock"
@@ -9483,7 +9483,7 @@ def test_a_lock_naming_synced_is_refused_rather_than_installed(tmp_path):
     literal sends the reader.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A, "my/synced": SYNCED_SKILL})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A, "acsi/synced": SYNCED_SKILL})
     project = tmp_path / "project"
     _project_naming_synced(project, root, sha)
     home = tmp_path / "home"
@@ -9506,7 +9506,7 @@ def test_a_lock_naming_synced_is_refused_rather_than_installed(tmp_path):
     # And the same name is unwritable by the sanctioned tooling, which is what
     # keeps the verdict above honest when it says to regenerate the lock with it.
     proc = run_generator("--repo", str(root), "--registry", root.resolve().as_uri(),
-                         "--ref", sha, "--bundles", "my",
+                         "--ref", sha, "--bundles", "acsi",
                          "-o", str(tmp_path / "regenerated.lock"))
     assert _rejected(proc), proc.stdout + proc.stderr
     assert "synced" in proc.stderr, proc.stderr
@@ -9526,7 +9526,7 @@ def test_an_unreachable_source_does_not_purge_the_account_store(tmp_path):
     `cp -R` is ever attempted and the removal is the only thing that happens.
     """
     root = tmp_path / "registry"
-    make_registry(root, {"my/alpha": SKILL_A, "my/synced": SYNCED_SKILL})
+    make_registry(root, {"acsi/alpha": SKILL_A, "acsi/synced": SYNCED_SKILL})
     project = tmp_path / "project"
     # A ref nothing can resolve: the lock's single source is unreachable, so
     # `fetched` is 0 and the hook takes the purge-then-degrade path.
@@ -9556,7 +9556,7 @@ def test_an_unreachable_source_does_not_purge_the_account_store(tmp_path):
 #     reaches the filesystem, so `synced.` opens `synced`.
 #
 # The hook's own skill-name charset accepts all three, and the generator wrote
-# `my/Synced` at exit 0. Measured on the exact-equality version, each spelling
+# `acsi/Synced` at exit 0. Measured on the exact-equality version, each spelling
 # walked past the reader, into `skills.nul`, and had a canary planted at that
 # name removed by `purge_locked_destinations` — and the record-driven prune
 # removed one too. The install loop is the one path that was already blocked,
@@ -9604,8 +9604,8 @@ def test_a_folded_spelling_of_synced_is_refused_by_the_reader_and_generator(
     _write(project / "skills.lock", json.dumps({
         "registry": (tmp_path / "unreachable").resolve().as_uri(),
         "ref": "0" * 40,
-        "bundles": ["my"],
-        "skills": {"my/alpha": "a" * 64, "my/%s" % spelling: "b" * 64},
+        "bundles": ["acsi"],
+        "skills": {"acsi/alpha": "a" * 64, "acsi/%s" % spelling: "b" * 64},
     }, indent=2) + "\n")
     home = tmp_path / "home"
     canary = home / ".claude" / "skills" / spelling
@@ -9626,11 +9626,11 @@ def test_a_folded_spelling_of_synced_is_refused_by_the_reader_and_generator(
 
     # ...and the sanctioned tooling will not write such a key either.
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A,
-                               "my/%s" % spelling: SYNCED_SKILL})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A,
+                               "acsi/%s" % spelling: SYNCED_SKILL})
     generated = run_generator("--repo", str(root), "--registry",
                               root.resolve().as_uri(), "--ref", sha,
-                              "--bundles", "my",
+                              "--bundles", "acsi",
                               "-o", str(tmp_path / "generated.lock"))
     assert _rejected(generated), generated.stdout + generated.stderr
     assert "synced" in generated.stderr, generated.stderr
@@ -9717,7 +9717,7 @@ def test_a_record_that_cannot_be_written_is_reported_rather_than_fatal(
 def test_another_repos_lock_does_not_reap_this_ones_skills(tmp_path):
     """Two repos, one ~/.claude/skills — the reason the scope is per-source.
 
-    Both locks claim the bundle `my`; only the REGISTRY differs, so this
+    Both locks claim the bundle `acsi`; only the REGISTRY differs, so this
     isolates that half of the scope. Unscoped, repo two's run would find every
     name repo one installed missing from its own lock and reap the lot.
 
@@ -9726,9 +9726,9 @@ def test_another_repos_lock_does_not_reap_this_ones_skills(tmp_path):
     contend, because neither is more authoritative than the other.)
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/beta": SKILL_B})
+    two_sha = make_registry(two, {"acsi/beta": SKILL_B})
     make_project(tmp_path / "project-one", one, one_sha)
     make_project(tmp_path / "project-two", two, two_sha)
     home = tmp_path / "home"
@@ -10020,7 +10020,7 @@ def test_a_refused_lock_is_not_reported_as_an_invalid_one(tmp_path):
     a property of this test's plumbing, not of the hook.
     """
     registry = tmp_path / "registry"
-    sha = make_registry(registry, {"my/alpha": SKILL_A})
+    sha = make_registry(registry, {"acsi/alpha": SKILL_A})
     project = tmp_path / "repos"
     project.mkdir()
     staged = tmp_path / "staged"
@@ -10094,7 +10094,7 @@ def test_a_long_value_does_not_truncate_the_rest_of_a_rejection_reason(tmp_path)
     standing in for it.
     """
     registry = tmp_path / "registry-one"
-    sha = make_registry(registry, {"my/alpha": SKILL_A})
+    sha = make_registry(registry, {"acsi/alpha": SKILL_A})
     parent = tmp_path / "repos"
     parent.mkdir()
     _child_repo(parent, "repo-a", registry, sha)
@@ -10110,9 +10110,9 @@ def test_a_long_value_does_not_truncate_the_rest_of_a_rejection_reason(tmp_path)
     _write(hostile / "skills.lock", json.dumps({
         "registry": long_registry,
         "ref": sha,
-        "bundles": ["my"],
+        "bundles": ["acsi"],
         "sources": [{"registry": "not a registry at all",
-                     "ref": "0" * 40, "bundles": ["my"]}],
+                     "ref": "0" * 40, "bundles": ["acsi"]}],
         "skills": {},
     }, indent=2) + "\n")
 
@@ -10146,7 +10146,7 @@ def test_a_repo_derived_fragment_cannot_amplify_the_verdict(tmp_path):
     lock was rejected at all.
     """
     registry = tmp_path / "registry"
-    sha = make_registry(registry, {"my/alpha": SKILL_A})
+    sha = make_registry(registry, {"acsi/alpha": SKILL_A})
     project = tmp_path / "project"
     project.mkdir()
     _child_repo(project, "aa-honest", registry, sha)
@@ -10155,7 +10155,7 @@ def test_a_repo_derived_fragment_cannot_amplify_the_verdict(tmp_path):
     (hostile / ".git").mkdir()
     # Rejected for its skill KEY alone, so the reason is the `%r`-quoted key.
     (hostile / "skills.lock").write_text(json.dumps({
-        "registry": "a/b", "ref": sha, "bundles": ["my"],
+        "registry": "a/b", "ref": sha, "bundles": ["acsi"],
         "skills": {"A" * 200000: gsl.LOCK_DIGEST_PREFIX + "0" * 64},
         "generated_from": sha,
     }), encoding="utf-8")
@@ -10200,9 +10200,9 @@ def test_two_sibling_repos_with_disjoint_skills_both_install(tmp_path):
     repos -- that is the difference between an auditable delivery and a number.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     _child_repo(parent, "repo-b", two, two_sha)
@@ -10228,7 +10228,7 @@ def test_two_sibling_repos_with_disjoint_skills_both_install(tmp_path):
 def test_two_sibling_repos_pinning_one_registry_share_a_single_fetch(tmp_path):
     """Case (a) -- the COMMON input, and the one a naive union turns into 0/N.
 
-    The fleet's locks largely declare the same `my` bundle from the same
+    The fleet's locks largely declare the same `acsi` bundle from the same
     registry at the same ref, so in an ordinary multi-repo session most
     destination names are claimed by EVERY lock present. A union that counted
     names before collapsing identical (name, digest) rows would call every one
@@ -10248,7 +10248,7 @@ def test_two_sibling_repos_pinning_one_registry_share_a_single_fetch(tmp_path):
     benign -- so there is nothing for an answer to that to mean.
     """
     shared = tmp_path / "registry"
-    sha = make_registry(shared, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    sha = make_registry(shared, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", shared, sha)
     _child_repo(parent, "repo-b", shared, sha)
@@ -10291,9 +10291,9 @@ def test_two_locks_naming_one_skill_at_different_digests_install_neither(tmp_pat
     is not there.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/alpha": SKILL_B})
+    two_sha = make_registry(two, {"acsi/alpha": SKILL_B})
     parent = tmp_path / "repos"
     repo_a = _child_repo(parent, "repo-a", one, one_sha)
     repo_b = _child_repo(parent, "repo-b", two, two_sha)
@@ -10336,9 +10336,9 @@ def test_a_project_with_its_own_lock_ignores_its_child_repos_locks(tmp_path):
     on a single run, which is exactly how it survived (#135).
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     project = tmp_path / "project"
     make_project(project, one, one_sha)                 # the project's OWN lock
     _child_repo(project, "vendored", two, two_sha)      # a child that has one too
@@ -10387,11 +10387,11 @@ def test_a_project_that_acquires_its_own_lock_does_not_reap_its_children(tmp_pat
     to look at them.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/beta": SKILL_B})
+    two_sha = make_registry(two, {"acsi/beta": SKILL_B})
     three = tmp_path / "registry-three"
-    three_sha = make_registry(three, {"my/gamma": SKILL_C})
+    three_sha = make_registry(three, {"acsi/gamma": SKILL_C})
     project = tmp_path / "project"
     _child_repo(project, "repo-a", one, one_sha)
     _child_repo(project, "repo-b", two, two_sha)
@@ -10439,15 +10439,15 @@ def test_one_malformed_sibling_lock_degrades_only_its_own_skills(tmp_path):
     warning -- that lock's skills are NOT installed.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     repo_b = _child_repo(parent, "repo-b", two, two_sha)
     bad = repo_b / "skills.lock"
     lock = json.loads(bad.read_text(encoding="utf-8"))
-    lock["skills"]["my/gamma"] = "not-a-digest"
+    lock["skills"]["acsi/gamma"] = "not-a-digest"
     bad.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     home = tmp_path / "home"
 
@@ -10487,9 +10487,9 @@ def test_a_sibling_lock_naming_synced_contributes_nothing_and_spares_the_store(
     `skills: n/n ... OK` while the account's files are gone.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C, "my/synced": SYNCED_SKILL})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C, "acsi/synced": SYNCED_SKILL})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     repo_b = parent / "repo-b"
@@ -10504,12 +10504,12 @@ def test_a_sibling_lock_naming_synced_contributes_nothing_and_spares_the_store(
     # the fixture registry's own bytes, so routing, source index, SKILL.md and
     # digest all check out and the reserved-name rule is the only thing standing
     # between this lock and the account store.
-    skills_root = two / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my")
+    skills_root = two / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi")
     _write(repo_b / "skills.lock", json.dumps({
         "registry": two.resolve().as_uri(),
         "ref": two_sha,
-        "bundles": ["my"],
-        "skills": {f"my/{name}": gsl.digest_skill_dir(skills_root / name)
+        "bundles": ["acsi"],
+        "skills": {f"acsi/{name}": gsl.digest_skill_dir(skills_root / name)
                    for name in ("gamma", "synced")},
     }, indent=2) + "\n")
     home = tmp_path / "home"
@@ -10577,9 +10577,9 @@ def test_a_narrower_session_leaves_the_other_repos_skills_alone(tmp_path):
     store.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     repo_a = _child_repo(parent, "repo-a", one, one_sha)
     _child_repo(parent, "repo-b", two, two_sha)
@@ -10627,9 +10627,9 @@ def test_an_env_override_is_refused_when_several_locks_were_discovered(
     refused here.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     repo_a = _child_repo(parent, "repo-a", one, one_sha)
     _child_repo(parent, "repo-b", two, two_sha)
@@ -10667,9 +10667,9 @@ def test_two_identical_union_runs_write_a_byte_identical_install_record(tmp_path
     into the same store is a no-op that would pass against any order at all.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C, "my/delta": SKILL_D})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C, "acsi/delta": SKILL_D})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     _child_repo(parent, "repo-b", two, two_sha)
@@ -10716,9 +10716,9 @@ def test_a_discovery_scan_that_cannot_be_completed_installs_but_prunes_nothing(
     stopped working".
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     repo_a = _child_repo(parent, "repo-a", one, one_sha)
     _child_repo(parent, "repo-b", two, two_sha)
@@ -10805,7 +10805,7 @@ def test_a_child_symlink_is_not_a_child_repo(tmp_path):
     file argues against.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A})
 
     # (a) outside the project entirely.
     outside = tmp_path / "elsewhere" / "unattached-repo"
@@ -10860,7 +10860,7 @@ def test_a_child_that_is_not_a_git_repository_contributes_no_lock(tmp_path):
         measures the repository test rather than a fixture that never delivered.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A})
     parent = tmp_path / "repos"
     fixture = parent / "testdata"
     make_project(fixture, root, sha)
@@ -10902,7 +10902,7 @@ def test_a_git_file_is_a_repository_too(tmp_path):
     a repo" for a shape the fleet actually uses.
     """
     root = tmp_path / "registry"
-    sha = make_registry(root, {"my/alpha": SKILL_A})
+    sha = make_registry(root, {"acsi/alpha": SKILL_A})
     parent = tmp_path / "repos"
     repo = _child_repo(parent, "worktree", root, sha)
     _rmtree(repo / ".git")
@@ -10945,9 +10945,9 @@ def test_a_child_directory_name_with_a_control_character_is_not_read(tmp_path):
     follows.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     # Built in a plainly-named directory and MOVED, because the generator
@@ -11327,9 +11327,9 @@ def test_a_child_name_cannot_forge_a_line_with_a_unicode_separator(tmp_path, sep
     python at all.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     staged = _child_repo(tmp_path, "staged", two, two_sha)
@@ -11389,9 +11389,9 @@ def test_a_child_name_bash_cannot_decode_degrades_only_its_own_lock(tmp_path):
     failure mode was a clean exit with an empty store and a misdirected verdict.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     staged = _child_repo(tmp_path, "staged", two, two_sha)
@@ -11546,9 +11546,9 @@ def test_a_childs_skills_lock_may_not_be_a_symlink(tmp_path):
     exactly the state this file exists to make knowable.
     """
     inside = tmp_path / "registry-one"
-    inside_sha = make_registry(inside, {"my/alpha": SKILL_A})
+    inside_sha = make_registry(inside, {"acsi/alpha": SKILL_A})
     outside_reg = tmp_path / "registry-two"
-    outside_sha = make_registry(outside_reg, {"my/gamma": SKILL_C})
+    outside_sha = make_registry(outside_reg, {"acsi/gamma": SKILL_C})
 
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", inside, inside_sha)
@@ -11587,7 +11587,7 @@ def test_a_childs_skills_lock_that_is_not_a_regular_file_is_named_not_skipped(
     shared lock whose target moves is the ordinary way this happens by accident.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
 
@@ -11623,7 +11623,7 @@ def test_the_project_dirs_own_skills_lock_may_not_be_a_symlink_either(tmp_path):
     that file must not silently substitute a different set of skills.
     """
     outside_reg = tmp_path / "registry-two"
-    outside_sha = make_registry(outside_reg, {"my/gamma": SKILL_C})
+    outside_sha = make_registry(outside_reg, {"acsi/gamma": SKILL_C})
     above = _child_repo(tmp_path, "above-the-project", outside_reg, outside_sha)
 
     project = tmp_path / "project"
@@ -11684,7 +11684,7 @@ def test_a_sibling_lock_that_crashes_the_reader_degrades_only_its_own_skills(
     boundary that stopped holding.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     hostile = parent / "repo-b"
@@ -11728,7 +11728,7 @@ def test_a_control_character_in_a_sibling_lock_cannot_desync_the_streams(
     attacker chose.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A})
     parent = tmp_path / "repos"
     _child_repo(parent, "repo-a", one, one_sha)
     home = tmp_path / "home"
@@ -11746,10 +11746,10 @@ def test_a_control_character_in_a_sibling_lock_cannot_desync_the_streams(
     _write(hostile / "skills.lock", json.dumps({
         "registry": one.resolve().as_uri(),
         "ref": one_sha,
-        "bundles": ["my"],
+        "bundles": ["acsi"],
         # A second source claiming the bundle the primary already claims, which
         # is what reaches that message before the registry is validated.
-        "sources": [{"registry": poison, "ref": "0" * 40, "bundles": ["my"]}],
+        "sources": [{"registry": poison, "ref": "0" * 40, "bundles": ["acsi"]}],
         "skills": {},
     }, indent=2) + "\n")
 
@@ -11783,10 +11783,10 @@ def test_a_rejected_sibling_lock_stops_the_prune_reaping_what_it_still_names(
         tmp_path):
     """A sibling's claim supplies exactly the scope its owner withheld.
 
-    Two repos pin the SAME registry and the SAME `my` bundle, which is what
+    Two repos pin the SAME registry and the SAME `acsi` bundle, which is what
     every consumer lock in the fleet says. Repo-b's lock is then broken, so it
     contributes no rows and no claims -- and repo-a's claim covers `(registry,
-    my)` anyway. Repo-b's installed `gamma` is then a recorded install whose
+    acsi)` anyway. Repo-b's installed `gamma` is then a recorded install whose
     (registry, bundle) is in scope and whose name is absent from `skills.nul`:
     a prune candidate. Measured, it was deleted -- a repo's delivered skills
     reaped because a DIFFERENT repo's lock was malformed.
@@ -11802,8 +11802,8 @@ def test_a_rejected_sibling_lock_stops_the_prune_reaping_what_it_still_names(
     "gamma survived" is equally true of a prune that stopped working.
     """
     shared = tmp_path / "registry"
-    sha = make_registry(shared, {"my/alpha": SKILL_A, "my/beta": SKILL_B,
-                                 "my/gamma": SKILL_C})
+    sha = make_registry(shared, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B,
+                                 "acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     repo_a = _child_repo(parent, "repo-a", shared, sha)
     repo_b = _child_repo(parent, "repo-b", shared, sha)
@@ -11819,7 +11819,7 @@ def test_a_rejected_sibling_lock_stops_the_prune_reaping_what_it_still_names(
     assert _verdict(first).startswith("skills: 3/3 "), _verdict(first)
 
     broken = json.loads(b_lock.read_text(encoding="utf-8"))
-    broken["skills"]["my/gamma"] = "not-a-digest"
+    broken["skills"]["acsi/gamma"] = "not-a-digest"
     _write(b_lock, json.dumps(broken, indent=2) + "\n")
     proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
     assert proc.returncode == 0, proc.stderr
@@ -11861,9 +11861,9 @@ def test_a_lock_starved_of_a_fetch_slot_does_not_reap_its_own_skills(tmp_path):
     guard held" and "the prune stopped working" are the same observation.
     """
     one = tmp_path / "registry-one"
-    one_sha = make_registry(one, {"my/alpha": SKILL_A, "my/beta": SKILL_B})
+    one_sha = make_registry(one, {"acsi/alpha": SKILL_A, "acsi/beta": SKILL_B})
     two = tmp_path / "registry-two"
-    two_sha = make_registry(two, {"my/gamma": SKILL_C})
+    two_sha = make_registry(two, {"acsi/gamma": SKILL_C})
     parent = tmp_path / "repos"
     repo_a = _child_repo(parent, "repo-a", one, one_sha)
     _child_repo(parent, "repo-b", two, two_sha)
@@ -12140,7 +12140,7 @@ def _assert_matrix_cell(label: str, proc, out: Path, reasons: dict) -> set:
 
 _MATRIX_SHAPES = [(build, name) for build, name, _ in _DRIFT_SHAPES] + [
     (_hand_broken_lock("ref"), "the lock lost its 'ref'"),
-    (_hand_broken_lock("bundles", ["my", "not a bundle name!"]),
+    (_hand_broken_lock("bundles", ["acsi", "not a bundle name!"]),
      "a 'bundles' entry is not a plausible name"),
     # The LAYOUT column, not another lock-shape column: every shape above puts
     # its source at the default sibling `../<repo-name>`, so a printed command
@@ -12223,7 +12223,7 @@ def test_a_ref_a_scoped_question_never_reads_cannot_change_its_answer(
     and on `the primary bundle is gone at HEAD and a source drifted`: the plain
     scoped run printed `--repin --ref <lock ref> --repin-source '<src>@'`
     (which runs at exit 0), while the same run with `--ref HEAD` printed no
-    command and blamed a shrink in `my`, a bundle it had not read and which
+    command and blamed a shrink in `acsi`, a bundle it had not read and which
     exists at every commit involved.
     """
     primary, out, _scoped = build(tmp_path)
@@ -12411,16 +12411,16 @@ def test_the_hook_refuses_a_symlinked_skill_root(tmp_path):
     link, measure alpha, and install zeta as a live link to another skill. It
     must be refused."""
     root = tmp_path / "registry"
-    first = make_registry(root, {"my/alpha": SKILL_A})
+    first = make_registry(root, {"acsi/alpha": SKILL_A})
     project = tmp_path / "project"
     project.mkdir()
     # A REAL lock for alpha, the shape the hook reads — then edited below the
     # way an attacker would, since our generator refuses the linked skill.
     proc = run_generator("--repo", str(root), "--registry", root.resolve().as_uri(),
-                         "--ref", first, "--bundles", "my",
+                         "--ref", first, "--bundles", "acsi",
                          "-o", str(project / "skills.lock"))
     assert proc.returncode == 0, proc.stderr
-    skills_root = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "my")
+    skills_root = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "acsi")
     true_digest = gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(skills_root / "alpha")
     link = skills_root / "zeta"
     _make_symlink(link, "alpha", to_directory=True)
@@ -12434,10 +12434,10 @@ def test_the_hook_refuses_a_symlinked_skill_root(tmp_path):
     assert "120000" in modes, f"git did not record a symlink here:\n{modes}"
 
     lock = json.loads((project / "skills.lock").read_text(encoding="utf-8"))
-    assert lock["skills"]["my/alpha"] == true_digest
+    assert lock["skills"]["acsi/alpha"] == true_digest
     lock["ref"] = sha
     lock["generated_from"] = sha
-    lock["skills"]["my/zeta"] = true_digest
+    lock["skills"]["acsi/zeta"] = true_digest
     _write(project / "skills.lock", json.dumps(lock, indent=2) + "\n")
     home = tmp_path / "home"
     hook = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
@@ -12452,7 +12452,7 @@ def test_the_hook_refuses_a_symlinked_skill_root(tmp_path):
     # The verdict says "absent"; the log must say WHY, or the operator chases
     # a missing directory that is present in the registry.
     logs = _bootstrap_log(home)
-    assert "refused symlinked skill root: plugins/my/skills/zeta" in logs, logs[-2000:]
+    assert "refused symlinked skill root: plugins/acsi/skills/zeta" in logs, logs[-2000:]
 
 
 def test_committed_sessionstart_matcher_includes_fork():

@@ -65,7 +65,7 @@ GOLDEN_RESULTS = TEST_DIR / "fixtures" / "issue_66" / "golden"
 sys.path.insert(0, str(HARNESS_DIR))
 import run_eval  # noqa: E402
 
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 TS = "20260716T070000Z"
 # The PATH and mount table every arm here runs with, explicit: the arm's read
 # fence is built from both, so no result depends on the host's (a WSL PATH
@@ -313,7 +313,7 @@ class TestIssue66SingleTrialIsMainPlusN(_HarnessCase):
 
         CLAUDE_BIN=test/fake-claude FAKE_CLAUDE_MODE=judge \\
           python3 harness/run_eval.py <fixture> --arm both --timeout 60 \\
-            --registry agentskills=test/fixtures/fake_registry \\
+            --registry acsi-agentskills=test/fixtures/fake_registry \\
             --results-dir <out>
 
     and copied in unedited, with one later edit: #71 added
@@ -340,7 +340,7 @@ class TestIssue66SingleTrialIsMainPlusN(_HarnessCase):
 
     def _run_golden(self, results: Path, *flags: str):
         return self._run(GOLDEN_FIXTURE, "--arm", "both",
-                         "--registry", f"agentskills={FAKE_REGISTRY}",
+                         "--registry", f"acsi-agentskills={FAKE_REGISTRY}",
                          "--timestamp", self.GOLDEN_TS, *flags,
                          results=results, cli=FAKE_CLAUDE, mode="judge")
 
@@ -967,7 +967,7 @@ class TestIssue66Trials(_HarnessCase):
         self._script(agents=[{"mode": "error"}] * 2 + [{}] * 2)
         proc = self._run(self.fixture_dir, "--arm", "both", "--trials", "2",
                          "--no-judge", "--timestamp", TS, "--registry",
-                         f"agentskills={self._registry(self.SKILL)}")
+                         f"acsi-agentskills={self._registry(self.SKILL)}")
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("Runner-level error in arm(s): "
                       "with_skill (2 of 2 trials)\n", proc.stdout)
@@ -994,7 +994,7 @@ class TestIssue66Trials(_HarnessCase):
         # judge (#371); this test is about aggregating its scores.
         proc = self._run(self.fixture_dir, "--arm", "both", "--trials", "2",
                          "--judge", "always", "--timestamp", TS, "--registry",
-                         f"agentskills={self._registry(self.SKILL)}")
+                         f"acsi-agentskills={self._registry(self.SKILL)}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         got = {}
         for arm in ("with_skill", "without_skill"):
@@ -1066,7 +1066,7 @@ class TestIssue66Trials(_HarnessCase):
         # The other arm of the same run directory is not taken, and runs.
         third = self._run(self.fixture_dir, "--arm", "with_skill", "--no-judge",
                           "--timestamp", TS, "--registry",
-                          f"agentskills={self._registry(self.SKILL)}")
+                          f"acsi-agentskills={self._registry(self.SKILL)}")
         self.assertEqual(third.returncode, 0, third.stdout + third.stderr)
 
     def test_a_check_id_that_is_not_a_string_is_still_aggregated(self):
@@ -1636,7 +1636,7 @@ class TestIssue66Badge(_HarnessCase):
                      judges=[{"overall": 8.0}] * 4)
         proc = self._run(fixture, "--arm", "both", "--trials", "2",
                          "--timestamp", TS, "--registry",
-                         f"agentskills={self._registry(self.SKILL)}")
+                         f"acsi-agentskills={self._registry(self.SKILL)}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self._badge(), {
             "schemaVersion": 1, "label": f"skill eval: {self.SKILL}",
@@ -1649,7 +1649,7 @@ class TestIssue66Badge(_HarnessCase):
                      judges=[{"overall": 8.0}] * 2)
         proc = self._run(fixture, "--arm", "both", "--timestamp", TS,
                          "--registry",
-                         f"agentskills={self._registry(self.SKILL)}")
+                         f"acsi-agentskills={self._registry(self.SKILL)}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self._badge()["message"],
                          f"with 2/2 vs without 1/2 · {DATE}")

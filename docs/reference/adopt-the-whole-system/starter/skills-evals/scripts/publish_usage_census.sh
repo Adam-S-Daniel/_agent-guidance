@@ -19,7 +19,7 @@
 #      a push that printed success is not proof the commit is on the branch;
 #   5. then, and only then, publish the PRIVATE per-invocation records
 #      (`--events-out`) to the `persistent/usage-events` branch of the private
-#      agentskills-private repository: merged by id into
+#      acsi-agentskills-private repository: merged by id into
 #      events/<YYYY-MM>/<machine>.jsonl, committed only if something was
 #      added, pushed and verified the same way. A missing branch is created
 #      as an orphan with a README. A failure here never undoes or blocks the
@@ -53,7 +53,7 @@ set -euo pipefail
 
 URL="${SKILLS_EVALS_URL:-https://github.com/example-adopter/skills-evals.git}"
 BRANCH="persistent/eval-results"
-EVENTS_URL="${USAGE_EVENTS_URL:-https://github.com/example-adopter/agentskills-private.git}"
+EVENTS_URL="${USAGE_EVENTS_URL:-https://github.com/example-adopter/acsi-agentskills-private.git}"
 EVENTS_BRANCH="persistent/usage-events"
 WIN_USERS="${WSL_USERS_DIR:-/mnt/c/Users}"
 PY="${PYTHON:-python3}"

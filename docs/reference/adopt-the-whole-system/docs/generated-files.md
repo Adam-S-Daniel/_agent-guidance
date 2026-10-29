@@ -31,28 +31,28 @@ Every item `REGENERATE.md` lists, and the quick start step that handles it:
 | `skills-evals` | `.github/workflows/actions.lock` | 17 |
 | `skills-evals` | The routine trigger id | 23, 24 |
 | `skills-evals` | `.github/workflows/eval.yml` | 18 |
-| `agentskills` | `skills.lock` | 13 |
-| `agentskills-private` | `skills.lock` | 13 |
-| `agentskills` | `.github/workflows/scheduled-run-health.yml` | 15 |
-| `agentskills-private` | `.github/workflows/scheduled-run-health.yml` | 15 |
-| `agentskills` | `.github/workflows/actions.lock` | 17 |
-| `agentskills-private` | `.github/workflows/actions.lock` | 17 |
-| `agentskills` | `<your name>` | 11 |
-| `agentskills-private` | `<your name>` | 11 |
+| `acsi-agentskills` | `skills.lock` | 13 |
+| `acsi-agentskills-private` | `skills.lock` | 13 |
+| `acsi-agentskills` | `.github/workflows/scheduled-run-health.yml` | 15 |
+| `acsi-agentskills-private` | `.github/workflows/scheduled-run-health.yml` | 15 |
+| `acsi-agentskills` | `.github/workflows/actions.lock` | 17 |
+| `acsi-agentskills-private` | `.github/workflows/actions.lock` | 17 |
+| `acsi-agentskills` | `<your name>` | 11 |
+| `acsi-agentskills-private` | `<your name>` | 11 |
 
-(`agentskills-private` has no `scheduled-run-health.yml`; `REGENERATE.md`
+(`acsi-agentskills-private` has no `scheduled-run-health.yml`; `REGENERATE.md`
 lists the two registries under one heading.)
 
 ## The skills locks
 
 `bash bootstrap/regenerate.sh skills-locks`, twice:
 
-1. The first run finds `agentskills`' `skills.lock` still pinning forty
+1. The first run finds `acsi-agentskills`' `skills.lock` still pinning forty
    zeros, and proposes the registry's own generator's output
    (`python3 scripts/generate_skills_lock.py`, which pins the registry's
    HEAD). Merge that pull request.
 2. The second run checks it (`--check` and `--check-current`), copies the
-   same file into `agentskills-private`, and re-pins `_agent-guidance`,
+   same file into `acsi-agentskills-private`, and re-pins `_agent-guidance`,
    `repo-settings` and `wsl-automation` with the registry's generator run on
    a clone of your registry (`--repo`), keeping each lock's bundles. Merge
    the four pull requests.
@@ -66,7 +66,7 @@ current.
 `_agent-guidance`'s `repos.yml` `skills_bootstrap.ref` names the registry
 commit the delivered `.claude/hooks/skills-bootstrap.sh` comes from; its
 `sha256` the export already computed from the exported hook.
-`bash bootstrap/regenerate.sh hook-pin` sets `ref` to your `agentskills`
+`bash bootstrap/regenerate.sh hook-pin` sets `ref` to your `acsi-agentskills`
 HEAD after checking that the hook there has exactly that sha256, and refuses
 if the two copies have drifted (then review the hook and run
 `_agent-guidance`'s own `scripts/bump-hook-pin.sh`, which re-pins both and
@@ -75,7 +75,7 @@ opens its own pull request; the nightly bumper runs it from then on).
 ## The scheduled-run-health pin
 
 `scheduled-run-health.yml` in `repo-settings`, `skills-evals` and
-`agentskills` calls `_agent-guidance`'s reusable workflow, and a cross-repo
+`acsi-agentskills` calls `_agent-guidance`'s reusable workflow, and a cross-repo
 reusable takes a full sha; the export ships forty zeros.
 `bash bootstrap/regenerate.sh run-health-sha` writes your `_agent-guidance`
 default branch's commit into all three.
@@ -85,7 +85,7 @@ default branch's commit into all three.
 `wsl-automation`'s `scripts/sync-codex-cloud-environments.sh` downloads your
 registry's skills-bootstrap hook at a reviewed commit and checks its digest;
 both ship as zeros, which fail closed (setup reports skills `DEGRADED`).
-`bash bootstrap/regenerate.sh codex-pin` sets them to your `agentskills`
+`bash bootstrap/regenerate.sh codex-pin` sets them to your `acsi-agentskills`
 HEAD and its hook's sha256, runs the script's own test with the new pin,
 and proposes the change. Skip it if you do not use Codex.
 

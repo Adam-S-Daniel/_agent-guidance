@@ -466,10 +466,10 @@ def test_config_check_flags_a_stray_repo(tmp_path):
     (wf / "w.yml").write_text(
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7.0.1\n"
         f"        with: {{repository: {KIT_OWNERS[0]}/side-project}}\n"
-        f"      - run: echo {KIT_OWNERS[0]}/agentskills\n", encoding="utf-8")
+        f"      - run: echo {KIT_OWNERS[0]}/acsi-agentskills\n", encoding="utf-8")
     found = config_names(tmp_path)
     assert found["repos.yml"] == ["skills-evals", "my-blog"]
-    assert sorted(found[".github/workflows/w.yml"]) == ["agentskills", "side-project", "side-project"]
+    assert sorted(found[".github/workflows/w.yml"]) == ["acsi-agentskills", "side-project", "side-project"]
 
 
 # C11 for routine prompts: a Routine is configured from these files (the

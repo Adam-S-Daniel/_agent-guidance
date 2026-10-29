@@ -67,11 +67,11 @@ Setup, in the skills-evals checkout:
      skill/PURPOSE.md (the lesson it answers, in invented terms, and the
      triage reason), optional skill/references/, skill/scripts/,
      skill/assets/ text files;
-   - plugin: one line, one of anything-anywhere,
-     coding-anywhere, coding-local, non-coding-local;
+   - plugin: one line, one of acsi-anything-anywhere,
+     acsi-coding-anywhere, acsi-coding-local, acsi-non-coding-local;
    - fixtures/<name>/ x4, each a fixture.yaml plus an optional seed/,
      modeled on evals/writing-adrs/*: `skill: <subject>`,
-     `registry: https://github.com/example-adopter/agentskills`, no
+     `registry: https://github.com/example-adopter/acsi-agentskills`, no
      `context:` block, a realistic prompt that does not name the skill, and
      deterministic objective checks that a with-skill run should pass and a
      plain run plausibly misses.
@@ -79,7 +79,7 @@ Setup, in the skills-evals checkout:
      "reason": ...} (not needed when PAYLOAD has "hook_declined": true).
 
 4. Measure: `python3 scripts/draft_new_skill.py measure --staging
-   $RUNNER/staging --registry agentskills=<agentskills checkout>
+   $RUNNER/staging --registry acsi-agentskills=<acsi-agentskills checkout>
    --ref <its HEAD sha> --payload PAYLOAD --trials 1 --results
    $RUNNER/results`. Exit 0 is accepted, 1 rejected, 2 refused. Do not edit
    the draft and re-measure; one measurement per run. measure (like
@@ -94,7 +94,7 @@ Setup, in the skills-evals checkout:
    $RUNNER/results/. .`), and add nothing else. Commit, then
    self-check before pushing: `python3 scripts/draft_new_skill.py validate
    --repo . --base origin/main --source HEAD --branch
-   claude/draft-skill-<run_id> --registry agentskills=<checkout> --out
+   claude/draft-skill-<run_id> --registry acsi-agentskills=<checkout> --out
    $RUNNER/selfcheck`. If it refuses, fix the branch's shape only. Push the
    branch. Never open a pull request or an issue; the gate does.
 

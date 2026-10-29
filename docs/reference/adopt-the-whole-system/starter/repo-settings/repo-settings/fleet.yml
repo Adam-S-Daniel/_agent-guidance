@@ -265,7 +265,7 @@ defaults:
     block_force_pushes: true
     block_deletions: true
     # why: _agent-guidance ADR 0021 -- the sync delivers agent-checks.yml (or,
-    # in agentskills, a ci.yml job with the same id) to every fleet repo.
+    # in acsi-agentskills, a ci.yml job with the same id) to every fleet repo.
     # It runs .githooks/agent-checks over every commit a PR adds: the check a
     # local `--no-verify` skips. Job id `agent-checks`, no `name:`, no matrix,
     # no `concurrency:`, no `timeout-minutes`, no path filter, so it reports on
@@ -306,7 +306,7 @@ defaults:
 # amended 2026-09-29; issue #51) is opened and auto-merged by a dedicated
 # per-repo GitHub App behind the required `test` check, not by GITHUB_TOKEN.
 # The eval loop's gated PRs (fixtures in skills-evals, skill improvements and
-# removals in agentskills, guidance sections in _agent-guidance) are the
+# removals in acsi-agentskills, guidance sections in _agent-guidance) are the
 # second exception (docs/decisions/0012): per-repo Apps open them, they
 # auto-merge behind each repo's required checks, and skills-evals' gates
 # enforce their path allowlists. No setting here changes for it.
@@ -332,7 +332,7 @@ defaults:
 # workflow files an issue naming any repo this file does not declare.
 repos:
   # --- public, ruleset-safe (adversarially verified: no workflow pushes to main) ---
-  # agentskills: the public skills registry. Same policy shape as agentskills (PR-only default branch, merge
+  # acsi-agentskills: the public skills registry. Same policy shape as agentskills (PR-only default branch, merge
   # commits only, SHA pinning, fork-PR approval) via the shared `defaults:`
   # block -- only the required-check override differs.
   #
@@ -354,7 +354,7 @@ repos:
   # Fourth check, `plugin-runtime-approval` (added 2026-10-08): the job in
   # .github/workflows/plugin-runtime-review.yml that holds a PR changing a
   # plugin's hooks, bin/, package.json or settings until the owner approves
-  # the `plugin-runtime-review` environment (agentskills ADR 0016/0017).
+  # the `plugin-runtime-review` environment (acsi-agentskills ADR 0016/0017).
   # It runs ONLY on `pull_request_target` (types opened/synchronize/reopened),
   # so no push/dispatch run can publish the context; no `name:`, no matrix,
   # no `concurrency:`, no `paths:` (an ungated PR reports success at once).
@@ -372,7 +372,7 @@ repos:
   # triggers only on `pull_request_target`. If that workflow ever gains a
   # trigger, list it here too or its runs are blocked. Why, and the fallback if
   # GitHub still shows the warning: docs/decisions/0009.
-  - name: example-adopter/agentskills
+  - name: example-adopter/acsi-agentskills
     manage: ["all"]
     overrides:
       ruleset:
@@ -393,7 +393,7 @@ repos:
   # UNATTENDED-merge gate everywhere in this fleet), a ruleset lives outside
   # the workflow a bad edit or a compromised token could rewrite.
   #
-  # The same two preconditions recorded on the agentskills entry above
+  # The same two preconditions recorded on the acsi-agentskills entry above
   # (stable context name, no `concurrency:` block), applied per repo and
   # CHECKED 2026-09-15 for each of the five:
   #   * the context name is stable -- a plain job id with no `name:` and no
@@ -532,10 +532,10 @@ repos:
   #     False seven minutes later, while a public repo in the same run stuck.
   #     See schema.md, "Downgrade behavior". ---
   # Renamed from example-adopter/retired-agentskills-private 2026-09-24 (companion
-  # private repo to the new agentskills public registry above). GitHub
+  # private repo to the new acsi-agentskills public registry above). GitHub
   # redirects the old name, but the engine keys targets by name verbatim, so
   # this file has to track the rename rather than rely on the redirect.
-  - name: example-adopter/agentskills-private
+  - name: example-adopter/acsi-agentskills-private
     manage: ["all"]
   # --- this repo, managing itself. Previously absent from this list entirely --
   #     not even as an excluded element -- so the repo that holds the

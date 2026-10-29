@@ -102,9 +102,9 @@ session that lost the guidance must not also lose these.
 ADRs live in [`docs/decisions/`](docs/decisions/README.md) (index +
 [`0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md`](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
 Skills are grouped into four plugins by audience and runtime —
-`plugins/anything-anywhere/`, `plugins/coding-anywhere/` (both
-cloud-safe, default-enabled), `plugins/coding-local/` and
-`plugins/non-coding-local/` (machine-bound, opt-in) — each holding real
+`plugins/acsi-anything-anywhere/`, `plugins/acsi-coding-anywhere/` (both
+cloud-safe, default-enabled), `plugins/acsi-coding-local/` and
+`plugins/acsi-non-coding-local/` (machine-bound, opt-in) — each holding real
 `skills/<skill>/` dirs, never symlinks. Skill directory basenames must stay
 unique and never change once a skill has shipped — locked by a consumer
 `skills.lock` (the basename keys it and the `setup.sh` symlinks). Before it
@@ -172,7 +172,7 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
   file linked above). Check the resolved path on the machine in front of you;
   never encode a repo location as a constant.
 - After a plugin move or rename, expect a one-time
-  `claude plugin install <plugin>@agentskills` per machine (plugin cache
+  `claude plugin install <plugin>@acsi-agentskills` per machine (plugin cache
   miss).
 - `sync.sh` never force-pushes a stale remote `agents-md-sync/update` branch
   (the push is non-fast-forward and it deliberately won't override). Recover

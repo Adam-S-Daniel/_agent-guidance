@@ -458,7 +458,7 @@ The rules that fall out, and they are cheap:
     "recomputes every digest from the pinned ref" and then prints `--repin`
     **without `--ref`**. `--repin` does not inherit `ref`, so it resolves `HEAD`
     and *advances* the pin (measured: `94cdcc81` → `3f40330`). Latent only
-    because the `my` bundle has not moved since `94cdcc81`.
+    because the `acsi` bundle has not moved since `94cdcc81`.
 - **A cross-repo string coupling needs the comment to match ALL its cases.**
   `bump-consumer-locks.sh` greps `^FAILED:` out of `generate_skills_lock.py` to
   decide whether to WRITE. When this was found, `FAILED:` covered three

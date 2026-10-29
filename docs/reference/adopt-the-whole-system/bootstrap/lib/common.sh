@@ -39,15 +39,15 @@ SKIPS=0
 
 # The six repos, as the owner names them (DECISIONS C1: the registries drop
 # the owner's name; _agent-guidance, repo-settings and skills-evals keep theirs).
-FLEET_REPOS=(_agent-guidance repo-settings agentskills agentskills-private skills-evals wsl-automation)
+FLEET_REPOS=(_agent-guidance repo-settings acsi-agentskills acsi-agentskills-private skills-evals wsl-automation)
 # Created only when named or with --with-optional: the waiting feed's private
 # data repo (REGENERATE.md, wsl-automation), which no kit tree fills.
 OPTIONAL_REPOS=(waiting-feed)
 # Private on every plan: the private registry and its lessons, the settings
 # engine's config (the owner's is private), and the waiting feed (session titles).
-ALWAYS_PRIVATE=(agentskills-private repo-settings waiting-feed)
+ALWAYS_PRIVATE=(acsi-agentskills-private repo-settings waiting-feed)
 # Public on every plan: the plugin marketplace other machines add by URL.
-ALWAYS_PUBLIC=(agentskills)
+ALWAYS_PUBLIC=(acsi-agentskills)
 
 log()  { printf '%s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -66,8 +66,8 @@ trap cleanup_work EXIT
 kit_tree() {
   case $1 in
     _agent-guidance) echo agent-guidance ;;
-    agentskills) echo agent-skills ;;
-    agentskills-private) echo agent-skills-private ;;
+    acsi-agentskills) echo agent-skills ;;
+    acsi-agentskills-private) echo agent-skills-private ;;
     repo-settings|skills-evals|wsl-automation) echo "$1" ;;
     *) return 1 ;;
   esac
@@ -191,8 +191,8 @@ description_for() {
   case $1 in
     _agent-guidance) echo "Fleet guidance, the sync that delivers it, the agent-checks runner and the routine specs" ;;
     repo-settings) echo "Repository settings as code: the engine, fleet.yml and the fan-out workflow" ;;
-    agentskills) echo "Reusable agent skills, packaged as a Claude Code plugin marketplace" ;;
-    agentskills-private) echo "Private agent skills and the lessons mined from your sessions" ;;
+    acsi-agentskills) echo "Reusable agent skills, packaged as a Claude Code plugin marketplace" ;;
+    acsi-agentskills-private) echo "Private agent skills and the lessons mined from your sessions" ;;
     skills-evals) echo "Evals for the skills and guidance, and the loop that improves and retires them" ;;
     wsl-automation) echo "Scheduled jobs for your durable machine: usage census, waiting feed, session miner" ;;
     waiting-feed) echo "Private data branch for the waiting-on-you feed" ;;
@@ -301,7 +301,7 @@ require_tools() { local t; for t in "$@"; do command -v "$t" >/dev/null 2>&1 || 
 #   repo-settings  fleet-apply            the admin App's key; the owner approves
 #                                         every apply; deploys from main only
 #                                         (repo-settings README, "One-time setup" 5)
-#   agentskills    plugin-runtime-review  the owner approves plugin runtime
+#   acsi-agentskills plugin-runtime-review  the owner approves plugin runtime
 #                                         changes; no branch policy, because it
 #                                         runs on pull_request_target (ADR 0016)
 #   skills-evals   routine-fire           the eval routine's bearer and trigger
@@ -309,7 +309,7 @@ require_tools() { local t; for t in "$@"; do command -v "$t" >/dev/null 2>&1 || 
 # Format: repo|environment|reviewer (owner|none)|branches (default|any)
 ENVIRONMENTS=(
   "repo-settings|fleet-apply|owner|default"
-  "agentskills|plugin-runtime-review|owner|any"
+  "acsi-agentskills|plugin-runtime-review|owner|any"
   "skills-evals|routine-fire|none|default"
 )
 
@@ -331,7 +331,7 @@ LABELS=(
 #   eval-improve    skills-evals' improve, draft and retirement PRs (ADR 0005)
 #   roster          skills-evals' roster, scaffold and fixture PRs (ADR 0003);
 #                   fleet.yml names its id as a bypass on roster/proposal
-#   registry-read   skills-evals' read of agentskills-private (lessons, census)
+#   registry-read   skills-evals' read of acsi-agentskills-private (lessons, census)
 # Format: app|permissions (JSON)|installed on ("fleet" or repos)|repo holding
 # the credentials|client id kind:name|key environment (- = repository level)|
 # key secret|config key|optional (yes|no)
@@ -339,9 +339,9 @@ APPS=(
   'guidance-sync|{"contents":"write","pull_requests":"write","metadata":"read","actions":"read","checks":"read","issues":"write"}|fleet|_agent-guidance|variable:APP_CLIENT_ID|-|APP_PRIVATE_KEY|GUIDANCE_SYNC_APP_ID|no'
   'settings-admin|{"administration":"write","actions":"write","issues":"write","metadata":"read"}|fleet|repo-settings|variable:REPO_SETTINGS_APP_CLIENT_ID|fleet-apply|REPO_SETTINGS_APP_PRIVATE_KEY|SETTINGS_ADMIN_APP_ID|no'
   'settings-read|{"administration":"read","actions":"read","issues":"read","metadata":"read"}|fleet|repo-settings|variable:REPO_SETTINGS_READ_APP_CLIENT_ID|-|REPO_SETTINGS_READ_APP_PRIVATE_KEY|SETTINGS_READ_APP_ID|no'
-  'eval-improve|{"contents":"write","pull_requests":"write"}|agentskills _agent-guidance|skills-evals|secret:EVAL_IMPROVE_APP_CLIENT_ID|-|EVAL_IMPROVE_APP_PEM|EVAL_IMPROVE_APP_ID|no'
+  'eval-improve|{"contents":"write","pull_requests":"write"}|acsi-agentskills _agent-guidance|skills-evals|secret:EVAL_IMPROVE_APP_CLIENT_ID|-|EVAL_IMPROVE_APP_PEM|EVAL_IMPROVE_APP_ID|no'
   'roster|{"contents":"write","pull_requests":"write"}|skills-evals|skills-evals|variable:ROSTER_APP_CLIENT_ID|-|ROSTER_APP_PRIVATE_KEY|ROSTER_WRITER_APP_ID|no'
-  'registry-read|{"contents":"read"}|agentskills-private|skills-evals|variable:REGISTRY_READ_APP_CLIENT_ID|-|REGISTRY_READ_APP_PEM|REGISTRY_READ_APP_ID|no'
+  'registry-read|{"contents":"read"}|acsi-agentskills-private|skills-evals|variable:REGISTRY_READ_APP_CLIENT_ID|-|REGISTRY_READ_APP_PEM|REGISTRY_READ_APP_ID|no'
 )
 
 # The generated files regenerate.sh rebuilds (export/REGENERATE.md), in the
@@ -351,7 +351,7 @@ REGEN_TASKS=(skills-locks hook-pin run-health-sha codex-pin actions-lock)
 # Secrets and variables that are not App credentials (set-secrets.sh).
 # Format: repo|environment (- = repository level)|kind (secret|variable)|name|source
 OTHER_VALUES=(
-  "agentskills|-|secret|PRIVACY_DENYLIST|file"
+  "acsi-agentskills|-|secret|PRIVACY_DENYLIST|file"
   "skills-evals|routine-fire|secret|EVAL_ROUTINE_FIRE_BEARER|prompt"
   "skills-evals|routine-fire|variable|ROUTINE_TRIGGER_ID|prompt"
 )

@@ -1,5 +1,5 @@
 # Export of adam-agentskills-private into starter/agent-skills-private/ (repo
-# name `agentskills-private`, DECISIONS C1). Built from the inventory (scratch
+# name `acsi-agentskills-private`, DECISIONS C1). Built from the inventory (scratch
 # manifests/adam-agentskills-private.yml, 2026-10-29) as amended by
 # DECISIONS.md. Only what that inventory lists as include or include_edit is
 # copied: everything but the credential runbook (X3) and the one skill (X2).
@@ -19,7 +19,8 @@ exclude:
 
 substitutions:
   # C1, as in the public registry's manifest: a bare `agentskills` names the
-  # retired predecessor registry, never the renamed live one.
+  # retired predecessor registry, never the renamed live one
+  # (`acsi-agentskills`).
   - name: C1 retired registry (bare)
     regex: '(?<![\w.-])agentskills(-private)?(?![\w.-])'
     to: 'retired-agentskills\1'
@@ -29,10 +30,10 @@ edits:
     stage: output
     old: |
       "owner": { "name": "the owner" },
-        "description": "the owner's personal agent skills — content that is simply personal. Public counterpart: example-adopter/agentskills.",
+        "description": "the owner's personal agent skills — content that is simply personal. Public counterpart: example-adopter/acsi-agentskills.",
     new: |
       "owner": { "name": "<your name>" },
-        "description": "Private agent skills: content that is personal or sensitive. Public counterpart: example-adopter/agentskills.",
+        "description": "Private agent skills: content that is personal or sensitive. Public counterpart: example-adopter/acsi-agentskills.",
     why: >-
       C10 and X9. Names the owner with the kit's `<your name>` placeholder
       (copy-starter.sh fills it from OWNER_NAME) and describes the registry,
@@ -42,7 +43,7 @@ edits:
     old: '"description": "the owner''s personal skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",'
     new: '"description": "Private skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",'
     why: C10. Describes the bundle, not the owner.
-  - path: plugins/private-anything-anywhere/.claude-plugin/plugin.json
+  - path: plugins/acsi-private-anything-anywhere/.claude-plugin/plugin.json
     stage: output
     old: |
       "description": "the owner's personal skills that run anywhere: claude.ai (web, iOS, Chrome, Desktop) and Claude Code.",

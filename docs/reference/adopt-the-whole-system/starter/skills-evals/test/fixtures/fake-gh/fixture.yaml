@@ -3,7 +3,7 @@
 # (harness/fakes/gh) drive this seed's payloads through it. It measures
 # nothing and no schedule names it.
 skill: fake-gh-example
-registry: https://github.com/example-adopter/agentskills
+registry: https://github.com/example-adopter/acsi-agentskills
 
 env:
   PATH: "$WORKSPACE/bin:$PATH"

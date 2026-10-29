@@ -3,7 +3,7 @@
 # input. It measures nothing and no schedule names it.
 
 skill: writing-adrs
-registry: https://github.com/example-adopter/agentskills
+registry: https://github.com/example-adopter/acsi-agentskills
 
 
 judge:

@@ -175,8 +175,8 @@ jobs:
       - name: Check out the skills registry
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: registries/agentskills
+          repository: example-adopter/acsi-agentskills
+          path: registries/acsi-agentskills
           fetch-depth: 0
           token: ${{ steps.token_example_adopter.outputs.token || github.token }}
 
@@ -205,7 +205,7 @@ jobs:
           # one answer to "which registry is ours" instead of a second copy in
           # a workflow that can disagree with it.
           BUMP_CHECKOUTS: >-
-            example-adopter/agentskills=${{ github.workspace }}/registries/agentskills
+            example-adopter/acsi-agentskills=${{ github.workspace }}/registries/acsi-agentskills
             example-adopter/example-site-platform=${{ github.workspace }}/registries/example-site-platform
           # Read through the environment, never interpolated into the command
           # below. `${{ inputs.* }}` inside a `run:` body is rendered into the
@@ -261,7 +261,7 @@ jobs:
           # string is passed as above so there is one spelling of "where the
           # checkouts are" in this file rather than two that can drift.
           BUMP_CHECKOUTS: >-
-            example-adopter/agentskills=${{ github.workspace }}/registries/agentskills
+            example-adopter/acsi-agentskills=${{ github.workspace }}/registries/acsi-agentskills
             example-adopter/example-site-platform=${{ github.workspace }}/registries/example-site-platform
           # Through the environment, never interpolated into the `run:` body —
           # same rule, same incident, as the step above.

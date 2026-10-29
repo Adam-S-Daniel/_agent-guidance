@@ -16,14 +16,14 @@
 #   settings-read   administration, actions, issues, metadata: read. The drift
 #                   check. Variable REPO_SETTINGS_READ_APP_CLIENT_ID, secret
 #                   REPO_SETTINGS_READ_APP_PRIVATE_KEY. Installed fleet-wide.
-#   eval-improve    contents, pull requests: write, on agentskills and
+#   eval-improve    contents, pull requests: write, on acsi-agentskills and
 #                   _agent-guidance. Secrets EVAL_IMPROVE_APP_CLIENT_ID and
 #                   EVAL_IMPROVE_APP_PEM in skills-evals (both secrets: the
 #                   gates check that both exist before minting).
 #   roster          contents, pull requests: write, on skills-evals. Variable
 #                   ROSTER_APP_CLIENT_ID, secret ROSTER_APP_PRIVATE_KEY. Its
 #                   App id is ROSTER_WRITER_APP_ID, a ruleset bypass actor.
-#   registry-read   contents: read, on agentskills-private. Variable
+#   registry-read   contents: read, on acsi-agentskills-private. Variable
 #                   REGISTRY_READ_APP_CLIENT_ID, secret REGISTRY_READ_APP_PEM.
 #
 # Default: all six; name some to create only those.

@@ -27,7 +27,7 @@ What a branch must look like to pass:
   * its name is `claude/eval-improve-<YYYYMMDDTHHMMSSZ>-<6 hex>`;
   * against its merge-base with the default branch it ADDS exactly the three
     files above, regular and non-executable, under its own run id;
-  * summary.json is an `accepted` record (schema 1) for the agentskills
+  * summary.json is an `accepted` record (schema 1) for the acsi-agentskills
     registry at a full commit sha, whose `skill_md` is that registry's
     `plugins/<plugin>/skills/<skill>/SKILL.md` for the record's own skill,
     and the skill has fixtures under `evals/<skill>/` on the default branch;
@@ -53,19 +53,19 @@ $GITHUB_OUTPUT):
   fire-check SKILL [--holdout NAME]                     (no output; exit 0 or 1)
 
 `prepare` builds the whole registry change on a clean checkout of
-agentskills' default branch tip, holding no credential: the patch
+acsi-agentskills' default branch tip, holding no credential: the patch
 (`apply`), a `PURPOSE.md` stub when the skill has none, the plugin's patch
-version raised in both manifests (agentskills ADR 0009), a
+version raised in both manifests (acsi-agentskills ADR 0009), a
 `docs/skill-impact.md` entry, the README table regenerated, then a second
 commit re-pinning `skills.lock` to the first when the lock covers the
 skill (the registry's own `scripts/` do the last two). Those are what the
 registry's required checks and AGENTS.md ask of a skill edit. It prints the
 merge mode: `evals/improve-policy.yml`'s `improve_merge_mode`, or `draft`
 when the skill's plugin runs code (`auto_refusal`), so an auto-merged pull
-request never touches what agentskills' plugin-runtime-review gates.
+request never touches what acsi-agentskills' plugin-runtime-review gates.
 `merge-mode` prints the same decision (`effective_mode`) for
 routine-draft-skill-gate.yml, so one policy file switches every loop gate
-that writes agentskills.
+that writes acsi-agentskills.
 
 `fire-check` is the other end: `routine-eval-fire.yml` runs it before the
 fire bearer exists, so a skill the loop would refuse never starts a routine
@@ -103,13 +103,13 @@ SIZE_CAPS = {"summary.json": 256 * 1024, "report.md": 64 * 1024,
 #: The only registry a pull request is opened in. ADR 0010 decision 1
 #: lets routine arms run only the registries' default branches; this gate
 #: further limits the loop's output to the one registry it targets.
-REGISTRY_NAME = "agentskills"
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_NAME = "acsi-agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 NAME = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
-#: agentskills' layout (harness/registries.yml: plugins/*/skills/*/SKILL.md).
+#: acsi-agentskills' layout (harness/registries.yml: plugins/*/skills/*/SKILL.md).
 SKILL_MD_RE = re.compile(rf"plugins/(?P<plugin>{NAME})/skills/(?P<skill>{NAME})/SKILL\.md")
 NAME_RE = re.compile(NAME)
-#: The branch the pull request comes from in agentskills: one per skill,
+#: The branch the pull request comes from in acsi-agentskills: one per skill,
 #: so a second accepted candidate waits until the first has merged (and its
 #: branch was deleted) or was closed (ADR 0005, "the idempotency check on an
 #: open eval-improve/<skill> branch").
@@ -121,7 +121,7 @@ MERGE_MODES = ("auto", "draft")
 #: A policy that names no mode (the owner, 2026-10-26: accepted improvements merge
 #: with no human in the loop).
 DEFAULT_MERGE_MODE = "auto"
-#: What makes a plugin one that runs code, as agentskills'
+#: What makes a plugin one that runs code, as acsi-agentskills'
 #: scripts/plugin_runtime_gate.py sees it: these paths under its root, or a
 #: `hooks` or `settings` key in a manifest. A skill in such a plugin is never
 #: auto-merged, because a hook can name any file under the root.
@@ -502,7 +502,7 @@ def _manifest(tree: Path, rel: str) -> tuple[str, dict]:
 
 def auto_refusal(tree: Path, plugin: str) -> str | None:
     """Why the skill's plugin may not be auto-merged into, or None. A plugin
-    that runs code (agentskills ADR 0016's runtime surfaces) always
+    that runs code (acsi-agentskills ADR 0016's runtime surfaces) always
     gets a draft: a hook can name any file under its root, skills included,
     and its runtime review must have an owner's approval."""
     root = f"plugins/{plugin}"
@@ -521,7 +521,7 @@ def effective_mode(tree: Path, plugin: str, policy: Path = POLICY) -> dict:
     """The merge mode for a loop pull request that changes a skill of
     `plugin` in the registry checkout `tree`: the policy's, lowered to
     `draft` (with the reason) when the plugin runs code. The one switch for
-    every loop gate that writes agentskills: this gate's `prepare` and
+    every loop gate that writes acsi-agentskills: this gate's `prepare` and
     routine-draft-skill-gate.yml's `merge-mode` step."""
     if not NAME_RE.fullmatch(plugin):
         raise Rejected("plugin is not a plugin name")
@@ -532,7 +532,7 @@ def effective_mode(tree: Path, plugin: str, policy: Path = POLICY) -> dict:
 
 
 def _bump_versions(tree: Path, plugin: str) -> tuple[str, str]:
-    """Raise the plugin's patch version in both manifests (agentskills
+    """Raise the plugin's patch version in both manifests (acsi-agentskills
     ADR 0009: `claude plugin update` fires on the version string alone, and
     its check_plugin_versions.py fails a content change without one).
     The text is edited in place so the file keeps its formatting."""
@@ -628,7 +628,7 @@ Maintenance context only; never loaded at inference.
 ## What it is for
 
 Not written yet. skills-evals' improvement gate added this file when
-improvement run `{run_id}` edited `SKILL.md`, because agentskills asks a
+improvement run `{run_id}` edited `SKILL.md`, because acsi-agentskills asks a
 touched skill to carry one (AGENTS.md, "Skill changes get recorded"). Replace
 it with the incidents and patterns that motivated the skill.
 
@@ -709,7 +709,7 @@ def prepare(staged: Path, tree: Path, skill_md: str, registry_sha: str,
     content = ingest.resolve_commit(repo, "HEAD")
 
     # The lock pins a commit, so it can only name the content commit after
-    # that commit exists (agentskills ci.yml, "Check skills.lock still
+    # that commit exists (acsi-agentskills ci.yml, "Check skills.lock still
     # describes the current bundle").
     if (tree / LOCK).exists():
         _no_symlink(tree, LOCK)
@@ -758,7 +758,7 @@ def pr_body(staged: Path, run_id: str, sha: str, branch: str,
     if mode == "auto":
         review = [
             "This pull request merges itself (merge commit) once "
-            "agentskills' required checks pass, with no human review: "
+            "acsi-agentskills' required checks pass, with no human review: "
             "the owner decided on 2026-10-26 that accepted improvements merge "
             f"with no human in the loop ([ADR 0021]({REGISTRY_ADR})). It does "
             "not count toward the three human-reviewed loop pull requests of "

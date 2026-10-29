@@ -50,23 +50,24 @@ protect:
 #   sentence_case: true   capitalize the replacement at a sentence start
 #   paths: [globs]        only in these files
 substitutions:
-  # C1: the retired predecessor registry keeps a distinct name, so it does
-  # not collide with the renamed current registry (`agentskills`).
+  # C1: the retired predecessor registry keeps a distinct name, so it stays
+  # readable beside the renamed current registry (`acsi-agentskills`).
   - name: C1 retired registry (owner-qualified)
     regex: 'Adam-S-Daniel/agentskills(-private)?(?![\w.-])'
     to: 'example-adopter/retired-agentskills\1'
   - name: C1 retired registry, second owner
     regex: 'jodidaniel/agentskills(-private)?(?![\w.-])'
     to: 'example-adopter-two/retired-agentskills\1'
-  # C1: repo and plugin names that carry the owner's name.
-  - {name: C1 private registry, literal: adam-agentskills-private, to: agentskills-private}
-  - {name: C1 registry, literal: adam-agentskills, to: agentskills}
-  - {name: C1 registry (identifier), literal: adam_agentskills, to: agentskills}
-  - {name: C1 private plugins, regex: 'adam-private-([a-z0-9][a-z0-9-]*)', to: 'private-\1'}
-  - {name: C1 plugin anything-anywhere, literal: adam-anything-anywhere, to: anything-anywhere}
-  - {name: C1 plugin coding-anywhere, literal: adam-coding-anywhere, to: coding-anywhere}
-  - {name: C1 plugin non-coding-local, literal: adam-non-coding-local, to: non-coding-local}
-  - {name: C1 plugin coding-local, literal: adam-coding-local, to: coding-local}
+  # C1: repo and plugin names that carry the owner's name take the generic
+  # `acsi-` prefix (automatic continuous self-improvement) in its place.
+  - {name: C1 private registry, literal: adam-agentskills-private, to: acsi-agentskills-private}
+  - {name: C1 registry, literal: adam-agentskills, to: acsi-agentskills}
+  - {name: C1 registry (identifier), literal: adam_agentskills, to: acsi_agentskills}
+  - {name: C1 private plugins, regex: 'adam-private-([a-z0-9][a-z0-9-]*)', to: 'acsi-private-\1'}
+  - {name: C1 plugin anything-anywhere, literal: adam-anything-anywhere, to: acsi-anything-anywhere}
+  - {name: C1 plugin coding-anywhere, literal: adam-coding-anywhere, to: acsi-coding-anywhere}
+  - {name: C1 plugin non-coding-local, literal: adam-non-coding-local, to: acsi-non-coding-local}
+  - {name: C1 plugin coding-local, literal: adam-coding-local, to: acsi-coding-local}
   # C3: the platform's consumer sites become invented example consumers.
   - {name: C3 consumer site A, literal: adamdaniel.ai, to: example-site-a}
   - {name: C3 consumer site B, literal: jodidaniel.com, to: example-site-b}
@@ -83,8 +84,8 @@ substitutions:
   - {name: C10 full name, regex: '(?<![\w-])Adam Daniel(?![\w-])', to: 'the owner', sentence_case: true}
   - {name: C10 first name possessive, regex: "(?<![\\w-])Adam['’]s(?![\\w-])", to: "the owner's", sentence_case: true}
   - {name: C10 first name, regex: '(?<![\w-])Adam(?![\w-])', to: 'the owner', sentence_case: true}
-  # C1: the bare `adam` bundle label (and names built on it) becomes `my`.
-  - {name: C1 bare adam label, regex: '(?<![\w-])adam(?![a-z_])', to: 'my'}
+  # C1: the bare `adam` bundle label (and names built on it) becomes `acsi`.
+  - {name: C1 bare adam label, regex: '(?<![\w-])adam(?![a-z_])', to: 'acsi'}
   # Machine names and the owner's drive letter.
   - {name: workstation name, regex: '\bBOXY\b', to: 'WORKSTATION'}
   - {name: old workstation name, regex: '\bZENDA\b', to: 'OLD-WORKSTATION'}
@@ -148,8 +149,8 @@ source_owners: [Adam-S-Daniel, jodidaniel, superoutrigger]
 kit_owners: [example-adopter, example-adopter-two]
 kit_repos:
   - _agent-guidance
-  - agentskills
-  - agentskills-private
+  - acsi-agentskills
+  - acsi-agentskills-private
   - skills-evals
   - repo-settings
   - wsl-automation

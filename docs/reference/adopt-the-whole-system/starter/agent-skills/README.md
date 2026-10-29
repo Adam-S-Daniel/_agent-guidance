@@ -1,13 +1,13 @@
-# agentskills
+# acsi-agentskills
 
 The owner's reusable agent skills, packaged as **Claude Code plugins** and as
 cross-agent skills that follow the
 [Agent Skills specification](https://agentskills.io/specification).
 
 Skills are grouped into four **plugins** under `plugins/<plugin>/skills/<skill>/`,
-named by audience and runtime (`[my|my-private]-[coding|non-coding|anything]-[local|anywhere]`;
+named by audience and runtime (`[acsi|acsi-private]-[coding|non-coding|anything]-[local|anywhere]`;
 see [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)),
-and the repo root is a Claude Code **plugin marketplace**, `agentskills`
+and the repo root is a Claude Code **plugin marketplace**, `acsi-agentskills`
 (`.claude-plugin/marketplace.json`). The marketplace also publishes one
 **federated plugin** — `example-site-platform`, whose plugin root is that repo itself, so
 it keeps its skills, its cadence and its review path there while this stays the
@@ -25,42 +25,42 @@ One command, on **Claude Code v2.1.275 or later** — it resolves the source,
 offers to add the marketplace, then installs the plugin:
 
 ```bash
-/plugin install coding-anywhere --marketplace example-adopter/agentskills
+/plugin install acsi-coding-anywhere --marketplace example-adopter/acsi-agentskills
 ```
 
 On Claude Code versions before v2.1.275, add the marketplace first and install
 by `plugin@marketplace`:
 
 ```bash
-/plugin marketplace add example-adopter/agentskills
-/plugin install coding-anywhere@agentskills
+/plugin marketplace add example-adopter/acsi-agentskills
+/plugin install acsi-coding-anywhere@acsi-agentskills
 ```
 
 Either way the marketplace is added once, so the other plugins install from it
 by name:
 
 ```bash
-/plugin install anything-anywhere@agentskills
-/plugin install coding-local@agentskills        # opt-in, machine-bound
-/plugin install non-coding-local@agentskills    # opt-in, local Cowork
-/plugin install example-site-platform@agentskills   # federated — fetched from example-adopter/example-site-platform
+/plugin install acsi-anything-anywhere@acsi-agentskills
+/plugin install acsi-coding-local@acsi-agentskills        # opt-in, machine-bound
+/plugin install acsi-non-coding-local@acsi-agentskills    # opt-in, local Cowork
+/plugin install example-site-platform@acsi-agentskills   # federated — fetched from example-adopter/example-site-platform
 # …or browse and pick interactively:
 /plugin
 ```
 
 Skills are namespaced by plugin — invoke them as `/<plugin>:<skill>`, e.g.
-`/anything-anywhere:finding-unknowns`. To refresh later, update the
+`/acsi-anything-anywhere:finding-unknowns`. To refresh later, update the
 catalog and then the installed plugin caches explicitly:
 
 ```bash
-claude plugin marketplace update agentskills
-claude plugin update coding-anywhere@agentskills
+claude plugin marketplace update acsi-agentskills
+claude plugin update acsi-coding-anywhere@acsi-agentskills
 ```
 
 Starting with Claude Code v2.1.232, installing by `plugin@marketplace` also
 refreshes the registered marketplace catalog automatically.
 Run `claude plugin update` for each installed plugin that should be refreshed;
-update `example-site-platform@agentskills` separately to refresh the federated
+update `example-site-platform@acsi-agentskills` separately to refresh the federated
 plugin from its own repository. Catalog refresh alone does not update installed
 plugin caches. In Claude Code v2.1.268 and later, installs, enables, and
 disables made in the interactive plugin menu apply when the menu closes. The
@@ -79,13 +79,13 @@ plugin contains a symlink.
 
 | Plugin | Default | For | Surfaces |
 | --- | --- | --- | --- |
-| `anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |
-| `coding-anywhere` | enabled | coding skills (CI, GitHub, skill delivery) | Claude Code terminals and cloud sessions |
-| `coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser), plus the clone-sync and API-credit-lane hooks | Claude Code on the owner's machines |
-| `non-coding-local` | opt-in; on in Windows, off in WSL/Linux on the owner's machines ([below](#which-bundles-on-which-os)) | document and browser skills | the Claude Desktop app's local Cowork |
+| `acsi-anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |
+| `acsi-coding-anywhere` | enabled | coding skills (CI, GitHub, skill delivery) | Claude Code terminals and cloud sessions |
+| `acsi-coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser), plus the clone-sync and API-credit-lane hooks | Claude Code on the owner's machines |
+| `acsi-non-coding-local` | opt-in; on in Windows, off in WSL/Linux on the owner's machines ([below](#which-bundles-on-which-os)) | document and browser skills | the Claude Desktop app's local Cowork |
 
 Sensitive skills live in the private sibling registry,
-`example-adopter/agentskills-private`, as `my-private-*` plugins.
+`example-adopter/acsi-agentskills-private`, as `acsi-private-*` plugins.
 
 `example-site-platform` is the exception to that layout: it is **federated**, not
 vendored — its entry names `example-adopter/example-site-platform` as the plugin root, so
@@ -97,8 +97,8 @@ sites, noise everywhere else) and every enabled skill costs always-on context.
 says a plugin *exists* and *where it lives*; a consumer's
 [`skills.lock`](skills.lock) says which plugins *that repo* installs and pins.
 So `example-site-platform` is published here and delivered by nothing in this repo's own
-lock — which carries only the cloud-safe pair, `anything-anywhere` and
-`coding-anywhere` — and that is the intended state rather than an
+lock — which carries only the cloud-safe pair, `acsi-anything-anywhere` and
+`acsi-coding-anywhere` — and that is the intended state rather than an
 omission: the platform plugin is opt-in per consumer, and which plugins
 another repo installs is not this repo's business.
 Nothing cross-checks the two files against each other, and nothing should; a
@@ -124,12 +124,12 @@ name is a one-way door once enabled anywhere — renaming it means every app
 that enabled it loses it.
 
 **Migrating from the retired `retired-agentskills` registry:** re-pin each consumer
-repo's `skills.lock` to `example-adopter/agentskills` and the new plugin
+repo's `skills.lock` to `example-adopter/acsi-agentskills` and the new plugin
 names, then on each of the owner's durable machines re-run
 `bash setup.sh --owner-machine` (in each home, Windows Git Bash and WSL).
 That registers the new marketplaces, enables the new plugins and writes
-`false` for the retired registry's plugins (`my`, `my-local`, `fastmail`,
-`my-personal`, `my-private`), so nothing loads twice; it leaves the old
+`false` for the retired registry's plugins (`acsi`, `acsi-local`, `fastmail`,
+`acsi-personal`, `acsi-private`), so nothing loads twice; it leaves the old
 marketplace entries themselves in place — remove those with
 `claude plugin marketplace remove`. Re-running it also cleans up the retired global sync-skills
 pre-push hook ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)), which
@@ -141,17 +141,17 @@ Available skills (a plugin with none yet says so; the table is generated by
 <!-- BEGIN GENERATED PLUGIN TABLE -->
 | Plugin | Invocation | Description |
 | --- | --- | --- |
-| `anything-anywhere` | none yet — add skills under `plugins/anything-anywhere/skills/` | Skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code. |
-| `coding-anywhere` | none yet — add skills under `plugins/coding-anywhere/skills/` | Coding skills for Claude Code terminals and Claude Code cloud sessions. |
-| `coding-local` | none yet — add skills under `plugins/coding-local/skills/` | Machine-bound coding skills and hooks for Claude Code on your own machines (WSL and Windows homes): clone sync and the API-credit lane. |
-| `non-coding-local` | none yet — add skills under `plugins/non-coding-local/skills/` | Non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork. |
+| `acsi-anything-anywhere` | none yet — add skills under `plugins/acsi-anything-anywhere/skills/` | Skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code. |
+| `acsi-coding-anywhere` | none yet — add skills under `plugins/acsi-coding-anywhere/skills/` | Coding skills for Claude Code terminals and Claude Code cloud sessions. |
+| `acsi-coding-local` | none yet — add skills under `plugins/acsi-coding-local/skills/` | Machine-bound coding skills and hooks for Claude Code on your own machines (WSL and Windows homes): clone sync and the API-credit lane. |
+| `acsi-non-coding-local` | none yet — add skills under `plugins/acsi-non-coding-local/skills/` | Non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork. |
 | `example-site-platform` | `/example-site-platform:<skill>` — skills live in [example-adopter/example-site-platform](https://github.com/example-adopter/example-site-platform) | An example of a federated plugin: the skills of a separate platform repo, served from that repo rather than mirrored here. |
 <!-- END GENERATED PLUGIN TABLE -->
 
 ## Install — Codex, and what `setup.sh` does now
 
 Codex installs these plugins from the same marketplace: register the catalog
-with `codex plugin marketplace add example-adopter/agentskills` (see
+with `codex plugin marketplace add example-adopter/acsi-agentskills` (see
 [marketplace catalogs](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli))
 and install the plugins you want.
 
@@ -211,8 +211,8 @@ is **not** for anyone else's machine:
   without this WSL git reports every file in those clones as modified;
 - converges `~/.claude/settings.json`: registers this marketplace and the
   owner's **private** one, enables the owner's plugins
-  (`anything-anywhere`, `coding-anywhere`, `coding-local`,
-  `private-anything-anywhere`), writes `false` for the account-synced
+  (`acsi-anything-anywhere`, `acsi-coding-anywhere`, `acsi-coding-local`,
+  `acsi-private-anything-anywhere`), writes `false` for the account-synced
   copies and for the retired registry's plugins, and sets
   `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
   that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
@@ -221,15 +221,15 @@ is **not** for anyone else's machine:
   ```` ```! ```` blocks in a skill never run as shell commands
   ([docs](https://code.claude.com/docs/en/skills); no skill here uses them);
   and applies the per-OS bundle policy below;
-- in Windows Git Bash, registers the `my-clone-sync` scheduled task by
-  running `plugins/coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1`
+- in Windows Git Bash, registers the `acsi-clone-sync` scheduled task by
+  running `plugins/acsi-coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1`
   through `pwsh.exe` (warns if PowerShell 7 is missing). See "Clone sync" below.
 
 Without the flag none of these steps runs, and the script says how to opt in.
 
 #### Clone sync
 
-`coding-local` ships two hooks that keep this machine's clean clones on
+`acsi-coding-local` ships two hooks that keep this machine's clean clones on
 the remote default branch
 ([ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)):
 after a successful `gh pr merge` or `*merge_pull_request` tool call, and at
@@ -238,14 +238,14 @@ repo. It fast-forwards only a clone that is on the default branch, has no
 tracked changes, has no operation in progress and is not a linked worktree,
 and never stashes, resets or forces. The hooks run in Claude Code and in Codex
 (which asks once to trust each hook definition). On Windows the
-`my-clone-sync` scheduled task runs the INSTALLED plugin's
+`acsi-clone-sync` scheduled task runs the INSTALLED plugin's
 `clone-sync.sh --all` every 30 minutes and at logon, and the same inside any
 WSL distro that is already running. Logs are under `~/.cache/clone-sync/`.
 
 #### API-credit lane (Claude Code only)
 
 When a weekly subscription window is more than half elapsed and ahead of pace,
-or at 98% or more, `coding-local` tells Claude Code sessions to delegate
+or at 98% or more, `acsi-coding-local` tells Claude Code sessions to delegate
 with `claude-credit -p "<task>"` instead of the Agent tool, and the child is
 billed to the owner's monthly API credit grant through workload identity
 federation
@@ -259,14 +259,14 @@ busy) and 76 (credit unavailable) mean: use the Agent tool.
 
 #### Which bundles on which OS
 
-The two `-anywhere` bundles and `coding-local` are the same on every
-durable machine. `non-coding-local` is not, so the default for any new
+The two `-anywhere` bundles and `acsi-coding-local` are the same on every
+durable machine. `acsi-non-coding-local` is not, so the default for any new
 machine of the owner's is:
 
 | Bundle | Windows | WSL / Linux | macOS |
 | --- | --- | --- | --- |
-| `anything-anywhere`, `coding-anywhere`, `coding-local` | on, from the marketplace | on, from the marketplace | on, from the marketplace |
-| `non-coding-local` | **on**, left as it arrives | **off** | untouched (no decision) |
+| `acsi-anything-anywhere`, `acsi-coding-anywhere`, `acsi-coding-local` | on, from the marketplace | on, from the marketplace | on, from the marketplace |
+| `acsi-non-coding-local` | **on**, left as it arrives | **off** | untouched (no decision) |
 
 Why: its seven skills (add-from-address, add-received-from-addresses, fastmail,
 ocr-pdfs, pdf-ocr-audit, rename-pdfs, compare-pdfpairs) are Windows, browser
@@ -274,9 +274,9 @@ and document workflows. `/skill-doctor` on WSL measured them at about 1.3k
 tokens of always-on descriptions per turn and zero uses in 7 days (2026-10-05).
 
 On WSL and Linux, `setup.sh --owner-machine` writes `false` for
-`non-coding-local@synced` (the claude.ai account sync, which brings the
+`acsi-non-coding-local@synced` (the claude.ai account sync, which brings the
 bundle in even with `syncClaudeAiSkills: false`) and for
-`non-coding-local@agentskills` (a marketplace install), because
+`acsi-non-coding-local@acsi-agentskills` (a marketplace install), because
 disabling one source leaves the other loading. It installs nothing, and it
 writes `false` on every run, so a manual `claude plugin enable` on Linux lasts
 only until the next run. On Windows it writes nothing and never turns off a
@@ -330,7 +330,7 @@ marketplace file had the same layout). That is historical compatibility
 evidence, not a current test of remote installation from this registry.
 
 As checked against the [current Codex plugin documentation on 2026-10-06](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli),
-register the catalog with `codex plugin marketplace add example-adopter/agentskills`.
+register the catalog with `codex plugin marketplace add example-adopter/acsi-agentskills`.
 Since 2026-10-08 Codex installs this registry's plugins from that catalog,
 which is why `setup.sh` no longer links skills for it (ADR 0017).
 
@@ -426,15 +426,15 @@ write is the delivery channel for ephemeral surfaces. What works where:
 ```
 .claude-plugin/marketplace.json       # catalog: 4 local plugins + 1 federated (no renames map)
 plugins/
-  <plugin>/                           # anything-anywhere | coding-anywhere |
-                                      # coding-local | non-coding-local —
+  <plugin>/                           # acsi-anything-anywhere | acsi-coding-anywhere |
+                                      # acsi-coding-local | acsi-non-coding-local —
                                       # LOCAL plugins only; example-site-platform is federated
     plugin.json                       # Agent Plugins 1.0.0 manifest
     .claude-plugin/plugin.json        # Claude Code plugin manifest
     skills/<skill>/SKILL.md           # one real dir per skill (+ scripts/, tests/, hooks/)
-    hooks/hooks.json                  # coding-local: harness-agnostic hooks (ADR 0017)
-    hooks/claude-code.json            # coding-local: Claude-only hooks (ADR 0018)
-    bin/claude-credit                 # coding-local: the API-credit lane wrapper
+    hooks/hooks.json                  # acsi-coding-local: harness-agnostic hooks (ADR 0017)
+    hooks/claude-code.json            # acsi-coding-local: Claude-only hooks (ADR 0018)
+    bin/claude-credit                 # acsi-coding-local: the API-credit lane wrapper
 schemas/                              # vendored Agent Plugins schema (pinned by sha256)
 scripts/                              # checks (consistency, privacy denylist, …) and their tests
 docs/decisions/                       # ADRs (see 0013 for the current plugin layout)
@@ -451,14 +451,14 @@ I put the following in Claude desktop app -> Settings -> Cowork -> Global instru
 > https://agentskills.io/specification and validate with `claude plugin validate`.
 > Skills live in plugins grouped by audience and runtime: add a new skill as
 > `plugins/<plugin>/skills/<skill>/SKILL.md` in the right plugin —
-> `anything-anywhere` for general skills usable everywhere,
-> `coding-anywhere` for cloud-safe coding skills, `coding-local` for
-> machine-bound coding skills, `non-coding-local` for local non-coding
+> `acsi-anything-anywhere` for general skills usable everywhere,
+> `acsi-coding-anywhere` for cloud-safe coding skills, `acsi-coding-local` for
+> machine-bound coding skills, `acsi-non-coding-local` for local non-coding
 > ones — no new plugin.json or marketplace entry needed.
 > Do **not** use `claude plugin init` — it
 > scaffolds into `.claude/skills`, which is not this repo's marketplace layout.
 > Never rename skill directories or plugins. Open a PR against `main` in
-> https://github.com/example-adopter/agentskills. Then fetch and pull in WSL and Windows
+> https://github.com/example-adopter/acsi-agentskills. Then fetch and pull in WSL and Windows
 > under `~/repos` and `%USERPROFILE%\repos`, and run `bash setup.sh --owner-machine` in both WSL and
 > Windows Git Bash so each home is converged — Claude Code and Codex install the
 > plugins from the marketplace, not from `.claude/skills` or per-agent skill

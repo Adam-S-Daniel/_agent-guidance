@@ -97,7 +97,7 @@ def errors_for(market, plugins_dir):
 
 
 def test_a_relative_path_source_is_local():
-    assert cc.classify_source(local_entry("my")) == ("local", "./plugins/my")
+    assert cc.classify_source(local_entry("acsi")) == ("local", "./plugins/acsi")
 
 
 def test_a_github_source_object_is_federated():
@@ -638,7 +638,7 @@ def test_a_link_into_the_retired_registry_is_reported(tmp_path, url):
 
 @pytest.mark.parametrize("text", [
     "https://github.com/Adam-S-Daniel/adam-agentskills/issues/1\n",
-    "https://github.com/example-adopter/agentskills-private\n",
+    "https://github.com/example-adopter/acsi-agentskills-private\n",
     "see old-registry issue 157\n",
     "https://agentskills.io/specification\n",
 ])

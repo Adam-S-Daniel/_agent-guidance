@@ -69,10 +69,10 @@ skills_bootstrap:
   # below, so no bot does that. See docs/decisions/0010.
   #
   # 2026-09-24: moved by hand from the retiring example-adopter/retired-agentskills to
-  # its successor example-adopter/agentskills (that repo's ADR 0013). The
+  # its successor example-adopter/acsi-agentskills (that repo's ADR 0013). The
   # bumper re-pins within one registry and cannot change `registry`, so this
   # one move was hand-made; `sha256` was recomputed from the bytes at `ref`.
-  registry: example-adopter/agentskills
+  registry: example-adopter/acsi-agentskills
   path: .claude/hooks/skills-bootstrap.sh
   ref: 1ecea2593bcbca6b6073eedf50bb4ffa90ee77e8
   # sha256 of the file at `ref`. The ref is already content-addressed, so this
@@ -80,7 +80,7 @@ skills_bootstrap:
   # start with no approval prompt, so "the bytes we deliver are the bytes that
   # were reviewed" is worth making mechanical rather than assumed. A mismatch
   # disables delivery for the whole run and fails it.
-  sha256: 42e6340a837b60c64a90dc40f8898a66a0acd95938a30b91c5a549d60758e2bb
+  sha256: b83fc2035eaeb8be8ef0b29d59a26effbc0de5a7fc8a711af9d00089e707d78f
   # The allowlist. Short repo names, matched the same way `exclude` is.
   #
   # Widened from two repos to ten on 2026-08-19 (ADR 0004). The two-repo start
@@ -108,8 +108,8 @@ skills_bootstrap:
     # survives review by looking already-decided.
     # Renamed from `agentskills-private` on 2026-09-24.
     # lock: committed — PR #8 merged 2026-08-19.
-    - agentskills-private
-    # lock: committed — federated (agentskills + example-site-platform), with the hook
+    - acsi-agentskills-private
+    # lock: committed — federated (acsi-agentskills + example-site-platform), with the hook
     # and its registration already in place. Listed so the sync keeps the hook
     # current against the pin above.
     - example-site-a
@@ -157,7 +157,7 @@ skills_bootstrap:
   # "reconcile" the two lists; ADR 0003 ruled against collapsing the scope
   # keys, and this is the coupling that ruling was protecting.
   out_of_scope:
-    - repo: agentskills
+    - repo: acsi-agentskills
       reason: >-
         Authors the hook and self-hosts it. Delivering it back would clobber
         the source of truth, and drift-report.sh exempts it from `unmanaged`
@@ -199,7 +199,7 @@ skills_bootstrap:
 # Every repo that runs Dependabot needs its own merge path: the
 # `dependabot-auto-merge.yml` workflow whose daily sweep merges a Dependabot
 # PR once every check on its head is green. Nothing added that file to a new
-# repo, so agentskills ran Dependabot without one and its green PRs
+# repo, so acsi-agentskills ran Dependabot without one and its green PRs
 # waited days for a hand merge (adam-agentskills#68).
 #
 # With `deliver: true`, sync.sh copies templates/dependabot-auto-merge/ into
@@ -261,8 +261,8 @@ cron_coverage:
   # classified out of scope below.
   fleet:
     - _agent-guidance
-    - agentskills
-    - agentskills-private
+    - acsi-agentskills
+    - acsi-agentskills-private
     - example-site-a
     - example-site-platform
     - example-site-b

@@ -29,18 +29,18 @@ Two facts argued against putting the rule in `agents-md/base.md`:
 
 ## Decision
 
-The lane is delivered by hooks in the `coding-local` plugin of
-[agentskills](https://github.com/example-adopter/agentskills), not by
+The lane is delivered by hooks in the `acsi-coding-local` plugin of
+[acsi-agentskills](https://github.com/example-adopter/acsi-agentskills), not by
 this repo's sync, and `base.md` does not mention it. The design lives in that
 repo's ADRs:
 
-- [0016](https://github.com/example-adopter/agentskills/blob/main/docs/decisions/0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md):
+- [0016](https://github.com/example-adopter/acsi-agentskills/blob/main/docs/decisions/0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md):
   plugins may ship hooks and `bin/`; a PR changing them waits for the owner's
   approval (`plugin-runtime-review`, a required check).
-- [0017](https://github.com/example-adopter/agentskills/blob/main/docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md):
+- [0017](https://github.com/example-adopter/acsi-agentskills/blob/main/docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md):
   Codex loads these plugins too, so hooks are harness-aware and Claude-only
   hooks live in a file Codex never reads.
-- [0018](https://github.com/example-adopter/agentskills/blob/main/docs/decisions/0018-api-credit-lane-for-claude-code.md):
+- [0018](https://github.com/example-adopter/acsi-agentskills/blob/main/docs/decisions/0018-api-credit-lane-for-claude-code.md):
   the lane itself — the gate, weekly allowance, grants, `claude-credit`, the WIF
   child environment, the fail-closed auth check, and the two cross-OS slots.
 

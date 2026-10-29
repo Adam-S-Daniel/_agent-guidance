@@ -71,7 +71,7 @@ into those files do too, with the AI review gating every merge.
 - Most of what the sweep and memory curation find now lands without the
   owner.
 - A wrong `CLEAN` reaches further. A platform skill such as example-site-platform's
-  ships through the `agentskills` marketplace to every machine that
+  ships through the `acsi-agentskills` marketplace to every machine that
   installs the bundle, and the fleet guidance is delivered by the sync to
   every fleet repo and loaded in every session. Each is still Markdown,
   reverted with one PR, and re-read by the next sweep.
@@ -89,11 +89,11 @@ into those files do too, with the AI review gating every merge.
 
 Two gaps showed up once the rule was live.
 
-First, a `SKILL.md` edit in `agentskills` never qualified. That repo's
+First, a `SKILL.md` edit in `acsi-agentskills` never qualified. That repo's
 `AGENTS.md` and CI also require a bundle `version` raise in both
 `plugin.json` files, a `docs/skill-impact.md` entry, a `PURPOSE.md` beside
 the skill, and a met eval touch gate. Merge rule item 2 now allows those
-files, in `agentskills` only and only beside a qualifying `SKILL.md`
+files, in `acsi-agentskills` only and only beside a qualifying `SKILL.md`
 change in the same bundle: the manifests when only `version` changes, the
 impact file when its diff only adds lines, and the `PURPOSE.md` in the
 changed skill's directory. The independent review answers `FINDINGS` unless

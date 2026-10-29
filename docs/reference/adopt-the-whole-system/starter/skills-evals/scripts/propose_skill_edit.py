@@ -6,7 +6,7 @@ slice) and https://github.com/Adam-S-Daniel/skills-evals/issues/232. The
 decision record is docs/decisions/0005-improvement-loop-reuses-skill-creator.md.
 
     python3 scripts/propose_skill_edit.py <skill> \\
-        --registry agentskills=PATH [--ref REF] [--trials 3] \\
+        --registry acsi-agentskills=PATH [--ref REF] [--trials 3] \\
         [--rotation K] [--min-gain .10] [--holdout FIXTURE] \\
         [--trigger-eval-set FILE] [--skill-creator DIR] [--num-workers 1] \\
         [--results-dir DIR] [--no-judge] [--dry-run]

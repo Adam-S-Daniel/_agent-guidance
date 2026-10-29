@@ -112,7 +112,7 @@ every skill into every session.* This repo has 9 plugins today and will grow.
 - Consider marking niche/personal plugins (`bell-schedule`, `fastmail`,
   `sync-cc-settings-between-wsl-and-windows`) as `defaultEnabled: false` in their
   `plugin.json` / marketplace entries, so they're installed-but-dormant until
-  invoked. Keep broadly useful ones (`my-writing-style`,
+  invoked. Keep broadly useful ones (`acsi-writing-style`,
   `github-actions-repo-settings`, `workflow-path-audit`) enabled.
 - Keep frontmatter `description` fields tight and trigger-focused — they are the
   text the model reads to decide whether to surface a skill, and they're what the

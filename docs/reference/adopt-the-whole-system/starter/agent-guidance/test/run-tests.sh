@@ -1033,7 +1033,7 @@ HOOK
 {
   "registry": "bootorg/agentskills",
   "ref": "1111111111111111111111111111111111111111",
-  "bundles": ["my"],
+  "bundles": ["acsi"],
   "sources": [
     {
       "registry": "bootorg/example-site-platform",
@@ -1042,7 +1042,7 @@ HOOK
       "layout": "skills"
     }
   ],
-  "skills": {"my/finding-unknowns": "deadbeef"}
+  "skills": {"acsi/finding-unknowns": "deadbeef"}
 }
 LOCK
 
@@ -1931,20 +1931,20 @@ setup_bump_repos() {
     # registry (scripts/generate_skills_lock.py), because that is where
     # bump-consumer-locks.sh looks for it by default.
     mkdir -p "$TEST_DIR/registry/scripts" \
-             "$TEST_DIR/registry/plugins/my/skills/finding-unknowns" \
-             "$TEST_DIR/registry/plugins/my/skills/writing-adrs"
+             "$TEST_DIR/registry/plugins/acsi/skills/finding-unknowns" \
+             "$TEST_DIR/registry/plugins/acsi/skills/writing-adrs"
     write_stub_generator "$TEST_DIR/registry/scripts/generate_skills_lock.py"
     write_strip_scoped_flags "$TEST_DIR/strip-scoped-flags.py"
     write_only_bundles_stub "$TEST_DIR/only-bundles-stub.py"
 
-    echo "v1" > "$TEST_DIR/registry/plugins/my/skills/finding-unknowns/SKILL.md"
-    echo "v1" > "$TEST_DIR/registry/plugins/my/skills/writing-adrs/SKILL.md"
+    echo "v1" > "$TEST_DIR/registry/plugins/acsi/skills/finding-unknowns/SKILL.md"
+    echo "v1" > "$TEST_DIR/registry/plugins/acsi/skills/writing-adrs/SKILL.md"
     git init --initial-branch=main "$TEST_DIR/registry" >/dev/null 2>&1
     cd "$TEST_DIR/registry"
     git config commit.gpgsign false
     git add -A && git commit -m "skills v1" >/dev/null 2>&1
     BUMP_REF_OLD=$(git rev-parse HEAD)
-    echo "v2" > plugins/my/skills/finding-unknowns/SKILL.md
+    echo "v2" > plugins/acsi/skills/finding-unknowns/SKILL.md
     git add -A && git commit -m "edit a skill" >/dev/null 2>&1
     BUMP_REF_CONTENT=$(git rev-parse HEAD)
     # A commit that moves HEAD without touching a bundle. This is what makes
@@ -2121,7 +2121,7 @@ seed_bump_lock() {
     python3 -c '
 import json, sys
 path, registry, ref, source_ref, baseline = sys.argv[1:6]
-doc = {"registry": registry, "ref": ref, "bundles": ["my"]}
+doc = {"registry": registry, "ref": ref, "bundles": ["acsi"]}
 if source_ref:
     doc["sources"] = [{
         "registry": "bumporg/example-site-platform",
@@ -2199,7 +2199,7 @@ doc = {
     "sources": [{
         "registry": "bumporg/agentskills",
         "ref": source_ref,
-        "bundles": ["my"],
+        "bundles": ["acsi"],
         "layout": "plugins/{bundle}/skills",
     }],
     "skills": {},
@@ -8979,14 +8979,14 @@ test_bump_consumer_locks() {
     fi
     local stale_old="$TEST_DIR/bump-stale-old.lock"
     bump_lock_at repo-stale main > "$stale_old"
-    if [[ "$(lock_skill_digest "$stale_new" my/finding-unknowns)" \
-          != "$(lock_skill_digest "$stale_old" my/finding-unknowns)" ]]; then
+    if [[ "$(lock_skill_digest "$stale_new" acsi/finding-unknowns)" \
+          != "$(lock_skill_digest "$stale_old" acsi/finding-unknowns)" ]]; then
         pass "bump: the changed skill's digest was re-derived"
     else
         fail "bump: the changed skill's digest was re-derived (it is unchanged)"
     fi
-    if [[ "$(lock_skill_digest "$stale_new" my/writing-adrs)" \
-          == "$(lock_skill_digest "$stale_old" my/writing-adrs)" ]]; then
+    if [[ "$(lock_skill_digest "$stale_new" acsi/writing-adrs)" \
+          == "$(lock_skill_digest "$stale_old" acsi/writing-adrs)" ]]; then
         pass "bump: the untouched skill's digest is unchanged"
     else
         fail "bump: the untouched skill's digest is unchanged"
@@ -9070,7 +9070,7 @@ test_bump_consumer_locks() {
     # The quoted verdict is the primary-scoped one, so every difference line in
     # it belongs to the ref this PR advances. A combined verdict would blame a
     # example-site-platform skill for an agentskills re-pin.
-    assert_contains "$fed_body" "my/finding-unknowns" "PR body: quotes the primary difference that caused this PR"
+    assert_contains "$fed_body" "acsi/finding-unknowns" "PR body: quotes the primary difference that caused this PR"
     assert_not_contains "$fed_body" "example-site-platform/deploy-site" "PR body: does not blame a federated skill for a primary re-pin"
     # A lock with a federated source holds digests published in TWO
     # repositories, so "every digest here is re-derived from the newly pinned
@@ -9546,7 +9546,7 @@ test_bump_bundle_vanished() {
     git clone "file://$TEST_DIR/registry" "$TEST_DIR/registry-vanished" >/dev/null 2>&1
     cd "$TEST_DIR/registry-vanished"
     git config commit.gpgsign false
-    git mv plugins/my plugins/my2 >/dev/null 2>&1
+    git mv plugins/acsi plugins/acsi2 >/dev/null 2>&1
     git commit -m "rename the bundle directory" >/dev/null 2>&1
     cd "$REPO_ROOT"
 
@@ -9681,7 +9681,7 @@ with open(path, "w", encoding="utf-8") as handle:
 # it: it digests the pinned tree and the working tree afresh and never reads
 # the stored values at all (the generator labels at the DOCUMENT boundary
 # expressly so that comparison keeps working on bare hex). Eight real consumer
-# locks sat malformed on 94cdcc81 for exactly as long as the `my` bundle
+# locks sat malformed on 94cdcc81 for exactly as long as the `acsi` bundle
 # stood still, with this script logging "no re-pin needed" at them nightly.
 #
 # So the fixtures are a MATCHED PAIR pinned at the same content-current ref,
@@ -9732,8 +9732,8 @@ test_bump_digest_format_gate() {
     local bare_lock labelled_lock
     bare_lock=$(git -C "$root/bumporg_repo-bare-digests" show main:skills.lock)
     labelled_lock=$(git -C "$root/bumporg_repo-labelled" show main:skills.lock)
-    if grep -qF '"my/finding-unknowns": "sha256:' <<< "$labelled_lock" \
-       && ! grep -qF '"my/finding-unknowns": "sha256:' <<< "$bare_lock"; then
+    if grep -qF '"acsi/finding-unknowns": "sha256:' <<< "$labelled_lock" \
+       && ! grep -qF '"acsi/finding-unknowns": "sha256:' <<< "$bare_lock"; then
         pass "format gate: the fixtures really are one labelled lock and one bare one"
     else
         fail "format gate: the fixtures really are one labelled lock and one bare one"
@@ -9779,8 +9779,8 @@ test_bump_digest_format_gate() {
     local pushed
     pushed=$(git -C "$root/bumporg_repo-bare-digests" \
         show "refs/heads/skills-lock-bump/update:skills.lock" 2>/dev/null || true)
-    if [[ -n "$pushed" ]] && ! grep -qE '"my/[a-z-]+": "[0-9a-f]{64}"' <<< "$pushed" \
-       && grep -qF '"my/finding-unknowns": "sha256:' <<< "$pushed"; then
+    if [[ -n "$pushed" ]] && ! grep -qE '"acsi/[a-z-]+": "[0-9a-f]{64}"' <<< "$pushed" \
+       && grep -qF '"acsi/finding-unknowns": "sha256:' <<< "$pushed"; then
         pass "format gate: the pushed lock has every digest relabelled, none left bare"
     else
         fail "format gate: the pushed lock has every digest relabelled, none left bare"
@@ -10441,7 +10441,7 @@ import json, sys
 out, ref, src = sys.argv[1:4]
 def lock(sources, primary_ref=None):
     return {"registry": "bumporg/agentskills", "ref": primary_ref or ref,
-            "bundles": ["my"], "sources": sources, "skills": {},
+            "bundles": ["acsi"], "sources": sources, "skills": {},
             "generated_from": primary_ref or ref}
 def source(bundles, r=None):
     return {"registry": "bumporg/example-site-platform", "ref": r or src,
@@ -10587,7 +10587,7 @@ path, ref = sys.argv[1:3]
 doc = {
     "registry": "bumporg/agentskills",
     "ref": ref,
-    "bundles": ["my"],
+    "bundles": ["acsi"],
     "sources": [{
         "registry": "bumporg/agentskills",
         "ref": ref,
@@ -10674,7 +10674,7 @@ path, ref = sys.argv[1:3]
 doc = {
     "registry": "bumporg/agentskills",
     "ref": ref,
-    "bundles": ["my"],
+    "bundles": ["acsi"],
     "sources": [{
         "registry": "bumporg/agentskills",
         "ref": ref,
@@ -14265,7 +14265,7 @@ test_bump_workflow() {
     fi
 
     local registry_depth
-    registry_depth=$(awk '$2 == "example-adopter/agentskills" { print $3 }' "$steps_file")
+    registry_depth=$(awk '$2 == "example-adopter/acsi-agentskills" { print $3 }' "$steps_file")
     if [[ "$registry_depth" == "0" ]]; then
         pass "bump workflow: the registry is checked out at full depth"
     else
@@ -14310,14 +14310,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: example-adopter/agentskills
+          repository: example-adopter/acsi-agentskills
           fetch-depth: 0
   bump:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
         with:
-          repository: example-adopter/agentskills
+          repository: example-adopter/acsi-agentskills
 YAML
     local decoy_steps="$TEST_DIR/two-job-bump-steps.txt"
     if ! workflow_steps "$decoy_wf" bump > "$decoy_steps" 2>/dev/null; then
@@ -14331,7 +14331,7 @@ YAML
             fi
         done < "$decoy_steps"
         local decoy_depth
-        decoy_depth=$(awk '$2 == "example-adopter/agentskills" { print $3 }' "$decoy_steps")
+        decoy_depth=$(awk '$2 == "example-adopter/acsi-agentskills" { print $3 }' "$decoy_steps")
         if [[ -z "$decoy_unpinned" && "$decoy_depth" != "0" ]]; then
             pass "bump workflow: N6 the pin and fetch-depth assertions scoped to 'bump' do not read an earlier job's steps"
         else
@@ -22607,7 +22607,7 @@ test_hook_eol_gitattributes_helper() {
     # The comment left behind when the line was removed by hand: only the line
     # comes back, so the comment is not duplicated.
     gattr_case "$d" comment-only "*.png binary\n$C\n" appended "*.png binary\n$C\n$L\n"
-    # A broader rule earlier in the file, as in agentskills.
+    # A broader rule earlier in the file, as in acsi-agentskills.
     gattr_case "$d" star-minus-text '* -text\n' appended "* -text\n$C\n$L\n"
 
     # Idempotence: a second ensure over the appended file writes nothing.

@@ -164,7 +164,7 @@ target.
   its own action-bump PRs, so a Dependabot auto-merge path allowlist that
   accepts `.github/workflows/*.yml` must also accept that exact path, or every
   action bump stops auto-merging. A gate that holds changes to its own
-  workflow for owner approval (agentskills' `plugin_runtime_gate.py`)
+  workflow for owner approval (acsi-agentskills' `plugin_runtime_gate.py`)
   must also gate the lockfile, which now chooses the commit its checkout
   runs. A salient-path diff runs with `--no-renames`, so moving a workflow out
   of `.github/workflows/` still runs the verify step.

@@ -40,7 +40,7 @@ def _sub(root: Path, rel: str, pairs) -> None:
 # Per plugin: (old description after substitution, new description, old
 # keywords as written inline in marketplace.json, new keywords).
 PLUGINS = {
-    "anything-anywhere": (
+    "acsi-anything-anywhere": (
         "the owner's skills for any Claude surface, coding or not: the claude.ai web and iOS apps, "
         "Claude in Chrome, the Claude Desktop app, and Claude Code. Writing ADRs and resolving task ambiguity.",
         "Skills for any Claude surface, coding or not: the claude.ai web and iOS apps, "
@@ -48,7 +48,7 @@ PLUGINS = {
         ["adr", "documentation", "requirements", "ambiguity", "planning"],
         ["skills", "writing", "planning"],
     ),
-    "coding-anywhere": (
+    "acsi-coding-anywhere": (
         "the owner's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions "
         "debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, disarming "
         "inherited reach, and filing vendor release-impact issues.",
@@ -57,7 +57,7 @@ PLUGINS = {
          "code-review", "skills", "changelog", "release-notes"],
         ["skills", "coding", "claude-code"],
     ),
-    "coding-local": (
+    "acsi-coding-local": (
         "the owner's machine-bound coding skills for Claude Code on the owner's own machines (WSL and Windows "
         "homes): Claude Code settings sync, session and memory management, and elevation from WSL.",
         "Machine-bound coding skills and hooks for Claude Code on your own machines (WSL and Windows homes): "
@@ -65,7 +65,7 @@ PLUGINS = {
         ["claude-code", "wsl", "windows", "sync", "settings", "memory", "skills"],
         ["claude-code", "wsl", "windows", "sync", "skills"],
     ),
-    "non-coding-local": (
+    "acsi-non-coding-local": (
         "the owner's non-coding skills that need local files or a signed-in browser, for the Claude Desktop "
         "app's local Cowork: PDF OCR, audit, renaming and comparison, and Fastmail email and "
         "sending-identity workflows.",

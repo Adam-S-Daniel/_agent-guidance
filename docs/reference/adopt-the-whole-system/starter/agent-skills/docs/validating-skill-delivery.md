@@ -78,15 +78,15 @@ differ, something is wrong with the plugin install, not with session shape.
 ### P1 — laptop, single-repo
 
 **Expect:** skills available as `/<plugin>:<skill>` (e.g.
-`/coding-anywhere:skills-doctor`); the hook installs nothing.
+`/acsi-coding-anywhere:skills-doctor`); the hook installs nothing.
 
 ```bash
-claude plugin list                  # anything-anywhere and coding-anywhere should be listed
+claude plugin list                  # acsi-anything-anywhere and acsi-coding-anywhere should be listed
 ls ~/.claude/skills/                # NOT where marketplace skills live
 ```
 
 Ask the agent: *"list your available skills and the exact slash command for
-each."* Plugin-namespaced (`/anything-anywhere:finding-unknowns`) is the pass.
+each."* Plugin-namespaced (`/acsi-anything-anywhere:finding-unknowns`) is the pass.
 
 **Fail signatures.** Skills missing entirely → the marketplace was never
 installed; run `setup.sh`. Skills present but **bare-named** (`/finding-unknowns`)
@@ -147,7 +147,7 @@ ls -la "$PWD/.claude/settings.json"   # written by the setup script; absent => n
 
 Run P3's lock-diff **once per attached repo**, from each repo's directory. The
 verdict should name every contributing lock, e.g.
-`skills: 22/22 from … across 2 locks (example-site-a, agentskills) — OK`.
+`skills: 22/22 from … across 2 locks (example-site-a, acsi-agentskills) — OK`.
 
 **Fail signatures.** `$PWD/.claude/settings.json` absent → the setup script did
 not run, or wrote elsewhere; it hardcodes the project dir precisely because

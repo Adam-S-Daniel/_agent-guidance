@@ -266,7 +266,7 @@ def test_invalid_names_rejected(plugins_dir, schema, name):
     assert problems, "expected name %r to be rejected" % name
 
 
-@pytest.mark.parametrize("name", ["my", "my-local", "fastmail", "a", "a.b-c", "x" * 64])
+@pytest.mark.parametrize("name", ["acsi", "acsi-local", "fastmail", "a", "a.b-c", "x" * 64])
 def test_valid_names_accepted(plugins_dir, schema, name):
     bundle = write_bundle(
         plugins_dir, "demo", root=good_root(name=name), claude=good_claude(name=name)
@@ -530,8 +530,8 @@ def test_shipped_run_names_every_federated_entry_it_did_not_validate(capsys):
 def test_every_shipped_bundle_has_both_manifests():
     bundles = cap.discover_bundles()
     assert {b.name for b in bundles} == {
-        "anything-anywhere", "coding-anywhere", "coding-local",
-        "non-coding-local"}
+        "acsi-anything-anywhere", "acsi-coding-anywhere", "acsi-coding-local",
+        "acsi-non-coding-local"}
     for bundle in bundles:
         assert (bundle / "plugin.json").is_file()
         assert (bundle / ".claude-plugin" / "plugin.json").is_file()

@@ -585,7 +585,7 @@ class RecordedSelectionTests(_HarnessCase):
     def scripted(self, agents: list, judges: int, *flags: str):
         self._script(agents=agents, judges=[{"overall": 7.0}] * judges)
         return self._run(self.fixture_dir, "--arm", "both",
-                         "--registry", f"agentskills={self.registry}",
+                         "--registry", f"acsi-agentskills={self.registry}",
                          "--roster", str(self.roster), "--timestamp", TS, *flags)
 
     def summaries(self) -> dict:
@@ -616,7 +616,7 @@ class RecordedSelectionTests(_HarnessCase):
                 log.write_text("", encoding="utf-8")
                 cmd = [sys.executable, str(HARNESS_DIR / "run_eval.py"),
                        str(self.fixture_dir), "--arm", "both", "--model", arm,
-                       "--registry", f"agentskills={self.registry}",
+                       "--registry", f"acsi-agentskills={self.registry}",
                        "--roster", str(self.roster), "--results-dir",
                        str(results), "--timeout", "60", "--timestamp", TS]
                 proc = subprocess.run(
@@ -704,7 +704,7 @@ class RecordedSelectionTests(_HarnessCase):
         registry = self._registry("pinned-skill")
         self._script(agents=[BARE, BARE], judges=[{"overall": 7.0}] * 2)
         proc = self._run(fixture, "--arm", "both", "--registry",
-                         f"agentskills={registry}", "--timestamp", TS)
+                         f"acsi-agentskills={registry}", "--timestamp", TS)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         for rel, summary in self.summaries().items():
             with self.subTest(summary=rel):

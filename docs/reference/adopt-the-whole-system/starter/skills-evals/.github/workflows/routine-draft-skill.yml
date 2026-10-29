@@ -11,9 +11,9 @@ name: Draft a skill from a lesson
 # * `select` holds `contents: read` and `actions: read` (the allowance
 #   guard counts the fire workflow's runs). It reads three things as data
 #   and runs nothing from them: the redacted proposals under
-#   agentskills-private's lessons/ (a sparse checkout with the
+#   acsi-agentskills-private's lessons/ (a sparse checkout with the
 #   read-only registry App token, minted as propagation.yml mints it), the
-#   public agentskills checkout and the private one's plugins/ (a
+#   public acsi-agentskills checkout and the private one's plugins/ (a
 #   subject that is already a skill there is never drafted), and the
 #   `claude/draft-skill-*` branches of this repository (a subject drafted
 #   before, whatever the decision, hook-first included, is never drafted
@@ -101,7 +101,7 @@ jobs:
           client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills-private
+          repositories: acsi-agentskills-private
           permission-contents: read
 
       # persistent/lessons exists only once the WORKSTATION miner has pushed a
@@ -117,7 +117,7 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$LESSONS_TOKEN" | base64 -w0)"
           rc=0
           git -c "http.extraHeader=Authorization: basic $auth" ls-remote --exit-code --heads \
-            https://github.com/example-adopter/agentskills-private.git persistent/lessons \
+            https://github.com/example-adopter/acsi-agentskills-private.git persistent/lessons \
             > /dev/null || rc=$?
           if [ "$rc" -eq 2 ]; then
             echo "no persistent/lessons branch yet: nothing to draft"
@@ -130,33 +130,33 @@ jobs:
       # lessons/ for the proposals, from persistent/lessons: the WORKSTATION miner
       # writes there because main is PR-only (skills-evals#423, ADR 0015).
       # Credentials not kept.
-      - name: Check out the lessons (agentskills-private)
+      - name: Check out the lessons (acsi-agentskills-private)
         if: steps.lessons-branch.outputs.present == 'true'
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills-private
+          repository: example-adopter/acsi-agentskills-private
           ref: persistent/lessons
-          path: agentskills-private-lessons
+          path: acsi-agentskills-private-lessons
           persist-credentials: false
           sparse-checkout: lessons
           token: ${{ steps.lessons-token.outputs.token }}
 
       # plugins/ from the default branch, so a private skill's name is never
       # drafted again. Credentials not kept.
-      - name: Check out the private skills (agentskills-private)
+      - name: Check out the private skills (acsi-agentskills-private)
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills-private
-          path: agentskills-private
+          repository: example-adopter/acsi-agentskills-private
+          path: acsi-agentskills-private
           persist-credentials: false
           sparse-checkout: plugins
           token: ${{ steps.lessons-token.outputs.token }}
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       # Subjects whose hook proposal the agent-checks lane declined: CLOSED
@@ -194,13 +194,13 @@ jobs:
         run: |
           set -euo pipefail
           # No lessons branch yet: an empty lessons/ selects nothing.
-          mkdir -p ../agentskills-private-lessons/lessons
+          mkdir -p ../acsi-agentskills-private-lessons/lessons
           drafted="${RUNNER_TEMP:?}/drafted-subjects.txt"
           python3 scripts/draft_new_skill.py drafted-subjects --repo . > "$drafted"
           python3 scripts/draft_new_skill.py select \
-            --lessons ../agentskills-private-lessons/lessons \
-            --registry agentskills=../agentskills \
-            --registry agentskills-private=../agentskills-private \
+            --lessons ../acsi-agentskills-private-lessons/lessons \
+            --registry acsi-agentskills=../acsi-agentskills \
+            --registry acsi-agentskills-private=../acsi-agentskills-private \
             --evals evals --drafted "$drafted" \
             --hook-declined "$RUNNER_TEMP/hook-declined.txt" > "$RUNNER_TEMP/select.out"
           cat "$RUNNER_TEMP/select.out" >> "$GITHUB_OUTPUT"

@@ -13,8 +13,8 @@ hand: change its manifest, patch or overlay, and export again.
 |---|---|---|
 | [`agent-guidance/`](agent-guidance/README.md) | `<you>/_agent-guidance` | The fleet guidance, the sync that delivers it, the hooks, templates and agent-checks runner, and the routine specs ([guidance](../docs/guidance.md)) |
 | [`repo-settings/`](repo-settings/README.md) | `<you>/repo-settings` | Every repo's settings as code (`repo-settings/fleet.yml`) and the engine that applies them ([settings](../docs/settings-and-apps.md)) |
-| [`agent-skills/`](agent-skills/README.md) | `<you>/agentskills` | The skills registry: a plugin marketplace with four empty plugins, the privacy check and the plugin runtime review ([skills](../docs/skills.md)) |
-| [`agent-skills-private/`](agent-skills-private/README.md) | `<you>/agentskills-private` | The private registry, packaged the same way; its `persistent/lessons` branch holds the session miner's lessons |
+| [`agent-skills/`](agent-skills/README.md) | `<you>/acsi-agentskills` | The skills registry: a plugin marketplace with four empty plugins, the privacy check and the plugin runtime review ([skills](../docs/skills.md)) |
+| [`agent-skills-private/`](agent-skills-private/README.md) | `<you>/acsi-agentskills-private` | The private registry, packaged the same way; its `persistent/lessons` branch holds the session miner's lessons |
 | [`skills-evals/`](skills-evals/README.md) | `<you>/skills-evals` | The eval harness, the planner, the gates and the lanes of the loop ([evals](../docs/evals-and-loop.md)) |
 | [`wsl-automation/`](wsl-automation/README.md) | `<you>/wsl-automation` | The jobs that run on your machine: the session miner, the usage census, the waiting feed ([machines](../docs/machine.md#scheduled-jobs-wsl-automation)) |
 

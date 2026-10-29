@@ -16,7 +16,7 @@
 #   - a privacy denylist kept outside every repository (PRIVACY_DENYLIST_FILE,
 #     default ~/.config/privacy-denylist.txt); without it nothing is mined;
 #   - the private registry clone whose origin receives persistent/lessons
-#     (LESSONS_CLONE, default ~/repos/agentskills-private), with a git
+#     (LESSONS_CLONE, default ~/repos/acsi-agentskills-private), with a git
 #     credential that works with no desktop session (`gh auth git-credential`
 #     and a file-stored token, not a desktop credential manager);
 #   - python3 with PyYAML;
@@ -121,7 +121,7 @@ if [[ -f $config ]]; then
 fi
 
 export PRIVACY_DENYLIST_FILE=${PRIVACY_DENYLIST_FILE:-$HOME/.config/privacy-denylist.txt}
-export LESSONS_CLONE=${LESSONS_CLONE:-$HOME/repos/agentskills-private}
+export LESSONS_CLONE=${LESSONS_CLONE:-$HOME/repos/acsi-agentskills-private}
 export SKILLS_EVALS_URL=${SKILLS_EVALS_URL:-https://github.com/example-adopter/skills-evals.git}
 # Never wait on a credential prompt: a scheduled run has no one to answer it.
 export GIT_TERMINAL_PROMPT=0

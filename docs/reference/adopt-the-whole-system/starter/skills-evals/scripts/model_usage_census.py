@@ -78,7 +78,7 @@ PRIVATE EVENTS are the exception, and the only one: `--events-out` writes
 one JSON line per skill invocation, with its timestamp, session id and title,
 repository and branch. That file is NEVER published publicly:
 `scripts/publish_usage_census.sh` commits it only to the private
-`persistent/usage-events` branch of agentskills-private (see
+`persistent/usage-events` branch of acsi-agentskills-private (see
 `evals/usage/CENSUS.md`, "Private usage events"). Nothing from it reaches
 the two public files.
 
@@ -239,7 +239,7 @@ def skill_allowlist(root: Path = REPO_ROOT) -> frozenset[str]:
 
 
 def _skill_name(raw) -> str | None:
-    """`/coding-anywhere:workflow-path-audit` -> `workflow-path-audit`."""
+    """`/acsi-coding-anywhere:workflow-path-audit` -> `workflow-path-audit`."""
     if not isinstance(raw, str):
         return None
     name = raw[1:] if raw.startswith("/") else raw

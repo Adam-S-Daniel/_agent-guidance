@@ -75,7 +75,7 @@ class PairCase(_HarnessCase):
              arm: str = "both"):
         self._script(agents=agents, judges=judges or [])
         return self._run(self.fixture_dir, "--arm", arm,
-                         "--registry", f"agentskills={self.registry}",
+                         "--registry", f"acsi-agentskills={self.registry}",
                          "--timestamp", TS, *flags)
 
     def trial_summaries(self, trials: int) -> dict:
@@ -367,7 +367,7 @@ class PairwiseTests(PairCase):
         self._script(agents=[GAIN, BARE])
         proc = self._run(fixture, "--arm", "both", "--timestamp", TS,
                          "--registry",
-                         f"agentskills={self._registry('pairwise-skill')}")
+                         f"acsi-agentskills={self._registry('pairwise-skill')}")
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("judge_mode_unsupported", proc.stdout)
         self.assertEqual(self._calls(), [])
@@ -560,7 +560,7 @@ class UsageOfADeferredJudgeTests(PairCase):
         if full:
             extra["FAKE_CLAUDE_FULL_USAGE"] = "1"
         cmd = [sys.executable, str(HARNESS_DIR / "run_eval.py"), str(fixture),
-               "--arm", "both", "--registry", f"agentskills={self.registry}",
+               "--arm", "both", "--registry", f"acsi-agentskills={self.registry}",
                "--results-dir", str(self.results), "--timeout", "60",
                "--timestamp", TS, *flags]
         return subprocess.run(cmd, capture_output=True, text=True,

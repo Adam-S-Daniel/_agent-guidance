@@ -13,7 +13,7 @@ no applicable Actions event policy. The warning is already shown on
 repositories by default. To continue allowing the event trigger, configure an
 Actions policy."
 
-agentskills' `.github/workflows/plugin-runtime-review.yml` triggers only on
+acsi-agentskills' `.github/workflows/plugin-runtime-review.yml` triggers only on
 `pull_request_target`, by design (its header explains why that event is the
 security property), and publishes `plugin-runtime-approval`, a required check
 declared in `fleet.yml`. A blocked event means the check never reports and every
@@ -32,7 +32,7 @@ policy would have to list every event every workflow uses.
 ## Decision
 
 Manage repository Actions event policies as a per-repo `actions_policies` list
-(`schema.md`). agentskills declares one policy, scoped to
+(`schema.md`). acsi-agentskills declares one policy, scoped to
 `.github/workflows/plugin-runtime-review.yml`, allowing only
 `pull_request_target`.
 
@@ -55,7 +55,7 @@ entry.
   reports on a real PR head, and (b) the "On November 2, 2026" annotation no
   longer appears on the next `pull_request_target` run.
 - Fallback if (b) still shows the warning: widen the scope to `~ALL` with
-  `allowed_events` listing every event agentskills' workflows use
+  `allowed_events` listing every event acsi-agentskills' workflows use
   (`pull_request`, `pull_request_target`, `push`, `schedule`,
   `workflow_dispatch`, plus any Dependabot-driven event). That trades the
   warning against the risk of blocking a trigger someone adds later.
@@ -91,7 +91,7 @@ misstate it.
 
 ## References
 
-- [Warning on a current agentskills run](https://github.com/Adam-S-Daniel/adam-agentskills/actions/runs/37841935690/job/113533312463)
+- [Warning on a current acsi-agentskills run](https://github.com/Adam-S-Daniel/adam-agentskills/actions/runs/37841935690/job/113533312463)
 - [GitHub changelog: workflow execution protections GA (2026-09-17)](https://github.blog/changelog/2026-09-17-workflow-execution-protections-in-github-actions-generally-available/)
 - [Securely using pull_request_target](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
 - [REST: Actions policies](https://docs.github.com/en/rest/actions/policies)

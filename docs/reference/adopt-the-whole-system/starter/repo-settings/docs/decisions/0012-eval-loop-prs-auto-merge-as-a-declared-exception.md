@@ -24,7 +24,7 @@ request in the repo the candidate changes:
   opens new real-work fixtures under `evals/real-work/<id>/`, and a later PR
   promotes a draft fixture to ready. Today these open as drafts with
   `GITHUB_TOKEN` (ADR 0008).
-- **agentskills:** the improve gate (`scripts/improve_gate.py`) opens one
+- **acsi-agentskills:** the improve gate (`scripts/improve_gate.py`) opens one
   SKILL.md edit; the retirement path (`scripts/retire_skill.py`, skills-evals
   ADR 0014) opens a skill removal. The improve gate opens drafts.
 - **_agent-guidance:** guidance-section edits and removals, which pass that
@@ -32,7 +32,7 @@ request in the repo the candidate changes:
 
 The owner decided that once a gate accepts a change, a human merge adds only
 latency. The one exception he kept: a change to how a plugin runs code still
-waits for him, through agentskills' `plugin-runtime-review` environment.
+waits for him, through acsi-agentskills' `plugin-runtime-review` environment.
 
 Every managed repo already has what native auto-merge needs:
 `repo.allow_auto_merge: true` and `required_approving_review_count: 0` are
@@ -51,7 +51,7 @@ review or approval is required.
 | Repo | PRs | Paths the PR may touch | Opened by |
 |---|---|---|---|
 | skills-evals | scaffolded fixtures, fixture promotions | `evals/real-work/<id>/**` | the roster App, `example-adopter-skills-evals-roster` (App id <roster App id>, skills-evals only) |
-| agentskills | skill improvements, skill removals | `plugins/<plugin>/skills/<skill>/**`, `docs/skill-impact.md`; a removal also the `version` in that plugin's `plugin.json` and `.claude-plugin/plugin.json` (skills-evals ADR 0014) | the eval-improve App (skills-evals secrets `EVAL_IMPROVE_APP_CLIENT_ID`, `EVAL_IMPROVE_APP_PEM`), installed on agentskills only |
+| acsi-agentskills | skill improvements, skill removals | `plugins/<plugin>/skills/<skill>/**`, `docs/skill-impact.md`; a removal also the `version` in that plugin's `plugin.json` and `.claude-plugin/plugin.json` (skills-evals ADR 0014) | the eval-improve App (skills-evals secrets `EVAL_IMPROVE_APP_CLIENT_ID`, `EVAL_IMPROVE_APP_PEM`), installed on acsi-agentskills only |
 | _agent-guidance | guidance-section edits and removals | `agents-md/**`, `AGENTS.md`, `docs/guidance-impact.md` | a dedicated eval-guidance App, installed on _agent-guidance only |
 
 Each App has Contents and Pull requests write and nothing else, and none is a
@@ -60,7 +60,7 @@ ruleset bypass actor. Its token is minted in the gate job that uses it.
 The exception holds only while all of these hold:
 
 - **Required checks gate every merge.** Auto-merge fires only when every
-  required context on the head has passed. In agentskills that includes
+  required context on the head has passed. In acsi-agentskills that includes
   `plugin-runtime-approval`, so a PR that touches plugin hooks, `bin/`,
   `package.json` or settings waits for the owner's approval of the
   `plugin-runtime-review` environment. No loop job approves that environment.
@@ -126,4 +126,4 @@ is not a repo setting. It would be inert config.
 - ADR 0008: [Let skills-evals' scaffold gate open draft PRs with GITHUB_TOKEN](0008-let-skills-evals-open-draft-scaffold-prs-with-github-token.md)
 - skills-evals ADR 0014: <https://github.com/example-adopter/skills-evals/blob/main/docs/decisions/0014-removal-pull-requests-merge-without-review.md>
 - The improve gate's App credential: <https://github.com/example-adopter/skills-evals/blob/main/.github/workflows/routine-improve-gate.yml>
-- agentskills' plugin runtime gate (its ADR 0016): <https://github.com/example-adopter/agentskills/blob/main/.github/workflows/plugin-runtime-review.yml>
+- acsi-agentskills' plugin runtime gate (its ADR 0016): <https://github.com/example-adopter/acsi-agentskills/blob/main/.github/workflows/plugin-runtime-review.yml>

@@ -23,7 +23,7 @@ The owner decided on 2026-10-26:
   ahead of a skill, and a skill ahead of guidance text.
 
 Lessons arrive from three places: proposals in
-`example-adopter/agentskills-private`, `hook-proposal` issues in
+`example-adopter/acsi-agentskills-private`, `hook-proposal` issues in
 `example-adopter/skills-evals`, and the memory curation routine's
 `Memory promotion <date>: <n> agent-checks` issues in this repo.
 

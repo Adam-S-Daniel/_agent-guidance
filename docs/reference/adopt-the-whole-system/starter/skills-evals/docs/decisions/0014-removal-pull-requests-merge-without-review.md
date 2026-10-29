@@ -18,7 +18,7 @@
 The fleet guidance says "PR + auto-merge is not a sanctioned bot-write
 path", with named exceptions (skills-evals' roster PR, repo-settings
 ADR 0003, recorded here as [ADR 0003](0003-roster-merges-automatically.md)).
-agentskills adds its own one-way doors: a skill basename, once shipped,
+acsi-agentskills adds its own one-way doors: a skill basename, once shipped,
 keys every consumer's `skills.lock` and `setup.sh` links, and a change to one
 gets an adversarial round before merge (its `AGENTS.md`, "One-way doors get
 an adversarial round").
@@ -36,8 +36,8 @@ compute_gates lets one skill retire per evaluation (harness/gates.py).
 ## Decision
 
 1. In `retirement_mode: auto`, `scripts/retire_skill.py` opens a removal
-   pull request in agentskills and enables auto-merge (merge commit).
-   No human reviews it; agentskills' required checks still gate it.
+   pull request in acsi-agentskills and enables auto-merge (merge commit).
+   No human reviews it; acsi-agentskills' required checks still gate it.
 2. It acts only from the scheduled workflow (`GITHUB_EVENT_NAME` is
    `schedule`), never from a dispatch, a pull request or a terminal; auto
    mode also needs `GITHUB_ACTIONS=true` on `refs/heads/main`, and the
@@ -46,13 +46,13 @@ compute_gates lets one skill retire per evaluation (harness/gates.py).
    at a time; an open one holds the slot whatever the newest verdict says.
 4. It refuses a skill whose basename is not found exactly once across the
    registry checkouts it is given, or whose copy is not a real
-   `plugins/<plugin>/skills/<skill>/` directory of agentskills (no
+   `plugins/<plugin>/skills/<skill>/` directory of acsi-agentskills (no
    symlink on the path, nothing it writes resolving outside the checkout),
    and a verdict whose cells are not every fixture crossed with every
    roster model exactly once, each `no-benefit`.
 5. The pull request carries the whole removal, because nothing human edits
-   it before agentskills' required checks read it: the skill directory,
-   the plugin's version in both manifests (agentskills ADR 0009; a
+   it before acsi-agentskills' required checks read it: the skill directory,
+   the plugin's version in both manifests (acsi-agentskills ADR 0009; a
    major raise since the second addendum),
    a `docs/skill-impact.md` `remove` entry, the skill dropped from
    `scripts/plugin_layout.json` (the ADR 0013 layout its tests pin), the
@@ -86,29 +86,29 @@ compute_gates lets one skill retire per evaluation (harness/gates.py).
 - **This ADR is one of three.** The exception must also be recorded in
   repo-settings (a bot write path that merges into a protected default
   branch, and whatever credential or ruleset change it needs) and in
-  agentskills (a removal of a shipped skill without the adversarial
+  acsi-agentskills (a removal of a shipped skill without the adversarial
   round its `AGENTS.md` requires of one-way doors). Neither is written
   here; auto mode stays off until both exist.
 - **Auto mode needs a credential that does not exist.** The scheduled job's
   own token can write skills-evals issues only. Auto mode needs a GitHub App
-  with contents and pull-requests write on agentskills alone, minted
+  with contents and pull-requests write on acsi-agentskills alone, minted
   immediately before use; until it exists the workflow allows only
   `proposal` and exits 2 on `auto`, rather than skipping quietly.
 - **A removal is a one-way door in its consumers.** Every `skills.lock`
   that pins the plugin's bundle digest goes stale when the removal merges,
-  and must be re-pinned. agentskills' required checks are what stop a
+  and must be re-pinned. acsi-agentskills' required checks are what stop a
   removal that breaks its own tree; a failed check leaves the pull request
   open, which holds the one slot until a human closes it.
 - **Results are trusted as written.** Anyone who can write the results
   branch can make a skill retire; equally, anyone who can merge to
-  agentskills can remove one. The gate guards against honest mistakes
+  acsi-agentskills can remove one. The gate guards against honest mistakes
   (a changed fixture or skill, errored trials, a copy of a run ingested
   twice), not forgery (the owner, 2026-10-26).
 
-## Addendum (2026-10-26): the agentskills exception
+## Addendum (2026-10-26): the acsi-agentskills exception
 
-The agentskills half of the exception this record asks for is
-[ADR 0021](https://github.com/example-adopter/agentskills/blob/main/docs/decisions/0021-automated-skill-changes-merge-without-review.md),
+The acsi-agentskills half of the exception this record asks for is
+[ADR 0021](https://github.com/example-adopter/acsi-agentskills/blob/main/docs/decisions/0021-automated-skill-changes-merge-without-review.md),
 "Automated skill changes merge without review", which covers removals and
 accepted improvements alike (the owner, 2026-10-25 for removals and 2026-10-26
 for improvements; the improvement side is [ADR 0005](0005-improvement-loop-reuses-skill-creator.md)'s
@@ -125,27 +125,27 @@ auto-merge with no human. `evals/gate-policy.yml` now commits
 `retirement_mode: auto` for skills (the one switch; set it to `proposal` to
 stop removal pull requests), and `skill-coverage.yml`'s `retirement` job
 wires it. The guidance block stays `proposal`: the App below is installed on
-agentskills alone, and _agent-guidance has no write path yet.
+acsi-agentskills alone, and _agent-guidance has no write path yet.
 
 - **The credential.** The job reuses the improvement gate's GitHub App
   exactly as `routine-improve-gate.yml` mints it (secrets
   `EVAL_IMPROVE_APP_CLIENT_ID` and `EVAL_IMPROVE_APP_PEM`; owner
-  example-adopter, repository agentskills only, contents and
+  example-adopter, repository acsi-agentskills only, contents and
   pull-requests write), in the step right before the one that uses it,
   under `continue-on-error`. The token reaches `retire_skill.py` as
-  `REGISTRY_TOKEN`, used only for agentskills writes; the push sends it
+  `REGISTRY_TOKEN`, used only for acsi-agentskills writes; the push sends it
   as an HTTP header through `GIT_CONFIG_*` and is verified by fetching the
   branch back (`git merge-base --is-ancestor`). Issues still use the job's
   own token. With no token (a secret unset, or the mint failed) the script
   gets `--fallback-to-proposal` and files the issue instead of exiting 2.
-- **Never through plugin-runtime-review** (agentskills ADR 0021,
+- **Never through plugin-runtime-review** (acsi-agentskills ADR 0021,
   decision 4). `retire_skill.py` reuses `scripts/improve_gate.py`'s
   `auto_refusal`: a skill whose plugin has `hooks/`, `bin/`, a settings or
   package file, or a manifest `hooks` or `settings` key gets the issue, not
-  a pull request. Today that is every skill in `coding-local`.
+  a pull request. Today that is every skill in `acsi-coding-local`.
 - **One loop pull request at a time** (ADR 0021, decision 5). Auto mode
   opens nothing, and exits 0, while any `eval-improve/*`, `draft-skill/*` or
-  `retire-skill/*` pull request is open in agentskills, the slot
+  `retire-skill/*` pull request is open in acsi-agentskills, the slot
   `routine-improve-gate.yml`'s `registry-pr` job checks. Decision 3 above
   counted only `retire-skill/*` heads, and the script exited 2 on one;
   waiting is not an error. A closed
@@ -160,22 +160,22 @@ agentskills alone, and _agent-guidance has no write path yet.
 - **A major version.** A removal breaks every consumer that calls the
   skill, so the plugin's major version is raised (the registry's
   `check_plugin_versions.py` asks only for a raise; it bumped
-  `coding-local` 1.1.0 -> 2.0.0 when it removed `sync-skills`).
+  `acsi-coding-local` 1.1.0 -> 2.0.0 when it removed `sync-skills`).
 - **The skill-impact entry** follows the registry's entry format: dated the
   day the workflow runs (`--date`, the gates file's `as_of` when absent),
   links in full, the version bump, the pooled run count and fixture paths
   as the `Eval:` line, and `pending merge` as the outcome.
-- **The private registry.** agentskills-private
-  (`example-adopter/agentskills-private`) is never a target
-  (agentskills ADR 0021, decision 7). The job does not check it out,
+- **The private registry.** acsi-agentskills-private
+  (`example-adopter/acsi-agentskills-private`) is never a target
+  (acsi-agentskills ADR 0021, decision 7). The job does not check it out,
   so a skill there has no tested digest and never reaches `retire`, and in
-  auto mode a copy found outside agentskills is refused.
+  auto mode a copy found outside acsi-agentskills is refused.
 
 Still open: the repo-settings exception ADR this record asks for; the App's
 two secrets in skills-evals (until both exist every removal is an issue); and
-`skills-doctor`'s removal stays refused while agentskills'
+`skills-doctor`'s removal stays refused while acsi-agentskills'
 `.claude/hooks/skills-bootstrap.sh` cites its test
 `test_the_source_limits_are_the_hooks_own` by name, a rewording only that
-repository can make. agentskills ADR 0021 still describes the removal
+repository can make. acsi-agentskills ADR 0021 still describes the removal
 as a patch raise and does not list `scripts/plugin_layout.json` among the
 files a removal touches (decision 3).

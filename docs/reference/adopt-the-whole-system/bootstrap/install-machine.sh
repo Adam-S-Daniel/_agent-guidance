@@ -5,16 +5,16 @@
 # the owner's are, by running the exported repos' own installers. It writes
 # nothing of its own:
 #
-#   1. clones OWNER/agentskills and OWNER/_agent-guidance into REPOS_DIR
+#   1. clones OWNER/acsi-agentskills and OWNER/_agent-guidance into REPOS_DIR
 #      (default ~/repos) when they are not there; an existing clone must have
 #      origin at OWNER/<repo>, and is fast-forwarded when it is clean and on
 #      its default branch (otherwise it is used as it is, with a warning);
-#   2. `bash agentskills/setup.sh --owner-machine`: converges
-#      ~/.claude/settings.json (your marketplaces agentskills and
-#      agentskills-private, the plugins enabled, syncClaudeAiSkills false,
+#   2. `bash acsi-agentskills/setup.sh --owner-machine`: converges
+#      ~/.claude/settings.json (your marketplaces acsi-agentskills and
+#      acsi-agentskills-private, the plugins enabled, syncClaudeAiSkills false,
 #      disableSkillShellExecution true) and removes links earlier versions
 #      made. Claude Code installs the enabled plugins in its next session;
-#   3. `bash agentskills/scripts/install-agent-hooks.sh`: the config-based git
+#   3. `bash acsi-agentskills/scripts/install-agent-hooks.sh`: the config-based git
 #      hooks that run a repo's .githooks/agent-checks, only in clones whose
 #      remote is one of your two owners (ADR 0020 there);
 #   4. `bash _agent-guidance/scripts/register-memory-home-hook.sh --hook
@@ -26,7 +26,7 @@
 #
 # Each installer is idempotent, so a second run changes nothing. --dry-run
 # makes the clones' reads and prints the commands, running none of them.
-# Merge the agentskills and _agent-guidance starter pull requests first: the
+# Merge the acsi-agentskills and _agent-guidance starter pull requests first: the
 # installers come from their default branches. The wsl-automation scheduled
 # jobs are a separate step (the quick start's "Schedule the machine jobs").
 # Needs: git, bash, python3; claude for the plugins to load.
@@ -99,15 +99,15 @@ step() {
 }
 
 log "Owner $O, clones in $DIR$([ "$DRY_RUN" = 1 ] && echo ', DRY RUN')"
-ensure_clone agentskills setup.sh; AS=$C
+ensure_clone acsi-agentskills setup.sh; AS=$C
 ensure_clone _agent-guidance scripts/register-memory-home-hook.sh; AG=$C
 [ -f "$AS/scripts/install-agent-hooks.sh" ] || die "$AS has no scripts/install-agent-hooks.sh"
 [ -f "$AG/.claude/hooks/memory-home.sh" ] || die "$AG has no .claude/hooks/memory-home.sh"
 
 # In a dry run of a fresh machine the clones are temporary; name where they will be.
-[ "$DRY_RUN" = 0 ] || { AS=$DIR/agentskills; AG=$DIR/_agent-guidance; }
-step "agentskills setup.sh --owner-machine" bash "$AS/setup.sh" --owner-machine
-step "agentskills install-agent-hooks.sh" bash "$AS/scripts/install-agent-hooks.sh"
+[ "$DRY_RUN" = 0 ] || { AS=$DIR/acsi-agentskills; AG=$DIR/_agent-guidance; }
+step "acsi-agentskills setup.sh --owner-machine" bash "$AS/setup.sh" --owner-machine
+step "acsi-agentskills install-agent-hooks.sh" bash "$AS/scripts/install-agent-hooks.sh"
 step "_agent-guidance register-memory-home-hook.sh" bash "$AG/scripts/register-memory-home-hook.sh" --hook "$DIR/_agent-guidance/.claude/hooks/memory-home.sh"
 if [ "$WITH_CODEX" = 1 ]; then
   if [ -d "$HOME/.codex" ]; then

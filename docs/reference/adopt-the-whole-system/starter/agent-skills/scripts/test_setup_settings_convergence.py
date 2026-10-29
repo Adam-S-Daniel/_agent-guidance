@@ -105,27 +105,27 @@ def test_the_extracted_block_is_the_shipped_one():
 def test_a_fresh_machine_gets_both_marketplaces_and_the_plugins(tmp_path):
     settings = converge(tmp_path)
     assert set(settings["extraKnownMarketplaces"]) == {
-        "agentskills", "agentskills-private"}
-    assert settings["extraKnownMarketplaces"]["agentskills"]["source"] == {
-        "source": "github", "repo": "example-adopter/agentskills"}
-    assert settings["extraKnownMarketplaces"]["agentskills-private"]["source"] == {
-        "source": "github", "repo": "example-adopter/agentskills-private"}
+        "acsi-agentskills", "acsi-agentskills-private"}
+    assert settings["extraKnownMarketplaces"]["acsi-agentskills"]["source"] == {
+        "source": "github", "repo": "example-adopter/acsi-agentskills"}
+    assert settings["extraKnownMarketplaces"]["acsi-agentskills-private"]["source"] == {
+        "source": "github", "repo": "example-adopter/acsi-agentskills-private"}
     enabled = settings["enabledPlugins"]
-    assert enabled["anything-anywhere@agentskills"] is True
-    assert enabled["coding-anywhere@agentskills"] is True
-    assert enabled["private-anything-anywhere@agentskills-private"] is True
+    assert enabled["acsi-anything-anywhere@acsi-agentskills"] is True
+    assert enabled["acsi-coding-anywhere@acsi-agentskills"] is True
+    assert enabled["acsi-private-anything-anywhere@acsi-agentskills-private"] is True
 
 
-# ADR 0015: `non-coding-local` is per OS. Off in WSL/Linux under every key
+# ADR 0015: `acsi-non-coding-local` is per OS. Off in WSL/Linux under every key
 # it can arrive by; left exactly as it is on Windows and macOS.
-NON_CODING_LOCAL = ("non-coding-local@synced",
-                    "non-coding-local@agentskills")
+NON_CODING_LOCAL = ("acsi-non-coding-local@synced",
+                    "acsi-non-coding-local@acsi-agentskills")
 
 
 @pytest.mark.parametrize("key", NON_CODING_LOCAL)
 def test_the_non_coding_bundle_is_off_on_linux_under_every_key(tmp_path, key):
     """WSL arrives as `@synced` (account sync, even with `syncClaudeAiSkills:
-    false`) and may also be installed as `@agentskills`; disabling one
+    false`) and may also be installed as `@acsi-agentskills`; disabling one
     copy leaves the other loading, so both are written. `False`, the JSON
     boolean."""
     assert converge(tmp_path, host="linux")["enabledPlugins"][key] is False
@@ -141,7 +141,7 @@ def test_the_non_coding_bundle_overrides_an_enabled_linux_copy(tmp_path, key):
 def test_the_non_coding_bundle_is_not_written_off_windows_or_macos(tmp_path, host):
     """Windows keeps it on and macOS has no decision: neither key is added."""
     enabled = converge(tmp_path, host=host)["enabledPlugins"]
-    assert not [k for k in enabled if k.startswith("non-coding-local@")]
+    assert not [k for k in enabled if k.startswith("acsi-non-coding-local@")]
 
 
 @pytest.mark.parametrize("host", ["windows", "macos"])
@@ -156,9 +156,9 @@ def test_an_enabled_non_coding_bundle_stays_enabled_on_windows_and_macos(tmp_pat
 def test_the_non_coding_policy_does_not_touch_other_plugins(tmp_path):
     settings = converge(tmp_path, {"enabledPlugins": {
         "theirs@someone-elses": True,
-        "coding-local@agentskills": True}}, host="linux")
+        "acsi-coding-local@acsi-agentskills": True}}, host="linux")
     assert settings["enabledPlugins"]["theirs@someone-elses"] is True
-    assert settings["enabledPlugins"]["coding-local@agentskills"] is True
+    assert settings["enabledPlugins"]["acsi-coding-local@acsi-agentskills"] is True
 
 
 @pytest.mark.parametrize("host", ["windows", "macos", "linux"])
@@ -198,21 +198,21 @@ def test_the_host_is_detected_from_sys_platform_without_the_override(tmp_path, p
     assert proc.returncode == 0, proc.stderr + proc.stdout
     enabled = json.loads((tmp_path / ".claude" / "settings.json").read_text(
         encoding="utf-8"))["enabledPlugins"]
-    wrote = {k: v for k, v in enabled.items() if k.startswith("non-coding-local@")}
+    wrote = {k: v for k, v in enabled.items() if k.startswith("acsi-non-coding-local@")}
     assert wrote == ({k: False for k in NON_CODING_LOCAL} if off else {})
 
 
 def test_the_machine_bound_bundle_is_enabled_from_the_marketplace(tmp_path):
-    """ADR 0010: the machine-bound plugin (now `coding-local`, ADR 0013)
+    """ADR 0010: the machine-bound plugin (now `acsi-coding-local`, ADR 0013)
     comes from the marketplace, pinned, where it had been drifting on the account. Enabling it is half the decision — the other
     half is the opt-out below, and neither is safe alone: opting out without
     enabling would take this plugin's machine-bound skills off the laptop
     entirely."""
     settings = converge(tmp_path)
-    assert settings["enabledPlugins"]["coding-local@agentskills"] is True
+    assert settings["enabledPlugins"]["acsi-coding-local@acsi-agentskills"] is True
 
 
-@pytest.mark.parametrize("plugin", ["anything-anywhere", "private-anything-anywhere"])
+@pytest.mark.parametrize("plugin", ["acsi-anything-anywhere", "acsi-private-anything-anywhere"])
 def test_the_account_plugins_are_off_in_terminals(tmp_path, plugin):
     """ADR 0013: the `-anything-anywhere` plugins are enabled on the claude.ai
     account too, and a terminal signed in with it would sync each as
@@ -226,8 +226,8 @@ def test_the_account_plugins_are_off_in_terminals(tmp_path, plugin):
 
 
 def test_an_operator_who_enabled_an_account_plugin_is_overridden(tmp_path):
-    settings = converge(tmp_path, {"enabledPlugins": {"anything-anywhere@synced": True}})
-    assert settings["enabledPlugins"]["anything-anywhere@synced"] is False
+    settings = converge(tmp_path, {"enabledPlugins": {"acsi-anything-anywhere@synced": True}})
+    assert settings["enabledPlugins"]["acsi-anything-anywhere@synced"] is False
 
 
 def test_the_account_skill_sync_is_turned_off(tmp_path):
@@ -302,7 +302,7 @@ def test_an_operators_own_settings_survive(tmp_path):
         == "other/marketplace"
     assert settings["enabledPlugins"]["theirs@someone-elses"] is True
     # and ours are there too
-    assert settings["enabledPlugins"]["coding-local@agentskills"] is True
+    assert settings["enabledPlugins"]["acsi-coding-local@acsi-agentskills"] is True
     assert settings["syncClaudeAiSkills"] is False
 
 
@@ -373,7 +373,7 @@ def test_a_bom_prefixed_file_converges_and_keeps_its_bom(tmp_path):
     assert data.startswith(BOM) and not data.startswith(BOM + BOM)
     settings = json.loads(data[len(BOM):].decode("utf-8"))
     assert settings["model"] == "claude-opus-5"
-    assert settings["enabledPlugins"]["anything-anywhere@synced"] is False
+    assert settings["enabledPlugins"]["acsi-anything-anywhere@synced"] is False
 
 
 def test_a_file_without_a_bom_does_not_gain_one(tmp_path):
@@ -417,7 +417,7 @@ def run_block(home: Path, existing) -> subprocess.CompletedProcess:
 
 
 @pytest.mark.parametrize("container", ["enabledPlugins", "extraKnownMarketplaces"])
-@pytest.mark.parametrize("value", [["coding-anywhere@agentskills"], "on", None, 1])
+@pytest.mark.parametrize("value", [["acsi-coding-anywhere@acsi-agentskills"], "on", None, 1])
 def test_a_non_object_container_fails_clearly_and_writes_nothing(tmp_path, container, value):
     existing = {"model": "claude-opus-5", container: value}
     path = tmp_path / ".claude" / "settings.json"
@@ -534,7 +534,7 @@ def test_python_2_is_skipped_for_a_later_candidate(tmp_path):
     assert "settings: probing python3" in proc.stdout
     assert "settings: probing python..." in proc.stdout
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert settings["enabledPlugins"]["anything-anywhere@synced"] is False
+    assert settings["enabledPlugins"]["acsi-anything-anywhere@synced"] is False
 
 
 def test_py_dash_3_is_chosen_and_passed_as_two_words(tmp_path):
@@ -552,7 +552,7 @@ def test_py_dash_3_is_chosen_and_passed_as_two_words(tmp_path):
     assert "settings: probing py -3" in proc.stdout
     assert "Setup complete." in proc.stdout
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert settings["enabledPlugins"]["anything-anywhere@synced"] is False
+    assert settings["enabledPlugins"]["acsi-anything-anywhere@synced"] is False
 
 
 def test_the_section_markers_are_the_shipped_ones():
@@ -586,7 +586,7 @@ def test_a_working_interpreter_after_a_stub_is_chosen(tmp_path):
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "Setup complete." in proc.stdout
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert settings["enabledPlugins"]["anything-anywhere@synced"] is False
+    assert settings["enabledPlugins"]["acsi-anything-anywhere@synced"] is False
 
 
 def test_a_failing_convergence_fails_setup(tmp_path):
@@ -620,15 +620,15 @@ def test_the_adr_that_named_these_plugins_is_on_disk_and_accepted():
            / "0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md"
            ).read_text(encoding="utf-8")
     assert re.search(r"^- \*\*Status:\*\* Accepted\b", adr, re.M)
-    assert "coding-local@agentskills" in adr
+    assert "acsi-coding-local@acsi-agentskills" in adr
     index = (REPO / "docs" / "decisions" / "README.md").read_text(encoding="utf-8")
     assert "0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md" in index
 
 
 # --- the retired registry's plugins (ADR 0013) --------------------------------
 
-RETIRED = ["my@retired-agentskills", "my-local@retired-agentskills", "fastmail@retired-agentskills",
-           "my-personal@retired-agentskills", "my-private@retired-agentskills-private"]
+RETIRED = ["acsi@retired-agentskills", "acsi-local@retired-agentskills", "fastmail@retired-agentskills",
+           "acsi-personal@retired-agentskills", "acsi-private@retired-agentskills-private"]
 
 
 def test_the_retired_registrys_plugins_end_disabled(tmp_path):

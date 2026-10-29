@@ -81,7 +81,7 @@
 #
 # A union of valid inputs must not be invalid, which is what shapes the rules
 # below: routing is validated PER LOCK (two sibling repos both declaring the
-# bundle `my` is the ordinary fleet shape, not a collision), a registry pinned
+# bundle `acsi` is the ordinary fleet shape, not a collision), a registry pinned
 # at one ref by fourteen repos is fetched ONCE, and a skill fourteen locks agree
 # on installs once rather than reading as fourteen duplicates. A lock that
 # cannot be read degrades only its own skills, for the same reason an
@@ -1364,7 +1364,7 @@ SOURCE_FIELDS = ("registry", "ref", "bundles", "layout")
 # the generator writes, this reader must accept, and vice-versa.
 #
 #   * NAME requires a LEADING ALPHANUMERIC, so a bundle or skill name can never
-#     be '.' or '..' — the key 'my/..' that made $name '..' and turned
+#     be '.' or '..' — the key 'acsi/..' that made $name '..' and turned
 #     `cp -R "$src" "$DEST/$name"` into a write to $HOME/.claude.
 #   * URL is a real URL charset, not merely 'starts with https://'.
 #   * CONTROL rejects EVERY whitespace/control byte in a registry, ref or
@@ -1508,7 +1508,7 @@ def read_lock(lock_path):
     routing map. The caller merges; nothing here knows another lock exists.
 
     THE `claim` MAP MUST STAY PER LOCK. Two sibling repos both declaring the
-    bundle `my` is the ordinary fleet shape — it is what every consumer lock
+    bundle `acsi` is the ordinary fleet shape — it is what every consumer lock
     says — and merging their routing into one dict trips the
     "claimed by two sources" refusal below, rejecting the whole union. A union of
     individually valid inputs must not be invalid, and this is the one place
@@ -1565,9 +1565,9 @@ def read_lock(lock_path):
     # must be REFUSED, not resolved by a default that happens to look safe. The
     # default was not safe: `claim.get(bundle, 0)` sent an unclaimed bundle to
     # the primary silently, and seeding `claim` only from what the primary
-    # explicitly listed meant a federated source could claim `my` unopposed
+    # explicitly listed meant a federated source could claim `acsi` unopposed
     # whenever that list was omitted, empty or naming something else — every
-    # my/* row then fetched from the other repo under a clean
+    # acsi/* row then fetched from the other repo under a clean
     # `skills: 1/1 … OK`. Requiring the primary's list the same way each extra
     # source's is already required (non-empty, real names) is what closes the
     # omitted/empty forms; the collision check below closes the form where the
@@ -1990,7 +1990,7 @@ for lock_index, lock_path in enumerate(lock_paths):
 # Formally: a name installs iff every row naming it agrees on one normalised
 # digest AND no single lock contributed more than one row for it.
 #
-# (a) IS THE COMMON CASE — the fleet's locks largely declare the same `my`
+# (a) IS THE COMMON CASE — the fleet's locks largely declare the same `acsi`
 # bundle at the same ref — so collapsing has to happen BEFORE anything counts
 # names. A union that counted first would mark every shared skill a duplicate,
 # `rm -rf` its destination and install nothing: `skills: 0/N` for the ordinary
@@ -2406,7 +2406,7 @@ fi
 #
 #   * A REJECTED or capped lock's skills are reaped by a SIBLING. The prune is
 #     scoped by (registry, bundle), and in the fleet shape every lock declares
-#     the same registry and the same `my` bundle — so the sibling's claim
+#     the same registry and the same `acsi` bundle — so the sibling's claim
 #     supplies exactly the scope the owner withheld, the owner's names are
 #     absent from `skills.nul`, and they are deleted.
 #   * A lock starved of a fetch slot at $MAX_FETCHES SELF-reaps: its rows are
@@ -2756,7 +2756,7 @@ while IFS= read -r -d '' key \
 
   # Re-check $name in bash, before any rm -rf/cp uses it. The lock reader
   # already rejects a key whose skill part is '.'/'..' or non-leading-alnum
-  # (the 'my/..' escape that made $name '..' and turned the install `cp` into
+  # (the 'acsi/..' escape that made $name '..' and turned the install `cp` into
   # a write to $HOME/.claude), so this is belt-and-braces — the destructive ops
   # must not rely SOLELY on a wire value. A '.'/'..'/empty name is NOT removed
   # (its `$DEST/$name` would be the install dir or its parent); it is skipped.
@@ -2858,7 +2858,7 @@ while IFS= read -r -d '' key \
   #
   # OPEN POLICY QUESTION, recorded rather than answered: under a union, ONE
   # repo's project-owned skill now suppresses delivery of a locked skill the
-  # OTHER repos in the session asked for. Near-dead in practice — agentskills
+  # OTHER repos in the session asked for. Near-dead in practice — acsi-agentskills
   # ships no `.claude/skills` at all — and the alternative (let a locked skill
   # overwrite a repo's own declaration) is the failure the guard was written for,
   # so the conservative arm is kept and the question is named.

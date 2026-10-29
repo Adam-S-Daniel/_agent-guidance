@@ -15,7 +15,7 @@ Run 2026-08-13, Claude Code `2.1.231`, inside a Claude Code on the web container
 ## Discriminators
 
 The same four used by E1: `finding-unknowns`, `writing-adrs`,
-`debug-github-workflows`, `review-bash-ci-reliability`. They are in the `my`
+`debug-github-workflows`, `review-bash-ci-reliability`. They are in the `acsi`
 bundle but **not** in the claude.ai account uploads, so their presence cannot be
 explained by the account-sync channel, and E1 proved the plugin channel is dead in
 cloud. If they appear, the hook is the only possible source.
@@ -57,7 +57,7 @@ yields a notice, never a crash).
 ```
 $ echo '{"hook_event_name":"SessionStart","source":"startup"}' | bash .claude/hooks/skills-bootstrap.sh
 {"reloadSkills":true,"hookSpecificOutput":{"hookEventName":"SessionStart","reloadSkills":true,
- "additionalContext":"skills-bootstrap: installed 8 skills from example-adopter/retired-agentskills@main (65893a1), bundle=my, into ~/.claude/skills."}}
+ "additionalContext":"skills-bootstrap: installed 8 skills from example-adopter/retired-agentskills@main (65893a1), bundle=acsi, into ~/.claude/skills."}}
 ```
 
 End-to-end, starting from a `~/.claude/skills/` holding only `session-start-hook`
@@ -108,7 +108,7 @@ A hook that runs `claude plugin marketplace add` + `claude plugin install` succe
 session's listing, even with `reloadSkills` emitted in both shapes:
 
 ```
---- hook log:  √ Successfully installed plugin: my@retired-agentskills (scope: user)
+--- hook log:  √ Successfully installed plugin: acsi@retired-agentskills (scope: user)
 --- model saw: NONE
 ```
 
@@ -124,15 +124,15 @@ This narrows E1's finding considerably. What is broken in cloud is the
 
 ```
 $ claude plugin marketplace add example-adopter/retired-agentskills   → √ Successfully added
-$ claude plugin install my@retired-agentskills                    → √ Successfully installed (scope: user)
+$ claude plugin install acsi@retired-agentskills                    → √ Successfully installed (scope: user)
 $ claude -p '…list matching skills…'   (fresh, empty, unrelated workspace)
-my:finding-unknowns
-my:writing-adrs
-my:debug-github-workflows
-my:review-bash-ci-reliability
+acsi:finding-unknowns
+acsi:writing-adrs
+acsi:debug-github-workflows
+acsi:review-bash-ci-reliability
 ```
 
-Note the `my:` namespace, and that `installed_plugins.json` pins
+Note the `acsi:` namespace, and that `installed_plugins.json` pins
 `gitCommitSha: 65893a10ad16…` — plugin delivery is namespaced and version-pinned;
 copying loose skill dirs is neither.
 
@@ -161,12 +161,12 @@ Two consequences:
 ## C4 — a marketplace can publish a plugin that lives in another repo
 
 ```json
-{ "name": "my-remote",
-  "source": { "source": "github", "repo": "example-adopter/retired-agentskills", "path": "plugins/my" } }
+{ "name": "acsi-remote",
+  "source": { "source": "github", "repo": "example-adopter/retired-agentskills", "path": "plugins/acsi" } }
 ```
 
-Validates, adds, and installs (`√ Successfully installed plugin: my-remote@fedtest`),
-caching to `~/.claude/plugins/cache/fedtest/my-remote/65893a10ad16`. So one
+Validates, adds, and installs (`√ Successfully installed plugin: acsi-remote@fedtest`),
+caching to `~/.claude/plugins/cache/fedtest/acsi-remote/65893a10ad16`. So one
 marketplace can federate bundles owned by several repos — a repo keeps its skills,
 its release cadence and its review path, and still ships through the single registry.
 
@@ -187,7 +187,7 @@ by it. Adopt the standard additively, exactly as its own migration guide prescri
 
 ## C6 — measured always-on token cost
 
-`claude plugin details my` reports the cost of carrying a bundle:
+`claude plugin details acsi` reports the cost of carrying a bundle:
 
 ```
 Projected token cost

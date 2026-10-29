@@ -13,7 +13,7 @@ It closed that question and deliberately left two open:
 
 1. **Which lock wins in a multi-repo session?** "A union is not well-defined,"
    because two of the account's repos pin the same `(example-adopter/retired-agentskills,
-   my)` bundle at different refs. It ends: "The hook has no such option — it
+   acsi)` bundle at different refs. It ends: "The hook has no such option — it
    has to choose — so the question stays open for it."
 2. **Should the `$SELF_ROOT/skills.lock` fallback exist?** Measured: an
    absolute-path invocation from a project dir with no lock yields
@@ -115,7 +115,7 @@ name installs iff every row naming it agrees on one normalised digest, and no
 single lock contributed more than one row for it.**
 
 - **Same name, same digest, different locks** — the ordinary fleet shape, since
-  the locks largely declare the same `my` bundle. Collapses to one install;
+  the locks largely declare the same `acsi` bundle. Collapses to one install;
   identical digests mean identical bytes, so which source supplies them cannot
   matter. This is why the rule is a digest agreement and not a name count: the
   hook's existing duplicate guard counts destination NAMES over one lock's rows,
@@ -292,7 +292,7 @@ would cost every repo every skill. Per-name failure is bounded to the genuinely
 ambiguous names and leaves the rest of the union intact.
 
 **Merge the locks into one expectation before reading them.** Rejected: it
-destroys per-lock routing — two locks each legitimately claiming `my` at
+destroys per-lock routing — two locks each legitimately claiming `acsi` at
 different registries would trip the "bundle is claimed by two sources" refusal,
 so a union of valid inputs would be invalid — and it throws away the attribution
 the verdict needs to name which lock said what.

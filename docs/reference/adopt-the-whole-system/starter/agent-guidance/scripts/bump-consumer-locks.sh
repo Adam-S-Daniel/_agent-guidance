@@ -1510,7 +1510,7 @@ fi
 # _agent-guidance itself, agentskills-private, claude-memory-map,
 # fastmail-actions, repo-settings, wsl-automation) stored bare 64-hex where
 # the canonical shape is `sha256:<hex>`, all pinning 94cdcc81; because the
-# `my` bundle had not moved, `--check-current` answered `OK: ...` at exit 0
+# `acsi` bundle had not moved, `--check-current` answered `OK: ...` at exit 0
 # every night and this script logged "no re-pin needed" and skipped. A healing
 # mechanism reporting success while doing nothing about the defect it exists
 # to fix.

@@ -45,7 +45,7 @@ else
   fi
   bootstrap_file=\$(mktemp)
   trap 'rm -f -- "\$bootstrap_file"' EXIT
-  if ! curl --fail --silent --show-error --location --output "\$bootstrap_file" 'https://raw.githubusercontent.com/example-adopter/agentskills/$bootstrap_revision/.claude/hooks/skills-bootstrap.sh' 2>/dev/null; then
+  if ! curl --fail --silent --show-error --location --output "\$bootstrap_file" 'https://raw.githubusercontent.com/example-adopter/acsi-agentskills/$bootstrap_revision/.claude/hooks/skills-bootstrap.sh' 2>/dev/null; then
     printf '%s\n' 'skills: DEGRADED (could not download reviewed bootstrap)' >&2
     exit 1
   fi

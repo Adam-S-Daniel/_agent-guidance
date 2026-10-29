@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for coding-local's API-credit lane (ADR 0018).
+"""Tests for acsi-coding-local's API-credit lane (ADR 0018).
 
-Covers plugins/coding-local/hooks/credit-lane/ (gate.py, slots.py,
+Covers plugins/acsi-coding-local/hooks/credit-lane/ (gate.py, slots.py,
 lane.py, Sign-CreditJwt.ps1, the two hooks), bin/claude-credit, and the shape
 of hooks/claude-code.json and the manifests that name it.
 
@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_consistency  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-PLUGIN = REPO / "plugins" / "coding-local"
+PLUGIN = REPO / "plugins" / "acsi-coding-local"
 LANE = PLUGIN / "hooks" / "credit-lane"
 WRAPPER = PLUGIN / "bin" / "claude-credit"
 CLAUDE_HOOKS = PLUGIN / "hooks" / "claude-code.json"

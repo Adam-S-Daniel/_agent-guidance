@@ -75,20 +75,20 @@ class EventTests(unittest.TestCase):
 
     def test_a_skill_call_becomes_one_record_with_every_field(self):
         records = self.events([with_session(skill_call(
-            "coding-anywhere:workflow-path-audit", "toolu_01"))])
+            "acsi-coding-anywhere:workflow-path-audit", "toolu_01"))])
         self.assertEqual(records, [{
             "v": 1, "id": "toolu_01", "ts": "2026-09-03T10:00:00.000Z", "kind": "skill",
-            "name": "coding-anywhere:workflow-path-audit", "surface": "local",
+            "name": "acsi-coding-anywhere:workflow-path-audit", "surface": "local",
             "root": "wsl", "machine": census.machine_name(), "session_id": SESSION,
             "session_title": None, "cwd_repo": None, "branch": "feature/example"}])
 
     def test_a_typed_command_uses_the_entry_uuid_and_drops_the_slash(self):
         records = self.events([with_session(
-            typed("<command-name>/anything-anywhere:finding-unknowns</command-name>"),
+            typed("<command-name>/acsi-anything-anywhere:finding-unknowns</command-name>"),
             uuid="aaaaaaaa-0000-4000-8000-000000000001")])
         self.assertEqual([(r["id"], r["name"]) for r in records],
                          [("aaaaaaaa-0000-4000-8000-000000000001",
-                           "anything-anywhere:finding-unknowns")])
+                           "acsi-anything-anywhere:finding-unknowns")])
 
     def test_an_unlisted_skill_keeps_its_raw_name_but_a_built_in_is_skipped(self):
         records = self.events([skill_call("zz-private-skill"),
@@ -242,13 +242,13 @@ class MultiRootTests(unittest.TestCase):
 
     def test_old_plugin_prefixes_reduce_to_the_skill(self):
         write_transcript(self.wsl / "p" / "a.jsonl", [
-            skill_call("my:workflow-path-audit", "toolu_a"),
-            skill_call("my-local:finding-unknowns", "toolu_b")])
+            skill_call("acsi:workflow-path-audit", "toolu_a"),
+            skill_call("acsi-local:finding-unknowns", "toolu_b")])
         _, skills, events = self.run_census(self.wsl)
         self.assertEqual(skills, {"workflow-path-audit": {"2026-W36": 1},
                                   "finding-unknowns": {"2026-W36": 1}})
         self.assertEqual(sorted(e["name"] for e in events),
-                         ["my-local:finding-unknowns", "my:workflow-path-audit"])
+                         ["acsi-local:finding-unknowns", "acsi:workflow-path-audit"])
 
     def test_the_cli_takes_repeated_and_separated_roots(self):
         write_transcript(self.wsl / "p" / "a.jsonl", self.entries())
@@ -369,10 +369,10 @@ class HookTests(unittest.TestCase):
 
     def test_public_repos_are_the_non_private_registries_plus_two(self):
         repos = census.public_repos()
-        self.assertIn("example-adopter/agentskills", repos)
+        self.assertIn("example-adopter/acsi-agentskills", repos)
         self.assertIn("example-adopter/_agent-guidance", repos)
         self.assertIn("example-adopter/skills-evals", repos)
-        self.assertNotIn("example-adopter/agentskills-private", repos)
+        self.assertNotIn("example-adopter/acsi-agentskills-private", repos)
 
     def test_the_cli_reads_hook_logs_and_skill_weight_ignores_hook_rows(self):
         projects = self.tmp / "projects"

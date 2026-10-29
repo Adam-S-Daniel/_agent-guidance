@@ -7,7 +7,7 @@ scheduled fan-out workflow that reconciles drift.
 
 This repo is the **canonical home** of the engine, its schema and the fan-out
 workflow. The `github-actions-repo-settings` skill in
-[example-adopter/agentskills](https://github.com/example-adopter/agentskills)
+[example-adopter/acsi-agentskills](https://github.com/example-adopter/acsi-agentskills)
 used to ship a copy; it now points here instead
 ([adam-agentskills#62](https://github.com/Adam-S-Daniel/adam-agentskills/issues/62)),
 so change the engine here and nowhere else. Schema reference:
@@ -41,7 +41,7 @@ Per repo, according to `fleet.yml`:
   instead of pretending it converged.
 - **Actions event policies** (`actions_policies`, per-repo only) — repository
   Actions policies that restrict which events may trigger a workflow. The one
-  use is agentskills' `plugin-runtime-review.yml`, which triggers only on
+  use is acsi-agentskills' `plugin-runtime-review.yml`, which triggers only on
   `pull_request_target` and publishes a required check; GitHub blocks that event
   on public repos by default from 2026-11-02 unless a policy allows it
   ([ADR 0009](docs/decisions/0009-allow-pull-request-target-with-a-workflow-scoped-policy-owned-by-name.md)).
@@ -76,7 +76,7 @@ The sanctioned patterns
 - **PR + auto-merge is not a sanctioned bot-write path** in this fleet,
   except where an ADR declares it: skills-evals' roster PR
   ([ADR 0003](docs/decisions/0003-scope-skills-evals-roster-auto-merge-as-declared-exception.md))
-  and the eval loop's gated PRs in skills-evals, agentskills and
+  and the eval loop's gated PRs in skills-evals, acsi-agentskills and
   _agent-guidance ([ADR 0012](docs/decisions/0012-eval-loop-prs-auto-merge-as-a-declared-exception.md)).
 
 ## Local use

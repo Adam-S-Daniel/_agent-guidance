@@ -33,7 +33,7 @@ the orchestrator scenarios, and test-only fixtures under `test/fixtures/`.
 `evals/scheduled.yml` starts with `fixtures: []`, so nothing runs on the
 weekly plan until you add your own: write a fixture for your first skill
 under `evals/<skill>/<name>/`, run it locally
-(`python3 harness/run_eval.py evals/<skill>/<name> --arm both --registry ../agentskills`, see the
+(`python3 harness/run_eval.py evals/<skill>/<name> --arm both --registry ../acsi-agentskills`, see the
 [README's "Running"](../starter/skills-evals/README.md#running)), and add it
 to `scheduled.yml` in a pull request. An improve fire needs four fixtures
 for its skill.
@@ -59,10 +59,10 @@ it and acts:
 | Lane | Branch | The gate |
 |---|---|---|
 | eval results | `claude/eval-*` (files under `eval-results/`) | `routine-eval-ingest.yml` writes `routine-results/<run id>/` to `persistent/eval-results` |
-| improve | `claude/eval-improve-*` (`eval-improve/`) | `routine-improve-gate.yml` opens a pull request in `agentskills` from `eval-improve/<skill>` with the `eval-improve` App |
+| improve | `claude/eval-improve-*` (`eval-improve/`) | `routine-improve-gate.yml` opens a pull request in `acsi-agentskills` from `eval-improve/<skill>` with the `eval-improve` App |
 | guidance improve | `claude/eval-guidance-improve-*` (`eval-guidance-improve/`) | `routine-guidance-improve-gate.yml` opens one in `_agent-guidance` |
 | scaffold | `claude/scaffold-*` | `routine-scaffold-gate.yml` opens a fixtures pull request here with the `roster` App |
-| draft skill | `claude/draft-skill-*` (`draft-skill/`, `evals/`) | `routine-draft-skill-gate.yml` opens a skill pull request in `agentskills` and a fixtures one here, or a hook-proposal issue |
+| draft skill | `claude/draft-skill-*` (`draft-skill/`, `evals/`) | `routine-draft-skill-gate.yml` opens a skill pull request in `acsi-agentskills` and a fixtures one here, or a hook-proposal issue |
 
 An improve branch also matches `claude/eval-*`; the two lanes' path filters
 are disjoint, so only one fires. `skills-evals`' `AGENTS.md` has the full
@@ -127,11 +127,11 @@ time.
   a skill with no benefit on every fixture and model at two fixed looks
   gets a removal pull request (`retirement_mode: auto`), or an issue.
 - **New skills:** `routine-draft-skill.yml` picks one new-skill lesson a day
-  from `agentskills-private`'s `persistent/lessons`, hooks first.
+  from `acsi-agentskills-private`'s `persistent/lessons`, hooks first.
 - **New fixtures:** `routine-fixture-supply.yml`, daily.
 
 These pull requests merge by auto-merge once required checks pass, with no
-human review, within the limits `agentskills`'
+human review, within the limits `acsi-agentskills`'
 [ADR 0021](../starter/agent-skills/docs/decisions/0021-automated-skill-changes-merge-without-review.md)
 writes down. Set `improve_merge_mode: draft` and `retirement_mode: proposal` (in
 `evals/gate-policy.yml`) if you want to review each one first.

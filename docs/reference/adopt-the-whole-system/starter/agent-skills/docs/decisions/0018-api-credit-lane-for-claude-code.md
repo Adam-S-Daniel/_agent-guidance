@@ -32,7 +32,7 @@ key.
 
 **Scope: local Claude Code only.** The lane is for the owner's laptop, where
 Windows and WSL Claude Code sessions run side by side. It lives in
-`coding-local`, which only those machines enable.
+`acsi-coding-local`, which only those machines enable.
 
 **Signal source.** The gate reads the collector's `usage.json`. It does not
 call any API itself. Data older than 15 minutes, or a source not marked `ok`,
@@ -135,7 +135,7 @@ the gate and prints one line only when the lane flips open or closed.
 `plugin.json` is unchanged, so Codex never loads them. The handlers carry no
 `commandWindows`.
 
-`coding-local` moves from 2.1.0 to 2.2.0
+`acsi-coding-local` moves from 2.1.0 to 2.2.0
 ([ADR 0009](0009-bump-bundle-versions-on-every-release.md)).
 
 ## Consequences
@@ -184,7 +184,7 @@ the gate and prints one line only when the lane flips open or closed.
 - [ADR 0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md),
   [ADR 0017](0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md),
   [ADR 0009](0009-bump-bundle-versions-on-every-release.md)
-- `plugins/coding-local/hooks/credit-lane/`,
-  `plugins/coding-local/bin/claude-credit`,
-  `plugins/coding-local/hooks/claude-code.json`,
+- `plugins/acsi-coding-local/hooks/credit-lane/`,
+  `plugins/acsi-coding-local/bin/claude-credit`,
+  `plugins/acsi-coding-local/hooks/claude-code.json`,
   `scripts/test_credit_lane.py`

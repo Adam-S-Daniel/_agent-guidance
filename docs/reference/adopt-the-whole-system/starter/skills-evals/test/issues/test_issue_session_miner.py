@@ -195,7 +195,7 @@ class TestSignals(Base):
     def test_skill_and_guidance_usage_and_subject_attribution(self):
         recs = self.extract([
             user("Write an ADR for the cache choice.", 0),
-            tool_use("s", "Skill", 1, skill="anything-anywhere:writing-adrs"),
+            tool_use("s", "Skill", 1, skill="acsi-anything-anywhere:writing-adrs"),
             assistant("Per A successful `git push` does not mean your commit exists, I verified.", 2),
             user("No, the ADR needs a Consequences section.", 3),
             assistant("Added.", 4),

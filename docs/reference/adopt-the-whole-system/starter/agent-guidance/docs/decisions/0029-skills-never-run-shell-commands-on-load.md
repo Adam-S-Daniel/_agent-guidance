@@ -49,7 +49,7 @@ delivered fleet-wide.
 - A project setting covers only sessions started in a repo that carries it.
   It does not cover a skill loaded from a repo outside the fleet, or a plugin
   skill used in an unrelated project. On durable machines the user-level
-  setting is converged separately, by `setup.sh` in `agentskills`.
+  setting is converged separately, by `setup.sh` in `acsi-agentskills`.
 - The check reads only files whose path says they are skills or commands. A
   skill installed another way (an account upload, a path the globs miss) is not
   seen; the setting is the backstop for those.

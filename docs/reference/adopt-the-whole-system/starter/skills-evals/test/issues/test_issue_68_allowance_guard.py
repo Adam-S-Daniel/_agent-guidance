@@ -61,7 +61,7 @@ import ingest_routine_results as ingest  # noqa: E402
 import run_eval  # noqa: E402
 from arm_test_env import install_arm_test_environment  # noqa: E402
 
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 LIMITS = {"weekly_cap": 0.30, "per_run_cap": 0.03, "per_run_overrun": 0.005,
           "stop_when_account_above": 0.80}
 RESERVE = 0.035
@@ -288,7 +288,7 @@ class EndToEndStopTests(unittest.TestCase):
                     "FAKE_CLAUDE_ARGV_LOG": str(self.log)})
         return subprocess.run(
             [sys.executable, str(HARNESS_DIR / "run_eval.py"), str(self.eval_dir),
-             "--arm", "both", "--registry", f"agentskills={self.registry}",
+             "--arm", "both", "--registry", f"acsi-agentskills={self.registry}",
              "--results-dir", str(self.results), "--timeout", "30",
              "--timestamp", self.TS, *args],
             capture_output=True, text=True, env=env, cwd=str(ROOT), timeout=300)

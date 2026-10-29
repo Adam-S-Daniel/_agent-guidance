@@ -1,7 +1,7 @@
 # E2 — Cloud-session probe: SessionStart skill bootstrap
 
 **Verdict: POSITIVE.** The `SessionStart` hook (`.claude/hooks/skills-bootstrap.sh`)
-ran on the Claude Code on the web boot path, installed the `my` bundle into
+ran on the Claude Code on the web boot path, installed the `acsi` bundle into
 `~/.claude/skills/`, the skills were loaded into the model's skill listing for
 the first turn, and the hook's `additionalContext` string reached the model.
 
@@ -30,8 +30,8 @@ All four present. None of these exist in the claude.ai account-upload set (see
 
 ### Every other non-obvious-built-in skill in the listing
 
-**Also from the `my` bundle (hook-installed), name-collides with an account upload:**
-`my-writing-style`, `github-actions-repo-settings`, `pin-actions-to-sha`,
+**Also from the `acsi` bundle (hook-installed), name-collides with an account upload:**
+`acsi-writing-style`, `github-actions-repo-settings`, `pin-actions-to-sha`,
 `workflow-path-audit` — these appear both at `~/.claude/skills/<name>/` (hook)
 and in `~/.claude/skills/synced/<name>/` (account upload). Each appears exactly
 once in the model's listing, so the two sources are deduplicated rather than
@@ -65,7 +65,7 @@ base directory.
 total 48
 drwxr-xr-x 12 root root 4096 Aug 13 14:33 .
 drwxr-xr-x  8 root root 4096 Aug 13 14:33 ..
-drwxr-xr-x  2 root root 4096 Aug 13 14:33 my-writing-style
+drwxr-xr-x  2 root root 4096 Aug 13 14:33 acsi-writing-style
 drwxr-xr-x  2 root root 4096 Aug 13 14:33 debug-github-workflows
 drwxr-xr-x  3 root root 4096 Aug 13 14:33 finding-unknowns
 drwxr-xr-x  4 root root 4096 Aug 13 14:33 github-actions-repo-settings
@@ -80,7 +80,7 @@ drwxr-xr-x  3 root root 4096 Aug 13 14:33 writing-adrs
 ### `cat /tmp/skills-bootstrap.log` (`$TMPDIR` is unset, so `/tmp` is the path the hook used)
 
 ```
-installed=8 ref=main sha=65893a1 bundle=my
+installed=8 ref=main sha=65893a1 bundle=acsi
 ```
 
 No clone-failure output preceded that line, i.e. the `git clone` of the
@@ -89,7 +89,7 @@ registry succeeded.
 ### `ls -1 ~/.claude/skills/synced/ | head -30`
 
 ```
-my-writing-style
+acsi-writing-style
 doc-coauthoring
 docx
 fastmail
@@ -119,8 +119,8 @@ xlsx
 `~/.claude/skills/` holds 9 directories besides `synced/`, but the log says
 `installed=8`. Resolved, not a miscount:
 
-- `git ls-tree origin/main plugins/my/skills/` returns exactly **8** skills:
-  `my-writing-style`, `debug-github-workflows`, `finding-unknowns`,
+- `git ls-tree origin/main plugins/acsi/skills/` returns exactly **8** skills:
+  `acsi-writing-style`, `debug-github-workflows`, `finding-unknowns`,
   `github-actions-repo-settings`, `pin-actions-to-sha`,
   `review-bash-ci-reliability`, `workflow-path-audit`, `writing-adrs`.
   `git rev-parse --short origin/main` = `65893a1`, matching the log's `sha=`.
@@ -141,7 +141,7 @@ model's listing.
 turn, as a system line reading:
 
 ```
-SessionStart hook additional context: skills-bootstrap: installed 8 skills from example-adopter/retired-agentskills@main (65893a1), bundle=my, into ~/.claude/skills.
+SessionStart hook additional context: skills-bootstrap: installed 8 skills from example-adopter/retired-agentskills@main (65893a1), bundle=acsi, into ~/.claude/skills.
 ```
 
 Conclusion: `SessionStart` `additionalContext` **does** reach the model on the
@@ -209,7 +209,7 @@ confirms it ran to completion rather than being silently suppressed.
 | Question | Result |
 |---|---|
 | Four bundle-only skills in the model's context | **All 4 present** |
-| Hook executed | **Yes** — log `installed=8 ref=main sha=65893a1 bundle=my` |
+| Hook executed | **Yes** — log `installed=8 ref=main sha=65893a1 bundle=acsi` |
 | Registry clone reachable from the cloud sandbox | **Yes** |
 | `additionalContext` reached the model | **Yes**, verbatim |
 | Skills live for turn one (`reloadSkills`) | **Yes** |

@@ -11,7 +11,7 @@ name: Publish skill eval coverage and draft public gaps
 # workflow daily, issue #292). Repository variable REGISTRY_READ_APP_CLIENT_ID
 # and repository secret REGISTRY_READ_APP_PEM hold the App's client id and
 # private key; the App has Contents: read only and is installed on
-# agentskills-private alone. The token is minted immediately before the
+# acsi-agentskills-private alone. The token is minted immediately before the
 # one checkout that uses it, as the other apps in this repo are (see
 # routine-improve-gate.yml).
 on:
@@ -55,10 +55,10 @@ jobs:
           path: skills-evals
           persist-credentials: false
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
+          repository: example-adopter/acsi-agentskills
           path: registry-agentskills
           persist-credentials: false
 
@@ -76,20 +76,20 @@ jobs:
           path: registry-site
           persist-credentials: false
 
-      - name: Mint the GitHub App token for agentskills-private
+      - name: Mint the GitHub App token for acsi-agentskills-private
         id: registry-token
         uses: actions/create-github-app-token@v3.2.0
         with:
           client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills-private
+          repositories: acsi-agentskills-private
           permission-contents: read
 
       - name: Check out the private registry
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills-private
+          repository: example-adopter/acsi-agentskills-private
           path: registry-private
           token: ${{ steps.registry-token.outputs.token }}
           persist-credentials: false
@@ -113,10 +113,10 @@ jobs:
         working-directory: skills-evals
         run: |
           python3 scripts/scaffold_skill_gaps.py census \
-            --registry "agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
             --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
             --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
-            --registry "agentskills-private=$GITHUB_WORKSPACE/registry-private" \
+            --registry "acsi-agentskills-private=$GITHUB_WORKSPACE/registry-private" \
             --guidance-dir "$GITHUB_WORKSPACE/guidance" \
             --out "$RUNNER_TEMP/skill-coverage"
 
@@ -177,16 +177,16 @@ jobs:
   # pooled results and act on a `retire` one. Only the schedule runs it, and
   # scripts/retire_skill.py refuses any other event as well. It reads the
   # results branch and the public registries (no private checkout, so a
-  # skill in agentskills-private has no tested digest and never
-  # retires; agentskills ADR 0021 decision 7).
+  # skill in acsi-agentskills-private has no tested digest and never
+  # retires; acsi-agentskills ADR 0021 decision 7).
   #
   # In `retirement_mode: auto` (evals/gate-policy.yml, the one switch; ADR
-  # 0014 and agentskills ADR 0021) a `retire` verdict becomes a ready
-  # removal pull request in agentskills, labeled `agent-authored`, with
+  # 0014 and acsi-agentskills ADR 0021) a `retire` verdict becomes a ready
+  # removal pull request in acsi-agentskills, labeled `agent-authored`, with
   # auto-merge (merge commit, --match-head-commit) enabled. Its writes use an
   # installation token of the skills-evals GitHub App that
   # routine-improve-gate.yml uses (secrets EVAL_IMPROVE_APP_CLIENT_ID and
-  # EVAL_IMPROVE_APP_PEM; agentskills only, contents and pull-requests
+  # EVAL_IMPROVE_APP_PEM; acsi-agentskills only, contents and pull-requests
   # write), minted under continue-on-error in the step right before the one
   # that uses it and passed as REGISTRY_TOKEN; skills-evals issues still use
   # this job's own token. With no token (either secret unset, or the mint
@@ -214,7 +214,7 @@ jobs:
           path: eval-results
           persist-credentials: false
 
-      - name: Check out agentskills
+      - name: Check out acsi-agentskills
         # Full history for auto mode: the removal branch re-pins
         # `skills.lock`, and both that re-pin and its `--check-current` read
         # the commit the lock pins, which a shallow clone does not contain.
@@ -224,7 +224,7 @@ jobs:
         # authenticates with the App token, in the step that pushes.
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
+          repository: example-adopter/acsi-agentskills
           path: registry-agentskills
           fetch-depth: 0
           persist-credentials: false
@@ -270,7 +270,7 @@ jobs:
             --results-tree "$GITHUB_WORKSPACE/eval-results" \
             --roster evals/roster.yml --policy evals/gate-policy.yml \
             --as-of "$as_of" \
-            --registry "agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
             --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
             --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --guidance "$GITHUB_WORKSPACE/agent-guidance" \
@@ -297,7 +297,7 @@ jobs:
       # Minted only now, after the verdicts, and only for the next step. A
       # failed mint leaves the token empty, and the next step falls back to
       # proposal mode instead of failing the job.
-      - name: Mint the GitHub App token for agentskills
+      - name: Mint the GitHub App token for acsi-agentskills
         id: app-token
         if: steps.credential.outputs.present == 'true'
         continue-on-error: true
@@ -306,7 +306,7 @@ jobs:
           client-id: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}
           private-key: ${{ secrets.EVAL_IMPROVE_APP_PEM }}
           owner: example-adopter
-          repositories: agentskills
+          repositories: acsi-agentskills
           permission-contents: write
           permission-pull-requests: write
 
@@ -321,12 +321,12 @@ jobs:
           if [ -n "$REGISTRY_TOKEN" ]; then
             modes+=(--allow-mode auto)
           else
-            echo "::notice::no agentskills write token (the GitHub App secrets EVAL_IMPROVE_APP_CLIENT_ID and EVAL_IMPROVE_APP_PEM are unset, or the mint failed); a retire verdict in auto mode files an issue instead"
+            echo "::notice::no acsi-agentskills write token (the GitHub App secrets EVAL_IMPROVE_APP_CLIENT_ID and EVAL_IMPROVE_APP_PEM are unset, or the mint failed); a retire verdict in auto mode files an issue instead"
             modes+=(--fallback-to-proposal)
           fi
           python3 scripts/retire_skill.py \
             --gates "$RUNNER_TEMP/gates/latest.json" \
-            --registry "agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
             --registry "example-site-platform=$GITHUB_WORKSPACE/registry-cms" \
             --registry "example-site-a=$GITHUB_WORKSPACE/registry-site" \
             --usage "$GITHUB_WORKSPACE/eval-results/usage/weekly-local.json" \

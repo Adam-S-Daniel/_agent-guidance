@@ -8,7 +8,7 @@
   (2026-10-06):** arms may run as nested `claude -p` inside a Claude Code
   routine, because there the sandbox supplies auth and the arm holds no
   readable long-lived subscription credential (ADR 0010, Probe 1), and only
-  default-branch content from the `agentskills`, `example-site-platform` and
+  default-branch content from the `acsi-agentskills`, `example-site-platform` and
   `example-site-a` registries and `_agent-guidance` runs in them. The
   supersession is conditional on that staying true; ADR 0010 lists an open
   risk (whether an arm can read the session's ingress token file or any

@@ -19,13 +19,13 @@
 # results, since anyone who can write the results can also remove a skill.
 #
 # `retirement_mode` is `auto` (a `retire` verdict opens a removal PR in
-# agentskills that auto-merges with no human review) or `proposal` (an
+# acsi-agentskills that auto-merges with no human review) or `proposal` (an
 # issue is filed and a human removes). A missing or invalid value is
 # `proposal`. It is `auto` by the owner's 2026-10-26 decision (removal pull
-# requests auto-merge with no human; ADR 0014 and agentskills ADR 0021);
+# requests auto-merge with no human; ADR 0014 and acsi-agentskills ADR 0021);
 # set it to `proposal` to turn removal pull requests off. Even in `auto`,
 # scripts/retire_skill.py files the issue instead when the skill's plugin
-# runs code or the scheduled workflow has no agentskills write token,
+# runs code or the scheduled workflow has no acsi-agentskills write token,
 # opens nothing while another loop pull request is open there, and acts only
 # from the scheduled workflow, never a dispatched or pull-request run.
 skills:

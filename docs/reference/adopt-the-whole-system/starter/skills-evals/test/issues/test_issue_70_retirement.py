@@ -1329,7 +1329,7 @@ class ComputeGatesTests(unittest.TestCase):
                 "--policy", str(POLICY_FILE), "--evals-dir", str(self.evals),
                 "--as-of", as_of, "--out", str(out)]
         if registry:
-            args += ["--registry", f"agentskills={self.registry}"]
+            args += ["--registry", f"acsi-agentskills={self.registry}"]
         self.assertEqual(compute_gates.main(args), 0)
 
         def refuse(value):

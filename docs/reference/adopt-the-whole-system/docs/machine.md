@@ -14,13 +14,13 @@ bash bootstrap/install-machine.sh --with-codex  # also wire Codex, if ~/.codex e
 ```
 
 It clones (or fast-forwards, when the clone is clean and on its default
-branch) your `agentskills` and `_agent-guidance` into `REPOS_DIR` from
+branch) your `acsi-agentskills` and `_agent-guidance` into `REPOS_DIR` from
 `fleet.env`, refuses a clone whose `origin` is not your repo, and then runs
 each repo's own installer:
 
-1. `agentskills`' `setup.sh --owner-machine`: adds your marketplace and
+1. `acsi-agentskills`' `setup.sh --owner-machine`: adds your marketplace and
    enables the plugins in `~/.claude/settings.json`.
-2. `agentskills`' `scripts/install-agent-hooks.sh`: the config-based git
+2. `acsi-agentskills`' `scripts/install-agent-hooks.sh`: the config-based git
    hooks (Git 2.54+) that run `.githooks/agent-checks` on every commit and
    push, in clones of your two owners' repos only (an `includeIf` per owner).
 3. `_agent-guidance`'s `scripts/register-memory-home-hook.sh`: the
@@ -41,7 +41,7 @@ login:
 
 | Job | When | What it does |
 |---|---|---|
-| session miner | daily at 07:17 | turns your transcripts into short, redacted lesson records on `agentskills-private`'s `persistent/lessons` |
+| session miner | daily at 07:17 | turns your transcripts into short, redacted lesson records on `acsi-agentskills-private`'s `persistent/lessons` |
 | usage census | daily at 12:37 | publishes which models and skills you ran each week to `skills-evals`' `persistent/eval-results`; the roster picks eval models from it and the planner improves the most used skills first |
 | waiting feed | every minute (optional) | publishes the sessions waiting on you to a private `waiting-feed` repo |
 
@@ -65,7 +65,7 @@ nothing). macOS needs `brew install flock coreutils`; systemd needs
 **The session miner refuses to run** until you set it up and run it by hand
 once, in the distro: a privacy denylist outside every repo
 (`~/.config/privacy-denylist.txt`, the same patterns as the `PRIVACY_DENYLIST`
-secret), a clone of `agentskills-private` at `~/repos/agentskills-private`
+secret), a clone of `acsi-agentskills-private` at `~/repos/acsi-agentskills-private`
 with a git credential that works without a desktop session
 (`gh auth setup-git` with a file-stored token), `python3-yaml`, and then
 `bash scripts/run-session-miner.sh --dry-run`. Filing issues stays off until
@@ -84,7 +84,7 @@ in it. Create one for your fleet work and give it:
 - **Network access:** "Custom", with the domains in `_agent-guidance`'s
   [`docs/reference/network-allowlist-claude-environments.txt`](../starter/agent-guidance/docs/reference/network-allowlist-claude-environments.txt).
   Its header says how to change it.
-- **Setup script:** the one in `agentskills`'
+- **Setup script:** the one in `acsi-agentskills`'
   [`docs/multi-repo-delivery.md`](../starter/agent-skills/docs/multi-repo-delivery.md),
   "The wiring (cloud only)", with its project directory set to the one your
   sessions open. A single-repo session needs none: the repo's own

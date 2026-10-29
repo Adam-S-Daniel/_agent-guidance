@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Act on a `retire` verdict (#70, part 2): file or update an issue, or open
-an auto-merging removal pull request in agentskills.
+an auto-merging removal pull request in acsi-agentskills.
 
-  retire_skill.py --gates FILE --registry agentskills=PATH
+  retire_skill.py --gates FILE --registry acsi-agentskills=PATH
                   [--registry NAME=PATH ...] [--dry-run]
                   [--allow-mode proposal|auto ...] [--usage FILE]
 
@@ -23,9 +23,9 @@ improvement to a draft):
   * the skill's plugin runs code (improve_gate.py's `auto_refusal`: a
     `hooks/` or `bin/` directory, a settings or package file, or a manifest
     `hooks` or `settings` key). Removing one of its skills would wait on
-    agentskills' plugin-runtime-review, which auto-merge cannot approve
-    (agentskills ADR 0021, decision 4);
-  * the caller has no write credential for agentskills this run
+    acsi-agentskills' plugin-runtime-review, which auto-merge cannot approve
+    (acsi-agentskills ADR 0021, decision 4);
+  * the caller has no write credential for acsi-agentskills this run
     (`--fallback-to-proposal` without `--allow-mode auto`): the scheduled
     workflow passes it when the GitHub App token was not minted.
 
@@ -37,17 +37,17 @@ The issue says why, and a human removes.
     updated, and a closed one means the skill is already decided, so nothing
     is filed again. A human removes. An issue anyone else wrote is ignored,
     whatever it quotes.
-  * `auto` (the owner, 2026-10-25; docs/decisions/0014 and agentskills ADR
+  * `auto` (the owner, 2026-10-25; docs/decisions/0014 and acsi-agentskills ADR
     0021): a branch `retire-skill/<skill>` is prepared in the
-    agentskills checkout; it is pushed (and the push verified with
+    acsi-agentskills checkout; it is pushed (and the push verified with
     `git merge-base --is-ancestor`), a ready pull request is opened, labeled
     `agent-authored`, and auto-merge (merge commit, `--match-head-commit`)
     is enabled and read back. No human review, so the branch must pass the
     registry's required checks on its own. Its first commit deletes
     `plugins/<plugin>/skills/<skill>/`, raises the plugin's MAJOR version in
-    both manifests (agentskills ADR 0009 requires a raise; removing a
+    both manifests (acsi-agentskills ADR 0009 requires a raise; removing a
     skill breaks every consumer that calls it, which the registry has bumped
-    as major before, `coding-local` 1.1.0 -> 2.0.0 for `sync-skills`),
+    as major before, `acsi-coding-local` 1.1.0 -> 2.0.0 for `sync-skills`),
     adds a `docs/skill-impact.md` entry, drops the skill from
     `scripts/plugin_layout.json` (the ADR 0013
     layout its tests pin) and regenerates the README skill table with the
@@ -67,11 +67,11 @@ exits 2 rather than doing nothing quietly, unless `--fallback-to-proposal`
 lowers auto to proposal.
 
 AUTO MODE OPENS NOTHING (exit 0, nothing written) while any loop pull
-request is open in agentskills (head `eval-improve/`, `draft-skill/` or
+request is open in acsi-agentskills (head `eval-improve/`, `draft-skill/` or
 `retire-skill/`; the slot routine-improve-gate.yml's `registry-pr` job
 checks): all three write the bundle version, `docs/skill-impact.md` and
 `skills.lock`, so a second would conflict once the first merged
-(agentskills ADR 0021, decision 5). Nor while a closed pull request
+(acsi-agentskills ADR 0021, decision 5). Nor while a closed pull request
 from `retire-skill/<skill>` exists: a person closed it, so the skill is
 decided, as a closed issue decides a proposal.
 
@@ -83,7 +83,7 @@ REFUSALS (exit 2, nothing written):
   * in auto mode, any run that is not `--dry-run` outside GitHub Actions
     (`GITHUB_ACTIONS` must be `true`) on the default branch (`GITHUB_REF`
     must be `refs/heads/main`);
-  * in auto mode, a shallow agentskills checkout (the lock re-pin and
+  * in auto mode, a shallow acsi-agentskills checkout (the lock re-pin and
     its check read the commit the lock pins, which a shallow clone lacks), a
     skill that is its plugin's last (emptying a plugin is a registry
     decision, and the lock generator refuses it), a
@@ -98,17 +98,17 @@ REFUSALS (exit 2, nothing written):
     registry's citation test would fail on the dangling name);
   * in auto mode, a skill whose basename is not found exactly once across
     every `--registry` checkout given, or whose one copy is not a real
-    `plugins/<plugin>/skills/<skill>/` directory of agentskills: none
+    `plugins/<plugin>/skills/<skill>/` directory of acsi-agentskills: none
     of `plugins/`, the plugin, its `skills/`, the skill, its manifests or
     `docs/skill-impact.md` may be a symlink or resolve outside the
     checkout. In proposal mode the issue says so instead, since a human
     removes.
 
-Only agentskills is ever written. The private registry,
-agentskills-private, is never a target (agentskills ADR 0021,
+Only acsi-agentskills is ever written. The private registry,
+acsi-agentskills-private, is never a target (acsi-agentskills ADR 0021,
 decision 7): the scheduled job does not check it out, so a skill there has
 no tested digest and never reaches `retire`, and a `--registry` copy found
-anywhere but agentskills is refused in auto mode.
+anywhere but acsi-agentskills is refused in auto mode.
 
 `--dry-run` reads (the gates file, the checkouts, and open pull requests or
 issues through `gh`), writes nothing, and prints the plan as JSON: the
@@ -116,7 +116,7 @@ action, the issue or pull request text, and the commands it would run.
 
 Every GitHub call goes through one of two functions, `gh(args, stdin)` (the
 `gh` CLI with `GH_TOKEN`: reads, and skills-evals issues) and
-`registry_gh(args, stdin)` (with `REGISTRY_TOKEN`: agentskills
+`registry_gh(args, stdin)` (with `REGISTRY_TOKEN`: acsi-agentskills
 writes), and every push through `push(checkout, branch)`, all injectable,
 so tests need no network. An error from `gh` is reported by its exit code
 only, never its output. Deterministic: no clock; the skill-impact date is
@@ -193,11 +193,11 @@ import guidance  # noqa: E402
 import skill_usage  # noqa: E402
 import improve_gate  # noqa: E402
 
-TARGET = "agentskills"
-REGISTRY_REPO = "example-adopter/agentskills"
+TARGET = "acsi-agentskills"
+REGISTRY_REPO = "example-adopter/acsi-agentskills"
 EVALS_REPO = "example-adopter/skills-evals"
 BRANCH_PREFIX = "retire-skill/"
-#: Every loop pull request's head in agentskills: improvement, new
+#: Every loop pull request's head in acsi-agentskills: improvement, new
 #: skill, removal. One open at a time across all three (ADR 0021,
 #: decision 5; routine-improve-gate.yml's registry-pr job checks the same).
 LOOP_PREFIXES = ("eval-improve/", "draft-skill/", BRANCH_PREFIX)
@@ -207,13 +207,13 @@ AGENT_LABEL = "agent-authored"
 AGENT_MARKER = improve_gate.AGENT_MARKER
 AGENT_TRAILER = "Agent: claude-code"
 REGISTRY_ADR = improve_gate.REGISTRY_ADR
-#: The environment variable holding the agentskills write token (the
+#: The environment variable holding the acsi-agentskills write token (the
 #: skills-evals GitHub App's installation token, minted by the workflow).
 REGISTRY_TOKEN_ENV = "REGISTRY_TOKEN"
 PR_URL_RE = re.compile(rf"https://github\.com/{re.escape(REGISTRY_REPO)}/pull/(\d+)")
 GUIDANCE_NO_CREDENTIAL = ("no write credential for _agent-guidance reached this run "
                          "(the GitHub App token was not minted)")
-NO_CREDENTIAL = ("no write credential for agentskills reached this run (the "
+NO_CREDENTIAL = ("no write credential for acsi-agentskills reached this run (the "
                  "GitHub App token was not minted)")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 ISSUE_MARKER = "<!-- skills-evals:retire-skill:{skill} -->"
@@ -368,7 +368,7 @@ def retiring(gates: dict) -> str | None:
 
 
 def locate(registries: dict, skill: str) -> dict:
-    """{"plugin", "path"} of the one copy of `skill`, in agentskills;
+    """{"plugin", "path"} of the one copy of `skill`, in acsi-agentskills;
     RetireError otherwise."""
     if TARGET not in registries:
         raise RetireError(f"no {TARGET} checkout was given (--registry {TARGET}=PATH)")
@@ -418,7 +418,7 @@ def _json_lines(text: str) -> list:
 
 
 def open_loop_prs(gh) -> list:
-    """Open agentskills pull requests whose head is any loop's."""
+    """Open acsi-agentskills pull requests whose head is any loop's."""
     text = gh(["api", "--paginate",
                f"repos/{REGISTRY_REPO}/pulls?state=open&per_page=100",
                "--jq", ".[] | {number: .number, head: .head.ref, url: .html_url}"])
@@ -427,7 +427,7 @@ def open_loop_prs(gh) -> list:
 
 
 def closed_removal_prs(gh, skill: str) -> list:
-    """Closed agentskills pull requests from `retire-skill/<skill>`."""
+    """Closed acsi-agentskills pull requests from `retire-skill/<skill>`."""
     owner = REGISTRY_REPO.split("/")[0]
     text = gh(["api", "--paginate",
                f"repos/{REGISTRY_REPO}/pulls?state=closed&per_page=100"
@@ -598,7 +598,7 @@ def layout_without(checkout: Path, plugin: str, skill: str) -> str:
 
 def lock_relevant(checkout: Path, plugin: str) -> bool:
     """Whether `skills.lock` locks `plugin`, so removing one of its skills
-    makes the lock stale (agentskills CI's `--check-current`)."""
+    makes the lock stale (acsi-agentskills CI's `--check-current`)."""
     contained(checkout, [LOCK_FILE])
     path = checkout / LOCK_FILE
     if not path.exists():
@@ -661,7 +661,7 @@ def _defined_tests(checkout: Path, rels) -> set:
 
 def dangling_citations(checkout: Path, path: str, skill: str) -> None:
     """RetireError when a tracked source outside the skill cites, by name, a
-    test that only the skill defines. agentskills'
+    test that only the skill defines. acsi-agentskills'
     test_every_test_this_repo_cites_by_name_exists scans every tracked
     non-test `*.py` and `*.sh` for `test_...` tokens and fails on one no
     tracked module defines, so removing the skill would turn that citation
@@ -720,7 +720,7 @@ def waived_paths(checkout: Path, path: str, skill: str) -> None:
 
 def runtime_gated(checkout: Path, path: str, skill: str) -> None:
     """RetireError when deleting this skill would be a plugin RUNTIME change
-    in agentskills' sense (its ADR 0016 gate): a `hooks/` or `bin/`
+    in acsi-agentskills' sense (its ADR 0016 gate): a `hooks/` or `bin/`
     directory inside the skill, or a hook naming a path inside it. Such a
     pull request waits on the `plugin-runtime-review` environment for the
     owner's approval, which auto-merge cannot supply, so the branch would sit
@@ -729,7 +729,7 @@ def runtime_gated(checkout: Path, path: str, skill: str) -> None:
     for name in ("hooks", "bin"):
         if (checkout / path / name).exists():
             raise RetireError(f"{skill} ships a {name}/ directory, so removing it is a "
-                              "plugin runtime change: agentskills' "
+                              "plugin runtime change: acsi-agentskills' "
                               "plugin-runtime-review gate holds such a pull request for "
                               "the owner, and auto-merge cannot approve it")
     needle = f"skills/{skill}/"
@@ -747,7 +747,7 @@ def runtime_gated(checkout: Path, path: str, skill: str) -> None:
         if needle in text:
             raise RetireError(
                 f"{config.relative_to(checkout).as_posix()} names a path inside {skill}, "
-                "so removing it is a plugin runtime change: agentskills' "
+                "so removing it is a plugin runtime change: acsi-agentskills' "
                 "plugin-runtime-review gate holds such a pull request for the owner, and "
                 "auto-merge cannot approve it")
 
@@ -978,7 +978,7 @@ def commands(action: dict) -> list:
 
 def execute(action: dict, registries: dict, gh, push, env, registry_gh=None) -> str:
     """Make the plan's writes: skills-evals issues through `gh`,
-    agentskills writes through `registry_gh` (default `gh`)."""
+    acsi-agentskills writes through `registry_gh` (default `gh`)."""
     registry_gh = registry_gh or gh
     kind = action["action"]
     if kind == "none":
@@ -1440,7 +1440,7 @@ def main(argv: list | None = None, *, env=None, gh=default_gh, push=None,
     elif registry_gh is None:
         def registry_gh(args, stdin=None):
             if not token:
-                raise RetireError(f"no {REGISTRY_TOKEN_ENV} for an agentskills write")
+                raise RetireError(f"no {REGISTRY_TOKEN_ENV} for an acsi-agentskills write")
             return default_gh(args, stdin, token)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--gates", required=True, type=Path)

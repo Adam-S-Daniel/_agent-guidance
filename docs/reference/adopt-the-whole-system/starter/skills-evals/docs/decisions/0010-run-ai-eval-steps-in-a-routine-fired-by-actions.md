@@ -75,7 +75,7 @@ says is now optional):
   [PR #296](https://github.com/Adam-S-Daniel/skills-evals/pull/296).
 - The only guidance fixture, `evals/guidance/_delivery/fixture.yaml`, is a
   delivery canary, "not a behavioral A/B" (lines 1-5). Only `writing-adrs`
-  (4 fixtures) and `my-writing-style` (3) have the three fixtures a
+  (4 fixtures) and `acsi-writing-style` (3) have the three fixtures a
   train/held-out split needs.
 - #71 item 5: the improvement workflow is not scheduled "until three
   human-reviewed PRs from it have merged".
@@ -169,7 +169,7 @@ go with your recommendations". Those recommendations, now decided:
      Proposed gate, the author's and pending the owner: the risk must be closed
      before the first scheduled run.
    - **Arms run only trusted content:** the default branches of the
-     `agentskills`, `example-site-platform` and `example-site-a` skill registries,
+     `acsi-agentskills`, `example-site-platform` and `example-site-a` skill registries,
      plus `_agent-guidance` as the guidance source. No pull-request, fork or
      third-party content runs in a routine arm.
 
@@ -358,7 +358,7 @@ Routine run [`session_EXAMPLE`](https://claude.ai/code/session_EXAMPLE),
 5. The improvement loop's routine mode: the routine pushes an accepted
    candidate to `claude/eval-improve-<run id>`, and
    `.github/workflows/routine-improve-gate.yml` validates it and opens a
-   draft pull request in agentskills with a GitHub App token, once
+   draft pull request in acsi-agentskills with a GitHub App token, once
    the App and its two secrets exist
    ([ADR 0005](0005-improvement-loop-reuses-skill-creator.md), "Routine
    improve mode addendum"). `routine-eval-fire.yml` fires it with

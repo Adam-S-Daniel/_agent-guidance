@@ -13,7 +13,7 @@ closed-folder clause only; the rest of ADR 0013 stands.
 `.claude-plugin/`, `plugin.json` and `skills/`, and refused any manifest key
 outside the metadata set.
 
-**Where that rule came from.** It was written for the retired `my-personal`
+**Where that rule came from.** It was written for the retired `acsi-personal`
 view plugin ([ADR 0012](0012-serve-the-account-skills-as-one-repo-synced-plugin.md)),
 which claude.ai served to Cowork, chat and iOS. Earlier, the repo root had
 been that plugin's root, so a component file anywhere in the repo would have

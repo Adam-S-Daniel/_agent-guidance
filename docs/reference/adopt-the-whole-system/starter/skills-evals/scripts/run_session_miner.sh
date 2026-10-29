@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Daily session mining: real Claude Code transcripts -> lesson records and
-# proposal files on agentskills-private's `persistent/lessons` branch.
+# proposal files on acsi-agentskills-private's `persistent/lessons` branch.
 #
 # Runs ONLY on the owner's own computer, from WSL (ADR 0015). Never in CI or a
 # cloud session: they have no real transcripts, and must never be given any.
@@ -27,13 +27,13 @@
 # Without it nothing is mined: exit 2.
 #
 # Settings (all optional; the defaults are the real thing on that machine):
-#   LESSONS_CLONE      private repo clone (default ~/repos/agentskills-private)
+#   LESSONS_CLONE      private repo clone (default ~/repos/acsi-agentskills-private)
 #   LESSONS_REPO_URL   override that clone's origin URL (tests)
 #   SKILLS_EVALS_URL   where to clone skills-evals from (default: GitHub)
 #   GUIDANCE_MANIFEST  _agent-guidance agents-md/eval-coverage.yml
 #                      (default ~/repos/_agent-guidance/agents-md/eval-coverage.yml)
 #   MINER_REGISTRIES   space-separated registry checkouts whose skill names count
-#                      (default ~/repos/agentskills and the private clone)
+#                      (default ~/repos/acsi-agentskills and the private clone)
 #   MINER_ROOTS        space-separated LABEL=PATH roots, replacing the defaults
 #   WIN_HOME           Windows profile as a WSL path (default: asked of cmd.exe)
 #   MINER_STATE        state file (default ~/.local/state/session-miner/state.json)
@@ -44,7 +44,7 @@ set -euo pipefail
 URL="${SKILLS_EVALS_URL:-https://github.com/example-adopter/skills-evals.git}"
 BRANCH="persistent/lessons"
 PY="${PYTHON:-python3}"
-CLONE="${LESSONS_CLONE:-$HOME/repos/agentskills-private}"
+CLONE="${LESSONS_CLONE:-$HOME/repos/acsi-agentskills-private}"
 STATE="${MINER_STATE:-$HOME/.local/state/session-miner/state.json}"
 MANIFEST="${GUIDANCE_MANIFEST:-$HOME/repos/_agent-guidance/agents-md/eval-coverage.yml}"
 DESKTOP_PACKAGE="AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude"
@@ -106,7 +106,7 @@ if [ -z "${MINER_ROOTS:-}" ] && [ -n "${win:-}" ] && [ -d "$win/$DESKTOP_PACKAGE
   mine_args+=(--desktop "$win/$DESKTOP_PACKAGE")
 fi
 if [ -f "$MANIFEST" ]; then mine_args+=(--guidance-manifest "$MANIFEST"); fi
-for reg in ${MINER_REGISTRIES-$HOME/repos/agentskills $CLONE}; do
+for reg in ${MINER_REGISTRIES-$HOME/repos/acsi-agentskills $CLONE}; do
   if [ -d "$reg/plugins" ]; then mine_args+=(--registry "$reg"); fi
 done
 now_args=()

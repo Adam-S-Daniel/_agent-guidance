@@ -76,7 +76,7 @@ merges". The owner chose the opposite for both.
    agent marker and `agent-authored` label the fleet requires of agent-made
    contributions. The loop's own measurement is the touch gate's eval run.
 7. **The private registry is never changed automatically.**
-   agentskills-private is not a target of either path; both name this
+   acsi-agentskills-private is not a target of either path; both name this
    repository alone.
 8. **The owner turns them off in skills-evals**: `improve_merge_mode: draft` in
    `evals/improve-policy.yml` (improvements and new skills),

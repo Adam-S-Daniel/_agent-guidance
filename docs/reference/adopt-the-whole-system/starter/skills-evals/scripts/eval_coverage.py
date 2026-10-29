@@ -6,8 +6,8 @@ reads registry checkouts and prints a table. Publication mode writes
 a public-safe report and badge for the workflow; it never runs an eval arm.
 
     python3 scripts/eval_coverage.py \\
-        --registry agentskills=PATH --registry example-site-platform=PATH \\
-        --registry example-site-a=PATH --registry agentskills-private=PATH \\
+        --registry acsi-agentskills=PATH --registry example-site-platform=PATH \\
+        --registry example-site-a=PATH --registry acsi-agentskills-private=PATH \\
         [--json] [--check] [--include-private-names]
 
     python3 scripts/eval_coverage.py --registry NAME=PATH ... \\
@@ -88,7 +88,7 @@ import context as fixture_context  # noqa: E402
 # An explicit allowlist, not a name-pattern guess. test_issue_64 asserts every
 # registries.yml entry whose name says "private" is listed here, so a new
 # private registry cannot arrive with its skill names printable.
-PRIVATE_REGISTRIES = frozenset({"agentskills-private"})
+PRIVATE_REGISTRIES = frozenset({"acsi-agentskills-private"})
 
 DEFAULT_NON_COVERAGE = REPO_ROOT / "evals" / "non-coverage.yml"
 DEFAULT_EVALS = REPO_ROOT / "evals"

@@ -438,7 +438,7 @@ class SupplyWorkflowShapeTests(unittest.TestCase):
                    for s in job["steps"] if "REGISTRY_READ_APP_PEM" in json.dumps(s)]
         self.assertEqual(holders, [("plan", "fleet-token")])
         mint = next(s for s in self.jobs["plan"]["steps"] if s.get("id") == "fleet-token")
-        self.assertEqual(mint["with"]["repositories"], "agentskills-private")
+        self.assertEqual(mint["with"]["repositories"], "acsi-agentskills-private")
         self.assertEqual(mint["with"]["permission-contents"], "read")
         self.assertNotIn("continue-on-error", mint)
         step = self.step("plan", "mine_real_work.py mine")

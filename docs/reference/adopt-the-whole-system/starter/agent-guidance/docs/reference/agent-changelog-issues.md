@@ -4,7 +4,7 @@ A loose spec for the GitHub issues opened while writing an entry in
 [`agent-claude-code.CHANGELOG.md`](agent-claude-code.CHANGELOG.md) or
 [`agent-codex.CHANGELOG.md`](agent-codex.CHANGELOG.md). A target repo's own
 `AGENTS.md` wins where the two disagree. The generic form of this spec is the
-`vendor-release-impact-issues` skill (`coding-anywhere`). This file adds
+`vendor-release-impact-issues` skill (`acsi-coding-anywhere`). This file adds
 fleet detail to it and wins where the two differ, except that it may not relax
 the skill's hygiene rules or its title lint. The procedure around it is
 [`agent-changelog-routine.md`](agent-changelog-routine.md).

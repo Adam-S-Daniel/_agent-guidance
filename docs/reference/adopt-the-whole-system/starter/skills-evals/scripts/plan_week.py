@@ -36,7 +36,7 @@ guidance-improve mode, ADR 0005's routine guidance improve mode addendum).
 THE BANDS (rule D), in order:
 
   1. safety: every cell of a skill with an open removal pull request in
-     agentskills (`retire-skill/<skill>`), no cap, counted first. The
+     acsi-agentskills (`retire-skill/<skill>`), no cap, counted first. The
      doc's second safety item, a touch check of an open registry pull
      request's head, is not planned: routine arms run only the registries'
      default branches (ADR 0010 decision 1).
@@ -91,7 +91,7 @@ full reservation before it spends anything; this plan only orders them.
 IMPROVE ELIGIBILITY (rule A), per skill with fixtures under evals/<skill>/:
 
   1. at least `MIN_IMPROVE_FIXTURES` (4) fixtures, all naming
-     agentskills (the one registry the routine checks out); the first
+     acsi-agentskills (the one registry the routine checks out); the first
      by name is the fixed holdout, passed as `holdout` so the proposer never
      sees it. Fewer fixtures with train headroom is a `needs-fixtures` work
      item instead, ranked by headroom.
@@ -100,14 +100,14 @@ IMPROVE ELIGIBILITY (rule A), per skill with fixtures under evals/<skill>/:
      skill below it (one that already passes at least 90% of its checks) can
      not be improved by an edit, so it becomes a `needs-harder-fixtures` work
      item instead: the next step is a fixture it fails. Retiring skills and
-     skills outside agentskills get none.
+     skills outside acsi-agentskills get none.
   3. a target: some train check fails in at least 25% of at least 6 scored
      with-arm trials, at least twice, and has passed at least once in some
      arm. Infrastructure trials are not evidence (gates.trial_record).
   4. not owned by retirement: its verdict is not `retire` or
      `retire-pending`.
   5. not paused (rule C, `pause`): no open improve pull request
-     (`eval-improve/<skill>` in agentskills), no attempt in flight, no
+     (`eval-improve/<skill>` in acsi-agentskills), no attempt in flight, no
      open issue or pull request labeled `on-hold` whose title names the
      skill, no cooldown. Outcomes come from scripts/improve_outcomes.py.
 
@@ -154,7 +154,7 @@ WORK ITEMS are not fires: `needs-fixtures`, `needs-harder-fixtures` and
 `fixture`), `guidance-improve` (change type `guidance-edit`; only for a
 section id the fire workflow refuses, see above), and `agent-check` items
 read from `--lessons` (lesson proposals
-of kind `agent-check`, agentskills-private lessons/proposals/**.json),
+of kind `agent-check`, acsi-agentskills-private lessons/proposals/**.json),
 which go to the fleet worker as agent-ready issues (the owner, 2026-10-26: git
 hooks are the first choice whenever possible, so they lead the work list).
 Every item carries `change_type`: `skill-edit` for an improve fire,
@@ -163,7 +163,7 @@ Every item carries `change_type`: `skill-edit` for an improve fire,
 
 THE TRIGGER LANE (usage tracking, 2026-10-26: about 55 skill calls in 8
 weeks over about 72,000 model turns, so most skills almost never trigger).
-Every agentskills skill whose usage weight is fresh (known) and at most
+Every acsi-agentskills skill whose usage weight is fresh (known) and at most
 `TRIGGER_MAX_WEIGHT` gets a work item: `trigger-optimize` (change type
 `trigger`) when it has a reviewed evals/<skill>/trigger-eval-set.json, or
 `needs-trigger-set` (change type `fixture`) to write one. Neither is a
@@ -230,8 +230,8 @@ import allowance_guard as guard  # noqa: E402
 import improve_outcomes as outcomes_mod  # noqa: E402
 import plan_scheduled_evals as schedule  # noqa: E402
 
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
-REGISTRY_REPO = "example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
+REGISTRY_REPO = "example-adopter/acsi-agentskills"
 SELF_REPO = "example-adopter/skills-evals"
 GUIDANCE_REPO = "example-adopter/_agent-guidance"
 #: Guidance-loop heads in _agent-guidance: improvements (this plan's fires,
@@ -578,7 +578,7 @@ def improve_items(ctx: dict, now: datetime) -> tuple:
         headroom = evidence["headroom"]
         reasons = []
         if not skill["registry_ok"]:
-            reasons.append("its fixtures do not all name agentskills")
+            reasons.append("its fixtures do not all name acsi-agentskills")
         if headroom is None or headroom < MIN_GAIN:
             reasons.append("no train headroom")
             if (headroom is not None and skill["registry_ok"]
@@ -722,7 +722,7 @@ def hook_candidate(text: str) -> bool:
 
 def trigger_items(ctx: dict) -> tuple:
     """(work items, hook candidates) for the trigger lane. A skill of
-    ctx["triggers"] (every agentskills skill) whose usage weight is
+    ctx["triggers"] (every acsi-agentskills skill) whose usage weight is
     known, so fresh, and at most TRIGGER_MAX_WEIGHT gets a `trigger` item
     when evals/<skill>/trigger-eval-set.json exists, routed TRIGGER_ROUTE
     because no fire can ask for description optimization yet, or else a
@@ -854,9 +854,9 @@ def _git_time(cwd: Path, *paths: str) -> datetime | None:
 
 
 def _registry_time(registries: dict, skill: str) -> datetime | None:
-    """The newest commit to the skill's directory in the agentskills
+    """The newest commit to the skill's directory in the acsi-agentskills
     checkout, or None without one."""
-    entry = registries.get("agentskills")
+    entry = registries.get("acsi-agentskills")
     if not entry:
         return None
     root = Path(entry["path"])
@@ -1258,9 +1258,9 @@ def guidance_use(tree: Path, now: datetime) -> float | None:
 
 def trigger_contexts(evals_dir: Path, registries: dict) -> dict:
     """{skill: {"trigger_set", "hook_candidate"}} for every skill of the
-    agentskills checkout (`plugins/*/skills/<skill>/SKILL.md`, the one
+    acsi-agentskills checkout (`plugins/*/skills/<skill>/SKILL.md`, the one
     registry the routine improves); {} without one."""
-    entry = registries.get("agentskills")
+    entry = registries.get("acsi-agentskills")
     if not entry:
         return {}
     out = {}

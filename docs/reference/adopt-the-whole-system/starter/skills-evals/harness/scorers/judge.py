@@ -8,7 +8,7 @@ Two modes, selected by a fixture's `judge.mode:`:
 - **pairwise** (`judge.mode: pairwise`): the judge receives the writing under
   test together with the fixture's committed reference samples, blind and in
   an order shuffled per trial, ranks them, and the score IS the rank. Class C
-  skills — `my-writing-style` (#81), `finding-unknowns` (#78) — are the
+  skills — `acsi-writing-style` (#81), `finding-unknowns` (#78) — are the
   ones where DESIGN.md prefers "pairwise preference against committed
   reference samples over absolute rubric scores".
 

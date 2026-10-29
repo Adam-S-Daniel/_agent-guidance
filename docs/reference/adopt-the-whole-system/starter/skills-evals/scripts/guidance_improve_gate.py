@@ -125,7 +125,7 @@ SIZE_CAPS = {"summary.json": 512 * 1024, "report.md": 64 * 1024,
 SECTION_RE = improve_outcomes.SECTION_RE
 GUIDANCE_REPO = "example-adopter/_agent-guidance"
 #: One branch per section in _agent-guidance, as `eval-improve/<skill>` is
-#: one per skill in agentskills.
+#: one per skill in acsi-agentskills.
 TARGET_PREFIX = "eval-guidance-improve/"
 TARGET_BRANCH = TARGET_PREFIX + "{section}"
 #: Every guidance-loop head in _agent-guidance: improvements and removals

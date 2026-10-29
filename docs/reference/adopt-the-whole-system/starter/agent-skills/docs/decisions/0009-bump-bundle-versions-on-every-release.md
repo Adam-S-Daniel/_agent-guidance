@@ -9,14 +9,14 @@
 Measured on a Windows laptop on 2026-08-31, by a `skills-doctor` run that was looking
 for something else.
 
-`claude plugin update my@retired-agentskills` reports
-`✔ my is already at the latest version (1.0.0).` and does nothing. It is
+`claude plugin update acsi@retired-agentskills` reports
+`✔ acsi is already at the latest version (1.0.0).` and does nothing. It is
 correct about the version and wrong about everything a reader takes from that
 sentence: the installed bundle was **381 commits behind `main`**.
 
 `update` gates on the declared **version string** and on nothing else:
 
-- Every bundle declares `"version": "1.0.0"`. `my` has said `1.0.0` since
+- Every bundle declares `"version": "1.0.0"`. `acsi` has said `1.0.0` since
   commit `b833735` first introduced the field; the three earlier commits that
   touched that file carried no `version` key at all. `1.0.0` is the only
   version this bundle has ever had, and the repo has **zero** git tags.
@@ -30,7 +30,7 @@ declines to consult it. `~/.claude/plugins/installed_plugins.json` carries
 (old-registry #77, 2026-08-14). `git merge-base --is-ancestor` confirms it a clean ancestor
 of `main`, 381 commits back.
 
-What those commits changed under `plugins/my/skills` — +10,516 / −295 lines
+What those commits changed under `plugins/acsi/skills` — +10,516 / −295 lines
 across 9 files:
 
 | File | Δ |
@@ -46,7 +46,7 @@ across 9 files:
 Three consequences make this more than one stale laptop.
 
 **A skill named in managed guidance was unreachable.** `AGENTS.md` instructs
-sessions to run `/my:disarm-inherited-reach` before disarming a scratch
+sessions to run `/acsi:disarm-inherited-reach` before disarming a scratch
 tree's inherited reach. It is on `main` and in two fleet `skills.lock` files.
 It was absent from the install, so a session obeying that instruction got
 nothing — and the guidance offers no fallback, having been written on the

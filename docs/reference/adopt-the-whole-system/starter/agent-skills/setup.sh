@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# setup.sh — one-time setup for the agentskills repo.
+# setup.sh — one-time setup for the acsi-agentskills repo.
 #
 # This repo is a Claude Code *plugin marketplace*: skills ship in plugins
 # under plugins/<plugin>/skills/<skill>/ (ADR 0013). Claude Code users can
 # install a plugin with one command (Claude Code v2.1.275 or later)
 #
-#   /plugin install coding-anywhere --marketplace example-adopter/agentskills
+#   /plugin install acsi-coding-anywhere --marketplace example-adopter/acsi-agentskills
 #
 # which offers to add the marketplace before installing — or, on older CLIs,
 # with the two-step form
 #
-#   /plugin marketplace add example-adopter/agentskills
-#   /plugin install coding-anywhere@agentskills
+#   /plugin marketplace add example-adopter/acsi-agentskills
+#   /plugin install acsi-coding-anywhere@acsi-agentskills
 #
 # invoke its skills as /<plugin>:<skill> (e.g.
-# /anything-anywhere:finding-unknowns),
+# /acsi-anything-anywhere:finding-unknowns),
 # and don't need this script at all. OpenAI Codex installs the same plugins
 # from the same marketplace (`codex plugin marketplace add
-# example-adopter/agentskills`).
+# example-adopter/acsi-agentskills`).
 #
 # THIS SCRIPT NO LONGER LINKS SKILLS ANYWHERE (ADR 0017). It used to link
 # every skill into ~/.agents/skills, ~/.agent/skills and ~/.cursor/skills for
@@ -31,7 +31,7 @@
 # and leaves everything else alone.
 #
 # Claude Code never was in that list. It is served by the plugin marketplace
-# (/plugin marketplace add example-adopter/agentskills). Linking the
+# (/plugin marketplace add example-adopter/acsi-agentskills). Linking the
 # same skills into ~/.claude/skills as well would double-load them — once as a
 # namespaced marketplace plugin and once as a personal skill — which wastes
 # context and makes invocation ambiguous. This script removes any such links it
@@ -50,8 +50,8 @@
 # sets `syncClaudeAiSkills: false`, turning off that user's claude.ai account
 # skills in their terminals (ADR 0010, ADR 0013), sets
 # `disableSkillShellExecution: true`, and applies the per-OS
-# policy for `non-coding-local` (off in WSL/Linux, left on in Windows;
-# ADR 0015); and, in Windows Git Bash, registering the `my-clone-sync`
+# policy for `acsi-non-coding-local` (off in WSL/Linux, left on in Windows;
+# ADR 0015); and, in Windows Git Bash, registering the `acsi-clone-sync`
 # scheduled task (ADR 0017). They run only with `--owner-machine` or
 # AGENTSKILLS_OWNER_MACHINE=1.
 #
@@ -73,7 +73,7 @@ for arg in "$@"; do
       echo "                   ~/.agent/skills, ~/.cursor/skills, ~/.gemini and ~/.claude/skills"
       echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook, set up"
       echo "                   WSL git for the Windows clones (WSL), converge"
-      echo "                   ~/.claude/settings.json, and register the my-clone-sync"
+      echo "                   ~/.claude/settings.json, and register the acsi-clone-sync"
       echo "                   scheduled task (Windows Git Bash), for the registry owner's own"
       echo "                   machines (same as AGENTSKILLS_OWNER_MACHINE=1)"
       exit 0 ;;
@@ -384,7 +384,7 @@ fi
 if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
   echo ""
   echo "Skipped the owner-machine steps (retired global hook cleanup, WSL git for Windows clones,"
-  echo "the ~/.claude/settings.json convergence, the my-clone-sync scheduled task)."
+  echo "the ~/.claude/settings.json convergence, the acsi-clone-sync scheduled task)."
   echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
 else
 echo ""
@@ -435,24 +435,24 @@ SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
 # on. autoUpdate is a real (optional) boolean field on marketplace entries —
 # verified against the claude 2.1.211 binary's zod schema.
 TARGET_MARKETPLACES = {
-    "agentskills": {
-        "source": {"source": "github", "repo": "example-adopter/agentskills"},
+    "acsi-agentskills": {
+        "source": {"source": "github", "repo": "example-adopter/acsi-agentskills"},
         "autoUpdate": True,
     },
-    "agentskills-private": {
-        "source": {"source": "github", "repo": "example-adopter/agentskills-private"},
+    "acsi-agentskills-private": {
+        "source": {"source": "github", "repo": "example-adopter/acsi-agentskills-private"},
         "autoUpdate": True,
     },
 }
 # ADR 0013: the public registry's plugins are grouped by audience and runtime.
 # A terminal takes the three that make sense on a durable machine from the
 # marketplace, pinned and version-gated: the two `-anywhere` plugins plus
-# `coding-local`, which carries this machine's own local-only skills
+# `acsi-coding-local`, which carries this machine's own local-only skills
 # (sync-cc-settings-between-wsl-and-windows, launch-top-level-claude-session,
 # migrate-claude-memory, windows-elevation-from-wsl) and so must run here.
-# `non-coding-local` (Windows, browser and document workflows) is
+# `acsi-non-coding-local` (Windows, browser and document workflows) is
 # per-OS: see NON_CODING_LOCAL_BY_HOST below. From the private registry,
-# `private-anything-anywhere` is enabled the same way.
+# `acsi-private-anything-anywhere` is enabled the same way.
 #
 # The two `-anything-anywhere` plugins are also enabled on the claude.ai
 # account (web, iOS, Chrome, Desktop), and a terminal signed in with the account
@@ -483,47 +483,47 @@ TARGET_MARKETPLACES = {
 # the manual migration step ADR 0013 names (`claude plugin marketplace
 # remove`).
 RETIRED_PLUGINS = (
-    "my@retired-agentskills",
-    "my-local@retired-agentskills",
+    "acsi@retired-agentskills",
+    "acsi-local@retired-agentskills",
     "fastmail@retired-agentskills",
-    "my-personal@retired-agentskills",
-    "my-private@retired-agentskills-private",
+    "acsi-personal@retired-agentskills",
+    "acsi-private@retired-agentskills-private",
 )
 TARGET_ENABLED_PLUGINS = {
-    "anything-anywhere@agentskills": True,
-    "coding-anywhere@agentskills": True,
-    "coding-local@agentskills": True,
-    "private-anything-anywhere@agentskills-private": True,
-    "anything-anywhere@synced": False,
-    "private-anything-anywhere@synced": False,
+    "acsi-anything-anywhere@acsi-agentskills": True,
+    "acsi-coding-anywhere@acsi-agentskills": True,
+    "acsi-coding-local@acsi-agentskills": True,
+    "acsi-private-anything-anywhere@acsi-agentskills-private": True,
+    "acsi-anything-anywhere@synced": False,
+    "acsi-private-anything-anywhere@synced": False,
 }
 TARGET_ENABLED_PLUGINS.update({name: False for name in RETIRED_PLUGINS})
 
-# `non-coding-local` (add-from-address, add-received-from-addresses,
+# `acsi-non-coding-local` (add-from-address, add-received-from-addresses,
 # fastmail, ocr-pdfs, pdf-ocr-audit, rename-pdfs, compare-pdfpairs) is the
 # Windows, browser and document bundle. In WSL it cost ~1.3k tokens of
 # always-on skill descriptions per turn and was used zero times in 7 days
 # (/skill-doctor, 2026-10-05), so the policy is per OS (ADR 0015):
 #
 #   Windows  keep it ON. Nothing is written: it stays however it arrives
-#            (`@synced` from the account, or `@agentskills`), and this
+#            (`@synced` from the account, or `@acsi-agentskills`), and this
 #            block never turns off a copy a Windows home is using.
 #   Linux    (WSL included) OFF. `false` under EVERY key it can arrive by,
 #            because the same bundle shows up as `@synced` (claude.ai account
 #            sync, even with `syncClaudeAiSkills: false`, which covers skills,
-#            not plugins) or `@agentskills` (marketplace install), and
+#            not plugins) or `@acsi-agentskills` (marketplace install), and
 #            disabling one leaves the other. `false` for a key that was never
 #            installed is inert, and nothing here installs the plugin.
 #   macOS    untouched: no measurement was taken there, so no decision is
 #            made for it.
 #
 # Like the `@synced` lines above, `false` is written on every run, so a manual
-# `claude plugin enable non-coding-local@synced` on a Linux machine lasts
+# `claude plugin enable acsi-non-coding-local@synced` on a Linux machine lasts
 # only until setup.sh next runs. Which OS this is comes from sys.platform;
 # AGENTSKILLS_HOST_OS (windows|macos|linux) overrides it for the tests.
 NON_CODING_LOCAL_KEYS = (
-    "non-coding-local@synced",
-    "non-coding-local@agentskills",
+    "acsi-non-coding-local@synced",
+    "acsi-non-coding-local@acsi-agentskills",
 )
 NON_CODING_LOCAL_BY_HOST = {
     "windows": {},
@@ -555,7 +555,7 @@ TARGET_ENABLED_PLUGINS.update(NON_CODING_LOCAL_BY_HOST[host_os()])
 # more always-on descriptions (~3,236 tok, measured 2026-09-18), three of them
 # a second copy of a skill this machine already has pinned -- and it puts the
 # one channel that drifts in front of the machine-bound skills
-# `coding-local` already carries pinned, from the marketplace.
+# `acsi-coding-local` already carries pinned, from the marketplace.
 #
 # False, the JSON boolean: the CLI honours only `false`, so a string "false"
 # or a 0 is an opt-out that silently does not happen. Only user, local or
@@ -668,19 +668,19 @@ fi
 
 if [[ "${OWNER_MACHINE:-0}" == 1 && "${HOST_KIND:-}" == gitbash ]]; then
 echo ""
-echo "=== Registering the my-clone-sync scheduled task ==="
+echo "=== Registering the acsi-clone-sync scheduled task ==="
 # The task fast-forwards this machine's clean clones every 30 minutes and at
 # logon (ADR 0017). It runs a launcher that resolves the INSTALLED
-# coding-local plugin at each run, so registering it from this checkout
+# acsi-coding-local plugin at each run, so registering it from this checkout
 # never makes the task run this checkout's code. pwsh is found by full path:
 # PATH first, then PowerShell 7's default install location.
-register_script="$PLUGINS_DIR/coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1"
+register_script="$PLUGINS_DIR/acsi-coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1"
 pwsh_exe="$(command -v pwsh.exe 2>/dev/null || true)"
 if [[ -z "$pwsh_exe" && -x "/c/Program Files/PowerShell/7/pwsh.exe" ]]; then
   pwsh_exe="/c/Program Files/PowerShell/7/pwsh.exe"
 fi
 if [[ -z "$pwsh_exe" ]]; then
-  echo "WARN     PowerShell 7 (pwsh.exe) not found, so the my-clone-sync task was NOT" >&2
+  echo "WARN     PowerShell 7 (pwsh.exe) not found, so the acsi-clone-sync task was NOT" >&2
   echo "         registered. Install PowerShell 7 and re-run setup.sh --owner-machine." >&2
 else
   register_arg="$register_script"
@@ -691,7 +691,7 @@ else
     :
   else
     register_rc=$?
-    echo "ERROR    registering the my-clone-sync task failed (exit $register_rc)" >&2
+    echo "ERROR    registering the acsi-clone-sync task failed (exit $register_rc)" >&2
     exit "$register_rc"
   fi
 fi

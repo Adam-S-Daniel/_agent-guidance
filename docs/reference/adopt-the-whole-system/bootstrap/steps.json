@@ -185,7 +185,7 @@
     {
       "id": "11",
       "title": "Copy the two registries and merge them",
-      "run": "`bootstrap/copy-starter.sh starter/agent-skills <you>/agentskills` and `bootstrap/copy-starter.sh starter/agent-skills-private <you>/agentskills-private`, then review and merge",
+      "run": "`bootstrap/copy-starter.sh starter/agent-skills <you>/acsi-agentskills` and `bootstrap/copy-starter.sh starter/agent-skills-private <you>/acsi-agentskills-private`, then review and merge",
       "kind": "script",
       "part": "skills",
       "link": "docs/skills.md#the-registry",
@@ -193,11 +193,11 @@
         "type": "files",
         "files": [
           {
-            "repo": "agentskills",
+            "repo": "acsi-agentskills",
             "path": "scripts/generate_skills_lock.py"
           },
           {
-            "repo": "agentskills-private",
+            "repo": "acsi-agentskills-private",
             "path": "skills.lock"
           }
         ]
@@ -355,7 +355,7 @@
     {
       "id": "22",
       "title": "Set up your cloud environments",
-      "run": "At https://claude.ai/code, give each cloud environment the setup script from agentskills' `docs/multi-repo-delivery.md` and the network allowlist from _agent-guidance's `docs/reference/network-allowlist-claude-environments.txt`",
+      "run": "At https://claude.ai/code, give each cloud environment the setup script from acsi-agentskills' `docs/multi-repo-delivery.md` and the network allowlist from _agent-guidance's `docs/reference/network-allowlist-claude-environments.txt`",
       "kind": "browser",
       "part": "machine",
       "link": "docs/machine.md#cloud-environments",

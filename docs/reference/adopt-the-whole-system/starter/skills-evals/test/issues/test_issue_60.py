@@ -28,7 +28,7 @@ def world(public_gaps=5):
         rows = [] if private else [
             {"registry": name, "bundle": None, "skill": f"public-{index}",
              "status": "gap", "fixtures": 0, "reason": None}
-            for index in range(public_gaps if name == "agentskills" else 1)]
+            for index in range(public_gaps if name == "acsi-agentskills" else 1)]
         counts = {"total": len(rows) if not private else 1,
                   "covered": 0, "skipped": 0,
                   "gap": len(rows) if not private else 1}
@@ -50,9 +50,9 @@ def world(public_gaps=5):
 
 def canonical_pr(skill="public-0", *, number=121, state="open", labels=None):
     return {"number": number, "state": state,
-            "body": gaps.marker("agentskills", skill),
+            "body": gaps.marker("acsi-agentskills", skill),
             "html_url": f"https://github.com/{gaps.REPO}/pull/{number}",
-            "head": {"ref": gaps.branch_name("agentskills", skill),
+            "head": {"ref": gaps.branch_name("acsi-agentskills", skill),
                      "repo": {"full_name": gaps.REPO}},
             "base": {"ref": "main", "repo": {"full_name": gaps.REPO}},
             "labels": [{"name": name} for name in
@@ -62,9 +62,9 @@ def canonical_pr(skill="public-0", *, number=121, state="open", labels=None):
 def canonical_issue(pr, skill="public-0", *, issue_id=123, state="open", labels=None):
     return {"id": issue_id, "number": issue_id, "state": state,
             "html_url": f"https://github.com/{gaps.REPO}/issues/{issue_id}",
-            "title": f"Author eval for agentskills/{skill}",
+            "title": f"Author eval for acsi-agentskills/{skill}",
             "user": {"login": "github-actions[bot]", "type": "Bot"},
-            "body": (f"{gaps.marker('agentskills', skill)}\n"
+            "body": (f"{gaps.marker('acsi-agentskills', skill)}\n"
                      f"Tracking parent: https://github.com/{gaps.REPO}/issues/62\n"
                      f"Draft PR: {pr['html_url']}\n"),
             "labels": [{"name": name} for name in (labels or [])]}
@@ -179,11 +179,11 @@ class DraftTests(unittest.TestCase):
         actual = gaps.public_gaps(census)
         self.assertEqual([row["skill"] for _, row in actual[:3]],
                          ["_hidden", "-dash", ".dot"])
-        self.assertTrue(gaps.branch_name("agentskills", ".dot").endswith(
+        self.assertTrue(gaps.branch_name("acsi-agentskills", ".dot").endswith(
             "x" + ".dot".encode().hex()))
-        self.assertNotEqual(gaps.branch_name("agentskills", "a..b"),
-                            gaps.branch_name("agentskills", "x612e2e62"))
-        self.assertTrue(gaps.branch_name("agentskills", "ends.lock").endswith(
+        self.assertNotEqual(gaps.branch_name("acsi-agentskills", "a..b"),
+                            gaps.branch_name("acsi-agentskills", "x612e2e62"))
+        self.assertTrue(gaps.branch_name("acsi-agentskills", "ends.lock").endswith(
             "x" + "ends.lock".encode().hex()))
         self.assertTrue(gaps.draft_files(*actual[0], sources))
 
@@ -249,18 +249,18 @@ class AutomationTests(unittest.TestCase):
 
     def test_exact_marker_and_held_pr_prevent_duplicate_or_paused_work(self):
         census, sources = world()
-        tag = gaps.marker("agentskills", "public-0")
+        tag = gaps.marker("acsi-agentskills", "public-0")
         held_pr = canonical_pr(labels=["on-hold"])
         other_pr = canonical_pr("public-10", number=122)
         api = FakeGitHub(prs=[held_pr, other_pr])
         tags = gaps.automate(api, census, sources, "42", "a" * 40, write=True,
                              as_of="2026-10-08T00:00:00Z")
         self.assertNotIn(tag, tags)
-        self.assertIn(gaps.marker("agentskills", "public-1"), tags)
+        self.assertIn(gaps.marker("acsi-agentskills", "public-1"), tags)
 
     def test_completed_marker_pair_and_subissue_need_no_reproposal(self):
         census, sources = world(public_gaps=1)
-        tag = gaps.marker("agentskills", "public-0")
+        tag = gaps.marker("acsi-agentskills", "public-0")
         pr = canonical_pr()
         api = FakeGitHub(prs=[pr], issues=[canonical_issue(pr)],
                          children=[{"id": 123}])
@@ -270,8 +270,8 @@ class AutomationTests(unittest.TestCase):
 
     def test_pr_only_resumes_and_unproven_issue_only_is_ignored(self):
         census, sources = world(public_gaps=2)
-        pr_tag = gaps.marker("agentskills", "public-0")
-        issue_tag = gaps.marker("agentskills", "public-1")
+        pr_tag = gaps.marker("acsi-agentskills", "public-0")
+        issue_tag = gaps.marker("acsi-agentskills", "public-1")
         api = FakeGitHub(prs=[canonical_pr()],
                          issues=[canonical_issue(canonical_pr("public-1"), "public-1")])
         tags = gaps.automate(api, census, sources, "42", "a" * 40,
@@ -288,7 +288,7 @@ class AutomationTests(unittest.TestCase):
 
     def test_held_tracking_issue_is_not_modified(self):
         census, sources = world(public_gaps=1)
-        tag = gaps.marker("agentskills", "public-0")
+        tag = gaps.marker("acsi-agentskills", "public-0")
         pr = canonical_pr()
         api = FakeGitHub(prs=[pr], issues=[canonical_issue(pr, labels=["on-hold"])])
         selected = gaps.automate(api, census, sources, "42", "a" * 40,
@@ -297,8 +297,8 @@ class AutomationTests(unittest.TestCase):
 
     def test_closed_marked_pr_or_issue_is_left_to_a_reviewer(self):
         census, sources = world(public_gaps=2)
-        pr_tag = gaps.marker("agentskills", "public-0")
-        issue_tag = gaps.marker("agentskills", "public-1")
+        pr_tag = gaps.marker("acsi-agentskills", "public-0")
+        issue_tag = gaps.marker("acsi-agentskills", "public-1")
         pr = canonical_pr("public-1", number=122)
         api = FakeGitHub(prs=[canonical_pr(state="closed"), pr],
                          issues=[canonical_issue(pr, "public-1", state="closed")])
@@ -311,7 +311,7 @@ class AutomationTests(unittest.TestCase):
 
     def assert_unrelated_pr_is_ignored(self, change):
         census, sources = world(public_gaps=1)
-        tag = gaps.marker("agentskills", "public-0")
+        tag = gaps.marker("acsi-agentskills", "public-0")
         for state, labels in (("open", []), ("closed", []), ("open", ["on-hold"])):
             with self.subTest(state=state, labels=labels):
                 pr = canonical_pr(state=state, labels=labels)
@@ -362,7 +362,7 @@ class AutomationTests(unittest.TestCase):
 
     def assert_unrelated_issue_is_ignored(self, change):
         census, sources = world(public_gaps=1)
-        tag = gaps.marker("agentskills", "public-0")
+        tag = gaps.marker("acsi-agentskills", "public-0")
         for state, labels in (("open", []), ("closed", []), ("open", ["on-hold"])):
             with self.subTest(state=state, labels=labels):
                 pr = canonical_pr()
@@ -490,7 +490,7 @@ class AutomationTests(unittest.TestCase):
 
     def test_unsafe_sources_or_census_make_zero_api_calls(self):
         census, sources = world()
-        sources["registries"]["agentskills-private"] = "d" * 40
+        sources["registries"]["acsi-agentskills-private"] = "d" * 40
         api = FakeGitHub()
         with self.assertRaises(gaps.GapError):
             gaps.automate(api, census, sources, "42", "a" * 40, write=True)
@@ -616,7 +616,7 @@ class WorkflowTests(unittest.TestCase):
             "client-id": "${{ vars.REGISTRY_READ_APP_CLIENT_ID }}",
             "private-key": "${{ secrets.REGISTRY_READ_APP_PEM }}",
             "owner": "example-adopter",
-            "repositories": "agentskills-private",
+            "repositories": "acsi-agentskills-private",
             "permission-contents": "read"})
         self.assertEqual(private["with"]["token"],
                          "${{ steps.registry-token.outputs.token }}")

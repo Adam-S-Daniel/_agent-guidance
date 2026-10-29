@@ -1,35 +1,35 @@
 {
-  "name": "agentskills",
+  "name": "acsi-agentskills",
   "owner": { "name": "<your name>" },
   "description": "Reusable agent skills, packaged as Claude Code plugins grouped by audience (coding or not) and runtime (anywhere or local).",
   "plugins": [
     {
-      "name": "anything-anywhere",
-      "source": "./plugins/anything-anywhere",
+      "name": "acsi-anything-anywhere",
+      "source": "./plugins/acsi-anything-anywhere",
       "description": "Skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code.",
       "category": "productivity",
       "keywords": ["skills", "writing", "planning"],
       "defaultEnabled": true
     },
     {
-      "name": "coding-anywhere",
-      "source": "./plugins/coding-anywhere",
+      "name": "acsi-coding-anywhere",
+      "source": "./plugins/acsi-coding-anywhere",
       "description": "Coding skills for Claude Code terminals and Claude Code cloud sessions.",
       "category": "development",
       "keywords": ["skills", "coding", "claude-code"],
       "defaultEnabled": true
     },
     {
-      "name": "coding-local",
-      "source": "./plugins/coding-local",
+      "name": "acsi-coding-local",
+      "source": "./plugins/acsi-coding-local",
       "description": "Machine-bound coding skills and hooks for Claude Code on your own machines (WSL and Windows homes): clone sync and the API-credit lane.",
       "category": "claude-code",
       "keywords": ["claude-code", "wsl", "windows", "sync", "skills"],
       "defaultEnabled": false
     },
     {
-      "name": "non-coding-local",
-      "source": "./plugins/non-coding-local",
+      "name": "acsi-non-coding-local",
+      "source": "./plugins/acsi-non-coding-local",
       "description": "Non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork.",
       "category": "productivity",
       "keywords": ["skills", "documents", "browser"],

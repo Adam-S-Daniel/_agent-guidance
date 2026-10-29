@@ -23,7 +23,7 @@ substitutions:
   - {name: skills-evals sign-off example in the wrapping scorer docstring, literal: '"Adam Daniel"', to: '"Alex Rivera"', paths: [harness/scorers/wrapping.py]}
   - {name: skills-evals surname-only bio test data, regex: '\bDaniel(?= leads delivery| rebuilt the)', to: Rivera, paths: [test/run_tests.py]}
   - {name: skills-evals writing-style name pattern comment, literal: '\bAdam\s+', to: '\bAlex\s+', paths: [test/run_tests.py]}
-  - {name: skills-evals capitalized registry URL test data, literal: "Adam-AgentSkills", to: "AgentSkills", paths: [test/run_tests.py]}
+  - {name: skills-evals capitalized registry URL test data, literal: "Adam-AgentSkills", to: "Acsi-AgentSkills", paths: [test/run_tests.py]}
   - {name: skills-evals shouted owner, literal: "PARKED ON ADAM", to: "PARKED ON THE OWNER"}
   - {name: skills-evals shouted owner, literal: "THE RULE ADAM DECIDED", to: "THE RULE THE OWNER DECIDED"}
   - {name: skills-evals shouted owner, literal: "ADAM'S OWN COMPUTER", to: "THE OWNER'S OWN COMPUTER"}

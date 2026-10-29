@@ -6,14 +6,14 @@
 
 ## Context
 
-`non-coding-local` carries seven skills (add-from-address,
+`acsi-non-coding-local` carries seven skills (add-from-address,
 add-received-from-addresses, fastmail, ocr-pdfs, pdf-ocr-audit, rename-pdfs,
 compare-pdfpairs). Their work is Windows, browser and document workflows: a WPF
 review tool, a signed-in Fastmail browser session, PDF folders on a Windows
 drive. [ADR 0014](0014-retire-the-account-zip-upload-channel.md) put the bundle
 on the claude.ai account, so every terminal signed in with it downloads it as
-`non-coding-local@synced`; the same bundle can also be installed from this
-marketplace as `non-coding-local@agentskills`.
+`acsi-non-coding-local@synced`; the same bundle can also be installed from this
+marketplace as `acsi-non-coding-local@acsi-agentskills`.
 
 `/skill-doctor` on the owner's WSL home (2026-10-05) measured the bundle at
 about 1.3k tokens of always-on skill descriptions per turn, with zero uses in
@@ -30,7 +30,7 @@ The bundle's default is per OS, and `setup.sh --owner-machine` writes it:
 - **Windows:** on. `setup.sh` writes nothing for it and never turns off a copy
   it finds, whichever key it arrived under.
 - **Linux, WSL included:** off. `setup.sh` writes `false` for both
-  `non-coding-local@synced` and `non-coding-local@agentskills`
+  `acsi-non-coding-local@synced` and `acsi-non-coding-local@acsi-agentskills`
   (disabling one source leaves the other loading) and installs nothing.
 - **macOS:** untouched. Nothing was measured there, so no decision is made.
 

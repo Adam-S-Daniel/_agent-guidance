@@ -66,7 +66,7 @@ fi
 
 mkdir -p "$(dirname "$inc_file")"
 {
-  echo "# Written by agentskills scripts/install-agent-hooks.sh (ADR 0020)."
+  echo "# Written by acsi-agentskills scripts/install-agent-hooks.sh (ADR 0020)."
   echo "# Re-run that script to update; edits here are overwritten."
   for event in $events; do
     printf '[hook "agent-checks-%s"]\n' "$event"

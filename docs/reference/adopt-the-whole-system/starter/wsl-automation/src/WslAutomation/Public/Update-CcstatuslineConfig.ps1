@@ -41,7 +41,7 @@ function Update-CcstatuslineConfig {
         Derives the WSL user from the 'Ubuntu' distro and syncs its ccstatusline settings.json
         to the default Windows destination.
     .EXAMPLE
-        Update-CcstatuslineConfig -DistroName 'Debian' -WslUser 'my' -WhatIf
+        Update-CcstatuslineConfig -DistroName 'Debian' -WslUser 'acsi' -WhatIf
 
         Shows whether the Debian distro's config would be copied, without writing anything.
     #>

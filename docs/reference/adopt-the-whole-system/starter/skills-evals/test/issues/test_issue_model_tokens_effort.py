@@ -49,7 +49,7 @@ import run_eval  # noqa: E402
 
 OWN = "claude-sonnet-5"
 SUBAGENT = "claude-opus-4-8"
-REGISTRY_URL = "https://github.com/example-adopter/agentskills"
+REGISTRY_URL = "https://github.com/example-adopter/acsi-agentskills"
 
 
 def usage_entry(inp, out, read, write, canonical=None) -> dict:
@@ -529,7 +529,7 @@ class EndToEndTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(HARNESS_DIR / "run_eval.py"),
              str(self.eval_dir), "--arm", arm,
-             "--registry", f"agentskills={self.registry}",
+             "--registry", f"acsi-agentskills={self.registry}",
              "--results-dir", str(self.results), "--timeout", "30",
              "--timestamp", self.TS, *flags],
             capture_output=True, text=True, env=env, cwd=str(ROOT), timeout=300)

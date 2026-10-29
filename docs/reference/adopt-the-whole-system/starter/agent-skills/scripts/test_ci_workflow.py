@@ -3,7 +3,7 @@
 
 `pytest-windows` is a REQUIRED status check on this repo's default branch. The
 declaration lives in another repo — repo-settings' `fleet.yml`, under
-`example-adopter/agentskills` — which is exactly why these tests exist here: this
+`example-adopter/acsi-agentskills` — which is exactly why these tests exist here: this
 repo owns the workflow that has to keep satisfying it, and has nothing else
 that would notice when it stops.
 
@@ -304,7 +304,7 @@ def test_the_gate_treats_skill_markdown_as_salient(tmp_path):
     """plugins/**/*.md is content: SKILL.md and PURPOSE.md move digests and
     the lock checks. The inert list must never grow to cover it."""
     out = _run_salience_body(
-        tmp_path, ["plugins/my/skills/x/SKILL.md"], "pull_request")
+        tmp_path, ["plugins/acsi/skills/x/SKILL.md"], "pull_request")
     assert "run=true" in out and "run=false" not in out
 
 

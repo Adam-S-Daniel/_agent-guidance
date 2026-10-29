@@ -33,7 +33,7 @@ from pathlib import Path
 SNAPSHOT = "docs/routines/guidance-centralization.routine.md"
 SPEC = "docs/routines/guidance-centralization.md"
 SWEEP = "docs/routines/prompt-audit-sweep.md"
-KIT_REPOS = ("_agent-guidance", "agentskills", "agentskills-private", "skills-evals",
+KIT_REPOS = ("_agent-guidance", "acsi-agentskills", "acsi-agentskills-private", "skills-evals",
              "repo-settings", "wsl-automation")
 HISTORY = "(source system history)"
 
@@ -217,7 +217,7 @@ id from `list_triggers`, edited where"""),
 
 SWEEP_EDITS = [
     ("""(on 2026-10-05:
-`agentskills-private`, `repo-settings` and `rss-inator`; never rely on
+`acsi-agentskills-private`, `repo-settings` and `rss-inator`; never rely on
 that list, read the field)""",
      """(in the source system on 2026-10-05, three of its repos; a list
 goes stale, so never rely on that list, read the field)"""),

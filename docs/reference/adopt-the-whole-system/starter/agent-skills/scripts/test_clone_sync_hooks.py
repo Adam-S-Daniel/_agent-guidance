@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for coding-local's harness-aware clone-sync hooks (ADR 0017).
+"""Tests for acsi-coding-local's harness-aware clone-sync hooks (ADR 0017).
 
-Covers plugins/coding-local/hooks/: harness detection (lib/harness.sh),
+Covers plugins/acsi-coding-local/hooks/: harness detection (lib/harness.sh),
 clone-sync.sh against real temporary git repositories, the PostToolUse and
 SessionStart hooks, the scheduled task's launcher, the shape of hooks.json,
 and Register-CloneSyncTask.ps1's dry run.
@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_consistency  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-HOOKS = REPO / "plugins" / "coding-local" / "hooks"
+HOOKS = REPO / "plugins" / "acsi-coding-local" / "hooks"
 CLONE_SYNC = HOOKS / "clone-sync"
 BASH = shutil.which("bash")
 
@@ -796,7 +796,7 @@ def run_launcher(tmp_path, *args, path_first=None):
 @posix_only
 def test_the_launcher_runs_the_user_scope_install(tmp_path):
     install = fake_install(tmp_path)
-    write_registry(tmp_path / "home", {"coding-local@agentskills": [
+    write_registry(tmp_path / "home", {"acsi-coding-local@acsi-agentskills": [
         {"scope": "project", "installPath": str(tmp_path / "elsewhere")},
         {"scope": "user", "installPath": str(install)},
     ]})
@@ -806,8 +806,8 @@ def test_the_launcher_runs_the_user_scope_install(tmp_path):
 @posix_only
 @pytest.mark.parametrize("registry", [
     None,
-    {"coding-anywhere@agentskills": [{"scope": "user", "installPath": "/x"}]},
-    {"coding-local@agentskills": "not a list"},
+    {"acsi-coding-anywhere@acsi-agentskills": [{"scope": "user", "installPath": "/x"}]},
+    {"acsi-coding-local@acsi-agentskills": "not a list"},
     "not json",
 ])
 def test_the_launcher_exits_quietly_when_the_plugin_is_not_installed(tmp_path, registry):
@@ -841,7 +841,7 @@ def stub_wsl(tmp_path, running):
 @posix_only
 def test_the_launcher_runs_inside_an_already_running_distro(tmp_path):
     install = fake_install(tmp_path)
-    write_registry(tmp_path / "home", {"coding-local@agentskills": [
+    write_registry(tmp_path / "home", {"acsi-coding-local@acsi-agentskills": [
         {"scope": "user", "installPath": str(install)}]})
     bin_dir = stub_wsl(tmp_path, ["Example-Linux"])
     assert run_launcher(tmp_path, path_first=bin_dir) == ["--all|"]
@@ -884,11 +884,11 @@ def test_the_register_dry_run_prints_the_task_and_changes_nothing(tmp_path):
     assert proc.returncode == 0, proc.stderr
     task = json.loads(proc.stdout)
     launcher = Path(task["Launcher"])
-    assert task["TaskName"] == "my-clone-sync"
+    assert task["TaskName"] == "acsi-clone-sync"
     assert task["Execute"] == "conhost.exe"
     assert task["Argument"] == f'--headless "{git_bash}" "{launcher}"'
     assert launcher.name == "clone-sync-launcher.sh"
-    assert launcher.parent == tmp_path / "localappdata" / "agentskills"
+    assert launcher.parent == tmp_path / "localappdata" / "acsi-agentskills"
     assert Path(task["LauncherSource"]) == CLONE_SYNC / "launcher.sh"
     assert task["RepetitionMinutes"] == 30
     assert set(task["Triggers"]) == {"AtLogOn", "Every30Minutes"}

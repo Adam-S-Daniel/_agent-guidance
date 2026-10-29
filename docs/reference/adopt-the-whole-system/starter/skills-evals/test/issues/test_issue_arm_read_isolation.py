@@ -1189,7 +1189,7 @@ class RunCheckoutsWiringTests(unittest.TestCase):
                         "AGENT_GUIDANCE_DIR"):
                 env.pop(key, None)
             paths = run_eval.run_checkouts(argparse.Namespace(
-                registry=["agentskills=/x/skills"], guidance="/x/guidance"))
+                registry=["acsi-agentskills=/x/skills"], guidance="/x/guidance"))
         self.assertIn(Path("/x/skills"), paths)
         self.assertEqual(paths[-1], Path("/x/guidance"))
 

@@ -16,7 +16,7 @@
 #   prompts ever run are this repo's committed fixtures. Never accept external
 #   fixture contributions into this path without dropping the key first.
 #   The trust boundary equally includes the three registries checked out
-#   below (agentskills, example-site-platform, example-site-a): the with_skill arm
+#   below (acsi-agentskills, example-site-platform, example-site-a): the with_skill arm
 #   installs skill content from whichever registry the fixture names, from
 #   that registry's default branch, and executes it under bypassPermissions
 #   with the key in env — write access to any of the three checked-out
@@ -1521,11 +1521,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "roster: merged evals/roster.yml from $merge_sha"
 
-      - name: Check out agentskills registry (side-by-side)
+      - name: Check out acsi-agentskills registry (side-by-side)
         uses: actions/checkout@v7.0.1
         with:
-          repository: example-adopter/agentskills
-          path: agentskills
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
           persist-credentials: false
 
       - name: Check out example-site-platform registry (side-by-side)
@@ -1841,7 +1841,7 @@ jobs:
             --permission-mode bypassPermissions \
             --run-billing api --run-runner actions --run-location cloud \
             --guidance ../_agent-guidance \
-            --registry agentskills=../agentskills \
+            --registry acsi-agentskills=../acsi-agentskills \
             --registry example-site-platform=../example-site-platform \
             --registry example-site-a=../example-site-a
 
