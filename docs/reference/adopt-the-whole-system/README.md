@@ -245,8 +245,18 @@ broke something.
 
 ### What it costs
 
-- Building it: expect several weeks of agent work. Do it in the phase order
-  below and stop at each phase's acceptance check.
+- Hands-on setup: the 15 Quick start steps come to about 30 to 40 commands
+  and browser actions, roughly one to two days. The browser steps (creating
+  and installing GitHub Apps, saving routines) take most of that time. Do it
+  in the phase order below and stop at each phase's acceptance check.
+- Calendar time: most of the rest is waiting on the eval budget, not work.
+  With the starter's `evals/budget.yml`, automated evals get 30% of the
+  weekly allowance, one eval fire is charged 0.03 and an improve fire 0.12,
+  so a week holds at most two improve fires. The weekly planner runs on
+  Mondays, after the allowance resets. An improve fire needs four fixtures
+  for its skill, and a fixture the loop adds stays a draft until it has two
+  clean runs. Expect the phase 8 gate (the first improvement merged or
+  rejected) to take one to two weeks of calendar time.
 - Running it: evals run as routines on your plan, so they draw down the
   weekly allowance like any session. The reference system caps all automated
   evals at 30% of the weekly allowance, with a hard stop when the account
