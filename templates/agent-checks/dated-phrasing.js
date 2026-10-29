@@ -22,7 +22,8 @@
  * the paths are in scope and needs no markdown-it, so the runner installs it
  * only when there is something to read.
  *
- * Scope (by path): every AGENTS.md, CLAUDE.md and SKILL.md, and agents-md/**
+ * Scope (by path): every AGENTS.md, CLAUDE.md and SKILL.md, except under a
+ * seed/ directory inside evals/ (frozen eval fixtures), and agents-md/**
  * (*.md). So .claude/hooks/fleet-guidance.md, a byte copy of _agent-guidance's
  * agents-md/base.md, is out of scope here and checked there. In an AGENTS.md,
  * everything before the `## Repo-specific additions` heading is the managed
@@ -79,6 +80,8 @@ const PHRASES = [
 const URL = /https?:\/\/\S+/g;
 
 function inScope(rel) {
+  // Eval fixture seeds are frozen copies of other repos, not guidance.
+  if (rel.startsWith("evals/") && rel.includes("/seed/")) return false;
   const base = rel.slice(rel.lastIndexOf("/") + 1);
   if (base === "AGENTS.md" || base === "CLAUDE.md" || base === "SKILL.md") return true;
   return rel.startsWith("agents-md/") && rel.endsWith(".md");

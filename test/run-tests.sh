@@ -23819,6 +23819,8 @@ test_agent_checks_dated_phrasing() {
     echo 'The payload is now copied here.' > "$repo/.claude/hooks/fleet-guidance.md"
     echo 'This readme is now out of scope.' > "$repo/README.md"
     echo 'Notes are now out of scope.' > "$repo/notes/guide.md"
+    mkdir -p "$repo/evals/real-work/x/seed"
+    echo 'A frozen fixture that is now out of scope.' > "$repo/evals/real-work/x/seed/AGENTS.md"
     git -C "$repo" add -A
     GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m base
 
@@ -23850,10 +23852,10 @@ test_agent_checks_dated_phrasing() {
             fail "dated-phrasing: no warning in $label (AGENTS.md:${line%%:*})"
         fi
     done
-    if ! grep -qE '^agent-checks \(warning\): (README\.md|notes/|\.claude/hooks/fleet-guidance\.md)' "$out-tree.err"; then
-        pass "dated-phrasing: README.md, other Markdown and the fleet-guidance payload are out of scope"
+    if ! grep -qE '^agent-checks \(warning\): (README\.md|notes/|evals/|\.claude/hooks/fleet-guidance\.md)' "$out-tree.err"; then
+        pass "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
     else
-        fail "dated-phrasing: README.md, other Markdown and the fleet-guidance payload are out of scope"
+        fail "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
     fi
     if grep -qF 'AGENTS.md:7: dated phrasing: the phrase "is now".' "$out-tree.err" \
        && grep -qF 'AGENTS.md:9: dated phrasing: a date in prose, "2026-08-29".' "$out-tree.err" \
