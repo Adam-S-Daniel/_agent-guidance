@@ -87,3 +87,39 @@ The guard also refuses deleting a remote `persistent/*` branch
 `gh api -X DELETE .../git/refs/heads/persistent/...`). Those branches outlive
 their pull requests and hold data, and a private repo has no ruleset to stop
 the delete.
+
+## Addendum (2026-10-29): a warn-only pass, dated-phrasing
+
+The runner gains its first check that never refuses, closing the last item
+of [#348](https://github.com/Adam-S-Daniel/_agent-guidance/issues/348). After
+the refusing checks, every event runs `.githooks/dated-phrasing.js` over the
+same paths: it warns on dated history (an ISO date) and migration-relative
+phrasing ("is now", "no longer", "moved to", ...) in the prose of every
+`AGENTS.md` (its repo-specific half), `CLAUDE.md`, `SKILL.md` and
+`agents-md/**`. That text loads into every session and is read as the rule
+that holds now, so a story about what changed goes stale there; it belongs in
+`docs/evidence/` or git ([ADR 0018](0018-incident-narratives-live-in-docs-evidence.md)).
+It warns and never blocks, as [ADR 0017](0017-prompt-audit-runs-as-an-event-triggered-sweep.md)
+requires of checks that grow out of the prompt audit: it never changes the
+exit status, appears in the run log's `checks` only when it read a file, and
+any failure of its own (no node or npm, an offline install) is one warning
+line.
+
+- **It parses Markdown with markdown-it**, because the fleet rule forbids a
+  line scan for structure. The dependency is not vendored: a minified bundle
+  in every repo's history is a gitleaks false-positive risk on repos whose
+  scan reads full history. The sync delivers
+  `.githooks/dated-phrasing/package.json` and `package-lock.json`, pinning
+  markdown-it exactly with integrity hashes, and the runner installs them
+  with `npm ci --ignore-scripts` into a cache keyed by the lockfile's sha256
+  (`${XDG_CACHE_HOME:-$HOME/.cache}/agent-checks/dated-phrasing/`, under
+  `$RUNNER_TEMP` in CI), only when a path in scope changed.
+- **The script, the fleet allowlist and the two package files are managed**
+  like the runner (`AC_DATED_FILES` in `scripts/sync.sh`), and this repo keeps
+  byte-identical self-copies under `.githooks/`, which the suite compares.
+- **Text that is right as written is allowlisted, not reworded.** The fleet
+  list is `templates/agent-checks/dated-phrasing-allowlist.txt`, reviewed
+  against every fleet repo's default branch; a repo adds its own lines in
+  `.agent-checks/dated-phrasing-allowlist.txt`, which the sync never touches.
+  An entry, `<owner/repo> <path> :: <text>`, silences the Markdown block
+  whose source holds `<text>`.
