@@ -3040,7 +3040,7 @@ _TEE_TARGET_RE = re.compile(r"\btee\s+(?:-a\s+)?(\S+)")
 # A `marker:` value that already carries HTML-comment syntax — the composite
 # wraps `marker` in its own `<!-- -->` to find a prior post, so a caller that
 # pre-wraps it too breaks that lookup (issue #86 review round 3, N8).
-_HTML_COMMENT_TOKEN_RE = re.compile(r"<!--|-->")
+_HTML_COMMENT_TOKEN_RE = re.compile(r"<!--|--!?>")
 
 # The skill's documented "don't repeat" pattern, applied to any `with:` value
 # rather than only whichever key a given check happens to test.
