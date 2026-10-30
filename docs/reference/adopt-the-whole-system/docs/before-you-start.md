@@ -4,7 +4,7 @@
 
 | Need | Why |
 |---|---|
-| Claude Pro or Max | Cloud sessions and routines (scheduled and API-triggered cloud runs). Evals spend your weekly allowance, so Max gives much more room. The owner's system runs on Max; nothing here was tested on a Team plan. |
+| Claude Max, ideally Max 20x | Cloud sessions and routines (scheduled and API-triggered cloud runs) work on Pro too, but the eval budget is a share of your plan's weekly allowance. On Max 20x, one eval fire reserves 3.5% of the week under the 30% cap. Pro's allowance is roughly a twentieth of that, so one fire would cost more than a week; Max 5x fits about two fires a week and never an improve fire. These figures are scaled from the owner's Max 20x, not measured on smaller plans; nothing here was tested on a Team plan. |
 | Claude Code, current release | Hooks, plugins, skills. The eval harness pins nothing about the CLI and breaks loudly when a release changes behavior. |
 | A GitHub account, and optionally a second | The exports name two owners throughout ([one owner or two](#one-owner-or-two)). |
 | A GitHub plan you know | **Rulesets, required checks and environments are enforced on private repos only on a paid GitHub plan** (Pro for a personal account, Team for an organization). See [free or paid](#free-or-paid-github-plan). |
