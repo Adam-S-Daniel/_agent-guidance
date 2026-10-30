@@ -1071,6 +1071,7 @@ actually ran:
 | `harness` | `{"name": "claude-code", "version": ..., "permission_mode": ..., "effort": ...}` — `effort` is the `--effort` level the agent arms ran at, `null` for the CLI default; `version` is the first line of `claude --version`, read once per run, reduced to version characters and capped at 64; `null` (with a warning) if it could not be read. Present on error paths too |
 | `models_used` | sorted keys of the agent result's `modelUsage` — the model id(s) that served the arm; `[]` when the agent call never produced a result |
 | `judge_models_used` | the same, from the judge's CLI result(s); `[]` when no judge ran |
+| `judge_selection` | `{"model", "rule", "arm_tier", "judge_tier"}`: the judge chosen for the arm, the rule that chose it (`fixture-pin`, `roster-judge`, `tier-above-arm`) and both tiers as the ladder reads them; `null` when no judge was selected (`--no-judge`). See [ADR 0013](docs/decisions/0013-judge-policy.md) |
 | `model_tokens` | per model id in the agent result's `modelUsage` (subagents' models included), its `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and `canonical_model`; `{}` when the agent call never produced a result |
 | `cross_model` | `{"model", "canonical_model", "complete", "dropped", "other_share", "threshold", "flagged"}` — whether that accounting is complete, and the share of its tokens spent on models other than the arm's own `--model`, flagged above 0.5; `null` when unknown (see DESIGN.md, "Per-model tokens") |
 

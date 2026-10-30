@@ -41,6 +41,9 @@ PUBLISH_TIME = "2026-10-08T05:41:00Z"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import eval_coverage  # noqa: E402
 
+sys.path.insert(0, str(TEST_DIR))
+from lockfile_pins import lock_problem  # noqa: E402
+
 REGISTRIES = {e["name"]: e for e in yaml.safe_load(
     REGISTRIES_YML.read_text(encoding="utf-8"))["registries"]}
 PRIVATE = "acsi-agentskills-private"
@@ -851,8 +854,10 @@ class PublicationWorkflow(unittest.TestCase):
         private = next(s for s in checkouts if s["with"].get("repository", "").endswith("-private"))
         mint = next(s for s in steps if s.get("id") == "registry-token")
         self.assertLess(steps.index(mint), steps.index(private))
-        self.assertEqual(mint["uses"],
-                         "actions/create-github-app-token@v3.2.0")
+        # The tag is Dependabot's to move; what stays fixed is the action and
+        # that its tag is locked in actions.lock.
+        self.assertTrue(mint["uses"].startswith("actions/create-github-app-token@"))
+        self.assertIsNone(lock_problem(mint["uses"], PROPAGATION_YML))
         self.assertEqual(mint["if"],
                          "github.event_name == 'schedule' && "
                          "vars.REGISTRY_READ_APP_CLIENT_ID != ''")

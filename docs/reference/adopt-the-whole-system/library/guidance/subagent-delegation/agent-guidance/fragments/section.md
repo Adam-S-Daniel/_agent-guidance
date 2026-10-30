@@ -14,16 +14,15 @@
   stop-and-report; a self-contradicting report ("2 failed",
   "exit 0"), re-run it. **Prove the verifier can fail first:**
   `python3 test_foo.py` with no `__main__` block exits 0 having asserted
-  nothing (2026-08-22). Name the RUNNER (`python3 -m pytest <paths> -q`),
+  nothing. Name the RUNNER (`python3 -m pytest <paths> -q`),
   never the file, and require the test COUNT beside the exit code.
 - **A working subagent OWNS the tree — do not commit or push under it.** A
   push mid-flight plus its `git commit --amend` diverges a published branch
-  (2026-08-22; recover by reset and a fresh commit, never force-push), and its
+  (recover by reset and a fresh commit, never force-push), and its
   `git checkout -- <file>` discards your edits. Wait for a clean `git status`
   plus a recorded result; decline a stop hook's "commit and push" nudge.
 - **A subagent that has REPORTED can still be holding the tree**: its
-  BACKGROUND CHILDREN are not reaped (2026-08-29: a 999/0 tree read
-  985/14). Look for descendants before trusting a long run
+  BACKGROUND CHILDREN are not reaped (a 999/0 tree read 985/14). Look for descendants before trusting a long run
   (`ps -eo pid,etimes,cmd | grep '[y]our-command'`); `md5sum` inputs before
   and after (differ → not evidence); prefer a per-run output path; kill
   orphans, and say so.

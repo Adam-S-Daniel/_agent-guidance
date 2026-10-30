@@ -60,7 +60,8 @@ def workflow(steps):
 
 
 LOCKFILE = ".github/workflows/actions.lock"
-TAG = "actions/checkout@v7.0.1"
+# A made-up tag: the fixture builds its own lockfile, not the repo's.
+TAG = "actions/checkout@v9.8.7"
 
 
 def lockfile(uses=TAG, commit="sha1-" + SHA, workflow_path=WORKFLOW, listed=TAG, ref=None):
@@ -198,7 +199,7 @@ class GuidanceViolationTests(unittest.TestCase):
             "other workflow": lockfile(workflow_path=".github/workflows/other.yml"),
             "not listed": lockfile(listed="actions/checkout@v7.0.0"),
             "ref differs from tag": lockfile(ref="v7.0.0"),
-            "ref missing": lockfile().replace("    ref: 'v7.0.1'\n", ""),
+            "ref missing": lockfile().replace("    ref: 'v9.8.7'\n", ""),
         }
         for label, lock in cases.items():
             with self.subTest(case=label):
@@ -343,7 +344,7 @@ class GuidanceViolationTests(unittest.TestCase):
         body = "".join(f"  '{path}':\n" + "".join(f"    - '{ref}'\n" for ref in refs)
                        for path, refs in lists.items())
         return (f"version: 'v0.0.3'\nworkflows:\n{body}"
-                f"dependencies:\n  '{TAG}':\n    ref: 'v7.0.1'\n    commit: 'sha1-{SHA}'\n")
+                f"dependencies:\n  '{TAG}':\n    ref: 'v9.8.7'\n    commit: 'sha1-{SHA}'\n")
 
     def test_a_composite_needs_every_calling_workflow_to_lock_it(self):
         # Credit is the intersection over callers: a second caller that is

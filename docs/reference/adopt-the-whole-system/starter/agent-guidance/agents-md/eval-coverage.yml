@@ -64,14 +64,14 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/watch-finished-is-not-ci-passed/
-  bytes: 1375
+  bytes: 1364
 
 - id: git-push-does-not-mean-commit-exists
   heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/git-push-does-not-mean-commit-exists/
-  bytes: 1153
+  bytes: 1111
 
 - id: pinning-github-actions
   heading: Pinning GitHub Actions
@@ -99,7 +99,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/git-practices/
-  bytes: 226
+  bytes: 214
 
 - id: section-docker
   heading: Docker

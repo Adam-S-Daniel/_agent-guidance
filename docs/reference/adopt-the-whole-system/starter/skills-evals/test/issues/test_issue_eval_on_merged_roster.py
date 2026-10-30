@@ -297,9 +297,11 @@ class TestTheWaitJobsShape(_Scripts):
         # and no env); the wait and sweep steps themselves use no action.
         self.assertEqual([s.get("name") for s in self.job["steps"]],
                          ["Set up Python", WAIT_STEP, SWEEP_STEP])
-        self.assertEqual(self.job["steps"][0], {
+        # The tag is Dependabot's to move; the lock check keeps it exact.
+        python = dict(self.job["steps"][0])
+        self.assertTrue(str(python.pop("uses", "")).startswith("actions/setup-python@"))
+        self.assertEqual(python, {
             "name": "Set up Python",
-            "uses": "actions/setup-python@v7.0.0",
             "with": {"python-version": "3.12"}})
         self.assertIsNone(lock_problem(self.job["steps"][0]["uses"], EVAL_WORKFLOW))
         wait = _step(self.job, WAIT_STEP)

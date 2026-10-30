@@ -1424,3 +1424,71 @@ non-core one still files its issue.
   run, a real run, idempotence, the joint module, the record, `verify.sh`'s
   `content` group before and after a merge, `status.sh`'s step 1) and
   `check-catalog.py`, including one run that must fail.
+
+## Re-pin (2026-10-30)
+
+Every manifest's `source_sha` moved to its source's current `main`, and the
+export was rerun.
+
+| Repo | Old | New |
+|---|---|---|
+| `_agent-guidance` | `9404fe7d648eb916a65128818fb58c4ca5f998aa` | `0082194ce1dcb122e802886e48f62eadb6db9b99` |
+| `agentskills` (the public registry) | `d2d81b00c51388baf51c3922a540ae27839adcde` | `0e81a5e9989c5f92a2af774f9d714e137a7262f9` |
+| `agentskills-private` (the private registry) | `c4bf812e4703e7b9fdd3f5408ed9198cba9df9be` | `c5b1bc9dfaaec3651ad9cb35f8d04192a126319b` |
+| `repo-settings` | `db44cee233bfd6c23aa34b1e2822df97c32df5bb` | `075636253c63a91e84d32fd331ca80e0174737ac` |
+| `skills-evals` | `99c667f93c67a3ddd0630bf7aadbcb43e506d43c` | `d965ccf6aeb0c3f5e2d744063405923525620b94` |
+| `wsl-automation` | `1c6893002aea500d43dcd25534a5fd7059c87b25` | `305090ad7e62dc773462508909d947fbaa13ca56` |
+| platform `imports:` (C4) | `06c89431ff513057e97bd5e5711522be586f6a12` | `fe15bb1cad82e3ee6934063b6ce6ae130096c433` |
+
+The C4 imports follow the platform release that `_agent-guidance`'s own
+`scheduled-run-health.yml` caller pins at its new `main` (`v0.1.164`, a
+lightweight tag on `fe15bb1`). The three imported files are byte-identical at
+both commits. The `_agent-guidance` source at its new `main` contains the kit
+itself; the manifest's `docs/reference/adopt-the-whole-system/` exclude keeps
+it out of the export. Each overlay `NOTICE` names the new commit.
+
+Edits and patches changed or dropped:
+
+- `_agent-guidance`, the `agents-md/base.md` edit that applied the
+  "Automation vs branch protection" bullet as of 4cab855: **dropped**. The
+  source now has that text.
+- `_agent-guidance`, `patches/_agent-guidance/blank_content.py`
+  `MERGE_CLAUSE`: the source dropped the date from "(2026-08-15: `cannot
+  resolve ref`)"; old and new follow it, and the cut clause is the same.
+- `_agent-guidance`, the reusable's `actions/setup-node` edit and its
+  `actions.lock` entry: `v7.0.0` becomes `v7.1.0`. The source moved every
+  workflow to `v7.1.0`, `v7.0.0` is no longer locked, and `v7.1.0` is the
+  commit the imported reusable pins.
+- `agentskills`, the `scheduled-run-health.yml` caller edit: `old` follows
+  the source's bump of the platform ref to `v0.1.167`. The edit still points
+  the caller at `_agent-guidance`'s copy.
+- `skills-evals`, the `dashboard/page/index.html` placeholder-key edit: the
+  source renamed the `usage_sources` key field from `file` to `key`; `old`
+  and `new` follow it, and the edit still adds the `threads` and `loop_gaps`
+  keys.
+- New (C11), `patches/_agent-guidance/kit_repos.py`: the agent-checks
+  dated-phrasing allowlist, new in the source, matches its entries by repo.
+  The one entry for a repo outside the kit (the source owner's usage
+  dashboard) is removed from the template and from `_agent-guidance`'s
+  `.githooks` copy, and the patch fails if any other entry names a repo
+  outside `kit_repos`. The other five repos copy the template
+  (`copy_from_kit`), as the sync delivers it.
+- New, `patches/_agent-guidance/kit_ci.py`: the source's CI now runs the
+  adoption kit's own tests (three steps in `ci.yml`'s `checks` job, the
+  `actions/setup-python` entry they add to `actions.lock`, the root
+  `.gitignore` block that keeps every kit file tracked, and
+  `test_ci_adoption_kit_step` in `test/run-tests.sh`). The exported repo has
+  no kit (the manifest excludes it), so the patch cuts each whole.
+- `patches/_agent-guidance/machinery_tests.py`: the source's new
+  dated-phrasing run-log assertion in `test/run-tests.sh` lists `rules-dir`
+  among the checks that ran. The kit's runner has no `rules-dir` (Content
+  tiers), so the assertion drops it, and the `rules-dir` library item puts it
+  back on install, as it does for the other run-log assertions.
+
+skills-evals' `harness/scorers/objective.py` carries `<!--|--!?>` at the
+source (skills-evals#480), so the kit copy has it with no edit.
+
+The dated-phrasing warning pass (`.githooks/dated-phrasing.js`, its allowlist
+and its pinned `markdown-it`) arrives with the source's agent-checks runner.
+It is machinery that only warns, and is shipped as the source has it. It is
+not listed in `bootstrap/content-catalog.json`, so it has no content tier yet.

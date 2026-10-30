@@ -15,7 +15,7 @@
 repo: wsl-automation
 kit_name: wsl-automation
 source: wsl-automation
-source_sha: 1c6893002aea500d43dcd25534a5fd7059c87b25
+source_sha: 305090ad7e62dc773462508909d947fbaa13ca56
 # Its sync-delivered files (AGENTS.md managed half, the fleet payload mirror,
 # the agent-checks runner) are rebuilt from the exported _agent-guidance.
 after: [_agent-guidance]
@@ -204,6 +204,8 @@ regenerate:
     why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
     why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/dated-phrasing-allowlist.txt, to: .githooks/dated-phrasing-allowlist.txt}
+    why: The sync delivers the dated-phrasing allowlist from _agent-guidance's templates; it carries that repo's C11 trim.
   - run: >-
       printf '%s\n%s\n' "$("$EXPORT_TREE_AGENT_GUIDANCE/scripts/build-agents-md.sh")"
       "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new

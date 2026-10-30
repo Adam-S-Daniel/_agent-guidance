@@ -125,9 +125,9 @@ MERGE_CLAUSE = (
     " are off (`--squash` fails; do not offer it) except the three\n"
     "  example-site-platform-managed repos (`example-site-platform`, `example-site-a`,\n"
     "  `example-site-b`), kept for Decap publishing. Squash strands commits a\n"
-    "  lockfile pins by sha (2026-08-15: `cannot resolve ref`).\n",
+    "  lockfile pins by sha (`cannot resolve ref`).\n",
     " are off (`--squash` fails; do not offer it). Squash strands commits a\n"
-    "  lockfile pins by sha (2026-08-15: `cannot resolve ref`).\n",
+    "  lockfile pins by sha (`cannot resolve ref`).\n",
 )
 
 IMPACT_DATE = "2026-10-29"

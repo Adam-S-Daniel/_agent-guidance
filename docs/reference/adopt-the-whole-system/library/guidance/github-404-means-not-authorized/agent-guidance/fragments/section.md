@@ -6,8 +6,8 @@ exists, so every 404 is ambiguous: gone, or invisible to that credential.
 - **Probe the repo, not the object.** If `GET /repos/<owner>/<repo>/pulls`
   404s too, the repo is invisible (a scope gap); if only the object does, it
   is gone.
-- **Try the other connector first** (2026-08-19: a mid-session MCP reconnect
-  brought up a server blind to a private repo the other read;
+- **Try the other connector first** (a mid-session MCP reconnect can bring
+  up a server blind to a private repo the other reads;
   `add_repo` "already attached" is session scope).
 - **Git is a separate credential path:** `git ls-remote origin '<ref>'` asks
   "does this branch exist", `git merge-base --is-ancestor <sha> origin/main`

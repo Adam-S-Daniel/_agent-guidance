@@ -4,8 +4,7 @@
   Never amend published commits or force-push shared branches.
 - **A closing keyword before `#N` or an issue/PR URL, any repo, closes it,
   PRs too**, from a PR body or any commit message; backticks don't help,
-  and linked issues won't show it (cms-platform#283 via `78617e1`,
-  _agent-guidance#136 by cms-platform#434). To close: `Closes #N`, not
+  and linked issues won't show it. To close: `Closes #N`, not
   `For #N`; else omit it. After merging, check what should stay open is.
 - **Before a PR, `git log origin/<base>..HEAD --oneline` lists only this
   task's commits.** A reusable worktree (`.claude/worktrees/<name>/`) carries

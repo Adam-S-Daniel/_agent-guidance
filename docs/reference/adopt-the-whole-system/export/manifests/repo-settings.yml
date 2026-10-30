@@ -8,7 +8,7 @@
 repo: repo-settings
 kit_name: repo-settings
 source: repo-settings
-source_sha: db44cee233bfd6c23aa34b1e2822df97c32df5bb
+source_sha: 075636253c63a91e84d32fd331ca80e0174737ac
 # Its sync-delivered files (AGENTS.md managed half, the fleet payload mirror)
 # are rebuilt from the exported _agent-guidance.
 after: [_agent-guidance]
@@ -54,6 +54,8 @@ regenerate:
     why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
     why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/dated-phrasing-allowlist.txt, to: .githooks/dated-phrasing-allowlist.txt}
+    why: The sync delivers the dated-phrasing allowlist from _agent-guidance's templates; it carries that repo's C11 trim.
   - run: >-
       printf '%s\n%s\n' "$("$EXPORT_TREE_AGENT_GUIDANCE/scripts/build-agents-md.sh")"
       "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new

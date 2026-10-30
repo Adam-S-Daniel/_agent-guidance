@@ -1273,12 +1273,13 @@ class ImproveValueTests(unittest.TestCase):
         at = next(i for i, step in enumerate(steps) if step.get("id") == "plan")
         self.assertIn('--ranking-out "$RUNNER_TEMP/improve-ranking.json"', steps[at]["run"])
         upload = steps[at + 1]
-        self.assertEqual(upload["uses"], "actions/upload-artifact@v7.0.2")
+        # The tag is Dependabot's to move; actions.lock keeps it exact.
+        self.assertTrue(upload["uses"].startswith("actions/upload-artifact@"))
         self.assertEqual(upload["with"], {
             "name": "improve-ranking", "path": "${{ runner.temp }}/improve-ranking.json",
             "retention-days": 30, "if-no-files-found": "error"})
         lock = (ROOT / ".github/workflows/actions.lock").read_text()
-        self.assertIn("actions/upload-artifact@v7.0.2", lock)
+        self.assertIn(f"'{upload['uses']}'", lock)
 
 
 BARE_FIXTURES = ("evals/writing-adrs/bootstrap", "evals/disarm-inherited-reach",

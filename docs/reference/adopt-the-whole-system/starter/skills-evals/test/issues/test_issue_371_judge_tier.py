@@ -200,6 +200,17 @@ class RosterJudgeTests(_RosterCase):
         self.assertIn("no-such-policy.yml", error)
         self.assertNotIn(str(self.tmp), error)
 
+    def test_an_unreadable_ladder_refuses_a_pairwise_fixture(self):
+        """The roster judge cannot be checked against the arm's tier, so it is
+        not served with both tiers null."""
+        with mock.patch.object(judge_policy, "TIER_POLICY",
+                               self.tmp / "no-such-policy.yml"):
+            agent, judge, error, selection = self.select(
+                TODAY, model=SONNET, fixture=fixture_doc(mode="pairwise"))
+        self.assertEqual((agent, judge, selection), (None, None, None))
+        self.assertIn("no-such-policy.yml", error)
+        self.assertNotIn(str(self.tmp), error)
+
 
 class NewestInTierTests(_RosterCase):
     """Which arm is the newest in the tier above (review round 1, finding 1).
@@ -236,6 +247,26 @@ class NewestInTierTests(_RosterCase):
                     self.assertIn(f"`{peer}`", error)
                 self.assertIn("canned-roster.yml", error)
                 self.assertIn("Pin `judge.model:`", error)
+
+    def test_a_trailing_word_beside_the_plain_id_is_not_ordered(self):
+        """`zip` stopped at the shorter key, so `-fast` read as a number."""
+        for suffix in ("fast", "preview", "latest"):
+            with self.subTest(suffix=suffix):
+                judge, error = self.judge_over(SONNET, OPUS, f"{OPUS}-{suffix}")
+                self.assertIsNone(judge)
+                self.assertIn("cannot be ordered", error)
+                self.assertIn(f"`{OPUS}-{suffix}`", error)
+
+    def test_two_spellings_of_one_version_are_not_ordered(self):
+        judge, error = self.judge_over(SONNET, "claude-opus-05", "claude-opus-5")
+        self.assertIsNone(judge)
+        self.assertIn("cannot be ordered", error)
+        self.assertIn("`claude-opus-05`", error)
+        self.assertIn("`claude-opus-5`", error)
+
+    def test_a_further_number_still_orders(self):
+        self.assertEqual(self.judge_over(SONNET, "claude-opus-5", OPUS),
+                         (OPUS, None))
 
     def test_one_family_of_a_peer_rung_is_ordered_among_itself(self):
         judge, error = self.judge_over(OPUS, "claude-mythos-5", "claude-mythos-6")

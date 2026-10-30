@@ -8,7 +8,8 @@ Only what is **specific to this account and learned the hard way**; depth
 lives in each repo's `docs/` and the skills registry. Delivered once per
 session to BOTH `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, so a rule for
 every agent goes here, not in `~/.claude/AGENTS.md` (one tool only). Keep it
-under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
+under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB. The
+incident behind each rule: `docs/evidence/base-md-incidents.md`.
 
 <!-- TEMPLATE: copy the block below outside this comment to add a section.
 
@@ -124,7 +125,7 @@ hides FAILURE lines.
   and the other reads clean. "Watch done" means "now verify".
 - **A pipe into `grep -q` is a race.** `grep -q` exits at the first match, so
   past the 64 KiB pipe buffer the writer dies 141 and `pipefail` reads a
-  present marker as absent (issue #81; 20 trials per size: 48 kB 0/20,
+  present marker as absent (20 trials per size: 48 kB 0/20,
   95 kB 18/20). Feed data as an argument or here-string —
   `grep -qxF -- "$m" <<<"$s"`.
   A size-dependent bug needs trials, not a probe; say how many.
@@ -138,8 +139,7 @@ hides FAILURE lines.
 A pre-commit hook that refuses the commit does not stop the push: `git push`
 pushes the base commit and prints an ordinary success. The
 fleet's `secrets-scan` guard (example-site-platform's `dev-hooks-sync.yml`) FAILS
-CLOSED without `gitleaks` on `PATH`, which a fresh container lacks
-(2026-08-25, example-site-a).
+CLOSED without `gitleaks` on `PATH`, which a fresh container lacks.
 
 - **Verify the commit, not the push:** `git log --oneline -1` shows your
   message and `git status --short` is clean, or `git rev-parse HEAD` differs
@@ -150,8 +150,8 @@ CLOSED without `gitleaks` on `PATH`, which a fresh container lacks
   emergencies; the binary is one `curl` away.
 - **A push can carry the WRONG ref while both checks pass.**
   `git push -u origin <name>` pushes the LOCAL branch of that name, maybe
-  not the one you are on (2026-08-29: the commit landed on `main` and
-  the push updated a stale local branch). The only check naming commit AND
+  not the one you are on (the commit lands on `main` and the push
+  updates a stale local branch). The only check naming commit AND
   remote branch: `git merge-base --is-ancestor <sha> origin/<branch>`, after
   every push.
 
@@ -237,4 +237,4 @@ belongs in a repo's `AGENTS.md`.
 
 - **Merge with a merge commit — `gh pr merge --merge`.** Squash and rebase
   are off (`--squash` fails; do not offer it). Squash strands commits a
-  lockfile pins by sha (2026-08-15: `cannot resolve ref`).
+  lockfile pins by sha (`cannot resolve ref`).

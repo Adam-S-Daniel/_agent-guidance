@@ -884,8 +884,9 @@ def select_judged_models(fixture: dict, args: argparse.Namespace) -> tuple:
        the arm's (`judge_policy.judge_for_arm`).
 
     A run is one arm model on both of its arms, so it still has one judge.
-    Rule 3 needs the tier ladder; a pin and a pairwise fixture record their
-    tiers when it can be read and null when it cannot.
+    Rule 3 needs the tier ladder, and so does a pairwise fixture, which is
+    refused without it: the roster judge cannot be checked against the arm's
+    tier. A pin records null tiers when the ladder cannot be read.
     """
     pinned_agent = args.model or fixture.get("model")
     judge_cfg = fixture.get("judge")
@@ -946,6 +947,10 @@ def select_judged_models(fixture: dict, args: argparse.Namespace) -> tuple:
                           f"`{judge_id}`, which is this run's arm model; a "
                           f"model must not grade its own run. Pin "
                           f"`judge.model:` in the fixture to override")
+        if ladder_problem:
+            return refuse(f"{ladder_problem}, so the roster judge cannot be "
+                          f"checked against the arm's tier, and this fixture "
+                          f"pins no judge model")
         chosen = judge_policy.selection(
             judge_id, judge_policy.RULE_ROSTER_JUDGE, agent, rungs)
         if chosen["arm_tier"] is not None \

@@ -44,6 +44,12 @@ unset GH_TOKEN GITHUB_TOKEN
 # log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
 export AGENT_CHECKS_LOG=off
 
+# Nor may it install markdown-it from npm for its dated-phrasing warning pass:
+# point the pass at a directory with no markdown-it, so it prints its one
+# "could not be loaded" warning. The dated-phrasing tests point it at the
+# copy CI's `npm ci` puts in this repo's node_modules themselves.
+export AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/no-markdown-it"
+
 # Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
 # means rather than the directory several artifacts share.
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
@@ -18991,7 +18997,11 @@ test_dependabot_sweep_merge_gating() {
 #!/usr/bin/env bash
 case "${1:-}" in
     fetch) exit 0 ;;
-    diff) echo ".github/workflows/ci.yml"; exit 0 ;;
+    diff)
+        # The PR's changed files: FIXTURES/diff-files, else one workflow file.
+        if [[ -f "$FIXTURES/diff-files" ]]; then cat "$FIXTURES/diff-files"; else echo ".github/workflows/ci.yml"; fi
+        exit 0
+        ;;
     rev-list)
         # How far the PR head is behind its base: FIXTURES/behind-by, else 0.
         if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
@@ -19070,6 +19080,10 @@ case "${1:-}" in
 esac
 GHSTUB
     chmod +x "$binhome/gh"
+
+    # `sleep` stub: read_pr's UNKNOWN re-reads wait 10s each for real.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$binhome/sleep"
+    chmod +x "$binhome/sleep"
 
     # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json>
     write_pr() {
@@ -19282,6 +19296,73 @@ GHSTUB
         "sweep gating (j): no pr update-branch when the head is not behind"
     assert_contains "$out_j" "is not behind main" \
         "sweep gating (j): reports the merge refusal as not behind"
+
+    # (k) #296 on 2026-10-29: the first read after main moved answers
+    #     mergeable=UNKNOWN. The sweep re-reads instead of skipping, and
+    #     merges once GitHub has computed MERGEABLE.
+    local fx_k="$TEST_DIR/auto-merge-gating-case-k"
+    mkdir -p "$fx_k"
+    printf '900\n' > "$fx_k/pr-numbers.txt"
+    write_pr "$fx_k/pr-900.json" 900 "$HEAD_X" "UNKNOWN" "UNKNOWN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    write_pr "$fx_k/pr-900.after.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_k="$TEST_DIR/auto-merge-gating-out-k.txt"
+    run_case "$fx_k" "" "$SELF" "$out_k" >/dev/null
+    assert_contains "$out_k" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (k): a first-read UNKNOWN is re-read and then merged"
+
+    # (l) control: UNKNOWN on every read stops after the bound and skips,
+    #     saying how many re-reads it made.
+    local fx_l="$TEST_DIR/auto-merge-gating-case-l"
+    mkdir -p "$fx_l"
+    printf '900\n' > "$fx_l/pr-numbers.txt"
+    write_pr "$fx_l/pr-900.json" 900 "$HEAD_X" "UNKNOWN" "UNKNOWN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
+    local out_l="$TEST_DIR/auto-merge-gating-out-l.txt"
+    run_case "$fx_l" "" "$SELF" "$out_l" >/dev/null
+    assert_contains "$out_l" "still UNKNOWN after 6 re-reads" \
+        "sweep gating (l): an UNKNOWN that never resolves is skipped after 6 re-reads"
+    assert_not_contains "$fx_l/calls.log" "pr merge" \
+        "sweep gating (l): no pr merge call while mergeable stays UNKNOWN"
+
+    # (m) #296 on 2026-10-27: Dependabot rewrites actions.lock with every
+    #     action bump (ADR 0024). The re-check accepts it beside workflow YAML.
+    local fx_m="$TEST_DIR/auto-merge-gating-case-m"
+    mkdir -p "$fx_m"
+    printf '900\n' > "$fx_m/pr-numbers.txt"
+    printf '.github/workflows/actions.lock\n.github/workflows/ci.yml\n' > "$fx_m/diff-files"
+    write_pr "$fx_m/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_m="$TEST_DIR/auto-merge-gating-out-m.txt"
+    run_case "$fx_m" "" "$SELF" "$out_m" >/dev/null
+    assert_contains "$out_m" "merged=1" \
+        "sweep gating (m): a diff of workflow YAML plus actions.lock merges"
+
+    # (n) control: any other non-manifest path is still left for a human.
+    local fx_n="$TEST_DIR/auto-merge-gating-case-n"
+    mkdir -p "$fx_n"
+    printf '900\n' > "$fx_n/pr-numbers.txt"
+    printf '.github/workflows/actions.lock\nscripts/sync.sh\n' > "$fx_n/diff-files"
+    write_pr "$fx_n/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_n="$TEST_DIR/auto-merge-gating-out-n.txt"
+    run_case "$fx_n" "" "$SELF" "$out_n" >/dev/null
+    assert_not_contains "$fx_n/calls.log" "pr merge" \
+        "sweep gating (n): no pr merge call when the diff touches a non-manifest path"
+
+    # Job `auto-merge` runs the same allowlist on each push; it interpolates
+    # \${{ }} so it is not extracted and run here. Both copies must accept the
+    # lockfile, or the job fails the PR the sweep would merge.
+    local lock_arms
+    # `|| true`: grep -c exits 1 on zero matches, which `set -e` would turn
+    # into an aborted group rather than this test's FAIL.
+    lock_arms=$(grep -cE '^ +\.github/workflows/actions\.lock\) ;;$' "$wf" || true)
+    if [[ "$lock_arms" -eq 2 ]]; then
+        pass "auto-merge: both manifest allowlists accept .github/workflows/actions.lock"
+    else
+        fail "auto-merge: both manifest allowlists should accept .github/workflows/actions.lock — found $lock_arms arm(s)"
+    fi
 
     unset -f write_pr
     unset -f run_case
@@ -23406,6 +23487,7 @@ setup_ac_repos() {
             ac-drift)
                 mkdir -p "$work/$name/.githooks"
                 echo "# an older runner" > "$work/$name/.githooks/agent-checks"
+                echo "// an older dated-phrasing pass" > "$work/$name/.githooks/dated-phrasing.js"
                 ;;
             ac-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
             ac-platform) echo "platform_ref: v0.0.1" > "$work/$name/platform.lock" ;;
@@ -23477,6 +23559,8 @@ test_sync_agent_checks() {
         "agent-checks (dry run): the runner is reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
         "agent-checks (dry run): the workflow is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing missing)" \
+        "agent-checks (dry run): the dated-phrasing files are reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would register the agent-checks guard on PreToolUse" \
         "agent-checks (dry run): the guard registration is reported"
 
@@ -23494,6 +23578,15 @@ test_sync_agent_checks() {
         pass "agent-checks (sync): runner, workflow and guard arrive byte for byte"
     else
         fail "agent-checks (sync): runner, workflow and guard arrive byte for byte"
+    fi
+    local dated_file dated_ok=true
+    for dated_file in dated-phrasing.js dated-phrasing-allowlist.txt dated-phrasing/package.json dated-phrasing/package-lock.json; do
+        cmp -s <(ac_show ac-none ".githooks/$dated_file") "$tmpl/$dated_file" || dated_ok=false
+    done
+    if $dated_ok; then
+        pass "agent-checks (sync): the dated-phrasing script, allowlist and package files arrive byte for byte under .githooks/"
+    else
+        fail "agent-checks (sync): the dated-phrasing script, allowlist and package files arrive byte for byte under .githooks/"
     fi
     got=$(gattr_git -C "$bare/acorg_ac-none" ls-tree main -- "$runner" "$guard" | awk '{print $1}' | sort -u | tr '\n' ' ')
     if [[ "$got" == "100755 " ]]; then
@@ -23551,6 +23644,12 @@ for g in doc["hooks"]["PreToolUse"]:
         pass "agent-checks (sync): a drifted runner is overwritten with the managed copy"
     else
         fail "agent-checks (sync): a drifted runner is overwritten with the managed copy"
+    fi
+    if cmp -s <(ac_show ac-drift .githooks/dated-phrasing.js) "$tmpl/dated-phrasing.js" \
+       && cmp -s <(ac_show ac-drift .githooks/dated-phrasing/package-lock.json) "$tmpl/dated-phrasing/package-lock.json"; then
+        pass "agent-checks (sync): a drifted dated-phrasing script is overwritten, and its missing siblings added"
+    else
+        fail "agent-checks (sync): a drifted dated-phrasing script is overwritten, and its missing siblings added"
     fi
     if [[ -z "$(ac_show ac-lock "$wf")" ]] && cmp -s <(ac_show ac-lock "$runner") "$tmpl/agent-checks"; then
         pass "agent-checks (sync): a repo with actions.lock gets the runner but not the SHA-pinned workflow"
@@ -23658,9 +23757,282 @@ test_agent_checks_persistent_delete() {
     fi
 }
 
+# The dated-phrasing warning pass (templates/agent-checks/dated-phrasing.js):
+# it warns on dated history and migration-relative phrasing in the prose of
+# the Markdown agents load, never in code, quotes, HTML, URLs, link text or an
+# AGENTS.md's managed half, and it never changes the runner's exit status.
+# markdown-it comes from this repo's node_modules (CI's `npm ci`), never npm.
+dated_lines() {   # <stderr file> — the "path:line" of each warning, sorted
+    sed -n 's/^agent-checks (warning): \([^:]*:[0-9]*\): dated phrasing: .*/\1/p' "$1" | sort | tr '\n' ' '
+}
+
+test_agent_checks_dated_phrasing() {
+    echo ""
+    echo "=== Test: agent-checks warns on dated phrasing and never blocks ==="
+    local tmpl="$REPO_ROOT/templates/agent-checks" mods="$REPO_ROOT/node_modules"
+    local repo="$TEST_DIR/ac-dated" out="$TEST_DIR/ac-dated" rc got line label n
+    if [[ ! -f "$mods/markdown-it/package.json" ]]; then
+        fail "dated-phrasing: markdown-it is installed in $mods (run npm ci at the repo root)"
+        return
+    fi
+    rm -rf "$repo"
+    mkdir -p "$repo/skills/x" "$repo/agents-md" "$repo/.claude/hooks" "$repo/notes"
+    git init -q "$repo"
+    git -C "$repo" remote add origin https://github.com/example-owner/widgets.git
+    printf '%s\n' \
+        '# AGENTS.md' \
+        '' \
+        'Managed text: the runner is now current, since 2026-01-02.' \
+        '' \
+        '## Repo-specific additions' \
+        '' \
+        'The build is now green.' \
+        '' \
+        'Fixed on 2026-08-29 by hand.' \
+        '' \
+        '```' \
+        'code: the build is now green, 2026-08-29' \
+        '```' \
+        '' \
+        'Run `is now 2026-08-29` here.' \
+        '' \
+        'See [the 2026-08-29 evidence, no longer current](https://example.com/e).' \
+        '' \
+        '> Quoted: the build is now green on 2026-08-29.' \
+        '' \
+        '<div>html: is now 2026-08-29</div>' \
+        '' \
+        'A second paragraph that is now flagged.' \
+        '' \
+        'Not a date: 2026-02-30. A link: https://example.com/2026-08-29/x.' \
+        '' \
+        '    indented code is now 2026-08-29' > "$repo/AGENTS.md"
+    echo 'This repo was formerly a fork.' > "$repo/CLAUDE.md"
+    printf '# Skill\n\nUse it as of today.\n' > "$repo/skills/x/SKILL.md"
+    echo 'The rule recently changed.' > "$repo/agents-md/base.md"
+    echo 'The payload is now copied here.' > "$repo/.claude/hooks/fleet-guidance.md"
+    echo 'This readme is now out of scope.' > "$repo/README.md"
+    echo 'Notes are now out of scope.' > "$repo/notes/guide.md"
+    mkdir -p "$repo/evals/real-work/x/seed"
+    echo 'A frozen fixture that is now out of scope.' > "$repo/evals/real-work/x/seed/AGENTS.md"
+    git -C "$repo" add -A
+    GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m base
+
+    # The suite itself runs under GitHub Actions in CI, so each run drops
+    # GITHUB_ACTIONS and RUNNER_TEMP unless DATED_GHA asks for the CI form.
+    run_dated() {   # <runner> <log stem> <event...> — env passes through
+        local runner=$1 stem=$2; shift 2
+        local -a ci=(env -u GITHUB_ACTIONS -u RUNNER_TEMP)
+        [ -n "${DATED_GHA:-}" ] && ci=(env GITHUB_ACTIONS=true)
+        (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null "${ci[@]}" bash "$runner" "$@") > "$stem.out" 2> "$stem.err"
+    }
+
+    # ── Tree mode over every path in scope ──
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-tree" tree || rc=$?
+    if [[ $rc -eq 0 ]] && grep -q '^agent-checks (warning): ' "$out-tree.err"; then
+        pass "dated-phrasing: the runner exits 0 when it warns"
+    else
+        fail "dated-phrasing: the runner exits 0 when it warns — exit $rc: $(head -3 "$out-tree.err")"
+    fi
+    got=$(dated_lines "$out-tree.err")
+    if [[ "$got" == "AGENTS.md:23 AGENTS.md:7 AGENTS.md:9 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
+        pass "dated-phrasing: a date and a phrase in prose warn, in every file in scope, at their own line"
+    else
+        fail "dated-phrasing: a date and a phrase in prose warn, in every file in scope, at their own line — got: $got"
+    fi
+    for line in "3:the managed half of AGENTS.md" "12:a fenced code block" "15:inline code" \
+                "17:link text" "19:a block quote" "21:an HTML block" "25:a URL and a date that is no calendar day" \
+                "27:an indented code block"; do
+        label=${line#*:}
+        if [[ " $got " != *" AGENTS.md:${line%%:*} "* ]]; then
+            pass "dated-phrasing: no warning in $label"
+        else
+            fail "dated-phrasing: no warning in $label (AGENTS.md:${line%%:*})"
+        fi
+    done
+    if ! grep -qE '^agent-checks \(warning\): (README\.md|notes/|evals/|\.claude/hooks/fleet-guidance\.md)' "$out-tree.err"; then
+        pass "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
+    else
+        fail "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
+    fi
+    if grep -qF 'AGENTS.md:7: dated phrasing: the phrase "is now".' "$out-tree.err" \
+       && grep -qF 'AGENTS.md:9: dated phrasing: a date in prose, "2026-08-29".' "$out-tree.err" \
+       && grep -qF '.agent-checks/dated-phrasing-allowlist.txt' "$out-tree.err" \
+       && ! grep -qF 'green' "$out-tree.err"; then
+        pass "dated-phrasing: a warning names the phrase and the allowlist, and prints nothing more of the file"
+    else
+        fail "dated-phrasing: a warning names the phrase and the allowlist, and prints nothing more of the file — $(head -2 "$out-tree.err")"
+    fi
+
+    # ── GitHub Actions: annotations ──
+    rc=0; DATED_GHA=1 AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-gha" tree || rc=$?
+    n=$(grep -c '^::warning file=[^,]*,line=[0-9]*,title=dated-phrasing::dated phrasing: ' "$out-gha.out" || true)
+    if [[ $rc -eq 0 && "$n" == 6 ]] \
+       && grep -qxF '::warning file=AGENTS.md,line=7,title=dated-phrasing::dated phrasing: the phrase "is now". Instruction files load into every session and are read as the rule that holds now, so history (what changed, and when) goes stale here and belongs in docs/evidence/ or git. Reword it as the present-tense rule; if it is right as written, add a line to .agent-checks/dated-phrasing-allowlist.txt (format: the header of .githooks/dated-phrasing-allowlist.txt). Warning only.' "$out-gha.out"; then
+        pass "dated-phrasing: under GitHub Actions each hit is one ::warning annotation with file, line and title"
+    else
+        fail "dated-phrasing: under GitHub Actions each hit is one ::warning annotation with file, line and title — exit $rc, $n annotations: $(head -1 "$out-gha.out")"
+    fi
+
+    # ── Allowlists: a fleet entry and a repo entry each silence their block only ──
+    local fleet="$TEST_DIR/ac-dated-fleet"
+    rm -rf "$fleet"
+    mkdir -p "$fleet"
+    cp "$tmpl/agent-checks" "$tmpl/dated-phrasing.js" "$fleet/"
+    printf '%s\n' '# test list' '' \
+        'example-owner/widgets AGENTS.md :: The build is now green.' \
+        'other-owner/widgets CLAUDE.md :: was formerly a fork' \
+        '* agents-md/base.md :: rule   recently' > "$fleet/dated-phrasing-allowlist.txt"
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$fleet/agent-checks" "$out-allow" tree || rc=$?
+    got=$(dated_lines "$out-allow.err")
+    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:9 CLAUDE.md:1 skills/x/SKILL.md:3 " ]]; then
+        pass "dated-phrasing: a fleet allowlist entry silences exactly its block; another repo's entry does not apply; * matches any repo"
+    else
+        fail "dated-phrasing: a fleet allowlist entry silences exactly its block; another repo's entry does not apply; * matches any repo — exit $rc, got: $got"
+    fi
+    mkdir -p "$repo/.agent-checks"
+    printf '%s\n' 'Example-Owner/Widgets AGENTS.md :: Fixed on 2026-08-29' 'not an entry' > "$repo/.agent-checks/dated-phrasing-allowlist.txt"
+    git -C "$repo" add -A
+    GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m allow
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-own" tree || rc=$?
+    got=$(dated_lines "$out-own.err")
+    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:7 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
+        pass "dated-phrasing: the repo's own .agent-checks/dated-phrasing-allowlist.txt silences its entry's block"
+    else
+        fail "dated-phrasing: the repo's own .agent-checks/dated-phrasing-allowlist.txt silences its entry's block — exit $rc, got: $got"
+    fi
+    if grep -qF 'agent-checks (warning): .agent-checks/dated-phrasing-allowlist.txt:2: not an allowlist entry' "$out-own.err"; then
+        pass "dated-phrasing: a malformed allowlist line is named and ignored"
+    else
+        fail "dated-phrasing: a malformed allowlist line is named and ignored"
+    fi
+
+    # ── pre-commit reads the index, and the run log counts the pass ──
+    echo 'Staged: this is now staged.' > "$repo/agents-md/staged.md"
+    git -C "$repo" add agents-md/staged.md
+    echo 'Clean worktree text.' > "$repo/agents-md/staged.md"
+    rc=0; AGENT_CHECKS_LOG="$TEST_DIR/ac-dated-runs.jsonl" AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" \
+        run_dated "$tmpl/agent-checks" "$out-pc" pre-commit || rc=$?
+    got=$(dated_lines "$out-pc.err")
+    if [[ $rc -eq 0 && "$got" == "agents-md/staged.md:1 " ]]; then
+        pass "dated-phrasing: pre-commit reads the staged content, and only the staged paths"
+    else
+        fail "dated-phrasing: pre-commit reads the staged content, and only the staged paths — exit $rc, got: $got"
+    fi
+    if grep -qF '"checks":["secret-file","skill-shell","dated-phrasing"],"failed":[]' "$TEST_DIR/ac-dated-runs.jsonl"; then
+        pass "dated-phrasing: the run log lists the pass as run and never as failed"
+    else
+        fail "dated-phrasing: the run log lists the pass as run and never as failed — $(cat "$TEST_DIR/ac-dated-runs.jsonl")"
+    fi
+    git -C "$repo" reset -q -- agents-md/staged.md
+    rm -f "$repo/agents-md/staged.md"
+
+    # ── It never blocks: a refusal still refuses, a warning adds nothing ──
+    echo 'TOKEN=x' > "$repo/.env"
+    echo 'This is now staged beside it.' > "$repo/agents-md/staged.md"
+    git -C "$repo" add .env agents-md/staged.md
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-env" pre-commit || rc=$?
+    if [[ $rc -eq 1 && "$(dated_lines "$out-env.err")" == "agents-md/staged.md:1 " ]] \
+       && grep -q '^agent-checks: .env: looks like a secret' "$out-env.err"; then
+        pass "dated-phrasing: a refusal in the same run still refuses beside the warnings"
+    else
+        fail "dated-phrasing: a refusal in the same run still refuses beside the warnings — exit $rc"
+    fi
+    git -C "$repo" reset -q -- .env agents-md/staged.md
+    rm -f "$repo/.env" "$repo/agents-md/staged.md"
+
+    # ── Failures of its own: one warning line, exit 0 ──
+    local nonode="$TEST_DIR/ac-dated-nonode" dir f
+    rm -rf "$nonode"
+    mkdir -p "$nonode"
+    local IFS_SAVE=$IFS
+    IFS=:
+    for dir in $PATH; do
+        for f in "$dir"/*; do
+            [[ -x "$f" && ! -d "$f" ]] || continue
+            case "${f##*/}" in node|npm|npx|corepack) continue ;; esac
+            [[ -e "$nonode/${f##*/}" ]] || ln -s "$f" "$nonode/${f##*/}"
+        done
+    done
+    IFS=$IFS_SAVE
+    rc=0; PATH="$nonode" run_dated "$tmpl/agent-checks" "$out-nonode" tree || rc=$?
+    n=$(grep -c '' "$out-nonode.err" || true)
+    if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'agent-checks (warning): dated-phrasing skipped: node is not on PATH' "$out-nonode.err"; then
+        pass "dated-phrasing: with no node on PATH it prints one warning line and exits 0"
+    else
+        fail "dated-phrasing: with no node on PATH it prints one warning line and exits 0 — exit $rc, $n lines: $(cat "$out-nonode.err")"
+    fi
+    rc=0; run_dated "$tmpl/agent-checks" "$out-nomods" tree || rc=$?
+    n=$(grep -c '' "$out-nomods.err" || true)
+    if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'agent-checks (warning): dated-phrasing skipped: markdown-it could not be loaded' "$out-nomods.err"; then
+        pass "dated-phrasing: with no markdown-it it prints one warning line and exits 0"
+    else
+        fail "dated-phrasing: with no markdown-it it prints one warning line and exits 0 — exit $rc, $n lines: $(cat "$out-nomods.err")"
+    fi
+
+    # ── The install: npm ci once into a cache keyed by the lockfile, then reused ──
+    local stub="$TEST_DIR/ac-dated-npm" cache="$TEST_DIR/ac-dated-cache"
+    rm -rf "$stub" "$cache"
+    mkdir -p "$stub"
+    printf '#!/bin/sh\necho "$*" >> "%s/calls"\nexit 1\n' "$stub" > "$stub/npm"
+    chmod +x "$stub/npm"
+    rc=0; env -u AGENT_CHECKS_DATED_PHRASING_MODULES PATH="$stub:$PATH" XDG_CACHE_HOME="$cache" \
+        env -u GITHUB_ACTIONS -u RUNNER_TEMP bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
+        > "$out-npmfail.out" 2> "$out-npmfail.err" || rc=$?
+    n=$(grep -c '' "$out-npmfail.err" || true)
+    if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'dated-phrasing skipped: installing markdown-it with npm ci failed' "$out-npmfail.err" \
+       && grep -qxF 'ci --ignore-scripts --no-audit --no-fund --loglevel=error' "$stub/calls"; then
+        pass "dated-phrasing: a failed npm ci --ignore-scripts prints one warning line and exits 0"
+    else
+        fail "dated-phrasing: a failed npm ci --ignore-scripts prints one warning line and exits 0 — exit $rc: $(cat "$out-npmfail.err")"
+    fi
+    rm -f "$stub/calls"
+    printf '#!/bin/sh\necho "$*" >> "%s/calls"\ncmp -s package-lock.json "%s/dated-phrasing/package-lock.json" || exit 1\nmkdir -p node_modules && cp -RL "%s"/. node_modules/\n' \
+        "$stub" "$tmpl" "$mods" > "$stub/npm"
+    for n in 1 2; do
+        env -u AGENT_CHECKS_DATED_PHRASING_MODULES PATH="$stub:$PATH" XDG_CACHE_HOME="$cache" \
+            env -u GITHUB_ACTIONS -u RUNNER_TEMP bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
+            > "$out-npm$n.out" 2> "$out-npm$n.err" || true
+    done
+    got=$(sha256sum "$tmpl/dated-phrasing/package-lock.json" | cut -d' ' -f1)
+    if [[ "$(grep -c '' "$stub/calls")" == 1 && -f "$cache/agent-checks/dated-phrasing/$got/node_modules/markdown-it/package.json" ]] \
+       && [[ "$(dated_lines "$out-npm1.err")" == "$(dated_lines "$out-own.err")" && "$(dated_lines "$out-npm2.err")" == "$(dated_lines "$out-own.err")" ]]; then
+        pass "dated-phrasing: markdown-it is installed once, into a cache keyed by the lockfile's sha256, and reused"
+    else
+        fail "dated-phrasing: markdown-it is installed once, into a cache keyed by the lockfile's sha256, and reused — calls: $(cat "$stub/calls" 2>/dev/null | wc -l), $(head -2 "$out-npm1.err")"
+    fi
+    if [[ -z "$(ls -A "$cache/agent-checks/dated-phrasing" | grep -v "^$got\$")" ]]; then
+        pass "dated-phrasing: the install leaves no temp directory behind"
+    else
+        fail "dated-phrasing: the install leaves no temp directory behind — $(ls -A "$cache/agent-checks/dated-phrasing")"
+    fi
+}
+
+# The pinned dependency: markdown-it exactly, with integrity hashes for every
+# package, and the package files and the lockfile agree.
+test_agent_checks_dated_phrasing_lock() {
+    echo ""
+    echo "=== Test: the dated-phrasing pass pins markdown-it exactly ==="
+    local dir="$REPO_ROOT/templates/agent-checks/dated-phrasing" got
+    got=$(node -e '
+const pkg = require(process.argv[1] + "/package.json");
+const lock = require(process.argv[1] + "/package-lock.json");
+const deps = Object.entries(lock.packages).filter(([k]) => k);
+const bad = deps.filter(([, v]) => !/^sha512-/.test(v.integrity || "") || !/^https:\/\/registry\.npmjs\.org\//.test(v.resolved || ""));
+console.log([JSON.stringify(pkg.dependencies), lock.packages[""].dependencies["markdown-it"],
+             lock.packages["node_modules/markdown-it"].version, deps.length, bad.length].join(" "));
+' "$dir" 2>&1)
+    if [[ "$got" == '{"markdown-it":"15.0.3"} 15.0.3 15.0.3 7 0' ]]; then
+        pass "dated-phrasing lock: markdown-it is pinned at 15.0.3, every package has an npm registry URL and a sha512 integrity"
+    else
+        fail "dated-phrasing lock: markdown-it is pinned at 15.0.3, every package has an npm registry URL and a sha512 integrity — got: $got"
+    fi
+}
+
 # The sync never reaches this repo (SYNC_SELF_REPO), so it carries its own
-# copies, by hand: the runner must stay byte-identical to the template the
-# fleet receives, and the guard is registered straight from the template.
+# copies, by hand: the runner and its dated-phrasing files must stay
+# byte-identical to the templates the fleet receives, and the guard is
+# registered straight from the template.
 test_self_agent_checks() {
     echo ""
     echo "=== Test: this repo runs the same agent-checks it delivers ==="
@@ -23669,6 +24041,14 @@ test_self_agent_checks() {
     else
         fail "self agent-checks: .githooks/agent-checks matches templates/agent-checks/agent-checks — copy the template over it"
     fi
+    local f
+    for f in dated-phrasing.js dated-phrasing-allowlist.txt dated-phrasing/package.json dated-phrasing/package-lock.json; do
+        if cmp -s "$REPO_ROOT/.githooks/$f" "$REPO_ROOT/templates/agent-checks/$f"; then
+            pass "self agent-checks: .githooks/$f matches templates/agent-checks/$f"
+        else
+            fail "self agent-checks: .githooks/$f matches templates/agent-checks/$f — copy the template over it"
+        fi
+    done
     if grep -qF 'bash .githooks/agent-checks ci' "$REPO_ROOT/.github/workflows/agent-checks.yml" 2>/dev/null; then
         pass "self agent-checks: a workflow runs the runner in CI"
     else
@@ -24275,6 +24655,8 @@ GROUP_automerge=(
 GROUP_agent_checks=(
     test_agent_checks_guard
     test_agent_checks_persistent_delete
+    test_agent_checks_dated_phrasing
+    test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
     test_sync_agent_checks
     test_agent_check_lane_cases

@@ -130,7 +130,17 @@ test_agent_checks_persistent_delete() {
     else
         fail "agent-checks persistent: deleting persistent/results is refused — exit $rc"
     fi
-''', ''),
+''', ''),    # The dated-phrasing pass's run-log assertion lists the checks that ran;
+    # the kit's runner has no rules-dir (its library item puts it back).
+    ('''grep -qF '"checks":["rules-dir","secret-file","skill-shell","dated-phrasing"],"failed":[]' ''',
+     '''grep -qF '"checks":["secret-file","skill-shell","dated-phrasing"],"failed":[]' '''),
+]
+
+# What the rules-dir library item puts back in test/run-tests.sh.
+RUN_TESTS_RULES_DIR_OPS = [
+    {"op": "replace", "file": "test/run-tests.sh",
+     "old": '''grep -qF '"checks":["secret-file","skill-shell","dated-phrasing"],"failed":[]' ''',
+     "new": '''grep -qF '"checks":["rules-dir","secret-file","skill-shell","dated-phrasing"],"failed":[]' '''},
 ]
 
 
@@ -140,3 +150,4 @@ def apply(root: Path, ctx) -> None:
     _sub(root, "test/test_agent_check_lane.py", LANE_EDITS)
     lib.add_ops("git-hook", "rules-dir", "agent-guidance", LANE_RULES_DIR_OPS)
     _sub(root, "test/run-tests.sh", RUN_TESTS_EDITS)
+    lib.add_ops("git-hook", "rules-dir", "agent-guidance", RUN_TESTS_RULES_DIR_OPS)

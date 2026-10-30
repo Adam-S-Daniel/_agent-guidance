@@ -2,6 +2,7 @@
 
 - **Status:** accepted (2026-09-13); amended by [ADR 0003](0003-roster-merges-automatically.md) (2026-09-28)
 - **Amended by [ADR 0004](0004-eval-runs-on-the-roster-its-run-merged.md) (2026-09-30):** the eval runs on the roster its own run merged, when that merge lands and verifies within the run's bounded wait; otherwise on the committed roster, as below.
+- **Superseded in part by [ADR 0013](0013-judge-policy.md) (2026-10-10):** the judge is no longer read from the roster alone; it is chosen per arm, one tier above it.
 - **Issue:** [#147](https://github.com/Adam-S-Daniel/skills-evals/issues/147), superseding the fix-round approach on [#67](https://github.com/Adam-S-Daniel/skills-evals/issues/67) / [PR #129](https://github.com/Adam-S-Daniel/skills-evals/pull/129)
 - **Deciders:** the evals orchestrator session, under the owner's decision 11 (redesign the denominator around a trusted history)
 

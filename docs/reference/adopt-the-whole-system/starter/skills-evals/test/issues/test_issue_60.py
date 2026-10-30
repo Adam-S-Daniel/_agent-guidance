@@ -610,8 +610,10 @@ class WorkflowTests(unittest.TestCase):
         private = next(step for step in checkouts
                        if step["with"].get("repository", "").endswith("-private"))
         self.assertLess(census_steps.index(mint), census_steps.index(private))
-        self.assertEqual(mint["uses"],
-                         "actions/create-github-app-token@v3.2.0")
+        # The tag is Dependabot's to move; what stays fixed is the action and
+        # that its tag is locked in actions.lock.
+        self.assertTrue(mint["uses"].startswith("actions/create-github-app-token@"))
+        self.assertIsNone(lock_problem(mint["uses"], "skill-coverage.yml"))
         self.assertEqual(mint["with"], {
             "client-id": "${{ vars.REGISTRY_READ_APP_CLIENT_ID }}",
             "private-key": "${{ secrets.REGISTRY_READ_APP_PEM }}",

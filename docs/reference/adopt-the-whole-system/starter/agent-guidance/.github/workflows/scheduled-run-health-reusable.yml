@@ -220,7 +220,7 @@ jobs:
           sparse-checkout-cone-mode: false
           path: .example-site-platform
       - name: Setup Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "20"
       - name: Audit scheduled-run health
