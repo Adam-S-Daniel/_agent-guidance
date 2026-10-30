@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9459ac0c7a9a78b5ac15c6e471312de28ff87692
+      - run: npm ci
+      - run: npm test
+
+  e2e:
+    if: contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9459ac0c7a9a78b5ac15c6e471312de28ff87692
+      - run: npm ci
+      - run: npm run e2e

@@ -1,0 +1,10 @@
+{
+  "name": "example-service",
+  "nameWithOwner": "example-org/example-service",
+  "owner": {
+    "login": "example-org"
+  },
+  "defaultBranchRef": {
+    "name": "main"
+  }
+}

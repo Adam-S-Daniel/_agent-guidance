@@ -1,0 +1,20 @@
+name: Sync labels
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - name: Sync labels
+        env:
+          GH_TOKEN: ${{ secrets.LABEL_SYNC_TOKEN }}
+          ORG: example-org
+        run: bash scripts/sync-labels.sh

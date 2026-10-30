@@ -1,0 +1,14 @@
+[
+ {
+  "thread_id": "thread-0001",
+  "title": "Plan the loop",
+  "state": "done",
+  "last_activity_at": "2026-01-06T09:00:00Z"
+ },
+ {
+  "thread_id": "thread-0002",
+  "title": "Track skill usage",
+  "state": "blocked",
+  "last_activity_at": "2026-01-06T11:00:00Z"
+ }
+]

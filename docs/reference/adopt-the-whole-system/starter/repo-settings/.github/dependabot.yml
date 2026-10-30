@@ -1,0 +1,67 @@
+# Dependabot for this repo.
+#
+# Previously this repo pinned third-party GitHub Actions to commit SHAs (per
+# the account-wide SHA-pinning convention) but had no dependabot.yml at all,
+# so those pins had no bump path — they'd sit until someone noticed. This
+# onboards the github-actions ecosystem so pins get proposed weekly, landed
+# unattended by .github/workflows/dependabot-auto-merge.yml once CI is
+# green (see that file for why this repo needs a scheduled sweep, not just
+# native auto-merge, to actually land them).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # MINIMUM PACKAGE AGE ("cooldown") — how long a release must exist before
+    # Dependabot will even OPEN the PR. Version updates ONLY: security
+    # updates bypass cooldown by GitHub's spec, so an advisory still opens
+    # (and auto-merges) immediately. GitHub's own default is an implicit
+    # 3-day minimum age, so `default-days: 7` here is a deliberate RAISE, not
+    # a floor from zero — it mechanises this account's standing 7-day
+    # cooling-off convention for third-party action SHAs (see
+    # example-site-platform/AGENTS.md, "SHA-pin every workflow `uses:`"), matching
+    # example-site-platform's own .github/dependabot.yml.
+    #
+    # NO semver-major-days (and no semver-minor-days / semver-patch-days
+    # either): GitHub's Dependabot options reference supports only
+    # `default-days` for the github-actions ecosystem, not per-SemVer-tier
+    # cooldown. Every actions bump, majors included, waits the flat 7 days
+    # above. Adding any `semver-*-days` key here is a schema validation
+    # error, not a key Dependabot quietly ignores, and it disables the WHOLE
+    # FILE. This file shipped with `semver-major-days: 30` on 2026-08-10.
+    # GitHub's `dependabot` check on that commit failed with "The property
+    # '#/updates/0/cooldown/semver-major-days' is not supported for the
+    # package ecosystem 'github-actions'", and no update job ever ran until
+    # the key was removed (#35). That check only runs once the file is on
+    # main, so a PR never shows it: tests/test_dependabot_config.py is the
+    # pre-merge guard. dependabot/dependabot-core#14628 is the open upstream
+    # request to add the support.
+    cooldown:
+      default-days: 7
+      # example-site-platform releases are this account's own code, gated by its own
+      # required checks before a tag ever exists, so they don't need the
+      # 7-day cooling-off above — that applies to third-party actions. This
+      # entry used to ignore example-site-platform bumps outright: the
+      # scheduled-run-health.yml thin caller carried the platform version
+      # TWICE (the reusable's `uses:@<tag>` and a `platform_ref:` input),
+      # and this ecosystem saw only the `uses:` half, so an unignored bump
+      # would have moved the workflow and stranded the script pin — the fate
+      # GHA-bench, which never carried this ignore, was left in. The
+      # reusable now resolves its own script commit from the job context, so
+      # the caller names the version once, and this exclude is what lets
+      # that one bump land without the third-party wait
+      # (https://github.com/Adam-S-Daniel/cms-platform/issues/424).
+      exclude: ["example-adopter/example-site-platform/*"]
+  # requirements.txt pins what the workflows install (PyYAML). Before this
+  # entry the workflows ran an unpinned `pip install pyyaml`, which no bump
+  # path could reach. Unlike github-actions, the pip ecosystem DOES support
+  # per-SemVer-tier cooldown, so majors wait 30 days here. Minor and patch
+  # tiers are left undefined and fall back to `default-days`.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30

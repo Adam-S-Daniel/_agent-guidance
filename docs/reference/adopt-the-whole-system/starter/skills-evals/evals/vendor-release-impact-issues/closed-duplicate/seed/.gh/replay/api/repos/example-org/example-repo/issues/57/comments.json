@@ -1,0 +1,9 @@
+[
+  {
+    "user": {
+      "login": "example-maintainer"
+    },
+    "body": "Closing as not planned. Forked sessions are deliberately left out of the session-start log: they duplicate the parent session's entry. The matcher stays `startup|resume`.",
+    "created_at": "2026-07-21T16:39:00Z"
+  }
+]

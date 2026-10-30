@@ -1,0 +1,42 @@
+{
+  "databaseId": 77001,
+  "name": "CI",
+  "workflowName": "CI",
+  "headBranch": "main",
+  "headSha": "1111111111111111111111111111111111111111",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure",
+  "url": "https://example.com/example-org/example-service/actions/runs/77001",
+  "createdAt": "2026-01-07T07:00:00Z",
+  "updatedAt": "2026-01-07T07:00:04Z",
+  "jobs": [
+    {
+      "databaseId": 88001,
+      "name": "test",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://example.com/example-org/example-service/actions/runs/77001/job/88001",
+      "steps": [
+        {
+          "number": 1,
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "number": 2,
+          "name": "Checkout",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "number": 3,
+          "name": "Run unit tests",
+          "status": "completed",
+          "conclusion": "failure"
+        }
+      ]
+    }
+  ]
+}

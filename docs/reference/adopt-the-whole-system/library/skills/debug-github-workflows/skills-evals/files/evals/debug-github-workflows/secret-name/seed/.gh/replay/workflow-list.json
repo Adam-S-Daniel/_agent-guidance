@@ -1,0 +1,14 @@
+[
+  {
+    "id": 57001,
+    "name": "Release notes",
+    "path": ".github/workflows/release-notes.yml",
+    "state": "active"
+  },
+  {
+    "id": 57002,
+    "name": "Docs",
+    "path": ".github/workflows/docs.yml",
+    "state": "active"
+  }
+]

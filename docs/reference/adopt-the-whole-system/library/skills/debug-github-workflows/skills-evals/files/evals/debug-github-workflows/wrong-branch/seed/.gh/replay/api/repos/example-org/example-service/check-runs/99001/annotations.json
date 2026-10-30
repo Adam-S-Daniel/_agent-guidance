@@ -1,0 +1,10 @@
+[
+  {
+    "path": ".github/workflows/ci.yml",
+    "start_line": 19,
+    "end_line": 19,
+    "annotation_level": "failure",
+    "title": "Unit test import failed",
+    "message": "ModuleNotFoundError: No module named 'test.test_legacy'\nProcess completed with exit code 1."
+  }
+]

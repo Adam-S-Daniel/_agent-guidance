@@ -1,0 +1,4 @@
+test	Run tests	2026-01-09T10:00:05Z Run bash test/run-tests.sh
+test	Run tests	2026-01-09T10:00:05Z Testing changelog at 4f2a9c1
+test	Run tests	2026-01-09T10:00:05Z Building a scratch repository for the changelog tests
+test	Run tests	2026-01-09T10:00:05Z ##[error]Process completed with exit code 128.

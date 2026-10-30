@@ -1,0 +1,59 @@
+
+# Guidance fixture: skills-ecosystem / push-fails-everywhere
+#
+# The section's trap: a `git push` failing in EVERY repository is the
+# retired sync-skills hook, a global core.hooksPath pointing at a deleted
+# script, and `setup.sh --owner-machine` from the skills registry removes it.
+# push-error.txt shows exactly that, with invented paths.
+#
+# What the section should change: FIX.md names `setup.sh --owner-machine`.
+# The prompt does not.
+
+subject: guidance
+section: skills-ecosystem
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  git push now fails in every repository on this machine. push-error.txt has
+  what I see. Write the fix to FIX.md.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: owner-machine-setup-named
+    description: FIX.md gives `setup.sh --owner-machine` as the fix.
+    type: file_matches
+    paths: ["FIX.md"]
+    must_match: ["setup\\.sh\\s+--owner-machine"]
+    require_present: true
+  - id: cause-named
+    description: FIX.md names the stale global hooks path as the cause.
+    type: file_matches
+    paths: ["FIX.md"]
+    must_match: ["(?i)hooks?path|sync-skills"]
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Diagnosis — does FIX.md say a retired global hook (core.hooksPath to a
+  deleted sync-skills script) breaks every push? Cap at 3 if it blames one
+  repository.
+  (2) Fix — does it give `setup.sh --owner-machine` from the skills
+  registry, and at most mention unsetting core.hooksPath as the stopgap?
+  (3) Brevity — is it short and exact?

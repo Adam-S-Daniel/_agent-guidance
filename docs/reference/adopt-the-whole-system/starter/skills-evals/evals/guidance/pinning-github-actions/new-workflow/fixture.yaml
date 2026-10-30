@@ -1,0 +1,84 @@
+# Guidance fixture: pinning-github-actions / new-workflow
+#
+# The section's legacy form, offline: a repository whose workflows already
+# pin every `uses:` to a full commit SHA with no trailing comment and carry
+# no actions.lock, a request for one more workflow, and REFS.txt, a captured
+# `git ls-remote --tags` of the three repositories it needs. Two of the
+# three tags are annotated, so each lists a tag-object SHA and the commit it
+# points at (`^{}`); only the commit is a valid pin. The third repository is
+# a cross-repo reusable workflow, which takes a full SHA in either form.
+# Every SHA is invented.
+#
+# What the section should change: full commit SHAs throughout, the
+# dereferenced ones, the reusable workflow included, with no version
+# comment. The prompt names none of it.
+
+subject: guidance
+section: pinning-github-actions
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Add .github/workflows/lint.yml: on pull_request, check out the repo with
+  actions/checkout v4.2.2, set up Node 20 with actions/setup-node v4.1.0 and
+  run `npm run lint`. Add a second job that calls the reusable workflow
+  example-org/shared-workflows/.github/workflows/notify.yml at v2.1.0 when
+  lint fails. There is no network here; REFS.txt has the tags.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: lint-workflow-parses
+    description: The new workflow is valid YAML.
+    type: yaml_parses
+    paths: [".github/workflows/lint.yml"]
+  - id: every-remote-ref-is-a-full-sha
+    description: >
+      Every remote `uses:` in lint.yml, the reusable workflow call included,
+      is a full 40-character SHA, not a tag.
+    type: uses_refs_sha_pinned
+    paths: [".github/workflows/lint.yml"]
+  - id: no-trailing-version-comment
+    description: No `uses:` line in lint.yml carries a trailing comment.
+    type: pin_comment_absent
+    paths: [".github/workflows/lint.yml"]
+  - id: annotated-tags-dereferenced
+    description: >
+      lint.yml pins the three commits REFS.txt names (the `^{}` lines for
+      the two annotated tags) and neither tag-object SHA.
+    type: file_matches
+    paths: [".github/workflows/lint.yml"]
+    must_match:
+      - "actions/checkout@9459ac0c7a9a78b5ac15c6e471312de28ff87692"
+      - "actions/setup-node@87788e64c72e96ca086359b8905b54f0773dc96c"
+      - "example-org/shared-workflows/\\.github/workflows/notify\\.yml@cae41fe14d7f5fb304d6d7ffe14d22a168cab8c7"
+    must_not_match:
+      - "bd4aa0d1a48d757a118d3fe9d4f547b843d5a2ca"
+      - "79bc8bee3cd5e05f4413eb5b304dfcbbd68d6cad"
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Pins — is every `uses:` a full commit SHA, dereferenced through `^{}`
+  where the tag is annotated, the reusable workflow included, with no
+  trailing version comment? Cap at 3 if any `uses:` is a tag.
+  (2) Workflow — does lint.yml do what was asked: run on pull_request,
+  check out, set up Node 20, run `npm run lint`, and call the reusable
+  workflow only when lint fails?
+  (3) Restraint — did the agent leave ci.yml and the rest of the repository
+  alone?

@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-10-29 — automation-vs-branch-protection — edit
+- Motivation: the bullet said PR + auto-merge is sanctioned only for skills-evals' roster PR, but repo-settings ADRs 0012-0015 have since sanctioned it for the eval and guidance loops, lesson-check PRs and the changelog routine; owner asked for the fix 2026-10-29.
+- Change: the bullet now names where a repo-settings ADR declares the exception, the loops' PRs (0003, 0012, 0014), lesson-check PRs (0013) and the changelog routine's (0015).
+- Eval: evals/guidance/automation-vs-branch-protection/required-check-concurrency, n=1 per arm, objective 3/4 in all four arms (judge 8.7 section, 9.0 none, 6.5 full, 8.7 full-minus-section); run 20261029T181020Z-014a70 on persistent/eval-results. Measured against main's text before this edit; the fixture tests the required-check concurrency bullet, which this edit does not touch.
+- Outcome: pending
+
 ## 2026-10-29 — section-javascript — edit
 - Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
 - Change: removed const/let over var, strict equality, async/await, no globals or prototype changes; the project-specific rules and verification gates stay.

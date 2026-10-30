@@ -1,0 +1,328 @@
+<!-- BEGIN MANAGED SECTION — DO NOT EDIT ABOVE "## Repo-specific additions" -->
+<!-- Source: _agent-guidance -->
+<!-- Sections: none -->
+<!-- Mode: stub -->
+
+# AGENTS.md
+
+> **Managed by [`_agent-guidance`].**
+> Edit only below the `## Repo-specific additions` header.
+> Everything above it will be overwritten on the next sync.
+
+## Fleet guidance is delivered once per session — not by this file
+
+The account's full guidance — incidents, fleet policy, machine layout, the
+traps that cost real outages — is installed into **user memory**
+(`~/.claude/CLAUDE.md`) by the `fleet-memory` SessionStart hook, so it is
+loaded **once per session** no matter how many repos are attached
+([2026-08-29: inlined per repo, it took 332.3k tokens](https://github.com/example-adopter/_agent-guidance/blob/main/docs/evidence/2026-08-29-guidance-inlined-in-every-repo.md)).
+
+**Check the session-start verdict before you rely on it.** The hook prints one
+line:
+
+- `fleet-guidance: installed (v<id>, <n> bytes)` or `fleet-guidance: current` —
+  the full guidance is in context. Use it.
+- `fleet-guidance: DEGRADED — <reason>` — it is **not** in context. You have
+  only what is below. Read `agents-md/base.md` in the `_agent-guidance`
+  checkout (or on GitHub) before non-trivial work, and say in your reply that
+  you were running degraded.
+- `fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set)` — also not in context,
+  but by the machine owner's deliberate choice, not a fault. User memory is
+  GLOBAL on a durable machine, so the guidance would otherwise load in every
+  unrelated project on that box; `FLEET_GUIDANCE_SKIP` opts out and removes any
+  block an earlier session installed. Read `agents-md/base.md` the same way you
+  would when degraded — just don't report it as a problem or try to "fix" it.
+
+No verdict at all means the hook never ran — treat that as DEGRADED.
+
+## Codex reads the same block, from `~/.codex/AGENTS.md`
+
+The hook writes the same block to `~/.codex/AGENTS.md` whenever `~/.codex`
+exists — Codex's global **user** instructions, outside its 32 KiB
+`project_doc_max_bytes` project-doc budget. Register it once per machine with
+`scripts/register-codex-hook.sh` from an `_agent-guidance` checkout, then
+trust it in `/hooks`. `codex debug prompt-input` renders instructions loaded
+from disk by its own diagnostic process; it does not run SessionStart hooks
+or inspect an existing session or daemon. Verify delivery in the launched
+session's initial instructions and verdict; see the
+[2026-10-04 evidence](https://github.com/example-adopter/_agent-guidance/blob/main/docs/evidence/codex-trust-and-daemon-0160.md#prompt-debugging-source-read-2026-10-04-cli-01600-rust-v01600).
+
+For Codex Cloud, use **Manual** environment setup with persistent
+`CODEX_HOME=/opt/codex`. Preserve the repository's dependency setup and run
+`bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
+maintenance; reset the cache for the first verification. Fresh setup and
+cached maintenance were verified in the `_agent-guidance` environment. See
+[`docs/codex-cloud.md`](https://github.com/example-adopter/_agent-guidance/blob/main/docs/codex-cloud.md).
+If the Cloud shell has no `codex debug prompt-input`, the saved task response's
+raw initial instruction envelope is the echo-free proof of model-visible
+delivery.
+
+## The floor: rules that hold even when the guidance did not load
+
+These are the ones with teeth. They are restated here, deliberately, because a
+session that lost the guidance must not also lose these.
+
+- **Branch protection is real.** Fleet repos are PR-only on their default
+  branch; a direct push is rejected (GH013), even from the repo's own
+  workflows. Never design a bot that pushes to a protected default branch.
+- **Every `uses:` is pinned through `.github/workflows/actions.lock`: an
+  exact tag, locked, checked by a required `gh actions-lock --verify`
+  failing on any pin finding.** A repo not yet migrated keeps the legacy
+  form, a full 40-character commit SHA with no trailing version comment,
+  until its migration PR; never mix the two in one repo. Cross-repo
+  reusable workflows take a full SHA either way. The one carve-out is a ref
+  into this account's own `example-site-platform`, which stays on its release tag.
+- **Never commit secrets or `.env` files, and never print personal data to a
+  CI log** — logs, artifacts and git history on a public repo are public.
+- **A successful `git push` does not mean your commit exists.** A refused
+  pre-commit hook still lets the push report success. Verify with
+  `git merge-base --is-ancestor <sha> origin/<branch>` — it is the only check
+  that names both the commit and the ref.
+- **"The watch finished" is not "CI passed."** Read the parsed conclusions;
+  never infer pass/fail from a watch command's exit code.
+- **A GitHub 404 means "not authorized", not "not there."** Never report a
+  repo, PR or branch as gone on a 404 alone.
+- **The fleet spans TWO owners** — `example-adopter` and `example-adopter-two`. A query
+  scoped to one returns a plausible, complete-shaped, wrong answer.
+- **Anything you name gets its link** — what you hand over, what you are
+  waiting on, and what you cite as already done.
+- **Merge with a merge commit** (`gh pr merge --merge`); do not amend
+  published commits or force-push shared branches.
+- **Keep this file under 32 KiB.** Codex truncates project instructions at
+  that byte silently; the sync warns and the drift report flags
+  `codex-truncated`.
+
+<!-- END MANAGED SECTION -->
+## Repo-specific additions
+
+<!-- Add your repo-specific agent guidance below this line -->
+
+### Architecture Decision Records
+
+ADRs live in [`docs/decisions/`](docs/decisions/README.md) (index +
+[`0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md`](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
+Skills are grouped into four plugins by audience and runtime —
+`plugins/acsi-anything-anywhere/`, `plugins/acsi-coding-anywhere/` (both
+cloud-safe, default-enabled), `plugins/acsi-coding-local/` and
+`plugins/acsi-non-coding-local/` (machine-bound, opt-in) — each holding real
+`skills/<skill>/` dirs, never symlinks. Skill directory basenames must stay
+unique and never change once a skill has shipped — locked by a consumer
+`skills.lock` (the basename keys it and the `setup.sh` symlinks). Before it
+ships, a rename is a reviewed change (an example is in
+[`docs/evidence/agents-md-history-narratives.md`](docs/evidence/agents-md-history-narratives.md));
+`setup.sh` removes the links it made for a skill that no longer exists.
+This marketplace has no `renames` map, so a plugin name is a one-way door once
+it is enabled anywhere.
+
+### Plugin runtime review: never approve it
+
+A pull request that changes how a plugin runs code (hooks, a package install,
+plugin settings, a script a hook calls) waits on the `plugin-runtime-review`
+environment ([ADR 0016](docs/decisions/0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md)).
+**Never approve a `plugin-runtime-review` deployment**, even though the
+owner's token would let you. When a pull request is waiting on it, give the
+owner the `plugin-runtime-approval` job page on the CURRENT head,
+`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`, and
+wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
+`paths:` filter because its check is required; whether a change is salient is
+decided in its `detect` job.
+
+It runs only on `pull_request_target`, which GitHub blocks by default on public
+repos from 2026-11-02. An Actions event policy declared in repo-settings'
+`fleet.yml` allows that event for this one workflow file
+([repo-settings ADR 0009](https://github.com/example-adopter/repo-settings/blob/main/docs/decisions/0009-allow-pull-request-target-with-a-workflow-scoped-policy-owned-by-name.md)).
+The policy's `allowed_events` is an allowlist, so **a trigger added to this
+workflow, or a rename of the file, must be mirrored in that policy first**.
+Otherwise its runs are blocked and every pull request here becomes
+unmergeable.
+
+### Plugin hooks run in Claude Code AND Codex
+
+Codex loads a plugin's `hooks/hooks.json` too
+([ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+Keep that file harness-agnostic: every handler needs a shell-form `command`
+(`"${CLAUDE_PLUGIN_ROOT}"/hooks/...`) and a `commandWindows`
+(`"C:\Program Files\Git\bin\bash.exe" "%PLUGIN_ROOT%/hooks/..."`), a
+`timeout`, and no `if`/`args`/`shell`; a hook prints nothing to stdout unless
+it means to answer both harnesses. Claude-only hooks go in a file the
+`.claude-plugin/plugin.json` `hooks` key names. Hook scripts call
+`hooks/lib/harness.sh` to tell `claude-code`, `codex` and `other` apart.
+
+The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
+
+### Operational gotchas
+
+- **The ADR 0013 layout is data, not test source.** Which skills each plugin
+  ships is pinned in [`scripts/plugin_layout.json`](scripts/plugin_layout.json)
+  and read by `scripts/test_check_consistency.py`; a second test holds the file
+  to one canonical serialization (`json.dumps(doc, indent=2)` plus a trailing
+  newline, plugins and skills sorted). Adding or removing a skill updates that
+  file in the same change, by hand or with a JSON parser — skills-evals'
+  `scripts/retire_skill.py` edits it that way so a skill-removal pull request
+  can pass these checks with no human edit. Do not re-inline the table.
+- Eval skill installs need the nested path: copy `plugins/<plugin>/skills/<skill>/`
+  into `.claude/skills/<skill>/`. Copying the outer plugin directory buries
+  `SKILL.md` and the skill silently never loads.
+- A path setting that accepts only absolute or `~/` paths (the retired
+  in-repo `autoMemoryDirectory` was one; this repo no longer sets it) cannot
+  name a checkout portably. Don't assume a `~/repos/<name>` path resolves
+  identically on every machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
+  guidance's "Workstation layout" section (Windows `<drive>:\repos\<owner>\<repo>`,
+  WSL `~/repos/<repo>`) is the counterexample (the sync-skills failure it caused is in the evidence
+  file linked above). Check the resolved path on the machine in front of you;
+  never encode a repo location as a constant.
+- After a plugin move or rename, expect a one-time
+  `claude plugin install <plugin>@acsi-agentskills` per machine (plugin cache
+  miss).
+- `sync.sh` never force-pushes a stale remote `agents-md-sync/update` branch
+  (the push is non-fast-forward and it deliberately won't override). Recover
+  by opening a PR from the stale branch and merging it to free the name, then
+  re-running sync — don't add `--force` to `sync.sh`, it could discard
+  reviewer commits on an open PR.
+- This marketplace deliberately has **no `renames` map** (ADR 0013): it is new,
+  and the retired `retired-agentskills` registry's plugin names never existed here.
+  Adding one would be a one-way door (Claude Code keeps following it,
+  append-only), so do not add one to paper over a rename — do not rename.
+- After any plugin restructure, re-run `bash setup.sh --owner-machine` on every
+  owner machine right away (a plain `bash setup.sh` only removes the skill
+  links earlier versions made; it links none since
+  [ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+  Before [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
+  a stale global sync-skills pre-push hook kept pointing at the old plugin
+  path and failed every `git push` from every repo until re-registered;
+  `setup.sh --owner-machine` now only removes that retired hook's global
+  git-config sections, so a machine that ran an earlier version still needs
+  one `--owner-machine` run to stop failing pushes.
+- **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
+  is the fleet guidance's "Prove the verifier can fail first" rule. Its
+  worked example there is `test_foo.py` (this repo's own deleted example is in
+  the evidence file linked above). Repo-specific facts: unless a test
+  file ends in an `if __name__ == "__main__"` block that invokes a runner,
+  running it directly imports the module and exits 0 having asserted nothing.
+  None of the `scripts/test_*.py` files has such a block, so every one is that
+  trap.
+  A skill's own test file may end in `unittest.main()` (one in the source
+  registry did), and running THAT one directly really does run its tests —
+  which is why the habit to build is naming the runner rather than
+  auditing each file for a footer. The one command that actually runs this
+  repo's suite is the one CI runs:
+  `shopt -s nullglob; python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q`,
+  and read its result from `$?` directly rather than through a pipe.
+  (`nullglob` because a registry with no skill tests yet leaves the two
+  plugin globs unmatched, and pytest refuses a literal glob.)
+- **A hosted session starts with NONE of the dev dependencies**, so that command
+  and `scripts/check_skills.py` both fail before they check anything. CI installs
+  `requirements-dev.txt` per job; nothing installs it here, and no SessionStart
+  hook does either.
+  Install it first — and expect the plain form to fail on these images:
+
+  ```bash
+  python3 -m pip install --ignore-installed PyYAML -r requirements-dev.txt
+  ```
+
+  `--ignore-installed PyYAML` is not optional cargo. The distro ships PyYAML
+  without installer metadata, so pip refuses with `Cannot uninstall PyYAML 6.0.1,
+  RECORD file not found. Hint: The package was installed by debian.` and installs
+  **nothing else either** — one unrelated package aborts the whole file, which
+  reads as "the repo's dependencies are broken" rather than "one of them is
+  undeletable" (measurements in the evidence file linked above).
+
+  **The flag leaves the pinned version importable.** `--ignore-installed` does
+  not remove Debian's copy; it installs alongside it, so which one wins is a
+  `sys.path` ORDER question. The pinned wheel wins: pip's
+  `/usr/local/lib/python3.11/dist-packages` precedes Debian's
+  `/usr/lib/python3/dist-packages`, so `import yaml` gives **6.0.3**
+  (`requirements-dev.txt`'s pin) with the full suite green. Take test counts
+  from the current run; they change with every PR.
+
+  That distinction is the whole reason to write this down. A hook that
+  installed only the three genuinely-MISSING modules would exit 0 and look
+  correct while leaving the session testing against unpinned `pyyaml` 6.0.1 —
+  the shape that appears to work is the shape that silently reintroduces the
+  bug. So the acceptance test is never "the install exited 0"; it is
+  `python3 -c "import yaml; print(yaml.__version__)"` reporting the pinned
+  version, then the canonical gate read from `$?` unpiped.
+
+  A **venv** is the other measured-good answer and costs a `PATH`/interpreter
+  decision every later step in the session has to honour;
+  `--break-system-packages` was not tried and the name is the warning.
+
+- **A long background run is not a baseline if you edit while it runs.** The
+  suite takes ~5.5 minutes, and several meta-tests READ THE SOURCE FROM DISK at
+  run time rather than from the collected module — `test_every_test_this_repo_cites_by_name_exists`
+  is one. Edit during the run and it judges the new tree against the old run,
+  so a failure it reports may be from a file the run never started with.
+  (A "pre-existing" red once turned out to be a dangling citation written
+  mid-run; see the evidence file linked above.) Take the baseline before editing,
+  or re-run it after — never read one that overlapped the edits.
+
+### One-way doors get an adversarial round
+
+- The irreversible surfaces in this repo are plugin names once enabled
+  anywhere (there is no `renames` map to migrate them), skill directory
+  basenames once shipped (they key the consumer `skills.lock` and `setup.sh`
+  symlinks), and the account store's contents, which the owner removes by hand
+  in the claude.ai UI (ADR 0014; ADR 0002 sets what may go there). A change that
+  touches one of them gets an **independent adversarial round before merge**:
+  a separately prompted agent whose job is to break the change, not to
+  approve it, run against the diff and — where the change is one-way — against
+  a live migration in a scratch environment.
+- **One clean-looking fix does not end the gate.** Of the four rounds that
+  hardened `.claude/hooks/skills-bootstrap.sh`, two found defects *introduced
+  by the previous round's fix*, one of them a fresh RCE. Keep going while
+  rounds keep finding things.
+- Depth, including the negative-control rule that keeps "the exploit stopped
+  working" from being mistaken for "the harness stopped working", is in
+  [`docs/experiments/E4-federated-bundle-delivery.md`](docs/experiments/E4-federated-bundle-delivery.md).
+- **The one exception: the evals loop's own pull requests.** A removal
+  (`retire-skill/<skill>`), an accepted improvement (`eval-improve/<skill>`)
+  or a new skill (`draft-skill/<skill>`) from skills-evals merges by auto-merge once required checks pass, with no
+  adversarial round or human review, within the scope limits of
+  [ADR 0021](docs/decisions/0021-automated-skill-changes-merge-without-review.md).
+
+### Privacy: invented data only
+
+- This is a public repo, and its predecessor was retired because its history
+  carried personal data (ADR 0013). Examples, fixtures, docs, commit messages
+  and PR text use **invented data only** — `example.com`, fictional names,
+  `<user>` placeholders — never real personal details, usernames, hostnames,
+  or account/org/session IDs.
+- `scripts/check_privacy_denylist.py` runs as the `privacy` CI job against the
+  `PRIVACY_DENYLIST` repository secret. Never commit the list; the checker
+  prints only `file:line` and a pattern number, never the matched text.
+- Run it locally with `PRIVACY_DENYLIST_FILE=<path outside the repo>` (add
+  `--base <ref>` to also scan the range's commit messages and added lines).
+  With no denylist it fails closed in CI and only warns locally.
+- The PR template (`.github/pull_request_template.md`) carries the
+  invented-data checkbox; tick it only after checking.
+
+### Skill changes get recorded, and evals gate them
+
+The method (instrument classes, fixture mining, harness rules) is skills-evals'
+`DESIGN.md`, "Scaling to the registry"; these are the hooks that live here:
+
+- **Every skill-content change appends an entry to
+  [`docs/skill-impact.md`](docs/skill-impact.md)** — creations, edits,
+  renames, removals, and **rejected proposals** — in the same PR as the
+  change (for a rejection, a follow-up commit linking the closed PR). Git
+  records what landed; that file records motivation, eval result, and what
+  was tried and turned down, which is the part the next session cannot
+  re-derive.
+- **Graduation gate:** a skill graduating into this registry ships with at
+  least one eval fixture in skills-evals (`evals/<skill>/`), and the
+  graduation PR's definition of done includes a green `with_skill` arm.
+- **Touch gate:** a PR that edits an existing SKILL.md either runs that
+  skill's eval (report exit code and counts) or adds its first fixture.
+  Skills in DESIGN.md's deliberate-non-coverage table are exempt — the
+  table is the record of why.
+- **`claude plugin eval` is not this gate** (no scriptable grader; assessment
+  in the evidence file linked above).
+- **A new or touched skill adds a `PURPOSE.md` beside `SKILL.md`** mapping
+  it to the incidents/patterns that motivated it — maintenance context only,
+  never loaded at inference. Do **not** mass-backfill `PURPOSE.md` across
+  untouched skills: every added file moves that skill's digest, which stales
+  `skills.lock` in every consumer until re-pinned. On-touch only.
+
+### Action pins
+
+Workflows name third-party actions by release tag; [`.github/workflows/actions.lock`](.github/workflows/actions.lock) locks each tag to an exact commit, and the runner runs the locked commit even when it disagrees with the tag. The `pytest` job's "Verify action lockfile" step is the shared action [`Adam-S-Daniel/verify-actions-lock`](https://github.com/Adam-S-Daniel/verify-actions-lock); it runs only when a PR touches workflow dependencies and fails on any `--verify` finding except `cooldown-config-ignored` (dependabot.yml's cooldown `exclude`, which the tool ignores). It is not the only guard: the runner rejects forged pins, and the repo will also turn on GitHub's Require lockfile policy. Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and commit both files; review an `actions.lock` diff as you would a SHA pin. A stale or moved pin is fixed with `gh actions-lock --accept-moved`; review the diff. A `reachability-unknown` failure means the GitHub API was unreachable: re-run. Cross-repo reusable workflows (`jobs.<id>.uses`) are not locked, so they take a full commit SHA (`example-adopter/example-site-platform` refs excepted); a test enforces it. Fleet rule: [ADR 0024](https://github.com/example-adopter/_agent-guidance/blob/main/docs/decisions/0024-actions-pin-through-lockfiles.md).

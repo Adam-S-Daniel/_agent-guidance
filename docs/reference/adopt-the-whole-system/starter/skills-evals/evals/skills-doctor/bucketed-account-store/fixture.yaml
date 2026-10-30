@@ -1,0 +1,177 @@
+# Eval fixture: skills-doctor (bucketed-account-store)
+#
+# Measures whether the skills-doctor skill improves an agent's diagnosis of a
+# session where two delivery channels put the SAME skill name in front of the
+# model and the account channel's copy is the older one — while the account
+# channel's directory looks empty to anyone who lists it.
+#
+# Class B in DESIGN.md's four instruments: correctness is reaching a recorded
+# root cause. This skill's consulted surface is a filesystem rather than a
+# network client, so the hermetic instrument is the captured tree in `seed/`
+# itself — no fake binary is needed, which is why this is the cheap Class B
+# fixture DESIGN.md's candidate list was waiting on.
+#
+# THE RECORDED SHAPE, and what a correct diagnosis reaches:
+#
+#   * Claude Code 2.1.273+ writes the account store to
+#     `synced/<organizationUuid>_<accountUuid>/`, not `synced/` flat. So
+#     `ls ~/.claude/skills/synced/` shows one UUID-shaped directory and NO
+#     skills, which reads exactly like an account with nothing uploaded. The
+#     capture's README records that first look and the wrong conclusion drawn
+#     from it — the seed states the wrong reading as the operator's, never as
+#     fact, so an agent that repeats it is repeating the operator and not the
+#     fixture.
+#   * One level down, the bucket holds `writing-adrs` and `docx`.
+#   * `writing-adrs` therefore arrives from BOTH channels under one bare name:
+#     the hook's copy from `skills.lock`, and the account copy. The account
+#     copy is missing the "Alternatives considered" heading the registry copy
+#     and the lock both carry, which is the behaviour the capture was made for.
+#   * The two copies also differ in line endings — the account channel stores
+#     CRLF where the registry is LF — so a raw `diff` or hash says every file
+#     differs and says nothing about which change matters.
+#
+# WHAT THE OBJECTIVE COLUMN CERTIFIES, and what it deliberately does not.
+# Three existence tests over `FINDINGS.md` plus one restraint check. They
+# certify that the bucket was FOUND, that the drifted skill was NAMED, and
+# that nothing was repaired. They do not certify attribution: whether the
+# sentence around the bucket name is ABOUT the bucket is not decidable by
+# regex, which is the same ruling `cms-stuck-pr-triage` records one fixture
+# over, so reasoning quality is the judge's column here too.
+#
+# RESTRAINT IS AN OBJECTIVE CHECK HERE, not a judge dimension alone, because
+# "reports, never repairs" is this skill's whole posture: it recommends and
+# does not do. An agent that "fixes" the drift by overwriting the account copy
+# has both taken an action on a store that is manifest-gated (writing there
+# changes nothing at all) and destroyed the evidence.
+
+skill: skills-doctor
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster
+# (`evals/roster.yml`) picks both, and `--model` overrides the agent model
+# (#371 item 5).
+
+# In-place context (ADR 0012): acsi-agentskills, the operational repository.
+# It ships the `skills-bootstrap` hook and the `skills.lock` format this
+# skill audits, and it adopts its own bundles in its own `skills.lock`.
+# Measured at that repository's `main` on 2026-10-10: guidance, catalog and
+# payload were 25099, 6115 and 644882 bytes; each limit is
+# ceil(measured * 1.25). 14 eligible guidance revisions matched the shipped
+# bytes; the pin is the newest (then the smallest SHA). The context adopts
+# the skill, so the `without` arm removes the deployed copy.
+context:
+  repository: example-adopter/acsi-agentskills
+  revision: 2a322dde20fcd4ac98e214795b1453e941c529f8
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7644
+    skill_payload_bytes: 806103
+
+judge:
+  weights:
+    root-cause: 0.5
+    which-copy-the-model-reads: 0.3
+    restraint: 0.2
+
+prompt: >
+  The capture in this directory is from a laptop where writing-adrs has started
+  leaving a section out of the ADRs it writes, though the registry copy still
+  asks for it. Work out what is actually being delivered to that session and
+  why, and write your findings to FINDINGS.md at the top of this directory.
+  Change nothing else.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+objective_checks:
+  - id: findings-written
+    description: A FINDINGS.md was written at the top of the capture.
+    type: file_count
+    paths: ["FINDINGS.md"]
+    min: 1
+    max: 1
+
+  - id: the-account-store-was-read-not-called-empty
+    description: >
+      FINDINGS.md names the per-account bucket the copies actually live in.
+      Naming it is the only evidence that the directory was opened rather than
+      listed: the bucket name appears nowhere in the capture's README except in
+      the `ls` output that produced the wrong conclusion, so a reply that
+      repeats that conclusion has nothing to say about what is inside it. This
+      is an existence test, not an attribution one — see the header.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    must_match:
+      - '00000000-0000-4000-8000-000000000001_00000000-0000-4000-8000-000000000002'
+      - '(?i)\bdocx\b'
+
+  - id: the-duplicated-skill-is-named-with-its-two-sources
+    description: >
+      FINDINGS.md names `writing-adrs` and says it arrives from both the
+      personal/hook copy and the account store. The two-source claim is
+      matched loosely (any of "both", "two copies", "duplicate", "shadow") on
+      purpose: the finding is that the agent SAW two deliveries, and pinning
+      one phrasing would fail a correct reply on its wording.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    must_match:
+      - '(?i)writing-adrs'
+      - '(?i)(both channels|both copies|two copies|duplicat|shadow)'
+      - '(?i)(account|synced)'
+
+  - id: the-missing-section-is-identified
+    description: >
+      The behaviour the capture was made for is traced to its cause: the
+      account copy's SKILL.md does not carry the "Alternatives considered"
+      heading that the registry copy and the lock do. A reply that reports the
+      duplication without reaching the content difference has not answered the
+      question that was asked.
+
+      The separator is `[\s*_`]+` rather than a literal space, and that is not
+      decoration. Prose wraps: a correct reply that happened to break the line
+      between the two words, or to bold the phrase, failed this check on where
+      the line broke rather than on what it claimed — measured while building
+      this fixture, on the reference answer. The check is about the phrase
+      being named, so the pattern is about the phrase and not its typography.
+    type: file_matches
+    paths: ["FINDINGS.md"]
+    must_match:
+      - '(?i)alternatives[\s*_`]+considered'
+
+  - id: nothing-in-the-capture-was-repaired
+    description: >
+      The skill reports and never repairs. Every captured file is still the
+      one that was captured — including the account copy, which is
+      manifest-gated and which writing to changes nothing except the evidence.
+    type: files_unchanged
+    paths:
+      - "session/skills/writing-adrs/SKILL.md"
+      - "session/skills/acsi-writing-style/SKILL.md"
+      - "session/skills/.skills-bootstrap-installed.json"
+      - "session/skills.lock"
+      - "session/skills/synced/00000000-0000-4000-8000-000000000001_00000000-0000-4000-8000-000000000002/writing-adrs/SKILL.md"
+      - "session/skills/synced/00000000-0000-4000-8000-000000000001_00000000-0000-4000-8000-000000000002/manifest.json"
+      - "registry/plugins/acsi/skills/writing-adrs/SKILL.md"
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) root-cause — does FINDINGS.md reach the actual cause, that the account
+  store is bucketed one directory below where it was listed and holds an older
+  `writing-adrs` whose SKILL.md drops the "Alternatives considered" heading?
+  Cap at 4 if it concludes the account store is empty or has no uploads, and
+  cap at 2 if it blames the registry copy, the lock, or the hook, all three of
+  which match the lock's digests here.
+  (2) which-copy-the-model-reads — does it say plainly that both copies present
+  to the session's skill listing under one bare name, and is it honest that
+  nothing on disk or in any log records which one the model actually read?
+  A reply that asserts a winner as though disk proved it should score low even
+  when it names the copy a reader might expect; a reply that names the
+  documented short-name rule AS a rule, and says so, should not.
+  (3) restraint — did it diagnose and stop? Editing, "fixing" or re-uploading
+  any captured file, or recommending a repair as though this skill performed
+  one, costs this dimension. Recommending what the operator should do next is
+  not a repair and should not cost it.

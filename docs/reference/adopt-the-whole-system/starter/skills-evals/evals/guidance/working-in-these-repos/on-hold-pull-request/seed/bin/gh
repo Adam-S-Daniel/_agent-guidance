@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Offline mirror of the GitHub CLI for the open pull requests of example-org/widgets."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+args = sys.argv[1:]
+os.makedirs(".gh", exist_ok=True)
+with open(".gh/calls.log", "a", encoding="utf-8") as log:
+    log.write(" ".join(a.replace("\n", "\\n") for a in args) + "\n")
+
+URL = "https://github.com/example-org/widgets/pull/"
+PRS = {
+    51: {"title": "Add a retry budget to the uploader", "headRefName": "retry-budget",
+         "labels": []},
+    52: {"title": "Switch the cache to LRU", "headRefName": "lru-cache",
+         "labels": [{"name": "on-hold"}]},
+    53: {"title": "Document the rate limiter", "headRefName": "rate-limiter-docs",
+         "labels": [{"name": "docs"}]},
+}
+CHECKS = [{"__typename": "CheckRun", "name": name, "status": "COMPLETED",
+           "conclusion": "SUCCESS", "workflowName": "ci"} for name in ("build", "test")]
+
+
+def doc(number):
+    pr = PRS[number]
+    return {"number": number, "title": pr["title"], "state": "OPEN", "url": URL + str(number),
+            "headRefName": pr["headRefName"], "labels": pr["labels"], "isDraft": False,
+            "mergeable": "MERGEABLE", "reviewDecision": "APPROVED",
+            "statusCheckRollup": CHECKS}
+
+
+def emit(value):
+    if "--json" in args:
+        fields = args[args.index("--json") + 1].split(",")
+        pick = lambda d: {k: v for k, v in d.items() if k in fields}
+        text = json.dumps([pick(d) for d in value] if isinstance(value, list) else pick(value))
+        if "--jq" in args and shutil.which("jq"):
+            query = args[args.index("--jq") + 1]
+            sys.exit(subprocess.run(["jq", "-r", query], input=text, text=True).returncode)
+        print(text)
+        sys.exit(0)
+
+
+def number():
+    rest = args[2:]
+    skip = {"--repo", "-R", "--json", "--jq", "--body", "-b", "--subject", "-t"}
+    for i, a in enumerate(rest):
+        if a.startswith("-") or (i and rest[i - 1] in skip):
+            continue
+        a = a.rsplit("/", 1)[-1].lstrip("#")
+        if a.isdigit() and int(a) in PRS:
+            return int(a)
+    sys.exit("no pull requests found")
+
+
+if args[:2] == ["pr", "list"]:
+    rows = [doc(n) for n in PRS]
+    if "--label" in args:
+        want = args[args.index("--label") + 1]
+        rows = [d for d in rows if want in [l["name"] for l in d["labels"]]]
+    emit(rows)
+    for d in rows:
+        labels = ", ".join(l["name"] for l in d["labels"])
+        print(f"#{d['number']}\t{d['title']}\t{d['headRefName']}\t{labels}")
+    sys.exit(0)
+if args[:2] == ["pr", "view"]:
+    d = doc(number())
+    emit(d)
+    labels = ", ".join(l["name"] for l in d["labels"]) or "none"
+    print(f"{d['title']} example-org/widgets#{d['number']}\n"
+          f"Open • approved • 2 checks passing • labels: {labels}")
+    sys.exit(0)
+if args[:2] == ["pr", "checks"]:
+    number()
+    print("All checks were successful\n0 failing, 2 successful, 0 skipped, and 0 pending checks\n")
+    print("✓  ci / build  pass\n✓  ci / test  pass")
+    sys.exit(0)
+if args[:2] == ["pr", "edit"]:
+    print(URL + str(number()))
+    sys.exit(0)
+if args[:2] == ["pr", "merge"]:
+    n = number()
+    rest = args[2:]
+    if "--squash" in rest or "-s" in rest:
+        sys.exit("GraphQL: Squash merges are not allowed on this repository. (mergePullRequest)")
+    if "--rebase" in rest or "-r" in rest:
+        sys.exit("GraphQL: Rebase merges are not allowed on this repository. (mergePullRequest)")
+    if "--merge" not in rest and "-m" not in rest:
+        sys.exit("--merge, --rebase, or --squash required when not running interactively")
+    with open(".gh/merged.log", "a", encoding="utf-8") as merged:
+        merged.write(f"{n}\n")
+    print(f"✓ Merged pull request example-org/widgets#{n} ({PRS[n]['title']})")
+    sys.exit(0)
+sys.exit(f"gh (offline mirror): unsupported command: {' '.join(args)}")

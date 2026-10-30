@@ -1,0 +1,340 @@
+name: Publish skill eval coverage and draft public gaps
+
+# The reader has no write permission and handles all four registry layouts.
+# Its artifact contains only the redacted census and public revisions. The
+# writer never checks out or executes registry content. An absent private read
+# credential fails the whole census, so a short denominator is never published.
+#
+# The private registry is read with a short-lived installation token from a
+# dedicated read-only GitHub App (the owner's 2026-10-20 decision, replacing a
+# fine-grained personal access token that was never set and failed this
+# workflow daily, issue #292). Repository variable REGISTRY_READ_APP_CLIENT_ID
+# and repository secret REGISTRY_READ_APP_PEM hold the App's client id and
+# private key; the App has Contents: read only and is installed on
+# acsi-agentskills-private alone. The token is minted immediately before the
+# one checkout that uses it, as the other apps in this repo are (see
+# routine-improve-gate.yml).
+on:
+  schedule:
+    - cron: "19 8 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Read and upload the census without GitHub writes.
+        type: boolean
+        default: true
+
+permissions: {}
+
+# Serialize the read and write halves so overlapping schedule and dispatch
+# runs cannot publish competing snapshots or duplicate proposals.
+concurrency:
+  group: skill-coverage-main
+  cancel-in-progress: false
+
+jobs:
+  census:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require the private registry read credential
+        env:
+          APP_CLIENT_ID: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
+          APP_PEM: ${{ secrets.REGISTRY_READ_APP_PEM }}
+        run: |
+          if [ -z "$APP_CLIENT_ID" ] || [ -z "$APP_PEM" ]; then
+            echo "::error::Complete coverage census unavailable: private registry read credential is absent (repository variable REGISTRY_READ_APP_CLIENT_ID and repository secret REGISTRY_READ_APP_PEM must both be set)"
+            exit 1
+          fi
+
+      - name: Check out skills-evals
+        uses: actions/checkout@v7.0.1
+        with:
+          path: skills-evals
+          persist-credentials: false
+
+      - name: Check out acsi-agentskills
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/acsi-agentskills
+          path: registry-agentskills
+          persist-credentials: false
+
+      - name: Mint the GitHub App token for acsi-agentskills-private
+        id: registry-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
+          owner: example-adopter
+          repositories: acsi-agentskills-private
+          permission-contents: read
+
+      - name: Check out the private registry
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/acsi-agentskills-private
+          path: registry-private
+          token: ${{ steps.registry-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Check out fleet guidance for the context revision
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/_agent-guidance
+          path: guidance
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the offline census dependency
+        run: python3 -m pip install pyyaml==6.0.3
+
+      - name: Build the redacted complete census
+        working-directory: skills-evals
+        run: |
+          python3 scripts/scaffold_skill_gaps.py census \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --registry "acsi-agentskills-private=$GITHUB_WORKSPACE/registry-private" \
+            --guidance-dir "$GITHUB_WORKSPACE/guidance" \
+            --out "$RUNNER_TEMP/skill-coverage"
+
+      - name: Summarize the redacted census
+        run: cat "$RUNNER_TEMP/skill-coverage/coverage.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload only redacted census files
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: skill-coverage
+          path: ${{ runner.temp }}/skill-coverage/
+          if-no-files-found: error
+
+  publish:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
+    needs: census
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Check out trusted skills-evals code
+        uses: actions/checkout@v7.0.1
+        with:
+          path: skills-evals
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the offline fixture parser dependency
+        run: python3 -m pip install pyyaml==6.0.3
+
+      - name: Download the redacted census
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: skill-coverage
+          path: ${{ runner.temp }}/skill-coverage/
+
+      - name: Publish coverage and reconcile up to three public draft proposals
+        working-directory: skills-evals
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/scaffold_skill_gaps.py automate \
+            --artifact "$RUNNER_TEMP/skill-coverage" \
+            --run-id "$RUN_ID" --main-sha "$MAIN_SHA" --write
+
+  # Skill retirement (#70, part 2): compute every skill's verdict from the
+  # pooled results and act on a `retire` one. Only the schedule runs it, and
+  # scripts/retire_skill.py refuses any other event as well. It reads the
+  # results branch and the public registries (no private checkout, so a
+  # skill in acsi-agentskills-private has no tested digest and never
+  # retires; acsi-agentskills ADR 0021 decision 7).
+  #
+  # In `retirement_mode: auto` (evals/gate-policy.yml, the one switch; ADR
+  # 0014 and acsi-agentskills ADR 0021) a `retire` verdict becomes a ready
+  # removal pull request in acsi-agentskills, labeled `agent-authored`, with
+  # auto-merge (merge commit, --match-head-commit) enabled. Its writes use an
+  # installation token of the skills-evals GitHub App that
+  # routine-improve-gate.yml uses (secrets EVAL_IMPROVE_APP_CLIENT_ID and
+  # EVAL_IMPROVE_APP_PEM; acsi-agentskills only, contents and pull-requests
+  # write), minted under continue-on-error in the step right before the one
+  # that uses it and passed as REGISTRY_TOKEN; skills-evals issues still use
+  # this job's own token. With no token (either secret unset, or the mint
+  # failed) the script gets `--fallback-to-proposal` and files the issue
+  # instead, as it does for a skill whose plugin runs code. It opens nothing
+  # while any loop pull request (an improvement, a new skill or a removal)
+  # is open there; scripts/retire_skill.py's LOOP_PREFIXES names the heads.
+  retirement:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out skills-evals
+        uses: actions/checkout@v7.0.1
+        with:
+          path: skills-evals
+          persist-credentials: false
+
+      - name: Check out the results branch
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: persistent/eval-results
+          path: eval-results
+          persist-credentials: false
+
+      - name: Check out acsi-agentskills
+        # Full history for auto mode: the removal branch re-pins
+        # `skills.lock`, and both that re-pin and its `--check-current` read
+        # the commit the lock pins, which a shallow clone does not contain.
+        # retire_skill.py refuses a shallow checkout in auto mode rather
+        # than pushing a branch the registry's required checks would reject
+        # (ADR 0014, decision 5). No credential is kept: the push
+        # authenticates with the App token, in the step that pushes.
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/acsi-agentskills
+          path: registry-agentskills
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out _agent-guidance
+        # The guidance sections' source (#124): read for their extents and
+        # digests, and edited on a removal branch. Not a skill registry, so
+        # it gets --guidance. No credential is kept: the push authenticates
+        # with the App token, in the step that pushes.
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/_agent-guidance
+          path: agent-guidance
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the offline verdict dependency
+        run: python3 -m pip install pyyaml==6.0.3 markdown-it-py==4.2.0
+
+      - name: Compute the retirement verdicts
+        working-directory: skills-evals
+        run: |
+          as_of=$(git -C "$GITHUB_WORKSPACE/eval-results" log -1 --format=%cI)
+          python3 scripts/compute_gates.py \
+            --results-tree "$GITHUB_WORKSPACE/eval-results" \
+            --roster evals/roster.yml --policy evals/gate-policy.yml \
+            --as-of "$as_of" \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --guidance "$GITHUB_WORKSPACE/agent-guidance" \
+            --out "$RUNNER_TEMP/gates/latest.json"
+
+      - name: Upload the verdicts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gates
+          path: ${{ runner.temp }}/gates/
+          if-no-files-found: error
+
+      - name: Are the GitHub App's secrets configured?
+        id: credential
+        env:
+          PR_CREDENTIAL_SET: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID != '' && secrets.EVAL_IMPROVE_APP_PEM != '' }}
+        run: |
+          if [ "$PR_CREDENTIAL_SET" = "true" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Minted only now, after the verdicts, and only for the next step. A
+      # failed mint leaves the token empty, and the next step falls back to
+      # proposal mode instead of failing the job.
+      - name: Mint the GitHub App token for acsi-agentskills
+        id: app-token
+        if: steps.credential.outputs.present == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.EVAL_IMPROVE_APP_PEM }}
+          owner: example-adopter
+          repositories: acsi-agentskills
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Act on the skill retirement verdict
+        working-directory: skills-evals
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          modes=(--allow-mode proposal)
+          if [ -n "$REGISTRY_TOKEN" ]; then
+            modes+=(--allow-mode auto)
+          else
+            echo "::notice::no acsi-agentskills write token (the GitHub App secrets EVAL_IMPROVE_APP_CLIENT_ID and EVAL_IMPROVE_APP_PEM are unset, or the mint failed); a retire verdict in auto mode files an issue instead"
+            modes+=(--fallback-to-proposal)
+          fi
+          python3 scripts/retire_skill.py \
+            --gates "$RUNNER_TEMP/gates/latest.json" \
+            --registry "acsi-agentskills=$GITHUB_WORKSPACE/registry-agentskills" \
+            --usage "$GITHUB_WORKSPACE/eval-results/usage/weekly-local.json" \
+            --date "$(date -u +%F)" \
+            "${modes[@]}"
+
+      # Minted only now, after the verdicts, and only for the next step. A
+      # failed mint (for example the App is not installed on _agent-guidance
+      # yet) leaves the token empty, and the next step files the issue
+      # instead of failing the job.
+      - name: Mint the GitHub App token for _agent-guidance
+        id: guidance-token
+        if: steps.credential.outputs.present == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.EVAL_IMPROVE_APP_PEM }}
+          owner: example-adopter
+          repositories: _agent-guidance
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Act on the guidance retirement verdict
+        # One section at a time. In `guidance: retirement_mode: auto`
+        # (gate-policy.yml) a retire verdict opens an auto-merging removal
+        # pull request in _agent-guidance; with no write token, or in
+        # proposal mode, it files an issue in this repository instead.
+        working-directory: skills-evals
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_TOKEN: ${{ steps.guidance-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          modes=(--allow-mode proposal)
+          if [ -n "$REGISTRY_TOKEN" ]; then
+            modes+=(--allow-mode auto)
+          else
+            echo "::notice::no _agent-guidance write token (the GitHub App secrets EVAL_IMPROVE_APP_CLIENT_ID and EVAL_IMPROVE_APP_PEM are unset, or the mint failed); a retire verdict in auto mode files an issue instead"
+            modes+=(--fallback-to-proposal)
+          fi
+          python3 scripts/retire_skill.py --target guidance \
+            --gates "$RUNNER_TEMP/gates/latest.json" \
+            --guidance "$GITHUB_WORKSPACE/agent-guidance" \
+            "${modes[@]}"

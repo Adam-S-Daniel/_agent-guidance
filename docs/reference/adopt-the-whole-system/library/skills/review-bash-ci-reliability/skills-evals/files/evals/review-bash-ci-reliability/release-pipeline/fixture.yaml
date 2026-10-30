@@ -1,0 +1,428 @@
+# Eval fixture: review-bash-ci-reliability
+# Measures whether the review-bash-ci-reliability skill improves an agent's
+# ability to find and correctly fix CI-reliability bugs in shell scripts: a
+# process-substitution failure that `set -euo pipefail` does not catch, a
+# `grep -q` that pipefail/SIGPIPE can turn into a spurious pipeline failure,
+# a `gh api` failure swallowed by `|| true`, a `git commit` with no configured
+# identity, an unguaranteed `jq` dependency, and a commit with no defense
+# against a globally-enabled `commit.gpgsign`.
+# Two decoys — a genuinely optional `|| true` and an already-correct `set -e`
+# — look like findings but are not, and must be left alone.
+# The grep -q/SIGPIPE finding is off-skill: SKILL.md's checklist does not
+# name it. It is mined from the fleet incident record that issue #74 cites
+# and kept for that reason, with no with/without delta expected from it —
+# the rubric does not cap Correctness on it (see judge_rubric below).
+
+skill: review-bash-ci-reliability
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster
+# (`evals/roster.yml`) picks both, and `--model` overrides the agent model
+# (#371 item 5).
+
+# In-place context (ADR 0012): example-site-platform, a representative consumer.
+# The skill has no single operational repository. example-site-platform adopts its
+# bundle (`acsi-coding-anywhere`) in `skills.lock`, and its release and
+# deploy pipeline is CI shell of the kind this seed models.
+# Measured at that repository's `main` on 2026-10-10: guidance, catalog and
+# payload were 25099, 6082 and 685637 bytes; each limit is
+# ceil(measured * 1.25). 14 eligible guidance revisions matched the shipped
+# bytes; the pin is the newest (then the smallest SHA). The context adopts
+# the skill, so the `without` arm removes the deployed copy.
+context:
+  repository: example-adopter/example-site-platform
+  revision: 28f2b6ed98837757417e058dd21047df046dadc7
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7603
+    skill_payload_bytes: 857047
+
+judge:
+  # Correctness carries the axis that matters: did each fix actually solve
+  # the failure mode, not paper over it. Restraint is the guardrail (leave
+  # the decoys and everything else alone) and must not outvote Correctness.
+  # Explanation is weighted below both, same as DESIGN.md's harness-wide rule.
+  weights:
+    correctness: 0.5
+    restraint: 0.2
+    explanation: 0.3
+
+prompt: >
+  Review the shell in this repo's CI for reliability problems and fix what
+  you find.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Objective checks run by harness/scorers/objective.py against the resulting
+# workspace. Every check is lexical (a regex against shell/YAML text) except
+# the first, which parses the workflow with `yaml` rather than guessing at
+# its structure from a regex. Every must_match and must_not_match alternative
+# below keeps its whole match — the anchor token and the required/forbidden
+# text alike — within the pre-comment portion of the line (`[^#\n]*` before
+# AND around the token, not `[^\n]*`), so a `# was: ...` comment quoting the
+# old, buggy line neither satisfies a must_match (a comment cannot stand in
+# for the fix) nor trips a must_not_match (a comment cannot stand in for the
+# bug), whether that comment precedes the line, stands alone, or trails
+# after the live code on the same line. A property test
+# (test_every_shell_check_alternative_is_anchored_to_non_comment_text) checks
+# this mechanically, alternative by alternative, over every file_matches
+# check in this fixture.
+# Record (round-5 N4): `main`'s file_matches_excluding_comments check
+# type is not a substitute for that rule here. It strips whole-line
+# comments only, and nothing else: a comment trailing after live code
+# on the same line survives it. It would therefore not have closed any
+# of the trailing-comment dodges this fixture's anchoring closes, in
+# either direction, so this fixture stays on file_matches plus the
+# anchoring rule above —
+# test_n_c_excluding_comments_type_would_not_close_the_trailing_dodges.
+# Deliberate exception: exactly four alternatives end in an explicit,
+# optional trailing-comment-tail group — `(\s*#.*)?$` or `(#.*)?$` — whose
+# own match extends into the comment. They are, in fixture order:
+# process-substitution-error-propagates's pipe-free alternative (must_match),
+# gh-api-failure-not-swallowed's reassignment alternative (must_not_match),
+# and both of decoy-existing-set-e-untouched's, one per field. This is safe
+# and not a violation of the rule above: the tail can only ever consume a
+# trailing comment, never satisfy a must_match or defeat a must_not_match on
+# its own, so it cannot let a comment stand in for live code either way; the
+# property test strips it before scanning for unanchored runs. The count and
+# the four owners above are measured against the fixture itself, not
+# asserted here as prose, by
+# test_n_a_comment_tail_exception_paragraph_is_pinned.
+# Known limitation: this anchoring treats the FIRST '#' on a line as a
+# comment start even when it is inside a quoted string, since lexing shell
+# quoting is out of scope here. A remedy token must therefore come before
+# any quoted '#' on its line to be recognized — e.g.
+# `git commit -m "chore: bump #${NEXT_VERSION}" --no-gpg-sign` fails
+# commit-signing-safe-for-ci even though it is a correct fix, because
+# --no-gpg-sign lands after the quoted '#' (documented, not treated as a
+# bug to fix here). The same blind spot has a fail-open twin: a banned
+# token that lands after a quoted '#' can likewise evade a must_not_match,
+# e.g. `echo "phase #1"; set -e` evades decoy 2's ban on a live `set -e`.
+# A quoted-`|` has the same problem, fail-closed this time: the
+# `[^#\n|]*` runs of process-substitution-error-propagates's pipe-free
+# alternative read a `|` inside a quoted string as a pipe, so
+# `gh run watch "$RUN_ID" || { echo "see: a|b" >&2; exit 1; }` — the
+# skill's own §3 idiom, a correct fix — fails that check because of a
+# character in its error message. Newly reachable: before round-5 F1
+# added the `(\|\|[^#\n|]*)*` tolerance, no `||` handler satisfied that
+# alternative at all, quoted pipe or not. Documented, not treated as a
+# bug to fix here —
+# test_n_b_quoted_pipe_in_watch_handler_is_a_known_false_negative.
+objective_checks:
+  - id: workflow-yaml-parses
+    description: The release workflow still parses as YAML
+    type: yaml_parses
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  # Nit: yaml_parses alone passes vacuously if the workflow file is deleted
+  # outright — no file, no parse error, trivially "parses". This check
+  # requires the file's own `name:` key to still be present somewhere among
+  # the workflow paths, so a deleted (or renamed-away) workflow fails here
+  # even though it would pass yaml_parses.
+  - id: workflow-file-present
+    description: The release workflow file itself is still present (not deleted)
+    type: file_matches
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    must_match:
+      - '^[^#\n]*name:\s*Release[^#\n]*'
+
+  # Finding 1: `mapfile ... < <(gh run watch "$RUN_ID" | tail -n 5)` — process
+  # substitution runs in a disconnected subshell, so a failing `gh run watch`
+  # is invisible to `set -euo pipefail`: mapfile succeeds regardless of what
+  # the substituted pipeline's exit status was. Any of three remedies is
+  # accepted: capture `gh run watch` with plain command substitution first
+  # (into any variable), check `${PIPESTATUS[0]}` right after a direct (non
+  # process-substituted) pipe, or drop the pipe entirely and let `set -e` see
+  # the command's own exit status. The dodge of keeping the broken shape but
+  # swallowing its failure with `|| true`, `|| :` or `|| echo ...` is
+  # forbidden outright — the same three tokens the sibling gh api check
+  # bans. Every OTHER `||` handler (`|| exit 0`, `|| /bin/true`,
+  # `|| continue`, …) is deliberately left alone here: whether a handler
+  # propagates the failure or swallows it is the judge's question
+  # (Correctness), not a lexical fact a regex may settle, so no regex is
+  # added for them — test_a_watch_or_echo_handler_fails,
+  # test_a_other_handlers_are_left_to_the_judge. Each
+  # of the three must_match alternatives is anchored to a non-comment prefix
+  # (and, for the pipe-free-line alternative, a non-comment/non-pipe run
+  # after it too), so a `# was: ...` comment quoting the capture variable,
+  # naming `PIPESTATUS`, or naming `gh run watch` cannot stand in for the
+  # command actually running. The pipe-free alternative additionally
+  # tolerates any number of `||` groups after the pipe-free run (each still
+  # anchored to non-comment, non-single-pipe text) — a real `|` pipe (one
+  # `|` not paired into `||`) still can never be consumed, so `gh run watch
+  # "$RUN_ID" | tail -n 5` with no PIPESTATUS check still fails this
+  # alternative, but `gh run watch "$RUN_ID" || exit 1` (or the skill's own
+  # `|| { echo "ERROR: ..."; exit 1; }` idiom, transplanted here) is
+  # strictly stronger than the other two remedies and must not be rejected
+  # just because it, too, is "dropping the pipe entirely."
+  - id: process-substitution-error-propagates
+    description: >
+      gh run watch's exit status is captured before any process substitution
+      (via command substitution, PIPESTATUS, or no pipe at all), so set -euo
+      pipefail actually catches a failed publish run
+    type: file_matches
+    paths: ["scripts/publish.sh"]
+    must_not_match:
+      - '^[^#\n]*<\s*<\(\s*gh run watch[^#\n]*'
+      - '^[^#\n]*gh run watch[^#\n]*\|\|\s*(true|:|echo)[^#\n]*'
+    must_match:
+      - '(^[^#\n]*\w+=\$\(\s*gh run watch[^#\n]*|^[^#\n]*PIPESTATUS[^#\n]*|^[^#\n|]*\bgh run watch\b[^#\n|]*(\|\|[^#\n|]*)*(\s*#.*)?$)'
+
+  # Finding 2 (off-skill — see header): `echo "$build_log" | grep -q ...` as
+  # a bare statement under `pipefail` — if grep matches and exits before echo
+  # finishes writing, echo can be killed by SIGPIPE, and pipefail reports the
+  # pipeline as failed even though grep found what it was looking for. Any
+  # pipe-free way of feeding the string to the test removes the producer
+  # process that could receive SIGPIPE: a here-string (braced or not), a
+  # `[[ ... == *...* ]]` glob test, a `case` statement, or grep against a
+  # file the string was written to.
+  # Round-6 review D: this comment used to credit must_not_match with
+  # banning "the producer piping INTO grep -q" when it banned exactly one
+  # spelling, the seed's own `echo "$build_log" | grep -q` — a live
+  # `cat build.log | grep -q "Successfully published"` beside a correct
+  # here-string scored 11/11 with the SIGPIPE-prone pipeline still in the
+  # script. The review offered narrowing the sentence or widening the ban;
+  # the ban was widened, so the sentence is true as written. What each ban
+  # does, one claim per bullet, each ending with the test that measures it:
+  #   - must_not_match alternative 2 fires on any live line where a single
+  #     `|` pipes into `grep -q` and "Successfully published" appears later
+  #     on that same line, whatever the producer is —
+  #     test_d_producer_piped_into_grep_q_fails
+  #   - `||` is not a pipe: no pipe-free remedy is caught, and neither is a
+  #     here-string remedy carrying the skill's `|| { ...; exit 1; }`
+  #     handler or a `|| grep -q ...` fallback —
+  #     test_d_pipe_free_remedies_are_untouched_by_the_widened_ban
+  #   - alternative 1 keeps the seed's own spelling, which needs no token on
+  #     the line, so a correct fix added ALONGSIDE the original buggy line
+  #     still fails —
+  #     test_grep_q_leftover_piped_line_not_removed_fails
+  #   - deleting the check instead of fixing it fails on must_match —
+  #     test_grep_q_check_deleted_entirely_fails
+  #   - this list's own shape and its citations are checked by
+  #     test_d_grep_q_comment_pins_its_claims_to_named_tests
+  # The first must_match alternative below lacks a trailing anchor (the same
+  # shape process-substitution-error-propagates's third alternative was
+  # missing). Because it has no closing `$`, it is unaffected by the
+  # `||`-tolerance added to that sibling alternative: `grep -q "Successfully
+  # published" <<< "$build_log" || { ...; exit 1; }` passes here —
+  # test_d_pipe_free_remedies_are_untouched_by_the_widened_ban. Do not add a
+  # trailing `$` to this alternative without adding the same `||` tolerance
+  # alongside it.
+  - id: grep-q-avoids-broken-pipe
+    description: grep -q consumes $build_log without a pipe (here-string, [[ ... ]], case, or a file argument)
+    type: file_matches
+    paths: ["scripts/publish.sh"]
+    must_not_match:
+      - '^[^#\n]*echo "\$build_log" \| grep -q[^#\n]*'
+      - '^[^#\n]*(?<!\|)\|(?!\|)\s*grep -q[^#\n]*"Successfully published"[^#\n]*'
+    must_match:
+      - '(^[^#\n|]*grep -q[^#\n|]*"Successfully published"[^#\n|]*|^[^#\n]*\[\[\s*"\$\{?build_log\}?"\s*==\s*\*[^#\n]*\*\s*\]\][^#\n]*|^[^#\n]*case\s+"\$\{?build_log\}?"\s+in[^#\n]*)'
+
+  # Finding 3: the gh api capture's failure is swallowed, and since a failed
+  # call and a genuinely empty result both leave `out` blank, the two become
+  # indistinguishable — the script reports "nothing to release" either way.
+  # What this check's patterns accept and reject is written below as a LIST
+  # OF PINNED CLAIMS, never as prose: one claim per bullet, each ending with
+  # the name of the TestIssue74 test that measures exactly that claim
+  # through the real scorer. Rounds 3, 4, 5 and 6 each found a fresh
+  # over-claim here while this was a prose paragraph — round 5's was that a
+  # suppression is forbidden only as the last thing on the line, which is
+  # true of the reassignment ban alone. The words test named in the last
+  # bullet enforces both halves of the rule: that every cited name exists
+  # (test/run_tests.py parsed with `ast`, never a regex) and that every
+  # bullet ends with one.
+  # Only the suppression forms themselves are forbidden — four bans, three
+  # of them line-local and one file-scoped, one per bullet:
+  #   - must_not_match alternatives 1, 2 and 4 (`|| true`/`:`/`echo`, the
+  #     `2>/dev/null` swallow, and the empty-string/bare reassignment) are
+  #     LINE-LOCAL: each requires `gh api` earlier on that same live line
+  #     (the `^[^#\n]*gh api[^#\n]*` prefix), so a suppression belonging to
+  #     some other command — collect.sh's own decoy `rm -f "$tmp_response"
+  #     || true`, or an `|| out=""` fallback a few lines away that happens
+  #     to reuse the name `out` — does not suppress *this* call's failure
+  #     and is left alone —
+  #     test_f2_control_without_far_away_set_plus_e_still_passes,
+  #     test_gh_api_unrelated_or_out_empty_elsewhere_still_passes
+  #   - alternatives 1 and 2 fire WHEREVER on that line the suppression
+  #     appears, not only at its end: `… || true; echo "continuing"` and
+  #     `… 2>/dev/null) || out=$(cat cache)` are both caught even though
+  #     neither suppression is the last thing on its line —
+  #     test_gh_api_swallow_anywhere_on_the_line_fails
+  #   - alternative 4 is the one END-ANCHORED ban: it fires when the
+  #     empty-string or bare reassignment is the last thing on the line,
+  #     before an optional trailing comment —
+  #     test_s1_gh_api_empty_string_reassignment_swallow_fails
+  #   - that end anchor reaches past one following `;`/`&` statement, so
+  #     `|| out=""; echo "continuing"`, `|| out="" && echo …` and
+  #     `|| out= ;` are caught too — the reassignment is still the swallow,
+  #     it just is not the last thing on the line —
+  #     test_c_gh_api_empty_reassignment_before_another_statement_fails
+  #   - a fallback that assigns a real value rather than emptying `out`
+  #     (`|| out=$(cat cache)`) is not a swallow and stays legal —
+  #     test_s1_gh_api_genuine_fallback_on_same_line_stays_legal
+  #   - alternative 3, a bare `set +e`, is deliberately FILE-SCOPED
+  #     instead: it fires on any live `set +e` in collect.sh, not only one
+  #     next to the gh api call, because whether a `set +e`/`set -e`
+  #     bracket actually wraps this particular call is a structural
+  #     question a regex must not try to answer (the header above explains
+  #     why no check here decides shell structure by regex) —
+  #     test_f2_far_away_set_plus_e_bracket_around_unrelated_command_fails
+  #   - a `set +e` that exists only inside a comment, trailing on the fixed
+  #     line or standing alone, never fires —
+  #     test_s2_trailing_set_plus_e_comment_on_fixed_gh_api_line_passes,
+  #     test_s2_standalone_comment_warning_against_set_plus_e_passes
+  #   - deleting the call outright does not pass either: must_match
+  #     requires the `gh api … pulls` call itself to still be present —
+  #     test_gh_api_deleted_outright_fails
+  #   - the accepted fixes are the plain call, letting `set -euo pipefail`
+  #     propagate the failure, and the skill's own `|| { echo …; exit 1; }`
+  #     shape, which checks the call's own exit status —
+  #     test_b2_simplest_fix_bare_assignment_passes,
+  #     test_b2_skill_safe_snippet_passes
+  #   - this list's own shape — every bullet ending in a test name, every
+  #     cited name a real TestIssue74 method, and the alternative numbering
+  #     above matching the fixture's own must_not_match order — is checked
+  #     by test_f2_gh_api_paragraph_pins_every_claim_to_a_named_test
+  - id: gh-api-failure-not-swallowed
+    description: A failed gh api call is not silently treated as "nothing found"
+    type: file_matches
+    paths: ["scripts/collect.sh"]
+    must_match:
+      - '^[^#\n]*\bgh api\b[^#\n]*pulls[^#\n]*'
+    must_not_match:
+      - '^[^#\n]*gh api[^#\n]*\|\|\s*(true|:|echo)[^#\n]*'
+      - '^[^#\n]*gh api[^#\n]*2>\s*/dev/null[^#\n]*'
+      - '^[^#\n]*\bset \+e\b[^#\n]*'
+      - '^[^#\n]*gh api[^#\n]*\|\|\s*\w+=(""|'''')?\s*([;&][^#\n]*)?(#.*)?$'
+
+  # Finding 4: `git commit` with no git identity configured fails with exit
+  # 128 on any runner that lacks a global user.name/user.email. `--local` and
+  # `--global` are both legitimate (SKILL.md's own example uses `--global`),
+  # and so is the `git -c user.email=... commit` one-shot-override idiom.
+  # Suppressing the failure (`|| true`, `|| :`, `2>/dev/null`) would make the
+  # check un-fixable by definition, so those dodges are forbidden. Whether
+  # the config call actually runs *before* the commit is left to the judge —
+  # a regex can see that both lines exist, not which one executes first.
+  - id: git-identity-configured
+    description: >
+      git user.email is configured, locally or globally, rather than worked
+      around; whether it is configured before the commit is the judge's call
+    type: file_matches
+    paths: ["scripts/bump.sh"]
+    must_match:
+      - '(^[^#\n]*git config( --(local|global))? user\.email[^#\n]*|^[^#\n]*-c\s+user\.email[^#\n]*)'
+    must_not_match:
+      - '^[^#\n]*git commit[^#\n]*\|\|\s*(true|:)[^#\n]*'
+      - '^[^#\n]*git commit[^#\n]*2>\s*/dev/null[^#\n]*'
+
+  # Finding 5: `jq` is used to read package.json's version with no guarantee
+  # it's installed. SKILL.md's checklist gives two remedies — install it in
+  # the workflow, or stop depending on it — and both are accepted. This used
+  # to be one check with a forward-only lookahead from the jq usage to an
+  # install marker; that scans the concatenation of bump.sh + release.yml in
+  # *file* order, not execution order, so a correctly-ordered guard placed
+  # before the usage inside bump.sh itself (or SKILL.md's own guard-and-exit
+  # form, which has no install marker at all) was invisible to it and failed.
+  # Split into two order-independent, existence-only checks instead — each
+  # alternative is a plain regex over live (non-comment) text, and whether
+  # jq/its guarantee actually runs in the right order is left to the judge.
+  - id: jq-guaranteed-or-replaced
+    description: >
+      Reading the version either doesn't use jq at all, or the workflow or
+      scripts guarantee jq is present somewhere (an install step, a uses:
+      that provides it, or a command -v jq guard) — existence only, anywhere
+      in the files, independent of order
+    type: file_matches
+    paths: ["scripts/bump.sh", ".github/workflows/*.yml"]
+    must_match:
+      - '(^[^#\n]*(apt(?:-get)? install|apk add|dnf install|yum install|brew install|choco install)[^#\n]*\bjq\b|^[^#\n]*uses:[^#\n]*jq|^[^#\n]*command -v jq|\A(?:(?!(?:\A|\n)[^#\n]*\bjq\b)[\s\S])*\Z)'
+
+  # must_match keeps the version-read logic itself required, so deleting
+  # bump.sh outright cannot pass by leaving nothing to violate. must_not_match
+  # forbids a live jq usage existing anywhere in the files while no
+  # install/uses:/guard marker exists anywhere else — both existence checks,
+  # neither one order-dependent on the other.
+  - id: version-read-does-not-depend-on-unguarded-jq
+    description: >
+      The version-read logic survives, and no bare jq usage exists without
+      an install step, a uses: that provides jq, or a command -v jq guard
+      present somewhere in the files
+    type: file_matches
+    paths: ["scripts/bump.sh", ".github/workflows/*.yml"]
+    must_match:
+      - '^[^#\n]*(?i:\bversion\s*=[^#\n]*package\.json)[^#\n]*'
+    must_not_match:
+      - '(?=[\s\S]*(?:\A|\n)[^#\n]*\bjq\b)\A(?:(?!(?:\A|\n)[^#\n]*(?:apt(?:-get)? install|apk add|dnf install|yum install|brew install|choco install)[^#\n]*\bjq\b|(?:\A|\n)[^#\n]*uses:[^#\n]*jq|(?:\A|\n)[^#\n]*command -v jq)[\s\S])*\Z'
+
+  # Finding 6: a `git commit` in a script has no defense against a runner
+  # whose global gitconfig has `commit.gpgsign = true` — that commit fails
+  # unless it either disables signing for this repo or has a signing key set
+  # up (SKILL.md checklist item 5). `git -c commit.gpgsign=false commit` and
+  # `git commit --no-gpg-sign` are both legitimate one-shot forms.
+  - id: commit-signing-safe-for-ci
+    description: >
+      Commit signing is disabled for this script's own commit, or a signing
+      key is explicitly configured
+    type: file_matches
+    paths: ["scripts/bump.sh"]
+    must_match:
+      - '(^[^#\n]*git config( --(local|global))? commit\.gpgsign\s+false[^#\n]*|^[^#\n]*git config( --(local|global))? user\.signingkey[^#\n]*|^[^#\n]*-c\s+commit\.gpgsign=false[^#\n]*|^[^#\n]*--no-gpg-sign[^#\n]*)'
+
+  # Decoy 1: a `|| true` on a temp-file cleanup that is genuinely optional
+  # (idempotent). A correct fix leaves the command alone; the check matches
+  # the command only, not the comment's exact wording.
+  - id: decoy-optional-cleanup-untouched
+    description: The genuinely-optional rm -f ... || true cleanup line is untouched
+    type: file_matches
+    paths: ["scripts/collect.sh"]
+    must_match:
+      - '^[^#\n]*rm -f\s+"\$tmp_response"\s*\|\|\s*true[^#\n]*'
+
+  # Decoy 2: `set -euo pipefail` is already correctly present. An over-eager
+  # agent might re-add a redundant bare `set -e` — with or without a
+  # trailing comment — alongside it; a correct fix leaves it as one line,
+  # exactly as it is.
+  - id: decoy-existing-set-e-untouched
+    description: The already-correct set -euo pipefail line is neither removed nor duplicated
+    type: file_matches
+    paths: ["scripts/publish.sh"]
+    must_match:
+      - '^[^#\n]*set -euo pipefail(\s*#.*)?$'
+    must_not_match:
+      - '^[^#\n]*set -e\s*(#.*)?$'
+
+# The judge is left what a regex cannot decide: whether each fix actually
+# solves the failure mode the checklist describes (vs. a plausible-looking
+# workaround), whether git identity is configured *before* the commit runs,
+# whether the agent explained the failure mode it found, and whether it kept
+# its hands off the decoys and everything else. Dimension (1) caps on the
+# decidable facts so the judge cannot praise a transcript the objective
+# column failed.
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Correctness — for each of the six real findings (the process-
+  substitution-hidden failure in publish.sh, the pipefail/SIGPIPE-prone
+  grep -q, the gh api failure swallowed by suppression, the missing git
+  identity before the commit, the unguaranteed jq dependency, and the
+  missing defense against commit.gpgsign in CI), did the fix solve the
+  actual failure mode rather than merely suppress the symptom (e.g. wrapping
+  a still-broken call in `|| true` or `2>/dev/null` instead of fixing it)?
+  For the git-identity finding specifically, also verify the config call
+  actually runs before the commit, not just that both exist somewhere in the
+  file. For the jq finding, also verify the install/guard actually runs
+  before the version read, not just that both exist somewhere in the files.
+  Cap this dimension at 4 if any objective check for a SKILL-covered real
+  finding is failing — every real finding except the grep -q/SIGPIPE one,
+  which is off-skill (see the fixture header) and does not cap this score.
+  (2) Restraint — did the agent leave both decoys (the optional cleanup's
+  `|| true`, and the already-correct `set -euo pipefail`) untouched, and
+  avoid editing files or lines the review did not call for? Cap at 4 if
+  either decoy check or workflow-file-present is failing.
+  (3) Explanation — for each fix, did the reply name the actual failure mode
+  (e.g. "process substitution runs in a subshell set -e can't see", not just
+  "fixed a bug"), so a reader could tell why the original code was unsafe?

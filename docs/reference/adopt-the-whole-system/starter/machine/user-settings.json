@@ -1,9 +1,0 @@
-{
-  "disableSkillShellExecution": true,
-  "hooks": {
-    "Stop": [
-      { "hooks": [ { "type": "command", "timeout": 10,
-          "command": "python3 ~/.claude/hooks/memory-home.py" } ] }
-    ]
-  }
-}

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+#
+# bootstrap-status.sh — Classify whether a .claude/settings.json registers the
+# skills-bootstrap SessionStart hook.
+#
+# Delivering `.claude/hooks/skills-bootstrap.sh` into a repo does nothing on
+# its own: Claude Code only runs it if `.claude/settings.json` names it in a
+# SessionStart hook. A hook that lands but is never registered is SILENTLY
+# DEAD — it costs a file in the tree and buys nothing, and no session will ever
+# tell you. This script is the single shared classifier: scripts/sync.sh and
+# scripts/drift-report.sh both call it so "is the hook registered?" is decided
+# in exactly one place — the same arrangement bridge-status.sh gives the
+# CLAUDE.md bridge.
+#
+# The idempotence key is the hook's BASENAME appearing in a
+# `hooks.SessionStart[*].hooks[*].command` string. It is deliberately a
+# semantic test on the parsed document, not a grep over the file:
+#   • a mention inside an unrelated key (a comment-ish field, a different hook
+#     event, a "description") must NOT count as registered, or the sync would
+#     skip a repo whose hook never runs;
+#   • the command string's exact spelling varies across repos that adopted by
+#     hand (agentskills' own entry carries no `matcher` and no `timeout`), so
+#     matching the whole command verbatim would re-register an already-working
+#     repo on every run.
+#
+# JSON is parsed with python3's stdlib `json`, never a regex or a line scanner:
+# this file decides whether a program executes at session start, and a
+# hand-rolled parser that mis-reads it either double-registers the hook or
+# silently declares a dead one healthy.
+#
+# Usage: bootstrap-status.sh <path>   — classify a file
+#        bootstrap-status.sh -        — classify stdin
+#
+# Prints exactly one of:
+#   registered    — a SessionStart hook command references skills-bootstrap.sh
+#   stale-matcher — registered, but only in a group the fleet itself wrote with
+#                   the pre-fork matcher `startup|resume`, so a forked session
+#                   skips the hook; register-bootstrap-hook.sh widens it
+#   no-entry      — valid JSON, but no such command (hook would never run)
+#   unparseable   — content present but not valid JSON (sync must not rewrite it)
+#   missing       — file absent or empty (or empty stdin)
+
+HOOK_BASENAME="${BOOTSTRAP_HOOK_BASENAME:-skills-bootstrap.sh}"
+# Keep in step with register-bootstrap-hook.sh, which owns the migration.
+HOOK_MATCHER="${BOOTSTRAP_HOOK_MATCHER:-startup|resume|fork}"
+LEGACY_MATCHER="startup|resume"
+# The hook event to look under. The agent-checks guard registers on PreToolUse
+# (ADR 0021); every other caller keeps the default.
+HOOK_EVENT="${BOOTSTRAP_HOOK_EVENT:-SessionStart}"
+
+classify() {
+    python3 -c '
+import json, sys
+
+needle = sys.argv[1]
+matcher = sys.argv[2]
+legacy = sys.argv[3]
+event = sys.argv[4]
+raw = sys.stdin.read()
+
+if not raw.strip():
+    print("missing")
+    sys.exit(0)
+
+try:
+    doc = json.loads(raw)
+except Exception:
+    print("unparseable")
+    sys.exit(0)
+
+# A settings.json whose top level is not an object is not something we can
+# reason about, let alone append to. Treat it exactly like malformed JSON so
+# the caller takes the same do-not-touch path.
+if not isinstance(doc, dict):
+    print("unparseable")
+    sys.exit(0)
+
+groups = doc.get("hooks", {})
+groups = groups.get(event, []) if isinstance(groups, dict) else []
+if not isinstance(groups, list):
+    groups = []
+
+def names_hook(entry):
+    return isinstance(entry, dict) and needle in str(entry.get("command", ""))
+
+# stale-matcher is reported only when EVERY group naming the hook is one the
+# fleet wrote with the legacy matcher: exactly `startup|resume`, holding
+# nothing but this hook. A hand-tuned matcher, or a group shared with another
+# command, is a choice the operator made and reads as registered.
+found = False
+stale = True
+for group in groups:
+    if not isinstance(group, dict):
+        continue
+    entries = group.get("hooks", [])
+    if not isinstance(entries, list):
+        continue
+    if any(names_hook(e) for e in entries):
+        found = True
+        if not (matcher != legacy
+                and group.get("matcher") == legacy
+                and all(names_hook(e) for e in entries)):
+            stale = False
+
+if found:
+    print("stale-matcher" if stale else "registered")
+else:
+    print("no-entry")
+' "$HOOK_BASENAME" "$HOOK_MATCHER" "$LEGACY_MATCHER" "$HOOK_EVENT"
+}
+
+# ── Dispatch on argument ─────────────────────────────────────────────────────
+
+case "${1:-}" in
+    "")
+        echo "Usage: bootstrap-status.sh <path>|-" >&2
+        exit 2
+        ;;
+    -)
+        classify
+        ;;
+    *)
+        # A directory is a caller error, not a fifth classification. `-s` is
+        # TRUE for one (directories have nonzero size), so without this guard
+        # control reaches `classify < "$1"`, bash redirects stdin from the
+        # directory, and python3 dies with a core-level fatal error.
+        if [[ -d "$1" ]]; then
+            echo "bootstrap-status.sh: $1 is a directory; pass its .claude/settings.json" >&2
+            exit 2
+        fi
+        if [[ ! -s "$1" ]]; then
+            echo "missing"
+        else
+            classify < "$1"
+        fi
+        ;;
+esac

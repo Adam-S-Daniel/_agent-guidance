@@ -1,0 +1,16 @@
+{
+  "ops": [
+    {
+      "op": "append-lines",
+      "file": "evals/scheduled.yml",
+      "fragment": "scheduled-rows.yml"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "ThirdBatchFixtureTests",
+      "method": "test_stop_worker",
+      "fragment": "ThirdBatchFixtureTests.test_stop_worker.py"
+    }
+  ]
+}

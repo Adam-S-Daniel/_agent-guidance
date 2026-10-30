@@ -7,9 +7,18 @@ requests) lives in the JSON file $GH_STUB_STATE, so a second run sees what
 the first one wrote. A secret's value is stored only as a SHA-256, so no
 secret text lands in any file.
 
+User installations come from the state's "installations" list (a test
+writes it): {"id", "app_id", "account": {"login"}, "repos": [full names]}.
+`gh actions-lock` is stubbed too: --help exits 0 unless
+GH_STUB_NO_ACTIONS_LOCK=1; --no-narrow appends GH_STUB_ACTIONS_LOCK_LINE (if
+set) to .github/workflows/actions.lock in the current directory; --verify
+exits GH_STUB_ACTIONS_LOCK_VERIFY (default 0).
+
 Knobs: GH_STUB_DRIFT=1 makes a ruleset read-back drop its last rule.
 GH_STUB_ENV_LIST_STATUS=<code> makes every environment secret/variable list
 fail with that HTTP status.
+GH_STUB_GIT_REMOTES=<dir> answers a contents read from the bare repo
+<dir>/<owner>/<repo>.git's default branch, so a test's merge is what GitHub sees.
 GH_STUB_FAKE_PEM and GH_STUB_CLIENT_SECRET are what a manifest conversion
 returns. Errors look like gh's: a JSON body on stdout, "gh: ... (HTTP n)" on
 stderr, exit 1.
@@ -101,6 +110,16 @@ def api(args):
         u = m.group(1)
         return out({"login": u, "id": 5000 + sum(map(ord, u)), "type": "User"})
 
+    if path == "user/installations":
+        return out({"total_count": len(st.get("installations", [])),
+                    "installations": [{k: v for k, v in i.items() if k != "repos"} for i in st.get("installations", [])]})
+    m = re.fullmatch(r"user/installations/(\d+)/repositories", path)
+    if m:
+        for i in st.get("installations", []):
+            if str(i["id"]) == m.group(1):
+                return out({"total_count": len(i["repos"]), "repositories": [{"full_name": r} for r in i["repos"]]})
+        return err(404, "Not Found")
+
     m = re.fullmatch(r"app-manifests/([^/]+)/conversions", path)
     if m and method == "POST":
         if m.group(1) == "expired":
@@ -137,9 +156,54 @@ def api(args):
         # The default branch's files: README.md once there is a first commit,
         # plus whatever a test puts in the repo's "files" (a merged pull request).
         p = rest[len("/contents/"):]
+        remotes = os.environ.get("GH_STUB_GIT_REMOTES")
+        if remotes:  # the default branch of the test's bare repo is the truth
+            import subprocess
+            got = subprocess.run(["git", f"--git-dir={remotes}/{full}.git", "show",
+                                  f"{r['default_branch']}:{p}"], capture_output=True)
+            if got.returncode != 0:
+                return err(404, "Not Found")
+            # GitHub's shape: the file's bytes in base64, wrapped at 60 characters.
+            b64 = base64.b64encode(got.stdout).decode("ascii")
+            return out({"type": "file", "path": p, "name": p.split("/")[-1], "encoding": "base64",
+                        "content": "\n".join(b64[i:i + 60] for i in range(0, len(b64), 60))})
         if (p == "README.md" and r["has_commits"]) or p in r.get("files", {}):
             return out({"type": "file", "path": p, "name": p.split("/")[-1]})
         return err(404, "Not Found")
+    # The git data API, enough to make an orphan branch: a tree, a commit with
+    # no parent, a ref. A branch reads back as its commit; the default branch
+    # reads back once the repo has a first commit.
+    m2 = re.fullmatch(r"/git/ref/heads/(.+)", rest)
+    if m2 and method == "GET":
+        b = m2.group(1)
+        sha = r.setdefault("branches", {}).get(b) or ("main-sha" if b == r["default_branch"] and r["has_commits"] else None)
+        if sha is None:
+            return err(404, "Not Found")
+        return out({"ref": f"refs/heads/{b}", "object": {"sha": sha}})
+    if rest == "/git/trees" and method == "POST":
+        if not body.get("tree"):
+            return err(422, "Invalid tree")
+        sha = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        r.setdefault("trees", {})[sha] = body["tree"]
+        return out({"sha": sha})
+    if rest == "/git/commits" and method == "POST":
+        if body.get("tree") not in r.get("trees", {}):
+            return err(422, "Tree SHA does not exist")
+        sha = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        r.setdefault("commits", {})[sha] = {"tree": body["tree"], "parents": body.get("parents", []),
+                                            "message": body.get("message")}
+        return out({"sha": sha})
+    if rest == "/git/refs" and method == "POST":
+        b = body.get("ref", "")
+        if not b.startswith("refs/heads/"):
+            return err(422, "Invalid reference")
+        b = b[len("refs/heads/"):]
+        if b in r.setdefault("branches", {}):
+            return err(422, "Reference already exists")
+        if body.get("sha") not in r.get("commits", {}):
+            return err(422, "Object does not exist")
+        r["branches"][b] = body["sha"]
+        return out({"ref": f"refs/heads/{b}", "object": {"sha": body["sha"]}})
     if rest == "/actions/permissions":
         if method == "PUT":
             r["actions"] = body
@@ -297,6 +361,16 @@ elif cmd in ("variable", "secret"):
     values(cmd, argv[1:])
 elif cmd == "pr":
     pr(argv[1:])
+elif cmd == "actions-lock":
+    if os.environ.get("GH_STUB_NO_ACTIONS_LOCK") == "1":
+        print("unknown command \"actions-lock\" for \"gh\"", file=sys.stderr)
+        sys.exit(1)
+    if "--no-narrow" in argv and os.environ.get("GH_STUB_ACTIONS_LOCK_LINE"):
+        with open(".github/workflows/actions.lock", "a", encoding="utf-8") as f:
+            f.write(os.environ["GH_STUB_ACTIONS_LOCK_LINE"] + "\n")
+    if "--verify" in argv:
+        sys.exit(int(os.environ.get("GH_STUB_ACTIONS_LOCK_VERIFY", "0")))
+    sys.exit(0)
 else:
     print("stub: unsupported command", file=sys.stderr)
     sys.exit(2)

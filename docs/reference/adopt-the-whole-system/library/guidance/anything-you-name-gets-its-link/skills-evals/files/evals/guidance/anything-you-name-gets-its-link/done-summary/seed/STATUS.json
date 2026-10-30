@@ -1,0 +1,11 @@
+{
+  "repo": "example-org/widgets",
+  "week": "2026-10-19",
+  "done": [
+    {"kind": "pull_request", "number": 38, "title": "Drop the legacy uploader", "merged_at": "2026-10-19"},
+    {"kind": "pull_request", "number": 41, "title": "Retry flaky uploads", "merged_at": "2026-10-20"},
+    {"kind": "issue", "number": 9, "title": "Docs build fails on Windows", "closed_at": "2026-10-21"},
+    {"kind": "workflow_run", "workflow": "release", "run_id": 9099001,
+     "conclusion": "success", "finished_at": "2026-10-22", "released": "v2.3.0"}
+  ]
+}

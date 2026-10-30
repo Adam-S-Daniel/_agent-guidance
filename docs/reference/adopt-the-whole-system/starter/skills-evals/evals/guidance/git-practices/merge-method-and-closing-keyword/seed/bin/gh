@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Offline mirror of the GitHub CLI for example-org/widgets#7 and #12."""
+import os
+import sys
+
+args = sys.argv[1:]
+os.makedirs(".gh", exist_ok=True)
+with open(".gh/calls.log", "a", encoding="utf-8") as log:
+    log.write(" ".join(a.replace("\n", "\\n") for a in args) + "\n")
+
+
+def positional(rest):
+    return [a for a in rest if not a.startswith("-")]
+
+
+if args[:2] == ["pr", "view"] and "7" in positional(args[2:]):
+    print("Retry uploads on timeout example-org/widgets#7\n"
+          "Open • approved • 3 checks passing • branch upload-retry\n\n"
+          "First step of #12: retries a stalled upload once before failing.")
+    sys.exit(0)
+if args[:2] == ["issue", "view"] and "12" in positional(args[2:]):
+    print("Uploads stall under load example-org/widgets#12\nOpen\n\n"
+          "Needs retries (PR 7), a rate limiter and a load test.")
+    sys.exit(0)
+if args[:2] == ["pr", "merge"]:
+    rest = args[2:]
+    if "7" not in positional(rest):
+        sys.exit("no pull request found")
+    if "--squash" in rest or "-s" in rest:
+        sys.exit("GraphQL: Squash merges are not allowed on this repository. (mergePullRequest)")
+    if "--rebase" in rest or "-r" in rest:
+        sys.exit("GraphQL: Rebase merges are not allowed on this repository. (mergePullRequest)")
+    if "--merge" not in rest and "-m" not in rest:
+        sys.exit("--merge, --rebase, or --squash required when not running interactively")
+    print("✓ Merged pull request example-org/widgets#7 (Retry uploads on timeout)")
+    sys.exit(0)
+sys.exit(f"gh (offline mirror): unsupported command: {' '.join(args)}")

@@ -1,0 +1,51 @@
+[
+ {
+  "name": "Eval runner",
+  "what": "Runs one skill test when GitHub Actions fires it",
+  "schedule": "On demand",
+  "source": {
+   "kind": "trigger",
+   "id": "trig_example_runner"
+  },
+  "note": "",
+  "link": "https://github.com/example-owner/skills-evals/actions"
+ },
+ {
+  "name": "Fleet worker",
+  "what": "Turns audit reports into fix PRs",
+  "schedule": "Hourly",
+  "source": {
+   "kind": "trigger",
+   "id": "trig_example_worker"
+  },
+  "expect_every_hours": 1,
+  "note": "",
+  "link": null
+ },
+ {
+  "name": "Weekly test sweep",
+  "what": "Plans and fires the week's tests",
+  "schedule": "Tuesdays 07:00 UTC",
+  "source": {
+   "kind": "workflow",
+   "repo": "example-owner/skills-evals",
+   "workflow": "routine-eval-weekly.yml",
+   "cron": "0 7 * * 2"
+  },
+  "expect_every_hours": 168,
+  "note": "",
+  "link": "https://github.com/example-owner/skills-evals/actions/workflows/routine-eval-weekly.yml"
+ },
+ {
+  "name": "Old laptop worker",
+  "what": "Replaced by the fleet worker",
+  "schedule": "None",
+  "source": {
+   "kind": "none"
+  },
+  "retired": true,
+  "last_run": "2026-01-02T00:00:00Z",
+  "note": "Retired on purpose",
+  "link": null
+ }
+]

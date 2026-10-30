@@ -1,0 +1,152 @@
+# Eval fixture: vendor-release-impact-issues (stamps-skip-quotes)
+# Measures SKILL.md's "Release publish times" rule that a stamp goes only on
+# text the agent wrote: "Never stamp or change text you did not write" —
+# quote attributions and versions named in the agent's own "Why" and "To
+# check" prose get the release's publish time; release-note quotes, text
+# quoted from files, and titles never do ("Mark, don't match"). It also
+# leans on "Exact quotes": a quote is copied, never retyped.
+#
+# The seed is ExampleCLI 4.1.0 -> 4.3.0 against a small repo with two real
+# findings, and each finding's release bullet NAMES A VERSION ITSELF:
+# 4.3.0's exit-code change ("scripts written against 4.2.0 or earlier ...",
+# which scripts/check.sh's `-eq 1` test depends on) and 4.2.0's hook-source
+# change ("matchers written for v4.1.0 ...", which the startup|resume matcher
+# in .example-cli/settings.json depends on). README.md's "Requires ExampleCLI
+# 4.1.0 or later." is file text a good issue may quote. The prompt asks, as
+# the owner once did, that every version the issues mention carry its
+# publish time. An agent stamping by search-and-replace over finished text
+# puts a stamp inside the quoted bullets, inside the quoted README line, and
+# in the titles; the skill's answer is to stamp only the agent's own prose
+# and attributions. This is the incident in the skill's PURPOSE.md: a
+# version matcher stamped a version inside a quoted "2.1.273+".
+#
+# Why issue-hygiene cannot measure this: none of its quoted bullets names a
+# version, so a stamp-everything pass and a stamp-only-my-prose pass leave
+# the same text there; its coverage of stamping is the judge's.
+#
+# What the objective column decides: both finding bullets appear verbatim
+# on one line (bare in a fence, or after `>` and/or a list marker); nothing
+# was inserted after the version inside either bullet or inside README's
+# requirement line wherever those are written; no title carries a date;
+# and the agent's own prose stamps 4.2.0 and 4.3.0 with their
+# releases.json publish times. It does not decide whether every prose
+# mention is stamped on first use, or whether a stamp's time source is
+# right beyond those two prose matches (issue-hygiene measures source and
+# binding); those are the judge's. A quote copied across several lines
+# fails quotes-kept-verbatim: the seed writes each bullet on one line, and
+# exact copying keeps it there.
+#
+# Every pattern below starts each top-level alternative with `^`, uses no
+# unescaped `.`, and keeps its wildcard runs inside negated classes that
+# exclude a newline, so one pattern reads one line;
+# test/issues/test_issue_vendor_release_stamps_skip_quotes.py asserts that
+# over this file as parsed YAML.
+#
+# Roster inheritance supplies both the arms and the judge (ADR 0013).
+skill: vendor-release-impact-issues
+registry: https://github.com/example-adopter/acsi-agentskills
+
+judge:
+  weights:
+    correctness: 0.5
+    hygiene: 0.3
+    restraint: 0.2
+
+prompt: >
+  Review ExampleCLI's release notes in `vendor/` against this repository
+  and draft the GitHub issues you would open for the changes that affect
+  it. Every ExampleCLI version your issues mention must carry that
+  release's publish time from `vendor/releases.json`. Write each issue to
+  `issues/<NN>-<slug>.md`, with the issue title as the first line
+  (`# <title>`) and the body below it. Do not open real issues.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+objective_checks:
+  # SKILL.md "Exact quotes": each finding's bullet, copied whole. The
+  # optional prefixes are the blockquote marker and the list marker the
+  # bullet carries in vendor/RELEASES.md; a fenced copy has neither.
+  - id: quotes-kept-verbatim
+    description: Both finding bullets appear verbatim, each on one line, in the drafted issues
+    type: file_matches
+    paths: ["issues/*.md"]
+    must_match:
+      - '^(?:> ?)?(?:[-*] )?`example-cli check` now exits 2 instead of 1 on configuration errors; scripts written against 4\.2\.0 or earlier that test for exit 1 need updating\.$'
+      - '^(?:> ?)?(?:[-*] )?Session-start hooks now report source "fork" for forked sessions; matchers written for v4\.1\.0 that list only startup\|resume no longer fire for them\.$'
+
+  # SKILL.md "Never stamped: release-note quotes, text quoted from files".
+  # Each pattern finds the quoted text up to and including its version, and
+  # fires when the words that follow the version in the source do not
+  # follow it here: a stamp, or any other edit, inserted after the version.
+  # Passes on the pristine seed (nothing drafted).
+  - id: quoted-text-unstamped
+    description: No stamp or other edit follows the version inside a quoted bullet or README's requirement line
+    type: file_matches
+    paths: ["issues/*.md"]
+    must_not_match:
+      - '^[^\n]*now exits 2 instead of 1 on configuration errors; scripts written against v?4\.2\.0(?! or earlier that test for exit 1 need updating\.)'
+      - '^[^\n]*report source "fork" for forked sessions; matchers written for v?4\.1\.0(?! that list only startup\|resume no longer fire for them\.)'
+      - '^[^\n]*Requires ExampleCLI v?4\.1\.0(?! or later\.)'
+
+  # SKILL.md "Never stamped: ... titles", and "Keep titles ... with no
+  # publish times". A title line is the first line, `# ...`, per the
+  # prompt. Passes on the pristine seed.
+  - id: titles-unstamped
+    description: No title line carries a date
+    type: file_matches
+    paths: ["issues/*.md"]
+    must_not_match:
+      - '^# [^\n]*20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+
+  # SKILL.md "Stamped: ... versions named in your 'Why' and 'To check'
+  # prose". A line that is neither a quote nor a title names the version
+  # and, within 40 characters, that release's published_at. The stamp form
+  # is not fixed here (`4.3.0 [time]`, `4.3.0 (published time)` and an
+  # attribution-style `v4.3.0 ..., published time` all pass); the judge
+  # scores the form.
+  - id: prose-versions-stamped
+    description: Prose outside quotes and titles names 4.2.0 and 4.3.0 with their releases.json publish times
+    type: file_matches
+    paths: ["issues/*.md"]
+    must_match:
+      - '^(?!>|# )[^\n]*(?<![0-9.])v?4\.2\.0(?![0-9])[^\n]{0,40}2026-07-14T09:47Z[^\n]*$'
+      - '^(?!>|# )[^\n]*(?<![0-9.])v?4\.3\.0(?![0-9])[^\n]{0,40}2026-08-25T02:16Z[^\n]*$'
+
+  - id: seed-repo-unchanged
+    description: The reviewed repo's own files are byte-identical to the seed
+    type: files_unchanged
+    paths:
+      - "vendor/RELEASES.md"
+      - "vendor/releases.json"
+      - ".example-cli/settings.json"
+      - "hooks/session-start.sh"
+      - "scripts/check.sh"
+      - ".github/workflows/ci.yml"
+      - "README.md"
+      - "AGENTS.md"
+
+judge_rubric: >
+  Score correctness, hygiene and restraint from 0 to 10, with a
+  one-sentence rationale each. The real findings are ExampleCLI 4.3.0's
+  exit-code change (configuration errors exit 2, not 1), which breaks
+  scripts/check.sh's `-eq 1` test, and 4.2.0's "fork" hook source, which the
+  startup|resume matcher in .example-cli/settings.json does not cover. CI
+  pins 4.1.0, so neither has reached CI yet. The palette, Windows, startup,
+  debug-log, verbose-flag and onboarding bullets are decoys.
+  (1) Correctness: are both findings drafted, each against the file it
+  touches, with no decoy filed? Cap at 4 if quotes-kept-verbatim or
+  prose-versions-stamped fails.
+  (2) Hygiene: every version the agent's own prose names carries its
+  publish time on first use, from releases.json's published_at; each quote
+  is followed by an attribution with its release link and publish time; and
+  no stamp sits inside quoted release text, quoted file text, or a title.
+  Prefer the skill's forms (`4.3.0 [2026-08-25T02:16Z]` in prose,
+  `published <time>` in an attribution) but do not require them. Cap at 4
+  if quoted-text-unstamped or titles-unstamped fails, or if a stamp was
+  inserted into quoted text anywhere the patterns do not reach.
+  (3) Restraint: cap at 3 if seed-repo-unchanged fails. Nothing outside
+  issues/ should be written.

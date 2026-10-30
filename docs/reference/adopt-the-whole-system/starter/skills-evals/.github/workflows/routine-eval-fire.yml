@@ -1,140 +1,943 @@
 name: Fire eval routine
 
-# Starts the EVAL RUNNER routine (guide 9.4). Manual dispatch only: no
-# pull_request or push trigger, so nothing here spends allowance because a
-# pull request changed.
+# Fires the eval runner routine (ADR 0010, "Smallest next PRs" item 2).
+# The routine is the repository's own: its trigger id (trig_...) is the
+# variable ROUTINE_TRIGGER_ID of the routine-fire environment, set when the routine is
+# created (docs/routine-prompt.md), and the fire step refuses to run
+# without a well-formed one.
 #
-# * Inputs are read from $GITHUB_EVENT_PATH by scripts/fire_inputs.py, never
-#   interpolated into a run: block, and validated before the bearer is in any
-#   step's env.
-# * The run name is "fire <mode> <run id>". allowance_guard.py parses it; mode
-#   is a choice and run_id is regex-checked in the first step, which fails the
-#   run before anything is fired if it is malformed.
-# * Every lane fires through here: eval and improve (routine-eval-weekly.yml),
-#   scaffold (fixture-supply.yml), draft (routine-draft-skill.yml). The guard
-#   charges improve its improve_reservation and every other mode per_run_cap.
-# * scripts/dispatch_fires.py builds these inputs; tests/test_workflows.py
-#   holds the two in step.
-# * Callers supply run_id: date -u +%Y%m%dT%H%M%SZ-$(openssl rand -hex 3)
-# * environment: routine-fire holds EVAL_ROUTINE_FIRE_BEARER (secret) and
-#   ROUTINE_TRIGGER_ID (variable), limited to the default branch.
-run-name: fire ${{ inputs.mode }} ${{ inputs.run_id }}
+# * `workflow_dispatch` ONLY. The weekly caller dispatches eval and improve
+#   mode (ADR 0010, decision 4 addendum, 2026-10-26: #71's three-PR gate is
+#   lifted), and the daily routine-draft-skill.yml draft mode. No
+#   pull_request or push: a pull_request job would
+#   have to be a required check, and nothing here should run, or spend
+#   subscription usage, because a pull request changed.
+# * Every dispatch input is read from $GITHUB_EVENT_PATH as data, never
+#   interpolated into a `run:` block (the rendered command is echoed into a
+#   public log), and validated before the bearer is ever in a step's env.
+# * Two modes (the owner, 2026-10-06, scaffold mode: "New fire-workflow input
+#   (Recommended)"). `eval`, the default, sends exactly five fields: mode,
+#   run_id, fixture, arms, trials, and a sixth, `model`, only when that input
+#   is set (#68, #372 U4; see below). `scaffold` sends exactly four: mode,
+#   run_id, candidate (a miner key, OWNER__REPO__PR) and issue_snapshot, and
+#   the routine turns that one candidate into one draft real-work fixture on
+#   its own branch.
+#   `improve` (ADR 0005, "Routine improve mode addendum") sends exactly
+#   five: run_id, mode, skill, trials and holdout (null when empty), and
+#   the routine runs the improvement loop on that skill. `skill` must pass
+#   the loop's own fixture resolution (`scripts/improve_gate.py
+#   fire-check`): nested evals/<skill>/<name> fixtures that all name it and
+#   acsi-agentskills, at least the loop's minimum of them, and `holdout`
+#   empty or one of their names.
+#   `guidance-improve` (ADR 0005, "Routine guidance improve mode addendum")
+#   sends exactly five: run_id, mode, section, trials and holdout (null when
+#   empty), and the routine runs scripts/propose_guidance_edit.py on that
+#   _agent-guidance section. `section` must match ^[a-z0-9][a-z0-9-]{0,63}$
+#   (so never `_delivery`) and pass `scripts/guidance_improve_gate.py
+#   fire-check`: at least the proposer's minimum of fixtures declaring the
+#   `full` arm (its own listing), `holdout` empty or one of their keys
+#   (guidance/<section>/<name>), and, after _agent-guidance is checked out
+#   (public, no credential kept), a manifest row that is not skipped.
+#   `draft` (turn a `new-skill` lesson into a drafted skill; caller
+#   routine-draft-skill.yml) takes one input, `proposal`, a path under
+#   acsi-agentskills-private's lessons/ matching
+#   proposals/<date>/<subject>__new-skill.json. A draft-only step mints the
+#   read-only registry App token (as propagation.yml does), sparse-checks
+#   out lessons/, and `scripts/draft_new_skill.py payload` re-validates the
+#   proposal and prints the payload, run_id, mode and proposal (subject,
+#   id, evidence_count, examples, repos), which `fire-check` checks again;
+#   the fire step sends that object as it is. A second draft-only input,
+#   `hook_declined` (a choice, false by default), says the agent-checks lane
+#   closed this subject's hook proposal as not planned; the payload then
+#   carries `hook_declined: true` and the routine skips its hooks-first
+#   triage. Each mode's own text inputs must
+#   be empty in the others (`candidate`, `skill`/`holdout`, `section` and
+#   `proposal` in eval mode, `fixture`, `skill`/`holdout`, `section` and
+#   `proposal` in scaffold mode, `fixture`, `candidate`, `section` and
+#   `proposal` in improve mode, `fixture`, `candidate`, `skill` and
+#   `proposal` in guidance-improve mode, and every other text input in draft
+#   mode), so no input is silently ignored except arms and trials, which are
+#   choices; arms is sent in eval mode only and trials in eval, improve and
+#   guidance-improve. The routine treats the payload as
+#   untrusted, and so does this workflow when it builds it: jq encodes
+#   every value.
+# * `arms: bare` (ADR 0012, bare baseline addendum; the owner, 2026-10-27) is
+#   eval mode only, and only for a fixture that runs in place: its committed
+#   fixture.yaml has a top-level `context` mapping, checked by
+#   `scripts/plan_scheduled_evals.py --in-place` (a fixture without one
+#   already has a bare arm, its isolation `without`). The payload sends
+#   `"arms": "bare"` and the routine runs the one isolation `without` arm:
+#   no skills, no guidance, no memory. A refusal is fixed text. The
+#   allowance guard charges it as any eval fire: one run, whatever its arms.
+# * `model` (#68's first slice, #372 U4) is optional and valid in eval mode
+#   only: the sweep dispatches each fixture once per roster arm. When set it
+#   must be the `id` of an arm in evals/roster.yml on the default branch,
+#   checked by scripts/roster_arm.py, which parses the YAML with the
+#   harness's own reader; the judge is not an arm. A refusal is a fixed
+#   message that never echoes the input. The payload gains `model` as its
+#   last key only then, so with it empty the payload is byte for byte what
+#   it was and the weekly caller (routine-eval-weekly.yml, which sets no
+#   model) is unaffected. The routine's saved prompt turns the payload's
+#   `model` into the runner's model flag; that prompt is not in this repo.
+# * Scaffold mode's issue snapshot (the owner, 2026-10-06: "Fire workflow
+#   precomputes (Recommended)"): a routine session refuses GitHub GraphQL,
+#   and an issue's body revisions have no REST read, so after validation,
+#   with the bearer in no step's env, the snapshot step runs
+#   `scripts/scaffold_real_work.py snapshot` with the job's read-only token:
+#   the closing issue's title and body as they stood before the pull
+#   request's first commit, with the three provenance times, or null when
+#   it closes no issue. The candidate must be a fleet repository (owner in
+#   SYNC_OWNERS, name in cron_coverage.fleet, from _agent-guidance's default
+#   branch; the owner, 2026-10-06: "Pin to fleet owners (Recommended)") whose
+#   GitHub full_name is the key's. Several closing issues (the owner,
+#   2026-10-06: "Keep refusing (Recommended)"), or any failed read, stop the
+#   run before the fire. routine-scaffold-gate.yml recomputes the same
+#   snapshot and rejects a branch whose copy differs.
+# * The fire API caps `text` at 65,536 characters
+#   (https://platform.claude.com/docs/en/api/claude-code/routines-fire; 400
+#   above it). The payload's UTF-8 bytes, never fewer than its characters by
+#   any count, are checked against that before the call, and a larger
+#   payload is refused, never truncated.
+# * The fire bearer (EVAL_ROUTINE_FIRE_BEARER, a repository secret per ADR
+#   0010 decision 5) reaches only the fire step, via `env`, and goes to curl
+#   on stdin, never in argv. The HTTP response body is never printed: the
+#   log names the status code and the run id, and the session URL goes to the
+#   job summary only after it matches the documented shape.
+# * The weekly allowance guard (#68; the owner, 2026-10-10: all automated evals
+#   within 30% of the weekly allowance): after validation and before the
+#   fire, in every mode, scripts/allowance_guard.py check reads the ingested
+#   runs of the last seven days from a read-only checkout of
+#   persistent/eval-results, counts this workflow's successful runs in the
+#   same window with the job's token (hence `actions: read`), and refuses the
+#   fire unless spent + pending + this run's reservation stays within
+#   evals/budget.yml's weekly_cap. An API error refuses too (fail closed). Its
+#   log line is numbers only. See docs/how-it-works.md, "The weekly allowance
+#   guard".
+# * No retry: the fire API has no idempotency key, so a retry after a lost
+#   response would start a second session (and spend a second fire).
+# * Results land on `claude/eval-<run id>`, pushed by the routine; the
+#   validator and ingester for that branch is a separate workflow (ADR 0010,
+#   decision 2). A scaffold run pushes `claude/scaffold-<fixture id>`
+#   instead, which its own gate validates, and an improve run pushes
+#   `claude/eval-improve-<run id>` only for an accepted candidate, which
+#   routine-improve-gate.yml validates; a guidance-improve run likewise
+#   pushes `claude/eval-guidance-improve-<run id>`, which
+#   routine-guidance-improve-gate.yml validates. A draft run always pushes
+#   `claude/draft-skill-<run id>`, which routine-draft-skill-gate.yml
+#   validates. Nothing here writes to the repository.
+# * `run-name` names the mode and its one text input (a candidate, a
+#   fixture, a skill or a section; the others are empty, as validation
+#   requires), so a
+#   successful scaffold run is titled `Fire eval routine: scaffold <key>`.
+#   routine-fixture-supply.yml reads those titles to fire no candidate twice
+#   within scripts/scaffold_real_work.py's REFIRE_AFTER_DAYS. It is a display
+#   title, never a `run:` block.
+#
+# * The run's title (`run-name`) names the mode, ` bare` after it for an
+#   eval fire with `arms: bare` (so the weekly planner can tell which
+#   (fixture, model) bare runs were fired), the one target input of that
+#   mode (fixture, candidate, skill or section) and the model when one is
+#   given. It is the only place the runs API exposes a dispatch's inputs, so
+#   scripts/improve_outcomes.py reads improve and guidance-improve attempts
+#   from it and scripts/allowance_guard.py charges both their own cost (G5,
+#   thresholds doc plumbing gap 2). A title is display text, never a command;
+#   the readers accept only titles matching a strict pattern, and only from
+#   runs that passed validation.
+#
+# API: https://platform.claude.com/docs/en/api/claude-code/routines-fire
+
+run-name: >-
+  Fire eval routine: ${{ inputs.mode }}${{ inputs.mode == 'eval' && inputs.arms == 'bare' && ' bare' || '' }}
+  ${{ inputs.fixture }}${{ inputs.candidate }}${{ inputs.skill }}${{ inputs.section }}
+  ${{ inputs.model }}
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: eval, improve, scaffold or draft
-        type: choice
-        options: [eval, improve, scaffold, draft]
-        default: eval
-      run_id:
-        description: "Run id, 20261028T120000Z-1a2b3c"
-        type: string
+        description: >-
+          eval runs a fixture; scaffold turns one miner candidate into a
+          draft real-work fixture; improve runs the improvement loop on
+          one skill; guidance-improve runs it on one _agent-guidance
+          section; draft turns one new-skill lesson into a drafted skill.
         required: true
-      fixture:
-        description: "eval mode: evals/<skill>/<fixture>"
+        type: choice
+        options: [eval, scaffold, improve, guidance-improve, draft]
+        default: eval
+      candidate:
+        description: >-
+          Scaffold mode only (leave empty for eval): the miner key,
+          OWNER__REPO__PR, e.g. example-adopter__skills-evals__123.
+        required: false
         type: string
-        default: ""
+      fixture:
+        description: >-
+          Eval mode only (leave empty otherwise): fixture directory under
+          evals/, e.g. evals/writing-adrs/bootstrap. Must be a committed
+          evals/**/fixture.yaml directory on the default branch.
+        required: false
+        type: string
+      skill:
+        description: >-
+          Improve mode only (leave empty otherwise): the skill name, e.g.
+          writing-adrs. evals/<skill>/ must hold at least three committed
+          fixtures on the default branch.
+        required: false
+        type: string
+      holdout:
+        description: >-
+          Improve and guidance-improve modes only, optional: the fixture to
+          hold out, a name under evals/<skill>/ (e.g. supersede) or a
+          guidance fixture key (e.g. guidance/example-section/handoff).
+          Empty means none.
+        required: false
+        type: string
+      section:
+        description: >-
+          Guidance-improve mode only (leave empty otherwise): the
+          _agent-guidance section id, e.g. anything-you-name-gets-its-link.
+          It must have at least four committed fixtures declaring the full
+          arm on the default branch.
+        required: false
+        type: string
+      proposal:
+        description: >-
+          Draft mode only (leave empty otherwise): the lesson proposal under
+          acsi-agentskills-private's lessons/, e.g.
+          proposals/2026-10-26/example-skill__new-skill.json.
+        required: false
+        type: string
+      hook_declined:
+        description: >-
+          Draft mode only: true when the agent-checks lane declined this
+          subject's hook proposal, so the routine skips its triage.
+        required: false
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+      model:
+        description: >-
+          Eval mode only, optional (leave empty otherwise): the id of one
+          arm in evals/roster.yml, e.g. claude-opus-5-5. Empty keeps the
+          fixture's pin or the roster's first arm.
+        required: false
+        type: string
       arms:
-        description: eval mode only
+        description: >-
+          Which arms to run. bare (eval mode, in-place fixtures only) runs
+          one arm with nothing of ours loaded.
+        required: true
         type: choice
         options: [both, with, without, bare]
         default: both
       trials:
-        description: Trials per arm
+        description: Trials per arm (1-3).
+        required: true
         type: choice
         options: ["1", "2", "3"]
-        default: "3"
-      model:
-        description: "eval mode, optional: a roster seat"
-        type: string
-        default: ""
-      skill:
-        description: "improve mode: the skill"
-        type: string
-        default: ""
-      pr:
-        description: "scaffold mode: <owner>/<repo>#<number> of a merged pull request"
-        type: string
-        default: ""
-      lesson_id:
-        description: "draft mode: the lesson's opaque id (sha256 of its subject); never its text"
-        type: string
-        default: ""
+        default: "1"
 
 permissions:
   contents: read
+  # The allowance guard counts this workflow's own successful runs (#68).
   actions: read
 
 jobs:
   fire:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The secret is repository-wide, so refuse a dispatch of this file from
+    # any other branch: only the default branch's copy may fire the routine.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # The bearer and the trigger id are held in the `routine-fire`
+    # environment, limited to the default branch (the kit's
+    # bootstrap/set-secrets.sh stores them there).
     environment: routine-fire
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      # Pinned, not the runner's system Python (WorkflowPinnedPythonTests):
+      # the validation step lists committed fixtures with
+      # scripts/plan_scheduled_evals.py and, in improve and guidance-improve
+      # modes, runs scripts/improve_gate.py or guidance_improve_gate.py
+      # fire-check.
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Install harness dependencies
-        run: python3 -m pip install --quiet -r requirements.txt
+      # fire-check loads fixture.yaml files: the gate workflows' PyYAML pin.
+      - name: Install PyYAML
+        run: python3 -m pip install pyyaml==6.0.3
 
-      - name: Validate inputs
-        id: inputs
-        run: >
-          python3 scripts/fire_inputs.py --event "$GITHUB_EVENT_PATH"
-          --payload-out "$RUNNER_TEMP/payload.json" --roster evals/roster.yml
-          --repo-root . --github-output "$GITHUB_OUTPUT"
+      - name: Validate the dispatch inputs
+        id: validate
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          event="${GITHUB_EVENT_PATH:?}"
+          # NUL first, on the event file itself: bash's $( ) drops a NUL, so
+          # every check below would otherwise judge a different string than
+          # the dispatcher sent. No rejection echoes the value back.
+          # `fixture`, `candidate`, `skill`, `holdout`, `section`, `model`
+          # and `proposal` are optional strings (each is used in one or two
+          # modes only), so an absent one reads as empty.
+          if jq -e '[.inputs.mode, .inputs.arms, .inputs.trials,
+                     (.inputs.fixture // ""), (.inputs.candidate // ""),
+                     (.inputs.skill // ""), (.inputs.holdout // ""),
+                     (.inputs.section // ""),
+                     (.inputs.model // ""), (.inputs.proposal // ""),
+                     (.inputs.hook_declined // "false")]
+                    | any(type != "string" or test("\u0000"))' \
+               "$event" >/dev/null; then
+            echo "::error::a dispatch input is missing, not a string, or contains a NUL byte"
+            exit 1
+          fi
+          # Also on the event file: $( ) strips trailing newlines, so a
+          # value ending in one would otherwise pass the pattern below.
+          if jq -e '[.inputs.mode, (.inputs.candidate // ""),
+                     (.inputs.skill // ""), (.inputs.holdout // ""),
+                     (.inputs.section // ""),
+                     (.inputs.model // ""), (.inputs.proposal // "")]
+                    | any(test("[\u0000-\u001f\u007f]"))' \
+               "$event" >/dev/null; then
+            echo "::error::input 'mode', 'candidate', 'skill', 'holdout', 'section', 'model' or 'proposal' contains a control character"
+            exit 1
+          fi
+          mode="$(jq -r '.inputs.mode' "$event")"
+          candidate="$(jq -r '.inputs.candidate // ""' "$event")"
+          fixture="$(jq -r '.inputs.fixture // ""' "$event")"
+          skill="$(jq -r '.inputs.skill // ""' "$event")"
+          holdout="$(jq -r '.inputs.holdout // ""' "$event")"
+          section="$(jq -r '.inputs.section // ""' "$event")"
+          model="$(jq -r '.inputs.model // ""' "$event")"
+          proposal="$(jq -r '.inputs.proposal // ""' "$event")"
+          hook_declined="$(jq -r '.inputs.hook_declined // "false"' "$event")"
+          arms="$(jq -r '.inputs.arms' "$event")"
+          trials="$(jq -r '.inputs.trials' "$event")"
 
-      # The results branch may not exist before the first ingest.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        id: results_checkout
-        continue-on-error: true
+          case "$arms" in
+            both|with|without|bare) ;;
+            *)
+              echo "::error::input 'arms' must be both, with, without or bare"
+              exit 1 ;;
+          esac
+          case "$trials" in
+            1|2|3) ;;
+            *)
+              echo "::error::input 'trials' must be 1, 2 or 3"
+              exit 1 ;;
+          esac
+          case "$hook_declined" in
+            false|true) ;;
+            *)
+              echo "::error::input 'hook_declined' must be false or true"
+              exit 1 ;;
+          esac
+
+          case "$mode" in
+            eval|scaffold|draft)
+              if [ -n "$skill" ] || [ -n "$holdout" ]; then
+                echo "::error::inputs 'skill' and 'holdout' must be empty unless the mode is improve or guidance-improve"
+                exit 1
+              fi ;;
+            guidance-improve)
+              if [ -n "$skill" ]; then
+                echo "::error::input 'skill' must be empty in guidance-improve mode"
+                exit 1
+              fi ;;
+          esac
+          if [ -n "$section" ] && [ "$mode" != guidance-improve ]; then
+            echo "::error::input 'section' must be empty unless the mode is guidance-improve"
+            exit 1
+          fi
+          case "$mode" in
+            scaffold|improve|guidance-improve|draft)
+              if [ -n "$model" ]; then
+                echo "::error::input 'model' must be empty unless the mode is eval"
+                exit 1
+              fi ;;
+          esac
+          if [ "$arms" = bare ] && [ "$mode" != eval ]; then
+            echo "::error::input 'arms' may be bare in eval mode only"
+            exit 1
+          fi
+          case "$mode" in
+            eval|scaffold|improve|guidance-improve)
+              if [ -n "$proposal" ] || [ "$hook_declined" != false ]; then
+                echo "::error::input 'proposal' must be empty and 'hook_declined' false unless the mode is draft"
+                exit 1
+              fi ;;
+          esac
+          case "$mode" in
+            eval)
+              if [ -n "$candidate" ]; then
+                echo "::error::input 'candidate' must be empty in eval mode"
+                exit 1
+              fi ;;
+            scaffold)
+              if [ -n "$fixture" ]; then
+                echo "::error::input 'fixture' must be empty in scaffold mode"
+                exit 1
+              fi
+              # The miner key pattern the routine re-checks. The repository
+              # part admits `_`, so a repository named `_x` still has a key.
+              if ! [[ "$candidate" =~ ^[A-Za-z0-9-]+__[A-Za-z0-9._-]+__[1-9][0-9]{0,6}$ ]]; then
+                echo "::error::input 'candidate' is empty or is not a miner key (OWNER__REPO__PR)"
+                exit 1
+              fi ;;
+            improve)
+              if [ -n "$fixture" ] || [ -n "$candidate" ]; then
+                echo "::error::inputs 'fixture' and 'candidate' must be empty in improve mode"
+                exit 1
+              fi
+              # The skill-name pattern the routine re-checks.
+              if ! [[ "$skill" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+                echo "::error::input 'skill' is empty or is not a skill name"
+                exit 1
+              fi
+              # The holdout is a single fixture name, no path; fire-check
+              # below checks it is one of the skill's fixtures.
+              if [ -n "$holdout" ] && ! [[ "$holdout" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
+                echo "::error::input 'holdout' is longer than 128 characters or has characters outside [A-Za-z0-9._-]"
+                exit 1
+              fi ;;
+            guidance-improve)
+              if [ -n "$fixture" ] || [ -n "$candidate" ]; then
+                echo "::error::inputs 'fixture' and 'candidate' must be empty in guidance-improve mode"
+                exit 1
+              fi
+              # A manifest id, never `_`-prefixed (`_delivery` is the canary).
+              if ! [[ "$section" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]; then
+                echo "::error::input 'section' is empty or is not a guidance section id"
+                exit 1
+              fi
+              # The proposer's fixture key, relative to evals/; fire-check
+              # below checks it is one of the section's fixtures.
+              if [ -n "$holdout" ] && ! [[ "$holdout" =~ ^guidance/[A-Za-z0-9][A-Za-z0-9._-]{0,127}(/[A-Za-z0-9][A-Za-z0-9._-]{0,127})?$ ]]; then
+                echo "::error::input 'holdout' is not a guidance fixture key (guidance/<section>/<name>)"
+                exit 1
+              fi ;;
+            draft)
+              if [ -n "$fixture" ] || [ -n "$candidate" ]; then
+                echo "::error::inputs 'fixture' and 'candidate' must be empty in draft mode"
+                exit 1
+              fi
+              # The proposal file shape the miner writes; the subject part
+              # becomes a skill directory name, so it is checked here and
+              # again by draft_new_skill.py payload against the file.
+              if ! [[ "$proposal" =~ ^proposals/[0-9]{4}-[0-9]{2}-[0-9]{2}/[a-z0-9][a-z0-9-]{0,63}__new-skill\.json$ ]]; then
+                echo "::error::input 'proposal' is empty or is not proposals/<date>/<subject>__new-skill.json"
+                exit 1
+              fi ;;
+            *)
+              echo "::error::input 'mode' must be eval, scaffold, improve, guidance-improve or draft"
+              exit 1 ;;
+          esac
+
+          if [ "$mode" = eval ]; then
+            case "$fixture" in
+              *[!A-Za-z0-9/_.-]*|'')
+                echo "::error::input 'fixture' is empty or has characters outside [A-Za-z0-9/_.-]"
+                exit 1 ;;
+            esac
+            case "/$fixture/" in
+              */../*|*/./*|*//*)
+                echo "::error::input 'fixture' has an empty, '.' or '..' path segment"
+                exit 1 ;;
+            esac
+            case "$fixture" in
+              evals/*) ;;
+              *)
+                echo "::error::input 'fixture' is not under evals/"
+                exit 1 ;;
+            esac
+            # Exact, whole-line match against git's index of committed
+            # fixtures: a here-string, never a pipe into an early-exit grep.
+            committed="$(python3 scripts/plan_scheduled_evals.py --committed)"
+            if ! grep -Fxq -- "$fixture" <<<"$committed"; then
+              echo "::error::input 'fixture' names no committed fixture on the default branch"
+              exit 1
+            fi
+            # An arm id from the committed roster, parsed as YAML. The shape
+            # check comes first so no value with a leading `-` reaches a
+            # command line; the script reads its first argument literally
+            # too, and its own refusal is the same fixed text.
+            if [ -n "$model" ]; then
+              if ! [[ "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+                 || ! python3 scripts/roster_arm.py "$model"; then
+                echo "::error::input 'model' is not an arm of the committed evals/roster.yml"
+                exit 1
+              fi
+            fi
+            # A bare run is the baseline of an in-place fixture only: a
+            # fixture with no `context` mapping already has one, its
+            # isolation `without` arm. Parsed as YAML by the script.
+            if [ "$arms" = bare ] \
+               && ! python3 scripts/plan_scheduled_evals.py --in-place "$fixture" >/dev/null; then
+              echo "::error::input 'arms' is bare but the fixture does not run in place (no top-level context mapping)"
+              exit 1
+            fi
+          fi
+
+          if [ "$mode" = improve ]; then
+            # The loop's own resolution, read-only and offline: the nested
+            # evals/<skill>/<name> fixtures must all name this skill and
+            # one registry, harness/registries.yml must map it to
+            # acsi-agentskills (the one registry the routine checks out),
+            # there must be at least the loop's MIN_FIXTURES, and a holdout
+            # must be one of them. Only the registry-side SKILL.md lookup,
+            # which needs the registry checkout, is left to the routine.
+            # Its refusals are fixed text and never echo the input.
+            # `--holdout=VALUE` is one word: a holdout with a leading `-`
+            # (its pattern allows one) is read as a name, never as a flag.
+            if ! python3 scripts/improve_gate.py fire-check "$skill" --holdout="$holdout"; then
+              echo "::error::input 'skill' or 'holdout' is refused by the improvement loop's fixture check"
+              exit 1
+            fi
+          fi
+
+          if [ "$mode" = guidance-improve ]; then
+            # propose_guidance_edit's own listing, read-only and offline: at
+            # least its MIN_FIXTURES fixtures declaring the `full` arm, and a
+            # holdout among them. The manifest row is checked below, once
+            # _agent-guidance is checked out. Fixed-text refusals only.
+            if ! python3 scripts/guidance_improve_gate.py fire-check "$section" --holdout="$holdout"; then
+              echo "::error::input 'section' or 'holdout' is refused by the guidance proposer's fixture check"
+              exit 1
+            fi
+          fi
+
+          run_id="$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+          if ! [[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]]; then
+            echo "::error::generated run id has an unexpected shape"
+            exit 1
+          fi
+
+          {
+            echo "mode=${mode}"
+            echo "candidate=${candidate}"
+            echo "fixture=${fixture}"
+            echo "skill=${skill}"
+            echo "holdout=${holdout}"
+            echo "section=${section}"
+            echo "model=${model}"
+            echo "proposal=${proposal}"
+            echo "hook_declined=${hook_declined}"
+            echo "arms=${arms}"
+            echo "trials=${trials}"
+            echo "run_id=${run_id}"
+          } >> "$GITHUB_OUTPUT"
+          echo "run id: ${run_id}"
+          if [ "$mode" = scaffold ]; then
+            echo "mode: scaffold, candidate: ${candidate} (arms and trials are not sent)"
+          elif [ "$mode" = improve ]; then
+            echo "mode: improve, skill: ${skill}, trials: ${trials}, holdout: ${holdout:-none} (arms is not sent)"
+          elif [ "$mode" = guidance-improve ]; then
+            echo "mode: guidance-improve, section: ${section}, trials: ${trials}, holdout: ${holdout:-none} (arms is not sent)"
+          elif [ "$mode" = draft ]; then
+            echo "mode: draft, proposal: ${proposal}, hook_declined: ${hook_declined} (arms and trials are not sent)"
+          else
+            echo "mode: eval, fixture: ${fixture}, arms: ${arms}, trials: ${trials}, model: ${model:-none}"
+          fi
+
+      # The ingested routine runs the allowance guard charges (#68). Data
+      # only: the bot-written branch is untrusted, nothing from it runs, and
+      # only routine-results/ is checked out.
+      - name: Check out persistent/eval-results (the ingested runs)
+        uses: actions/checkout@v7.0.1
         with:
           ref: persistent/eval-results
-          path: results
+          path: eval-results-branch
           persist-credentials: false
+          sparse-checkout: routine-results
 
-      - name: Window and fires
+      # Every mode, before the fire: refused (exit 1, numbers-only log) when
+      # this run's reservation (an improve or guidance-improve run's own,
+      # larger charge) would
+      # take the last seven days past the weekly cap, or when the spend
+      # cannot be read. The job's read-only token, never the bearer.
+      - name: Check the weekly allowance
+        id: allowance
         env:
           GH_TOKEN: ${{ github.token }}
-          MODE: ${{ steps.inputs.outputs.mode }}
-        run: |
-          mkdir -p results
-          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          start=$(python3 scripts/allowance_guard.py reset --results results \
-            --budget evals/budget.yml --now "$now" | jq -r .window_start)
-          # Every dispatch of this workflow since the reset, and whether it
-          # fired (scripts/list_fires.sh; the weekly sweep reads the same list).
-          bash scripts/list_fires.sh "$start" > fires.json
+          MODE: ${{ steps.validate.outputs.mode }}
+        run: python3 scripts/allowance_guard.py check --results-tree eval-results-branch --mode "$MODE"
 
-      - name: Allowance guard
-        env:
-          MODE: ${{ steps.inputs.outputs.mode }}
-        run: |
-          python3 scripts/allowance_guard.py check --results results --fires fires.json \
-            --budget evals/budget.yml --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --kind "$MODE"
+      # The fleet pin (the owner, 2026-10-06: "Pin to fleet owners (Recommended)"):
+      # the candidate's owner must be in SYNC_OWNERS and its name in
+      # cron_coverage.fleet, read from _agent-guidance's default branch as the
+      # miner reads them. A public repository; no credentials are kept.
+      # Guidance-improve mode reads its section's manifest row from it too.
+      - name: Check out _agent-guidance (the fleet registry)
+        if: steps.validate.outputs.mode == 'scaffold' || steps.validate.outputs.mode == 'guidance-improve'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/_agent-guidance
+          path: _agent-guidance
+          persist-credentials: false
 
-      - name: Fire the routine
+      # Guidance-improve mode only, no token in env: the section's row in
+      # _agent-guidance's agents-md/eval-coverage.yml exists and is not
+      # `skipped` (propose_guidance_edit's load_row), so a section the
+      # proposer would refuse never starts a session. Fixed text only.
+      - name: Check the guidance section's manifest row
+        if: steps.validate.outputs.mode == 'guidance-improve'
         env:
-          EVAL_ROUTINE_FIRE_BEARER: ${{ secrets.EVAL_ROUTINE_FIRE_BEARER }}
+          SECTION: ${{ steps.validate.outputs.section }}
+          HOLDOUT: ${{ steps.validate.outputs.holdout }}
+        run: |
+          set -euo pipefail
+          if ! python3 scripts/guidance_improve_gate.py fire-check "$SECTION" \
+               --holdout="$HOLDOUT" --guidance _agent-guidance; then
+            echo "::error::input 'section' has no measurable row in _agent-guidance's manifest"
+            exit 1
+          fi
+
+      # Guidance-improve mode only, no token in env: the plan's own rule A
+      # headroom (scripts/plan_week.py guidance-headroom) over the ingested
+      # runs, so a fire dispatched by hand cannot start a section the plan
+      # would never pick, one already passing at least 90% of its checks.
+      # The guidance proposer has no early stop (it interleaves baseline and
+      # candidate), so without this such a fire spends its whole run before
+      # rejecting (2026-10-28, run 20261028T213124Z-65c174). Numbers only.
+      - name: Check the guidance section's train headroom
+        if: steps.validate.outputs.mode == 'guidance-improve'
+        env:
+          SECTION: ${{ steps.validate.outputs.section }}
+        run: |
+          set -euo pipefail
+          as_of="$(git -C eval-results-branch log -1 --format=%cI)"
+          python3 scripts/plan_week.py guidance-headroom "$SECTION" \
+            --results-tree eval-results-branch --as-of "$as_of" --guidance _agent-guidance
+
+      # Scaffold mode only. The job's read-only token, never the bearer: the
+      # snapshot refuses a candidate outside the fleet, or whose repository
+      # GitHub names differently (a rename redirect), before it reads GitHub
+      # (REST for the pull request, GraphQL for its closing issue and the
+      # issue's revisions), and its log line is a
+      # status, never the issue's text.
+      - name: Compute the issue snapshot
+        id: snapshot
+        if: steps.validate.outputs.mode == 'scaffold'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.validate.outputs.candidate }}
+          FLEET_REGISTRY: _agent-guidance/repos.yml
+          FLEET_SYNC_WORKFLOW: _agent-guidance/.github/workflows/sync.yml
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP:?}/issue-snapshot.json"
+          python3 scripts/scaffold_real_work.py snapshot --candidate="$CANDIDATE" --out "$out" \
+            --registry "$FLEET_REGISTRY" --sync-workflow "$FLEET_SYNC_WORKFLOW"
+          echo "file=${out}" >> "$GITHUB_OUTPUT"
+
+      # Draft mode only. The read-only registry App token, minted exactly as
+      # propagation.yml mints it: acsi-agentskills-private alone, contents
+      # read, revoked when the job ends. It reaches only the checkout below.
+      - name: Mint the read-only token for the lessons
+        id: lessons-token
+        if: steps.validate.outputs.mode == 'draft'
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ vars.REGISTRY_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REGISTRY_READ_APP_PEM }}
+          owner: example-adopter
+          repositories: acsi-agentskills-private
+          permission-contents: read
+
+      # Only lessons/ (the miner's redacted proposals), from
+      # persistent/lessons, where the miner writes (main is PR-only;
+      # skills-evals#423, ADR 0015). Credentials not kept.
+      - name: Check out the lessons (acsi-agentskills-private)
+        if: steps.validate.outputs.mode == 'draft'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/acsi-agentskills-private
+          ref: persistent/lessons
+          path: lessons-repo
+          persist-credentials: false
+          sparse-checkout: lessons
+          token: ${{ steps.lessons-token.outputs.token }}
+
+      # Draft mode only, with no token in env: `payload` re-validates the one
+      # proposal file (inside lessons/proposals, not a symlink, every field
+      # to the schema) and prints the payload, refusing one over 60,000
+      # bytes; `fire-check` re-reads that payload offline. Both refusals are
+      # fixed text that never echoes the file.
+      - name: Build the draft payload
+        id: draft-payload
+        if: steps.validate.outputs.mode == 'draft'
+        env:
+          RUN_ID: ${{ steps.validate.outputs.run_id }}
+          PROPOSAL: ${{ steps.validate.outputs.proposal }}
+          HOOK_DECLINED: ${{ steps.validate.outputs.hook_declined }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP:?}/draft-payload.json"
+          declined=()
+          if [ "$HOOK_DECLINED" = true ]; then
+            declined=(--hook-declined)
+          fi
+          python3 scripts/draft_new_skill.py payload --lessons lessons-repo/lessons \
+            --proposal="$PROPOSAL" --run-id="$RUN_ID" "${declined[@]}" > "$out"
+          python3 scripts/draft_new_skill.py fire-check --payload "$out"
+          echo "file=${out}" >> "$GITHUB_OUTPUT"
+
+      - name: Fire the eval routine
+        env:
           ROUTINE_TRIGGER_ID: ${{ vars.ROUTINE_TRIGGER_ID }}
+          EVAL_ROUTINE_FIRE_BEARER: ${{ secrets.EVAL_ROUTINE_FIRE_BEARER }}
+          RUN_ID: ${{ steps.validate.outputs.run_id }}
+          FIXTURE: ${{ steps.validate.outputs.fixture }}
+          ARMS: ${{ steps.validate.outputs.arms }}
+          TRIALS: ${{ steps.validate.outputs.trials }}
+          MODE: ${{ steps.validate.outputs.mode }}
+          CANDIDATE: ${{ steps.validate.outputs.candidate }}
+          SKILL: ${{ steps.validate.outputs.skill }}
+          HOLDOUT: ${{ steps.validate.outputs.holdout }}
+          SECTION: ${{ steps.validate.outputs.section }}
+          MODEL: ${{ steps.validate.outputs.model }}
+          PROPOSAL: ${{ steps.validate.outputs.proposal }}
+          HOOK_DECLINED: ${{ steps.validate.outputs.hook_declined }}
+          ISSUE_SNAPSHOT_FILE: ${{ steps.snapshot.outputs.file }}
+          DRAFT_PAYLOAD_FILE: ${{ steps.draft-payload.outputs.file }}
         run: |
-          set +x
-          payload=$(jq -c . "$RUNNER_TEMP/payload.json")
-          body=$(jq -n --arg text "$payload" '{text: $text}')
-          status=$(printf 'Authorization: Bearer %s\n' "$EVAL_ROUTINE_FIRE_BEARER" \
+          set -euo pipefail
+          if [ -z "${EVAL_ROUTINE_FIRE_BEARER:-}" ]; then
+            echo "::error::repository secret EVAL_ROUTINE_FIRE_BEARER is not set"
+            exit 1
+          fi
+          # C7: the trigger id is a variable, so it is checked before it
+          # becomes part of a URL: trig_ and 1-64 letters or digits.
+          if ! [[ "${ROUTINE_TRIGGER_ID:-}" =~ ^trig_[A-Za-z0-9]{1,64}$ ]]; then
+            echo "::error::the routine-fire variable ROUTINE_TRIGGER_ID is not set or is not a trig_ id"
+            exit 1
+          fi
+          FIRE_URL="https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_TRIGGER_ID}/fire"
+          # The payload is the routine's untrusted input: each mode's fields
+          # and nothing else, every value encoded by jq. Any other mode
+          # stops here, before the API is called.
+          case "${MODE:-}" in
+            scaffold)
+              # Exactly one JSON value, an object or null, as the snapshot
+              # step wrote it; it is sent as data, never read by the shell.
+              if [ -z "${ISSUE_SNAPSHOT_FILE:-}" ] || ! jq -e -s \
+                   'length == 1 and (.[0] | type == "object" or type == "null")' \
+                   "$ISSUE_SNAPSHOT_FILE" >/dev/null 2>&1; then
+                echo "::error::the scaffold issue snapshot is missing or is not one JSON object or null"
+                exit 1
+              fi
+              body="$(jq -n -c \
+                --arg run_id "$RUN_ID" --arg candidate "$CANDIDATE" \
+                --slurpfile snapshot "$ISSUE_SNAPSHOT_FILE" \
+                '{text: ({mode: "scaffold", run_id: $run_id, candidate: $candidate,
+                          issue_snapshot: $snapshot[0]} | tojson)}')" ;;
+            eval)
+              body="$(jq -n -c \
+                --arg run_id "$RUN_ID" --arg fixture "$FIXTURE" \
+                --arg arms "$ARMS" --argjson trials "$TRIALS" \
+                --arg model "${MODEL:-}" \
+                '{text: ({mode: "eval", run_id: $run_id, fixture: $fixture, arms: $arms, trials: $trials}
+                         + (if $model == "" then {} else {model: $model} end) | tojson)}')" ;;
+            improve)
+              # Exactly five keys; an empty holdout is null, never "".
+              body="$(jq -n -c \
+                --arg run_id "$RUN_ID" --arg skill "$SKILL" \
+                --argjson trials "$TRIALS" --arg holdout "$HOLDOUT" \
+                '{text: ({run_id: $run_id, mode: "improve", skill: $skill, trials: $trials,
+                          holdout: (if $holdout == "" then null else $holdout end)} | tojson)}')" ;;
+            guidance-improve)
+              # Exactly five keys; an empty holdout is null, never "".
+              body="$(jq -n -c \
+                --arg run_id "$RUN_ID" --arg section "$SECTION" \
+                --argjson trials "$TRIALS" --arg holdout "$HOLDOUT" \
+                '{text: ({run_id: $run_id, mode: "guidance-improve", section: $section,
+                          trials: $trials,
+                          holdout: (if $holdout == "" then null else $holdout end)} | tojson)}')" ;;
+            draft)
+              # Exactly one JSON object, as draft_new_skill.py payload wrote
+              # and fire-check passed it, with this run's id and draft mode,
+              # `hook_declined: true` exactly when the input said so, and no
+              # other top-level key; it is sent as data, in its own key
+              # order, never read by the shell.
+              if [ -z "${DRAFT_PAYLOAD_FILE:-}" ] || ! jq -e -s --arg run_id "$RUN_ID" \
+                   --arg declined "${HOOK_DECLINED:-false}" \
+                   'length == 1 and (.[0] | type == "object"
+                      and (if $declined == "true"
+                           then keys == ["hook_declined", "mode", "proposal", "run_id"]
+                                and .hook_declined == true
+                           else keys == ["mode", "proposal", "run_id"] end)
+                      and .run_id == $run_id and .mode == "draft"
+                      and (.proposal | type == "object"))' \
+                   "$DRAFT_PAYLOAD_FILE" >/dev/null 2>&1; then
+                echo "::error::the draft payload is missing or is not this run's draft object"
+                exit 1
+              fi
+              body="$(jq -n -c --slurpfile payload "$DRAFT_PAYLOAD_FILE" \
+                '{text: ($payload[0] | tojson)}')" ;;
+            *)
+              echo "::error::mode must be eval, scaffold, improve, guidance-improve or draft"
+              exit 1 ;;
+          esac
+          # The fire API's documented cap on `text`: 65,536 characters. Its
+          # UTF-8 bytes are never fewer, so cap those; refuse, never truncate.
+          if ! jq -e '.text | utf8bytelength <= 65536' <<<"$body" >/dev/null; then
+            echo "::error::the routine payload is over the fire API's 65,536-character text cap; nothing was sent"
+            exit 1
+          fi
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          # The bearer goes to curl on stdin (`-H @-`), so it is never in
+          # argv, where any process on the runner could read it.
+          status="$(printf 'Authorization: Bearer %s\n' "$EVAL_ROUTINE_FIRE_BEARER" \
             | curl --silent --proto '=https' --max-time 60 \
-                --request POST "https://api.anthropic.com/v1/claude_code/routines/$ROUTINE_TRIGGER_ID/fire" \
-                --header @- --header 'anthropic-version: 2023-06-01' \
-                --header 'anthropic-beta: experimental-cc-routine-2026-04-01' \
+                --request POST "$FIRE_URL" \
+                --header @- \
+                --header 'anthropic-version: 2023-06-01' \
                 --header 'Content-Type: application/json' \
-                --data-binary "$body" --output response.json --write-out '%{http_code}') || status=000
-          echo "fire API status: $status"   # never print the response body
-          # No retry: there is no idempotency key, so a retry could start a second run.
-          [ "$status" = 200 ] && jq -e '.claude_code_session_id | strings' response.json >/dev/null
+                --data-binary "$body" \
+                --output "$response" --write-out '%{http_code}')" || status="000"
+          echo "fire API status: ${status}"
+          if [ "$status" != "200" ]; then
+            echo "::error::the fire API answered ${status}; the response body is not printed"
+            exit 1
+          fi
+          # On a refused 200, say what SHAPE the body had without printing
+          # any of it. Every value comes from a fixed vocabulary or is an
+          # integer; the only text taken from the body is an id prefix that
+          # already matched ^[a-z]{1,10}_, anything else prints as "other".
+          describe_shape() {
+            if ! jq empty "$response" >/dev/null 2>&1; then
+              echo "response shape: body_is_json=no"
+              return 0
+            fi
+            jq -rn 'input
+              | (if type == "object" then . else {} end) as $o
+              | $o.claude_code_session_id as $id
+              | $o.claude_code_session_url as $url
+              | "response shape: body_is_json=yes"
+                + " top_level_type=\(type)"
+                + " type_is_routine_fire=\(
+                    if ($o | has("type")) | not then "missing"
+                    elif $o.type == "routine_fire" then "yes" else "no" end)"
+                + " id_type=\($id | type)"
+                + " id_length=\(if ($id | type) == "string" then ($id | length) else 0 end)"
+                + " id_prefix=\(
+                    if ($id | type) != "string" then "none"
+                    elif ($id | test("^[a-z]{1,10}_")) then ($id | capture("^(?<p>[a-z]{1,10}_)") | .p)
+                    else "other" end)"
+                + " url_starts_with_claude_code=\(
+                    if ($url | type) == "string" and ($url | startswith("https://claude.ai/code/"))
+                    then "yes" else "no" end)"
+                + " url_equals_code_plus_id=\(
+                    if ($id | type) == "string" and ($url | type) == "string"
+                       and $url == ("https://claude.ai/code/" + $id)
+                    then "yes" else "no" end)"
+                + " url_equals_code_session_suffix=\(
+                    if ($id | type) == "string" and ($url | type) == "string"
+                       and $url == ("https://claude.ai/code/session_" + ($id | sub("^[a-z]{1,10}_"; "")))
+                    then "yes" else "no" end)"
+                + " top_level_keys=\(if type == "object" then length else 0 end)"
+                + " has_wrapper_key=\(
+                    if type == "object" and (has("data") or has("result") or has("response"))
+                    then "yes" else "no" end)"' \
+              "$response" 2>/dev/null || echo "response shape: unavailable"
+          }
+          # Fail closed on any response shape the docs do not describe. The
+          # docs show `session_<X>` for the id and a URL of
+          # `https://claude.ai/code/` + id. The real response (re-fire run
+          # 37521038032, shape line only) has a `cse_<24 chars>` id and a URL
+          # that is NOT `.../code/session_<X>`. The list_runs API shows the
+          # first run (37518720233) as `cse_<X>` with its URL on
+          # `session_<X>`. So accept either id prefix and a URL that is the
+          # documented `https://claude.ai/code/` + id, or `.../code/session_`
+          # + the same <X>. The accepted URL is rebuilt from the validated
+          # id, never copied from the body.
+          if ! session_id="$(jq -er '
+                select(.type == "routine_fire")
+                | .claude_code_session_id
+                | select(type == "string" and test("^(session|cse)_[A-Za-z0-9]{1,128}$"))' \
+                "$response" 2>/dev/null)"; then
+            echo "::error::the fire API answered 200 with an unrecognized body; it is not printed"
+            describe_shape
+            exit 1
+          fi
+          session_key="${session_id#*_}"
+          if jq -e --arg id "$session_id" \
+               '.claude_code_session_url == ("https://claude.ai/code/" + $id)' \
+               "$response" >/dev/null 2>&1; then
+            session_url="https://claude.ai/code/${session_id}"
+          elif jq -e --arg key "$session_key" \
+               '.claude_code_session_url == ("https://claude.ai/code/session_" + $key)' \
+               "$response" >/dev/null 2>&1; then
+            session_url="https://claude.ai/code/session_${session_key}"
+          else
+            echo "::error::the fire API's session URL does not match its session id; the body is not printed"
+            describe_shape
+            exit 1
+          fi
+          echo "run id: ${RUN_ID}; session link is in the job summary"
+          if [ "$MODE" = scaffold ]; then
+            {
+              echo "### Eval routine fired (scaffold mode)"
+              echo
+              echo "- Run id: \`${RUN_ID}\`"
+              echo "- Candidate: \`${CANDIDATE}\`"
+              echo "- Session: ${session_url}"
+              echo "- Branch: \`claude/scaffold-<fixture id>\`, pushed by the routine; its gate opens the draft PR"
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = improve ]; then
+            {
+              echo "### Eval routine fired (improve mode)"
+              echo
+              echo "- Run id: \`${RUN_ID}\`"
+              echo "- Skill: \`${SKILL}\`, trials: \`${TRIALS}\`"
+              if [ -n "$HOLDOUT" ]; then
+                echo "- Holdout: \`${HOLDOUT}\`"
+              else
+                echo "- Holdout: none"
+              fi
+              echo "- Session: ${session_url}"
+              echo "- Results branch: \`claude/eval-improve-${RUN_ID}\`, pushed only on an accepted candidate; routine-improve-gate.yml validates it and opens the draft PR"
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = guidance-improve ]; then
+            {
+              echo "### Eval routine fired (guidance-improve mode)"
+              echo
+              echo "- Run id: \`${RUN_ID}\`"
+              echo "- Section: \`${SECTION}\`, trials: \`${TRIALS}\`"
+              if [ -n "$HOLDOUT" ]; then
+                echo "- Holdout: \`${HOLDOUT}\`"
+              else
+                echo "- Holdout: none"
+              fi
+              echo "- Session: ${session_url}"
+              echo "- Results branch: \`claude/eval-guidance-improve-${RUN_ID}\`, pushed only on an accepted candidate; routine-guidance-improve-gate.yml validates it and opens the pull request in _agent-guidance"
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = draft ]; then
+            {
+              echo "### Eval routine fired (draft mode)"
+              echo
+              echo "- Run id: \`${RUN_ID}\`"
+              echo "- Proposal: \`${PROPOSAL}\`, hook declined: \`${HOOK_DECLINED}\`"
+              echo "- Session: ${session_url}"
+              echo "- Branch: \`claude/draft-skill-${RUN_ID}\`, always pushed by the routine; routine-draft-skill-gate.yml validates it and opens the pull requests or the hook-proposal issue"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Eval routine fired"
+              echo
+              echo "- Run id: \`${RUN_ID}\`"
+              echo "- Fixture: \`${FIXTURE}\`, arms: \`${ARMS}\`, trials: \`${TRIALS}\`"
+              if [ -n "${MODEL:-}" ]; then
+                echo "- Model: \`${MODEL}\`"
+              fi
+              echo "- Session: ${session_url}"
+              echo "- Results branch: \`claude/eval-${RUN_ID}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

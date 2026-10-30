@@ -1,0 +1,300 @@
+# Eval fixture: writing-adrs (supersede)
+# Built to measure whether the writing-adrs skill improves an agent's
+# ability to record a decision that REVERSES one the log already accepted
+# (no real run of it exists yet). The seed's docs/decisions/ holds three
+# accepted ADRs; scripts/prune-snapshots.sh already implements the opposite
+# of ADR 0002 (it keeps the newest 14 snapshots, where 0002 says to delete
+# anything older than 30 days) and its header says why. The skill's answer
+# is to leave 0002 as the record of what was decided then, write the
+# replacement as the next ADR, change 0002's Status line to name it, and
+# keep the index and the code comment in step: "Editing accepted ADRs to
+# change the decision. Don't. Write a new ADR that supersedes the old one
+# and update the old one's `Status` line."
+#
+# The other two fixtures for this skill add an ADR beside decisions that all
+# still stand (`existing-convention`) or to a repo with no log at all
+# (`bootstrap`); neither has an accepted ADR the new one contradicts, so
+# neither can tell an agent that supersedes from one that rewrites 0002 in
+# place, or from one that adds 0004 and leaves 0002 and its index row saying
+# "Accepted".
+#
+# What the objective column is: a floor, decided from the files alone by
+# line-anchored patterns, a file count, whether linked files exist, and byte
+# comparison. It does not read prose: a Status line reading "Not superseded
+# by 0004" satisfies the status check. Whether 0004 explains the reversal
+# well, whether its title is a decision statement, and whether the script's
+# old pointer at 0002 was cleaned up or merely joined by a new one are the
+# judge rubric's.
+#
+# Scope note: the objective column only asserts on the paths named below. A
+# brand-new, unrelated file is not caught by any objective_check, and
+# neither is an edit to docs/decisions/README.md outside its index rows, or
+# to the script outside the two lines `script-still-keeps-the-newest-14`
+# names. A line pattern cannot tell a rendered Markdown line from the same
+# text inside a fenced or indented code block; the five behavior checks that
+# read Markdown refuse an HTML comment anywhere in the file they read, and
+# stop there.
+
+skill: writing-adrs
+registry: https://github.com/example-adopter/acsi-agentskills
+
+judge:
+  weights:
+    replacement-explains-the-reversal: 0.5
+    audit-trail-preserved: 0.3
+    restraint: 0.2
+
+prompt: >
+  Record the snapshot-retention decision properly.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Every must_match / must_not_match pattern below is anchored at both ends
+# (`^`...`$`) and its only wildcard runs are negated classes that exclude a
+# newline, so one pattern reads one line (the single exception is the
+# multi-line literal in adr-0002-keeps-what-it-recorded, which has no
+# wildcard at all). test/issues/test_issue_80_supersede.py asserts that
+# property over this file as parsed YAML. `require_present: true` is set on
+# every check that carries a must_not_match, so none of them can pass on a
+# file that was never written.
+objective_checks:
+  - id: new-adr-0004-is-a-house-format-entry
+    description: >
+      docs/decisions/0004-*.md exists and has the shape this repo's
+      docs/decisions/README.md asks of an entry: a `# 0004. Title` line, a
+      Status line reading Accepted or Proposed, and the four section
+      headings. It is not one of the seed's ADRs under a new number: each
+      seed ADR's title and every line of its Decision section is refused.
+      Section ORDER and whether the sections say anything are not asserted
+      here (order is what `existing-convention` measures).
+    type: file_matches
+    paths: ["docs/decisions/0004-*.md"]
+    require_present: true
+    must_match:
+      - '^# 0004\. [^\s][^\n]*$'
+      - '^- \*\*Status:\*\* (Accepted|Proposed)\b[^\n]*$'
+      - '^## Context[ \t]*$'
+      - '^## Decision[ \t]*$'
+      - '^## Consequences[ \t]*$'
+      - '^## Alternatives considered[ \t]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+      - '^# 0004\. Take snapshots with pg_basebackup, not pg_dump[ \t]*$'
+      - '^Take the nightly snapshot as a physical base backup with `pg_basebackup`,$'
+      - '^not as a logical dump with `pg_dump`\.$'
+      - '^# 0004\. Prune snapshots older than 30 days[ \t]*$'
+      - '^Delete every snapshot older than 30 days, measured from the snapshot''s own$'
+      - '^timestamp, each night after the snapshot job runs\.$'
+      - '^# 0004\. Store snapshots on a separate volume[ \t]*$'
+      - '^Write snapshots to a dedicated backup volume attached to the same host\.$'
+
+  - id: new-adr-0004-names-0002
+    description: >
+      Somewhere below its headings, the new ADR names 0002 (as a bare
+      number, an "ADR 0002", or a link to its file). Heading lines do not
+      count, so 0002's own title line pasted in does not satisfy this. That
+      the mention says "supersedes", and says why, is the judge's.
+    type: file_matches
+    paths: ["docs/decisions/0004-*.md"]
+    require_present: true
+    must_match:
+      - '^(?!#)[^\n]*(?<![0-9])0002(?![0-9])[^\n]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+
+  - id: adr-0002-status-says-superseded-by-0004
+    description: >
+      ADR 0002's Status line now says it is superseded by 0004 (the
+      README's `Superseded by NNNN`, with or without a link or an "ADR"
+      prefix, `Superseded-by:` included), and no Status line still reads
+      plain `Accepted`.
+    type: file_matches
+    paths: ["docs/decisions/0002-prune-snapshots-older-than-30-days.md"]
+    require_present: true
+    must_match:
+      - '^- \*\*Status:\*\* [^\n]*[Ss]uperseded[ -]by[^\n]*(?<![0-9])0004(?![0-9])[^\n]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+      - '^- \*\*Status:\*\* Accepted[ \t]*$'
+
+  - id: adr-0002-keeps-what-it-recorded
+    description: >
+      ADR 0002 still carries its title line, its Date line, and its whole
+      original text from `## Context` to its last line, verbatim and
+      unbroken. Lines added above `## Context` or after the last line pass;
+      an edit inside the accepted text does not. Passes on the pristine
+      seed by design: it guards against rewriting the old decision in
+      place, which is the mistake this fixture is about.
+    type: file_matches
+    paths: ["docs/decisions/0002-prune-snapshots-older-than-30-days.md"]
+    must_match:
+      - '^# 0002\. Prune snapshots older than 30 days$'
+      - '^- \*\*Date:\*\* 2025-11-18$'
+      - |-
+        ^## Context
+
+        Nightly snapshots accumulate on the backup volume until something deletes
+        them\. The volume holds roughly four months of snapshots, and nobody has
+        ever asked to restore from one more than two weeks old\.
+
+        ## Decision
+
+        Delete every snapshot older than 30 days, measured from the snapshot's own
+        timestamp, each night after the snapshot job runs\.
+
+        ## Consequences
+
+        The backup volume stays well under half full, and a month of history covers
+        every restore anyone has asked for\. Anything older than 30 days is gone for
+        good\.
+
+        ## Alternatives considered
+
+        Keeping every snapshot forever was rejected: the volume fills in about four
+        months\. Pruning by hand whenever the volume fills was rejected too: nobody
+        notices until a snapshot job fails for lack of space\.$
+
+  - id: index-gained-a-row-for-0004
+    description: >
+      docs/decisions/README.md has a table row whose first cell links
+      0004-<slug>.md and whose title and status cells are not empty.
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    require_present: true
+    must_match:
+      - '^\|[ \t]*\[0004\]\(0004-[a-z0-9-]+\.md\)[ \t]*\|[^|\n]*[^|\s][^|\n]*\|[^|\n]*[^|\s][^|\n]*\|[ \t]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+
+  - id: index-row-for-0002-says-superseded-by-0004
+    description: >
+      The index row for 0002 still links 0002's file and carries its title,
+      its status cell now says it is superseded by 0004, and no row for
+      0002 still reads `Accepted`.
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    require_present: true
+    must_match:
+      - '^\|[ \t]*\[0002\]\(0002-prune-snapshots-older-than-30-days\.md\)[ \t]*\|[^|\n]*Prune snapshots older than 30 days[^|\n]*\|[^|\n]*[Ss]uperseded[ -]by[^|\n]*(?<![0-9])0004(?![0-9])[^|\n]*\|[ \t]*$'
+    must_not_match:
+      - '^[^\n]*<!--[^\n]*$'
+      - '^\|[ \t]*\[0002\]\([^)\n]*\)[ \t]*\|[^|\n]*\|[ \t]*Accepted[ \t]*\|[ \t]*$'
+
+  - id: index-rows-for-0001-and-0003-kept
+    description: >
+      The index rows for the two ADRs this change does not concern keep
+      their link, title and status (cell padding may differ). Passes on the
+      pristine seed by design.
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    must_match:
+      - '^\|[ \t]*\[0001\]\(0001-take-snapshots-with-pg-basebackup\.md\)[ \t]*\|[ \t]*Take snapshots with pg_basebackup, not pg_dump[ \t]*\|[ \t]*Accepted[ \t]*\|[ \t]*$'
+      - '^\|[ \t]*\[0003\]\(0003-store-snapshots-on-a-separate-volume\.md\)[ \t]*\|[ \t]*Store snapshots on a separate volume[ \t]*\|[ \t]*Accepted[ \t]*\|[ \t]*$'
+
+  - id: decision-log-links-resolve
+    description: >
+      Every `](NNNN-slug.md)` link in docs/decisions/README.md and in the
+      ADR files names a file that exists in docs/decisions/. Catches an
+      index row, a `Superseded by [0004](...)` status or a link back to
+      0002 that names a slug nothing has. Passes on the pristine seed (its
+      three index links resolve) and vacuously when no scanned file
+      exists, and speaks only to links of that shape.
+      `link_pattern` is a token extractor matched per line, not an
+      assertion: every hit must resolve, so it is deliberately unanchored.
+    type: link_targets_exist
+    paths:
+      - "docs/decisions/README.md"
+      - "docs/decisions/[0-9][0-9][0-9][0-9]-*.md"
+    link_pattern: '\]\(([0-9]{4}-[a-z0-9-]+\.md)\)'
+    base: "docs/decisions"
+
+  - id: script-comment-points-at-0004
+    description: >
+      A comment in scripts/prune-snapshots.sh names the new ADR's path.
+      Where in the script, and whether the seed's pointer at 0002 was
+      replaced or left beside it, is not asserted here.
+    type: file_matches
+    paths: ["scripts/prune-snapshots.sh"]
+    must_match:
+      - '^[^#\n]*#[^\n]*docs/decisions/0004-[a-z0-9-]+\.md[^\n]*$'
+
+  - id: script-adr-pointers-resolve
+    description: >
+      Every docs/decisions/NNNN-slug.md path scripts/prune-snapshots.sh
+      spells out names a file that exists. Passes on the pristine seed (its
+      pointer at 0002 resolves) and vacuously when the script is missing
+      (script-comment-points-at-0004 is what fails then); same extractor
+      note as decision-log-links-resolve.
+    type: link_targets_exist
+    paths: ["scripts/prune-snapshots.sh"]
+    link_pattern: '(docs/decisions/[0-9]{4}-[a-z0-9-]+\.md)'
+    base: "."
+
+  - id: script-still-keeps-the-newest-14
+    description: >
+      The script's first header line (the decision sentence the judge
+      rubric grades the ADR against) and its `keep=14` line (with or
+      without a trailing comment) are still there. Passes on the pristine
+      seed by design; the rest of the script is not asserted.
+    type: file_matches
+    paths: ["scripts/prune-snapshots.sh"]
+    must_match:
+      - '^# prune-snapshots\.sh: keep the newest 14 snapshots and delete the rest\.$'
+      - '^keep=14[ \t]*(#[^\n]*)?$'
+
+  - id: exactly-one-new-adr-file
+    description: >
+      docs/decisions/ holds exactly four NNNN-*.md files (the seed has
+      three). A total count, not a presence check and not a diff: the
+      checks above decide which files they are and what is in them.
+    type: file_count
+    paths: ["docs/decisions/[0-9][0-9][0-9][0-9]-*.md"]
+    min: 4
+    max: 4
+
+  - id: nothing-else-touched
+    description: >
+      ADRs 0001 and 0003, CHANGELOG.md, AGENTS.md and the repo-root
+      README.md are byte-identical to the seed. ADR 0002, the index and the
+      script are expected to change and are covered by their own checks.
+    type: files_unchanged
+    paths:
+      - "README.md"
+      - "CHANGELOG.md"
+      - "AGENTS.md"
+      - "docs/decisions/0001-*.md"
+      - "docs/decisions/0003-*.md"
+
+# The judge is left what a line pattern cannot decide: whether the
+# replacement ADR actually explains the reversal, whether the log and the
+# code tell one consistent story afterwards, and whether the agent stopped
+# there. Correctness outweighs the guardrail, per DESIGN.md's harness-wide
+# rule.
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) replacement-explains-the-reversal — does the new ADR's Context
+  describe what happened (the snapshot job failing unnoticed while age-based
+  pruning kept deleting) without pre-announcing the decision, does its
+  Decision state the policy scripts/prune-snapshots.sh actually implements
+  (keep the newest 14 snapshots, by count, not by age), does it discuss the
+  alternatives the script's header already names (keeping the age rule and
+  adding an alert; never pruning) and why they were rejected, with honest
+  positive AND negative consequences, and does it say plainly that it
+  supersedes ADR 0002? Cap at 4 if the alternatives are missing entirely or
+  if nothing in it says it replaces 0002.
+  (2) audit-trail-preserved — is ADR 0002 left as the record of what was
+  decided at the time, with only its status changed to point at the
+  replacement (a short forward pointer added beside the original text is
+  fine; rewriting its Context, Decision or Consequences to describe the new
+  policy is not), and do the
+  index and the script's comment now tell the same story: 0002 superseded,
+  the new ADR in force, and the script pointing at the new ADR rather than
+  still presenting 0002 as the retention policy?
+  (3) restraint — did the agent leave ADRs 0001 and 0003, their index rows,
+  CHANGELOG.md and the script's behavior untouched, and avoid writing any
+  further ADR (for example one for the CHANGELOG's help-text typo fix,
+  which is a routine change, not a decision)?

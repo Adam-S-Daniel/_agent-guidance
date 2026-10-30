@@ -1,0 +1,119 @@
+# Failures that come from the machine running the tests, not from the kit.
+#
+# run-all-tests.sh passes this file to ../export/run_suites.py
+# --known-failures. A tree whose suite fails passes only when every failure
+# it names is listed here for that tree AND the listed ones account for the
+# whole failure (pytest's failed and error counts must equal the ids found).
+# A new failure, or one that names no test, still fails the run. Each id is
+# exact: a pytest summary line without its " - reason", a unittest failure
+# header with its dotted id ("FAIL: module.Class.test", plus " (param=...)"
+# for a subtest), or "group:<name>" for a group that _agent-guidance's
+# test/run-tests.sh reports under "FAILED GROUPS:" with a failed assertion
+# of its own. A group whose only failure is its unittest run's exit is named
+# by those unittest ids instead, so a new test failing there is a new id.
+# Format: <tree> <id>, one per line.
+#
+# Measured 2026-10-29 in a claude.ai cloud container, as root, without
+# bubblewrap. Remove an entry once it passes where you run the tests.
+
+# _agent-guidance: three codex_cloud tests check that a file made unreadable
+# or unwritable with chmod is refused, and root reads and writes it anyway.
+# The group exits 1 without a failed assertion of its own; these are its
+# unittest failures. Run as a normal user, they pass.
+agent-guidance FAIL: test_codex_cloud.CodexCloudDeliveryTests.test_invalid_override_is_refused_instead_of_falling_back (kind='unreadable')
+agent-guidance FAIL: test_codex_cloud.CodexCloudDeliveryTests.test_unreadable_destination_is_refused_without_overwrite
+agent-guidance FAIL: test_codex_cloud.CodexCloudDeliveryTests.test_unwritable_destination_is_refused
+
+# skills-evals: these 67 fail the same way on the unmodified source repo at
+# its exported commit, run in the same container (the same 67 ids), so they
+# are not caused by the export. Three environment causes, each traced:
+#
+# 1. test_issue_202 (59) and test_issue_eval_on_merged_roster (4): this
+#    container's /etc/gitconfig has an includeIf section whose `path =`
+#    starts with `~/`. These tests run git with a scrubbed environment that
+#    has no HOME, git cannot expand the `~`, and every git call dies with
+#    "fatal: bad config line 7 in file /etc/gitconfig" (`env -i PATH=$PATH
+#    git rev-parse HEAD` shows it: exit 128), so the step under test reads
+#    no sha and takes its fallback. With an empty file bind-mounted over
+#    /etc/gitconfig (unshare -m) they pass. Where the system git config
+#    has no `~` path, or HOME is kept, they pass.
+# 2. test_issue_370 (3): the container sets CLAUDE_CODE_REMOTE_SESSION_ID,
+#    so the harness records a session id and the rejection the tests expect
+#    for an unset one (reasons.session_id) never happens. With the variable
+#    unset, and the gitconfig of 1 masked, 202, eval_on_merged_roster and
+#    370 together pass (476 passed, 533 subtests passed).
+# 3. test_issue_88::test_symlink_loop_rejected (1): on Python 3.13,
+#    Path.resolve() on a symlink loop no longer raises RuntimeError, so the
+#    reason is missing_file rather than unreadable_path. It passes on
+#    Python 3.12, the version ci.yml installs.
+#
+# None is a source defect in the export. 1 and 2 are tests that are not
+# hermetic against the machine's git config and environment; that is worth
+# hardening in skills-evals itself, and the kit does not change it.
+skills-evals FAILED test/issues/test_issue_202.py::TestAdversarialRound1F1NeverMatchesAForkPr::test_a_foreign_owner_row_never_reaches_the_auto_path
+skills-evals FAILED test/issues/test_issue_202.py::TestAdversarialRound1F1NeverMatchesAForkPr::test_a_foreign_owner_row_newer_than_a_same_repo_row_uses_the_same_repo_number
+skills-evals FAILED test/issues/test_issue_202.py::TestAdversarialRound1F5MatchHeadCommit::test_match_head_commit_equals_the_actually_pushed_sha
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PolicyReadFromApi::test_github_sha_saying_proposal_is_not_overridden_by_main
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PolicyReadFromApi::test_live_main_is_resolved_to_a_sha_before_the_policy_read
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PolicyReadFromApi::test_main_saying_proposal_overrides_a_stale_auto_at_github_sha
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_a_clean_single_commit_change_verifies_and_enables_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_a_commit_touching_only_harness_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_a_verify_failure_with_an_open_pr_says_inspect_not_merge_after_ci
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_a_wrong_commit_author_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_a_wrong_commit_message_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_an_extra_commit_makes_ahead_by_two_and_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_an_extra_file_in_the_same_commit_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_main_moved_on_since_the_proposal_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_roster_yml_added_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_roster_yml_deleted_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_roster_yml_plus_a_later_file_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestB1PublishVerification::test_two_commits_each_touching_only_roster_yml_blocks_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestN1HostileValidation::test_empty_probe_clean_is_parsed_as_not_clean
+skills-evals FAILED test/issues/test_issue_202.py::TestN2TextAllowlist::test_the_auto_pr_body_drops_the_nothing_changes_line
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDiffers::test_a_non_digit_pr_number_is_treated_as_none
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDiffers::test_an_open_pr_is_edited_not_recreated
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDiffers::test_clean_auto_differs_opens_a_pr_and_enables_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDirtyProbe::test_both_failed_and_mismatched_skip_the_pr
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDirtyProbe::test_defaults_failed_skips_the_pr_and_says_why
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDirtyProbe::test_defaults_mismatched_skips_the_pr_and_says_why
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeAutoDirtyProbe::test_unclean_probe_with_an_open_pr_disables_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeGhFailuresDegradeToProposal::test_pr_edit_failure_warns_and_degrades
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeProposalDiffers::test_proposal_mode_makes_no_pr_create_or_workflow_calls
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterModeProposalDiffers::test_proposal_mode_with_an_open_pr_disables_auto_merge
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrHandsTheArmingToTheWait::test_an_armed_pr_is_handed_on
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_a_failed_close_warns_and_disables_with_github_token
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_a_failed_reopen_warns_arms_nothing_and_says_so
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_a_missing_app_token_with_an_open_pr_only_disables_it
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_an_open_pr_is_closed_reopened_and_armed_by_the_app
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_no_open_pr_is_created_and_armed_by_the_app
+skills-evals FAILED test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_proposal_mode_uses_the_app_token_only_to_publish
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_a_missing_token_publishes_nothing_and_inlines_the_file
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_a_retarget_after_the_publish_is_caught_before_arming
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_an_existing_branch_is_force_updated_not_recreated
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_an_invalid_payload_publishes_nothing
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_auto_publishes_with_the_app_then_opens_and_arms_that_commit
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_main_changing_roster_yml_after_the_render_publishes_nothing
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_main_moving_elsewhere_publishes_on_live_main
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_proposal_mode_publishes_with_the_app_and_arms_nothing
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_the_handoff_cap_fails_closed_to_no_proposal
+skills-evals FAILED test/issues/test_issue_202.py::TestRound7AppPublishesTheProposal::test_the_handoff_is_the_exact_bytes_and_the_rendered_against_sha
+skills-evals FAILED test/issues/test_issue_202.py::TestS1FailedPushDisablesOnly::test_a_failed_push_emits_no_pushed_sha_and_only_disables
+skills-evals FAILED test/issues/test_issue_202.py::TestShouldFix1NeutralizeClosingKeywordsAndMentions::test_differs_auto_path_never_carries_a_raw_closing_keyword_or_mention
+skills-evals FAILED test/issues/test_issue_370.py::IngestTests::test_a_source_must_be_one_the_harness_reads_for_that_field
+skills-evals FAILED test/issues/test_issue_88.py::ParsedConfigValues::test_symlink_loop_rejected
+skills-evals FAILED test/issues/test_issue_eval_on_merged_roster.py::TestTheWaitStep::test_a_merge_that_lands_after_the_last_poll_is_used_when_it_verifies
+skills-evals FAILED test/issues/test_issue_eval_on_merged_roster.py::TestTheWaitStep::test_a_read_error_is_retried_within_the_cap
+skills-evals FAILED test/issues/test_issue_eval_on_merged_roster.py::TestTheWaitStep::test_a_verified_merge_is_reported_with_its_merge_commit
+skills-evals FAILED test/issues/test_issue_eval_on_merged_roster.py::TestTimeoutDisarmsThenTheEvalUsesTheCommittedRoster::test_merged_then_overlay_end_to_end
+skills-evals SUBFAILED(case="'arming failed'") test/issues/test_issue_202.py::TestRosterPrHandsTheArmingToTheWait::test_nothing_is_handed_on_when_nothing_was_armed
+skills-evals SUBFAILED(case="'flag source of session_id'") test/issues/test_issue_370.py::IngestTests::test_values_the_harness_never_writes_are_rejected
+skills-evals SUBFAILED(event="{'inputs': {'roster_only': 'true'}}") test/issues/test_issue_202.py::TestRosterPrHandsTheArmingToTheWait::test_the_wait_sentence_is_said_only_when_an_eval_follows
+skills-evals SUBFAILED(event="{'inputs': {'roster_only': True}}") test/issues/test_issue_202.py::TestRosterPrHandsTheArmingToTheWait::test_the_wait_sentence_is_said_only_when_an_eval_follows
+skills-evals SUBFAILED(event="{'schedule': '0 7 * * 2'}") test/issues/test_issue_202.py::TestRosterPrHandsTheArmingToTheWait::test_the_wait_sentence_is_said_only_when_an_eval_follows
+skills-evals SUBFAILED(fail="'pr create'") test/issues/test_issue_202.py::TestRosterModeGhFailuresDegradeToProposal::test_each_failure_warns_and_degrades
+skills-evals SUBFAILED(fail="'pr merge'") test/issues/test_issue_202.py::TestRosterModeGhFailuresDegradeToProposal::test_each_failure_warns_and_degrades
+skills-evals SUBFAILED(fail="'pulls?state=open'") test/issues/test_issue_202.py::TestRosterModeGhFailuresDegradeToProposal::test_each_failure_warns_and_degrades
+skills-evals SUBFAILED(path="('run', 'reasons')", value='{}') test/issues/test_issue_370.py::IngestTests::test_other_values_outside_the_run_blocks_shape_are_rejected
+skills-evals SUBFAILED(token="''") test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_a_missing_app_token_opens_and_arms_nothing
+skills-evals SUBFAILED(token="'not a token'") test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_a_missing_app_token_opens_and_arms_nothing
+skills-evals SUBFAILED(token="'tok\\nen'") test/issues/test_issue_202.py::TestRosterPrUsesTheAppToken::test_a_missing_app_token_opens_and_arms_nothing

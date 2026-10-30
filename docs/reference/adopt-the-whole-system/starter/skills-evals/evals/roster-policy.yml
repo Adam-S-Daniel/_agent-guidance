@@ -1,0 +1,351 @@
+# Model roster policy — the thresholds `harness/roster.py` reads.
+#
+# The roster answers "which models should this harness be running against
+# today?" from two inputs: what the Models API says is AVAILABLE, and what the
+# fleet is actually USING (the census published to `persistent/eval-results` as
+# `usage/latest.json`). Arms pinned as literals in each fixture went stale
+# silently — nothing here noticed when a model shipped or retired — which is
+# the problem this file exists to close (#67).
+#
+# Rationale and the numbers' provenance belong in an ADR, not in a comment
+# block: see ADR (to be written under #73) —
+# https://github.com/Adam-S-Daniel/skills-evals/issues/73
+#
+# NO MODEL IDS LIVE HERE, deliberately, and none live in roster.py either. A
+# tier is inferred from the family word in a model's own id, matched against
+# the ladder below; that is the whole of the harness's model knowledge, and it
+# is why a model that ships after this file was written needs no edit here.
+# test/run_tests.py::TestIssue67::test_no_model_ids_are_hardcoded_outside_fixtures
+# is the guard.
+
+# `roster_mode` selects how `.github/workflows/eval.yml`'s "Propose a
+# roster change" step handles a proposal that differs from the committed
+# roster. `roster.py` never reads this key — it is machinery for the
+# workflow step alone. See
+# docs/decisions/0003-roster-merges-automatically.md.
+#
+#   auto     — the proposal is pushed to `roster/proposal` as today, AND
+#              (only when this run's vendor-default probe was clean: no
+#              `defaults_failed`, no `defaults_mismatched`) a pull request
+#              from that branch is opened or updated, `ci.yml` is dispatched
+#              on its head so the required `test` check reports there, and
+#              the PR is set to merge automatically once it passes. A
+#              tracking issue is still filed, linking the PR.
+#   proposal — today's flow: the branch is pushed and a tracking issue is
+#              filed; a human opens and merges the pull request. Set this to
+#              restore human approval without any other change.
+#
+# Missing entirely, or any value other than the two above, is treated as
+# `proposal` — silently when the key is simply absent, with a fixed
+# `::warning::` when it is present and wrong.
+roster_mode: auto
+
+# Capability ladder, weakest rung first. A model's tier is the WEAKEST rung
+# below whose word appears as a dash-separated token anywhere in its id —
+# `rung_of()` walks the ladder from the top of this list down and returns on
+# the first rung that matches, not the first word to appear positionally in
+# the id string itself. A rung may be written as a bare word or as a LIST OF
+# PEERS that rank identically — same tier, same price, different access
+# programme — which is what `[fable, mythos]` is below.
+#
+# A model whose id carries none of these words is UNRANKED. It takes no roster
+# seat, it is listed under `unranked` in the published roster with that reason,
+# and — this is the part that bites — its usage is excluded from the share
+# denominator. Leaving it in pushed every ranked model's share towards zero
+# (measured: a model at 60 turns a week computed at 5.7% against 1000 unranked
+# turns a week) and quietly emptied the arm set. Adding a rung here is how a
+# new family becomes visible; there is nothing else to change.
+tiers:
+  - haiku
+  - sonnet
+  - opus
+  - [fable, mythos]
+
+# ASSUMPTION, recorded here because the code acts on it: an id that is another
+# id plus a `-YYYYMMDD` suffix is a dated SNAPSHOT of that model, not a second
+# model. Both are collapsed onto the undated alias for ranking, seating and
+# usage — otherwise one model takes two arm seats and its usage splits across
+# two census keys, halving both shares. The collapse only happens when the
+# undated alias is itself in the catalogue; a catalogue that publishes only
+# dated ids has nothing to collapse onto and every id stands on its own.
+# A PREVIOUS ARM whose listed form switches between dated and undated from
+# one run to the next — the Models API is free to do that — is still that
+# same arm, whether or not the family's vendor-default probe succeeded this
+# run: a frozen family holds its previous arms under whichever spelling
+# this run's catalogue lists, and a seated default's tier stays on the
+# roster through another previous arm seated under either spelling (#203
+# probe round 9). A dated snapshot replaced by a DIFFERENT dated snapshot
+# of the same base — the base itself never listed — is a different model,
+# not a rename: the old one retires as no longer returned by the Models
+# API, and, under a freeze that would otherwise leave the family with no
+# held arm left in the API, the new one may still be seated by usage, as a
+# family with no listed seat (#203 adversarial round 10, S1).
+
+# A since-retired model's usage still counts toward the denominator when
+# this harness's own history says it was once in the catalogue: the
+# published roster carries `catalogue_seen`, the union of every id the
+# Models API has ever listed across runs. A model's usage stops counting
+# only once no run has ever observed it — FIRST-RUN CAVEAT: with no
+# `catalogue_seen` history yet (a genuine first run, a previous roster that
+# could not be read, OR THE MIGRATION CASE — the `previous.json` already
+# published on `persistent/eval-results` predates this field entirely, so the first
+# run after it merges behaves exactly like a genuine first run), a model
+# retired before this harness's first run is unattributable, and its usage
+# silently drops from the denominator until a run observes it directly. An
+# earlier approach inferred this from the id's SHAPE instead; withdrawn
+# because shape cannot tell a since-retired real model from a
+# plausibly-named proxy alias. A SECOND migration applies to
+# `catalogue_seen`'s own shape (below): the bare id string it used to
+# publish is accepted for one run and rewritten with an age.
+
+# A model becomes an arm if it carries at least this share of census usage
+# over the trailing window...
+arm_enter_usage_pct: 10
+# Shortened from 4 to 2 by the owner on 2026-10-25 so tier qualification
+# reflects current use.
+arm_enter_window_weeks: 2
+
+# ...or if it is the newest model IN A TIER THAT ALREADY QUALIFIES ON THAT
+# USAGE BAR, and has been out at least this long. The cooling-off is the
+# fleet's standing convention for new versions: day-one models move, and a
+# roster that chases them re-baselines the eval every week.
+#
+# "IN A TIER THAT ALREADY QUALIFIES" is the owner's decision of 2026-09-22, and it
+# is the whole of the second rule's scope. The rule used to read "newest in
+# its tier" full stop, across every tier on the ladder, which seated the
+# newest haiku and the newest fable on a census showing the fleet ran 6.3%
+# and 3.0% of its turns on them — two arms of a four-arm roster measuring
+# tiers nobody uses, at four arms' worth of spend. A tier now earns its
+# newest-model seat by having some model of its own at or above
+# `arm_enter_usage_pct`: on the 2026-09-22 census (sonnet-5 45.4%, opus-5
+# 45.2%, haiku 6.3%, fable-5-1 3.0%) that is the sonnet and opus tiers, both
+# of whose newest models are already the qualifying ones, so the roster is
+# the two usage seats and nothing else. Ship an opus 5.1 and the opus tier —
+# which qualifies — seats it beside opus-5 on the next run, three arms; ship
+# a newer haiku or fable and nothing changes, because those tiers qualify for
+# nothing. NO KNOB WAS ADDED FOR THIS: the rule reads the entry bar above and
+# has no threshold of its own.
+#
+# WITH NO USABLE USAGE THE RULE REVERTS TO NEWEST PER TIER ACROSS ALL TIERS,
+# and that is deliberate rather than an omission. No usable census means no
+# qualifying tier, so a restricted rule would seat nobody and publish an
+# empty roster; the eight verdicts `_census_verdict` distinguishes (see
+# `census_max_age_days` below) therefore keep the fallback they always had,
+# and every arm's reason still names which of the eight it was. The same
+# holds when the census is fresh overall but the ENTER window's own ranked
+# total is under one of the floors below — there is no share to qualify a
+# tier with. A usable census that simply names no model at the entry bar is a
+# different thing: that is evidence, and it says no tier qualifies, so the
+# only arms are previous ones held over the exit bar.
+#
+# SINCE #202 ALL OF THE ABOVE APPLIES ONLY TO A TIER WITH NO RESOLVED VENDOR
+# DEFAULT, and to the preflight pick. Where `scripts/probe_model_defaults.py`
+# asked the freshly installed Claude Code CLI — with no credential — which
+# model the tier's family alias resolves to (#203), and that model is
+# available this run, it is the tier's seat the moment the tier is on the
+# roster — no cooling-off: the vendor making it the default is the signal the
+# cooling-off was standing in for. See `superseded_exit_weeks` below and
+# docs/decisions/0002-roster-follows-vendor-defaults.md.
+#
+# REFINEMENTS (#203 rounds 1 and 2). (1) The default's OWN previous seat does
+# not keep its tier on the roster: with no qualifying usage, no other
+# still-seated previous arm in the tier and a usable census, a default that
+# is a previous arm gets the ordinary exit check below
+# (`arm_exit_usage_pct` over `arm_exit_window_weeks`) and can retire, and
+# that check reads the TIER's combined share — every model of the default's
+# family, over the same denominator — not the default's own, so a tier
+# between the exit and entry bars keeps an arm while the fleet moves from
+# one version to the next. (2) A previous arm NEWER than its tier's default
+# earns no new seat but is not retired on sight: it gets the same exit
+# check. (3) A default governs the models of its own family word only: a
+# peer family in the same rung (`[fable, mythos]` below) keeps the rules
+# above.
+#
+# A FAILED PROBE FREEZES ITS FAMILY FOR THAT RUN (#203 probe round 1). A
+# family the probe failed for (an error recorded for its alias, an answer in
+# the wrong tier or family, a model with no `created_at` to start a
+# predecessor's buffer from (`no-created-at` — probe round 5, R5-1), or no
+# usable document) keeps every previous arm's seat and retires nothing but a
+# model gone from the Models API. While it still holds a seat the Models API
+# lists it seats nothing new (#203 probe round 3); only a family that would
+# otherwise vanish is seated — by the entry bar above, or, with no usable
+# enter window, as the newest in its tier as with no probe — and the roster
+# says so loudly (`defaults_failed`, the summary's first lines, a
+# `::warning::`). Falling back to the rules above instead flipped seats on
+# one bad week. A default the probe answered but this run's catalogue does
+# not otherwise match (not available, an ambiguous snapshot) FREEZES its
+# family too, through the identical rule (#203 probe round 7, R7-1 — the
+# governing guarantee, first stated in probe round 5 as R5-2: a single run
+# whose probe answer is a failure or a mismatch changes no seat a clean run
+# would not) — only the wording (`defaults_mismatched`) says a mismatch
+# rather than a failure. A persistent mismatch that holds a listed seat is
+# surfaced just as loudly: its own fixed `::warning::` in the proposal step
+# (#203 probe round 8, R8-1) and an open tracking issue on "same" too, whose
+# title says "probe failed" only for a genuine failure, its own wording for
+# a mismatch, or both when both are present in the same run. Nothing is
+# carried to the next run (the owner's decision of 2026-09-28): the
+# carried-defaults block and its expiry knob that briefly stood here are
+# gone.
+#
+# SET TO 0 BY THE OWNER ON 2026-09-27 (#202): "Removing cool off from haiku
+# and preflight." At 0 every model with a `created_at` is past the
+# cooling-off, so the newest-in-tier rule above (for a family with no
+# resolved vendor default: one the probe skips, e.g. mythos) and the
+# preflight pick both take the
+# newest model at once. The knob and the machinery that reads it are kept, so a
+# positive value restores the cooling-off without a code change.
+cooling_off_days: 0
+
+# An arm keeps its seat until it falls under this share for the whole trailing
+# window (or disappears from the Models API, which is immediate). Hysteresis,
+# not a second entry bar: without it a model hovering at the entry threshold
+# joins and leaves the arm set on alternate runs and every week-over-week
+# comparison is against a different arm.
+arm_exit_usage_pct: 2
+# Shortened from 8 to 2 by the owner on 2026-10-25 so tier qualification
+# reflects current use.
+arm_exit_window_weeks: 2
+
+# A previous arm whose tier's vendor default is now a NEWER model (#202,
+# the owner's decision of 2026-09-27) is not measured over the exit window
+# above. It keeps its seat until at least this many complete ISO weeks have
+# passed since its successor's `created_at` AND its share over the most
+# recent such weeks is under `arm_exit_usage_pct`; a stale or too-thin census
+# holds it, as it holds any arm. One week lets the fleet's usage move to the
+# new default before the old one is dropped. 0 retires it on the first run
+# that sees it superseded — the "no buffer" setting. This buffer is for an arm
+# OLDER than the default only (#203 round 1): the default itself, once seated,
+# and a previous arm NEWER than the default are measured by the exit window
+# rule above.
+#
+# SET TO 0 BY THE OWNER ON 2026-10-25: "Having it there is entirely
+# backward-looking... based on what is in use now." A model the vendor's
+# default has replaced retires on the first roster run that sees it replaced,
+# whatever the census says. The knob and the machinery that reads it are kept,
+# so a positive value restores the buffer without a code change.
+superseded_exit_weeks: 0
+
+# A census older than this is not evidence of anything current. Past it the
+# roster falls back to "newest per tier" and says so, in words, in every arm's
+# reason — degrading loudly rather than publishing a stale-usage roster that
+# looks exactly like a fresh one.
+census_max_age_days: 14
+
+# A census can hold a nonzero ranked, attributable total that is still not
+# enough to be evidence of anything — almost the whole fleet routed through
+# Bedrock/Vertex/a proxy (landing under `other`) with one stray direct-API
+# turn leaves `ranked_total` at 1, which used to read as CENSUS_FRESH and
+# could retire a previous arm with no counted usage of its own at a false
+# 0.0%. Below this many ranked, attributable turns over the window, the
+# census falls back the same way an entirely-unranked one does. Applied per
+# window, not only over the exit-window union: a handful of ranked turns can
+# clear this floor over the union while the enter window carries
+# next to none of them, which used to compute a false 100.0% entry share on
+# one lone turn.
+min_ranked_turns: 20
+
+# ...and a RELATIVE floor beside the absolute one above: the ranked,
+# attributable total must also be at least this fraction of the RAW window
+# total. The absolute floor alone passes `{other: 100000/wk, some-model: 20
+# turns total}` as usable evidence over 800,020 raw turns — 20 turns clears
+# min_ranked_turns while being a vanishing fraction of what the fleet
+# actually did, which used to retire a previous arm with no counted usage
+# of its own at a literal 0.0%. Applied per window (enter AND exit), not
+# only over the exit-window union: a handful of ranked turns elsewhere in the
+# union can clear this floor while one window's OWN ranked/raw ratio still
+# fails it — which used to compute a false 100.0% entry share on 25 turns
+# out of 4,000,025 raw ones in the enter window alone.
+min_ranked_share: 0.01
+
+# `catalogue_seen` — the roster's record of every model id the Models API
+# has EVER listed, across runs (see roster.py's module docstring, property
+# 5) — lives in the COMMITTED `evals/roster.yml`, on `main`. `main` is
+# ruleset-protected and pull-request-only, so an entry cannot appear there
+# or vanish from there without a reviewed commit. That is
+# docs/decisions/0001-roster-trusted-on-main.md, and it is what replaced
+# reading the history back from `roster/latest.json` on `persistent/eval-results` —
+# a branch other jobs on other machines write to, which this harness
+# treated as untrusted input (issue #147).
+#
+# Every entry carries a `last_seen` date, refreshed to today whenever the
+# Models API actually returns that id THIS run. An entry is DROPPED once
+# its `last_seen` is older than this many days, and that is the ONLY way
+# an entry leaves. Picked at roughly 6 months: long enough that a model
+# still genuinely in occasional use across the harness's own weekly
+# cadence keeps counting, short enough that an id nobody has observed in
+# half a year stops propping up a denominator. This run's own live ids
+# are never aged out (they get `last_seen` = today every run) — only
+# accumulated history can be.
+#
+# WHAT USED TO SIT HERE, AND WHY IT IS GONE. Six review rounds of #129
+# built machinery in this position and it is all deleted (ADR 0001,
+# decision 4, which names each of the deleted constants by identifier —
+# nothing else in the tree does, because a name that no longer resolves is
+# a name a reader will go looking for):
+#
+#   * TWO EXEMPTIONS from the age — keep an entry this run's census still
+#     names, and keep an entry the usage alias map needs as a HOP on the
+#     chain from a census key to the numerator that collects its turns.
+#     Both existed because `last_seen` was a field the untrusted previous
+#     roster itself wrote, so a back-dated date could drop a real model's
+#     turns out of the attributable denominator and no local rule could
+#     tell that apart from an honest expiry. A `last_seen` is a date a
+#     reviewer merged now, so there is only one reading of an old one left
+#     — the true one — and an exemption exists to disbelieve a date.
+#
+#   * TWO 500-ENTRY LENGTH CAPS, one over each list, the two-tier ordering
+#     they evicted by, and the 10,000-entry carry ceiling past which the
+#     run refused to publish at all. They bounded an unbounded public input, and the
+#     order they used — rank by the live catalogue and the census, carry
+#     whole anything neither names — was built so that the writer of
+#     `previous.json` could not choose its own survivors. The input is
+#     bounded by review now, so every remaining effect of a cap was on
+#     honest data: a repository with more than 500 genuinely observed
+#     models would have had its own reviewed history evicted, by an order
+#     chosen to defeat an attacker who can no longer write the file. The
+#     denial-of-service the ceiling documented — 10,001 planted lines
+#     refusing the refresh for good — goes with them, because those lines
+#     would now have to be merged.
+#
+#   * THE ANCHORED DENOMINATOR, the retirement veto keyed on it, and the
+#     count-only notice beside them.
+#     They measured how much of a window's denominator rested on
+#     `previous.json`. With `previous` reviewed, that fraction measures
+#     how much of the usage belongs to models this repository has a merged
+#     record of — so a veto keyed on it refuses precisely the honest case
+#     (a real since-retired arm with in-window turns) and refuses nothing
+#     an attacker can still reach, because the attacker's remaining reach
+#     is the census, which sits in both denominators at once and cancels
+#     out of the difference.
+#
+# THE ONE INPUT STILL WRITTEN BY ANOTHER MACHINE IS THE CENSUS.
+# `.github/workflows/eval.yml` takes it from
+# `origin/persistent/eval-results:usage/latest.json` — and takes the previous roster
+# from the COMMITTED `evals/roster.yml` instead, which is the whole of
+# #147: one write to `persistent/eval-results` used to grant both, and now it grants
+# only this one. The census is trusted for nothing:
+# it can shape a PROPOSAL and nothing else. What guards it is named rather
+# than assumed — the freshness window and the ranked/raw floors below, the
+# schema validation in `_clean_counts` (a bad row or cell is a named
+# one-line skip, never a traceback and never an echoed value), and a SIZE
+# BOUND, `CENSUS_MAX_KEYS` / `CENSUS_MAX_BYTES` in roster.py, past which
+# the run refuses with a named error rather than let an untrusted document
+# decide how much work it does.
+#
+# A FORGED CENSUS IS STILL A FORGED MEASUREMENT OF THE QUANTITY BEING
+# MEASURED, and no ordering rule ever defended against that. What changed
+# is what a forgery can reach: the roster it distorts is a proposal,
+# published with each seat's numerator and denominator in words, pushed to
+# the bot-owned `roster/proposal` branch and filed as one tracking issue.
+# A person merges it or does not. The defence is that the distortion is
+# visible in a diff on `main`'s history rather than silent on a branch
+# nobody reads, and that reverting the merge undoes it — the two
+# properties `persistent/eval-results` never had.
+#
+# Ageing out is not a repair, and that has not changed. It ends a plant's
+# future effect; it does not undo a retirement the plant already caused —
+# by the time it expires the model is no longer an arm, so the exit bar no
+# longer applies to it and a trickle of real usage never re-seats it. It
+# returns by clearing the ENTRY bar, by being the newest in a tier that
+# some model of its own clears the ENTRY bar in, or by hand.
+catalogue_seen_max_age_days: 180

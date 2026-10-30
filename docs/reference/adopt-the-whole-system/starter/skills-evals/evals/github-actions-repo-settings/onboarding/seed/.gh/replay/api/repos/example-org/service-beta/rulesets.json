@@ -1,0 +1,8 @@
+[
+  {
+    "enforcement": "active",
+    "id": 7202,
+    "name": "default branch protection",
+    "target": "branch"
+  }
+]

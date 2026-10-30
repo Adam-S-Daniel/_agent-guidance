@@ -1,0 +1,14 @@
+{
+ "report_base": "https://github.com/example-owner/skills-evals/blob/persistent/eval-results/",
+ "thread_url": "https://claude.ai/code/project/<project id>?thread=",
+ "thread_titles": {
+  "thread-0002": "Track how often skills get used"
+ },
+ "project_channel_id": "chan_example",
+ "github_owners": [
+  "example-owner"
+ ],
+ "environment_review_repos": [
+  "example-owner/skills-registry"
+ ]
+}

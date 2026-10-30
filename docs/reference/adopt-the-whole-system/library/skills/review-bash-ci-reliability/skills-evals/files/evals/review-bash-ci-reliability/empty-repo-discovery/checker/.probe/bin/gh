@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Stand-in gh for the probe: `gh repo list` answers as GH_STUB_MODE says;
+# every other invocation succeeds with no output.
+if [[ "${1:-}" == "repo" && "${2:-}" == "list" ]]; then
+    case "${GH_STUB_MODE:-}" in
+        fail)
+            echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+            exit 1 ;;
+        partial)
+            printf '%s\n' docs-site
+            echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+            exit 1 ;;
+        empty) ;;
+        allowed) printf '%s\n' docs-site widgets ;;
+        unexpected) printf '%s\n' docs-site widgets internal-tools ;;
+        *) echo "gh stand-in: unknown GH_STUB_MODE" >&2; exit 2 ;;
+    esac
+fi
+exit 0

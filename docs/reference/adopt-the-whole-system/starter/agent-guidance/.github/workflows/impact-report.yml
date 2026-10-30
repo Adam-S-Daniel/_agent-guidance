@@ -1,0 +1,135 @@
+name: Impact report
+# Daily: scripts/impact-report.js counts real-work outcomes (PRs opened,
+# merged, reverted, agent-authored, red after merge; agent-checks CI runs and
+# failures on PR heads) per fleet repo per ISO week over the last 8 weeks, and
+# publishes them as usage/weekly-ci.json on skills-evals' persistent/eval-results
+# branch for the project dashboard's impact view. Private repos are folded
+# into one "private" row per week; nothing identifying reaches the file or
+# this public log.
+#
+# Credential: the agents-md-sync GitHub App (repository variable
+# APP_CLIENT_ID, secret APP_PRIVATE_KEY), down-scoped per token at mint time:
+# read-only per owner for the sweep, and Contents: write on skills-evals
+# alone for the publish. The job itself holds only contents: read.
+# A failed run is caught by scheduled-run-health.yml, like every cron here.
+run-name: >-
+  ${{ github.event_name == 'schedule'
+        && format('scheduled — {0}', github.event.schedule)
+     || format('manual — @{0}', github.actor) }}
+
+on:
+  schedule:
+    # Off-peak offset minute, clear of this repo's other crons (0 6, 17 6,
+    # 29 7, 41 7, 47 8) and ahead of scheduled-run-health.
+    - cron: '53 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUBLISH_REPO: example-adopter/skills-evals
+      PUBLISH_BRANCH: persistent/eval-results
+      PUBLISH_PATH: usage/weekly-ci.json
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "20"
+
+      # Read tokens, one per owner. --require-owner-tokens below fails the run
+      # when either is missing, so a partial fleet is never published as whole.
+      - name: Mint read token for example-adopter
+        id: token_example_adopter
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: example-adopter
+          permission-metadata: read
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: read
+          permission-actions: read
+
+      - name: Mint read token for example-adopter-two
+        id: token_example_adopter_two
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: example-adopter-two
+          permission-metadata: read
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: read
+          permission-actions: read
+
+      - name: Mint publish token for skills-evals
+        id: token_publish
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: example-adopter
+          repositories: skills-evals
+          permission-contents: write
+
+      - name: Clone the results branch
+        env:
+          PUBLISH_TOKEN: ${{ steps.token_publish.outputs.token }}
+        run: |
+          set -euo pipefail
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PUBLISH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=$auth" clone --quiet --depth 1 \
+            --single-branch --branch "$PUBLISH_BRANCH" \
+            "https://github.com/$PUBLISH_REPO.git" "$RUNNER_TEMP/results"
+
+      - name: Measure the fleet
+        env:
+          GH_TOKEN_EXAMPLE_ADOPTER: ${{ steps.token_example_adopter.outputs.token }}
+          GH_TOKEN_EXAMPLE_ADOPTER_TWO: ${{ steps.token_example_adopter_two.outputs.token }}
+          SYNC_OWNERS: "example-adopter example-adopter-two"
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/results/$PUBLISH_PATH"
+          mkdir -p "$(dirname "$dest")"
+          node scripts/impact-report.js --require-owner-tokens --previous "$dest" --out "$dest"
+
+      - name: Publish usage/weekly-ci.json
+        env:
+          PUBLISH_TOKEN: ${{ steps.token_publish.outputs.token }}
+        working-directory: ${{ runner.temp }}/results
+        run: |
+          set -euo pipefail
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PUBLISH_TOKEN" | base64 -w0)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- "$PUBLISH_PATH"
+          staged=$(git diff --cached --name-only)
+          if [ -z "$staged" ]; then
+            echo "impact-report: nothing to publish"
+            exit 0
+          fi
+          if [ "$staged" != "$PUBLISH_PATH" ]; then
+            echo "::error::impact-report: refusing to commit: something besides the report is staged"
+            exit 1
+          fi
+          git commit --quiet -m "propagation: impact report [skip ci]"
+          if ! git -c "http.https://github.com/.extraheader=$auth" push --quiet origin "HEAD:refs/heads/$PUBLISH_BRANCH"; then
+            echo "impact-report: push rejected; rebasing once onto the new tip"
+            git -c "http.https://github.com/.extraheader=$auth" pull --quiet --rebase --deepen=100 origin "$PUBLISH_BRANCH"
+            git -c "http.https://github.com/.extraheader=$auth" push --quiet origin "HEAD:refs/heads/$PUBLISH_BRANCH"
+          fi
+          git -c "http.https://github.com/.extraheader=$auth" fetch --quiet origin "$PUBLISH_BRANCH"
+          git merge-base --is-ancestor HEAD "origin/$PUBLISH_BRANCH"
+          echo "impact-report: published"

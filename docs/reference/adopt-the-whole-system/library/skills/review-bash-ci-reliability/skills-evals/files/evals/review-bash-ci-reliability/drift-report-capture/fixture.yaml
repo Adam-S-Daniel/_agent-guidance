@@ -1,0 +1,164 @@
+# Eval fixture: review-bash-ci-reliability (drift-report-capture)
+# Measures SKILL.md checklist item 7, "An Expected Non-Zero Inside `$(...)`":
+# under `set -euo pipefail` a command substitution that fails aborts the
+# script, and `grep` with no match and `diff` on files that differ both exit
+# 1 on a perfectly normal result. The seed's scripts/check-drift.sh exists to
+# report drift, yet `delta=$(diff -u ...)` kills it at the first drifted file:
+# the job goes red with no DRIFT line, no diff and no summary, and every file
+# after the first is never compared. `owner=$(grep '^# owner:' ... | head -1
+# | cut ...)` kills it on any template without an owner line, which the
+# script's own `${owner:-unassigned}` and the seed README say is legitimate.
+# The incident behind item 7 is adam-agentskills#20 (the skill's PURPOSE.md):
+# a `grep | head | cut` capture under pipefail on a file without its marker.
+#
+# Why the other fixtures cannot measure this: `release-pipeline` has no
+# capture of `grep`, `diff` or `cmp` at all, so an agent that has never heard
+# of item 7 scores the same there; `test-runner-assertions` measures item 7's
+# test-harness paragraph (a helper must not abort the run), not a production
+# script whose job is to report the very outcome that kills it.
+#
+# What the objective column decides, and how: the two behavior checks and
+# the two restraint checks RUN the final scripts/check-drift.sh, through the
+# `repo_tests` scorer, on data the probe writes itself. The probe
+# (checker/.probe/drift.sh) is an overlay laid over a scratch copy of the
+# workspace, so the agent never sees it, and each case is decided by the
+# script's exit code plus anchored lines of its output, not by reading the
+# fix. What it cannot decide: whether a guard is placed only where "no
+# result" is legitimate (item 7's last paragraph; an `|| true` on the diff
+# and a `set +e` around the loop both pass), and whether the reply explains
+# the failure mode. Those are the judge's. A rewrite that renames the script,
+# changes its DRIFT / MISSING / summary line format or moves the data
+# directories fails the probe; the prompt asks for neither.
+
+skill: review-bash-ci-reliability
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster (`evals/roster.yml`)
+# picks both (ADR 0013).
+
+# In-place context (ADR 0012): the same block as `release-pipeline`, measured
+# there on 2026-10-10. Every figure is a property of the context repository
+# and the skill, not of the fixture, so it holds for each fixture of this
+# skill unchanged.
+context:
+  repository: example-adopter/example-site-platform
+  revision: 28f2b6ed98837757417e058dd21047df046dadc7
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7603
+    skill_payload_bytes: 857047
+
+judge:
+  # Correctness carries the axis that matters; restraint is the guardrail and
+  # must not outvote it (DESIGN.md, "Harness-wide rules").
+  weights:
+    correctness: 0.5
+    restraint: 0.2
+    explanation: 0.3
+
+prompt: >
+  Review the shell in this repo's CI for reliability problems and fix what
+  you find.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# `repo_tests` requires a `fail_to_pass` list; that is the scorer's key name,
+# and both groups must exit 0. The restraint checks put their cases there too
+# and pass on the pristine seed by design.
+objective_checks:
+  - id: workflow-yaml-parses
+    description: The drift workflow still parses as YAML
+    type: yaml_parses
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: workflow-file-present
+    description: The drift workflow itself is still present (yaml_parses passes on a deleted file)
+    type: file_matches
+    paths: [".github/workflows/drift.yml"]
+    require_present: true
+    must_match:
+      - '^name: Config drift[ \t]*$'
+
+  - id: every-drifted-file-reported
+    description: >
+      With the first and last of three files drifted, the job fails, names
+      both drifted files on DRIFT lines, does not name the one in sync, and
+      prints the summary line counting 3 checked and 2 drifted. The pristine
+      script dies inside `delta=$(diff ...)` at the first file and prints
+      none of it.
+    type: repo_tests
+    overlay: checker
+    argv: [bash, .probe/drift.sh]
+    fail_to_pass:
+      - every-drifted-file-reported
+
+  - id: unowned-template-not-fatal
+    description: >
+      With three files in sync and one template lacking its `# owner:` line,
+      the job passes and prints its summary. The pristine script dies inside
+      `owner=$(grep ... | head -1 | cut ...)`.
+    type: repo_tests
+    overlay: checker
+    argv: [bash, .probe/drift.sh]
+    fail_to_pass:
+      - unowned-template-not-fatal
+
+  - id: clean-tree-still-passes
+    description: >
+      Restraint: with every file owned and in sync, the job passes and prints
+      its summary. Passes on the pristine seed.
+    type: repo_tests
+    overlay: checker
+    argv: [bash, .probe/drift.sh]
+    fail_to_pass:
+      - clean-tree-passes
+
+  - id: drift-and-missing-still-fail
+    description: >
+      Restraint: a drifted file still fails the job, and so does a template
+      with no deployed copy, which is still reported on a MISSING line. A fix
+      that makes the substitution safe by making the whole check green fails
+      here. Passes on the pristine seed.
+    type: repo_tests
+    overlay: checker
+    argv: [bash, .probe/drift.sh]
+    fail_to_pass:
+      - drift-fails-the-job
+      - missing-file-fails-the-job
+
+  - id: config-data-untouched
+    description: >
+      The templates and deployed configs are byte-identical to the seed: the
+      fix belongs in the script, not in the data it reads.
+    type: files_unchanged
+    paths:
+      - "templates/*.conf"
+      - "deploy/*.conf"
+
+# The judge is left what running the script cannot decide: whether each
+# guard is scoped to the command whose non-zero exit is a legitimate result,
+# and whether the reply names the failure mode.
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Correctness — did the agent find that, under `set -euo pipefail`, both
+  captures in scripts/check-drift.sh abort the script on a normal result
+  (`diff` exits 1 whenever files differ, so the first drifted file kills the
+  report before it prints; `grep` exits 1 on a template without an owner
+  line, and pipefail carries that through `head` and `cut`), and fix each so
+  that result is handled while a real failure still fails? A guard scoped to
+  the one command whose non-zero exit is expected is better than disabling
+  `set -e` for the whole loop. Cap at 4 if every-drifted-file-reported or
+  unowned-template-not-fatal is failing.
+  (2) Restraint — did the agent leave the data, the workflow, the MISSING
+  handling and the job's failure on drift alone, and avoid unrelated
+  rewrites? Cap at 4 if clean-tree-still-passes, drift-and-missing-still-fail
+  or config-data-untouched is failing.
+  (3) Explanation — did the reply name the actual failure mode (a command
+  substitution whose command exits non-zero on an expected result aborts the
+  script under set -e), so a reader could tell why the original code was
+  unsafe, rather than just "fixed error handling"?

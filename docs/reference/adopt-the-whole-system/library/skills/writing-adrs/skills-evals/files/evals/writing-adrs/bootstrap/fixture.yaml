@@ -1,0 +1,203 @@
+# Eval fixture: writing-adrs (bootstrap)
+# Measures whether the writing-adrs skill improves an agent's ability to
+# BOOTSTRAP docs/decisions/ from scratch (no existing convention to read)
+# and record a real, already-implemented decision as the first ADR — using
+# the skill's own carried template rather than improvising a shape, landing
+# the folder and the ADR in one change, adding the AGENTS.md pointer
+# paragraph the skill's Bootstrap step 4 calls for (the seed has an
+# AGENTS.md with no ADR pointer yet, so step 4 edits it, not README.md),
+# and touching nothing else: no edits to README.md or CHANGELOG.md, no
+# second ADR for the CHANGELOG's routine fact.
+#
+# Scope note (round 2, N4): the objective column only asserts on the paths
+# named below. A brand-new, unrelated file (e.g. a stray NOTES.md nothing
+# here names) is not caught by any objective_check and is not this
+# fixture's business to catch — that's the judge rubric's restraint
+# dimension.
+
+skill: writing-adrs
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster
+# (`evals/roster.yml`) picks both, and `--model` overrides the agent model
+# (#371 item 5).
+
+# In-place context (ADR 0012): example-site-platform, a representative consumer.
+# The skill has no single operational repository. example-site-platform adopts its
+# bundle (`acsi-anything-anywhere`) in `skills.lock` and has no
+# `docs/decisions/` yet, which is the case this fixture bootstraps.
+# Measured at that repository's `main` on 2026-10-10: guidance, catalog and
+# payload were 25099, 6082 and 685637 bytes; each limit is
+# ceil(measured * 1.25). 14 eligible guidance revisions matched the shipped
+# bytes; the pin is the newest (then the smallest SHA). The context adopts
+# the skill, so the `without` arm removes the deployed copy.
+context:
+  repository: example-adopter/example-site-platform
+  revision: 28f2b6ed98837757417e058dd21047df046dadc7
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7603
+    skill_payload_bytes: 857047
+
+judge:
+  weights:
+    decision-with-alternatives-and-consequences: 0.5
+    title-is-a-decision-statement: 0.3
+    restraint: 0.2
+
+prompt: >
+  Record the retry-policy decision properly.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Objective checks (Class A, format half). The first check's must_match list
+# names headings/strings that are currently stable in the skill's own
+# references/decisions-README-template.md — kept deliberately generic
+# (structural headings, not full prose) so a wording tweak to the template
+# doesn't spuriously break this fixture. The REAL drift guard is dynamic:
+# test/run_tests.py::TestIssue80 resolves the live template through
+# harness/registries.yml / --registry at TEST time, derives a
+# skill-template-faithful README from it, and asserts that derived README
+# still satisfies this same check — so if the skill ever drops one of these
+# headings, that test (not this static fixture) is what goes red first.
+objective_checks:
+  - id: readme-bootstrapped-in-skill-shape
+    description: >
+      docs/decisions/README.md was created, carrying the skill's own
+      bootstrap template shape (naming/numbering convention, status values,
+      and the per-ADR template), not an ad-hoc convention invented on the
+      spot.
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    must_match:
+      - '(?im)^## When to write one\s*$'
+      - '(?im)^## Naming and numbering\s*$'
+      - '(?im)^## Status values\s*$'
+      - '(?im)^## Index\s*$'
+      - 'NNNN-kebab-title\.md'
+
+  - id: index-gained-a-row-for-0001
+    description: The freshly-created index table carries a row for the first ADR
+    type: file_matches
+    paths: ["docs/decisions/README.md"]
+    must_match:
+      - '\[0001\]\(0001-[a-z0-9-]+\.md\)'
+
+  - id: adr-0001-sections-in-order
+    description: >
+      docs/decisions/0001-*.md exists with the skill's default per-ADR
+      section order: Context, Decision, Consequences, Alternatives
+      considered, References. See existing-convention/fixture.yaml for why a
+      multi-line regex is an acceptable way to assert Markdown heading
+      order (headings are lexical lines).
+    type: file_matches
+    paths: ["docs/decisions/0001-*.md"]
+    must_match:
+      - '(?s)^## Context\b.*^## Decision\b.*^## Consequences\b.*^## Alternatives considered\b.*^## References\b'
+
+  - id: retry-sh-links-the-adr
+    description: >
+      scripts/retry.sh's HEADER points at the new ADR — the mention must
+      appear in a comment line before `set -euo pipefail`, not merely
+      anywhere in the file (e.g. appended after the function body) — and
+      the header's own decision sentence (what the judge rubric leans on to
+      check the ADR's content against) is still there.
+    type: file_matches
+    paths: ["scripts/retry.sh"]
+    must_match:
+      - '(?s)^#[^\n]*docs/decisions/0001-[a-z0-9-]+\.md.*^set -euo pipefail$'
+      - 'retry a transient command failure with capped exponential backoff'
+
+  - id: readme-index-links-resolve
+    description: >
+      Every ADR link in docs/decisions/README.md's index table names a file
+      that actually exists. Round 2 review item S3: an index row naming a
+      slug no file matches (the ADR file itself keeps its correct name) is
+      invisible to index-gained-a-row-for-0001's must_match, which only
+      checks the row's SHAPE — a real eval run was blind to this dodge.
+      (N1, round 3: if docs/decisions/README.md doesn't exist at all, this
+      check passes vacuously — readme-bootstrapped-in-skill-shape above is
+      what decides whether the README was even written.)
+    type: link_targets_exist
+    paths: ["docs/decisions/README.md"]
+    link_pattern: '\[[0-9]{4}\]\(([0-9]{4}-[a-z0-9-]+\.md)\)'
+    base: "docs/decisions"
+
+  - id: retry-sh-link-resolves
+    description: >
+      scripts/retry.sh's header comment names an ADR file that actually
+      exists. Round 2 review item S3: retry-sh-links-the-adr's must_match
+      only checks that the path STRING appears, not that a file with that
+      name was written — the twin dodge to the index-row one above.
+      (N1, round 3: if scripts/retry.sh doesn't exist at all, this check
+      passes vacuously — retry-sh-links-the-adr above is what decides
+      whether the header comment was even written.)
+    type: link_targets_exist
+    paths: ["scripts/retry.sh"]
+    link_pattern: '(docs/decisions/[0-9]{4}-[a-z0-9-]+\.md)'
+    base: "."
+
+  - id: exactly-one-adr-file
+    description: >
+      Exactly one ADR file exists: guards against a second, unwarranted ADR
+      for the CHANGELOG.md entry (a routine fact, not a decision).
+    type: file_count
+    paths: ["docs/decisions/[0-9][0-9][0-9][0-9]-*.md"]
+    min: 1
+    max: 1
+
+  - id: nothing-else-touched
+    description: >
+      Nothing outside docs/decisions/**, the code link, and the AGENTS.md
+      pointer paragraph changed — no edits to README.md or CHANGELOG.md.
+      The pointer paragraph itself is required, not forbidden: Bootstrap
+      step 4 calls for it since the seed has no docs/decisions/ pointer
+      yet. agents-md-gained-the-pointer below checks it was actually added.
+    type: files_unchanged
+    paths: ["README.md", "CHANGELOG.md"]
+
+  - id: agents-md-gained-the-pointer
+    description: >
+      Bootstrap step 4: AGENTS.md gained a pointer paragraph under a new
+      "### Architecture Decision Records" heading, appended to the file's
+      existing content (checked via must_match on the original first
+      paragraph AND the original Conventions bullet, so a gutted rewrite
+      that drops the rest of the file still fails this) rather than
+      replacing it — and the pointer must actually point: a bare heading
+      with no link to docs/decisions was a round-2 finding that used to
+      score 7/7.
+    type: file_matches
+    paths: ["AGENTS.md"]
+    must_match:
+      - '(?im)^### Architecture Decision Records\s*$'
+      - 'Order Sync polls the upstream fulfillment service and mirrors order status'
+      - 'docs/decisions'
+      - 'Keep `scripts/retry\.sh` as the one retry helper for transient upstream'
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) decision-with-alternatives-and-consequences — does the new ADR's
+  Context section describe the situation without pre-announcing the
+  decision, does its Decision section state the retry policy actually
+  implemented in scripts/retry.sh (capped attempts, exponential backoff),
+  and does it discuss the alternatives retry.sh's header already names
+  (retrying forever, failing fast with no retry) and why they were rejected,
+  alongside honest positive AND negative consequences? Cap at 4 if the
+  alternatives are missing entirely.
+  (2) title-is-a-decision-statement — is the ADR's title (and its index row)
+  an imperative verb + object naming what was decided (e.g. "Retry
+  transient failures N times with capped exponential backoff"), not a noun
+  phrase like "Retry policy" or a past-tense narration like "Decided to add
+  retries"?
+  (3) restraint — did the agent land the folder and the one ADR it needed
+  without also writing an unwarranted second ADR for CHANGELOG.md's
+  dependency-removal/typo-fix fact, and without any other unrelated
+  changes? The AGENTS.md pointer paragraph under "### Architecture
+  Decision Records" is Bootstrap step 4, not an unrelated change — its
+  absence, or an edit to README.md/CHANGELOG.md instead, should cost points
+  here; the paragraph's presence should not.

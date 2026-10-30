@@ -1,0 +1,202 @@
+# Eval fixture: workflow-path-audit
+# Measures whether the workflow-path-audit skill improves an agent's ability to
+# give every pull_request/push workflow a filter over the paths its own steps
+# actually consume — and to recognise the required-check trap, where a
+# workflow-level filter leaves a REQUIRED status check missing and blocks every
+# merge, so the salience decision has to move inside the workflow instead.
+
+skill: workflow-path-audit
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster
+# (`evals/roster.yml`) picks both, and `--model` overrides the agent model
+# (#371 item 5).
+
+# In-place context (ADR 0012): example-site-platform, a representative consumer.
+# The skill has no single operational repository. example-site-platform adopts its
+# bundle (`acsi-coding-anywhere`) in `skills.lock` and has the most workflows
+# (48) of the fleet repositories checked.
+# Measured at that repository's `main` on 2026-10-10: guidance, catalog and
+# payload were 25099, 6082 and 685637 bytes; each limit is
+# ceil(measured * 1.25). 14 eligible guidance revisions matched the shipped
+# bytes; the pin is the newest (then the smallest SHA). The context adopts
+# the skill, so the `without` arm removes the deployed copy.
+context:
+  repository: example-adopter/example-site-platform
+  revision: 28f2b6ed98837757417e058dd21047df046dadc7
+  guidance_revision: 59416cbc87b5231ae36ef1b9d99790cbdcc60b6d
+  budget:
+    guidance_bytes: 31374
+    skill_catalog_bytes: 7603
+    skill_payload_bytes: 857047
+
+judge:
+  # Weighted overall — the harness recomputes it from these and ignores the
+  # judge's own arithmetic. The three dimensions are NOT interchangeable:
+  # Completeness carries the correctness axis (every pull_request/push workflow
+  # decided, and the required-check trap handled), while Restraint is a
+  # guardrail — it says the agent broke nothing, not that it did the job. Left
+  # equal-weighted, Restraint is a third of the score and quietly penalises
+  # thoroughness, which is how a do-less arm can out-score a do-more one.
+  # Correctness must outvote the guardrail, not the other way round.
+  weights:
+    completeness: 0.5
+    salience: 0.3
+    restraint: 0.2
+
+prompt: >
+  Audit this repository's GitHub Actions workflows and make each one trigger
+  only when a file it actually depends on has changed.
+
+arms:
+  with_skill:
+    # The harness copies the nested skill dir plugins/<bundle>/skills/workflow-path-audit/
+    # (wherever it's found under the registry's plugins/*/skills/ tree) into
+    # .claude/skills/workflow-path-audit/. Copying the outer plugin/bundle dir
+    # instead would bury SKILL.md a level deep and the skill would silently
+    # never load.
+    install: copy
+  without_skill:
+    install: none          # same prompt, no skill
+
+# Objective checks run by harness/scorers/objective.py against the resulting
+# workspace. Each check has an id, a description, and a type the scorer knows.
+#
+# The first four are the behavioural spec: they replay a changeset through
+# each workflow's `on:` filters using GitHub's own path-matching semantics and
+# assert exactly which workflows fire. That is decidable from the workflow
+# files alone, and it defeats both failure modes a presence-only check would
+# miss — a catch-all filter (`paths: ["**"]` still fires on a prose-only
+# change) and an over-narrow one (a workflow filtered into never running).
+objective_checks:
+  - id: docs-change-routes-correctly
+    description: A docs-only change builds the docs site (and the required check), nothing else
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["docs/guide.md"]
+    expect_triggered:
+      - ".github/workflows/docs-site.yml"
+      - ".github/workflows/tests.yml"
+    expect_skipped:
+      - ".github/workflows/deploy.yml"
+
+  - id: source-change-routes-correctly
+    description: A src/ change runs the tests and the deploy, but not the docs build
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["src/index.js"]
+    expect_triggered:
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/deploy.yml"
+    expect_skipped:
+      - ".github/workflows/docs-site.yml"
+
+  # A lockfile-only change is the classic Dependabot bump, and it is the case a
+  # `paths: [package.json]` filter silently drops: the scorer's glob translation
+  # makes `package.json` a literal, so it does NOT match `package-lock.json`
+  # (only a wider spelling like `package*.json` does). Two honest limits on what
+  # this check proves:
+  #   - tests.yml is in expect_triggered but fires TRIVIALLY — it carries the
+  #     required status check and so by construction has no workflow-level
+  #     filter at all. The real assertion here is deploy.yml.
+  #   - whether tests.yml's INTERNAL salience gate treats the lockfile as
+  #     salient is NOT verified: changeset_triggers replays `on:` filters only,
+  #     never the in-workflow `if:`. That half is left to the judge's Salience
+  #     dimension.
+  - id: lockfile-change-routes-to-installers
+    description: A lockfile-only change still reaches every workflow that installs from it
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["package-lock.json"]
+    expect_triggered:
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/deploy.yml"
+    expect_skipped:
+      - ".github/workflows/docs-site.yml"
+
+  - id: prose-change-runs-nothing-but-the-required-check
+    description: A README/LICENSE-only change runs no optional workflow at all
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["README.md", "LICENSE"]
+    # tests.yml stays here because a required check must fire on EVERY pull
+    # request — GitHub blocks the merge on a missing check, not just a failing
+    # one. It reports success without doing the work; see the next check.
+    expect_triggered:
+      - ".github/workflows/tests.yml"
+    expect_skipped:
+      - ".github/workflows/docs-site.yml"
+      - ".github/workflows/deploy.yml"
+
+  - id: required-check-always-fires-and-gates-internally
+    description: >
+      The workflow carrying a required status check (per .github/rulesets/main.json)
+      has NO workflow-level paths/paths-ignore, and instead decides salience
+      inside itself — a computed step/job output gating the real work via `if:`.
+      This is the always-run + early-skip pattern; a workflow-level filter here
+      would leave the required check missing and deadlock the merge.
+    type: required_checks_early_skip
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: workflows-still-parse
+    description: All workflow files still parse as YAML
+    type: yaml_parses
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: event-only-workflows-unfiltered
+    description: >
+      Workflows with no pull_request/push trigger (schedule-only, issue-driven)
+      gained no paths/paths-ignore filter — GitHub ignores path filters on those
+      events, so adding one is noise that reads as a working guard.
+    type: event_only_workflows_unfiltered
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: ruleset-unchanged
+    description: >
+      The branch-protection ruleset is untouched. It is the input that says
+      which checks are required; editing it would let an agent satisfy the
+      required-check rule by redefining the requirement.
+    type: files_unchanged
+    paths: [".github/rulesets/main.json"]
+
+# Judge scoring: 3 dimensions, 0-10 each. Routing behaviour is verified
+# objectively above (the changeset replays), so the judge is left the things
+# that genuinely need judgement: whether the path lists correspond to what each
+# workflow's steps really consume — which the four probe changesets sample but
+# cannot exhaust — and whether the agent kept its hands off everything else.
+# The predecessor's "Communication" dimension gives way to Salience: with the
+# routing now measured directly, salience is the higher-value judgement of the
+# two, and three dimensions is the shape.
+#
+# Dimension (1) names one passing shape and caps the score, because the judge
+# and the objective `required_checks_early_skip` check were measuring the same
+# decidable fact and disagreeing — a real run scored Completeness 9 for "the
+# required unit-tests check was correctly preserved via a paths-ignore
+# companion with always-run semantics" while the objective column failed that
+# same arm. Whether a workflow carries a workflow-level path filter is not a
+# judgement call, so leaving the judge to infer the passing shape was the bug.
+# And a judge that praises a solution which deadlocks or races the merge is
+# misleading even when the objective column catches it: the scores get read on
+# their own, where a 9 beside a red check reads as the check being wrong.
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Completeness — did EVERY pull_request/push workflow end up with a
+  deliberate trigger decision, including ones the agent had to discover rather
+  than being pointed at, and was the required status check given the one shape
+  that works: a single workflow with NO workflow-level paths or paths-ignore at
+  all, deciding salience inside itself through a computed output that gates the
+  real work with an `if:`. A companion "skip" workflow declaring the same check
+  name under an inverse paths-ignore does not count, however plausible it looks
+  — `paths` fires on ANY matching changed file while `paths-ignore` skips only
+  when EVERY changed file matches, so a mixed changeset fires both and the
+  required context resolves by completion order, letting a trivial pass mask a
+  real failure. Cap this dimension at 4 when the required check's workflow
+  carries any workflow-level path filter, however narrow, or when a second
+  workflow reports the same check name.
+  (2) Salience — for each workflow, are the listed paths the ones that
+  workflow's own steps actually consume (its sources, its tests, the configs
+  it reads, the workflow file itself), rather than a catch-all, a guess, or a
+  copy of a sibling workflow's list?
+  (3) Restraint — did the agent leave the schedule-only and issue-driven
+  workflows alone, leave the branch-protection ruleset alone, and avoid
+  editing files the audit did not call for?

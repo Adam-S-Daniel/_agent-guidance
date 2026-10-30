@@ -1,0 +1,307 @@
+name: Gate routine guidance improvement candidate
+
+# The guidance improvement loop's gate (ADR 0005, "Routine guidance improve
+# mode addendum"; repo-settings ADRs 0012 and 0014). In guidance-improve mode
+# the eval routine runs scripts/propose_guidance_edit.py on one
+# _agent-guidance section and, on an ACCEPTED candidate only (accepted, and
+# its patch passed that repository's own checks), pushes
+# `claude/eval-guidance-improve-<run id>` holding
+# `eval-guidance-improve/<run id>/{summary.json, report.md, guidance.patch}`.
+# The routine never opens a pull request; this workflow decides whether the
+# candidate becomes one in example-adopter/_agent-guidance, and whether it
+# merges itself (evals/improve-policy.yml's improve_merge_mode).
+#
+# * The branch is UNTRUSTED (a model run wrote it). This workflow runs on
+#   `workflow_run`, so GitHub always runs the DEFAULT BRANCH's copy of it,
+#   never one the branch carries (see routine-guidance-improve-pushed.yml).
+#   Every checkout is the default branch; the branch is only fetched into a
+#   private ref and read through git plumbing by
+#   scripts/guidance_improve_gate.py. Nothing from it is checked out,
+#   imported or executed; its patch reaches `git apply` in an _agent-guidance
+#   checkout as data, after validation.
+# * The validator rejects the whole branch unless it ADDS exactly the three
+#   files, regular and non-executable, under its own run id: an accepted
+#   record for one section at a full guidance sha whose split is that
+#   section's fixtures on the default branch, a `git diff` of the section's
+#   file and the proposer's three bookkeeping files only, and a report with
+#   the proposer's title and no closing keyword or @mention.
+# * Two jobs. `validate` holds `contents: read` and no secret. `guidance-pr`
+#   re-validates the branch at the sha `validate` judged, builds the
+#   _agent-guidance commit with no credential (`prepare`: the measured sha
+#   must be on its default branch with agents-md/ and AGENTS.md unchanged
+#   since, the patch applied, base.md re-copied to its fleet-memory payload,
+#   every changed path inside repo-settings ADR 0014's allowlist), and only
+#   then mints the eval-improve App's token for _agent-guidance ALONE
+#   (repo-settings ADR 0014: one App, one repository per mint, contents and
+#   pull-requests write), under `continue-on-error`, as skill-coverage.yml's
+#   guidance-token step does. One later step uses it. With either App secret
+#   unset, or a failed mint (the App not installed on _agent-guidance yet),
+#   that step opens nothing, says why in the job summary and succeeds: a
+#   missing credential never turns the gate red, and the validated candidate
+#   stays on its branch.
+# * The pull request comes from `eval-guidance-improve/<section>`: ready,
+#   labeled `agent-authored`, with auto-merge (merge commit,
+#   `--match-head-commit`) enabled and read back when the mode is `auto`; a
+#   draft otherwise. If that branch already exists, or any guidance-loop pull
+#   request (`eval-guidance-improve/*`, `retire-guidance/*`) is open there,
+#   nothing is opened: they all write AGENTS.md and docs/guidance-impact.md.
+#   It never approves, force-pushes or deletes anything, and merges only
+#   through auto-merge, after _agent-guidance's required checks.
+# * Branch names, shas and file content are never interpolated into a `run:`
+#   block: the event is read from $GITHUB_EVENT_PATH by the validator, which
+#   emits only values that matched a strict pattern, and every later step
+#   reads them through `env`.
+# * No `concurrency` group: GitHub keeps only the newest pending run in a
+#   group, so a burst of pushes would cancel gates silently.
+# * `workflow_dispatch` re-gates a branch by name (for a missed or failed
+#   run); only the default branch's copy may run.
+
+on:
+  workflow_run:
+    workflows: [Routine guidance improve pushed]
+    types: [completed]
+    branches:
+      - claude/eval-guidance-improve-*
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: The guidance improve branch, claude/eval-guidance-improve-<run id>.
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate:
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name == 'workflow_dispatch'
+          || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      branch: ${{ steps.resolve.outputs.branch }}
+      run_id: ${{ steps.gate.outputs.run_id }}
+      sha: ${{ steps.gate.outputs.sha }}
+      section: ${{ steps.gate.outputs.section }}
+      guidance_sha: ${{ steps.gate.outputs.guidance_sha }}
+      section_file: ${{ steps.gate.outputs.section_file }}
+      target_branch: ${{ steps.gate.outputs.target_branch }}
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: skills-evals
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      # The validator reads fixture.yaml files (the proposer's listing) and,
+      # in the next job, the manifest: the gate workflows' pins.
+      - name: Install the validator's dependencies
+        run: python3 -m pip install pyyaml==6.0.3 markdown-it-py==4.2.0
+
+      - name: Resolve the branch to gate
+        id: resolve
+        working-directory: skills-evals
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/guidance_improve_gate.py resolve \
+            --event-name "$EVENT_NAME" --event-path "$GITHUB_EVENT_PATH" \
+            > "$RUNNER_TEMP/resolve.out"
+          cat "$RUNNER_TEMP/resolve.out" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the guidance improve branch into a private ref
+        working-directory: skills-evals
+        env:
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/guidance-improve/source"
+
+      - name: Validate the candidate
+        id: gate
+        working-directory: skills-evals
+        env:
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          python3 scripts/guidance_improve_gate.py validate \
+            --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
+            --source refs/guidance-improve/source --branch "$BRANCH" \
+            --expect-sha "$SHA" --out "$RUNNER_TEMP/staged" \
+            > "$RUNNER_TEMP/gate.out"
+          cat "$RUNNER_TEMP/gate.out" >> "$GITHUB_OUTPUT"
+
+  guidance-pr:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: skills-evals
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the validator's dependencies
+        run: python3 -m pip install pyyaml==6.0.3 markdown-it-py==4.2.0
+
+      # The same validator, on the sha `validate` judged: this job stages its
+      # own copy of the files instead of trusting an artifact, and fails if
+      # the branch moved (its newer push runs its own gate).
+      - name: Re-validate the candidate at the judged sha
+        working-directory: skills-evals
+        env:
+          BRANCH: ${{ needs.validate.outputs.branch }}
+          SHA: ${{ needs.validate.outputs.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/guidance-improve/source"
+          python3 scripts/guidance_improve_gate.py validate \
+            --repo . --base "refs/remotes/origin/${DEFAULT_BRANCH}" \
+            --source refs/guidance-improve/source --branch "$BRANCH" \
+            --expect-sha "$SHA" --out "$RUNNER_TEMP/staged" \
+            > "$RUNNER_TEMP/revalidate.out"
+          cat "$RUNNER_TEMP/revalidate.out"
+
+      # Built before any credential exists: _agent-guidance is public, so it
+      # is fetched anonymously, and nothing of it runs here.
+      - name: Build the _agent-guidance commit
+        id: build
+        working-directory: skills-evals
+        env:
+          TARGET_REPO: example-adopter/_agent-guidance
+          RUN_ID: ${{ needs.validate.outputs.run_id }}
+          SHA: ${{ needs.validate.outputs.sha }}
+          SECTION: ${{ needs.validate.outputs.section }}
+          GUIDANCE_SHA: ${{ needs.validate.outputs.guidance_sha }}
+          SECTION_FILE: ${{ needs.validate.outputs.section_file }}
+          TARGET_BRANCH: ${{ needs.validate.outputs.target_branch }}
+        run: |
+          set -euo pipefail
+          # The values re-derived from the judged sha must be the ones
+          # `validate` handed over.
+          for pair in "run_id=${RUN_ID}" "sha=${SHA}" "section=${SECTION}" \
+                      "guidance_sha=${GUIDANCE_SHA}" "section_file=${SECTION_FILE}" \
+                      "target_branch=${TARGET_BRANCH}"; do
+            if ! grep -qxF -- "$pair" "$RUNNER_TEMP/revalidate.out"; then
+              echo "::error::re-validation disagrees with the validate job"
+              exit 1
+            fi
+          done
+          tree="$RUNNER_TEMP/agent-guidance"
+          git init -q "$tree"
+          git -C "$tree" remote add origin "https://github.com/${TARGET_REPO}.git"
+          symref="$(git -C "$tree" ls-remote --symref origin HEAD)"
+          base="$(sed -n 's|^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$|\1|p' <<<"$symref")"
+          if ! [[ "$base" =~ ^[A-Za-z0-9._/-]{1,100}$ ]]; then
+            echo "::error::could not read ${TARGET_REPO}'s default branch"
+            exit 1
+          fi
+          git -C "$tree" fetch -q --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}"
+          # Full history of the default branch only: the measured sha must
+          # be on it, and prepare refuses unless it is and the guidance it
+          # measured is unchanged at the tip the commit is based on.
+          git -C "$tree" checkout -q --detach "refs/remotes/origin/${base}"
+          python3 scripts/guidance_improve_gate.py prepare \
+            --staged "$RUNNER_TEMP/staged" --tree "$tree" --section "$SECTION" \
+            --guidance-sha "$GUIDANCE_SHA" --run-id "$RUN_ID" \
+            > "$RUNNER_TEMP/prepare.out"
+          cat "$RUNNER_TEMP/prepare.out"
+          {
+            echo "base=${base}"
+            cat "$RUNNER_TEMP/prepare.out"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Are the GitHub App's secrets configured?
+        id: credential
+        env:
+          PR_CREDENTIAL_SET: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID != '' && secrets.EVAL_IMPROVE_APP_PEM != '' }}
+        run: |
+          if [ "$PR_CREDENTIAL_SET" = "true" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Minted only now, after re-validation and the build, for
+      # _agent-guidance alone (repo-settings ADR 0014). A failed mint leaves
+      # the token empty, and the next step opens nothing instead of failing.
+      - name: Mint the GitHub App token for _agent-guidance
+        id: guidance-token
+        if: steps.credential.outputs.present == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.EVAL_IMPROVE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.EVAL_IMPROVE_APP_PEM }}
+          owner: example-adopter
+          repositories: _agent-guidance
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open the pull request in _agent-guidance
+        working-directory: skills-evals
+        env:
+          GUIDANCE_TOKEN: ${{ steps.guidance-token.outputs.token }}
+          BRANCH: ${{ needs.validate.outputs.branch }}
+          RUN_ID: ${{ needs.validate.outputs.run_id }}
+          SHA: ${{ needs.validate.outputs.sha }}
+          SECTION: ${{ needs.validate.outputs.section }}
+          BASE: ${{ steps.build.outputs.base }}
+          COMMIT: ${{ steps.build.outputs.commit }}
+          MODE: ${{ steps.build.outputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ -n "$GUIDANCE_TOKEN" ]; then
+            echo "::add-mask::${GUIDANCE_TOKEN}"
+          fi
+          python3 scripts/guidance_improve_gate.py open-pr \
+            --staged "$RUNNER_TEMP/staged" --tree "$RUNNER_TEMP/agent-guidance" \
+            --section "$SECTION" --run-id "$RUN_ID" --sha "$SHA" --branch "$BRANCH" \
+            --base "$BASE" --commit "$COMMIT" --mode "$MODE" > "$RUNNER_TEMP/open.out"
+          opened="$(sed -n 's/^opened=//p' "$RUNNER_TEMP/open.out")"
+          reason="$(sed -n 's/^reason=//p' "$RUNNER_TEMP/open.out")"
+          if [ -z "$opened" ]; then
+            echo "::notice::the candidate passed the gate; no pull request is opened: ${reason}"
+            {
+              echo "### Guidance improvement candidate validated; pull request not opened"
+              echo
+              echo "- Run id: \`${RUN_ID}\`, section: \`${SECTION}\`"
+              echo "- Why: ${reason}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### Pull request opened in _agent-guidance (${MODE})"
+            echo
+            echo "- Pull request: ${opened}"
+            echo "- Run id: \`${RUN_ID}\`, section: \`${SECTION}\`"
+            echo "- Source commit: \`${SHA}\`"
+            echo "- Commit: \`${COMMIT}\` on \`eval-guidance-improve/${SECTION}\`"
+            if [ "$MODE" = auto ]; then
+              echo "- Auto-merge (merge commit, matched to that head) is enabled; it merges once the required checks pass."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

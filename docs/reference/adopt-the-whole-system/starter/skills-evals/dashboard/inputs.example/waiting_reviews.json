@@ -1,0 +1,18 @@
+[
+ {
+  "repo": "example-owner/skills-registry",
+  "name": "Add a session hook",
+  "environment": "plugin-runtime-review",
+  "head_sha": "aaaa",
+  "created_at": "2026-01-06T10:00:00Z",
+  "job_url": "https://github.com/example-owner/skills-registry/actions/runs/2/job/3"
+ },
+ {
+  "repo": "example-owner/skills-registry",
+  "name": "Add a session hook",
+  "environment": "plugin-runtime-review",
+  "head_sha": "bbbb",
+  "created_at": "2026-01-05T10:00:00Z",
+  "job_url": "https://github.com/example-owner/skills-registry/actions/runs/1/job/1"
+ }
+]

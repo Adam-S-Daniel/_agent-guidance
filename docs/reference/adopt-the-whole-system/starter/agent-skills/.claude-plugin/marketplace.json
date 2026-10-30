@@ -1,15 +1,47 @@
 {
-  "name": "<you>-skills",
+  "name": "acsi-agentskills",
   "owner": { "name": "<your name>" },
-  "description": "Reusable agent skills, packaged as Claude Code plugins.",
+  "description": "Reusable agent skills, packaged as Claude Code plugins grouped by audience (coding or not) and runtime (anywhere or local).",
   "plugins": [
     {
-      "name": "<you>-coding-anywhere",
-      "source": "./plugins/<you>-coding-anywhere",
-      "description": "Coding skills for Claude Code terminals and cloud sessions: a worked example (workflow-path-audit) and a template to copy (example-skill).",
-      "category": "development",
-      "keywords": ["github-actions", "ci-cd", "template"],
+      "name": "acsi-anything-anywhere",
+      "source": "./plugins/acsi-anything-anywhere",
+      "description": "Skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code.",
+      "category": "productivity",
+      "keywords": ["skills", "writing", "planning"],
       "defaultEnabled": true
+    },
+    {
+      "name": "acsi-coding-anywhere",
+      "source": "./plugins/acsi-coding-anywhere",
+      "description": "Coding skills for Claude Code terminals and Claude Code cloud sessions.",
+      "category": "development",
+      "keywords": ["skills", "coding", "claude-code"],
+      "defaultEnabled": true
+    },
+    {
+      "name": "acsi-coding-local",
+      "source": "./plugins/acsi-coding-local",
+      "description": "Machine-bound coding skills and hooks for Claude Code on your own machines (WSL and Windows homes): clone sync and the API-credit lane.",
+      "category": "claude-code",
+      "keywords": ["claude-code", "wsl", "windows", "sync", "skills"],
+      "defaultEnabled": false
+    },
+    {
+      "name": "acsi-non-coding-local",
+      "source": "./plugins/acsi-non-coding-local",
+      "description": "Non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork.",
+      "category": "productivity",
+      "keywords": ["skills", "documents", "browser"],
+      "defaultEnabled": false
+    },
+    {
+      "name": "example-site-platform",
+      "source": { "source": "github", "repo": "example-adopter/example-site-platform" },
+      "description": "An example of a federated plugin: the skills of a separate platform repo, served from that repo rather than mirrored here. Point it at a repo of your own, or remove the entry.",
+      "category": "development",
+      "keywords": ["example", "federated"],
+      "defaultEnabled": false
     }
   ]
 }

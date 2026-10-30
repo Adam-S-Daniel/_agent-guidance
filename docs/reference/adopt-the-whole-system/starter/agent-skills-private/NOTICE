@@ -1,10 +1,17 @@
-This content is derived from
-  https://github.com/Adam-S-Daniel/adam-agentskills
-  https://github.com/Adam-S-Daniel/_agent-guidance
-both licensed under the Apache License, Version 2.0
-(https://www.apache.org/licenses/LICENSE-2.0).
+This tree is an export of the original author's private skills registry
+(`acsi-agentskills-private` here) at commit
+c4bf812e4703e7b9fdd3f5408ed9198cba9df9be. That repository is private and has
+no license file of its own; only the files its export manifest includes were
+copied (its export manifest, under export/manifests/): the marketplace and
+plugin manifests, setup.sh, README.md, the lessons/ format with its invented
+example, the CI workflow and the files _agent-guidance's sync delivers. Its
+credential runbook and its one skill were not.
 
-It has been modified: owner-specific names, repositories, paths, dates,
-incident links and infrastructure were removed or generalized, some text was
-rewritten, and some files were replaced. The modified content is distributed
-under the same license.
+It has been modified by the adoption kit's export
+(docs/reference/adopt-the-whole-system/export/export.py in _agent-guidance):
+owner, repository, plugin, site and machine names were replaced with invented
+ones, links to specific issues, pull requests and commits still point at the
+original repositories, and the edits recorded in the manifest were applied.
+Each change and its reason is listed in export/DECISIONS.md. It is distributed
+with the adoption kit, under the kit's license (Apache License, Version 2.0,
+https://www.apache.org/licenses/LICENSE-2.0).

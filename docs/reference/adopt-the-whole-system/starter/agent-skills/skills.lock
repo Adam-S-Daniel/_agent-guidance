@@ -1,0 +1,15 @@
+{
+  "registry": "example-adopter/acsi-agentskills",
+  "ref": "0000000000000000000000000000000000000000",
+  "bundles": [
+    "acsi-anything-anywhere",
+    "acsi-coding-anywhere"
+  ],
+  "skills": {
+    "acsi-coding-anywhere/github-actions-repo-settings": "sha256:075aa817a241da6b72123cc9d0fb794cd37710aa17ed4ec70d8eaeb2cb25257f",
+    "acsi-coding-anywhere/skills-doctor": "sha256:632d2359f541f346111e423dcf84529aca132b21d1b7c35bd5a9107649bb6397",
+    "acsi-coding-anywhere/vendor-release-impact-issues": "sha256:b7bc6f17c002a05b5c5c517ddf598c717820ef808d5d240a5e8e9d6e68a7c426",
+    "acsi-coding-anywhere/workflow-path-audit": "sha256:8a7c57bcd890bbab38c42473d8705f0b2521954385f03bf5289e3ec84d3fcdde"
+  },
+  "generated_from": "0000000000000000000000000000000000000000"
+}

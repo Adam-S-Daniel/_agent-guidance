@@ -1,0 +1,13 @@
+{
+  "number": 418,
+  "state": "open",
+  "title": "Refresh the canary page",
+  "head": {
+    "ref": "content/canary",
+    "sha": "5b2e8d47c1069a3f8e24b70d5c93a1f6802be47d"
+  },
+  "base": {
+    "ref": "main",
+    "sha": "9e41b7c2d6084f1ab3c57e0d9a2f6b18c4d70e35"
+  }
+}

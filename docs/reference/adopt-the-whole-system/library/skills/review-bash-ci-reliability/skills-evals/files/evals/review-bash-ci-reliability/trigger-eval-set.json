@@ -1,0 +1,82 @@
+[
+  {
+    "query": "our deploy job in .github/workflows/release.yml went green last night but nothing got published. the step runs scripts/publish.sh, which loops over `find dist -name '*.tgz'` and calls npm publish on each. can you look over the script and tell me how it could pass without doing anything?",
+    "should_trigger": true
+  },
+  {
+    "query": "review ci/run-tests.sh before I merge it. it has set -e at the top, runs pytest | tee test.log, then greps the log for FAILED. I want to be sure a test failure actually fails the GitHub Actions job",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm writing a bash step for our GitLab pipeline that reads the list of changed packages with mapfile -t pkgs < <(git diff --name-only origin/main | cut -d/ -f2 | sort -u) and builds each one. anything that could fail silently there?",
+    "should_trigger": true
+  },
+  {
+    "query": "the nightly backup job in Jenkins has been 'succeeding' for weeks but the S3 bucket is empty. the shell step is: aws s3 sync /data s3://backups-example/$(date +%F) || echo 'sync failed'. what's wrong with it and how do I make it fail loudly?",
+    "should_trigger": true
+  },
+  {
+    "query": "audit the .sh files under .github/scripts/ for anything that would let a CI run pass when it shouldn't: missing set -o pipefail, unchecked command substitutions, that kind of thing",
+    "should_trigger": true
+  },
+  {
+    "query": "this works on my Mac but the Actions runner says 'readlink: illegal option -- f' and then carries on and uploads an empty artifact. here's the script from the build step, can you make it reliable on ubuntu-latest and fail if the artifact dir is empty?",
+    "should_trigger": true
+  },
+  {
+    "query": "write me a bash script for a CircleCI job that waits for the staging deploy to report healthy (curl the /health endpoint every 10s, give up after 5 minutes) and then runs the smoke tests. it needs to fail the job on timeout, not just print a warning",
+    "should_trigger": true
+  },
+  {
+    "query": "in our workflow we have `count=$(grep -c ERROR build.log)` under set -e and the job dies with exit 1 whenever the build is clean. why, and what other traps like that should I check for in the rest of ci/lint.sh?",
+    "should_trigger": true
+  },
+  {
+    "query": "a PR changes scripts/check-migrations.sh, which runs in our required CI check. the new version pipes psql output through while read line; do ... done and sets a FAILED=1 flag inside the loop. can you review it? I think the flag never makes it out",
+    "should_trigger": true
+  },
+  {
+    "query": "our Buildkite step does `local version=$(./get-version.sh)` inside a function and the job keeps going with an empty version when the helper fails. explain why set -e didn't stop it and fix the script so a broken helper fails the build",
+    "should_trigger": true
+  },
+  {
+    "query": "write a bash alias and a small function for my .zshrc that jumps to the git root of whatever repo I'm in and lists the last five branches I checked out",
+    "should_trigger": false
+  },
+  {
+    "query": "convert this GitHub Actions workflow to use a matrix over Node 18, 20 and 22 instead of three copies of the same job. the steps themselves are fine, it's just npm ci and npm test",
+    "should_trigger": false
+  },
+  {
+    "query": "review scripts/etl.py, the Python job our Airflow DAG runs every hour. I'm worried about how it handles a partial failure halfway through writing the parquet files",
+    "should_trigger": false
+  },
+  {
+    "query": "what's the difference between [ and [[ in bash? I keep seeing both in tutorials and want to know which one to use in my own scripts",
+    "should_trigger": false
+  },
+  {
+    "query": "our GitHub Actions bill doubled this month. which workflows are running most often and how do I add caching for the node_modules directory?",
+    "should_trigger": false
+  },
+  {
+    "query": "write a one-off bash command I can paste into my terminal to rename every .jpeg in ~/Pictures/trip to .jpg",
+    "should_trigger": false
+  },
+  {
+    "query": "the Dockerfile for our API image is 1.4 GB. help me turn it into a multi-stage build so the final image only has the compiled binary and ca-certificates",
+    "should_trigger": false
+  },
+  {
+    "query": "set up branch protection on main so PRs need one approval and the `test` check before merging, and explain where that's configured in the GitHub UI",
+    "should_trigger": false
+  },
+  {
+    "query": "translate this PowerShell build script to a Makefile so the Linux devs can run the same targets locally: build, test, clean",
+    "should_trigger": false
+  },
+  {
+    "query": "the flaky test in tests/test_scheduler.py fails about one run in twenty on CI with a timeout. how do I find out whether it's a race in the code or just a slow runner?",
+    "should_trigger": false
+  }
+]

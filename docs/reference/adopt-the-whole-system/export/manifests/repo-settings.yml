@@ -1,0 +1,67 @@
+# Export of repo-settings into starter/repo-settings/. Built from the
+# inventory (scratch manifests/repo-settings.yml, 2026-10-29) as amended by
+# DECISIONS.md: every fleet.yml element is kept with names substituted (the
+# tests pin the shipped file), the platform label-only mechanism (ADR 0016)
+# is kept with invented names (C3), the two owner legs of the workflow keep
+# their shape with the owners substituted (C9), and the scheduled-run-health
+# caller points at the copy in _agent-guidance (C4).
+repo: repo-settings
+kit_name: repo-settings
+source: repo-settings
+source_sha: db44cee233bfd6c23aa34b1e2822df97c32df5bb
+# Its sync-delivered files (AGENTS.md managed half, the fleet payload mirror)
+# are rebuilt from the exported _agent-guidance.
+after: [_agent-guidance]
+
+edits:
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "    uses: Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.164\n"
+    new: "    uses: Adam-S-Daniel/_agent-guidance/.github/workflows/scheduled-run-health-reusable.yml@0000000000000000000000000000000000000000\n"
+    why: >-
+      C4. The reusable now lives in _agent-guidance. A cross-repo reusable
+      takes a full commit sha, and the adopter's _agent-guidance commit does
+      not exist yet, so this is a placeholder sha the adopter replaces with
+      the command in REGENERATE.md.
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "# sweep once startup-failed 30/30 for a month unnoticed). The platform owns\n# the audit logic; this thin caller schedules it."
+    new: "# sweep once startup-failed 30/30 for a month unnoticed). _agent-guidance's\n# scheduled-run-health-reusable.yml owns the audit logic; this thin caller\n# schedules it."
+    why: C4. The audit logic now lives in _agent-guidance.
+
+  - path: .gitignore
+    old: "pytest-cache*\n"
+    new: "pytest-cache*\n# The adoption kit's copy-starter.sh skips these when it copies the tree;\n# ignoring them here keeps them out of the adopter's first commits too.\nnode_modules/\n.DS_Store\n"
+    why: >-
+      The kit's bootstrap test requires every starter tree's .gitignore to
+      name each path copy-starter.sh skips (__pycache__/, *.pyc,
+      .pytest_cache/, node_modules/, .DS_Store); the lines already present
+      are not repeated.
+
+patches:
+  - file: kit_config.py
+    why: >-
+      C11: fleet.yml declares only the kit's repos. C12: the two App ids it
+      grants a bypass are read from variables the bootstrap sets, not
+      hardcoded (engine, workflow env and schema.md change with it).
+  - file: app_ids.py
+    why: >-
+      C12: the decision records gave the source's two bypass Apps' numeric
+      ids beside the substituted App slugs; they become the placeholders
+      <roster App id> and <guidance sync App id>, found from the ADRs at run
+      time so the kit spells neither.
+
+regenerate:
+  - copy_from_kit: {repo: _agent-guidance, from: agents-md/base.md, to: .claude/hooks/fleet-guidance.md}
+    why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
+    why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - run: >-
+      printf '%s\n%s\n' "$("$EXPORT_TREE_AGENT_GUIDANCE/scripts/build-agents-md.sh")"
+      "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new
+      && mv AGENTS.md.new AGENTS.md
+    why: The managed half of AGENTS.md is the exported _agent-guidance's build-agents-md.sh output.
+
+# The repo's own suite, as tests.yml runs it.
+suite:
+  setup: python3 -I -c 'import yaml, markdown_it'
+  command: python3 -I -m unittest discover -s tests
+  needs: the pins in requirements-dev.txt (python3 -m pip install --ignore-installed PyYAML -r requirements-dev.txt)

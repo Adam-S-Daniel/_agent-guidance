@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
-# create-repos.sh [--config fleet.env] [--dry-run] [<repo>...]
+# create-repos.sh [--config fleet.env] [--dry-run] [--with-optional] [<repo>...]
 #
-# Creates the five fleet repos the guide names (section 1) and sets what
-# phase 1 asks for on each one. Default: all five.
+# Creates the six repos the kit exports, under OWNER, with the names the
+# owner's own repos have (export/DECISIONS.md C1): _agent-guidance,
+# repo-settings, acsi-agentskills, acsi-agentskills-private, skills-evals and
+# wsl-automation. Default: all six. --with-optional (or naming it) also
+# creates waiting-feed, the private repo the waiting-on-you feed publishes
+# to (export/REGENERATE.md, wsl-automation), which no starter tree fills.
 #
-#   * Visibility (guide section 2): agent-skills-private and repo-settings are
-#     always private. On PLAN=free every other repo is public; on PLAN=paid,
-#     agent-guidance and skills-evals follow VISIBILITY_* in fleet.env
-#     (default public). agent-skills is always public.
-#   * A first commit (a README), so no ruleset meets an empty repo (3.4). The
-#     README is generated_readme (lib/common.sh), whose last line is a fixed
-#     marker: copy-starter.sh replaces exactly that file without --force.
-#   * Merge settings (3.1): merge commit only, auto-merge on, delete the
-#     branch on merge.
-#   * Actions (3.3): approval for fork pull request runs from all outside
-#     collaborators (public repos; GitHub answers 422 on private ones), the
-#     default workflow token read-only and unable to approve pull requests,
-#     and SHA pinning required (SHA_PINNING_REQUIRED, default true).
-#   * Labels (11): agent-ready, on-hold, agent-authored, and vendor-release and
-#     agent-check, which routine specs use (LABELS in lib/common.sh).
+#   * Visibility: acsi-agentskills-private, repo-settings and waiting-feed are
+#     always private, acsi-agentskills always public. On PLAN=free every other repo
+#     is public; on PLAN=paid, _agent-guidance, skills-evals and
+#     wsl-automation follow VISIBILITY_* in fleet.env (default public).
+#   * A first commit (a README), so a clone has a default branch to branch
+#     from. The README is generated_readme (lib/common.sh), whose last line is
+#     a fixed marker: copy-starter.sh replaces exactly that file without --force.
+#   * Labels agent-ready and on-hold (LABELS in lib/common.sh): the fleet
+#     worker reads both and no fleet.yml entry declares them.
+#
+#   * skills-evals gets its persistent/eval-results branch (EVAL_RESULTS_BRANCH
+#     in lib/common.sh) as an orphan commit holding a short README. The eval
+#     loop's workflows and the usage census fetch it and fail when it is absent,
+#     and nothing else creates it. No other persistent/* branch needs this: the
+#     script or routine that writes each one creates it when missing.
+#
+# Everything else a repo's settings hold (merge methods, Actions policy,
+# security features, the rulesets and the agent-authored label) is
+# repo-settings' fleet.yml, applied by apply-settings.sh with the exported
+# engine, as the owner's own fleet is.
 #
 # Idempotent: it reads first and writes only what differs; a second run says
 # "Nothing to change". An existing repo with the wrong visibility is reported,
@@ -30,13 +39,23 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
+WITH_OPTIONAL=0
 parse_common_args "$@"
+REPOS=()
+for a in "${REST_ARGS[@]}"; do
+  case $a in
+    --with-optional) WITH_OPTIONAL=1 ;;
+    -*) die "unknown option: $a" ;;
+    *) is_known_repo "$a" || die "unknown repo: $a (expected one of: ${FLEET_REPOS[*]} ${OPTIONAL_REPOS[*]})"; REPOS+=("$a") ;;
+  esac
+done
 require_tools jq "$GH"
 load_config "$CONFIG"
 O=$CFG_OWNER
-REPOS=("${REST_ARGS[@]}")
-[ ${#REPOS[@]} -gt 0 ] || REPOS=("${FLEET_REPOS[@]}")
-for r in "${REPOS[@]}"; do is_known_repo "$r" || die "unknown repo: $r (expected one of: ${FLEET_REPOS[*]})"; done
+if [ ${#REPOS[@]} = 0 ]; then
+  REPOS=("${FLEET_REPOS[@]}")
+  [ "$WITH_OPTIONAL" = 0 ] || REPOS+=("${OPTIONAL_REPOS[@]}")
+fi
 
 PROBLEMS=0
 
@@ -49,7 +68,7 @@ ensure_repo() { # name -> sets FRESH=1 when the repo does not exist yet (dry run
     if [ "$have" = "$want" ]; then
       skip "$O/$r exists ($have)"
     else
-      warn "$O/$r exists but is $have; the guide wants it $want. Not changed: fix it in Settings, General, Danger zone."
+      warn "$O/$r exists but is $have; the kit wants it $want. Not changed: fix it in Settings, General, Danger zone."
       PROBLEMS=$((PROBLEMS + 1))
     fi
     ensure_first_commit "$r"
@@ -65,7 +84,6 @@ ensure_repo() { # name -> sets FRESH=1 when the repo does not exist yet (dry run
     return 0
   fi
   ensure_first_commit "$r"
-  return 0
 }
 
 readme_body() { # name: the contents API body for the generated README
@@ -74,7 +92,7 @@ readme_body() { # name: the contents API body for the generated README
 }
 
 ensure_first_commit() { # name
-  local r=$1 body
+  local r=$1
   if gh_read "repos/$O/$r/commits?per_page=1"; then
     skip "$O/$r has a first commit"; return 0
   fi
@@ -83,60 +101,33 @@ ensure_first_commit() { # name
   did "added a README to the empty repo $O/$r"
 }
 
-ensure_merge_settings() { # name
-  local r=$1 want cur
-  want='{"allow_merge_commit":true,"allow_squash_merge":false,"allow_rebase_merge":false,"allow_auto_merge":true,"delete_branch_on_merge":true}'
-  if [ "$FRESH" = 0 ]; then
-    gh_read_or_die "repos/$O/$r" "$O/$r"
-    cur=$(printf '%s' "$GH_OUT" | jq -c '{allow_merge_commit, allow_squash_merge, allow_rebase_merge, allow_auto_merge, delete_branch_on_merge}')
-    if [ "$(jq -cS . <<<"$cur")" = "$(jq -cS . <<<"$want")" ]; then
-      skip "$O/$r merge settings"; return 0
-    fi
-  fi
-  gh_write_api PATCH "repos/$O/$r" "$want"
-  did "set merge settings on $O/$r (merge commit only, auto-merge, delete branch on merge)"
+results_body() { # kind arg...: the git data API body of one step of an orphan commit
+  case $1 in
+    tree) jq -n --arg c "$(eval_results_readme)" \
+            '{tree: [{path: "README.md", mode: "100644", type: "blob", content: $c}]}' ;;
+    commit) jq -n --arg t "$2" '{message: "Create the results branch", tree: $t, parents: []}' ;;
+    ref) jq -n --arg r "refs/heads/$EVAL_RESULTS_BRANCH" --arg s "$2" '{ref: $r, sha: $s}' ;;
+  esac
 }
 
-ensure_actions() { # name
-  local r=$1 vis cur body
-  vis=$(repo_visibility "$r")
-  # SHA pinning (3.3). enabled and allowed_actions are required in the PUT;
-  # keep whatever is set.
-  if [ "$CFG_SHA_PINNING_REQUIRED" = true ]; then
-    cur='{}'
-    if [ "$FRESH" = 0 ]; then gh_read_or_die "repos/$O/$r/actions/permissions" "Actions permissions of $O/$r"; cur=$GH_OUT; fi
-    if [ "$(printf '%s' "$cur" | jq -r '.sha_pinning_required // false')" = true ]; then
-      skip "$O/$r requires SHA-pinned actions"
-    else
-      body=$(printf '%s' "$cur" | jq -c '{enabled: (.enabled // true), allowed_actions: (.allowed_actions // "all"), sha_pinning_required: true}')
-      gh_write_api PUT "repos/$O/$r/actions/permissions" "$body"
-      did "required SHA-pinned actions on $O/$r"
+ensure_results_branch() { # name: the orphan EVAL_RESULTS_BRANCH, when it does not exist
+  local r=$1 b=$EVAL_RESULTS_BRANCH tree commit
+  if [ "$FRESH" = 0 ]; then
+    if gh_read "repos/$O/$r/git/ref/heads/$b"; then
+      skip "$O/$r has the $b branch"; return 0
     fi
+    [ "$GH_HTTP" = 404 ] || die "could not read the $b branch of $O/$r (HTTP $GH_HTTP)"
   fi
-  # Default workflow token: read-only, cannot approve pull requests.
-  cur='{}'
-  if [ "$FRESH" = 0 ]; then gh_read_or_die "repos/$O/$r/actions/permissions/workflow" "workflow token settings of $O/$r"; cur=$GH_OUT; fi
-  if [ "$(printf '%s' "$cur" | jq -r '"\(.default_workflow_permissions)/\(.can_approve_pull_request_reviews)"')" = "read/false" ]; then
-    skip "$O/$r default workflow token is read-only"
-  else
-    gh_write_api PUT "repos/$O/$r/actions/permissions/workflow" \
-      '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}'
-    did "made the default workflow token read-only on $O/$r"
-  fi
-  # Fork pull request approval: all outside collaborators. Public repos only.
-  if [ "$vis" = public ]; then
-    cur='{}'
-    if [ "$FRESH" = 0 ]; then gh_read_or_die "repos/$O/$r/actions/permissions/fork-pr-contributor-approval" "fork approval of $O/$r"; cur=$GH_OUT; fi
-    if [ "$(printf '%s' "$cur" | jq -r '.approval_policy // ""')" = all_external_contributors ]; then
-      skip "$O/$r requires approval for all outside collaborators' fork runs"
-    else
-      gh_write_api PUT "repos/$O/$r/actions/permissions/fork-pr-contributor-approval" \
-        '{"approval_policy":"all_external_contributors"}'
-      did "required approval for all outside collaborators' fork runs on $O/$r"
-    fi
-  else
-    skip "$O/$r is private: fork run approval does not apply (forks of a private repo need access)"
-  fi
+  gh_write_api POST "repos/$O/$r/git/trees" "$(results_body tree)"
+  tree=$(printf '%s' "$GH_OUT" | jq -r '.sha // empty')
+  [ "$DRY_RUN" = 0 ] || tree=${tree:-"<tree sha>"}
+  [ -n "$tree" ] || die "creating the tree of $b in $O/$r returned no sha"
+  gh_write_api POST "repos/$O/$r/git/commits" "$(results_body commit "$tree")"
+  commit=$(printf '%s' "$GH_OUT" | jq -r '.sha // empty')
+  [ "$DRY_RUN" = 0 ] || commit=${commit:-"<commit sha>"}
+  [ -n "$commit" ] || die "creating the commit of $b in $O/$r returned no sha"
+  gh_write_api POST "repos/$O/$r/git/refs" "$(results_body ref "$commit")"
+  did "created the orphan branch $b in $O/$r"
 }
 
 ensure_labels() { # name
@@ -161,9 +152,8 @@ log "Owner $O, plan $CFG_PLAN$([ "$DRY_RUN" = 1 ] && echo ', DRY RUN')"
 for r in "${REPOS[@]}"; do
   log "== $O/$r"
   ensure_repo "$r"
-  ensure_merge_settings "$r"
-  ensure_actions "$r"
-  ensure_labels "$r"
+  if is_fleet_repo "$r"; then ensure_labels "$r"; fi
+  if [ "$r" = "$EVAL_RESULTS_REPO" ]; then ensure_results_branch "$r"; fi
 done
 finish
 if [ "$PROBLEMS" -gt 0 ]; then

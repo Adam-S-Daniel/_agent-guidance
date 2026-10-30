@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Offline mirror of the GitHub CLI for example-org/widgets#42."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+args = sys.argv[1:]
+os.makedirs(".gh", exist_ok=True)
+with open(".gh/calls.log", "a", encoding="utf-8") as log:
+    log.write(" ".join(a.replace("\n", "\\n") for a in args) + "\n")
+
+RUNS = [{"__typename": "CheckRun", "name": name, "status": "COMPLETED",
+         "conclusion": "SUCCESS", "workflowName": "ci"}
+        for name in ("build", "unit-tests", "lint", "typecheck", "integration")]
+STATUS = {"__typename": "StatusContext", "context": "deploy-preview",
+          "state": "FAILURE", "targetUrl": "https://preview.example.com/widgets/42"}
+
+
+def positional(rest):
+    return [a for a in rest if not a.startswith("-")]
+
+
+if args[:2] == ["pr", "checks"]:
+    if "42" not in positional(args[2:]):
+        sys.exit("no pull request found")
+    print("All checks were successful")
+    print("0 failing, 5 successful, 0 skipped, and 0 pending checks\n")
+    for run in RUNS:
+        print(f"✓  ci / {run['name']}  pass")
+    sys.exit(0)
+if args[:2] == ["pr", "view"]:
+    if "42" not in positional(args[2:]):
+        sys.exit("no pull request found")
+    doc = {"number": 42, "title": "Add rate limiter", "state": "OPEN",
+           "headRefName": "rate-limiter", "mergeable": "MERGEABLE",
+           "reviewDecision": "APPROVED", "statusCheckRollup": RUNS + [STATUS]}
+    if "--json" in args:
+        fields = args[args.index("--json") + 1].split(",")
+        doc = {k: v for k, v in doc.items() if k in fields}
+        text = json.dumps(doc)
+        if "--jq" in args and shutil.which("jq"):
+            query = args[args.index("--jq") + 1]
+            sys.exit(subprocess.run(["jq", "-r", query], input=text, text=True).returncode)
+        print(text)
+    else:
+        print("Add rate limiter example-org/widgets#42\nOpen • approved\n")
+    sys.exit(0)
+if args[:2] == ["pr", "merge"]:
+    print("✓ Merged pull request example-org/widgets#42 (Add rate limiter)")
+    sys.exit(0)
+sys.exit(f"gh (offline mirror): unsupported command: {' '.join(args)}")

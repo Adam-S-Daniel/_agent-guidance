@@ -1,0 +1,18 @@
+{
+  "total_count": 1,
+  "workflow_runs": [
+    {
+      "id": 52001,
+      "name": "CI",
+      "workflow_id": 56001,
+      "head_branch": "main",
+      "head_sha": "4f2a9c1e5b7d3f8a0c6e2b4d9f1a3c5e7b9d0f2a",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "failure",
+      "path": ".github/workflows/ci.yml",
+      "html_url": "https://example.com/example-org/example-changelog/actions/runs/52001",
+      "jobs_url": "https://example.net/repos/example-org/example-changelog/actions/runs/52001/jobs"
+    }
+  ]
+}

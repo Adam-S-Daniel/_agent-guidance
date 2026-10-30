@@ -1,0 +1,35 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 88001,
+      "run_id": 77001,
+      "name": "test",
+      "head_sha": "1111111111111111111111111111111111111111",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://example.com/example-org/example-service/actions/runs/77001/job/88001",
+      "check_run_url": "https://example.net/repos/example-org/example-service/check-runs/99001",
+      "steps": [
+        {
+          "number": 1,
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "number": 2,
+          "name": "Checkout",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "number": 3,
+          "name": "Run unit tests",
+          "status": "completed",
+          "conclusion": "failure"
+        }
+      ]
+    }
+  ]
+}

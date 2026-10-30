@@ -1,160 +1,81 @@
-# Bootstrap scripts for adopting the whole system
+# Bootstrap scripts
 
-These scripts do the GitHub and machine setup from the guide
-[Adopt the whole self-improvement system on your own account](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/adopt-the-whole-system.md),
-on your own account, with the GitHub CLI (`gh`). They do the part that can be
-scripted. The rest happens in a browser, and the end of this file lists it.
+These scripts do the part of adopting the system that can be scripted, on
+your own account, with the GitHub CLI (`gh`). The order is
+[`steps.json`](steps.json), rendered in
+[the quick start](../docs/quick-start.md); `status.sh` says where you are
+and the [`/adopt` skill](../.claude/skills/adopt/SKILL.md) walks you
+through it.
 
 Every script:
 
-- reads one config file, `fleet.env` (`--config <path>`, default `./fleet.env`);
+- reads one config file, `fleet.env` (`--config <path>`, default
+  `./fleet.env`), parsed, never sourced;
 - has `--dry-run`, which makes the same reads and prints each write call
   instead of making it;
-- is idempotent: it reads first and writes only what differs, so a second run
-  prints `Nothing to change`;
+- is idempotent: it reads first and writes only what differs, so a second
+  run prints `Nothing to change`;
 - prints an HTTP status or a fixed message on error, never a response body;
 - has a usage header (`<script> --help`).
 
-You need bash 4.4 or newer, `gh` (logged in as the owner: `gh auth login`,
-then `gh auth refresh -s workflow` so pushes can add workflow files), `jq`,
-`python3` and `git`. `install-machine.sh` also needs `claude`.
+You need bash 4.4 or newer, `gh` (signed in as the owner, with the
+`workflow` scope so pushes can add workflow files:
+`gh auth refresh -s workflow`), `jq`, `git` and `python3` with PyYAML.
+`regenerate.sh actions-lock` also needs the `gh actions-lock` extension, and
+Claude Code installs the plugins `install-machine.sh` enables in its next
+session.
 
-## Order
-
-| Step | Command | Guide section |
-|---|---|---|
-| 0 | `cp fleet.env.example fleet.env` and fill in `OWNER` and `PLAN` | 1, 2 |
-| 1 | `./create-repos.sh` | 1, 3.1, 3.3, 11 |
-| 2 | `./apply-rulesets.sh --all` | 3.1 (persistent ruleset: deletion and non-fast-forward only, until each repo's App exists) |
-| 3 | `./create-environments.sh`: the environments, and the repository variables the workflows read (`REGISTRY_REPO`, `GUIDANCE_REPO`, `LESSONS_REPO` in `skills-evals`; `repo-settings`' mirror of `fleet.env`) | 3.4, 4.5, 6.5, 9.4, 10.5 |
-| 4 | `./set-secrets.sh --only privacy --denylist ~/private/denylist`: before the sync delivers `agent-checks.yml`, or every `privacy` check fails | 6.5 |
-| 5 | `./copy-starter.sh ../starter/repo-settings <you>/repo-settings` (then `../starter/agent-guidance`, `agent-skills`, `agent-skills-private` and `skills-evals` into the repos of the same name, as you reach each phase; `machine` and `cloud` are not repos) | 3.1 onward |
-| 6 | Phase 2: `./create-apps.sh guidance-sync`, then install the App, then `./apply-rulesets.sh --all` (agent-guidance's persistent-branches ruleset now lets guidance-sync write `persistent/drift-report`) and `./create-environments.sh` (repo-settings' `GUIDANCE_SYNC_APP_ID`). | 3.1, 3.4, 4.5 |
-| 7 | On each durable machine: `./install-machine.sh` (it reads `../starter/machine`; `--machine-dir <dir>` for another copy) | 2, 5.3, 6.2, 8.1 |
-| 8 | Phase 4, once `agent-checks` has reported on a pull request: `./apply-rulesets.sh --all --with-required-check`. It records `REQUIRED_CHECKS=on` in `fleet.env`, so every later `apply-rulesets.sh` and `verify.sh` keeps the checks without the flag (`--without-required-check` turns them off again); then `./create-environments.sh` mirrors the key to `repo-settings`. | 3.1, 6.3 |
-| 9 | Phase 7: `./create-apps.sh loop-writer`, install it, then `./apply-rulesets.sh --all` (skills-evals' persistent-branches ruleset now lets loop-writer write `persistent/eval-results`) and `./create-environments.sh` (repo-settings' `LOOP_WRITER_APP_ID`). Create the eval runner routine, then `./set-secrets.sh --only routine-fire` for `EVAL_ROUTINE_FIRE_BEARER` and `ROUTINE_TRIGGER_ID`. | 3.1, 9.4 |
-| 10 | Phase 8: `./create-apps.sh lessons-reader` (for the optional roster refresh, `./create-environments.sh --with-optional` and then `./create-apps.sh --with-optional roster-writer`); on a paid plan, `./create-apps.sh settings-admin`, which lets `repo-settings`' `apply.yml` re-apply the rulesets on push and weekly (see `../starter/repo-settings/README.md`) | 3.4, 10.4 |
-| 11 | Any time: `./verify.sh --phase <N>` after finishing phase N, which checks only what should exist by then; `./verify.sh` alone expects everything (and the required checks when `fleet.env` has `REQUIRED_CHECKS=on`) | all |
-
-`create-apps.sh` with no App name walks through every App that is not yet in
-`fleet.env`, in table order. Pass names to do one phase at a time.
-
-## What each script does, and what it cannot
+## The scripts
 
 | Script | Does | Cannot |
 |---|---|---|
-| `fleet.env.example` | The one file you fill in: owner, plan, App IDs (filled by `create-apps.sh`). No secrets, ever. | |
-| `create-repos.sh` | The five repos with the guide's visibility, a generated README as the first commit (it ends with a fixed marker line, so `copy-starter.sh` may replace it while it is unchanged), merge settings (merge commit only, auto-merge, delete branch on merge), Actions settings (fork-run approval for all outside collaborators on public repos, read-only default token that cannot approve, SHA pinning required), labels `agent-ready`, `on-hold`, `agent-authored`, `vendor-release`, `agent-check` (`LABELS` in `lib/common.sh`). | Change the visibility of an existing repo (it reports a mismatch and exits 1). Allow `pull_request_target` for `agent-checks.yml` (see the manual steps). |
-| `apply-rulesets.sh` | `default-branch` and `persistent-branches` from `rulesets/` (or `--rulesets-dir <dir>`, such as a `repo-settings` checkout's `rulesets/`), PUT or POST by name, then a read-back compared with the file; drift fails the run. `--with-required-check` adds `rulesets/phase4/required-status-checks.json` and records `REQUIRED_CHECKS=on` in `fleet.env`; `--without-required-check` records `off`. `persistent-branches` is per repo: `skills-evals` gets loop-writer as its one bypass and `agent-guidance` gets guidance-sync, each once its App ID is in `fleet.env`; every other repo, deletion and non-fast-forward with no bypass. | Protect private repos on GitHub Free (GitHub does not enforce rulesets there; they are skipped). |
-| `create-environments.sh` | Every environment, deployment branches limited to the default branch by a custom branch policy, you as required reviewer on `plugin-runtime-review`; the repository variables in `REPO_VARIABLES` (`lib/common.sh`), value on stdin, skipping a `fleet.env` key that is empty. | Create environments in private repos on Free (skipped, with the guide's alternative printed). Delete extra branch policies (it reports them). |
-| `create-apps.sh` | Writes a manifest and an auto-submitting HTML form per App, exchanges the code you paste, stores the client ID (variable) and private key (secret) in the App's environment through stdin, records the App ID in `fleet.env`, prints the install URL and the repos to pick. | Click Create or install the App for you. Recover a lost key: generate a new one on the App's settings page. |
-| `set-secrets.sh` | `EVAL_ROUTINE_FIRE_BEARER`, `ROUTINE_TRIGGER_ID` and `PRIVACY_DENYLIST` (validated: outside any git work tree, every line a valid regular expression), from hidden prompts or the file, on stdin. | Read the bearer from claude.ai: you copy it from the routine's API trigger. Compare an existing secret (GitHub never shows one); `--rotate` replaces them. |
-| `copy-starter.sh` | Clones, copies a starter folder, fills `<you>`, `<your name>` and the ruleset App ID placeholders in text files and `<you>` in file and folder names (`plugins/<you>-coding-anywhere/`; a `<you>-` name prefix takes the owner lowercased, URLs keep its case; it never copies `__pycache__`, `*.pyc`, `.pytest_cache`, `node_modules` or `.DS_Store`; `OWNER` must match `^[A-Za-z0-9-]{1,39}$`), refuses to overwrite a different file unless `--force` (except a `README.md` that is still exactly the one `create-repos.sh` generated), commits on `starter/<folder>`, pushes, checks `git merge-base --is-ancestor`, opens a pull request. | Merge the pull request: review it yourself, above all anything under `.github/workflows/` (guide 6.3). |
-| `install-machine.sh` | Merges `disableSkillShellExecution` and the `memory-home.py` Stop hook into `~/.claude/settings.json` (backup first), installs `memory-home.py`, runs the git-hook installer with `<you>` filled, then adds the marketplace and installs the plugins. If the marketplace add fails (the `agent-skills` starter pull request is not merged yet), it warns, says to merge it and rerun, and ends `Not finished`. | Install PyYAML (it warns), upgrade git to 2.54+, or set up the desktop scheduled task for memory curation. |
-| `verify.sh` | Read-only PASS/FAIL/SKIP for every item above (`--phase N` checks only what phase N should have made, and SKIPs later items naming their phase; `--only <group>,...` checks only those groups, such as `rulesets` or `apps:loop-writer`); names of environment variables and secrets only, and each repository variable compared with the value `fleet.env` implies, printing neither. | See a secret's value, or check anything outside GitHub (routines, the cloud environment, installs). |
-| `status.sh` | Read-only: where you are in the quick start. One line per step of `steps.json` (done, next, todo, or asked: done), then the next step, its time estimate and what to run. Script steps are checked with `verify.sh --only` or a contents read of a starter file on the default branch; steps nothing can see (an App installation, a routine, the cloud setup script, another machine) are recorded with `--mark <id>` in a state file outside every repo. The `/adopt` skill (`../.claude/skills/adopt/`) drives it. | See anything `verify.sh` cannot; decide an ask step for you. |
+| `fleet.env.example` | The one file you fill in: owners, plan, visibility, `REPOS_DIR`, and the App ids `create-apps.sh` records. No secrets, ever. | |
+| `add-content.sh` | Adds the recommended and opinionated items you name (`--items <ids\|recommended\|none>`, from `content-catalog.json`) to the kit copy's `../starter/` from `../library/`, rebuilds the generated files they feed (through `lib/content.py`), and records your choices beside `status.sh`'s state file. Idempotent; `--dry-run` lists the files it would add or change. | Write to GitHub: once the repos exist it lists the repos that need a pull request. Run inside a git work tree. |
+| `create-repos.sh` | The six repos (`FLEET_REPOS` in `lib/common.sh`), with the owner's visibility, a generated README as the first commit, the labels `agent-ready` and `on-hold`, and, in `skills-evals`, the orphan branch `persistent/eval-results` (a README only) that the eval loop's workflows fetch and nothing else creates. `--with-optional` adds the private `waiting-feed`. | Change an existing repo's visibility (it reports the mismatch and exits 1). Every other setting is `fleet.yml`'s, applied by `apply-settings.sh`. |
+| `copy-starter.sh` | Clones one of your repos, copies an export from `../starter/` into it with your names (every form of the invented owners, and `<your name>`, through `lib/substitute.py`), commits on `starter/<folder>`, pushes, checks the commit is on the remote branch, and opens a pull request. Refuses to overwrite a file that differs unless `--force`, except the README `create-repos.sh` generated. | Merge it: review it yourself, above all `.github/workflows/`. |
+| `create-environments.sh` | The three environments (`ENVIRONMENTS`): `fleet-apply` in `repo-settings` and `routine-fire` in `skills-evals`, limited to the default branch, and `plugin-runtime-review` in `acsi-agentskills` with you as reviewer. Then the repository variables in `REPO_VARIABLES` (`repo-settings`' `GUIDANCE_SYNC_APP_ID` and `ROSTER_WRITER_APP_ID`, and, when you fill them in, `skills-evals`' four optional `ANTHROPIC_*` federation ids, all from `fleet.env`). | Create an environment in a private repo on GitHub Free (it says so and skips it). Delete an extra branch policy (it reports it). |
+| `create-apps.sh` | The six Apps (`APPS`) through GitHub's App manifest flow: writes `app-manifests/<app>.html`, exchanges the code from the URL you paste, records the App id in `fleet.env`, stores the client id and private key under the names the workflows read, on stdin, and prints the install link and the repos to pick. | Click Create or install an App for you. Recover a lost key. |
+| `set-secrets.sh` | `PRIVACY_DENYLIST` in `acsi-agentskills` (`--only privacy`: the file must be outside every git work tree and every line must compile), and `EVAL_ROUTINE_FIRE_BEARER` and `ROUTINE_TRIGGER_ID` in `skills-evals`' `routine-fire` environment (`--only routine-fire`), from a hidden prompt or the file, on stdin. `--rotate` replaces values already set. | Read the bearer from claude.ai: you copy it from the routine's API trigger. Compare a stored secret (GitHub never shows one). |
+| `regenerate.sh <task>` | Rebuilds a generated file the export could not (`skills-locks`, `hook-pin`, `run-health-sha`, `codex-pin`, `actions-lock`) with the repo's own tooling, on a clone, and proposes it as a pull request on `regenerate/<task>`. `--check` reads the default branches and exits 1 while it is not done. | Merge what it opens. |
+| `apply-settings.sh` | Clones your `repo-settings` and runs its own engine, `scripts/repo_settings.py`, on `repo-settings/fleet.yml` for one owner: `apply`, then `diff`, which must report no drift. Refuses while `fleet.yml` names a repo that does not exist. `--dry-run` is the engine's preview, `--check` the `diff` alone. | Apply for the second owner while `gh` is signed in as the first (sign in as that account and pass `--owner`). |
+| `install-machine.sh` | On one durable machine: clones or fast-forwards `acsi-agentskills` and `_agent-guidance` into `REPOS_DIR` and runs their installers: `setup.sh --owner-machine`, `scripts/install-agent-hooks.sh`, `scripts/register-memory-home-hook.sh`, and with `--with-codex` `scripts/register-codex-hook.sh`. | Install git 2.54+, PyYAML or Codex. Trust the Codex hook (`/hooks` in Codex). |
+| `verify.sh` | Read-only PASS, FAIL or SKIP per group: `repos`, `labels`, `branches`, `environments`, `variables`, `apps:<app>`, `installs:<app>`, `values:<group>`; `settings` (the engine's `diff`) and `regen:<task>` only when named with `--only`; `content` (each installed optional item is on its repo's default branch) once `add-content.sh` has recorded your choices. Names of variables and secrets only, never a value. | See a secret's value, or anything outside GitHub (routines, cloud environments, machines). |
+| `status.sh` | Read-only: one line per step (done, next, todo, optional, asked: done), then the next step with its time, kind, what to run and the section to read. `--mark`/`--unmark` record the steps nothing can see, in a state file outside every repo. | Decide an ask step for you. |
+| `render-quickstart.py` | Writes the steps table into `../docs/quick-start.md`; `--check` fails when it is stale. | |
 
-## Manual steps, with the page to visit
-
-Replace `<you>` with your owner, `<repo>` with a repo name, `<slug>` with the
-App slug `create-apps.sh` prints.
-
-1. **GitHub plan** (only if you want protection on the private repos):
-   https://github.com/settings/billing (personal) or
-   `https://github.com/organizations/<you>/settings/billing`.
-2. **Create each App**: open the `app-manifests/<app>.html` file the script
-   wrote, click Create on GitHub's page, paste the redirect URL back.
-3. **Install each App**: `https://github.com/apps/<slug>/installations/new`,
-   "Only select repositories", the repos the script names (for
-   `guidance-sync`, every repo in `repos.yml` too).
-4. **Allow `pull_request_target`** on each public repo, for every workflow
-   that uses it (GitHub turns it off by default from 2026-11-02, guide 6.3):
-   `https://github.com/<you>/<repo>/settings/actions`. Record the setting in
-   `repo-settings`. The workflows:
-   - `agent-guidance` and every public repo the sync reaches: `.github/workflows/agent-checks.yml`
-   - `agent-skills`: `.github/workflows/plugin-runtime-review.yml`
-   - `agent-skills`: `.github/workflows/loop-disarm.yml`
-   - `skills-evals`: `.github/workflows/scaffold-disarm.yml`
-5. **Pin the actions** in each workflow you copy (guide 3.3):
-   `git ls-remote https://github.com/<owner>/<action> 'refs/tags/<tag>^{}'`,
-   or the lockfile with `gh actions-lock`.
-6. **Routines** at https://claude.ai/code/routines: the eval runner (by hand in
-   the web UI, with an API trigger: copy the bearer it shows once into
-   `set-secrets.sh`, and the `trig_...` ID), then dashboard refresh, changelog
-   watcher, memory curation and fleet worker, each run once by hand (guide
-   9.4, 11). Paste each prompt from `agent-guidance`'s
-   `docs/routines/<name>.prompt.txt` (in the kit,
-   `../starter/agent-guidance/docs/routines/`).
-7. **Cloud environment setup script** (guide 7.3): in Claude Code on the web,
-   https://claude.ai/code, edit the cloud environment the routines use and
-   paste the setup script that `bash ../starter/cloud/build-setup-script.sh --config fleet.env`
-   writes to `../starter/cloud/cloud-setup-script.sh`. Check the project directory with `pwd` in a
-   session first.
-8. **Machine memory curation**: a scheduled task in the Claude desktop app, or
-   cron running `claude -p "Run docs/routines/memory-curation.md"` from an
-   `agent-guidance` checkout (guide 8.2).
-9. **Approve plugin-runtime changes** on the `plugin-runtime-review`
-   environment yourself, on the job page of the waiting run:
-   `https://github.com/<you>/agent-skills/actions`. Never let an agent approve.
-10. **Acceptance checks** (guide 3, 15): `git push origin main` from a clone is
-    rejected with `GH013`; squash and rebase are greyed out.
-
-## Names: from the guide, and the ones it leaves out
-
-From the guide, unchanged:
-
-- Repos: `agent-guidance`, `agent-skills`, `agent-skills-private`,
-  `skills-evals`, `repo-settings`.
-- Environments: `guidance-sync`, `privacy`, `loop-writer`, `routine-fire`.
-- Variables: `GUIDANCE_SYNC_CLIENT_ID`, `LOOP_WRITER_CLIENT_ID`,
-  `ROUTINE_TRIGGER_ID`. Secrets: `GUIDANCE_SYNC_PEM`, `LOOP_WRITER_PEM`,
-  `EVAL_ROUTINE_FIRE_BEARER`, `PRIVACY_DENYLIST`.
-- Apps and permissions: the 3.4 table. Labels: `agent-ready`, `on-hold`,
-  `agent-authored`, and `vendor-release` and `agent-check`, which the
-  changelog-watcher and fleet-worker routine specs read and write. Rulesets: `default-branch`, `persistent-branches`;
-  required checks `agent-checks` and `privacy` (agent-skills-private:
-  `agent-checks` only), plus `plugin-runtime-review` in agent-skills alone
-  (`EXTRA_CHECKS` in `lib/rulesets.sh`), all `integration_id` 15368.
-- Marketplace `<you>-skills`, plugin `<you>-coding-anywhere`.
-
-Not named by the guide, so named here (change them in `lib/common.sh`):
-
-- `lessons-reader`, `settings-admin`, `roster-writer` environments, with
-  `<APP>_CLIENT_ID` / `<APP>_PEM`: the guide says each App's key lives in an
-  environment but names only two; these follow its pattern for
-  `guidance-sync` and `loop-writer`. `lessons-reader` and `roster-writer` live
-  in `skills-evals`, whose workflows use them.
-- `plugin-runtime-review` in `agent-skills`, with you as the required
-  reviewer: the guide (10.5 step 6) asks for such an environment without a
-  name; this is the reference registry's name.
-- Repository variables `GUIDANCE_REPO` and `LESSONS_REPO` in `skills-evals`,
-  beside the guide's `REGISTRY_REPO`: the draft lane files hook proposals in
-  the guidance repo and reads lessons from the private registry, and names
-  each repo the way the improve gate names the registry.
+The libraries: `lib/common.sh` (config parsing, the registries of repos,
+environments, Apps, values and variables, and the `gh` wrappers that honor
+`--dry-run`), `lib/pr.sh` (branch, commit, push, verify and open a pull
+request; never a default branch, never a force push),
+`lib/substitute.py` (the owner names) and `lib/content.py` (the library
+installer `add-content.sh` runs).
 
 ## Variables and secrets set by hand
 
-Every `vars.NAME` and `secrets.NAME` a kit workflow reads is set by a script:
-App client IDs and keys by `create-apps.sh`, `EVAL_ROUTINE_FIRE_BEARER`,
-`ROUTINE_TRIGGER_ID` and `PRIVACY_DENYLIST` by `set-secrets.sh`, and the
-repository variables by `create-environments.sh`. None is left to set by
-hand. If you add a workflow that reads a value no script sets, list it here
-as a list item, "- `NAME`: where it lives and how to set it";
-`tests/check-refs.py` fails on any name that is neither
-set by a script nor listed here, and on a name listed here that a script
-already sets or nothing reads.
+Every `vars.NAME` and `secrets.NAME` an exported workflow reads is set by a
+script: App client ids and keys by `create-apps.sh`, `PRIVACY_DENYLIST`,
+`EVAL_ROUTINE_FIRE_BEARER` and `ROUTINE_TRIGGER_ID` by `set-secrets.sh`,
+and the repository variables by `create-environments.sh`. None is left to
+set by hand. If you add a workflow that reads a value no script sets, list
+it here as a list item, "- `NAME`: where it lives and how to set it";
+`tests/check-refs.py` fails on any name that is neither set by a script nor
+listed here, and on a name listed here that a script already sets or
+nothing reads.
 
 ## Security
 
-- No value from `fleet.env` or GitHub reaches a shell command unquoted;
-  `fleet.env` is parsed, never sourced, and each key is validated.
-- JSON bodies are built with `jq` and passed with `--input`.
-- A private key, client secret, bearer or denylist goes to `gh` on stdin from
-  `printf` (a builtin, so never in a process list) or from the file itself,
-  and is never printed, logged or written to disk. The manifest conversion
-  response is dropped as soon as the four fields are read.
-- `copy-starter.sh` never pushes to the default branch, never force-pushes,
-  and checks its commit is on the remote branch after the push.
+- No value from `fleet.env` or GitHub reaches a shell command unquoted; each
+  key is validated when it is parsed.
+- JSON bodies are built with `jq` or Python and passed on stdin.
+- A private key, client secret, bearer or denylist goes to `gh` on stdin
+  from `printf` (a builtin, so never in a process list) or from the file
+  itself, and is never printed, logged or written to disk. The manifest
+  conversion response is dropped as soon as its fields are read.
+- No script pushes to a default branch or force-pushes; each checks its
+  commit is on the remote branch after the push
+  (`git merge-base --is-ancestor`).
+- `apply-settings.sh` runs the engine from a fresh clone of your own
+  `repo-settings`, with `python3 -I`.
 
 ## Tests
 
@@ -162,14 +83,20 @@ already sets or nothing reads.
 bash tests/test-bootstrap.sh
 ```
 
-No network, no sleeps, no wall-clock. `tests/stubs/gh` is a stateful `gh`
-stand-in that logs every argv (secrets are stored only as SHA-256), and
-`copy-starter.sh` pushes to local bare repos through `url.insteadOf` in a
-scratch `GIT_CONFIG_GLOBAL`. The fixtures in `tests/fixtures/machine/` are the
-guide's own `install-agent-hooks.sh` (6.2) and `memory-home.py` (8.1). The
-suite also fails if `rulesets/` and the copy in `../starter/repo-settings/`
-(with the apply script in its `bin/`) differ by a byte, and
-`tests/check-refs.py` (run by the suite) holds every workflow's variables and
-secrets to the scripts that set them; `tests/check-branch-prefixes.py` holds
-the routine docs, the gates and the disarm workflows to one set of loop
-branch names.
+No network, no sleeps, no wall clock. `tests/stubs/gh` is a stateful `gh`
+stand-in that logs every argv (it stores secrets only as SHA-256). The git
+remotes are local bare repos (`BOOTSTRAP_GIT_BASE`), with a scratch `HOME`
+and `GIT_CONFIG_GLOBAL`: the real `copy-starter.sh` copies all six exports
+in, the test merges them, and the real `regenerate.sh` runs each repo's own
+generator on them. `apply-settings.sh` and `install-machine.sh` run against
+repos holding a fake engine and fake installers that log their arguments;
+the real engine's `--help` is checked for every flag the script passes. Run
+it in a PID namespace (`unshare --pid --fork --mount-proc --`, or with
+`--user --map-current-user` when not root). The suite also runs the
+checkers: `tests/check-refs.py` holds every workflow's variables and secrets
+to the scripts that set them; `tests/check-branch-prefixes.py` holds the
+routine prompt, the gates and the docs to one set of loop branch lanes;
+`tests/check-guide-lists.py` holds the docs to the workflows, Apps,
+environments and `REGENERATE.md`; `tests/check-steps.py` checks
+`steps.json`; `tests/check-links.py` resolves every relative link and anchor
+in the kit's own pages.

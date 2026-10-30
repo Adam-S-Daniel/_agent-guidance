@@ -1,0 +1,176 @@
+# Eval fixture: workflow-path-audit (workflow-doc-in-step)
+# Measures the skill's step 5, "Update the docs that already exist": the repo
+# documents its workflows in AGENTS.md, in a table whose "Salient paths"
+# column says `all paths` for tests.yml and docs-site.yml, and the audit is
+# done only when that column matches the filters it wrote. It also measures
+# the step's other half, "If no such doc exists, do not create one", from the
+# side this seed can see: the table already exists, so a new WORKFLOWS.md, a
+# CONTRIBUTING.md or a page under docs/ is a second record nobody asked for.
+#
+# Why the other fixtures cannot measure it: none of the sibling seeds
+# documents its workflows anywhere, so none can tell an agent that brings an
+# existing table back in step from one that edits the YAML and stops.
+#
+# What the objective column decides, from the files alone: changeset replays
+# through every `on:` block (the seed fires both workflows on everything, so
+# all four fail on it); line-anchored patterns over AGENTS.md that the
+# tests.yml row names src/ and the docs-site.yml row names docs/, with
+# neither row still saying `all paths`, and the schedule row and the other
+# sections kept; and byte comparison of everything else, which catches a new
+# doc at the common names. It does not read the table's prose: a row naming
+# src/ for the wrong reason passes, and a doc created under some other name is
+# the judge's. The ruleset declares no required check, so workflow-level
+# filters are the right shape; the fake `gh` answers the skill's step 1 reads
+# offline and nothing reads its log.
+
+skill: workflow-path-audit
+registry: https://github.com/example-adopter/acsi-agentskills
+
+# No `model:` or `judge.model:` pin: the committed roster (`evals/roster.yml`)
+# picks both (ADR 0013). No `context:`: an isolation pair, like every nested
+# fixture added since #66.
+
+judge:
+  weights:
+    docs-in-step: 0.4
+    salience: 0.4
+    restraint: 0.2
+
+env:
+  PATH: "$WORKSPACE/bin:$PATH"
+  GH_REPLAY_DIR: "$WORKSPACE/.gh/replay"
+  GH_REPO: "example-org/example-service"
+
+prompt: >
+  Both of our CI workflows run on every change. Fix their triggers so each
+  runs only when it needs to.
+
+arms:
+  with_skill:
+    install: copy
+  without_skill:
+    install: none
+
+# Every must_match / must_not_match pattern below is anchored at both ends,
+# has no unescaped `.`, and every negated class excludes a newline, so a
+# pattern matches one whole line of AGENTS.md and nothing across lines.
+objective_checks:
+  - id: docs-change-builds-only-the-docs
+    description: A docs-only change builds the docs site and skips the tests
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["docs/guide.md"]
+    expect_triggered:
+      - ".github/workflows/docs-site.yml"
+    expect_skipped:
+      - ".github/workflows/tests.yml"
+
+  - id: source-change-runs-only-the-tests
+    description: A src/ change runs the tests and skips the docs build
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["src/util.js"]
+    expect_triggered:
+      - ".github/workflows/tests.yml"
+    expect_skipped:
+      - ".github/workflows/docs-site.yml"
+
+  - id: lockfile-change-runs-only-the-tests
+    description: A lockfile-only change runs the tests (npm ci reads it) and skips the docs build
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["package-lock.json"]
+    expect_triggered:
+      - ".github/workflows/tests.yml"
+    expect_skipped:
+      - ".github/workflows/docs-site.yml"
+
+  - id: agents-md-change-runs-nothing
+    description: Editing AGENTS.md or README.md, the audit's own doc change, runs neither workflow
+    type: changeset_triggers
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    changeset: ["AGENTS.md", "README.md"]
+    expect_skipped:
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/docs-site.yml"
+
+  - id: tests-row-names-its-paths
+    description: The AGENTS.md table row for tests.yml names src/ and no longer says `all paths`
+    type: file_matches
+    paths: ["AGENTS.md"]
+    require_present: true
+    must_match:
+      - '^\|[^\n]*tests\.yml[^\n]*\|[^\n]*src/[^\n]*\|[ \t]*$'
+    must_not_match:
+      - '^\|[^\n]*tests\.yml[^\n]*\|[ \t]*all paths[ \t]*\|[ \t]*$'
+
+  - id: docs-site-row-names-its-paths
+    description: The AGENTS.md table row for docs-site.yml names docs/ and no longer says `all paths`
+    type: file_matches
+    paths: ["AGENTS.md"]
+    require_present: true
+    must_match:
+      - '^\|[^\n]*docs-site\.yml[^\n]*\|[^\n]*(?<![A-Za-z0-9_-])docs/[^\n]*\|[ \t]*$'
+    must_not_match:
+      - '^\|[^\n]*docs-site\.yml[^\n]*\|[ \t]*all paths[ \t]*\|[ \t]*$'
+
+  - id: agents-md-keeps-the-rest
+    description: AGENTS.md keeps the schedule row and its other sections
+    type: file_matches
+    paths: ["AGENTS.md"]
+    require_present: true
+    must_match:
+      - '^\|[^\n]*nightly-sweep\.yml[^\n]*\|[^\n]*schedule[^\n]*\|[ \t]*$'
+      - '^## Running locally$'
+      - '^## Conventions$'
+      - '^- Keep `src/` free of runtime dependencies\.$'
+
+  - id: workflows-still-parse
+    description: All workflow files still parse as YAML
+    type: yaml_parses
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: event-only-workflows-unfiltered
+    description: The schedule-only sweep gained no path filter
+    type: event_only_workflows_unfiltered
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: no-second-workflow-doc
+    description: >
+      Nothing outside .github/workflows/ and AGENTS.md changed, and no new
+      workflow doc appeared at the common names beside the table that exists.
+    type: files_unchanged
+    paths:
+      - "src/*.js"
+      - "test/*.js"
+      - "docs/*"
+      - "scripts/*.sh"
+      - "package.json"
+      - "package-lock.json"
+      - "mkdocs.yml"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "WORKFLOWS.md"
+      - ".github/*.md"
+      - ".github/rulesets/main.json"
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension.
+  The seed's tests.yml and docs-site.yml run on every pull request and every
+  push to main, and AGENTS.md's "CI workflows" table says `all paths` for
+  both. No check is required, so a workflow-level `paths:` (or
+  `paths-ignore:`) filter is the right shape.
+  (1) Docs in step — after the change, does each AGENTS.md row's "Salient
+  paths" cell state the filter its workflow now carries (tests.yml: src/,
+  test/, the manifest and lockfile, its own file; docs-site.yml: docs/,
+  mkdocs.yml, its own file), and do the Triggers cells still match the YAML?
+  Cap at 3 if tests-row-names-its-paths or docs-site-row-names-its-paths
+  failed. Cap at 5 if the agent wrote a second workflow doc instead of, or
+  beside, the existing table.
+  (2) Salience — are the path lists the files each workflow's own steps
+  consume, rather than a catch-all or a copy of the sibling's list? Cap at 4
+  if any of the four changeset checks failed.
+  (3) Restraint — did the agent leave the schedule-only sweep unfiltered,
+  leave every file outside .github/workflows/ and AGENTS.md alone, and keep
+  the rest of AGENTS.md as it was? Cap at 3 if no-second-workflow-doc or
+  agents-md-keeps-the-rest failed.

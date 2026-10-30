@@ -1,0 +1,385 @@
+name: CI
+
+# The salient list is DERIVED, not guessed: this workflow runs exactly one
+# thing — `python3 test/run_tests.py --jobs auto --shard K/N`, split across shards — so it is the set of files
+# that suite actually reads, taken from tracing a real run. harness/ (run_eval,
+# run_canary, the scorers it imports), scripts/ (make_badge.py, both imported
+# and shelled out to), test/ (the suite, its fake-claude stub, fixtures/),
+# evals/ (the fixture YAML and seed trees the eval and canary dirs load), and
+# eval.yml — which BadgeWorkflowOrderingTests parses to assert the badge is
+# built after the persistent/eval-results checkout; and routine-eval-fire.yml,
+# which test_issue_routine_eval_fire.py parses and runs; routine-eval-weekly.yml,
+# which test_issue_scheduled_fixtures.py parses and runs; routine-eval-ingest.yml
+# and routine-eval-results-pushed.yml, which test_issue_routine_eval_ingest.py
+# parses; routine-improve-gate.yml and routine-improve-pushed.yml, which
+# test_issue_routine_improve.py parses; routine-guidance-improve-gate.yml and
+# routine-guidance-improve-pushed.yml, which
+# test_issue_routine_guidance_improve.py parses; propagation.yml, which test_issue_64.py
+# parses for coverage publication gates; and .github/dependabot.yml, which test_issue_real_work_fixtures.py
+# parses to check it covers every seed manifest. Plus this file itself, so a change to
+# the filter is always exercised by the filter. .github/workflows/actions.lock,
+# .github/workflows/** and .github/actions/** are here for the "Verify action
+# lockfile" step: any change to a workflow, a local action or the lockfile
+# must re-verify the pins (ADR 0024), so this list also names files no test
+# reads. README.md and DESIGN.md are
+# included too: TestIssue80::test_readme_lists_the_writing_adrs_eval_directory
+# reads the former and test_design_doc_no_longer_lists_writing_adrs_as_a_class_a_candidate
+# reads the latter, so a change that drops the README's writing-adrs/ line or
+# DESIGN's graduation sentence needs this workflow to run. The scheduled-fixture
+# suite also reads ADR 0008 and ADR 0010, so changes to either decision record
+# must run the checks that guard its wording — and
+# CiDispatchTests::test_every_root_markdown_file_this_suite_reads_is_salient
+# closes this as a class, not a one-off: it AST-walks this suite's own source
+# for every root Markdown file it reads and fails if one is ever missing from
+# here. AGENTS/CLAUDE and badges/ stay deliberately absent: the
+# suite never opens them, so a docs-only pull request touching only those has
+# nothing to prove here and should not pay for a runner. One
+# path this filter structurally cannot name: the suite also reads
+# acsi-agentskills' own scripts/skills_registries.yml from the side-by-side
+# checkout below, for
+# TestIssue63::test_registries_agree_with_agentskills_own_file — a file in a
+# different repo, outside anything a `paths:` filter here can match.
+#
+# `push:` is pinned to main because without a branch filter every push to a
+# pull-request branch ran `test` TWICE — once for the push, once for the
+# pull_request. Observed on 82596ff: same commit, same job, finishing 03:38:30
+# and 03:39:14. Both events carry the same list; keep the two in step.
+#
+# `test` now publishes a context meant to be REQUIRED on main (cms-platform#437
+# declares it in repo-settings' fleet.yml), so a pull_request run must always
+# exist: the filter moved inside the job (step `salient`), the push filter
+# stays as the cheap workflow-level one because a push to main publishes no
+# merge gate, and SALIENT_PATHS must equal on.push.paths (CiDispatchTests pins
+# both).
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ci.yml
+      - .github/workflows/eval.yml
+      - .github/workflows/propagation.yml
+      - .github/workflows/routine-improve-gate.yml
+      - .github/workflows/routine-improve-pushed.yml
+      - .github/workflows/routine-eval-fire.yml
+      - .github/workflows/routine-eval-weekly.yml
+      - .github/workflows/routine-eval-ingest.yml
+      - .github/workflows/routine-eval-results-pushed.yml
+      - .github/workflows/routine-scaffold-gate.yml
+      - .github/workflows/routine-scaffold-pushed.yml
+      - .github/workflows/skill-coverage.yml
+      - .github/workflows/actions.lock
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/dependabot.yml
+      - evals/**
+      - dashboard/**
+      - harness/**
+      - scripts/**
+      - test/**
+      - README.md
+      - DESIGN.md
+      - docs/decisions/0008-run-ready-fixtures-on-the-weekly-schedule.md
+      - docs/decisions/0010-run-ai-eval-steps-in-a-routine-fired-by-actions.md
+  # Bare — no inputs, and deliberately no `paths:`, which GitHub ignores on a
+  # dispatch anyway. That is the point rather than an omission: the push
+  # filter above is what makes a docs-only push cheap, and it is therefore
+  # also what leaves running this suite against such a commit with no button at
+  # all. Added for the same reason as propagation.yml's: a fix merged and
+  # confirming it was impossible — `422 Workflow does not have
+  # 'workflow_dispatch' trigger` — so verification waited on the next
+  # qualifying push. Unlike propagation.yml, the dispatch is still safe
+  # because this workflow declares no `concurrency` group, so a manual run
+  # cancels nothing; the residual is a human cancelling a dispatched run on a
+  # PR head, which leaves the required `test` context cancelled until re-run.
+  workflow_dispatch:
+
+# Least privilege: the suite is hermetic — no network, no pushes — so a read
+# token is all it needs. propagation.yml declares the same at workflow level.
+permissions:
+  contents: read
+
+jobs:
+  # The suite, split across parallel jobs: each shard runs the tests
+  # test/shard.py assigns it, and the runner cross-checks that it collected
+  # exactly that share of build_suite(). One job took 10-12 minutes on 4
+  # vCPUs (2026-10-26); the shards together do the same work in about a
+  # quarter of the time. Add a shard by adding a number below: `--shard`
+  # reads the total from strategy.job-total, so nothing else changes.
+  suite:
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard reports, so one red run lists every failure.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Check out skills-evals
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+          path: skills-evals
+          persist-credentials: false
+
+      - name: Did this pull request touch a salient path?
+        id: salient
+        working-directory: skills-evals
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SALIENT_PATHS: |
+            .github/workflows/ci.yml
+            .github/workflows/eval.yml
+            .github/workflows/propagation.yml
+            .github/workflows/routine-improve-gate.yml
+            .github/workflows/routine-improve-pushed.yml
+            .github/workflows/routine-eval-fire.yml
+            .github/workflows/routine-eval-weekly.yml
+            .github/workflows/routine-eval-ingest.yml
+            .github/workflows/routine-eval-results-pushed.yml
+            .github/workflows/routine-scaffold-gate.yml
+            .github/workflows/routine-scaffold-pushed.yml
+            .github/workflows/skill-coverage.yml
+            .github/workflows/actions.lock
+            .github/workflows/**
+            .github/actions/**
+            .github/dependabot.yml
+            evals/**
+            dashboard/**
+            harness/**
+            scripts/**
+            test/**
+            README.md
+            DESIGN.md
+            docs/decisions/0008-run-ready-fixtures-on-the-weekly-schedule.md
+            docs/decisions/0010-run-ai-eval-steps-in-a-routine-fired-by-actions.md
+        run: |
+          set -euo pipefail
+
+          # SALIENT_PATHS must equal on.push.paths above (CiDispatchTests pins
+          # both). Validate its shape up front: each non-empty line must be
+          # either an exact path (no `*` anywhere) or a `<prefix>/**` glob
+          # with no other `*` in it — a shape this matcher cannot honour must
+          # fail loudly here, never silently mismatch every changed file
+          # below.
+          while IFS= read -r entry; do
+            if [ -z "$entry" ]; then
+              continue
+            fi
+            case "$entry" in
+              */\*\*)
+                prefix="${entry%/**}"
+                case "$prefix" in
+                  *'*'*)
+                    echo "::error::SALIENT_PATHS entry '${entry}' has a '*' outside its trailing /** — this matcher cannot honour it"
+                    exit 1
+                    ;;
+                esac
+                ;;
+              *'*'*)
+                echo "::error::SALIENT_PATHS entry '${entry}' is neither an exact path nor a <prefix>/** glob — this matcher cannot honour it"
+                exit 1
+                ;;
+              *)
+                ;;
+            esac
+          done <<<"$SALIENT_PATHS"
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "event is ${EVENT_NAME}, not pull_request — always running"
+            exit 0
+          fi
+
+          # The checkout above is GitHub's synthetic merge commit for the PR
+          # (actions/checkout's default ref for a pull_request event), whose
+          # first parent is the base branch tip — so HEAD^1..HEAD is exactly
+          # the PR's changeset. --no-renames lists both sides of a rename, so
+          # moving a file out of a salient path still counts as touching it.
+          if ! changed=$(git diff --no-renames --name-only HEAD^1 HEAD 2>&1); then
+            echo "::warning::$(head -n1 <<<"$changed") -- could not diff against HEAD^1; running the suite rather than risking a false skip"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          run=false
+          while IFS= read -r file; do
+            if [ -z "$file" ]; then
+              continue
+            fi
+            while IFS= read -r entry; do
+              if [ -z "$entry" ]; then
+                continue
+              fi
+              case "$entry" in
+                */\*\*)
+                  prefix="${entry%/**}"
+                  case "$file" in
+                    "${prefix}"/*)
+                      run=true
+                      ;;
+                  esac
+                  ;;
+                *)
+                  if [ "$file" = "$entry" ]; then
+                    run=true
+                  fi
+                  ;;
+              esac
+            done <<<"$SALIENT_PATHS"
+          done <<<"$changed"
+
+          echo "run=${run}" >> "$GITHUB_OUTPUT"
+          if [ "$run" = "true" ]; then
+            echo "a salient path changed — running the suite"
+          else
+            echo "no salient path changed — skipping the suite; \`test\` still reports success so the required context is present"
+          fi
+
+      - name: Verify action lockfile
+        uses: Adam-S-Daniel/verify-actions-lock@v1.1.0
+        with:
+          working-directory: skills-evals
+
+      # Side-by-side, same convention as eval.yml and propagation.yml: this
+      # is what makes the harness's sibling-directory default
+      # (`../acsi-agentskills` next to a skills-evals checkout) resolve to
+      # something real here, which is what lets
+      # TestIssue63::test_registries_agree_with_agentskills_own_file actually
+      # run in CI instead of skipping every time.
+      - name: Check out acsi-agentskills registry (side-by-side)
+        if: steps.salient.outputs.run == 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/acsi-agentskills
+          path: acsi-agentskills
+          persist-credentials: false
+
+      # Also side-by-side, and for the same reason: the guidance-subject tests
+      # (#97) drive the REAL fleet-memory.sh hook and the REAL section
+      # manifest out of this checkout. Without it they skip with a printed
+      # reason and CI never exercises the delivery path at all.
+      - name: Check out _agent-guidance (side-by-side)
+        if: steps.salient.outputs.run == 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: example-adopter/_agent-guidance
+          path: _agent-guidance
+          persist-credentials: false
+
+      # Pinned, not the runner's system Python: ubuntu-latest moves to Ubuntu
+      # 26.04 from 2026-10-19 (https://github.com/actions/runner-images/issues/14748),
+      # taking system Python from 3.12 to 3.14 and pip with it. 3.12 is what
+      # eval.yml and propagation.yml already run.
+      - name: Set up Python
+        if: steps.salient.outputs.run == 'true'
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        if: steps.salient.outputs.run == 'true'
+        # markdown-it-py is what harness/guidance.py parses a guidance
+        # section's extent with, and the hermetic suite imports it. Pinned
+        # exact, same convention as eval.yml. pytest + pytest-xdist are what
+        # `run_tests.py --jobs` fans the suite out with (#182); pinned exact
+        # and more than 7 days old at adoption, same as every other pin here.
+        # These are the same two pins acsi-agentskills carries in its own
+        # requirements-dev.txt for its own `-n auto` run
+        # (https://github.com/Adam-S-Daniel/agentskills/pull/179) — kept in
+        # step deliberately:
+        # TestIssue63::test_parallel_pins_agree_with_agentskills_requirements
+        # fails the whole suite when the two repos' pins disagree.
+        run: pip install pyyaml==6.0.3 markdown-it-py==4.2.0 tree-sitter==0.26.0 tree-sitter-bash==0.25.1 pytest==9.1.1 pytest-xdist==3.8.0
+      - name: Set up Node for the real-work fixtures' dependencies
+        if: steps.salient.outputs.run == 'true'
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 22
+      # The real-work fixtures' checkers (test/issues/test_issue_real_work_fixtures.py)
+      # run each seed's own tests, which need the seed's npm dependencies,
+      # installed here from the seed's committed lockfile as a run's `deps:`
+      # step would. The list is the fixtures' own `deps:` entries
+      # (scaffold_real_work.py deps-dirs), so a scaffolded fixture needs no
+      # edit here; the assignment fails the step if the list cannot be read.
+      - name: Install real-work fixture dependencies
+        if: steps.salient.outputs.run == 'true'
+        working-directory: skills-evals/evals/real-work
+        run: |
+          set -euo pipefail
+          dirs="$(python3 ../../scripts/scaffold_real_work.py deps-dirs --manager npm)"
+          for dir in $dirs; do
+            (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund)
+          done
+      # example-site-platform-760's checker builds a real Jekyll site. Its gems come
+      # from the seed's own e2e/fixture-site/Gemfile.lock, installed frozen
+      # into vendor/bundle beside it, as seed_prep's bundler `deps:` installs
+      # them in a run; the lockfile's bundler version is installed first so
+      # the runner's older bundler does not try to switch versions mid-step.
+      # The list is the fixtures' own bundler `deps:` entries, as above.
+      - name: Install real-work fixture gems
+        if: steps.salient.outputs.run == 'true'
+        working-directory: skills-evals/evals/real-work
+        run: |
+          set -euo pipefail
+          sudo gem install bundler --version 4.0.10 --no-document
+          dirs="$(python3 ../../scripts/scaffold_real_work.py deps-dirs --manager bundler)"
+          for dir in $dirs; do
+            (cd "$dir" && BUNDLE_PATH=vendor/bundle BUNDLE_FROZEN=true BUNDLE_DISABLE_SHARED_GEMS=true BUNDLE_APP_CONFIG="$RUNNER_TEMP/bundle-config" bundle install --quiet)
+          done
+      # Workspace-executing scorers run only inside bubblewrap and fail
+      # closed without it (ADR 0006's 2026-10-07 addendum, #344). The runner
+      # image ships no bwrap, and Ubuntu's AppArmor denies unprivileged user
+      # namespaces by default, so grant that permission to /usr/bin/bwrap
+      # alone (the profile Ubuntu itself ships from 24.10) rather than lifting
+      # the restriction host-wide. The probe uses the scorer's own namespace
+      # flags, so a sandbox the suite cannot start fails here, by name.
+      - name: Provide bubblewrap for the scorer sandbox
+        if: steps.salient.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bubblewrap
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' \
+              'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' \
+              | sudo tee /etc/apparmor.d/bwrap >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          fi
+          /usr/bin/bwrap --ro-bind / / --unshare-pid --unshare-net --unshare-ipc \
+            --unshare-uts --proc /proc --dev /dev --die-with-parent -- /usr/bin/true
+      - name: Run tests
+        if: steps.salient.outputs.run == 'true'
+        working-directory: skills-evals
+        env:
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        # `auto` (one worker per CPU) for fleet consistency with
+        # agentskills#179's own `-n auto`; ubuntu-latest has 4 vCPUs on a
+        # public repo and 8 workers measured no faster than 4, so this
+        # resolves to the same thing an explicit `--jobs 4` would. This calls
+        # the RUNNER, not bare pytest, so the run-wide user-memory guard and
+        # the build_suite() collection cross-check still span the whole run
+        # (#182).
+        run: python3 test/run_tests.py --jobs auto --shard "$SHARD"
+
+      - name: No salient path changed
+        if: steps.salient.outputs.run != 'true'
+        run: echo "::notice::No salient path changed on this pull request — skipping the suite; this step's success is what keeps the required \`test\` context present."
+
+  # The REQUIRED context (cms-platform#437). A matrix publishes one context
+  # per shard, `suite (1)` and so on, so branch protection names this job
+  # instead: it passes only when every shard concluded `success`. `if:
+  # always()` keeps it from being skipped when a shard fails, since a skipped
+  # required check reads as passing.
+  test:
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every suite shard passed
+        env:
+          SUITE_RESULT: ${{ needs.suite.result }}
+        run: |
+          if [ "$SUITE_RESULT" != "success" ]; then
+            echo "::error::the suite shards concluded '${SUITE_RESULT}', not 'success'"
+            exit 1
+          fi
+          echo "every suite shard passed"

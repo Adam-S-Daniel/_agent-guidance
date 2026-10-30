@@ -1,0 +1,16 @@
+name: Docs
+
+on:
+  release:
+    types: [edited]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - name: Build the site
+        run: python3 -m compileall -q scripts

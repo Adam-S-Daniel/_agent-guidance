@@ -1,0 +1,12 @@
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+  "rules": [
+    {"type": "pull_request"},
+    {"type": "required_status_checks",
+     "parameters": {"required_status_checks": [{"context": "test"}],
+                    "strict_required_status_checks_policy": false}}
+  ]
+}

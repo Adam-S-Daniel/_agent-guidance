@@ -1,0 +1,10 @@
+{
+  "repo": "example-org/widgets",
+  "release": "v2.4.0",
+  "blocking_the_release_pr": [
+    {"kind": "local_task", "id": "bench-7", "what": "load benchmark on this machine",
+     "state": "running", "output": "/tmp/bench-7/results.csv"},
+    {"kind": "pull_request", "number": 44, "title": "Add a rate limiter",
+     "state": "open", "waiting_on": "code review"}
+  ]
+}

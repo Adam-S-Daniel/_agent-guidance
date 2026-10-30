@@ -1,16 +1,68 @@
-# Retirement thresholds (guide 10.3; compute_gates.py reads it).
-# Schema: these keys only (compute_gates.py refuses any other), numbers as
-# written in the guide's reference values. A key left out takes the default
-# in compute_gates.py's DEFAULT_POLICY.
-insufficient_runs: 5            # fewer runs than this: insufficient
-insufficient_cli_versions: 2    # or runs from fewer CLI versions than this
-cannot_discriminate_below: 0.10 # both arms score under this: fix the fixture
-ceiling_pass_rate: 0.90         # both arms pass at least this share of checks: ceiling
-ceiling_judge: 9.0              # or the judge gives both at least this of 10
-no_benefit_pass_rate_bound: 0.05  # upper bound of the with-skill advantage below this ...
-no_benefit_judge_bound: 0.5       # ... and below this many judge points
-confidence: 0.975               # one-sided
-looks: [5, 10, 20]              # judged only after this many runs
-looks_required: 2               # no-benefit at both of the two largest looks reached
-bootstrap_resamples: 2000       # the bootstrap half of the no-benefit interval
-bootstrap_seed: 20261028        # fixed, so the same results always give the same verdict
+# Thresholds for the retirement verdict, read by harness/gates.py (#70).
+#
+# The owner set the thresholds on 2026-10-10 (#70) and chose POOLED evidence on
+# 2026-10-25, replacing #70's four weekly sweeps: a cell (skill, fixture,
+# requested arm model) pools every validated run whose fixture, arm context
+# and (for the with arm) skill content match the current ones, the run is
+# the unit, and bounds over run means decide it. harness/gates.py's
+# docstring says how each number is used.
+#
+# Confidences: `benefit_confidence` is two-sided, `retire_confidence` and
+# `check_confidence` are one-sided. `retire_looks` are the only run counts
+# at which a cell may be classified `no-benefit`, and it must be so at the
+# two largest it has reached (so at least ten runs per arm).
+#
+# Every validated run counts, from `results/` and `routine-results/` alike
+# (scripts/compute_gates.py): the gate guards against honest mistakes (a
+# changed fixture or skill, a different guidance or skill set between the
+# arms, errored trials, a copy of a run ingested twice), not against forged
+# results, since anyone who can write the results can also remove a skill.
+#
+# `retirement_mode` is `auto` (a `retire` verdict opens a removal PR in
+# acsi-agentskills that auto-merges with no human review) or `proposal` (an
+# issue is filed and a human removes). A missing or invalid value is
+# `proposal`. It is `auto` by the owner's 2026-10-26 decision (removal pull
+# requests auto-merge with no human; ADR 0014 and acsi-agentskills ADR 0021);
+# set it to `proposal` to turn removal pull requests off. Even in `auto`,
+# scripts/retire_skill.py files the issue instead when the skill's plugin
+# runs code or the scheduled workflow has no acsi-agentskills write token,
+# opens nothing while another loop pull request is open there, and acts only
+# from the scheduled workflow, never a dispatched or pull-request run.
+skills:
+  objective_margin: 0.05
+  judge_margin: 0.5
+  benefit_confidence: 0.90
+  retire_confidence: 0.975
+  check_confidence: 0.90
+  min_runs: 5
+  min_cli_versions: 2
+  ceiling_fraction: 0.90
+  judge_ceiling: 9.0
+  floor_fraction: 0.10
+  bootstrap_resamples: 2000
+  retire_looks: [5, 10, 20]
+  retirement_mode: auto
+# Guidance sections (skills-evals#124): the same verdict over each section's
+# ablation pair (full vs full-minus-section), with the section-vs-none pair
+# read only for the `shorten-or-merge` outcome (harness/gates.py,
+# `guidance_verdict`). Same starting values as skills, kept apart so they can
+# diverge. The owner made section removal automatic on 2026-10-10 (#124) and
+# removal pull requests auto-merging on 2026-10-25. The write path is the
+# eval-improve GitHub App's token for _agent-guidance alone; with no token
+# (the secrets are unset, the mint failed, or the App is not installed on
+# _agent-guidance), scripts/retire_skill.py --target guidance files the
+# issue instead. Set it to `proposal` to turn removal pull requests off.
+guidance:
+  objective_margin: 0.05
+  judge_margin: 0.5
+  benefit_confidence: 0.90
+  retire_confidence: 0.975
+  check_confidence: 0.90
+  min_runs: 5
+  min_cli_versions: 2
+  ceiling_fraction: 0.90
+  judge_ceiling: 9.0
+  floor_fraction: 0.10
+  bootstrap_resamples: 2000
+  retire_looks: [5, 10, 20]
+  retirement_mode: auto

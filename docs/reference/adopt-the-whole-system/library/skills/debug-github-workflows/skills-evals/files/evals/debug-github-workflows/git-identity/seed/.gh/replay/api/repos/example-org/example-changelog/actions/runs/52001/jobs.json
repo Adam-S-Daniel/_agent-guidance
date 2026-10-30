@@ -1,0 +1,49 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 72001,
+      "run_id": 52001,
+      "name": "test",
+      "head_sha": "4f2a9c1e5b7d3f8a0c6e2b4d9f1a3c5e7b9d0f2a",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://example.com/example-org/example-changelog/actions/runs/52001/job/72001",
+      "check_run_url": "https://example.net/repos/example-org/example-changelog/check-runs/92001",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-01-09T10:00:01Z",
+          "completed_at": "2026-01-09T10:00:02Z"
+        },
+        {
+          "name": "Run actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-01-09T10:00:02Z",
+          "completed_at": "2026-01-09T10:00:04Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 3,
+          "started_at": "2026-01-09T10:00:04Z",
+          "completed_at": "2026-01-09T10:00:05Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-01-09T10:00:05Z",
+          "completed_at": "2026-01-09T10:00:05Z"
+        }
+      ]
+    }
+  ]
+}

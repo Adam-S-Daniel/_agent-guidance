@@ -1,0 +1,30 @@
+# Registry name -> URL -> skill-directory layout, for resolving the
+# `with_skill` arm's skill dir across every registry layout the fleet uses.
+#
+# Seeded from acsi-agentskills' scripts/skills_registries.yml (agentskills#55)
+# but NOT imported from it at run time: this harness must resolve using only
+# its own checkout plus the registry under test, so `url` and `layout` are
+# kept in step by hand. test/run_tests.py::TestIssue63 asserts the two agree
+# on names and layouts whenever an acsi-agentskills checkout is present as a
+# sibling of this repo, and skips (with a printed reason, never silently)
+# otherwise.
+#
+# `url` matches a fixture's `registry:` field. `layout` is a glob ending in
+# `*/SKILL.md`; the `*` immediately before `SKILL.md` (the second-to-last
+# path segment) is the skill-name placeholder substituted by `_skill_md_glob`
+# in harness/run_eval.py, any earlier `*` (a bundle/plugin name) stays a
+# wildcard.
+#
+# `may_be_empty: true` (optional, a boolean, false when absent) says the
+# registry may hold no skill yet: the coverage census then resolves it with
+# 0 skills instead of refusing a layout that matches nothing (the kit's
+# private registry starts that way). Without the key an empty registry is
+# still refused as a wrong path or a wrong layout.
+registries:
+  - name: acsi-agentskills
+    url: https://github.com/example-adopter/acsi-agentskills
+    layout: "plugins/*/skills/*/SKILL.md"
+  - name: acsi-agentskills-private
+    url: https://github.com/example-adopter/acsi-agentskills-private
+    layout: "plugins/*/skills/*/SKILL.md"
+    may_be_empty: true

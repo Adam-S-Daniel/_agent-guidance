@@ -1,0 +1,48 @@
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git commit --no-verify -m x"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git commit -nm x"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -am \"x\""}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -m \"-n flag\""}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -m \"skip --no-verify\""}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push --no-verify origin x"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push -n origin x"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git -c core.hooksPath=/dev/null commit -m x"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git -c hook.agent-checks-pre-commit.enabled=false commit -m x"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git -c user.name=x commit -m x"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "GIT_CONFIG_GLOBAL=/dev/null git commit -m x"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git config --global --unset-all includeIf.hasconfig:remote.*.url:x.path"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git config --get core.hooksPath"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git config --global hook.x.enabled false"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "rm -f .githooks/agent-checks"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "sed -i s/x/y/ .githooks/agent-checks"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "echo hi > .githooks/agent-checks"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "cat .githooks/agent-checks"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "cd repo && git commit --no-verify"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -F - <<'EOF'\nmention --no-verify here\nEOF\ngit push origin x"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "ls; git commit -n"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git commit -c HEAD -n"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git commit -m\"x\" -n"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git log --no-verify"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -m \"unterminated"}}
+{"expect": "block", "tool_name": "Edit", "tool_input": {"file_path": "/x/repo/.githooks/agent-checks"}}
+{"expect": "allow", "tool_name": "Write", "tool_input": {"file_path": "/x/repo/src/a.py"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api -X DELETE repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api repos/example-owner/widgets/git/refs/heads/persistent/eval-results --method DELETE"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api --method=DELETE /repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api -XDELETE repos/example-owner/widgets/git/refs/heads/persistent%2Feval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "gh api -H 'Accept: application/vnd.github+json' -X delete repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "gh api repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "gh api -X GET repos/example-owner/widgets/git/refs/heads/persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "gh api -X DELETE repos/example-owner/widgets/git/refs/heads/feature/old-work"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin --delete persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push --delete origin refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push -d origin persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin :persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin :refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "git push origin +:refs/heads/persistent/eval-results"}}
+{"expect": "block", "tool_name": "Bash", "tool_input": {"command": "cd widgets && git push -o ci.skip origin feature/a --delete persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin --delete feature/old-work"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin :feature/old-work"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git push origin HEAD:persistent/eval-results"}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -m \"git push origin --delete persistent/eval-results\""}}
+{"expect": "allow", "tool_name": "Bash", "tool_input": {"command": "git commit -F - <<'EOF'\nDo not run gh api -X DELETE repos/example-owner/widgets/git/refs/heads/persistent/x\nEOF"}}

@@ -1,6 +1,18 @@
-# Caches and local junk. bootstrap/copy-starter.sh skips the same paths.
+# Python build artifacts. repo-settings had no .gitignore at all, so running
+# `python3 -m pytest tests/` left a dirty tree and four .pyc files were
+# committed by accident (removed from the index in the same commit as this
+# file). Mirrors agentskills' list -- same language, same toolchain, and no
+# reason for the two to disagree.
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+pytest-cache*
+# The adoption kit's copy-starter.sh skips these when it copies the tree;
+# ignoring them here keeps them out of the adopter's first commits too.
 node_modules/
 .DS_Store

@@ -1,0 +1,51 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 81003,
+      "run_id": 61003,
+      "name": "sync",
+      "head_sha": "3333333333333333333333333333333333333333",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-01-07T03:00:01Z",
+      "completed_at": "2026-01-07T03:00:07Z",
+      "html_url": "https://example.com/example-org/example-labels/actions/runs/61003/job/81003",
+      "check_run_url": "https://example.net/repos/example-org/example-labels/check-runs/91003",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-01-07T03:00:01Z",
+          "completed_at": "2026-01-07T03:00:02Z"
+        },
+        {
+          "name": "Run actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-01-07T03:00:02Z",
+          "completed_at": "2026-01-07T03:00:06Z"
+        },
+        {
+          "name": "Sync labels",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-01-07T03:00:06Z",
+          "completed_at": "2026-01-07T03:00:07Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-01-07T03:00:07Z",
+          "completed_at": "2026-01-07T03:00:07Z"
+        }
+      ]
+    }
+  ]
+}

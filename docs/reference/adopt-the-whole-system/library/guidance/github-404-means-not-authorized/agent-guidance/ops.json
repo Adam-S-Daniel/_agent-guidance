@@ -1,0 +1,42 @@
+{
+  "ops": [
+    {
+      "op": "insert-section",
+      "file": "agents-md/base.md",
+      "fragment": "section.md",
+      "heading": "## A GitHub 404 means \"not authorized\", not \"not there\"",
+      "follows": [
+        "## Agent-made GitHub contributions carry a marker",
+        "## Automation vs branch protection",
+        "## Data exposure in CI and public repos",
+        "## Security",
+        "## Finding your unknowns",
+        "## Anything you name gets its link",
+        "## Working habits",
+        "## Working in these repos"
+      ]
+    },
+    {
+      "op": "coverage-row",
+      "file": "agents-md/eval-coverage.yml",
+      "fragment": "coverage-row.yml",
+      "id": "github-404-means-not-authorized",
+      "follows": [
+        "agent-contribution-markers",
+        "automation-vs-branch-protection",
+        "data-exposure-in-ci",
+        "security",
+        "finding-your-unknowns",
+        "anything-you-name-gets-its-link",
+        "working-habits",
+        "working-in-these-repos"
+      ]
+    },
+    {
+      "op": "impact-entry",
+      "file": "docs/guidance-impact.md",
+      "fragment": "impact-entry.md",
+      "heading": "## 2026-10-29 — github-404-means-not-authorized — create"
+    }
+  ]
+}

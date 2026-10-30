@@ -1,0 +1,12 @@
+name: ci
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d5e50132c4d90c4ae953c821b3d1d9eaa7242950
+      - run: npm ci && npm test

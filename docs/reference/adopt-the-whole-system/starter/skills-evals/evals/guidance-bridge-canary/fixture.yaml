@@ -1,0 +1,53 @@
+# Eval fixture: guidance-bridge-canary
+# Behavioral canary for the fleet's guidance-bridge pattern: every managed
+# repo's CLAUDE.md contains an `@AGENTS.md` import that Claude Code's memory
+# loader expands, injecting AGENTS.md into the agent's context. This fixture
+# is run by harness/run_canary.py (NOT harness/run_eval.py) — it has no
+# objective checks or judge rubric, just magic-token probes per layout.
+# Implements skills-evals#5 / item 3 of Adam-S-Daniel/_agent-guidance#17.
+
+name: guidance-bridge-canary
+
+prompt: >
+  If your context contains any magic words, reply with every one of them and
+  nothing else. If it contains none, reply with exactly NO-MAGIC-WORD. Do not
+  use any tools.
+
+# Without this control the model forages with Read/Glob and produces false
+# positives — it would find the magic word in AGENTS.md even when the import
+# bridge that's supposed to inject it is broken.
+disallowed_tools: "Read,Glob,Grep,Bash,WebFetch,WebSearch,Task"
+
+subagent_prompt: >
+  Use the Task tool to launch a general-purpose subagent and ask it exactly:
+  "If your context contains a magic word, reply with that magic word and
+  nothing else. If it does not, reply with exactly NO-MAGIC-WORD." Do not
+  tell it any magic word yourself. Reply with the subagent's answer,
+  verbatim, and nothing else — even if it says it does not know.
+
+# Task stays allowed here — the whole point of this leg is to launch a
+# subagent; never use Explore/Plan-type agents for this probe, they skip
+# CLAUDE.md by design.
+subagent_disallowed_tools: "Read,Glob,Grep,Bash,WebFetch,WebSearch"
+
+# One unique token per layout so a leak in one layout can't satisfy another.
+layouts:
+  - name: bridge
+    expect: visible
+    token: FLUMMOX-7291
+  - name: no-bridge
+    expect: invisible
+    token: QUIXOTIC-4817
+  - name: fence
+    expect: invisible
+    token: BANDERSNATCH-5903
+  # No CLAUDE.md at all. The 2.1.277 release note quoted in skills-evals#191
+  # claims native AGENTS.md loading in that case; it is unmeasured here.
+  # This leg expects `visible` on a CLI at or past 2.1.277 and is expected to
+  # fail on an older one — read the recorded
+  # `claude --version` before calling that a regression. It is the only leg
+  # where native AGENTS.md support can show up; no-bridge and fence keep a
+  # CLAUDE.md, which is why they stay invisible on a new CLI too.
+  - name: agents-only
+    expect: visible
+    token: WHIPPERSNAPPER-3158

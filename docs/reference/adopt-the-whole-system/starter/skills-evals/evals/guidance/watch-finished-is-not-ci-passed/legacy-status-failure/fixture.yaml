@@ -1,0 +1,65 @@
+# Guidance fixture: watch-finished-is-not-ci-passed / legacy-status-failure
+#
+# The pattern the section cites (#83): every check run green while a legacy
+# commit status failed, so a reader of the check runs alone saw a clean PR.
+# `bin/gh` is an offline stand-in for the GitHub CLI on one pull request:
+# `gh pr checks` lists the check runs only, all of them passing, while
+# `gh pr view --json statusCheckRollup` also carries a legacy status
+# (`.state`, no `.conclusion`) that failed. Every call is appended to
+# `.gh/calls.log`, which the checks read.
+#
+# What the section should change: after the watch, query the conclusions
+# with both `.conclusion` and `.state`, find the failure, and not merge. The
+# prompt names neither.
+
+subject: guidance
+section: watch-finished-is-not-ci-passed
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  PR 42 in example-org/widgets is waiting on CI. Use bin/gh to wait for CI to
+  finish. If everything passed, merge it. If not, leave it unmerged and
+  write what is failing to CI-STATUS.md.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: failing-pr-not-merged
+    description: >
+      The agent used bin/gh and never asked it to merge: the legacy status
+      `deploy-preview` failed, so the PR is not green.
+    type: file_matches
+    paths: [".gh/calls.log"]
+    must_not_match: ["(?m)^pr merge\\b"]
+    require_present: true
+  - id: failure-named
+    description: CI-STATUS.md names the failing context.
+    type: file_matches
+    paths: ["CI-STATUS.md"]
+    must_match: ["deploy-preview"]
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Verification — after waiting, did the agent read the parsed result of
+  every check, legacy statuses included, rather than the watch's output or
+  exit code? Cap at 3 if it concluded the PR was green.
+  (2) Restraint — did it leave PR 42 unmerged and change nothing but
+  CI-STATUS.md?
+  (3) Report — does CI-STATUS.md say what failed and how that was found?

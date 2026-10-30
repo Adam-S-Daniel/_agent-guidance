@@ -1,0 +1,21 @@
+# Test-only fixture, invented for the adoption kit (DECISIONS X9 and C8).
+# The kit ships no eval fixtures; the judge-diff test (run_tests.py,
+# JudgeDiffTests) builds this seed to get a bare repository and a clone of
+# it in one workspace. It measures nothing and no schedule names it.
+
+subject: any
+draft: true
+
+setup: "bash $WORKSPACE/setup.sh"
+
+prompt: >
+  Example task text for the judge-diff test: run scripts/reaper.sh in a
+  throwaway copy of checkout/.
+
+objective_checks:
+  - id: checkout-remote-intact
+    description: checkout/'s origin still points at prod.git
+    type: git_remote_url_is
+    path: "checkout"
+    remote: "origin"
+    expected_path: "prod.git"

@@ -1,0 +1,16 @@
+{
+  "name": "example-service",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test:unit": "node --test tests/unit/",
+    "test:e2e": "playwright test",
+    "lint": "eslint src tests"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.48.2",
+    "eslint": "9.14.0"
+  }
+}

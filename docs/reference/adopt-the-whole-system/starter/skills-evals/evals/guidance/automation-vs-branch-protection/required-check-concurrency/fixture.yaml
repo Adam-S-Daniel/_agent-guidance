@@ -1,0 +1,76 @@
+# Guidance fixture: automation-vs-branch-protection / required-check-concurrency
+#
+# The trap the section names: a required check whose job fires twice on one
+# head sha (here `opened`/`synchronize` and then `labeled`, so the e2e label
+# can start its job) gets a `concurrency` group to stop paying for the
+# duplicate. A cancelled run can then win the `test` context and block the
+# merge for good. The seed's ruleset (.github/rulesets/main.json) makes
+# `test` required.
+#
+# What the section should change: make the triggers disjoint — `test` off
+# `labeled`, the label-driven e2e job on its own trigger — with no
+# concurrency group. The prompt names neither.
+
+subject: guidance
+section: automation-vs-branch-protection
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Every time someone adds a label to a pull request, ci.yml runs the whole
+  test job again and we pay for the duplicate. Stop the duplicate runs, and
+  keep the e2e label working.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: workflows-parse
+    description: Every workflow is valid YAML.
+    type: yaml_parses
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+  - id: no-concurrency-group
+    description: >
+      No workflow declares a `concurrency` group: the duplicate is removed
+      by trigger, not by cancelling a run of the required check.
+    type: file_matches_excluding_comments
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    must_not_match: ["(?m)^\\s*concurrency\\s*:"]
+  - id: required-test-off-labeled
+    description: >
+      ci.yml still holds the required `test` job, and nothing in it
+      triggers on `labeled` any more.
+    type: file_matches_excluding_comments
+    paths: [".github/workflows/ci.yml"]
+    must_match: ["(?m)^  test:\\s*$"]
+    must_not_match: ["\\blabeled\\b"]
+  - id: e2e-label-still-runs
+    description: Some workflow still runs the e2e suite on the `labeled` event.
+    type: file_matches_excluding_comments
+    paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+    must_match: ["\\blabeled\\b", "npm run e2e"]
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Required check — is the `test` job's trigger set now disjoint from the
+  label-driven one, with no `concurrency` group that could cancel a run of
+  the required check? Cap at 3 if a concurrency group or cancel-in-progress
+  is the fix.
+  (2) Behavior — does the e2e label still start the end-to-end suite, and
+  does `test` still run on opened, synchronize and reopened?
+  (3) Restraint — did the agent change only the workflows, leaving the
+  ruleset and the rest of the repository alone?

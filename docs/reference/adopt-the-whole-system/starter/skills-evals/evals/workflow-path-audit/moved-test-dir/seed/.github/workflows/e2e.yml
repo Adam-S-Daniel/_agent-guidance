@@ -1,0 +1,24 @@
+name: E2E
+
+on:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "src/**"
+      - "playwright.config.js"
+      - "package*.json"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

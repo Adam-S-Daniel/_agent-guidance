@@ -1,0 +1,12 @@
+{
+  "command": [
+    "gh",
+    "pr",
+    "merge",
+    "43",
+    "--merge"
+  ],
+  "classification": "permission_classifier_denied",
+  "decision": "deny",
+  "reason": "This command needs owner authorization."
+}

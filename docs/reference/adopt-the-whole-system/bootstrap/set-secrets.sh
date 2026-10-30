@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
 # set-secrets.sh [--config fleet.env] [--dry-run] [--rotate] [--denylist PATH] [--only privacy|routine-fire]
 #
-# Sets the environment secrets and variables the guide names that are not App
-# credentials (create-apps.sh stores those):
+# Sets the secrets and variables the exported workflows read that are not App
+# credentials (create-apps.sh stores those). OTHER_VALUES in lib/common.sh:
 #
-#   skills-evals  routine-fire  secret   EVAL_ROUTINE_FIRE_BEARER  (9.4; prompted, hidden)
-#   skills-evals  routine-fire  variable ROUTINE_TRIGGER_ID        (9.4; trig_..., prompted)
-#   agent-guidance, agent-skills, skills-evals, repo-settings
-#                 privacy       secret   PRIVACY_DENYLIST          (6.5; from a file)
+#   acsi-agentskills  (repository)  secret   PRIVACY_DENYLIST          group privacy
+#   skills-evals      routine-fire  secret   EVAL_ROUTINE_FIRE_BEARER  group routine-fire
+#   skills-evals      routine-fire  variable ROUTINE_TRIGGER_ID        group routine-fire
 #
-# The bearer is shown once, on the routine's API trigger at
-# claude.ai/code/routines. The denylist is a file OUTSIDE every repo, one
-# regular expression per line (your real names, emails, hosts, account IDs);
-# the script refuses a path inside a git work tree and never prints a pattern.
-# Values reach gh on stdin only, and are never echoed. --only <environment>
-# sets just that environment's values (privacy comes before the routine exists).
+# PRIVACY_DENYLIST feeds acsi-agentskills' required `privacy` check
+# (scripts/check_privacy_denylist.py), which fails closed without it, so set
+# it before the acsi-agentskills starter pull request. It is a file OUTSIDE every
+# repo, one regular expression per line (your real names, emails, hosts,
+# account ids); the script refuses a path inside a git work tree and never
+# prints a pattern.
 #
-# Idempotent: a secret or variable that already exists is left alone (GitHub
-# cannot show a secret, so it is not compared); --rotate replaces them.
-# PLAN=free skips environments in private repos. Run create-environments.sh
-# first. Needs: gh, jq, python3.
+# The bearer and the trigger id come from the eval runner routine's API
+# trigger at claude.ai/code/routines (skills-evals docs/routine-prompt.md);
+# the bearer is shown once. routine-eval-fire.yml reads both from the
+# routine-fire environment and refuses a trigger id that is not trig_...
+#
+# Values reach gh on stdin only and are never echoed. --only <group> sets one
+# group (privacy comes long before the routine exists).
+#
+# Idempotent: a value that already exists is left alone (GitHub cannot show a
+# secret, so it is not compared); --rotate replaces them. PLAN=free skips
+# environments in private repos. Needs: gh, jq, python3.
 
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -72,7 +78,7 @@ get_denylist() {
   [ -f "$DENYLIST" ] || die "the denylist path is not a file"
   local dir; dir=$(cd "$(dirname "$DENYLIST")" && pwd)
   if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    die "the denylist is inside a git work tree; keep it outside every repo (guide 6.5)"
+    die "the denylist is inside a git work tree; keep it outside every repo"
   fi
   # Each pattern must compile, and there must be at least one. Report line
   # numbers only, never a pattern.
@@ -95,45 +101,46 @@ if n == 0:
     print("denylist: no patterns; the privacy check would fail closed", file=sys.stderr)
     sys.exit(1)
 PY
-  if [ -n "$(find "$DENYLIST" -perm /077 2>/dev/null)" ]; then
+  # The mode bits from stat(2), not `find -perm /077`: BSD find (macOS) has
+  # no `/` form, so it erred, the error was discarded, and nothing warned.
+  if python3 -I -c 'import os, sys; sys.exit(0 if os.stat(sys.argv[1]).st_mode & 0o077 else 1)' "$DENYLIST"; then
     warn "the denylist is readable by other users; consider chmod 600"
   fi
   HAVE_DENYLIST=1
 }
 
-set_one() { # repo env kind name source
-  local repo=$1 env=$2 kind=$3 name=$4 src=$5
-  if ! env_available "$repo"; then
-    log "skip: $O/$repo/$env $name: $repo is private and PLAN=free, so it has no environments (guide 3.4)"
+set_one() { # repo env kind name
+  local repo=$1 env=$2 kind=$3 name=$4 at
+  if [ "$env" = - ]; then at=""; else at=" environment $env"; fi
+  if [ "$env" != - ] && ! env_available "$repo"; then
+    log "skip: $O/$repo$at $name: $repo is private and PLAN=free, so it has no environments"
     return 0
   fi
-  if env_names "$kind" "$O/$repo" "$env"; then
-    if grep -qxF -- "$name" <<<"$ENV_NAMES_OUT" && [ "$ROTATE" = 0 ]; then
-      skip "$O/$repo environment $env has $kind $name"; return 0
+  if value_names "$kind" "$O/$repo" "$env"; then
+    if grep -qxF -- "$name" <<<"$NAMES_OUT" && [ "$ROTATE" = 0 ]; then
+      skip "$O/$repo$at has $kind $name"; return 0
     fi
   elif [ "$DRY_RUN" = 0 ]; then
-    die "could not list ${kind}s of environment $env in $O/$repo (HTTP $GH_HTTP): run create-environments.sh first"
+    die "could not list the ${kind}s of $O/$repo$at (HTTP $GH_HTTP): run create-repos.sh$([ "$env" = - ] || echo " and create-environments.sh") first"
   fi
   if [ "$DRY_RUN" = 1 ]; then
-    WRITES=$((WRITES + 1))
-    printf 'DRY-RUN: %s %s set %s --env %s --repo %s   (value on stdin, never shown)\n' "$GH" "$kind" "$name" "$env" "$O/$repo"
-    return 0
+    set_value "$kind" "$O/$repo" "$env" "$name" </dev/null
+  else
+    case $name in
+      EVAL_ROUTINE_FIRE_BEARER) get_bearer; set_value "$kind" "$O/$repo" "$env" "$name" < <(printf '%s' "$BEARER") ;;
+      ROUTINE_TRIGGER_ID) get_trigger; set_value "$kind" "$O/$repo" "$env" "$name" < <(printf '%s' "$TRIGGER") ;;
+      PRIVACY_DENYLIST) get_denylist; set_value "$kind" "$O/$repo" "$env" "$name" < "$DENYLIST" ;;
+      *) die "no source for $name" ;;
+    esac
   fi
-  WRITES=$((WRITES + 1))
-  case $name in
-    EVAL_ROUTINE_FIRE_BEARER) get_bearer; printf '%s' "$BEARER" | run_write_stdin "$GH" secret set "$name" --env "$env" --repo "$O/$repo" ;;
-    ROUTINE_TRIGGER_ID) get_trigger; printf '%s' "$TRIGGER" | run_write_stdin "$GH" variable set "$name" --env "$env" --repo "$O/$repo" ;;
-    PRIVACY_DENYLIST) get_denylist; run_write_stdin "$GH" secret set "$name" --env "$env" --repo "$O/$repo" < "$DENYLIST" ;;
-    *) die "no source for $name ($src)" ;;
-  esac
-  did "set $kind $name in $O/$repo environment $env"
+  did "set $kind $name in $O/$repo$at"
 }
 
 log "Owner $O, plan $CFG_PLAN$([ "$DRY_RUN" = 1 ] && echo ', DRY RUN')"
 for entry in "${OTHER_VALUES[@]}"; do
-  IFS='|' read -r repo env kind name src <<<"$entry"
-  [ -z "$ONLY" ] || [ "$ONLY" = "$env" ] || continue
-  set_one "$repo" "$env" "$kind" "$name" "$src"
+  IFS='|' read -r repo env kind name _src <<<"$entry"
+  [ -z "$ONLY" ] || [ "$ONLY" = "$(value_group "$name")" ] || continue
+  set_one "$repo" "$env" "$kind" "$name"
 done
 BEARER="" TRIGGER=""
 finish

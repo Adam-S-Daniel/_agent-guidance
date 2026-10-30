@@ -1,0 +1,8 @@
+test	Run unit tests	2026-01-07T07:00:03Z Run python3 -m unittest test.test_legacy
+test	Run unit tests	2026-01-07T07:00:03Z E
+test	Run unit tests	2026-01-07T07:00:03Z ERROR: test_legacy (unittest.loader._FailedTest.test_legacy)
+test	Run unit tests	2026-01-07T07:00:03Z ImportError: Failed to import test module: test_legacy
+test	Run unit tests	2026-01-07T07:00:03Z ModuleNotFoundError: No module named 'test.test_legacy'
+test	Run unit tests	2026-01-07T07:00:03Z Ran 1 test in 0.000s
+test	Run unit tests	2026-01-07T07:00:03Z FAILED (errors=1)
+test	Run unit tests	2026-01-07T07:00:04Z Process completed with exit code 1.

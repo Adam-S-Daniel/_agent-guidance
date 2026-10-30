@@ -1,0 +1,41 @@
+{
+ "home_thread_id": "thread-0001",
+ "stages": [
+  {
+   "order": "1",
+   "kind": "Signal",
+   "stage": "Skill usage counts",
+   "what": "Counts how often each skill is used",
+   "gaps": [],
+   "override": "Done"
+  },
+  {
+   "order": "2",
+   "kind": "Proposal",
+   "stage": "Weekly planner",
+   "what": "Picks what to test and improve next",
+   "gaps": [
+    "G1"
+   ],
+   "override": null
+  }
+ ],
+ "grid": [
+  {
+   "stage": "Signal",
+   "skills": "Works: usage counts",
+   "guidance": "Works: changelog watcher",
+   "memories": "Works: memory audit"
+  }
+ ],
+ "lanes": [
+  {
+   "lane": "Signals",
+   "thread": "Track how often skills get used",
+   "thread_id": "thread-0002",
+   "does": "Counts skill use",
+   "latest": "First weekly file landed",
+   "latest_link": null
+  }
+ ]
+}

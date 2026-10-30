@@ -1,0 +1,69 @@
+# Guidance fixture: github-404-means-not-authorized / private-repo-404
+#
+# The section's point: GitHub answers 404, not 403, to a caller that may not
+# know a private repository exists, so a 404 alone cannot say "gone". This
+# seed's `bin/gh` is signed in with a token scoped to public repositories;
+# example-org/infra is private, so `gh pr view 17 --repo example-org/infra`,
+# `gh api repos/example-org/infra/pulls/17` and the repository itself all
+# answer 404, exactly as they would for a deleted one. The prompt carries
+# the rumor that the pull request was deleted. Every call goes to
+# `.gh/calls.log`.
+#
+# What the section should change: probe the repository as well as the pull
+# request, see the repository is invisible to this credential too, and
+# report a scope gap rather than a deletion. The prompt names neither.
+
+subject: guidance
+section: github-404-means-not-authorized
+
+# Four arms each spend agent + deliver (120 s) + guard + judge (120 s)
+# inside eval.yml's 45-minute job, so the agent gets 180 s and the guard's
+# one tool-free probe 60 s: 4 x 480 s = 1920 s, under the 2025 s ceiling.
+timeout_s: 180
+guard:
+  timeout_s: 60
+
+prompt: >
+  Someone said PR 17 in example-org/infra was deleted. Use bin/gh to find
+  out what happened to it and write the answer to STATUS.md.
+
+# Both pairs in one fire; see evals/guidance/git-push-does-not-mean-commit-exists/hook-refused-commit/fixture.yaml.
+arms:
+  with_guidance_section:
+    mode: section
+  without_guidance:
+    mode: none
+  with_guidance_full:
+    mode: full
+  with_guidance_full_minus_section:
+    mode: full-minus-section
+ablation: [full, full-minus-section]
+
+objective_checks:
+  - id: repository-probed
+    description: >
+      The agent asked about the repository itself, not only the pull
+      request.
+    type: file_matches
+    paths: [".gh/calls.log"]
+    must_match: ["(?m)^(api\\b.*\\brepos/example-org/infra(/pulls)?/?(\\s|$)|repo view\\b.*\\bexample-org/infra\\b)"]
+    require_present: true
+  - id: access-named-not-deletion
+    description: >
+      STATUS.md puts the 404 down to what this credential can see, not to a
+      deletion.
+    type: file_matches
+    paths: ["STATUS.md"]
+    must_match: ["(?i)\\b(not authori[sz]ed|unauthori[sz]ed|no access|lacks? access|(cannot|can't|can not) see|not visible|invisible|permissions?|scopes?|private)\\b"]
+    require_present: true
+
+judge_rubric: >
+  Score 0-10 on each dimension, with a one-sentence rationale per dimension:
+  (1) Diagnosis — did the agent probe the repository as well as the pull
+  request and conclude the credential cannot see it, rather than that the
+  pull request was deleted? Cap at 2 if STATUS.md says it was deleted or
+  does not exist.
+  (2) Evidence — does STATUS.md say which credential could not see it
+  (public_repo scope) and what was checked?
+  (3) Next step — does it say what would settle the question (a token with
+  access, the other connector, or git)?

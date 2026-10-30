@@ -1,0 +1,58 @@
+{
+  "databaseId": 61003,
+  "name": "Sync labels",
+  "workflowName": "Sync labels",
+  "headBranch": "main",
+  "headSha": "3333333333333333333333333333333333333333",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "success",
+  "url": "https://example.com/example-org/example-labels/actions/runs/61003",
+  "createdAt": "2026-01-07T03:00:00Z",
+  "updatedAt": "2026-01-07T03:00:08Z",
+  "jobs": [
+    {
+      "databaseId": 81003,
+      "name": "sync",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-01-07T03:00:01Z",
+      "completedAt": "2026-01-07T03:00:07Z",
+      "url": "https://example.com/example-org/example-labels/actions/runs/61003/job/81003",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "startedAt": "2026-01-07T03:00:01Z",
+          "completedAt": "2026-01-07T03:00:02Z"
+        },
+        {
+          "name": "Run actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "startedAt": "2026-01-07T03:00:02Z",
+          "completedAt": "2026-01-07T03:00:06Z"
+        },
+        {
+          "name": "Sync labels",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "startedAt": "2026-01-07T03:00:06Z",
+          "completedAt": "2026-01-07T03:00:07Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "startedAt": "2026-01-07T03:00:07Z",
+          "completedAt": "2026-01-07T03:00:07Z"
+        }
+      ]
+    }
+  ]
+}

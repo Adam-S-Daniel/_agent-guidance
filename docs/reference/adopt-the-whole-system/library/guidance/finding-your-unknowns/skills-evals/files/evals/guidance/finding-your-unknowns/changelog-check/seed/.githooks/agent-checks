@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# agent-checks: runs before every commit (.githooks/pre-commit) and as the
+# required agent-checks CI job. The fleet-wide checks below are delivered by
+# the guidance sync; do not edit them here.
+#
+# One repository's own checks go in .agent-checks/local.sh: define
+# local_checks(), read the staged paths from "$STAGED" (one per line), and
+# call `fail "<message>"` for each problem.
+set -euo pipefail
+
+STAGED=$(git diff --cached --name-only)
+problems=0
+fail() { echo "agent-checks: $*" >&2; problems=$((problems + 1)); }
+
+# Fleet check: no .env files.
+if grep -qE '(^|/)\.env$' <<<"$STAGED"; then fail ".env files are never committed"; fi
+
+if [ -f .agent-checks/local.sh ]; then
+  # shellcheck source=/dev/null
+  . .agent-checks/local.sh
+  local_checks
+fi
+exit $((problems > 0))

@@ -1,0 +1,250 @@
+# Export of _agent-guidance into starter/agent-guidance/. Built from the
+# inventory (scratch manifests/_agent-guidance.yml, 2026-10-29) as amended by
+# DECISIONS.md: run logs and changelogs are kept (not truncated), the
+# platform-only code paths are kept with invented names (C3), and the
+# scheduled-run-health reusable is copied in (C4).
+repo: _agent-guidance
+kit_name: agent-guidance
+source: _agent-guidance
+source_sha: 9404fe7d648eb916a65128818fb58c4ca5f998aa
+
+exclude:
+  - path: docs/reference/adopt-the-whole-system/
+    why: The adoption kit itself, which lives inside this repo; it is not part of the exported repo.
+  - path: docs/evidence/2026-10-07-workstation-retirement-117.md
+    why: DECISIONS X7 (a checkpoint on retiring the owner's own workstation; nothing links to it).
+
+# DECISIONS C4: the scheduled-run-health reusable and the two scripts it
+# sparse-checks-out from the repo it runs from. They come from the platform
+# repo at a pinned commit and go through the same substitution as the rest.
+imports:
+  - repo: cms-platform
+    sha: 06c89431ff513057e97bd5e5711522be586f6a12
+    path: .github/workflows/scheduled-run-health.yml
+    to: .github/workflows/scheduled-run-health-reusable.yml
+    why: >-
+      C4. The cron-coverage gate (scripts/check-cron-coverage.js) requires a
+      scheduled-run-health caller and the platform repo is not in the kit.
+      Named -reusable so it does not collide with this repo's own caller.
+  - repo: cms-platform
+    sha: 06c89431ff513057e97bd5e5711522be586f6a12
+    path: scripts/audit-scheduled-runs.js
+    why: C4. The reusable sparse-checks-out this script from the repo it is called from, which is now this one.
+  - repo: cms-platform
+    sha: 06c89431ff513057e97bd5e5711522be586f6a12
+    path: scripts/check-platform-currency.js
+    why: C4. The reusable's currency step runs this script, checked out the same way.
+
+edits:
+  # ---- C4: the reusable and its callers
+  - path: .github/workflows/scheduled-run-health-reusable.yml
+    old: "# Scheduled-run + default-branch-push health audit (reusable).\n"
+    new: |
+      # Scheduled-run + default-branch-push health audit (reusable).
+      #
+      # Copied into this repo from the shared platform repo by the adoption
+      # kit's export (DECISIONS C4), so every repo in the fleet calls it here:
+      # this repo through ./.github/workflows/scheduled-run-health-reusable.yml,
+      # the others at a full commit sha of this repo. The history below is the
+      # platform's own and still applies.
+    why: Says where this file came from and how callers reach it now.
+  - path: .github/workflows/scheduled-run-health-reusable.yml
+    old: "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    new: "uses: actions/checkout@v7.0.1"
+    why: >-
+      This repo pins actions through .github/workflows/actions.lock (ADR 0024)
+      and must not mix that with legacy sha pins; v7.0.1 is the tag the lock
+      already maps to this same commit.
+  - path: .github/workflows/scheduled-run-health-reusable.yml
+    old: "uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1"
+    new: "uses: actions/setup-node@v7.0.0"
+    why: Same lockfile rule; v7.0.0 is the setup-node tag every other workflow here is locked to.
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "    uses: Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.164\n"
+    new: "    uses: ./.github/workflows/scheduled-run-health-reusable.yml\n"
+    why: C4. The caller points at the copy of the reusable in this repo.
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "# sweep once startup-failed 30/30 for a month unnoticed). The platform owns\n# the audit logic; this thin caller schedules it."
+    new: "# sweep once startup-failed 30/30 for a month unnoticed). The reusable beside\n# this file owns the audit logic; this thin caller schedules it."
+    why: C4. The audit logic now lives in this repo.
+  - path: .github/workflows/actions.lock
+    stage: output
+    old: "    '.github/workflows/scheduled-run-health.yml': []\n"
+    new: "    '.github/workflows/scheduled-run-health-reusable.yml':\n        - 'actions/checkout@v7.0.1'\n        - 'actions/setup-node@v7.0.0'\n    '.github/workflows/scheduled-run-health.yml': []\n"
+    why: >-
+      P3. The entry `gh actions-lock` writes for the copied reusable: both tags
+      are already locked in this file, so no new commit is named. Confirm with
+      `gh actions-lock --no-narrow` (REGENERATE.md).
+  - path: README.md
+    old: "repo running crons actually calls cms-platform's `scheduled-run-health`\nreusable, and that the caller it has can fire and can file."
+    new: "repo running crons actually calls the `scheduled-run-health` reusable\n(`.github/workflows/scheduled-run-health-reusable.yml` in this repo), and\nthat the caller it has can fire and can file."
+    why: C4. Names where the reusable lives now.
+  - path: test/run-tests.sh
+    old: "    sed '/uses: Adam-S-Daniel/d' \"$caller\" \\\n"
+    new: "    sed '/^    uses: /d' \"$caller\" \\\n"
+    why: >-
+      C4. The test deletes the caller's job-level `uses:` line; it used to
+      find it by the owner name in the cross-repo ref, and the caller now
+      calls the local copy (./.github/...), so it matches the key instead.
+  - path: scripts/check-cron-coverage.js
+    old: " * THE REMEDY. cms-platform's `scheduled-run-health` reusable: a daily audit of\n"
+    new: " * THE REMEDY. The `scheduled-run-health` reusable (this repo's\n * .github/workflows/scheduled-run-health-reusable.yml): a daily audit of\n"
+    why: C4. Names where the reusable lives now.
+
+  # ---- Content tiers (2026-10-29): base.md's text as of 4cab855
+  - path: agents-md/base.md
+    old: |
+      - PR + auto-merge is not a sanctioned bot-write path, bar skills-evals' roster
+        PR (repo-settings ADR 0003); cms-platform-managed repos use it by design.
+    new: |
+      - PR + auto-merge is a sanctioned bot-write path only where a repo-settings
+        ADR declares the exception: the eval and guidance loops' PRs (ADRs 0003,
+        0012, 0014), lesson-check PRs (0013) and the changelog routine's (0015);
+        cms-platform-managed repos use it by design.
+    why: >-
+      Content tiers. The owner asked for "Automation vs branch protection" as
+      of commit 4cab855, which rewrote this one bullet. Its only base.md change
+      is applied here as an edit, word for word, instead of re-pinning
+      source_sha: the same range also changes this repo's ci.yml,
+      actions.lock, .gitignore and test/run-tests.sh for the kit's own CI,
+      which are not part of the exported repo's content.
+
+  - path: .gitignore
+    old: "drift-report-skills-orphans.txt\n"
+    new: "drift-report-skills-orphans.txt\n# The adoption kit's copy-starter.sh skips these when it copies the tree;\n# ignoring them here keeps them out of the adopter's first commits too.\n__pycache__/\n.pytest_cache/\n.DS_Store\n"
+    why: >-
+      The kit's bootstrap test requires every starter tree's .gitignore to
+      name each path copy-starter.sh skips (__pycache__/, *.pyc,
+      .pytest_cache/, node_modules/, .DS_Store); the lines already present
+      are not repeated.
+
+  # ---- Cold-start fixes (2026-10-29): C3's invented example platform is not checked out
+  - path: .github/workflows/skills-lock-bump.yml
+    stage: output
+    old: |2
+            # A federated consumer's lock names this one too (example-site-a and
+            # example-site-b both federate it). Without its checkout those two are
+            # SKIPPED, not half-re-pinned — so it is here to keep them in scope, not
+            # because anything in this run bumps example-site-platform's own pin.
+            - name: Check out the federated source registry
+              uses: actions/checkout@v7.0.1
+              with:
+                repository: example-adopter/example-site-platform
+                path: registries/example-site-platform
+                fetch-depth: 0
+                token: ${{ steps.token_example_adopter.outputs.token || github.token }}
+
+            - name: Bump consumer locks
+    new: |2
+            - name: Bump consumer locks
+    why: >-
+      Cold start. The step checked out the invented example platform (C3), a
+      repo an adopter does not have, so the nightly bump failed at checkout.
+      A federated consumer whose source has no checkout is skipped by
+      bump-consumer-locks.sh, not half-re-pinned, so dropping it is safe; an
+      adopter who federates a registry adds its checkout and BUMP_CHECKOUTS
+      entry back.
+  - path: .github/workflows/skills-lock-bump.yml
+    stage: output
+    old: "            example-adopter/example-site-platform=${{ github.workspace }}/registries/example-site-platform\n"
+    new: ""
+    count: 2
+    why: Cold start. The matching BUMP_CHECKOUTS entry of the dropped checkout, in both passes that set it.
+  - path: .github/workflows/skills-lock-bump.yml
+    stage: output
+    old: |2
+                # Only the registry that owns the hook is needed here — the
+                # federated source has no `skills_bootstrap` pin — but the same
+                # string is passed as above so there is one spelling of "where the
+                # checkouts are" in this file rather than two that can drift.
+    new: |2
+                # Only the registry that owns the hook is needed here; the same
+                # string is passed as above so there is one spelling of "where the
+                # checkouts are" in this file rather than two that can drift.
+    why: Cold start. The comment described the dropped federated checkout.
+
+# DECISIONS X9: the content starts with one real item of each kind and a
+# template (see the patch's docstring).
+patches:
+  - file: blank_content.py
+    why: >-
+      X9 and Content tiers. base.md keeps the core sections (two of them split
+      into a core part under the original heading and a recommended part
+      under a new one) and a commented template; each recommended or
+      opinionated section goes to library/guidance/<id>/ with its
+      eval-coverage row and impact entry; the per-stack sections carry no
+      rule; guidance-impact.md and the lessons ledger keep headers only; the
+      agent-checks runner ships the core checks (secret-file, skill-shell)
+      and a commented example, and rules-dir goes to library/git-hooks/.
+  - file: kit_repos.py
+    why: >-
+      C11. repos.yml (sync delivery, the registry partition, cron coverage)
+      names only the kit's repos.
+  - file: machinery_tests.py
+    why: >-
+      X9 and Content tiers. The tests that asserted on left-out content move
+      to test-only fixtures or, where they only locked it, are removed; the
+      secret-file and skill-shell cases are kept, and the rules-dir cases and
+      assertions go to its library item, which puts them back on install
+      (listed in DECISIONS.md X9 and Content tiers).
+  - file: routine_specs.py
+    why: >-
+      C11 and C7. The guidance-centralization audit's stored prompt and spec
+      (and one dated list in the prompt-audit sweep) fit an adopter: the fork
+      control is the forks the run enumerates, the attached repos are the
+      kit's, counts are computed, measured counts stay only where marked as
+      the source system's history, and the trigger is the Routine's own.
+  - file: owner_links.py
+    why: >-
+      Live output. The sync pull request body linked the source owner's
+      issue #172; it points at the adopter's own README section instead.
+  - file: account_ids.py
+    why: >-
+      C12. A handoff note's numeric ruleset id and two fixtures' real Claude
+      Code session id become a description and an invented uuid.
+
+# P3: generated files rebuilt from the edited sources, in this order.
+regenerate:
+  - copy: {from: agents-md/base.md, to: .claude/hooks/fleet-guidance.md}
+    why: The fleet payload mirror must equal base.md byte for byte (scripts/check-fleet-guidance-mirror.js).
+  - run: NODE_PATH="$EXPORT_SOURCES/_agent-guidance/node_modules" node scripts/check-guidance-coverage.js --write-bytes >/dev/null
+    why: Section byte counts in agents-md/eval-coverage.yml follow base.md.
+  - run: >-
+      printf '%s\n%s\n' "$(./scripts/build-agents-md.sh)"
+      "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new
+      && mv AGENTS.md.new AGENTS.md
+    why: The managed half of AGENTS.md is build-agents-md.sh output (the recipe in this repo's AGENTS.md).
+  - run: >-
+      python3 -I -c 'import hashlib,re,pathlib;
+      p=pathlib.Path("repos.yml"); h=hashlib.sha256(pathlib.Path(".claude/hooks/skills-bootstrap.sh").read_bytes()).hexdigest();
+      t=p.read_text(); n=re.subn(r"(?m)^(  sha256: )[0-9a-f]{64}$", lambda m: m.group(1)+h, t);
+      assert n[1]==1, n[1]; p.write_text(n[0])'
+    why: >-
+      repos.yml pins the vendored hook's sha256 (test_self_hosted_hook_pin);
+      substitution changed the hook's bytes. `ref` names a registry commit
+      the adopter's registry will not have: REGENERATE.md.
+
+# P2 citation spans that are really test data: protecting them would leave
+# the fixture on the source owner while the assertion beside it is
+# substituted. Both files get the plain substitution instead.
+protect_except:
+  - path: test/test-routine-merge-gate.js
+    why: Its parseIssueMap fixtures are owner/repo#N strings whose expected repo the same test spells out separately.
+  - path: docs/reference/agent-changelog-issue-map.txt
+    why: >-
+      The changelog routine's working map of the issues it filed (data, not
+      prose); test-routine-merge-gate.js pins one of its entries, so the two
+      are substituted together.
+
+# The repo's own suite, as its AGENTS.md and ci.yml run it (all shards in one
+# process). run_suites.py runs it in a git-initialized copy.
+suite:
+  git_init: true
+  setup: >-
+    if [ -n "${KIT_NODE_MODULES:-}" ]; then cp -a "$KIT_NODE_MODULES" node_modules;
+    else npm ci --no-audit --no-fund --silent; fi
+  command: ./test/run-tests.sh
+  needs: >-
+    node 20+, npm (or KIT_NODE_MODULES naming an installed node_modules), git,
+    jq, python3, and mikefarah yq v4 on PATH (ci.yml pins v4.53.3)
+  summary: '^\s*(Results: .*|FAILED GROUPS: .*)$'

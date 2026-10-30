@@ -1,0 +1,7 @@
+acsi-anything-anywhere:finding-unknowns
+acsi-anything-anywhere:writing-adrs
+acsi-coding-anywhere:debug-github-workflows
+acsi-coding-anywhere:disarm-inherited-reach
+acsi-coding-anywhere:skills-doctor
+acsi-coding-anywhere:workflow-path-audit
+standup-notes

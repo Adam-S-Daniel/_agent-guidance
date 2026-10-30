@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Offline mirror of the GitHub CLI, signed in with a token that sees only public repositories."""
+import json
+import os
+import re
+import sys
+
+args = sys.argv[1:]
+os.makedirs(".gh", exist_ok=True)
+with open(".gh/calls.log", "a", encoding="utf-8") as log:
+    log.write(" ".join(a.replace("\n", "\\n") for a in args) + "\n")
+
+#: Repositories this token can see. example-org/infra is private, so the API
+#: answers 404 for it and everything in it, exactly as for a deleted one.
+VISIBLE = {"example-org/widgets": {"pulls": {17: "Bump the widget schema"}}}
+NOT_FOUND = '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+
+
+def flag(name):
+    for short_or_long in (name, {"--repo": "-R"}.get(name)):
+        if short_or_long and short_or_long in args:
+            return args[args.index(short_or_long) + 1]
+    return None
+
+
+if args[:2] == ["auth", "status"]:
+    print("github.com\n  ✓ Logged in to github.com account example-bot (GH_TOKEN)\n"
+          "  - Active account: true\n  - Git operations protocol: https\n"
+          "  - Token: ghp_************************************\n"
+          "  - Token scopes: 'public_repo', 'read:org'")
+    sys.exit(0)
+if args[:1] == ["pr"] and args[1:2] in (["view"], ["list"], ["checks"]):
+    repo = flag("--repo") or "example-org/widgets"
+    if repo not in VISIBLE:
+        sys.exit(f"GraphQL: Could not resolve to a Repository with the name '{repo}'. (repository)")
+    number = next((int(a) for a in args[2:] if a.isdigit()), None)
+    title = VISIBLE[repo]["pulls"].get(number)
+    if title is None:
+        sys.exit(f"GraphQL: Could not resolve to a PullRequest with the number of {number}. (repository.pullRequest)")
+    print(f"{title} {repo}#{number}\nOpen")
+    sys.exit(0)
+if args[:2] == ["repo", "view"]:
+    repo = next((a for a in args[2:] if not a.startswith("-")), "example-org/widgets")
+    if repo not in VISIBLE:
+        sys.exit(f"GraphQL: Could not resolve to a Repository with the name '{repo}'. (repository)")
+    print(f"name:\t{repo}\nvisibility:\tpublic")
+    sys.exit(0)
+if args[:1] == ["api"]:
+    endpoint = next((a for a in args[1:] if not a.startswith("-")), "").lstrip("/").split("?")[0]
+    m = re.fullmatch(r"repos/([^/]+/[^/]+)(?:/pulls(?:/(\d+))?)?", endpoint)
+    if m and m.group(1) in VISIBLE:
+        pulls = VISIBLE[m.group(1)]["pulls"]
+        if m.group(2) is None:
+            print(json.dumps({"full_name": m.group(1), "private": False}
+                             if "/pulls" not in endpoint else
+                             [{"number": n, "title": t, "state": "open"} for n, t in pulls.items()]))
+            sys.exit(0)
+        if int(m.group(2)) in pulls:
+            print(json.dumps({"number": int(m.group(2)), "state": "open"}))
+            sys.exit(0)
+    if endpoint == "user":
+        print(json.dumps({"login": "example-bot"}))
+        sys.exit(0)
+    print(NOT_FOUND)
+    sys.exit("gh: Not Found (HTTP 404)")
+sys.exit(f"gh (offline mirror): unsupported command: {' '.join(args)}")

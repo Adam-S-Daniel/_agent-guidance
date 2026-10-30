@@ -342,6 +342,105 @@ jobs:
       - name: CI shards cover every test group
         run: node scripts/check-ci-shards.js
 
+      # THE ADOPTION KIT (docs/reference/adopt-the-whole-system/): its own
+      # tests (the leak scan over every kit file, public names and the
+      # owner's private denylist; every kit file tracked by git; the suite
+      # runner) and `export.py --check` (each starter tree equals a fresh
+      # export of its pinned source, as git tracks it). Until this step
+      # nothing ran either, so the denylist half of the leak scan ran
+      # nowhere. A step in this job, not a job of its own: `test` already
+      # requires `checks`, so no ruleset change is needed.
+      #
+      # Salient-path gated, inside the job (this job is required, so no
+      # `on.paths`): the kit, the root .gitignore (it decides which kit files
+      # git tracks; `**/[Bb]in/*` and `*.log` once dropped ten of them), and
+      # this workflow. The step below runs only when one changed; when it
+      # cannot tell (an unreadable range, a dispatch), it runs. Shas come from
+      # $GITHUB_EVENT_PATH, never interpolated into the script.
+      - name: Did the adoption kit change?
+        id: kit
+        run: |
+          set -euo pipefail
+          salient='^(docs/reference/adopt-the-whole-system/|\.gitignore$|\.github/workflows/ci\.yml$)'
+          kitonly='^docs/reference/adopt-the-whole-system/'
+          run=""
+          kit_changed=""
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              base=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
+              head=$(jq -r '.pull_request.head.sha // empty' "$GITHUB_EVENT_PATH") ;;
+            push)
+              base=$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")
+              head=$(jq -r '.after // empty' "$GITHUB_EVENT_PATH") ;;
+            *) base=""; head=""; run=true; kit_changed=true ;;
+          esac
+          if [ -z "$run" ]; then
+            if [[ "$base" =~ ^[0-9a-f]{40}$ && "$head" =~ ^[0-9a-f]{40}$ && "$base" != 0000000000000000000000000000000000000000 ]] \
+                && from=$(git merge-base "$base" "$head" 2>/dev/null) \
+                && changed=$(git diff --name-only "$from" "$head" 2>/dev/null); then
+              if grep -qE -- "$salient" <<<"$changed"; then run=true; else run=false; fi
+              if grep -qE -- "$kitonly" <<<"$changed"; then kit_changed=true; else kit_changed=false; fi
+            else
+              echo "::notice::could not diff this event's range; running the adoption kit checks"
+              run=true
+              kit_changed=true
+            fi
+          fi
+          echo "adoption kit checks: $run (kit files changed: $kit_changed)"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "kit_changed=$kit_changed" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python for the adoption kit
+        if: steps.kit.outputs.run == 'true'
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      # The denylist arrives through `env:` from the repository secret and is
+      # read by the test from the environment; it is never interpolated into
+      # the script, and the test prints a hit as `path:line: pattern #N`,
+      # never the text. A missing or empty secret FAILS this step when kit
+      # files changed: a leak scan that checked nothing must not read as green.
+      # Two cases warn instead, because GitHub passes no Actions secrets to a
+      # Dependabot- or fork-triggered `pull_request` run: only this workflow
+      # or the root .gitignore changed (a weekly github-actions bump edits
+      # ci.yml), or the pull request's author is `dependabot[bot]` (read from
+      # $GITHUB_EVENT_PATH; Dependabot cannot add personal data). The public
+      # scan and `--check` still run; only the private half is skipped
+      # (CI=false makes its test skip, as it does locally).
+      # The sources are fetched at the manifests' pinned commits with no
+      # credential, so the private registry's tree (its source is private) is
+      # left out of `--check` here (`--skip`); its files are still scanned,
+      # and checked as tracked, by the tests above, and the full check runs in
+      # the kit's own run-all-tests.sh where the source checkouts are.
+      - name: Adoption kit tests and export check
+        if: steps.kit.outputs.run == 'true'
+        env:
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+          SOURCE_OWNER: ${{ github.repository_owner }}
+          KIT_CHANGED: ${{ steps.kit.outputs.kit_changed }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          set -euo pipefail
+          if [ -z "${PRIVACY_DENYLIST//[[:space:]]/}" ]; then
+            author=$(jq -r '.pull_request.user.login // empty' "${GITHUB_EVENT_PATH:-/dev/null}" 2>/dev/null) || author=""
+            if [ "$author" = "dependabot[bot]" ]; then
+              echo "::warning::the PRIVACY_DENYLIST secret is not available to a Dependabot run, so the adoption kit's private leak scan was skipped; the public scan and the export check still ran"
+            elif [ "${KIT_CHANGED:-true}" != "true" ]; then
+              echo "::warning::the PRIVACY_DENYLIST secret is unset or empty (no secret reaches a fork run), and only this workflow or .gitignore changed, so the adoption kit's private leak scan was skipped; the public scan and the export check still ran"
+            else
+              echo "::error::the adoption kit changed and the PRIVACY_DENYLIST repository secret is unset or empty, so its leak scan cannot run: set the secret (one regular expression per line), then re-run"
+              exit 1
+            fi
+            export CI=false
+          fi
+          kit=docs/reference/adopt-the-whole-system
+          python3 -m pip install --quiet pytest==9.1.1 pyyaml==6.0.3
+          python3 -m pytest "$kit/export/tests" -q -p no:cacheprovider
+          python3 "$kit/export/fetch_sources.py" --owner "$SOURCE_OWNER" --dest "$RUNNER_TEMP/kit-sources" \
+            --self "$GITHUB_WORKSPACE" --skip agentskills-private
+          python3 "$kit/export/export.py" --check --sources "$RUNNER_TEMP/kit-sources" --skip agentskills-private
+
   # THE REQUIRED CONTEXT. Its job id and name are both `test` and must stay
   # so: that is the context branch protection names. `if: always()` and not
   # `!cancelled()` or the default `success()`: under either of those a red or

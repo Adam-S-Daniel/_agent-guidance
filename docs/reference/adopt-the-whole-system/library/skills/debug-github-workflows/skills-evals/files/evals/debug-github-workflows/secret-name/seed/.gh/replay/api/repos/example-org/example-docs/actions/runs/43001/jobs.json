@@ -1,0 +1,49 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 63001,
+      "run_id": 43001,
+      "name": "notes",
+      "head_sha": "4444444444444444444444444444444444444444",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://example.com/example-org/example-docs/actions/runs/43001/job/63001",
+      "check_run_url": "https://example.net/repos/example-org/example-docs/check-runs/93001",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-01-02T16:00:01Z",
+          "completed_at": "2026-01-02T16:00:02Z"
+        },
+        {
+          "name": "Run actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-01-02T16:00:02Z",
+          "completed_at": "2026-01-02T16:00:04Z"
+        },
+        {
+          "name": "Publish release notes",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 3,
+          "started_at": "2026-01-02T16:00:04Z",
+          "completed_at": "2026-01-02T16:00:05Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-01-02T16:00:05Z",
+          "completed_at": "2026-01-02T16:00:05Z"
+        }
+      ]
+    }
+  ]
+}

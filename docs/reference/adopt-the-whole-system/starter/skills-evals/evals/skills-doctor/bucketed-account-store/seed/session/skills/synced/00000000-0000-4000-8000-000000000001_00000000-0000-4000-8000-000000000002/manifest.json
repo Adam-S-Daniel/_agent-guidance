@@ -1,0 +1,19 @@
+{
+  "lastUpdated": 1789713628092,
+  "skills": [
+    {
+      "description": "Write a lightweight Nygard-style ADR under docs/decisions/.",
+      "name": "writing-adrs",
+      "skillId": "skill_01aaaaaaaaaaaaaaaaaaaaaa",
+      "source": "custom",
+      "updatedAt": "2026-06-02T14:30:55.088004Z"
+    },
+    {
+      "description": "Create, read and edit Word documents.",
+      "name": "docx",
+      "skillId": "skill_01bbbbbbbbbbbbbbbbbbbbbb",
+      "source": "anthropic",
+      "updatedAt": "2026-05-11T23:30:32.710922Z"
+    }
+  ]
+}

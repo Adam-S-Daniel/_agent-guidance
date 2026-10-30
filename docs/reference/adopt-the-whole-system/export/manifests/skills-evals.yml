@@ -1,0 +1,583 @@
+# Export of skills-evals into starter/skills-evals/. Built from the
+# inventory (scratch manifests/skills-evals.yml, 2026-10-29) as amended by
+# DECISIONS.md: only the fixtures of the one kept skill and the one kept
+# guidance section, and no real-work seeds (X4, X5, X9); the machinery (harness, scorers, fakes, scripts, config, workflows)
+# comes along whole. The export record in DECISIONS.md lists every edit
+# that is more than a substitution and every test changed or removed.
+repo: skills-evals
+kit_name: skills-evals
+source: skills-evals
+source_sha: 99c667f93c67a3ddd0630bf7aadbcb43e506d43c
+# The vendored fleet files (payload mirror, agent-checks runner and guard,
+# AGENTS.md's managed half) are rebuilt from the kit's own _agent-guidance.
+after: [_agent-guidance]
+
+# Run before _common.yml's rules (a manifest's own rules are listed first), so
+# these phrasings win over the generic owner-name rules at the same position.
+substitutions:
+  - {name: skills-evals roster App id in ADR 0003 (C12), regex: '(?<=-roster`, App id )[1-9][0-9]{4,11}(?=\) and)', to: '`<roster App id>`', paths: [docs/decisions/0003-roster-merges-automatically.md]}
+  - {name: skills-evals sign-off in writing-style test data, literal: "Adam Daniel", to: "Alex Rivera", paths: [test/run_tests.py]}
+  - {name: skills-evals one-word sign-off test data, literal: '        "Adam\n")', to: '        "Alex\n")', paths: [test/run_tests.py]}
+  - {name: skills-evals one-word sign-off expected tail, literal: 'the meantime.\nAdam"', to: 'the meantime.\nAlex"', paths: [test/run_tests.py]}
+  - {name: skills-evals sign-off example in the wrapping scorer, regex: 'Adam(\n# )Daniel(?=")', to: 'Alex\1Rivera', paths: [harness/scorers/wrapping.py]}
+  - {name: skills-evals sign-off example in the wrapping scorer docstring, literal: '"Adam Daniel"', to: '"Alex Rivera"', paths: [harness/scorers/wrapping.py]}
+  - {name: skills-evals surname-only bio test data, regex: '\bDaniel(?= leads delivery| rebuilt the)', to: Rivera, paths: [test/run_tests.py]}
+  - {name: skills-evals writing-style name pattern comment, literal: '\bAdam\s+', to: '\bAlex\s+', paths: [test/run_tests.py]}
+  - {name: skills-evals capitalized registry URL test data, literal: "Adam-AgentSkills", to: "Acsi-AgentSkills", paths: [test/run_tests.py]}
+  - {name: skills-evals shouted owner, literal: "PARKED ON ADAM", to: "PARKED ON THE OWNER"}
+  - {name: skills-evals shouted owner, literal: "THE RULE ADAM DECIDED", to: "THE RULE THE OWNER DECIDED"}
+  - {name: skills-evals shouted owner, literal: "ADAM'S OWN COMPUTER", to: "THE OWNER'S OWN COMPUTER"}
+  - name: skills-evals ADR 0012 addendum anchor
+    literal: addendum-adam-2026-10-27
+    to: addendum-the-owner-2026-10-27
+  - {name: skills-evals site constant, literal: _ADAMDANIEL_AI, to: _EXAMPLE_SITE_A}
+  - name: skills-evals ADR 0015 file name (and every link to it)
+    literal: 0015-mine-real-sessions-only-on-adams-own-computer
+    to: 0015-mine-real-sessions-only-on-the-owners-own-computer
+  - {name: skills-evals underscore owner test datum, literal: Adam_S__repo__12, to: Own_S__repo__12}
+  - {name: skills-evals miner drive test datum, regex: 'D:(?=\\+repos)', to: 'E:', paths: [test/issues/test_issue_session_miner.py]}
+  - {name: skills-evals miner drive test datum, literal: /mnt/d/repos/o/r, to: /mnt/e/repos/o/r, paths: [test/issues/test_issue_session_miner.py]}
+  - {name: skills-evals scaffold candidate test datum, literal: jodidaniel__jodidaniel.com__1, to: example-adopter-two__example-site-b__1, paths: [test/issues/test_issue_routine_eval_fire.py]}
+  - {name: skills-evals budget test name, literal: test_the_committed_budget_is_adams_current_cap, to: test_the_committed_budget_is_the_standing_cap}
+
+exclude:
+  - path: evals/real-work/
+    why: X4 (the four platform seeds) and X5 (_agent-guidance-196, pinned to real commits); an adopter's fixture-supply job mines its own.
+  # Content tiers (2026-10-29): the core items' fixtures and test modules
+  # are no longer left out; the recommended and opinionated items' are
+  # exported and moved to the library by patches/skills-evals/library_fixtures.py.
+  # The entries below are the items that are not shipped.
+  - path: evals/guidance/fleet-spans-two-owners/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/read-before-you-start/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-docker/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-dotnet/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-go/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-javascript/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-python/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-rust/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/section-typescript/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/two-github-connectors/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/guidance/workstation-layout/
+    why: X9 and Content tiers (a fixture for a guidance section the kit does not ship). evals/guidance/_delivery/ stays, the delivery canary.
+  - path: evals/adam-writing-style/
+    why: X2 and X9.
+  - path: evals/admin-config-render/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/browser-testing/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/ci-job-performance/
+    why: X9 and Content tiers (the fixtures of a skill the kit does not ship).
+  - path: evals/ci-watcher-loops/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/cms-stuck-pr-triage/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/code-quality/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/consumer-repo-provisioning/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/editorial-label-audit/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/embeddable-tool-pages/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/github-actions-sha-pinning/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/pdf-ocr-audit/
+    why: X9 (a personal PDF skill).
+  - path: evals/platform-release-and-bump/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/post-failure-comment/
+    why: X4 and X9 (a platform-only skill's fixtures).
+  - path: evals/rename-pdfs/
+    why: X9 (a personal PDF skill).
+  - path: evals/windows-elevation-from-wsl/
+    why: X9 and Content tiers (the fixtures of a skill the kit does not ship).
+  - path: badges/workflow-path-audit.json
+    why: X6 (a generated result badge, the owner's measurement of the one kept skill; an adopter's own runs make theirs).
+
+  # ---- X9 / C8: test modules that only lock a left-out fixture (each listed in DECISIONS.md)
+  - path: test/issues/test_issue_87.py
+    why: X9. Every test in it locks the platform's admin-config-render fixture, which the kit does not ship.
+  - path: test/issues/test_issue_88_fixture.py
+    why: X9. Every test in it locks the platform's code-quality fixture, which the kit does not ship.
+  - path: test/issues/test_issue_90.py
+    why: X9. Every test in it locks the platform's editorial-label-audit fixture, which the kit does not ship.
+  - path: test/issues/test_issue_91.py
+    why: X9. Every test in it locks the platform's consumer-repo-provisioning fixture, which the kit does not ship.
+  - path: test/issues/test_issue_93.py
+    why: X9. Every test in it locks the platform's consumer-bump fixture, which the kit does not ship.
+  - path: test/issues/test_issue_ci_job_performance_browser_cache.py
+    why: X9. Every test in it locks the ci-job-performance fixture, which the kit does not ship.
+
+inputs:
+  - from: docs/routine-prompt.md
+    to: docs/routine-prompt.md
+    why: >-
+      The eval runner routine's prompt lives only in claude.ai (the
+      routines inventory). Committed as a doc so the kit carries the loop's
+      most important prompt. The kit keeps it already substituted (the
+      leak scan covers export/ too); the substitution pass leaves it as is.
+
+edits:
+  # ---- Review fixes (2026-10-29): owner issue links in live output
+  - path: harness/run_eval.py
+    old: |2
+                  detail = (f"cannot drive judge mode {judge_mode!r} yet: re-run with "
+                            "--no-judge and read the objective column. #97 "
+                            "https://github.com/Adam-S-Daniel/skills-evals/issues/97 "
+                            "wires the call site onto judge.score_fixture(); until "
+    new: |2
+                  detail = (f"cannot drive judge mode {judge_mode!r} yet: re-run with "
+                            "--no-judge and read the objective column. The call site "
+                            "is not wired onto judge.score_fixture() yet; until "
+    why: >-
+      The refusal is a report cell the adopter reads in their own runs; a link
+      to the source owner's issue tracker (and its bare number, which would
+      read as the adopter's issue 97) is not theirs. The comment above it
+      keeps the citation (P2).
+  - path: test/run_tests.py
+    old: "        for needed in (\"--no-judge\", \"#97\", self.ISSUE_97):\n            with self.subTest(needed=needed):\n                self.assertIn(needed, row)\n"
+    new: "        for needed in (\"--no-judge\", \"judge.score_fixture()\"):\n            with self.subTest(needed=needed):\n                self.assertIn(needed, row)\n        self.assertNotIn(\"github.com\", row)\n"
+    why: >-
+      The report cell no longer carries the source owner's issue link (the
+      run_eval.py edit above); the actionable half it checks is the flag and
+      the call it waits on, and no link is left.
+  - path: test/run_tests.py
+    old: "    ISSUE_97 = \"https://github.com/Adam-S-Daniel/skills-evals/issues/97\"\n\n"
+    new: ""
+    why: The constant's one reader is the assertion edited above.
+  - path: test/run_tests.py
+    old: "        self.assertIn(\"#97\", proc.stdout)\n"
+    new: "        self.assertIn(\"judge.score_fixture()\", proc.stdout)\n        self.assertNotIn(\"github.com\", proc.stdout)\n"
+    why: >-
+      The same refusal, read from the runner's stdout by
+      test_a_pairwise_fixture_with_the_judge_on_exits_2; it checks the call
+      the refusal waits on, and that no link is left, as the row check above.
+  - path: evals/propagation/ROUTINE.md
+    old: "Tied to [adam-agentskills#23](https://github.com/Adam-S-Daniel/adam-agentskills/issues/23):\n"
+    new: "Tied to the source system's account-store retirement issue (cited at the top of this file):\n"
+    why: >-
+      The retirement plan reads as an instruction; the source owner's issue
+      link stays once, in the header's history citation (P2), not in the
+      plan an adopter might follow.
+  - path: .gitignore
+    old: "__pycache__/\n*.pyc\n"
+    new: "__pycache__/\n*.pyc\n# The adoption kit's copy-starter.sh skips these when it copies the tree;\n# ignoring them here keeps them out of the adopter's first commits too.\n.pytest_cache/\nnode_modules/\n.DS_Store\n"
+    why: >-
+      The kit's bootstrap test requires every starter tree's .gitignore to
+      name each path copy-starter.sh skips (__pycache__/, *.pyc,
+      .pytest_cache/, node_modules/, .DS_Store); the lines already present
+      are not repeated.
+  # ---- C4: the scheduled-run-health caller points at _agent-guidance's copy
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "    uses: Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.163\n"
+    new: "    uses: Adam-S-Daniel/_agent-guidance/.github/workflows/scheduled-run-health-reusable.yml@0000000000000000000000000000000000000000\n"
+    why: >-
+      C4. The reusable now lives in _agent-guidance. A cross-repo reusable
+      takes a full commit sha, and the adopter's _agent-guidance commit does
+      not exist yet, so this is a placeholder sha the adopter replaces with
+      the command in REGENERATE.md.
+  - path: .github/workflows/scheduled-run-health.yml
+    old: "# sweep once startup-failed 30/30 for a month unnoticed). The platform owns\n# the audit logic; this thin caller schedules it."
+    new: "# sweep once startup-failed 30/30 for a month unnoticed). _agent-guidance's\n# scheduled-run-health-reusable.yml owns the audit logic; this thin caller\n# schedules it."
+    why: C4. The audit logic now lives in _agent-guidance.
+  # ---- X9: no browser-testing fixture to install
+  - path: .github/workflows/ci.yml
+    old: |2
+            - name: Set up Node for the browser-testing AST fixture
+              if: steps.salient.outputs.run == 'true'
+              uses: actions/setup-node@v7.0.0
+              with:
+                node-version: 22
+            - name: Install browser-testing parser dependencies
+              if: steps.salient.outputs.run == 'true'
+              working-directory: skills-evals/evals/browser-testing/seed
+              run: npm ci --ignore-scripts --no-audit --no-fund
+    new: |2
+            - name: Set up Node for the real-work fixtures' dependencies
+              if: steps.salient.outputs.run == 'true'
+              uses: actions/setup-node@v7.0.0
+              with:
+                node-version: 22
+    why: >-
+      X9. The browser-testing fixture whose parser this step installed is left
+      out; Node stays for the real-work fixtures' own npm installs below.
+  - path: scripts/dev_setup.sh
+    old: "    --print-npm-dirs) echo evals/browser-testing/seed; real_work_dirs npm; exit 0 ;;\n"
+    new: "    --print-npm-dirs) real_work_dirs npm; exit 0 ;;\n"
+    why: X9. Follows ci.yml, which no longer installs the left-out browser-testing fixture.
+  - path: scripts/dev_setup.sh
+    old: "for dir in evals/browser-testing/seed $npm_dirs; do\n"
+    new: "for dir in $npm_dirs; do\n"
+    why: X9. Same.
+
+  # ---- C7: the routine's trigger id is the adopter's, held in a repo variable
+  - path: .github/workflows/routine-eval-fire.yml
+    stage: output
+    old: |
+      # Fires the eval runner routine (ADR 0010, "Smallest next PRs" item 2):
+      # https://claude.ai/code/routines/trig_EXAMPLE
+    new: |
+      # Fires the eval runner routine (ADR 0010, "Smallest next PRs" item 2).
+      # The routine is the repository's own: its trigger id (trig_...) is the
+      # variable ROUTINE_TRIGGER_ID of the routine-fire environment, set when the routine is
+      # created (docs/routine-prompt.md), and the fire step refuses to run
+      # without a well-formed one.
+    why: C7. The source names its owner's trigger in the header; the kit's adopter creates their own routine.
+  - path: .github/workflows/routine-eval-fire.yml
+    stage: output
+    old: "          FIRE_URL: https://api.anthropic.com/v1/claude_code/routines/trig_EXAMPLE/fire\n"
+    new: "          ROUTINE_TRIGGER_ID: ${{ vars.ROUTINE_TRIGGER_ID }}\n"
+    why: C7. The trigger id comes from a repository variable instead of the source owner's hardcoded id.
+  - path: .github/workflows/routine-eval-fire.yml
+    stage: output
+    old: |2
+                  echo "::error::repository secret EVAL_ROUTINE_FIRE_BEARER is not set"
+                  exit 1
+                fi
+    new: |2
+                  echo "::error::repository secret EVAL_ROUTINE_FIRE_BEARER is not set"
+                  exit 1
+                fi
+                # C7: the trigger id is a variable, so it is checked before it
+                # becomes part of a URL: trig_ and 1-64 letters or digits.
+                if ! [[ "${ROUTINE_TRIGGER_ID:-}" =~ ^trig_[A-Za-z0-9]{1,64}$ ]]; then
+                  echo "::error::the routine-fire variable ROUTINE_TRIGGER_ID is not set or is not a trig_ id"
+                  exit 1
+                fi
+                FIRE_URL="https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_TRIGGER_ID}/fire"
+    why: C7. Validates the variable and builds the fire URL from it, before any payload work or API call.
+  - path: test/issues/test_issue_routine_eval_fire.py
+    stage: output
+    old: |2
+              self.assertEqual(
+                  env["FIRE_URL"],
+                  "https://api.anthropic.com/v1/claude_code/routines/"
+                  "trig_EXAMPLE/fire")
+    new: |2
+              self.assertEqual(
+                  env["ROUTINE_TRIGGER_ID"],
+                  "${{ vars.ROUTINE_TRIGGER_ID }}")
+              self.assertNotIn("FIRE_URL", env)
+    why: C7. The step reads the trigger id from the repository variable; the URL is built in the script.
+  - path: test/issues/test_issue_routine_eval_fire.py
+    stage: output
+    old: "            \"FIRE_URL\": self.env_block[\"FIRE_URL\"],\n"
+    new: "            \"ROUTINE_TRIGGER_ID\": \"trig_EXAMPLE\",\n"
+    why: C7. The step script is run with the variable it now reads.
+  - path: test/issues/test_issue_68_model_input.py
+    stage: output
+    old: |2
+              steps = base.load(base.WORKFLOW)["jobs"]["fire"]["steps"]
+              self.url = next(s for s in steps
+                              if s.get("name") == "Fire the eval routine")["env"]["FIRE_URL"]
+    new: |2
+              self.url = "https://api.anthropic.com/v1/claude_code/routines/trig_EXAMPLE/fire"
+    why: C7. The fire URL is built in the step script from ROUTINE_TRIGGER_ID, which fire() passes.
+  - path: test/issues/test_issue_68_model_input.py
+    stage: output
+    old: "            \"HOME\": str(self.tmp), \"FIRE_URL\": self.url,\n"
+    new: "            \"HOME\": str(self.tmp), \"ROUTINE_TRIGGER_ID\": \"trig_EXAMPLE\",\n"
+    why: C7. Same.
+  - path: test/issues/test_issue_routine_improve.py
+    stage: output
+    old: "ROUTINE_ID = \"trig_EXAMPLE\"\n"
+    new: "ROUTINE_ID = \"ROUTINE_TRIGGER_ID\"\n"
+    why: C7. A workflow that reaches the routine now names the variable, not an id.
+
+  - path: test/issues/test_issue_routine_eval_fire.py
+    stage: output
+    old: "    def test_a_curl_failure_is_status_000_and_prints_no_body(self):\n"
+    new: |2
+          @unittest.skipUnless(shutil.which("jq"), "needs jq on PATH")
+          def test_the_fire_url_is_built_from_the_trigger_variable(self):
+              # C7: the trigger id is the repository variable, not a constant.
+              proc = self.run_step("200", self.ok_body(),
+                                   ROUTINE_TRIGGER_ID="trig_01ExampleOnly")
+              self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+              argv = json.loads((self.log / "argv.json").read_text())
+              self.assertEqual(
+                  argv[argv.index("--request") + 2],
+                  "https://api.anthropic.com/v1/claude_code/routines/"
+                  "trig_01ExampleOnly/fire")
+
+          def test_a_missing_or_malformed_trigger_variable_stops_before_curl(self):
+              # C7: an empty variable (GitHub renders an unset one as ""), or
+              # one that is not trig_ plus 1-64 letters or digits, never
+              # reaches a URL or the API.
+              for label, value in (("empty", ""),
+                                   ("no_prefix", "014ExampleOnly"),
+                                   ("path", "trig_x/../../other"),
+                                   ("space", "trig_x y"),
+                                   ("too_long", "trig_" + "a" * 65)):
+                  with self.subTest(case=label):
+                      proc = self.run_step("200", self.ok_body(),
+                                           ROUTINE_TRIGGER_ID=value)
+                      self.assertNotEqual(proc.returncode, 0)
+                      self.assertIn("ROUTINE_TRIGGER_ID is not set or is not a trig_ id",
+                                    proc.stdout + proc.stderr)
+                      self.assertFalse((self.log / "calls").exists())
+
+          def test_a_curl_failure_is_status_000_and_prints_no_body(self):
+    why: C7. New tests for the variable, the URL built from it, and the refusal of a missing or malformed one before curl runs.
+
+  - path: .github/workflows/routine-eval-fire.yml
+    stage: output
+    old: |2
+          runs-on: ubuntu-latest
+          timeout-minutes: 5
+          steps:
+            - name: Check out the default branch
+    new: |2
+          # The bearer and the trigger id are held in the `routine-fire`
+          # environment, limited to the default branch (the kit's
+          # bootstrap/set-secrets.sh stores them there).
+          environment: routine-fire
+          runs-on: ubuntu-latest
+          timeout-minutes: 5
+          steps:
+            - name: Check out the default branch
+    why: >-
+      C7. The kit keeps the bearer and the trigger id in the routine-fire
+      environment (README 3.4 and 9.4, bootstrap/set-secrets.sh); a job sees
+      an environment's values only when it names it.
+  - path: test/issues/test_issue_routine_eval_fire.py
+    stage: output
+    old: "    def test_only_workflow_dispatch(self):\n"
+    new: |2
+          def test_the_job_reads_the_routine_fire_environment(self):
+              # C7: the bearer and ROUTINE_TRIGGER_ID live in this environment.
+              self.assertEqual(self.job["environment"], "routine-fire")
+
+          def test_only_workflow_dispatch(self):
+    why: C7. Locks the environment the bearer and trigger id are read from.
+  # ---- C6: the allowance budget at the standing defaults
+  - path: evals/budget.yml
+    stage: output
+    old: |
+      # Temporarily 60 points for the week ending 2026-11-02 17:00 UTC (the owner,
+      # 2026-10-27: 50, after two improve fires' estimated charge had left 2.5
+      # points, which blocked every fire; 2026-10-28: "a smidge" more, 55; then
+      # 60, so the first guidance-improve fire could go); back to 0.30 after
+      # that reset.
+      weekly_cap: 0.60
+    new: |
+      weekly_cap: 0.30
+    why: C6. The standing default (30 points a week); the dropped comment recorded one week's temporary raise, a spending decision of the source owner's.
+  # ---- C12: account-specific App ids are not the kit's (a substitution rule,
+  # above, finds the roster App's id by its context, so this file spells none)
+
+
+  - path: test/issues/test_issue_68_allowance_guard.py
+    stage: output
+    old: |2
+              # The owner, 2026-10-27/28: 60 points until the 2026-11-02 reset, then
+              # 0.30 again (restore LIMITS here when evals/budget.yml goes back).
+              self.assertEqual(budget.load_budget(), {**LIMITS, "weekly_cap": 0.60})
+    new: |2
+              # C6: the kit ships the standing defaults.
+              self.assertEqual(budget.load_budget(), LIMITS)
+    why: C6. The committed budget is the standing default, LIMITS, not the source's one-week raise.
+  # ---- X9: machinery that must accept an empty starting state
+  - path: scripts/plan_scheduled_evals.py
+    stage: output
+    old: |2
+          if not isinstance(entries, list) or not 1 <= len(entries) <= 256:
+              raise ValueError("schedule must contain 1 to 256 fixtures")
+    new: |2
+          # The kit starts with an empty schedule (no fixtures yet): it plans
+          # nothing until the first row lands.
+          if not isinstance(entries, list) or len(entries) > 256:
+              raise ValueError("schedule must contain at most 256 fixtures")
+    why: >-
+      X9. The kit's evals/scheduled.yml starts empty; refusing it would fail
+      the weekly planner and the fixture-supply promotion (which adds the
+      first row) before any fixture exists.
+  # ---- substitution side effects
+
+  # ---- Cold-start fixes (2026-10-29): the dashboard builds from nothing
+  - path: dashboard/build.py
+    stage: output
+    old: |2
+          rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
+          return rows
+    new: |2
+          rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
+          return rows or [{"title": "No threads yet", "state": None, "last_active": None, "link": None,
+                           "id": PLACEHOLDER_ID}]
+    why: >-
+      Cold start. A project with no threads yet wrote an empty dataset and
+      main() exited ("threads: empty dataset; give it a placeholder row"). It
+      gets one placeholder row, key field `id` = "none", like the datasets
+      that already have one.
+  - path: dashboard/build.py
+    stage: output
+    old: "    return stages, cfg[\"grid\"], lanes, gaps\n"
+    new: |2
+          return stages, cfg["grid"], lanes, gaps or [
+              {"gap": PLACEHOLDER_ID, "title": "No loop gaps yet", "status": "", "owner": "", "link": None}]
+    why: >-
+      Cold start. A loop with no gaps yet wrote an empty `loop_gaps` and
+      main() exited. One placeholder row, key field `gap` = "none"; the
+      placeholder is added after the stages are derived, so no stage sees it.
+  - path: dashboard/build.py
+    stage: output
+    old: "         out[\"loop_gaps\"]) = loop(load(loop_cfg), inp(\"loop_status.json\"), site)\n"
+    new: "         out[\"loop_gaps\"]) = loop(load(loop_cfg), inp(\"loop_status.json\", {\"gaps\": []}), site)\n"
+    why: >-
+      Cold start. `loop_status.json` is the loop thread's own gap list, which
+      an adopter has no source for yet; build() exited "missing input". An
+      absent file builds as no gaps, like the other optional dumps.
+  - path: dashboard/page/index.html
+    stage: output
+    old: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file' };\n"
+    new: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file', threads: 'id', loop_gaps: 'gap' };\n"
+    why: >-
+      Cold start. The two new placeholder rows are hidden the way the other
+      key-field placeholders are, so the loop gap counts stay 0 of 0 and the
+      tables stay empty rather than showing a "none" row.
+  - path: dashboard/README.md
+    stage: output
+    old: "| `loop_status.json` | The loop's gap list (`gaps[]`: `gap`, `title`, `status`, `owner`, `pr`), kept by the loop thread |\n"
+    new: "| `loop_status.json` | Optional. The loop's gap list (`gaps[]`: `gap`, `title`, `status`, `owner`, `pr`), kept by the loop thread; without it the loop has no gaps |\n"
+    why: Cold start. Says the dump is optional now.
+  - path: test/issues/test_issue_dashboard_build.py
+    stage: output
+    old: "    def test_the_page_names_no_owner(self):\n"
+    new: |2
+          def test_builds_from_fully_empty_inputs(self):
+              # Cold start: a new adopter has no thread list, no dumps and no
+              # loop_status.json. The example config builds anyway, and the two
+              # datasets that would be empty carry one placeholder row.
+              empty_results, empty_inputs, out = self.tmp / "r0", self.tmp / "i0", self.tmp / "ds0"
+              empty_results.mkdir()
+              empty_inputs.mkdir()
+              build.main(["--results", str(empty_results), "--inputs", str(empty_inputs),
+                          "--config", str(DASH / "config.example"), "--out", str(out), "--now", NOW.isoformat()])
+              threads = json.loads((out / "threads.json").read_text())
+              gaps = json.loads((out / "loop_gaps.json").read_text())
+              self.assertEqual([r["id"] for r in threads], ["none"])
+              self.assertEqual([r["gap"] for r in gaps], ["none"])
+              for name in {p.stem for p in out.glob("*.json")}:
+                  self.assertTrue(json.loads((out / f"{name}.json").read_text()), name)
+              page = (DASH / "page" / "index.html").read_text()
+              self.assertIn("threads: 'id', loop_gaps: 'gap'", page)  # the page hides both placeholders
+
+          def test_the_page_names_no_owner(self):
+    why: Cold start. Regression test that build.py succeeds on fully empty inputs.
+
+patches:
+  - file: owner_constants.py
+    why: >-
+      C2 and C10. The miner test's two owner constants are named after the
+      people; they become OWNER and OWNER_TWO, found from the parsed module so
+      no name is spelled in the kit. The one assertion whose order follows the
+      names' sort order is reordered ("example-adopter-two/" sorts before
+      "example-adopter/").
+  - file: library_fixtures.py
+    why: >-
+      Content tiers. The recommended and opinionated items' fixtures, weekly
+      rows, test modules and the tests of them inside shared modules move to
+      library/<kind>/<id>/skills-evals/, with the ops add-content.sh runs to
+      put each back; machinery_tests.py then removes those tests from the
+      tree.
+  - file: machinery_tests.py
+    why: >-
+      X9 and C8. Removes the tests in kept modules that only lock a left-out
+      fixture (removed_tests.txt) and points the machinery tests at the
+      invented test-only fixtures under test/fixtures/ (the two kept
+      fixtures' tests read the real fixtures).
+  - file: federation_vars.py
+    why: >-
+      C12. eval.yml's two token exchanges named the source's own Anthropic
+      workload identity federation ids (rule, organization, service account,
+      workspace); they now read four repository variables that bootstrap sets
+      from fleet.env, checked by shape, and a failed exchange logs the HTTP
+      status and error type, not the response body.
+  - file: owner_links.py
+    why: >-
+      Live output. Pull request bodies, impact entries and a scaffold's
+      tracking.json linked the source owner's issues, or the source's issue
+      numbers on the adopter's own repo; they link the adopter's own ADRs or
+      drop the link.
+  - file: invented_credential.py
+    why: >-
+      Names. The fixture scan's Basic-auth test credential decoded to the
+      source owner's first name; it is an invented one of the same shape.
+  - file: empty_config.py
+    why: >-
+      X9 and Content tiers. evals/scheduled.yml keeps the rows of the core items' fixtures and
+      evals/non-coverage.yml keeps its header and key with an empty list;
+      the dropped rows named fixtures and skills the kit does not ship.
+  - file: cold_start_registries.py
+    why: >-
+      Cold start (DECISIONS "Cold-start fixes"). A registry entry may declare
+      `may_be_empty: true` and the census resolves it with 0 skills (set for
+      the private registry, which starts empty); and the invented example
+      sites of C3 are no longer checked out, flagged or listed in
+      harness/registries.yml.
+  - file: cold_start_tests.py
+    why: >-
+      Cold start. Tests that used the dropped example sites as a second
+      public registry (test_issue_60, test_issue_64, test_issue_70_retire,
+      test_issue_adr0012_delivery and TestIssue63 in run_tests.py) move to the registries the kit ships;
+      the counts follow the new denominator.
+  - file: retirement_exempt.py
+    why: >-
+      Content tiers. The automatic retirement skips the core items:
+      evals/retirement-exempt.yml lists them (written from
+      bootstrap/content-catalog.json), compute_gates.py turns a core item's
+      `retire` into `retire-exempt` before it picks the one retirement, and
+      retire_skill.py opens nothing for one, for skills and guidance
+      sections alike.
+
+protect_except:
+  - path: test/issues/test_issue_70_retire.py
+    why: >-
+      Its fake gh prints pull request URLs on the source owner's registry
+      (citation-shaped test data) that retire_skill.py's substituted URL
+      pattern must accept, and one impact-entry test spells the owner's
+      issue link the script writes; both sides are substituted together.
+  - path: scripts/improve_gate.py
+    why: >-
+      The pull request body it writes cites the loop's tracking issue
+      (citation-shaped), and test_issue_routine_improve.py asserts the
+      substituted link; the body names the adopter's issue, not the source
+      owner's.
+  - path: test/issues/test_issue_real_work_miner.py
+    why: >-
+      Its closing-keyword cases spell cross-repository references
+      (citation-shaped test data) that mine_real_work.closing_refs must
+      resolve against the substituted owner; left as the source owner's,
+      the "another owner's repo" cases would test the wrong thing.
+
+regenerate:
+  - copy_from_kit: {repo: _agent-guidance, from: agents-md/base.md, to: .claude/hooks/fleet-guidance.md}
+    why: The fleet payload mirror is the kit's own base.md (P3; X9 leaves it blank), not the source owner's.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
+    why: The vendored agent-checks runner is the kit template (X9 ships it with no checks).
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks-guard.sh, to: .claude/hooks/agent-checks-guard.sh}
+    why: The vendored PreToolUse guard is the kit template, byte for byte.
+  - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/fleet-memory.sh, to: .claude/hooks/fleet-memory.sh}
+    why: The vendored fleet-memory hook is the kit's own, byte for byte.
+  - run: >-
+      printf '%s\n%s\n' "$(bash "$EXPORT_TREE_AGENT_GUIDANCE/scripts/build-agents-md.sh")"
+      "$(sed -n '/^## Repo-specific additions/,$p' AGENTS.md)" > AGENTS.md.new
+      && mv AGENTS.md.new AGENTS.md
+    why: AGENTS.md's managed half is the kit's build-agents-md.sh output, as the sync writes it.
+
+suite:
+  git_init: true
+  setup: bash scripts/dev_setup.sh
+  command: python3 test/run_tests.py --jobs auto
+  needs: python3 with pip, node 22 and npm, git, jq, bwrap for the workspace-executing scorers
+  summary: '^(=+ .* in [0-9.]+s.*=+|FAILED .*)$'

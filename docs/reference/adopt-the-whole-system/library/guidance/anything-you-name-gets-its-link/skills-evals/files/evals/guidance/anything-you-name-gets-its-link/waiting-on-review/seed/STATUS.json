@@ -1,0 +1,10 @@
+{
+  "repo": "example-org/widgets",
+  "items": [
+    {"kind": "pull_request", "number": 44, "title": "Add a rate limiter",
+     "state": "open", "head_sha": "4f1c2e9", "checks": "passing",
+     "waiting_on": {"type": "environment review", "environment": "production-approval",
+                    "reviewers": ["release-managers"], "workflow": "deploy",
+                    "run_id": 9100877, "job_id": 27301190}}
+  ]
+}

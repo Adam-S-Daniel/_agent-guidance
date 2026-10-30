@@ -1,0 +1,4 @@
+github.com
+  - Logged in to github.com account example-bot (GH_TOKEN)
+  - Token: ****************************************
+  - Token scopes: 'repo:status', 'public_repo'

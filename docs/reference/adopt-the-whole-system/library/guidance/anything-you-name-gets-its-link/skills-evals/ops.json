@@ -1,0 +1,37 @@
+{
+  "ops": [
+    {
+      "op": "append-lines",
+      "file": "evals/scheduled.yml",
+      "fragment": "scheduled-rows.yml"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "TextFixtureTests",
+      "method": "test_done_summary_needs_every_link",
+      "fragment": "TextFixtureTests.test_done_summary_needs_every_link.py"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "TextFixtureTests",
+      "method": "test_handoff_with_bare_numbers_fails_and_with_links_passes",
+      "fragment": "TextFixtureTests.test_handoff_with_bare_numbers_fails_and_with_links_passes.py"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "TextFixtureTests",
+      "method": "test_no_url_says_so",
+      "fragment": "TextFixtureTests.test_no_url_says_so.py"
+    },
+    {
+      "op": "insert-method",
+      "file": "test/issues/test_issue_124_guidance_gates.py",
+      "class": "TextFixtureTests",
+      "method": "test_waiting_on_review_is_read_from_the_reply",
+      "fragment": "TextFixtureTests.test_waiting_on_review_is_read_from_the_reply.py"
+    }
+  ]
+}
