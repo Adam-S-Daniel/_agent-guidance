@@ -3541,8 +3541,12 @@ class WorkflowPinnedPythonTests(unittest.TestCase):
     def test_the_guard_can_fail(self):
         # Mutation inside the test: the helper must flag each unpinned shape,
         # so a parser that silently matches nothing cannot pass the real check.
-        pin = {"uses": "actions/setup-python@v7.0.0",
-               "with": {"python-version": "3.12"}}
+        # The tag ci.yml uses, so it stays locked when Dependabot moves it.
+        ci = yaml.safe_load((self.WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+        locked = next(s["uses"] for job in ci["jobs"].values()
+                      for s in job.get("steps") or []
+                      if str(s.get("uses", "")).startswith(self.SETUP_PYTHON))
+        pin = {"uses": locked, "with": {"python-version": "3.12"}}
         run = {"name": "go", "run": "python3 x.py"}
         cases = {
             "no pin": ([run], ["j: go"]),
@@ -18092,6 +18096,18 @@ class TestIssue86(unittest.TestCase):
              "      - uses: ./.example-site-platform/.github/actions/post-failure-comment\n"
              "        with:\n          mode: post\n"
              "          marker: \"<!-- e2e-failure -->\"\n")
+        ws = self._ws({".github/workflows/w.yml": wf})
+        passed, _ = objective.workflow_step_uses(
+            str(ws), self.PATTERNS, uses_suffix="/post-failure-comment",
+            with_equals={"mode": "post"}, marker_not_html_comment=True)
+        self.assertFalse(passed)
+
+    def test_marker_not_html_comment_rejects_the_bang_comment_end(self):
+        # HTML ends a comment at `--!>` as well as `-->`.
+        wf = ("on:\n  pull_request:\njobs:\n  e2e:\n    runs-on: ubuntu-latest\n    steps:\n"
+             "      - uses: ./.example-site-platform/.github/actions/post-failure-comment\n"
+             "        with:\n          mode: post\n"
+             "          marker: \"e2e-failure --!>\"\n")
         ws = self._ws({".github/workflows/w.yml": wf})
         passed, _ = objective.workflow_step_uses(
             str(ws), self.PATTERNS, uses_suffix="/post-failure-comment",

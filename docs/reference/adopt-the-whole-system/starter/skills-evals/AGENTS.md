@@ -15,7 +15,7 @@ The account's full guidance — incidents, fleet policy, machine layout, the
 traps that cost real outages — is installed into **user memory**
 (`~/.claude/CLAUDE.md`) by the `fleet-memory` SessionStart hook, so it is
 loaded **once per session** no matter how many repos are attached
-([2026-08-29: inlined per repo, it took 332.3k tokens](https://github.com/example-adopter/_agent-guidance/blob/main/docs/evidence/2026-08-29-guidance-inlined-in-every-repo.md)).
+([inlined per repo, it took 332.3k tokens](https://github.com/example-adopter/_agent-guidance/blob/main/docs/evidence/2026-08-29-guidance-inlined-in-every-repo.md)).
 
 **Check the session-start verdict before you rely on it.** The hook prints one
 line:
@@ -37,25 +37,9 @@ No verdict at all means the hook never ran — treat that as DEGRADED.
 
 ## Codex reads the same block, from `~/.codex/AGENTS.md`
 
-The hook writes the same block to `~/.codex/AGENTS.md` whenever `~/.codex`
-exists — Codex's global **user** instructions, outside its 32 KiB
-`project_doc_max_bytes` project-doc budget. Register it once per machine with
-`scripts/register-codex-hook.sh` from an `_agent-guidance` checkout, then
-trust it in `/hooks`. `codex debug prompt-input` renders instructions loaded
-from disk by its own diagnostic process; it does not run SessionStart hooks
-or inspect an existing session or daemon. Verify delivery in the launched
-session's initial instructions and verdict; see the
-[2026-10-04 evidence](https://github.com/example-adopter/_agent-guidance/blob/main/docs/evidence/codex-trust-and-daemon-0160.md#prompt-debugging-source-read-2026-10-04-cli-01600-rust-v01600).
-
-For Codex Cloud, use **Manual** environment setup with persistent
-`CODEX_HOME=/opt/codex`. Preserve the repository's dependency setup and run
-`bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
-maintenance; reset the cache for the first verification. Fresh setup and
-cached maintenance were verified in the `_agent-guidance` environment. See
+The hook writes the same block there whenever `~/.codex` exists. Setup for
+local Codex and Codex Cloud, and how to verify delivery:
 [`docs/codex-cloud.md`](https://github.com/example-adopter/_agent-guidance/blob/main/docs/codex-cloud.md).
-If the Cloud shell has no `codex debug prompt-input`, the saved task response's
-raw initial instruction envelope is the echo-free proof of model-visible
-delivery.
 
 ## The floor: rules that hold even when the guidance did not load
 
@@ -86,8 +70,10 @@ session that lost the guidance must not also lose these.
   scoped to one returns a plausible, complete-shaped, wrong answer.
 - **Anything you name gets its link** — what you hand over, what you are
   waiting on, and what you cite as already done.
-- **Merge with a merge commit** (`gh pr merge --merge`); do not amend
-  published commits or force-push shared branches.
+- **Merge with a merge commit** (`gh pr merge --merge`), except in the three
+  example-site-platform-managed repos (`example-site-platform`, `example-site-a`,
+  `example-site-b`), which squash; do not amend published commits or
+  force-push shared branches.
 - **Keep this file under 32 KiB.** Codex truncates project instructions at
   that byte silently; the sync warns and the drift report flags
   `codex-truncated`.
@@ -147,4 +133,4 @@ session that lost the guidance must not also lose these.
 
 ### Action pins
 
-Workflows name third-party actions by release tag; [`.github/workflows/actions.lock`](.github/workflows/actions.lock) locks each tag to an exact commit, and the runner runs the locked commit even when it disagrees with the tag. The `test` job's "Verify action lockfile" step is the shared action [`Adam-S-Daniel/verify-actions-lock`](https://github.com/Adam-S-Daniel/verify-actions-lock); it runs `gh actions-lock --verify` only when a PR touches workflow dependencies (`.github/workflows/**`, `.github/actions/**`, an `action.yml`/`action.yaml`) and fails on any finding except `cooldown-config-ignored` (dependabot.yml's cooldown `exclude`, which the tool ignores). It is early feedback, not the only guard: the runner rejects forged pins, and the repo will also turn on GitHub's Require lockfile policy. Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and commit both files; review an `actions.lock` diff as you would a SHA pin. A stale or moved pin is fixed with `gh actions-lock --accept-moved`; review the diff. A `reachability-unknown` failure means the GitHub API was unreachable: re-run. Cross-repo reusable workflows (`jobs.<id>.uses`) are not locked, so they take a full commit SHA (`example-adopter/example-site-platform` refs excepted); a test enforces it. Fleet rule: [ADR 0024](https://github.com/example-adopter/_agent-guidance/blob/main/docs/decisions/0024-actions-pin-through-lockfiles.md).
+Workflows name third-party actions by release tag; [`.github/workflows/actions.lock`](.github/workflows/actions.lock) locks each tag to an exact commit, and the runner runs the locked commit even when it disagrees with the tag. The `test` job's "Verify action lockfile" step is the shared action [`Adam-S-Daniel/verify-actions-lock`](https://github.com/Adam-S-Daniel/verify-actions-lock); it runs `gh actions-lock --verify` only when a PR touches workflow dependencies (`.github/workflows/**`, `.github/actions/**`, an `action.yml`/`action.yaml`) and fails on any finding except `cooldown-config-ignored` (dependabot.yml's cooldown `exclude`, which the tool ignores). It is early feedback, not the only guard: the runner rejects forged pins, and GitHub's Require lockfile policy is on. Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and commit both files; review an `actions.lock` diff as you would a SHA pin. A stale or moved pin is fixed with `gh actions-lock --accept-moved`; review the diff. A `reachability-unknown` failure means the GitHub API was unreachable: re-run. Cross-repo reusable workflows (`jobs.<id>.uses`) are not locked, so they take a full commit SHA (`example-adopter/example-site-platform` refs excepted); a test enforces it. Fleet rule: [ADR 0024](https://github.com/example-adopter/_agent-guidance/blob/main/docs/decisions/0024-actions-pin-through-lockfiles.md).

@@ -20,4 +20,4 @@ name outlives a rename).
 - **Do not lean on a scanner's internals.** `sha256:<hex>` dodges the rule
   only because `:` is outside its capture class.
 - **Suppress by value, never by path.** A `paths` entry skips the file before
-  any rule runs (cms-platform#260).
+  any rule runs.

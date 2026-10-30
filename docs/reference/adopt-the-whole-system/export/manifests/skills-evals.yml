@@ -7,7 +7,7 @@
 repo: skills-evals
 kit_name: skills-evals
 source: skills-evals
-source_sha: 99c667f93c67a3ddd0630bf7aadbcb43e506d43c
+source_sha: d965ccf6aeb0c3f5e2d744063405923525620b94
 # The vendored fleet files (payload mirror, agent-checks runner and guard,
 # AGENTS.md's managed half) are rebuilt from the kit's own _agent-guidance.
 after: [_agent-guidance]
@@ -439,8 +439,8 @@ edits:
       absent file builds as no gaps, like the other optional dumps.
   - path: dashboard/page/index.html
     stage: output
-    old: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file' };\n"
-    new: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file', threads: 'id', loop_gaps: 'gap' };\n"
+    old: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'key' };\n"
+    new: "  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'key', threads: 'id', loop_gaps: 'gap' };\n"
     why: >-
       Cold start. The two new placeholder rows are hidden the way the other
       key-field placeholders are, so the loop gap counts stay 0 of 0 and the
@@ -565,6 +565,8 @@ regenerate:
     why: The fleet payload mirror is the kit's own base.md (P3; X9 leaves it blank), not the source owner's.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
     why: The vendored agent-checks runner is the kit template (X9 ships it with no checks).
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/dated-phrasing-allowlist.txt, to: .githooks/dated-phrasing-allowlist.txt}
+    why: The sync delivers the dated-phrasing allowlist from _agent-guidance's templates; it carries that repo's C11 trim.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks-guard.sh, to: .claude/hooks/agent-checks-guard.sh}
     why: The vendored PreToolUse guard is the kit template, byte for byte.
   - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/fleet-memory.sh, to: .claude/hooks/fleet-memory.sh}

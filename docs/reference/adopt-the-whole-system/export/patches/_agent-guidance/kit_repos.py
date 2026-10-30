@@ -1,4 +1,4 @@
-"""DECISIONS C11: repos.yml names only the kit's repos.
+"""DECISIONS C11: repos.yml (and the dated-phrasing allowlist) name only the kit's repos.
 
 repos.yml is live config: sync.sh delivers to `skills_bootstrap.repos`,
 check-registry.js holds `repos` and `out_of_scope` to a partition, and
@@ -60,6 +60,17 @@ REPOS_YML_LINES = [
 ]
 
 
+# The dated-phrasing allowlist (agent-checks' warning pass) matches entries by
+# repo, so an entry for a repo outside the kit is dead config naming the
+# source owner's personal tool repo. The template and this repo's own
+# delivered copy; the other repos copy the template (their manifests'
+# copy_from_kit), as the sync delivers it.
+ALLOWLIST_FILES = ["templates/agent-checks/dated-phrasing-allowlist.txt",
+                   ".githooks/dated-phrasing-allowlist.txt"]
+ALLOWLIST_LINES = [
+    ("example-adopter/ai-usage-dashboard AGENTS.md :: tested 2026-10-20\n", ""),
+]
+
 # A test that pinned the list's size to the source fleet's.
 TEST_EDITS = [
     ("test/test-prompt-audit-sweep.js",
@@ -85,6 +96,17 @@ def apply(root: Path, ctx) -> None:
                    "  # a comment saying why, when it should not be audited.\n"
                    "  out_of_scope: []\n")
     path.write_text(text, encoding="utf-8")
+
+    for rel in ALLOWLIST_FILES:
+        p = root / rel
+        a = p.read_text(encoding="utf-8")
+        for old, new in ALLOWLIST_LINES:
+            a = _replace(a, old, new, rel)
+        stray = sorted({ln.split()[0].split("/", 1)[-1] for ln in a.splitlines()
+                        if ln.strip() and not ln.startswith("#") and ln.split()[0] != "*"} - kit)
+        if stray:
+            raise SystemExit(f"kit_repos: {rel} still names repos outside the kit: {stray}")
+        p.write_text(a, encoding="utf-8")
 
     for rel, old, new in TEST_EDITS:
         p = root / rel

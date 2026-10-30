@@ -158,7 +158,7 @@ jobs:
       # the one pinned dev dependency behind it has to be here. `npm ci`, not
       # `npm install`: the lockfile is the version under test.
       - name: Setup Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "20"
 
@@ -211,7 +211,7 @@ jobs:
       # they have to be here as well as in `suite`. `npm ci`, not
       # `npm install`: the lockfile is the version under test.
       - name: Setup Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "20"
 

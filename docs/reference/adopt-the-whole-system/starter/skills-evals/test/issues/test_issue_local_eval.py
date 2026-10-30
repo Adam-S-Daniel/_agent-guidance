@@ -574,9 +574,11 @@ class TestLocalEval(unittest.TestCase):
         self.assertEqual(manifest["harness"]["claude_version"],
                          version.splitlines()[0].strip())
         # EVAL_DIR pins neither model (#371 item 5): the committed roster's
-        # first arm and the judge chosen for it, a tier above (ADR 0013),
-        # are what the run selects. The judge is worked out here from the
-        # ladder, not by `judge_policy.judge_for_arm`, which this checks.
+        # first arm and a judge chosen for it, a tier above (ADR 0013), are
+        # what the run selects: any roster arm in the lowest tier above it,
+        # else the roster's judge. Worked out here from the ladder, not by
+        # `judge_policy.judge_for_arm`, which this checks; which of several is
+        # the newest is tested in test_issue_371_judge_tier.py.
         roster = yaml.safe_load((REPO_ROOT / "evals" / "roster.yml").read_text(encoding="utf-8"))
         arm_ids = [arm["id"] for arm in roster["arms"]]
         sys.path.insert(0, str(REPO_ROOT / "harness"))
@@ -589,14 +591,14 @@ class TestLocalEval(unittest.TestCase):
         above = sorted((rung, arm) for rung, arm in placed
                        if rung is not None and rung > tier)
         lowest = [arm for rung, arm in above if rung == above[0][0]]
-        # One arm in the tier above (or none): nothing here works out "newest".
-        assert len(lowest) <= 1, lowest
-        judge = lowest[0] if lowest else roster["judge"]["id"]
-        assert tiers.rung_of(judge, rungs) > tier, (arm_ids[0], judge)
+        judges = lowest or [roster["judge"]["id"]]
+        for judge in judges:
+            assert tiers.rung_of(judge, rungs) > tier, (arm_ids[0], judge)
         self.assertEqual(manifest["fixtures"][0]["models"]["fixture_pins"],
                          {"model": None, "judge_model": None})
-        self.assertEqual(manifest["fixtures"][0]["models"]["selected"],
-                         {"agent": arm_ids[0], "judge": judge})
+        selected = manifest["fixtures"][0]["models"]["selected"]
+        self.assertEqual(selected["agent"], arm_ids[0])
+        self.assertIn(selected["judge"], judges)
         head = _git(registry, "rev-parse", "HEAD").stdout.strip()
         self.assertEqual(manifest["fixtures"][0]["registry"],
                          {"name": "acsi-agentskills", "source": "--registry flag",

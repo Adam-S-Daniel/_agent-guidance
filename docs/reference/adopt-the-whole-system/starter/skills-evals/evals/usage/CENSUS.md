@@ -133,6 +133,16 @@ private repository: branch `persistent/usage-events` of
   naming the step and nothing else, and the script exits 1 after the public
   census has been published.
 
+## Weekly review of blocked hook runs
+
+`scripts/hook_block_report.py` reads the private events and the two public
+weekly files, groups blocked local hook runs by repository, check and hour,
+flags one repository driving most blocks or a steady hourly repeat (a
+scheduled job retrying), and checks that each source is fresh. Its output
+names repositories and machines, so it is private: a weekly routine files it
+as an issue in the private repository and fixes what it finds. The procedure
+is [`docs/hook-block-review-routine.md`](../../docs/hook-block-review-routine.md).
+
 ## Why it runs on the owner's durable machine
 
 It reads transcripts, and only the machine where Claude Code is used day to day

@@ -60,7 +60,7 @@
     <p class="pd-take" id="takeaway">
       Gate to start building again: <b class="dash-skeleton" data-source="headline" data-field="gate_met">—</b> of <b class="dash-skeleton" data-source="headline" data-field="gate_total">—</b> conditions met.
       Tests used <b class="dash-skeleton" data-source="cap_use" data-field="spent">—</b> of <b class="dash-skeleton" data-source="cap_use" data-field="cap">—</b> allowance points this week.
-      The skill beat no skill in <b class="dash-skeleton" data-source="eval_summary" data-where="model=All" data-field="helped">—</b> of <b class="dash-skeleton" data-source="eval_summary" data-where="model=All" data-field="runs">—</b> tests.
+      On each skill test's latest run, the skill beat no skill in <b class="dash-skeleton" data-source="eval_latest_summary" data-field="helped">—</b> of <b class="dash-skeleton" data-source="eval_latest_summary" data-field="tests">—</b>.
       <b class="dash-skeleton" data-source="headline" data-field="waiting">—</b> items wait on you.
     </p>
   </header>
@@ -96,8 +96,8 @@
       </button>
       <button class="pd-tile" data-go="evals" id="tile-helped">
         <span class="pd-tile-label">Skill beat no skill</span>
-        <span class="pd-tile-num"><span class="dash-skeleton" data-source="eval_summary" data-where="model=All" data-field="helped">—</span> <small>of <span data-source="eval_summary" data-where="model=All" data-field="runs">—</span> tests</small></span>
-        <span class="pd-tile-note"><span data-source="eval_scope" data-field="skills">—</span> skills, 3 tries per side; now on <span data-source="eval_scope" data-field="models">—</span></span>
+        <span class="pd-tile-num"><span class="dash-skeleton" data-source="eval_latest_summary" data-field="helped">—</span> <small>of <span data-source="eval_latest_summary" data-field="tests">—</span> tests</small></span>
+        <span class="pd-tile-note">Latest run of each test on each model; <span data-source="eval_latest_summary" data-field="tied">—</span> tied, <span data-source="eval_latest_summary" data-field="hurt">—</span> worse. <span data-source="eval_scope" data-field="skills">—</span> skills, usually 3 tries per side; now on <span data-source="eval_scope" data-field="models">—</span></span>
       </button>
       <button class="pd-tile" data-go="cleanup" id="tile-cleanup">
         <span class="pd-tile-label">Cleanup list done</span>
@@ -206,23 +206,23 @@
   <section class="pd-page" id="impact" data-page-id="impact" hidden>
     <div class="pd-card" id="card-impact-summary">
       <h2>How much real work uses the system</h2>
-      <p class="pd-note">Counts from your real sessions and CI runs, by week: each skill use and each git hook check run, and how often a git hook check blocked a commit or push. These are git hooks (the agent-checks runner on pre-commit and pre-push), not Claude Code hooks; Claude Code hook runs are not counted yet. Only weekly totals are kept, never session text. Names not on the public list are counted as "other". Guidance has no direct use signal; its effect shows only in test results.</p>
-      <p class="pd-note" id="impact-empty" hidden><b>Not all sources are in yet.</b> PR outcomes and git hook check runs in CI arrive daily (2:53 AM ET). Skill counts start after your computer's next daily usage job (12:37 PM ET); the counter merged in skills-evals#420. Git hook checks run on your computers (with what they blocked) follow once git hook logging (_agent-guidance#337) reaches each machine.</p>
+      <p class="pd-note">Counts from your real sessions and CI runs, by week: each skill use and each git hook check run, and how often a git hook check blocked a commit or push. These are git hooks (the agent-checks runner on pre-commit and pre-push), not Claude Code hooks; Claude Code hook runs are not counted yet. Only weekly totals are kept, never session text. Skills and repos not on the public list are counted as "other". Guidance has no direct use signal; its effect shows only in test results.</p>
+      <p class="pd-note" id="impact-empty" hidden><b>No skill uses counted yet.</b> Skill counts come from your computer's daily usage job (about 12:37 PM ET); PR outcomes and CI git hook runs come from the daily CI impact report (scheduled 2:53 AM ET, often started hours late by GitHub).</p>
       <div class="pd-tiles" id="impact-tiles">
-        <div class="pd-tile"><span class="pd-tile-label">Skill uses</span><span class="pd-tile-num" data-source="usage_summary" data-field="skill_uses">—</span><span class="pd-tile-note">in <span data-source="usage_summary" data-field="skill_names">—</span> skills</span></div>
+        <div class="pd-tile"><span class="pd-tile-label">Skill uses</span><span class="pd-tile-num" data-source="usage_summary" data-field="skill_uses">—</span><span class="pd-tile-note">in <span data-source="usage_summary" data-field="skill_names">—</span> named skills, plus any counted as "other"</span></div>
         <div class="pd-tile"><span class="pd-tile-label">Git hook runs</span><span class="pd-tile-num" data-source="usage_summary" data-field="hook_runs">—</span><span class="pd-tile-note"><span data-source="usage_summary" data-field="hook_runs_local">—</span> on your computers, the rest in CI</span></div>
-        <div class="pd-tile"><span class="pd-tile-label">Git hook runs that blocked or failed</span><span class="pd-tile-num" data-source="usage_summary" data-field="hook_blocked">—</span><span class="pd-tile-note">at least one check failed; <span data-source="usage_summary" data-field="hook_names">—</span> checks seen locally</span></div>
+        <div class="pd-tile"><span class="pd-tile-label">Git hook runs that stopped a commit or push</span><span class="pd-tile-num" data-source="usage_summary" data-field="hook_blocked">—</span><span class="pd-tile-note">on your computers, a run where any check refused; in CI, a red agent-checks run. <span data-source="usage_summary" data-field="hook_names">—</span> different checks have run locally</span></div>
         <div class="pd-tile"><span class="pd-tile-label">Weeks covered</span><span class="pd-tile-num" data-source="usage_summary" data-field="weeks">—</span><span class="pd-tile-note">latest week of <span data-source="usage_summary" data-field="latest_week">—</span></span></div>
       </div>
     </div>
 
     <div class="pd-card" id="card-impact-names">
       <h2>By skill and git hook check</h2>
-      <p class="pd-note">Click a row to see it by repo and by week below. A blank cell means that number isn't collected yet. Each git hook run executes many checks, so the per-check rows add up to more than the run totals above; "agent-checks" in CI counts whole CI runs.</p>
+      <p class="pd-note">Click a row to see it by repo and by week below. A blank cell means that number isn't collected yet. Each git hook run executes many checks, so the per-check rows add up to more than the run totals above; "agent-checks" in CI counts whole CI runs. "Blocked" is a refused commit or push on your computers, or a red run in CI. "Red in CI" counts CI runs that failed, meaning the commit got past any local git hook; it is collected for CI only.</p>
       <div class="pd-chips" id="impact-kinds" role="group" aria-label="Kind"></div>
       <div class="pd-scroll">
         <table class="pd-table" id="tbl-impact-names" data-source="usage_by_name" data-row-key="key">
-          <thead><tr><th data-field="kind">Kind</th><th data-field="name">Name</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="sessions">Sessions</th><th class="num" data-field="blocked">Blocked</th><th class="num" data-field="overridden">Bypassed</th><th class="num" data-field="repos">Repos</th><th data-field="last_week">Last week seen</th></tr></thead>
+          <thead><tr><th data-field="kind">Kind</th><th data-field="name">Name</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="sessions">Sessions</th><th class="num" data-field="blocked">Blocked</th><th class="num" data-field="overridden">Red in CI</th><th class="num" data-field="repos">Repos</th><th data-field="last_week">Last week seen</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -231,17 +231,17 @@
     <div class="pd-grid">
       <div class="pd-card" id="card-impact-repos">
         <h2>By repo: <span id="impact-sel-repo">all</span></h2>
-        <p class="pd-note">PR counts come from CI; blank until that job runs.</p>
+        <p class="pd-note">PR counts per repo are in "PR outcomes by repo" below.</p>
         <div class="pd-scroll">
           <table class="pd-table" id="tbl-impact-repos" data-source="usage_by_repo" data-row-key="key">
-            <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="blocked">Blocked</th><th class="num" data-field="prs_opened">PRs opened</th><th class="num" data-field="prs_merged">PRs merged</th><th class="num" data-field="ci_red_after">CI failed after</th></tr></thead>
+            <thead><tr><th data-field="repo">Repo</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="blocked">Blocked</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
       <div class="pd-card" id="card-impact-weeks">
         <h2>By week: <span id="impact-sel-week">all</span></h2>
-        <p class="pd-note">Weeks start Monday (UTC). "Where" is your computer or the cloud.</p>
+        <p class="pd-note">Weeks start Monday (UTC). "Where" is "local" (your computers) or "ci" (GitHub Actions).</p>
         <div class="pd-scroll">
           <table class="pd-table" id="tbl-impact-weeks" data-source="usage_by_week" data-row-key="key">
             <thead><tr><th data-field="week">Week of</th><th data-field="surface">Where</th><th class="num" data-field="invocations">Uses</th><th class="num" data-field="sessions">Sessions</th><th class="num" data-field="blocked">Blocked</th></tr></thead>
@@ -271,9 +271,10 @@
 
     <div class="pd-card" id="card-impact-sources">
       <h2>Where the counts come from</h2>
+      <p class="pd-note">Each producer reports what it read in its own unit. weekly-local.json comes from your computer's daily usage job (about 12:37 PM ET): sessions for skill uses, git hook runs for local checks. weekly-ci.json comes from the daily CI impact report (scheduled 2:53 AM ET, often started hours late): repos read for PR outcomes and CI git hook runs.</p>
       <div class="pd-scroll">
-        <table class="pd-table" id="tbl-impact-sources" data-source="usage_sources" data-row-key="file">
-          <thead><tr><th data-field="file">File</th><th data-field="surface">Where</th><th data-field="scope">Scope</th><th data-field="from">From</th><th data-field="to">To</th><th class="num" data-field="sessions_scanned">Sessions read</th></tr></thead>
+        <table class="pd-table" id="tbl-impact-sources" data-source="usage_sources" data-row-key="key">
+          <thead><tr><th data-field="file">File</th><th data-field="surface">Where</th><th data-field="scope">Scope</th><th data-field="from">From</th><th data-field="to">To</th><th class="num" data-field="scanned">Read</th><th data-field="generated_at">Made</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -335,7 +336,7 @@
 
     <div class="pd-card" id="card-coverage">
       <h2>Test coverage by skill</h2>
-      <p class="pd-note">Every test folder in skills-evals' evals/ on main, read live, matched with the scored runs above. "Not yet tested" means no scored run since Oct 20.</p>
+      <p class="pd-note">Every test folder in skills-evals' evals/ on main, read live, matched with the scored runs above. "Not yet tested" means no scored run in the results (they start Oct 6, 2026).</p>
       <div class="pd-scroll">
         <table class="pd-table" id="tbl-coverage" data-source="eval_coverage" data-row-key="skill">
           <thead><tr><th data-field="skill">Skill test</th><th data-field="status">Status</th><th class="num" data-field="runs">Runs</th><th data-field="last_run">Last run</th><th class="num" data-field="with_share">With</th><th class="num" data-field="without_share">Without</th><th class="num" data-field="gain">Gain</th></tr></thead>
@@ -490,7 +491,7 @@
 // dashboard/build.py writes one placeholder row (key field "none") instead of an empty
 // list, because an empty dataset reads as "failed to load". Calcs and tables never see them.
 (() => {
-  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'file', threads: 'id', loop_gaps: 'gap' };
+  const PH = { eval_runs: 'run_id', bare_runs: 'run_id', usage_rows: 'kind', usage_sources: 'key', threads: 'id', loop_gaps: 'gap' };
   const real = (id, rows) => (PH[id] && Array.isArray(rows) ? rows.filter((r) => r[PH[id]] !== 'none') : rows);
   try {
     const calc = dash.calc.bind(dash);
@@ -579,19 +580,35 @@ dash.loader('eval_dirs', {
 });
 
 // ---- Worked-out figures ----
+// Guidance runs share eval_runs (skill "guidance/<section>"); skill totals leave them out.
+const isSkillRun = (r) => !String(r.skill).startsWith('guidance/');
 dash.calc('eval_summary', {
   title: 'Skill vs. no skill by model',
-  description: 'Per model and overall: tests where the skill scored higher, tied or lower, the average share of checks passed on each side, and the difference (lift).',
+  description: 'Per model and overall, over every scored skill run (guidance runs are left out): runs where the skill scored higher, tied or lower, the average share of checks passed on each side, and the difference (lift).',
   inputs: ['eval_runs'],
   fn: (eval_runs) => {
     const g = {};
-    for (const r of eval_runs) for (const k of ['All', r.model]) {
+    for (const r of eval_runs.filter(isSkillRun)) for (const k of ['All', r.model]) {
       const x = g[k] || (g[k] = { model: k, runs: 0, helped: 0, tied: 0, hurt: 0, w: 0, wo: 0 });
       x.runs += 1;
       if (r.gain > 0) x.helped += 1; else if (r.gain < 0) x.hurt += 1; else x.tied += 1;
       x.w += r.with_share; x.wo += r.without_share;
     }
     return Object.values(g).map((x) => ({ model: x.model, runs: x.runs, helped: x.helped, tied: x.tied, hurt: x.hurt, with_avg: x.w / x.runs, without_avg: x.wo / x.runs, lift: (x.w - x.wo) / x.runs }));
+  },
+});
+dash.calc('eval_latest_summary', {
+  title: 'Latest result per skill test',
+  description: 'For the newest scored run of each skill test on each model: how many the skill won, tied and lost. One test re-run many times counts once.',
+  inputs: ['eval_runs'],
+  fn: (eval_runs) => {
+    const latest = new Map();
+    for (const r of eval_runs.filter(isSkillRun)) {
+      const k = r.fixture + '|' + r.model, o = latest.get(k);
+      if (!o || r.fired_at > o.fired_at) latest.set(k, r);
+    }
+    const v = [...latest.values()];
+    return [{ tests: v.length, helped: v.filter((r) => r.gain > 0).length, tied: v.filter((r) => r.gain === 0).length, hurt: v.filter((r) => r.gain < 0).length }];
   },
 });
 dash.calc('eval_latest', {
@@ -623,7 +640,7 @@ dash.calc('eval_trend', {
 });
 dash.calc('eval_coverage', {
   title: 'Test coverage by skill',
-  description: 'Each test folder on main (not the guidance, real-work or usage folders), with its scored runs since Oct 20 and its newest result on any model.',
+  description: 'Each test folder on main (not the guidance, real-work or usage folders), with its scored runs and its newest result on any model.',
   inputs: ['eval_dirs', 'eval_runs'],
   fn: (eval_dirs, eval_runs) => {
     const skip = ['guidance', 'real-work', 'usage'];
@@ -652,7 +669,7 @@ dash.calc('eval_scope', {
   description: 'Distinct skills in the scored runs, and the models the tests run on now (from the model list).',
   inputs: ['eval_runs', 'roster'],
   fn: (eval_runs, roster) => [{
-    skills: new Set(eval_runs.map((r) => r.skill)).size,
+    skills: new Set(eval_runs.filter(isSkillRun).map((r) => r.skill)).size,
     models: roster.filter((r) => r.role === 'Tested' && r.status === 'In use').map((r) => r.model).join(' and '),
   }],
 });
@@ -676,24 +693,23 @@ const usageSum = (rows, f) => (rows.some((r) => r[f] != null) ? d3.sum(rows, (r)
 const usageGroup = (usage_rows, keyFn, base) => [...d3.group(usage_rows, keyFn)].map(([key, rs]) => ({
   key, ...base(rs[0]), invocations: d3.sum(rs, (r) => r.invocations || 0),
   sessions: usageSum(rs, 'sessions'), blocked: usageSum(rs, 'blocked'), overridden: usageSum(rs, 'overridden'),
-  prs_opened: usageSum(rs, 'prs_opened'), prs_merged: usageSum(rs, 'prs_merged'), ci_red_after: usageSum(rs, 'ci_red_after'),
   repos: new Set(rs.map((r) => r.repo)).size, last_week: d3.max(rs, (r) => r.week),
 }));
 dash.calc('usage_by_name', {
   title: 'Use by skill and git hook check',
-  description: 'Each skill or git hook check summed over all weeks, repos and places: uses, sessions, blocks, bypasses, repos and the last week seen.',
+  description: 'Each skill or git hook check summed over all weeks, repos and places: uses, sessions, blocks, red CI runs, repos and the last week seen.',
   inputs: ['usage_rows'],
   fn: (usage_rows) => usageGroup(usage_rows.filter((r) => r.kind !== 'repo' && r.kind !== 'hook_all'), (r) => r.kind + '|' + r.name, (r) => ({ kind: r.kind, name: r.name })),
 });
 dash.calc('usage_by_repo', {
   title: 'Use by repo',
-  description: 'Each skill or git hook check per repo, with PR outcomes where CI reports them.',
+  description: 'Each skill or git hook check per repo: uses, sessions and blocks.',
   inputs: ['usage_rows'],
   fn: (usage_rows) => usageGroup(usage_rows.filter((r) => r.kind !== 'repo' && r.kind !== 'hook_all'), (r) => r.kind + '|' + r.name + '|' + r.repo, (r) => ({ kind: r.kind, name: r.name, sel: r.kind + '|' + r.name, repo: r.repo })),
 });
 dash.calc('usage_by_week', {
   title: 'Use by week',
-  description: 'Each skill or git hook check per week and place (your computer or the cloud).',
+  description: 'Each skill or git hook check per week and place (your computers or CI).',
   inputs: ['usage_rows'],
   fn: (usage_rows) => usageGroup(usage_rows.filter((r) => r.kind !== 'repo' && r.kind !== 'hook_all'), (r) => r.kind + '|' + r.name + '|' + r.week + '|' + r.surface, (r) => ({ kind: r.kind, name: r.name, sel: r.kind + '|' + r.name, week: r.week, surface: r.surface })),
 });
@@ -706,7 +722,7 @@ dash.calc('usage_outcomes', {
 });
 dash.calc('usage_summary', {
   title: 'Real-work use totals',
-  description: 'Skill uses, git hook check runs, blocks and bypasses over all weeks collected, and the weeks covered.',
+  description: 'Skill uses, git hook check runs, and blocks over all weeks collected, and the weeks covered.',
   inputs: ['usage_rows'],
   fn: (usage_rows) => {
     // Hook run totals: the local per-week "all" rows plus CI's agent-checks job runs. One run executes
@@ -715,7 +731,7 @@ dash.calc('usage_summary', {
     const runs = usage_rows.filter((r) => r.kind === 'hook_all' || (r.kind === 'hook' && r.surface === 'ci'));
     const checks = usage_rows.filter((r) => r.kind === 'hook' && r.surface !== 'ci');
     const weeks = [...new Set(usage_rows.map((r) => r.week))].sort();
-    return [{ rows: usage_rows.length, skill_uses: d3.sum(sk, (r) => r.invocations || 0), skill_names: new Set(sk.map((r) => r.name)).size,
+    return [{ rows: usage_rows.length, skill_uses: d3.sum(sk, (r) => r.invocations || 0), skill_names: new Set(sk.filter((r) => r.name !== 'other').map((r) => r.name)).size,
       hook_runs: d3.sum(runs, (r) => r.invocations || 0), hook_names: new Set(checks.map((r) => r.name)).size,
       hook_blocked: d3.sum(runs, (r) => r.blocked || 0),
       hook_runs_local: d3.sum(runs.filter((r) => r.kind === 'hook_all'), (r) => r.invocations || 0),
@@ -1069,9 +1085,9 @@ dash.calc('new_runs', {
     const empty = status('usage_rows') === 'ok' && !rowsOf('usage_rows').some((r) => r.kind === 'skill');
     document.getElementById('impact-empty').hidden = !empty;
     const p = dash.params();
-    const kind = ['skill', 'hook', 'guidance'].includes(p.ikind) ? p.ikind : '';
+    const kind = ['skill', 'hook'].includes(p.ikind) ? p.ikind : '';
     const sel = p.isel || '';
-    kindBox.replaceChildren(...[['', 'All'], ['skill', 'Skills'], ['hook', 'Git hook checks'], ['guidance', 'Guidance']].map(([k, label]) => {
+    kindBox.replaceChildren(...[['', 'All'], ['skill', 'Skills'], ['hook', 'Git hook checks']].map(([k, label]) => {
       const b = document.createElement('button'); b.className = 'pd-chip'; b.dataset.kind = k; b.textContent = label;
       b.setAttribute('aria-pressed', String(k === kind)); return b;
     }));
@@ -1088,7 +1104,7 @@ dash.calc('new_runs', {
       const rows = rowsOf(src).filter(inScope);
       if (sel) return rows;
       return [...d3.group(rows, keyOf)].map(([key, rs]) => ({ key, ...rs[0], invocations: d3.sum(rs, (r) => r.invocations || 0),
-        sessions: usageSum(rs, 'sessions'), blocked: usageSum(rs, 'blocked'), prs_opened: usageSum(rs, 'prs_opened'), prs_merged: usageSum(rs, 'prs_merged'), ci_red_after: usageSum(rs, 'ci_red_after') }));
+        sessions: usageSum(rs, 'sessions'), blocked: usageSum(rs, 'blocked') }));
     };
     const fillRows = (id, rows, cols) => {
       const tbody = document.querySelector('#' + id + ' tbody');
@@ -1099,7 +1115,7 @@ dash.calc('new_runs', {
       }));
     };
     if (status('usage_by_repo') === 'ok') fillRows('tbl-impact-repos', roll('usage_by_repo', (r) => r.repo).sort((a, b) => d3.descending(a.invocations, b.invocations)),
-      [{ field: 'repo' }, { field: 'invocations', num: true }, { field: 'blocked', num: true }, { field: 'prs_opened', num: true }, { field: 'prs_merged', num: true }, { field: 'ci_red_after', num: true }]);
+      [{ field: 'repo' }, { field: 'invocations', num: true }, { field: 'blocked', num: true }]);
     if (status('usage_by_week') === 'ok') fillRows('tbl-impact-weeks', roll('usage_by_week', (r) => r.week + '|' + r.surface).sort((a, b) => d3.descending(a.week, b.week)),
       [{ field: 'week' }, { field: 'surface' }, { field: 'invocations', num: true }, { field: 'sessions', num: true }, { field: 'blocked', num: true }]);
     // PR outcomes: totals per repo, then by week for the clicked repo (or all repos)
@@ -1113,7 +1129,7 @@ dash.calc('new_runs', {
       document.querySelectorAll('#tbl-impact-outcomes tbody tr').forEach((tr, i, all) => { tr.dataset.key = tr.firstChild.textContent; tr.setAttribute('aria-selected', String(tr.dataset.key === orepo)); });
       fillRows('tbl-impact-oweeks', sumBy(oc.filter((r) => !orepo || r.repo === orepo), (r) => r.week, (k) => ({ week: k })).sort((a, b) => d3.descending(a.week, b.week)), [{ field: 'week' }, ...cols]);
     }
-    renderTable('tbl-impact-sources', 'usage_sources', [{ field: 'file' }, { field: 'surface' }, { field: 'scope' }, { field: 'from', fmt: dt }, { field: 'to', fmt: dt }, { field: 'sessions_scanned', num: true }], (r) => r.file + r.scope);
+    renderTable('tbl-impact-sources', 'usage_sources', [{ field: 'file' }, { field: 'surface' }, { field: 'scope' }, { field: 'from', fmt: dt }, { field: 'to', fmt: dt }, { field: 'scanned', num: true, fmt: (v, r) => (v == null ? '' : d3.format(',')(v) + ' ' + (r.scanned_unit || '')) }, { field: 'generated_at', fmt: dt }], (r) => r.key);
   };
 
   function draw() {

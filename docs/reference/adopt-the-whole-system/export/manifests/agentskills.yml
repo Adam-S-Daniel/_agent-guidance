@@ -4,7 +4,7 @@
 repo: agentskills
 kit_name: agent-skills
 source: adam-agentskills
-source_sha: d2d81b00c51388baf51c3922a540ae27839adcde
+source_sha: 0e81a5e9989c5f92a2af774f9d714e137a7262f9
 after: [_agent-guidance]
 
 exclude:
@@ -62,7 +62,7 @@ edits:
       installer writes it, so the installed config cannot show a duplicate.
   # ---- C4: the scheduled-run-health caller points at _agent-guidance's copy
   - path: .github/workflows/scheduled-run-health.yml
-    old: "    uses: Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.164\n"
+    old: "    uses: Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.167\n"
     new: "    uses: Adam-S-Daniel/_agent-guidance/.github/workflows/scheduled-run-health-reusable.yml@0000000000000000000000000000000000000000\n"
     why: >-
       C4. The reusable now lives in _agent-guidance. A cross-repo reusable
@@ -265,6 +265,8 @@ regenerate:
     why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
     why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/dated-phrasing-allowlist.txt, to: .githooks/dated-phrasing-allowlist.txt}
+    why: The sync delivers the dated-phrasing allowlist from _agent-guidance's templates; it carries that repo's C11 trim.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks-guard.sh, to: .claude/hooks/agent-checks-guard.sh}
     why: The sync delivers the guard from _agent-guidance's templates (byte-identical in the sources).
   - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/fleet-memory.sh, to: .claude/hooks/fleet-memory.sh}

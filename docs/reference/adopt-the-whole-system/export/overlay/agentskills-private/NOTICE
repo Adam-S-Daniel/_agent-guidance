@@ -1,6 +1,6 @@
 This tree is an export of the original author's private skills registry
 (`acsi-agentskills-private` here) at commit
-c4bf812e4703e7b9fdd3f5408ed9198cba9df9be. That repository is private and has
+c5b1bc9dfaaec3651ad9cb35f8d04192a126319b. That repository is private and has
 no license file of its own; only the files its export manifest includes were
 copied (its export manifest, under export/manifests/): the marketplace and
 plugin manifests, setup.sh, README.md, the lessons/ format with its invented

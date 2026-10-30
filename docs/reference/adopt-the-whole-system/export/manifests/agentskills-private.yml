@@ -6,7 +6,7 @@
 repo: agentskills-private
 kit_name: agent-skills-private
 source: adam-agentskills-private
-source_sha: c4bf812e4703e7b9fdd3f5408ed9198cba9df9be
+source_sha: c5b1bc9dfaaec3651ad9cb35f8d04192a126319b
 # The sync-delivered files come from the exported _agent-guidance, and the
 # lock pins the exported public registry.
 after: [_agent-guidance, agentskills]
@@ -62,6 +62,8 @@ regenerate:
     why: The sync delivers _agent-guidance's base.md here byte for byte; it carries that repo's X9 blanking.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks, to: .githooks/agent-checks}
     why: The sync delivers the agent-checks runner from _agent-guidance's templates; X9 ships it with no checks.
+  - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/dated-phrasing-allowlist.txt, to: .githooks/dated-phrasing-allowlist.txt}
+    why: The sync delivers the dated-phrasing allowlist from _agent-guidance's templates; it carries that repo's C11 trim.
   - copy_from_kit: {repo: _agent-guidance, from: templates/agent-checks/agent-checks-guard.sh, to: .claude/hooks/agent-checks-guard.sh}
     why: The sync delivers the guard (byte-identical in the sources).
   - copy_from_kit: {repo: _agent-guidance, from: .claude/hooks/fleet-memory.sh, to: .claude/hooks/fleet-memory.sh}

@@ -71,6 +71,12 @@ AC_RUNNER_REL_PATH=".githooks/agent-checks"
 AC_WF_REL_PATH=".github/workflows/agent-checks.yml"
 AC_GUARD_REL_PATH=".claude/hooks/agent-checks-guard.sh"
 AC_GUARD_MATCHER="Bash|Edit|Write|MultiEdit|NotebookEdit"
+# The runner's dated-phrasing warning pass: its script, the fleet allowlist,
+# and the package files that pin its one dependency. MANAGED like the runner,
+# delivered at the same relative path under .githooks/ as under the template
+# directory, so the runner finds them beside itself in both places.
+AC_DATED_FILES=(dated-phrasing.js dated-phrasing-allowlist.txt
+                dated-phrasing/package.json dated-phrasing/package-lock.json)
 # The runner is run by bash from git hooks, so a CRLF checkout breaks it the
 # same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
 AC_EOL_LINE='.githooks/* text eol=lf'
@@ -423,11 +429,11 @@ fi
 # Same posture as the switch above: only a literal `true` turns it on.
 AGENT_CHECKS_ENABLED=false
 if [[ "$(read_repos_yml '.agent_checks.deliver // false')" == "true" ]]; then
-    if [[ -s "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks" \
-          && -s "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks.yml" \
-          && -s "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks-guard.sh" ]]; then
-        AGENT_CHECKS_ENABLED=true
-    else
+    AGENT_CHECKS_ENABLED=true
+    for ac_template in agent-checks agent-checks.yml agent-checks-guard.sh "${AC_DATED_FILES[@]}"; do
+        [[ -s "$AGENT_CHECKS_TEMPLATE_DIR/$ac_template" ]] || AGENT_CHECKS_ENABLED=false
+    done
+    if ! $AGENT_CHECKS_ENABLED; then
         echo "::warning::repos.yml turns on agent_checks.deliver, but $AGENT_CHECKS_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
     fi
 fi
@@ -1147,13 +1153,16 @@ for repo_name in "${REPOS[@]}"; do
     # ── agent-checks: classify ─────────────────────────────────────────
     # Four parts, each skipped on its own rather than failing the repo:
     #   runner    missing | current | drifted | skipped (gitignored)
+    #   dated     the runner's dated-phrasing files (AC_DATED_FILES), as one:
+    #             missing | current | drifted | skipped (gitignored, or the
+    #             runner is)
     #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
     #             "present" is ANY workflow that runs .githooks/agent-checks:
     #             acsi-agentskills runs it as a job in ci.yml.
     #   guard     the PreToolUse hook; delivered only where fleet-memory can
     #             be (same .claude/ and settings.json refusals).
     #   eol       the `.githooks/* text eol=lf` line in .gitattributes.
-    ac_runner_state="n/a"; ac_wf_state="n/a"; ac_guard_state="n/a"
+    ac_runner_state="n/a"; ac_dated_state="n/a"; ac_wf_state="n/a"; ac_guard_state="n/a"
     ac_reg_state="n/a"; ac_eol_state="n/a"; ac_guard_deliver=false
     if $AGENT_CHECKS_ENABLED; then
         if git check-ignore -q "$AC_RUNNER_REL_PATH" 2>/dev/null; then
@@ -1164,6 +1173,27 @@ for repo_name in "${REPOS[@]}"; do
                 && ac_runner_state="current" || ac_runner_state="drifted"
         else
             ac_runner_state="missing"
+        fi
+
+        if [[ "$ac_runner_state" == "skipped" ]]; then
+            ac_dated_state="skipped"
+        else
+            ac_dated_state="current"
+            ac_dated_absent=0
+            for ac_dated_file in "${AC_DATED_FILES[@]}"; do
+                if git check-ignore -q ".githooks/$ac_dated_file" 2>/dev/null; then
+                    ac_dated_state="skipped"
+                    log "WARN: .githooks/$ac_dated_file is gitignored in $repo_name — the dated-phrasing warning pass is not delivered."
+                    break
+                elif [[ ! -f ".githooks/$ac_dated_file" ]]; then
+                    ac_dated_absent=$((ac_dated_absent + 1))
+                    ac_dated_state="drifted"
+                elif ! cmp -s ".githooks/$ac_dated_file" "$AGENT_CHECKS_TEMPLATE_DIR/$ac_dated_file"; then
+                    ac_dated_state="drifted"
+                fi
+            done
+            [[ "$ac_dated_state" == "drifted" && $ac_dated_absent -eq ${#AC_DATED_FILES[@]} ]] \
+                && ac_dated_state="missing"
         fi
 
         ac_wf_state="missing"
@@ -1199,10 +1229,11 @@ for repo_name in "${REPOS[@]}"; do
             ac_eol_state=$(HOOK_EOL_LINE="$AC_EOL_LINE" HOOK_EOL_COMMENT="$AC_EOL_COMMENT" \
                            "$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")
         fi
-        log "agent-checks: runner=$ac_runner_state workflow=$ac_wf_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state"
+        log "agent-checks: runner=$ac_runner_state dated=$ac_dated_state workflow=$ac_wf_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state"
     fi
     ac_up_to_date=true
     if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" \
+          || "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" \
           || "$ac_wf_state" == "missing" || "$ac_eol_state" == "missing" ]]; then
         ac_up_to_date=false
     fi
@@ -1313,6 +1344,8 @@ for repo_name in "${REPOS[@]}"; do
         if ! $ac_up_to_date; then
             [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]] \
                 && log "[DRY RUN] Would write $AC_RUNNER_REL_PATH (runner $ac_runner_state)"
+            [[ "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" ]] \
+                && log "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing $ac_dated_state)"
             [[ "$ac_wf_state" == "missing" ]] \
                 && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check)"
             [[ "$ac_eol_state" == "missing" ]] \
@@ -1503,7 +1536,7 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── agent-checks: write ────────────────────────────────────────────
-    ac_runner_written=false; ac_wf_written=false; ac_eol_written=false
+    ac_runner_written=false; ac_dated_written=false; ac_wf_written=false; ac_eol_written=false
     ac_guard_written=false; ac_registered_now=false
     if ! $ac_up_to_date; then
         if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]]; then
@@ -1511,6 +1544,13 @@ for repo_name in "${REPOS[@]}"; do
             cp "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks" "$AC_RUNNER_REL_PATH"
             chmod 0755 "$AC_RUNNER_REL_PATH"
             ac_runner_written=true
+        fi
+        if [[ "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" ]]; then
+            for ac_dated_file in "${AC_DATED_FILES[@]}"; do
+                mkdir -p "$(dirname ".githooks/$ac_dated_file")"
+                cp "$AGENT_CHECKS_TEMPLATE_DIR/$ac_dated_file" ".githooks/$ac_dated_file"
+            done
+            ac_dated_written=true
         fi
         if [[ "$ac_wf_state" == "missing" ]]; then
             mkdir -p "$(dirname "$AC_WF_REL_PATH")"
@@ -1548,7 +1588,7 @@ for repo_name in "${REPOS[@]}"; do
                 fi
             fi
         fi
-        log "agent-checks: runner=$ac_runner_written workflow=$ac_wf_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
+        log "agent-checks: runner=$ac_runner_written dated=$ac_dated_written workflow=$ac_wf_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
     fi
     # ── skill shell execution: write ───────────────────────────────────
     skillshell_written=false
@@ -1563,12 +1603,15 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     ac_any_written=false
-    if $ac_runner_written || $ac_wf_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
+    if $ac_runner_written || $ac_dated_written || $ac_wf_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
         ac_any_written=true
     fi
 
     add_paths=(AGENTS.md)
     $ac_runner_written && add_paths+=("$AC_RUNNER_REL_PATH")
+    if $ac_dated_written; then
+        for ac_dated_file in "${AC_DATED_FILES[@]}"; do add_paths+=(".githooks/$ac_dated_file"); done
+    fi
     $ac_wf_written && add_paths+=("$AC_WF_REL_PATH")
     $ac_guard_written && add_paths+=("$AC_GUARD_REL_PATH")
     # git add takes a path twice without complaint, so the files the other
@@ -1650,11 +1693,12 @@ it afterwards."
     if $ac_any_written; then
         bootstrap_note="${bootstrap_note}
 
-Delivers the agent-checks git hook runner (.githooks/agent-checks), the CI
-check that runs it over every change, and a Claude Code PreToolUse guard
-against --no-verify. Owner machines run the runner from config-based git
-hooks; CI is the enforcement. Managed by _agent-guidance's
-templates/agent-checks/; see its docs/decisions/0021."
+Delivers the agent-checks git hook runner (.githooks/agent-checks) with its
+warn-only dated-phrasing pass (.githooks/dated-phrasing*), the CI check that
+runs it over every change, and a Claude Code PreToolUse guard against
+--no-verify. Owner machines run the runner from config-based git hooks; CI is
+the enforcement. Managed by _agent-guidance's templates/agent-checks/; see its
+docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \

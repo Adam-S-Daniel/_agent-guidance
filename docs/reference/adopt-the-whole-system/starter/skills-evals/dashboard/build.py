@@ -258,6 +258,17 @@ def roster(cfg):
 # Outcome keys from _agent-guidance scripts/impact-report.js (kind "repo" rows from CI).
 OUTCOME_KEYS = ["prs_opened", "prs_merged", "prs_closed_unmerged", "prs_reverted", "agent_prs_merged", "ci_red_after"]
 
+# Each producer names what it read in its own field: the transcript census counts sessions,
+# the local hook log counts git hook runs, the CI report counts repos.
+SCANNED_KEYS = [("sessions_scanned", "sessions"), ("runs_scanned", "git hook runs"), ("repos_scanned", "repos")]
+
+
+def scanned(s):
+    for key, unit in SCANNED_KEYS:
+        if s.get(key) is not None:
+            return s[key], unit
+    return None, None
+
 
 def usage(er):
     """Concatenate every usage/weekly-*.json (schema 1); counts stay exact."""
@@ -268,9 +279,10 @@ def usage(er):
         if d.get("schema") != 1:
             sys.exit(f"{name}: schema {d.get('schema')!r}, expected 1; update build.py and the Impact tab")
         for s in d.get("sources", []):
-            sources.append({"file": name, "surface": s.get("surface"), "scope": s.get("scope"), "from": s.get("from"),
-                            "to": s.get("to"), "sessions_scanned": s.get("sessions_scanned"),
-                            "generated_at": d.get("generated_at")})
+            count, unit = scanned(s)
+            sources.append({"key": f"{name}|{s.get('scope')}", "file": name, "surface": s.get("surface"),
+                            "scope": s.get("scope"), "from": s.get("from"), "to": s.get("to"),
+                            "scanned": count, "scanned_unit": unit, "generated_at": d.get("generated_at")})
         for r in d.get("rows", []):
             o = r.get("outcome") or {}
             # A git hook row named "all" is that week's total across checks; its own kind keeps
@@ -281,8 +293,8 @@ def usage(er):
                          "sessions": r.get("sessions"), "blocked": r.get("blocked"),
                          "overridden": r.get("overridden"), **{k: o.get(k) for k in OUTCOME_KEYS}})
     if not sources:
-        sources = [{"file": PLACEHOLDER_ID, "surface": None, "scope": None, "from": None, "to": None,
-                    "sessions_scanned": None, "generated_at": None}]
+        sources = [{"key": PLACEHOLDER_ID, "file": PLACEHOLDER_ID, "surface": None, "scope": None, "from": None,
+                    "to": None, "scanned": None, "scanned_unit": None, "generated_at": None}]
     if not rows:
         rows = [{"week": None, "kind": PLACEHOLDER_ID, "name": "No usage counts yet", "repo": None, "surface": None,
                  "invocations": 0, "sessions": None, "blocked": None, "overridden": None,

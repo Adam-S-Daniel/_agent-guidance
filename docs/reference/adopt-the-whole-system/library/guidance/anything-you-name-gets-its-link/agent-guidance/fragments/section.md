@@ -1,8 +1,8 @@
 ## Anything you name gets its link
 
 Any noun the reader might open gets its URL in the same sentence:
-**what you hand over** (jodidaniel.com#176), **what YOU are waiting on**
-(every time you name it), **what you cite as DONE** (2026-08-29).
+**what you hand over**, **what YOU are waiting on** (every time you name
+it), **what you cite as DONE**.
 
 - **Link the surface that decides, not its parent.** A required environment
   review lives on its job page, `.../actions/runs/<run_id>/job/<job_id>`, not

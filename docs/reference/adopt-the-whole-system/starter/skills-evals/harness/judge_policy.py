@@ -76,15 +76,23 @@ def _order_key(model_id: str) -> tuple:
 def _numbers_decide(one: tuple, other: tuple) -> bool:
     """Whether two `roster._version_key`s differ in nothing but numbers: at
     every position both hold, a number each or the same word. One key running
-    longer than the other is a further version component (`-5-5` over `-5`)."""
-    return all(a[0] == b[0] == 1 or a == b for a, b in zip(one, other))
+    longer than the other is a further version component (`-5-5` over `-5`)
+    only when its extra tail is all numbers; a trailing word (`-5-fast` beside
+    `-5`) is a difference no number settles."""
+    if not all(a[0] == b[0] == 1 or a == b for a, b in zip(one, other)):
+        return False
+    longer = one if len(one) > len(other) else other
+    return all(part[0] == 1 for part in longer[min(len(one), len(other)):])
 
 
 def newest_of(model_ids: list[str]) -> tuple[str | None, str | None]:
     """(the newest of these ids, None), or (None, an id the highest of them
-    cannot be ordered against). Independent of the order they are listed in."""
+    cannot be ordered against). Independent of the order they are listed in.
+    Two different ids with an equal order key (`-05` and `-5`) are unordered."""
     top = max(model_ids, key=_order_key)
     for model_id in sorted(model_ids):
+        if model_id != top and _order_key(model_id) == _order_key(top):
+            return None, model_id
         if not _numbers_decide(_order_key(top)[0], _order_key(model_id)[0]):
             return None, model_id
     return top, None

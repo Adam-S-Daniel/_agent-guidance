@@ -12,6 +12,20 @@ untrusted (observed). See the
 [ADR 0012 addendum](decisions/0012-codex-gets-the-guidance-as-user-instructions.md#addendum--trust-and-daemon-evidence-boundaries-2026-10-04)
 for what was observed and what remains open.
 
+## Local Codex
+
+The `fleet-memory` hook writes the guidance block to `~/.codex/AGENTS.md`
+whenever `~/.codex` exists. That file is Codex's global user instructions,
+outside its 32 KiB `project_doc_max_bytes` project-doc budget. Register the
+hook once per machine with `scripts/register-codex-hook.sh` from an
+`_agent-guidance` checkout, then trust it in `/hooks`.
+
+`codex debug prompt-input` renders instructions loaded from disk by its own
+diagnostic process; it does not run SessionStart hooks or inspect an existing
+session or daemon. Verify delivery in the launched session's initial
+instructions and verdict; see the
+[prompt-debugging evidence](evidence/codex-trust-and-daemon-0160.md#prompt-debugging-source-read-2026-10-04-cli-01600-rust-v01600).
+
 ## Configure the environment
 
 1. Select **Manual** environment setup. Merely adding setup and maintenance

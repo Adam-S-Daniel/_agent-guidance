@@ -1,0 +1,67 @@
+# dated-phrasing allowlist (fleet-wide, managed by _agent-guidance).
+#
+# One entry per line: <owner/repo> <path> :: <text>
+# A hit is not reported when the repo and path match and <text> occurs in the
+# raw source of the Markdown block (paragraph, list item, heading) that holds
+# it. `*` as the repo matches any repo. Runs of whitespace compare as one space,
+# so a reflowed paragraph keeps its entry. Blank lines and `#` comments are
+# ignored. A repo's own entries go in .agent-checks/dated-phrasing-allowlist.txt,
+# in the same format.
+#
+# An entry is for text that is fine as written: present-tense facts that happen
+# to use a listed phrase, version-anchored product behavior, dates that qualify
+# a measurement or observation, quoted examples. History of how this repo or
+# process changed is not fine; reword it instead. Reviewed 2026-10-29 against
+# every fleet repo's default branch (_agent-guidance#348).
+
+# Present-tense facts that use a listed phrase.
+example-adopter/acsi-agentskills AGENTS.md :: a skill that no longer exists
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md :: none** of them names it any more
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md :: one whose bytes no longer match
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md :: is now left alone forever
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md :: "repo-owned" no longer identifies
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md :: is now raised only where every local rung is
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/workflow-path-audit/SKILL.md :: is no longer reviewable as an audit
+example-adopter/_agent-guidance docs/reference/adopt-the-whole-system/starter/agent-skills/plugins/<you>-coding-anywhere/skills/workflow-path-audit/SKILL.md :: is no longer reviewable as an audit
+example-adopter/acsi-agentskills plugins/acsi-coding-local/skills/migrate-claude-memory/SKILL.md :: anymore. And because
+example-adopter/acsi-agentskills plugins/acsi-coding-local/skills/sync-cc-settings-between-wsl-and-windows/SKILL.md :: more-recently-modified-wins
+example-adopter/acsi-agentskills plugins/acsi-non-coding-local/skills/fastmail/SKILL.md :: Confirm the inbox is now visible
+example-adopter/example-site-platform skills/cms-stuck-pr-triage/SKILL.md :: reported green no longer counts
+example-adopter/example-site-platform skills/github-actions-sha-pinning/SKILL.md :: can no longer move it, and fails SILENTLY
+example-adopter/example-site-platform skills/platform-release-and-bump/SKILL.md :: the precondition is now MORE likely
+example-adopter/wsl-automation AGENTS.md :: Real, previously-booted distros
+example-adopter-two/example-site-b AGENTS.md :: previously partner and
+
+# Version-anchored product behavior.
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/github-actions-repo-settings/SKILL.md :: no longer accepted
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/skills-doctor/SKILL.md :: in either no longer loads
+example-adopter/acsi-agentskills plugins/acsi-coding-local/skills/migrate-claude-memory/SKILL.md :: 2.1.273 and later no longer loads
+example-adopter/acsi-agentskills AGENTS.md :: repos from 2026-11-02
+
+# Quoted examples and example data.
+example-adopter/acsi-agentskills plugins/acsi-anything-anywhere/skills/writing-adrs/SKILL.md :: No "as of today the build is broken"
+example-adopter/acsi-agentskills plugins/acsi-non-coding-local/skills/rename-pdfs/SKILL.md :: "Scan from 2024-03-15.pdf"
+example-adopter/acsi-agentskills plugins/acsi-non-coding-local/skills/rename-pdfs/SKILL.md :: "as of" date
+
+# Dates that qualify a measurement, an observation or a decision.
+example-adopter/acsi-agentskills plugins/acsi-coding-anywhere/skills/ci-job-performance/SKILL.md :: were measured
+example-adopter/acsi-agentskills plugins/acsi-coding-local/skills/sync-cc-settings-between-wsl-and-windows/SKILL.md :: checked against the [settings reference]
+example-adopter/skills-evals AGENTS.md :: on 2 cores (2026-10-10)
+example-adopter/example-site-platform AGENTS.md :: owner decision 2026-10-05
+example-adopter/example-site-platform AGENTS.md :: the 2026-09-28
+example-adopter/example-site-platform AGENTS.md :: lint-locked (2026-08-20)
+example-adopter/example-site-platform AGENTS.md :: since 2026-10-22
+example-adopter/wsl-automation AGENTS.md :: verified on the owner's machine
+example-adopter/wsl-automation AGENTS.md :: on the first real run
+example-adopter/wsl-automation AGENTS.md :: Verified 2026-09-25
+example-adopter/wsl-automation AGENTS.md :: Observed live 2026-09-27
+example-adopter/wsl-automation AGENTS.md :: Observed 2026-09-29
+example-adopter/wsl-automation AGENTS.md :: (observed 2026-10-05)
+example-adopter/wsl-automation AGENTS.md :: 2026-10-04 13:02 EDT a test ran
+example-adopter/_agent-guidance AGENTS.md :: (The 2026-08-19 incident:
+
+# Dates that qualify a decision or an observed event in skills-evals' workflow table.
+example-adopter/skills-evals AGENTS.md :: the owner's 2026-10-06 decision
+example-adopter/skills-evals AGENTS.md :: as on 2026-10-27
+example-adopter/skills-evals AGENTS.md :: (ADR 0010 decision 4 addendum, 2026-10-26)
+example-adopter/skills-evals AGENTS.md :: (ADR 0003's 2026-10-26 addendum)
