@@ -106,7 +106,7 @@ The "one full cycle" above is now six hours: `skills-lock-bump.yml` runs at
 `41 1,7,13,19 * * *`. The day-long window cost more than it bought. A registry
 skill edit re-pins the registry's own `skills.lock` at once, so every session
 that attached the registry beside a consumer saw the edited skill pinned at
-two digests and installed neither (adam-agentskills ADR 0007) until the bump
+two digests and installed neither (the skills registry's ADR 0007) until the bump
 landed two or three daily runs later. skills-doctor was missing from those
 sessions from 2026-10-29 to 2026-10-31, and the self-improvement loop now
 ships skill edits often enough to make that the usual state.
