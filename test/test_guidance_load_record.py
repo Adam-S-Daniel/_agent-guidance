@@ -352,25 +352,70 @@ class UploadTests(HookTestCase):
         self.assertEqual(shape, [("GET", PROBE)] * 3)
         self.assertEqual([r["uploaded"] for r in self.records()], [False, False, False])
 
-    def test_session_credential_writes_when_the_repo_is_attached(self):
+    def bare_remote(self, existing=None, reject_first_push=False):
+        """A local bare repo standing in for the private repo's
+        persistent/usage-events branch."""
+        bare = self.tmp / "remote.git"
+        seed = self.tmp / "seed"
+        env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_NOSYSTEM="1")
+        def git(*args, cwd=None):
+            subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+        git("init", "-q", "--bare", str(bare))
+        git("init", "-q", "-b", "persistent/usage-events", str(seed))
+        (seed / "README.md").write_text("events\n", encoding="utf-8")
+        if existing is not None:
+            (seed / "events" / "2026-10").mkdir(parents=True)
+            (seed / "events" / "2026-10" / "cloud-guidance.jsonl").write_text(existing, encoding="utf-8")
+        git("add", "-A", cwd=seed)
+        git("-c", "user.name=Example", "-c", "user.email=example@example.com",
+            "commit", "-q", "-m", "seed", cwd=seed)
+        git("push", "-q", str(bare), "persistent/usage-events", cwd=seed)
+        if reject_first_push:
+            hook = bare / "hooks" / "pre-receive"
+            flag = self.tmp / "rejected-once"
+            hook.write_text(f'#!/bin/sh\n[ -e "{flag}" ] && exit 0\ntouch "{flag}"\nexit 1\n',
+                            encoding="utf-8")
+            hook.chmod(0o755)
+        return bare
+
+    def remote_file(self, bare):
+        out = subprocess.run(["git", "--git-dir", str(bare), "show",
+                              "persistent/usage-events:events/2026-10/cloud-guidance.jsonl"],
+                             capture_output=True, text=True)
+        return out.stdout if out.returncode == 0 else None
+
+    def test_session_credential_appends_with_git_when_the_repo_is_attached(self):
         # A hosted session's proxy substitutes its own credential for any
-        # Authorization header, so this path sends none, and needs no App.
-        self.script([
-            {"status": 200, "body": {"permissions": {"push": True, "pull": True}}},
-            {"status": 404, "body": {"message": "Not Found"}},
-            {"status": 201, "body": {"content": {}}},
-        ])
-        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
+        # Authorization header and refuses contents-API writes, but allows a
+        # git push; this path sends no Authorization header and needs no App.
+        earlier = '{"v":1,"kind":"guidance-load","session":"0000000000000000"}'
+        bare = self.bare_remote(existing=earlier)  # no trailing newline on purpose
+        self.script([{"status": 200, "body": {"permissions": {"push": True, "pull": True}}}])
+        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true", GUIDANCE_RECORD_GIT=str(bare)))
         [record] = self.records()
         self.assertIs(record["uploaded"], True)
         calls = self.calls()
-        shape = [(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in calls]
-        self.assertEqual(shape, [("GET", PROBE), ("GET", CONTENTS + "?ref=persistent/usage-events"),
-                                 ("PUT", CONTENTS)])
-        for c in calls:
-            self.assertNotIn("Authorization", c["stdin"])
-        line = json.loads(base64.b64decode(calls[2]["body"]["content"]).decode().splitlines()[-1])
-        self.assertEqual({k: v for k, v in record.items() if k != "uploaded"}, line)
+        self.assertEqual([(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in calls],
+                         [("GET", PROBE)])
+        self.assertNotIn("Authorization", calls[0]["stdin"])
+        lines = self.remote_file(bare).splitlines()
+        self.assertEqual(lines[0], earlier)
+        self.assertEqual(json.loads(lines[1]), {k: v for k, v in record.items() if k != "uploaded"})
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+    def test_git_path_creates_the_month_file_and_retries_a_rejected_push(self):
+        bare = self.bare_remote(reject_first_push=True)
+        self.script([{"status": 200, "body": {"permissions": {"push": True}}}])
+        self.run_hook(env={"CLAUDE_CODE_REMOTE": "true", "GUIDANCE_RECORD_GIT": str(bare)})
+        self.assertIs(self.records()[0]["uploaded"], True)
+        self.assertEqual(len(self.remote_file(bare).splitlines()), 1)
+        self.assertTrue((self.tmp / "rejected-once").exists())
+
+    def test_git_path_failure_records_false(self):
+        self.script([{"status": 200, "body": {"permissions": {"push": True}}}])
+        self.run_hook(env={"CLAUDE_CODE_REMOTE": "true", "GUIDANCE_RECORD_GIT": str(self.tmp / "missing.git")})
+        self.assertIs(self.records()[0]["uploaded"], False)
 
     def test_read_only_session_credential_falls_back_to_the_app(self):
         self.script([
