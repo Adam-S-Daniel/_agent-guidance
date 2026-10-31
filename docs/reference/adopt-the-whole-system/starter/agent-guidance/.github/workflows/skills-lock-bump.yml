@@ -40,17 +40,7 @@ on:
     # records measured GitHub cron lag of 4-5h on daily crons, which swamps 41
     # minutes of nominal separation. Nothing breaks if two of these do overlap;
     # they are separate workflows on separate runners.
-    #
-    # EVERY SIX HOURS, not daily. A registry skill edit re-pins the registry's
-    # own skills.lock in the same pull request, but reaches a consumer only
-    # after one run proposes the bump and a later run sweeps it in (two cycles,
-    # three when the #227 deferral applies). Until then a session that attaches
-    # the registry beside a consumer sees two locks pin that skill at different
-    # digests, and the bootstrap hook installs neither (the skills
-    # registry's ADR 0007). At a daily cadence that window was two to three
-    # days after every edit; at six hours it is about half a day. Six hours is still far more than any consumer's CI needs to
-    # report before the sweep reads it (ADR 0015's 2026-10-31 addendum).
-    - cron: "41 1,7,13,19 * * *"
+    - cron: "41 7 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

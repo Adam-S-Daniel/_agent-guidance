@@ -20,7 +20,7 @@ run-name: >-
 on:
   schedule:
     # Off-peak offset minute, clear of this repo's other crons (0 6, 17 6,
-    # 29 7, 41 1/7/13/19, 47 8) and ahead of scheduled-run-health.
+    # 29 7, 41 7, 47 8) and ahead of scheduled-run-health.
     - cron: '53 6 * * *'
   workflow_dispatch:
 
