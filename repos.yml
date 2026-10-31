@@ -60,7 +60,7 @@ skills_bootstrap:
   # the claim silently becomes false again rather than failing.
   #
   # `ref` AND `sha256` ARE MACHINE-PROPOSED — do not hand-edit them.
-  # `scripts/bump-hook-pin.sh` runs nightly from skills-lock-bump.yml and opens
+  # `scripts/bump-hook-pin.sh` runs every 6 hours from skills-lock-bump.yml and opens
   # a pull request here whenever the hook's BYTES change upstream, recomputing
   # the digest from the bytes at the commit it proposes. Editing either by hand
   # is not forbidden, just redundant and easy to get half-right — a ref moved

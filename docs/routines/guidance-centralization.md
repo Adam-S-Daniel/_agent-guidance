@@ -43,8 +43,8 @@ duplicate one:
 |---|---|
 | Does each consumer's managed block, fleet-memory hook, and guidance payload match their sources? | `drift-report.yml`, nightly |
 | Is the managed block delivered? | `sync.yml`, on push to `main` |
-| Is each `skills.lock` re-pinned? | `skills-lock-bump.yml`, nightly |
-| Is the hook pin current? | `scripts/bump-hook-pin.sh`, nightly |
+| Is each `skills.lock` re-pinned? | `skills-lock-bump.yml`, every 6 hours |
+| Is the hook pin current? | `scripts/bump-hook-pin.sh`, every 6 hours |
 | Is every audited repo's cron covered? | `check-cron-coverage.js` |
 
 What is left is the one question a script cannot answer: **is this paragraph
