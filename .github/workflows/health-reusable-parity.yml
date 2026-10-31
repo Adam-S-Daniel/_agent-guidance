@@ -1,0 +1,64 @@
+name: Health reusable parity
+# Daily: does scheduled-run-health-reusable.yml (this repo's lockfile-safe
+# copy) still match cms-platform's scheduled-run-health.yml at its latest
+# release? scripts/check-health-reusable-parity.js has what is compared and
+# why. A red run here is reported into the `ci` tracking issue by the next
+# scheduled-run health audit, like every cron in this repo.
+#
+# On schedule and dispatch it then moves .github/health-audit-platform-ref to
+# that release if it is behind, in a self-merging PR (the script's BUMP MODE).
+# The bump runs only after the comparison passed, so a release that changed
+# the workflow is not adopted until the copy is brought back in step. The PR
+# is opened with the agents-md-sync App's token, as skills-lock-bump.yml's
+# are, because a GITHUB_TOKEN push would not start the required checks.
+run-name: >-
+  ${{ github.event_name == 'schedule'
+        && format('scheduled — {0}', github.event.schedule)
+     || format('manual — @{0}', github.actor) }}
+
+on:
+  schedule:
+    # Off-peak offset minute, ahead of scheduled-run-health (47 8).
+    - cron: '13 8 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/scheduled-run-health-reusable.yml'
+      - '.github/workflows/health-reusable-parity.yml'
+      - 'scripts/check-health-reusable-parity.js'
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "20"
+      - run: npm ci
+      - name: Compare with cms-platform's latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-health-reusable-parity.js
+      - name: Mint an installation token for the bump PR
+        if: github.event_name != 'pull_request'
+        id: token
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: _agent-guidance
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Move the platform pin if it is behind
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: node scripts/check-health-reusable-parity.js --bump --repo "$REPO"

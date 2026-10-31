@@ -748,8 +748,14 @@ with Contents: write for the publish.
 A `schedule:`-triggered workflow fails silently — no PR goes red, nothing
 notifies. This repo's own `drift-report.yml` was red for 26 consecutive nights
 before anyone noticed. `scripts/check-cron-coverage.js` is the gate that says a
-repo running crons actually calls cms-platform's `scheduled-run-health`
-reusable, and that the caller it has can fire and can file.
+repo running crons actually calls a `scheduled-run-health` reusable, and that
+the caller it has can fire and can file. A repo without an `actions.lock` calls
+cms-platform's. A repo with one calls this repo's
+`scheduled-run-health-reusable.yml`, because a reusable is covered by the
+lockfile of the repo that defines it and cms-platform has none (ADR 0024's
+2026-10-31 addendum). The daily `health-reusable-parity.yml` keeps that copy in
+step with cms-platform's and moves its release pin,
+`.github/health-audit-platform-ref`, in a self-merging PR.
 
 Two forms, answering two different questions:
 
