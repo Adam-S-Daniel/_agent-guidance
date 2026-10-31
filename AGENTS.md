@@ -156,6 +156,16 @@ as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
 from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
 per-group seconds in the suite's `Groups` table, not by count.
 
+**Guidance sections are measured elsewhere, and two CI gates keep the record.**
+[`scripts/check-guidance-coverage.js`](scripts/check-guidance-coverage.js) (the
+manifest gate) holds [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml)
+to one row per `##` heading, and [`scripts/check-guidance-touch.js`](scripts/check-guidance-touch.js)
+(the touch gate) requires an entry in [`docs/guidance-impact.md`](docs/guidance-impact.md)
+for every section whose body a pull request changes. Whether a section earns its
+bytes is decided by skills-evals' ablation fixtures, and a section that adds
+nothing is removed by an automatic pull request, not by a person
+([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md)).
+
 **Action pins.** This repo's own workflows name third-party actions by exact
 release tag, and [`.github/workflows/actions.lock`](.github/workflows/actions.lock)
 locks each tag to a commit ([ADR 0024](docs/decisions/0024-actions-pin-through-lockfiles.md)).
