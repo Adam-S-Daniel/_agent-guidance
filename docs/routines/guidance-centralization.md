@@ -34,6 +34,18 @@ the local one wins the reader's attention because it is nearer.
 If the run changes anything, it drives propagation to the consumers and
 verifies it landed. A merged change that never propagated is not done.
 
+## What it does not measure
+
+Whether a section of `base.md` changes agent behavior, and whether it is worth
+its bytes, is not this Routine's question and it must not re-derive it.
+Efficacy is measured in
+[skills-evals](https://github.com/Adam-S-Daniel/skills-evals) by ablation
+fixtures named in [`agents-md/eval-coverage.yml`](../../agents-md/eval-coverage.yml),
+and a section that adds nothing is retired there automatically
+([ADR 0030](../decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md);
+the flow is the README's [Guidance evals](../../README.md#guidance-evals)).
+This audit decides where a rule lives; the eval loop decides whether it stays.
+
 ## Why a Routine, and not a workflow
 
 Everything mechanical here is *already* a workflow, and this Routine must not

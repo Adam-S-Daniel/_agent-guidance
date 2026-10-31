@@ -45,6 +45,9 @@ a page.
 | [0027](0027-lessons-become-agent-checks-through-the-fleet-worker.md) | Lessons become agent-checks through the fleet worker, and their PRs auto-merge when green |
 | [0028](0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md) | The fleet worker also merges skill, fleet guidance and partial fixes |
 | [0029](0029-skills-never-run-shell-commands-on-load.md) | Skills never run shell commands on load: a runner check refuses them and the sync sets `disableSkillShellExecution` |
+| [0030](0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md) | A section's worth is measured by ablation and weighed against its bytes, and retirement is automatic (see also 0002) |
+| [0031](0031-guidance-eval-fixtures-are-unprompted.md) | Guidance eval fixtures are unprompted (see also 0002) |
+| [0032](0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md) | Guidance evals deliver through user memory and prove it per arm |
 
 ## Format
 

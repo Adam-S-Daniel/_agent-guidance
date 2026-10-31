@@ -348,6 +348,31 @@ It never approximates: a row the exact match cannot resolve is exit 2 naming
 that row and the remedy — merge or rebase onto the base branch, after which
 the manifest exists at both shas and no fallback runs at all.
 
+### Guidance evals
+
+Whether a section is worth its bytes is measured in
+[skills-evals](https://github.com/Adam-S-Daniel/skills-evals), not here. The
+flow: a pull request edits `agents-md/base.md`; the
+[manifest gate](#section-manifest) requires a row for every heading and the
+[touch gate](#touch-gate) requires a [`docs/guidance-impact.md`](docs/guidance-impact.md)
+entry for every changed section. Fixtures under skills-evals'
+[`evals/guidance/<section id>/`](https://github.com/Adam-S-Daniel/skills-evals/tree/main/evals/guidance)
+are named by the manifest's `covered` rows and are unprompted
+([ADR 0031](docs/decisions/0031-guidance-eval-fixtures-are-unprompted.md)). The
+weekly routine fires each against the model roster, delivering the guidance
+through the real `fleet-memory.sh` and proving each arm got it
+([ADR 0032](docs/decisions/0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md));
+results go to skills-evals' [`persistent/eval-results`](https://github.com/Adam-S-Daniel/skills-evals/tree/persistent/eval-results)
+branch. From there the regression detector and the gates read them: a section
+whose `full` against `full-minus-section` pair shows no benefit is retired by
+an auto-merging pull request in this repo, with no human approval, and one
+that helps only alone gets a shorten-or-merge issue
+([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md)).
+The results explorer is tracked in
+[adamdaniel.ai#3538](https://github.com/Adam-S-Daniel/adamdaniel.ai/issues/3538).
+The harness is described in skills-evals'
+[DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
+
 ### Payload mirror
 
 This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
