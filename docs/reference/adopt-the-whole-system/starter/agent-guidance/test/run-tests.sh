@@ -14279,7 +14279,7 @@ test_bump_workflow() {
     fi
 
     local field
-    for field in "on.schedule.0.cron:41 7 * * *" \
+    for field in "on.schedule.0.cron:41 1,7,13,19 * * *" \
                  "on.workflow_dispatch.inputs.dry_run.type:boolean" \
                  "permissions.contents:read" \
                  "concurrency.group:skills-lock-bump" \

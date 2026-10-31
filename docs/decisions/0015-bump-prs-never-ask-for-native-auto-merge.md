@@ -99,3 +99,20 @@ nothing a direct push would already have skipped past. The reasoning is
 specific to a bot PR standing in for an already-ungated write, and does not
 extend to `bump-consumer-locks.sh`, whose PRs are the only place this fleet
 lets a consumer's own CI object to what a re-pin changed.
+
+## Addendum, 2026-10-31: the cycle is six hours, not a day
+
+The "one full cycle" above is now six hours: `skills-lock-bump.yml` runs at
+`41 1,7,13,19 * * *`. The day-long window cost more than it bought. A registry
+skill edit re-pins the registry's own `skills.lock` at once, so every session
+that attached the registry beside a consumer saw the edited skill pinned at
+two digests and installed neither (adam-agentskills ADR 0007) until the bump
+landed two or three daily runs later. skills-doctor was missing from those
+sessions from 2026-10-29 to 2026-10-31, and the self-improvement loop now
+ships skill edits often enough to make that the usual state.
+
+What the day protected is unchanged in kind: the sweep still merges only a PR
+a previous run opened, still requires every check in the rollup to have
+concluded green, and still passes `--match-head-commit`. Six hours is far
+longer than any consumer's checks take to start and report; a PR whose checks
+are still running is skipped and swept on the next run.
