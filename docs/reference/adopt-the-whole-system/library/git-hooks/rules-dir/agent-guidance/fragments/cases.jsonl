@@ -1,2 +1,0 @@
-{"id": "rules-dir-refused", "event": "pre-commit", "files": {".claude/rules/style.md": "Use tabs.\n"}, "expect": "refuse", "message": "path-scoped rules (.claude/rules/) are not used"}
-{"id": "claude-dir-other-file-passes", "event": "pre-commit", "files": {".claude/settings.json": "{}\n"}, "expect": "pass"}

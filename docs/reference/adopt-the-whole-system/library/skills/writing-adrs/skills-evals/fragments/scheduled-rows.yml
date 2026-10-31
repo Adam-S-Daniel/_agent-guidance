@@ -1,2 +1,0 @@
-  - path: evals/writing-adrs/bootstrap
-    readiness: "Isolation pair on pins since removed (agent claude-sonnet-5, judge claude-opus-4-8). Local N=3 judged baseline 2026-10-05 (Claude Code 2.1.289, skills-evals c1bf71c), 0 errors: objective with 8/9 vs without 2.33/9; judge 9.03 vs 1.17, ranges 8.9-9.3 vs 0.4-1.9."

@@ -1,6 +1,0 @@
-{
-  "name": "acsi-non-coding-local",
-  "version": "1.0.3",
-  "description": "Non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork.",
-  "author": { "name": "<your name>" }
-}
