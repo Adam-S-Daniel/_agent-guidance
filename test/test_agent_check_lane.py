@@ -8,6 +8,7 @@ Run: python3 -m unittest discover -s test -p 'test_agent_check_lane.py'
 (test/run-tests.sh's agent_checks group runs it that way).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -369,7 +370,7 @@ class ScopeTests(LaneTestCase):
         self.assertIn("is not byte-identical", out.stdout)
 
 
-LOG_KEYS = ["v", "ts", "event", "repo", "checks", "failed"]
+LOG_KEYS = ["v", "ts", "event", "repo", "checks", "failed", "runner"]
 KEBAB = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 
@@ -412,6 +413,20 @@ class RunLogTests(LaneTestCase):
         self.assertEqual(entry["repo"], "example-owner/widgets")
         self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell"])
         self.assertEqual(entry["failed"], [])
+        self.assertEqual(entry["runner"], hashlib.sha256(RUNNER.read_bytes()).hexdigest()[:12])
+
+    def test_runner_digest_follows_the_runner_file(self):
+        self.stage({"README.md": "# Example\n"})
+        copy = self.tmp / "copy" / "agent-checks"
+        copy.parent.mkdir()
+        copy.write_bytes(RUNNER.read_bytes() + b"# a later version\n")
+        env = dict(self.env, AGENT_CHECKS_LOG=str(self.log))
+        out = subprocess.run(["bash", str(copy), "pre-commit"], cwd=str(self.repo), env=env,
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        [entry] = self.entries()
+        self.assertEqual(entry["runner"], hashlib.sha256(copy.read_bytes()).hexdigest()[:12])
+        self.assertNotEqual(entry["runner"], hashlib.sha256(RUNNER.read_bytes()).hexdigest()[:12])
 
     def test_refused_pre_commit_lists_the_check_and_keeps_the_message(self):
         self.stage({".env": "A=1\n"})

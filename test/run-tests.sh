@@ -55,6 +55,7 @@ export AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/no-markdown-it"
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
 FLEET_HOOK_REL_PATH_T=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH_T=".claude/hooks/fleet-guidance.md"
+GREC_REL_PATH_T=".claude/hooks/guidance-load-record.sh"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -7032,6 +7033,27 @@ test_sync_bootstrap() {
     else
         fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
     fi
+    # The guidance-load record rides with fleet-memory: same repos, a managed
+    # byte-identical copy, executable, and one Stop group with its timeout.
+    if cmp -s "$nolock/$GREC_REL_PATH_T" "$REPO_ROOT/$GREC_REL_PATH_T" && [[ -x "$nolock/$GREC_REL_PATH_T" ]]; then
+        pass "repo-no-lock: guidance-load-record delivered byte for byte and executable"
+    else
+        fail "repo-no-lock: guidance-load-record delivered byte for byte and executable"
+    fi
+    local grec_reg
+    grec_reg=$(python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1]))
+for g in doc["hooks"]["Stop"]:
+    for h in g["hooks"]:
+        if "guidance-load-record.sh" in h["command"]:
+            print(g["matcher"], h["timeout"], h["command"])
+' "$nolock/.claude/settings.json" 2>/dev/null) || grec_reg=""
+    if [[ "$grec_reg" == '* 20 bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh"' ]]; then
+        pass "repo-no-lock: guidance-load-record registered on Stop with its timeout"
+    else
+        fail "repo-no-lock: guidance-load-record registered on Stop with its timeout — got: $grec_reg"
+    fi
     if [[ -e "$nolock/skills.lock" ]]; then
         fail "repo-no-lock: the sync did NOT create a skills.lock"
     else
@@ -7084,6 +7106,11 @@ test_sync_bootstrap() {
             fail "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
         else
             pass "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        fi
+        if [[ -e "$ignored/$GREC_REL_PATH_T" ]]; then
+            fail "repo-ignored: guidance-load-record withheld with fleet-memory"
+        else
+            pass "repo-ignored: guidance-load-record withheld with fleet-memory"
         fi
         assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
         assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
@@ -7146,6 +7173,12 @@ test_sync_bootstrap_idempotent() {
         pass "re-run: still exactly 3 SessionStart groups (registration not duplicated)"
     else
         fail "re-run: still exactly 3 SessionStart groups — got $groups"
+    fi
+    groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks']['Stop']))")
+    if [[ "$groups" -eq 1 ]]; then
+        pass "re-run: exactly 1 Stop group (guidance-load-record not duplicated)"
+    else
+        fail "re-run: exactly 1 Stop group — got $groups"
     fi
     if cmp -s "$adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
         pass "re-run: skills.lock STILL byte-identical"
@@ -7402,6 +7435,8 @@ test_sync_bootstrap_dry_run() {
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "existing entries preserved" "dry-run: states that existing entries are preserved"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would NOT touch skills.lock" "dry-run: states that skills.lock is never touched"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "no skills.lock in the repo yet" "dry-run: explains the withheld repo"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would write $GREC_REL_PATH_T (guidance-load record hook missing)" "dry-run: names the guidance-load-record hook it would add"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would register guidance-load-record.sh on Stop in .claude/settings.json" "dry-run: names the Stop registration"
 
     # A dry run must change nothing at all.
     local v="$TEST_DIR/verify-dry"
@@ -7448,6 +7483,8 @@ test_sync_bootstrap_pr_body() {
     assert_contains "$body" "always-on context" "PR body: discloses the standing context cost"
     assert_contains "$body" "existing entries are preserved" "PR body: states that existing SessionStart entries survive"
     assert_contains "$body" "sha256 verified before writing" "PR body: states the delivered bytes were digest-verified"
+    assert_contains "$body" "This PR also delivers \`.claude/hooks/guidance-load-record.sh\`" "PR body: the guidance-load-record hook is called out"
+    assert_prose_contains "$body" "the line holds no paths, names or content" "PR body: states what the guidance-load record never holds"
 
     rm -f "$TEST_DIR/bare/bootorg_repo-adopted/hooks/pre-receive"
 }
@@ -19514,11 +19551,11 @@ test_fleet_guidance_mirror() {
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
-    # 12 is the suite's actual count; a deleted test fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 12 ]]; then
+    # 19 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 19 ]]; then
         pass "fleet guidance mirror: node:test suite is green ($pass_n passed)"
     else
-        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=12): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=19): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 
     # The checker only protects anything if CI runs it. Unconditional (no
@@ -20910,6 +20947,14 @@ test_fleet_memory_repo_header() {
     CLAUDE_CONFIG_DIR="$d/cfg" bash "$hook" >/dev/null 2>&1
     assert_contains "$dest" "Only what is **specific to this account" "repo header: real payload body delivered"
     assert_not_contains "$dest" "Edit only below" "repo header: real payload's repo-only notice not delivered"
+    # The transcript-count marker sits right after the header, so stripping
+    # the header must leave it as the block body's first line: Claude Code's
+    # transcript drops HTML comments, so this visible line is what the
+    # guidance-load Stop hook counts.
+    line="$(grep -A1 '^<!-- fleet-guidance-delivered: ' "$dest" | tail -1)"
+    [[ "$line" == "guidance-marker: fleet-full (transcript counts use this line; keep it)" ]] \
+        && pass "repo header: real payload's fleet-full marker survives as the first body line" \
+        || fail "repo header: real payload's body starts with '$line', not the fleet-full marker"
 
     # Codex Cloud writes the same block through its own path.
     CODEX_HOME="$d/codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --codex-cloud > "$d/out-cloud" 2>&1
@@ -24274,6 +24319,59 @@ PY
 }
 
 
+# The guidance-load-record Stop hook's own unit tests, counted as the lane
+# module above is: unittest's real count goes into PASS, so a module that
+# discovers nothing cannot pass, and under CI (where openssl is present) a
+# skipped upload case is a failure rather than a quiet gap.
+test_guidance_load_record() {
+    echo ""
+    echo "=== Test: guidance-load-record.sh unit tests ==="
+    local count_file="$TEST_DIR/guidance-load-record-count" rc=0 passed=0 skipped=0
+    python3 - "$SCRIPT_DIR" "$count_file" <<'PY' || rc=$?
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_guidance_load_record.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+passed = result.testsRun - len(result.skipped) - len(result.expectedFailures)
+pathlib.Path(sys.argv[2]).write_text(f"{passed} {len(result.skipped)}\n", encoding="ascii")
+sys.exit(0 if result.wasSuccessful() else 1)
+PY
+    if [[ -s "$count_file" ]]; then read -r passed skipped < "$count_file"; fi
+    if [[ $rc -ne 0 ]]; then
+        fail "guidance-load-record: unit tests failed (exit $rc)"
+    elif (( passed == 0 )); then
+        fail "guidance-load-record: test/test_guidance_load_record.py ran zero tests"
+    elif [[ "${CI:-}" == true ]] && (( skipped > 0 )); then
+        fail "guidance-load-record: $skipped unit test(s) skipped under CI, where openssl is installed"
+    else
+        PASS=$((PASS + passed))
+        echo "  guidance-load-record: $passed unit test(s) passed, $skipped skipped"
+    fi
+}
+
+# This repo is excluded from its own sync, so it registers the hook by hand:
+# the same classifier sync.sh uses must read it as registered on Stop.
+test_self_hosted_guidance_record() {
+    echo ""
+    echo "=== Test: this repo runs the guidance-load-record hook it delivers ==="
+    local reg
+    reg=$(BOOTSTRAP_HOOK_EVENT="Stop" BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
+          BOOTSTRAP_HOOK_MATCHER="*" \
+          "$REPO_ROOT/scripts/bootstrap-status.sh" "$REPO_ROOT/.claude/settings.json")
+    if [[ "$reg" == "registered" ]]; then
+        pass "self guidance-load-record: registered on Stop in this repo's settings.json"
+    else
+        fail "self guidance-load-record: registered on Stop in this repo's settings.json — got $reg"
+    fi
+    if [[ -x "$REPO_ROOT/$GREC_REL_PATH_T" ]] && ! grep -q $'\r' "$REPO_ROOT/$GREC_REL_PATH_T"; then
+        pass "self guidance-load-record: the hook is executable and LF"
+    else
+        fail "self guidance-load-record: the hook is executable and LF"
+    fi
+}
+
 TEST_GROUPS=(
     runner
     codex_memory_audit
@@ -24295,6 +24393,7 @@ TEST_GROUPS=(
     gitattr
     automerge
     agent_checks
+    guidance_record
 )
 
 GROUP_sync=(
@@ -24829,6 +24928,13 @@ GROUP_agent_checks=(
     test_agent_check_lane_module
 )
 
+# The guidance-load-record lane: the hook's unit tests use temp HOMEs and a
+# fake curl of their own, and the self-hosted check reads only this repo.
+GROUP_guidance_record=(
+    test_guidance_load_record
+    test_self_hosted_guidance_record
+)
+
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
 # CLAUDE_PROJECT_DIR / HOME, so they can sit anywhere; kept beside the other
 # user-level registrar for the reader.
@@ -24922,7 +25028,7 @@ run_one_group() {
     else
         # This group owns its SQLite/filesystem fixtures and does not need mock
         # repos. It also runs unchanged in a Git-free negative-control scratch.
-        if [[ "$g" != codex_memory_audit && "$g" != memory_audit && "$g" != runner ]]; then setup_fixtures; fi
+        if [[ "$g" != codex_memory_audit && "$g" != memory_audit && "$g" != runner && "$g" != guidance_record ]]; then setup_fixtures; fi
         local ref="GROUP_${g}[@]"
         for t in "${!ref}"; do
             "$t"

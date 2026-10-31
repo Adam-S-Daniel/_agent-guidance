@@ -17,8 +17,10 @@ const SCRIPT = path.join(__dirname, "..", "scripts", "check-fleet-guidance-mirro
 const REPO = path.join(__dirname, "..");
 const { run } = require(SCRIPT);
 
-const BASE = "# Guidance\n\nSee [the incident](https://example.com/blob/main/docs/evidence/2026-01-01-x.md).\n";
-const STUB = "# Stub\n\nNo pointers here.\n";
+const FULL = "guidance-marker: fleet-full (transcript counts use this line; keep it)\n";
+const STUBM = "guidance-marker: fleet-stub (transcript counts use this line; keep it)\n";
+const BASE = "# Guidance\n\n" + FULL + "\nSee [the incident](https://example.com/blob/main/docs/evidence/2026-01-01-x.md).\n";
+const STUB = "# Stub\n\n" + STUBM + "\nNo pointers here.\n";
 
 function tree(overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mirror-"));
@@ -68,13 +70,13 @@ test("a dead docs/evidence pointer in base.md fails, with file and line", () => 
   const r = run(tree({ "agents-md/base.md": base, ".claude/hooks/fleet-guidance.md": base }));
   assert.equal(r.code, 1);
   assert.equal(r.lines.length, 1);
-  assert.match(r.lines[0], /^agents-md\/base\.md:5 points at docs\/evidence\/gone\.md,/);
+  assert.match(r.lines[0], /^agents-md\/base\.md:7 points at docs\/evidence\/gone\.md,/);
 });
 
 test("a dead docs/evidence pointer in stub.md or a section file fails", () => {
-  const stub = run(tree({ "agents-md/stub.md": "see docs/evidence/nope.md\n" }));
+  const stub = run(tree({ "agents-md/stub.md": STUBM + "see docs/evidence/nope.md\n" }));
   assert.equal(stub.code, 1);
-  assert.match(stub.lines[0], /^agents-md\/stub\.md:1 /);
+  assert.match(stub.lines[0], /^agents-md\/stub\.md:2 /);
   const sec = run(tree({ "agents-md/sections/python.md": "[x](docs/evidence/nope.md)\n" }));
   assert.equal(sec.code, 1);
   assert.match(sec.lines[0], /^agents-md\/sections\/python\.md:1 /);
@@ -92,6 +94,61 @@ test("a bare docs/evidence/ directory mention is not a pointer", () => {
 test("missing base.md or stub.md is exit 2, never a pass", () => {
   assert.equal(run(tree({ "agents-md/stub.md": null })).code, 2);
   assert.equal(run(tree({ "agents-md/base.md": null })).code, 2);
+});
+
+// Marker cases: base.md is rewritten together with its mirror, so each case
+// breaks only the marker and never the byte-identical payload check.
+function withBase(base) {
+  return { "agents-md/base.md": base, ".claude/hooks/fleet-guidance.md": base };
+}
+
+test("a missing fleet-full marker in base.md fails and names the line to restore", () => {
+  const r = run(tree(withBase(BASE.replace(FULL, ""))));
+  assert.equal(r.code, 1);
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0], /^agents-md\/base\.md has no `guidance-marker: fleet-full` line/);
+  assert.match(r.lines[0], /Fix: restore the line `guidance-marker: fleet-full \(transcript counts use this line; keep it\)`/);
+});
+
+test("a duplicated fleet-full marker in base.md fails", () => {
+  const r = run(tree(withBase(BASE + "\n" + FULL)));
+  assert.equal(r.code, 1);
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0], /^agents-md\/base\.md has 2 `guidance-marker: fleet-full` lines/);
+});
+
+test("a missing fleet-stub marker in stub.md fails", () => {
+  const r = run(tree({ "agents-md/stub.md": STUB.replace(STUBM, "") }));
+  assert.equal(r.code, 1);
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0], /^agents-md\/stub\.md has no `guidance-marker: fleet-stub` line/);
+});
+
+test("a duplicated fleet-stub marker in stub.md fails", () => {
+  const r = run(tree({ "agents-md/stub.md": STUB + STUBM }));
+  assert.equal(r.code, 1);
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0], /^agents-md\/stub\.md has 2 `guidance-marker: fleet-stub` lines/);
+});
+
+test("swapped markers fail in both files, each naming the stray marker", () => {
+  const r = run(tree({ ...withBase(BASE.replace(FULL, STUBM)), "agents-md/stub.md": STUB.replace(STUBM, FULL) }));
+  assert.equal(r.code, 1);
+  assert.equal(r.lines.length, 4);
+  assert.ok(r.lines.some((l) => /^agents-md\/base\.md carries a `guidance-marker: fleet-stub` line/.test(l)));
+  assert.ok(r.lines.some((l) => /^agents-md\/stub\.md carries a `guidance-marker: fleet-full` line/.test(l)));
+});
+
+test("a stray stub marker beside the right one in base.md fails", () => {
+  const r = run(tree(withBase(BASE + STUBM)));
+  assert.equal(r.code, 1);
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0], /^agents-md\/base\.md carries a `guidance-marker: fleet-stub` line/);
+});
+
+test("a marker mentioned mid-line is not a marker line", () => {
+  const r = run(tree({ "agents-md/stub.md": STUB + "Counts use `guidance-marker: fleet-full` in base.md.\n" }));
+  assert.equal(r.code, 0);
 });
 
 test("CLI: exit codes and annotations on a temp tree", () => {
