@@ -24,6 +24,9 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/create-github-app-token@v3.3.0'
         - 'actions/setup-node@v7.1.0'
+    '.github/workflows/scheduled-run-health-reusable.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-node@v7.1.0'
     '.github/workflows/scheduled-run-health.yml': []
     '.github/workflows/skills-lock-bump.yml':
         - 'actions/checkout@v7.0.1'

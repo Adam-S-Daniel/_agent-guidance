@@ -8169,7 +8169,7 @@ EOF
     # 3. Caller file present, job-level `uses:` deleted. The detector must key
     #    on the `uses:` VALUE, never on a filename it could be fooled by.
     cron_workload nouses
-    sed '/uses: Adam-S-Daniel/d' "$caller" \
+    sed '/^    uses: /d' "$caller" \
         > "$root/nouses/.github/workflows/scheduled-run-health.yml"
     assert_cron nouses 1 "no scheduled-run-health caller" \
         "cron coverage: a caller file with no uses: fails"

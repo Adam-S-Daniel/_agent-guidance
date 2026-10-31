@@ -257,3 +257,28 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   the `sha1-` prefix, the `could not verify` exit code and the linter results
   live here rather than in the section, and the next
   `base.md` addition has to trim something first.
+
+## Addendum, 2026-10-31: a lockfile repo cannot call a reusable from a repo without one
+
+GitHub's docs say "a reusable workflow is covered by the lockfile of the
+repository where it is defined"
+([workflow dependency lockfiles](https://docs.github.com/actions/concepts/security/workflow-dependency-lockfiles)).
+Lockfiles went GA on 2026-10-28 and every repo here that has a lockfile and
+called cms-platform's `scheduled-run-health.yml` startup-failed daily from that
+day: skills-evals, repo-settings, adam-agentskills and this repo. This repo had
+its lockfile on 2026-10-27 and passed then. adamdaniel.ai, with no lockfile,
+kept passing on the same reusable at the same release. A startup failure
+carries no error text, so this rests on the docs and that pattern.
+
+- **cms-platform still stays legacy.** The fix is not a lockfile there: the
+  actionlint and runtime-checkout blockers above are unchanged. The same holds
+  for its two consumers, adamdaniel.ai and jodidaniel.com, which reference its
+  composite actions and are moved by `platform-bump`.
+- **A lockfile repo calls this repo's
+  `scheduled-run-health-reusable.yml` instead**, at a full commit sha (this
+  repo through `./`). Its two actions are locked here, and it still runs the
+  audit script from cms-platform's latest release, so there is one copy of the
+  audit logic.
+- **Any other cms-platform reusable has the same problem** for a lockfile
+  caller. Check where a reusable is defined before calling it from a lockfile
+  repo.
