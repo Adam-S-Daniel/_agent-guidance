@@ -30,6 +30,25 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-10-31 — 2.1.314 through 2.1.316
+
+- **Checked:** 2026-10-31T01:25Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.316](https://github.com/anthropics/claude-code/releases/tag/v2.1.316), published 2026-10-31T01:01Z
+- **Window:** v2.1.314 (published 2026-10-30T01:06Z) and v2.1.316 (published 2026-10-31T01:01Z), the stable releases after v2.1.312: 2 releases, 174 bullets (119 in 2.1.314, 55 in 2.1.316; only the two in group 1 are indexed). v2.1.313 and v2.1.315 have no tag or changelog section and are skipped as gaps. The publish times are the `datetime` attributes on the tag pages, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.314` and `v2.1.316` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200, no pre-release label) for their publish times.
+- **Repos considered:** all 13 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and assessed the local checkouts by fleet grep.
+
+#### 1. Headless isolation flags and exit code
+
+- [v2.1.314](https://github.com/anthropics/claude-code/releases/tag/v2.1.314), published 2026-10-30T01:06Z (bullet 2.1.314/5)
+  > Fixed `claude -p` exiting with code 0 and no output when startup failed; it now prints the error and exits 1
+- [v2.1.314](https://github.com/anthropics/claude-code/releases/tag/v2.1.314), published 2026-10-30T01:06Z (bullet 2.1.314/33)
+  > Fixed a settings file excluded with `--setting-sources` still supplying some settings, such as auto mode rules and saved permission consents
+
+**Issues:** [skills-evals#484](https://github.com/Adam-S-Daniel/skills-evals/issues/484) (`agent-ready`).
+
+No other group met the name-the-surface bar. No Claude Code bullet in the window adds a model, changes the default model or an alias, changes `/doctor` or `/skill-doctor`, or changes how instruction files load, so the prompt-audit sweep was not fired. A fleet grep for `ultrathink`, `CLAUDE_CODE_SUBAGENT_EFFORT`, `PreCompact`, Monitor-matched hooks, fast mode and `blockWritesOutsideWorkingDirectories` found no fleet-repo file using them; the 2.1.316 fast-mode deprecation for Opus 4.8 matched only the archived benchmark repo's notes. The cloud-session, VS Code, Claude Tag, Code Review, Remote Control, gateway and display bullets remove failures or adjust display without changing a documented command, flag or setting the fleet uses. Codex: no stable release after 0.166.0.
+
 ### 2026-10-28 — 2.1.312 through 2.1.312
 
 - **Checked:** 2026-10-28T01:15Z, [release log](https://github.com/anthropics/claude-code/releases)
