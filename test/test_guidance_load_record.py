@@ -423,6 +423,18 @@ class UploadTests(HookTestCase):
         self.assertNotIn("sha", put)
         self.assertEqual(len(base64.b64decode(put["content"]).decode().splitlines()), 1)
 
+    def test_a_base64_encoded_key_works_too(self):
+        self.script([
+            {"status": 200, "body": {"id": 7}},
+            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
+            {"status": 404, "body": {"message": "Not Found"}},
+            {"status": 201, "body": {"content": {}}},
+        ])
+        encoded = base64.b64encode(self.pem.encode()).decode()
+        self.run_hook(env=dict(self.creds, USAGE_WRITER_APP_PEM=encoded, CLAUDE_CODE_REMOTE="true"))
+        self.assertIs(self.records()[0]["uploaded"], True)
+        self.assertEqual(len(self.calls()), 4)
+
     def test_second_conflict_gives_up(self):
         self.script([
             {"status": 200, "body": {"id": 7}},

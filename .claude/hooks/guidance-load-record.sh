@@ -48,7 +48,8 @@
 # -----------------------------
 # A cloud container's state dies with it, so when the session is remote
 # (CLAUDE_CODE_REMOTE=true or CLAUDE_CODE_REMOTE_SESSION_ID set) AND both
-# USAGE_WRITER_APP_CLIENT_ID and USAGE_WRITER_APP_PEM (the PEM text) are set,
+# USAGE_WRITER_APP_CLIENT_ID and USAGE_WRITER_APP_PEM (the PEM text, or that text
+# base64-encoded) are set,
 # the same line (without `uploaded`) is appended to
 # events/<YYYY-MM>/cloud-guidance.jsonl on branch persistent/usage-events of
 # Adam-S-Daniel/adam-agentskills-private, through the contents API, with an
@@ -256,6 +257,13 @@ def app_jwt(work, client_id, pem, at):
 def upload(line, when):
     client_id = os.environ.get("USAGE_WRITER_APP_CLIENT_ID", "")
     pem = os.environ.get("USAGE_WRITER_APP_PEM", "")
+    if "-----BEGIN" not in pem:
+        # An environment-variable field may not hold a multi-line value, so
+        # the key may also be given base64-encoded.
+        try:
+            pem = base64.b64decode("".join(pem.split()), validate=True).decode("ascii")
+        except ValueError:
+            pem = ""
     base = (os.environ.get("GUIDANCE_RECORD_API") or "https://api.github.com").rstrip("/")
     if shutil.which("curl") is None or shutil.which("openssl") is None:
         return False
