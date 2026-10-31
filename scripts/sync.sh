@@ -12,9 +12,11 @@ set -euo pipefail
 #   5. Delivers the skills-bootstrap SessionStart hook to ALLOWLISTED repos
 #      that already carry their own skills.lock (see repos.yml and
 #      docs/decisions/0001) — never to every repo, and never writing the lock
-#   6. Ensures the root .gitattributes pins .claude/hooks/*.sh to LF (one
+#   6. Delivers, with the fleet-memory hook, the guidance-load-record Stop
+#      hook that records once per session whether the full guidance loaded
+#   7. Ensures the root .gitattributes pins .claude/hooks/*.sh to LF (one
 #      appended line; see docs/decisions/0019)
-#   7. Pushes the update directly to the default branch (the sync App has a
+#   8. Pushes the update directly to the default branch (the sync App has a
 #      ruleset bypass, declared in repo-settings); falls back to a PR with
 #      auto-merge for repos whose protection rejects the push
 #
@@ -51,6 +53,16 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# guidance-load-record: the Stop hook that writes one line per session saying
+# whether the full guidance or only the stub loaded. It measures the very
+# delivery fleet-memory makes, so it rides with it: every repo fleet-memory
+# reaches gets it, MANAGED (overwritten when it drifts) like fleet-memory.sh,
+# and registered as an additional `Stop` group. Stop takes no matcher; `*` is
+# the match-all value, written so the shared registrar's default (a
+# SessionStart source list) does not land on a Stop entry.
+GREC_REL_PATH=".claude/hooks/guidance-load-record.sh"
+GREC_SOURCE="$REPO_ROOT/.claude/hooks/guidance-load-record.sh"
+GREC_MATCHER="*"
 # The one managed line in each repo's root .gitattributes that keeps the hook
 # scripts above LF in every checkout, so bash in WSL can parse them from a
 # Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
@@ -907,6 +919,29 @@ for repo_name in "${REPOS[@]}"; do
         fleet_up_to_date=false
     fi
 
+    # ── guidance-load-record: classify ─────────────────────────────────
+    # Wherever fleet-memory goes, and nowhere else: a record of whether the
+    # guidance loaded means nothing in a repo the guidance cannot reach.
+    grec_deliver=false
+    grec_state="n/a"         # n/a | missing | current | drifted
+    grec_reg_state="n/a"     # n/a | registered | no-entry | missing
+    if $fleet_deliver && [[ -r "$GREC_SOURCE" ]]; then
+        grec_deliver=true
+        grec_state="missing"
+        if [[ -f "$GREC_REL_PATH" ]]; then
+            cmp -s "$GREC_REL_PATH" "$GREC_SOURCE" && grec_state="current" || grec_state="drifted"
+        fi
+        grec_reg_state=$(BOOTSTRAP_HOOK_EVENT="Stop" \
+                         BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
+                         BOOTSTRAP_HOOK_MATCHER="$GREC_MATCHER" \
+                         "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
+        log "guidance-load-record: hook=$grec_state settings=$grec_reg_state"
+    fi
+    grec_up_to_date=true
+    if $grec_deliver && { [[ "$grec_state" != "current" ]] || [[ "$grec_reg_state" != "registered" ]]; }; then
+        grec_up_to_date=false
+    fi
+
     # ── Build managed content ──────────────────────────────────────────
 
     managed_content=$(AGENTS_MD_MODE="$FLEET_MODE" "$BUILD_SCRIPT" "${sections[@]}")
@@ -1256,7 +1291,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $grec_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1325,6 +1360,13 @@ for repo_name in "${REPOS[@]}"; do
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
+        fi
+
+        if ! $grec_up_to_date; then
+            [[ "$grec_state" != "current" ]] \
+                && log "[DRY RUN] Would write $GREC_REL_PATH (guidance-load record hook $grec_state)"
+            [[ "$grec_reg_state" != "registered" ]] \
+                && log "[DRY RUN] Would register guidance-load-record.sh on Stop in $SETTINGS_REL_PATH (currently: $grec_reg_state)"
         fi
 
         if ! $gitattr_up_to_date; then
@@ -1504,6 +1546,36 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── guidance-load-record: write ────────────────────────────────────
+    grec_written=false
+    grec_registered_now=false
+    if ! $grec_up_to_date; then
+        if [[ "$grec_state" != "current" ]]; then
+            mkdir -p "$(dirname "$GREC_REL_PATH")"
+            cp "$GREC_SOURCE" "$GREC_REL_PATH"
+            chmod 0755 "$GREC_REL_PATH"
+            grec_written=true
+            log "guidance-load-record: hook ${grec_state} — written."
+        fi
+        if [[ "$grec_reg_state" != "registered" ]]; then
+            mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
+            if grec_register_result=$(
+                    BOOTSTRAP_HOOK_EVENT="Stop" \
+                    BOOTSTRAP_HOOK_MATCHER="$GREC_MATCHER" \
+                    BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh"' \
+                    BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
+                    BOOTSTRAP_HOOK_TIMEOUT="20" \
+                    "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
+                [[ "$grec_register_result" == "registered" || "$grec_register_result" == "migrated" ]] && grec_registered_now=true
+                log "guidance-load-record: settings.json — $grec_register_result."
+            else
+                log "WARN: could not register guidance-load-record in $SETTINGS_REL_PATH ($grec_register_result) — leaving it untouched."
+            fi
+        fi
+    fi
+    grec_any_written=false
+    { $grec_written || $grec_registered_now; } && grec_any_written=true
+
     # ── .gitattributes: write ──────────────────────────────────────────
     # Appended to, never rewritten (the helper's header has the byte rules).
     gitattr_written=false
@@ -1627,6 +1699,8 @@ for repo_name in "${REPOS[@]}"; do
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
     $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
+    $grec_written && add_paths+=("$GREC_REL_PATH")
+    $grec_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     # Both hooks can register in the same file in one run; add it once.
     if $fleet_registered_now && ! $bootstrap_registered_now; then
         add_paths+=("$SETTINGS_REL_PATH")
@@ -1690,6 +1764,18 @@ _agent-guidance's templates/dependabot-auto-merge/; the sync never overwrites
 it afterwards."
     fi
 
+    if $grec_any_written; then
+        bootstrap_note="${bootstrap_note}
+
+Delivers the guidance-load-record Stop hook ($GREC_REL_PATH), registered as
+an additional Stop entry: once per session it appends one line to a local
+state file saying whether the full fleet guidance or only this repo's stub
+loaded, read from the session transcript. The line holds no paths, names or
+content. In cloud sessions with the usage-writer App configured it also
+appends that line to the private usage-events branch. Managed by
+_agent-guidance."
+    fi
+
     if $ac_any_written; then
         bootstrap_note="${bootstrap_note}
 
@@ -1702,31 +1788,37 @@ docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written \
+       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
         commit_message="chore: disable shell execution when a skill loads
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $ac_any_written && ! $automerge_written && ! $gitattr_written \
+       && $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
         commit_message="chore: deliver the agent-checks git hooks and CI check
 
 AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $grec_any_written \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
         commit_message="chore: add the Dependabot auto-merge workflow
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $grec_any_written \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
         commit_message="chore: pin the hook scripts to LF in .gitattributes
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $grec_any_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: deliver the guidance-load-record Stop hook
+
+AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
         commit_message="chore: deliver the skills-bootstrap SessionStart hook
 
@@ -1964,6 +2056,20 @@ This PR also adds one line to \`$GITATTR_REL_PATH\`, \`.claude/hooks/*.sh text e
 with a comment above it; nothing else in that file changes. A Windows
 \`core.autocrlf=true\` checkout gives the hook scripts CRLF, which bash in WSL
 cannot parse. See [ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)."
+        fi
+
+        if $grec_any_written; then
+            pr_extra="${pr_extra}
+
+This PR also delivers \`$GREC_REL_PATH\`, a \`Stop\` hook registered as an
+**additional** \`hooks.Stop\` entry in \`$SETTINGS_REL_PATH\` (existing entries
+preserved). Once per session it appends one JSON line to
+\`\${XDG_STATE_HOME:-~/.local/state}/fleet-guidance/sessions.jsonl\` saying
+whether the full fleet guidance or only this repo's stub loaded, read from the
+session transcript; the line holds no paths, names or content. In a cloud
+session with the usage-writer GitHub App's credentials set, it also appends
+that line to a private usage-events branch. It never blocks a session and
+prints nothing."
         fi
 
         existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \
