@@ -28,6 +28,9 @@ FULL = "guidance-marker: fleet-full (transcript counts use this line; keep it)"
 STUB = "guidance-marker: fleet-stub (transcript counts use this line; keep it)"
 REPO = "Adam-S-Daniel/adam-agentskills-private"
 CONTENTS = f"https://api.example.com/repos/{REPO}/contents/events/2026-10/cloud-guidance.jsonl"
+PROBE = f"https://api.example.com/repos/{REPO}"
+# The session-credential probe, refused: the private repo is not attached.
+NOT_ATTACHED = {"status": 403, "body": {"message": "not permitted"}}
 
 # The fake curl: appends {"argv": [...], "stdin": "...", "body": ...} to
 # $FAKE_CURL_LOG, then pops the next {"status", "body"} from $FAKE_CURL_SCRIPT,
@@ -339,18 +342,53 @@ class UploadTests(HookTestCase):
         self.assertEqual(self.calls(), [])
         self.assertIsNone(self.records()[0]["uploaded"])
 
-    def test_not_attempted_without_credentials(self):
+    def test_no_app_credentials_and_no_attached_repo_records_false(self):
+        self.script([NOT_ATTACHED] * 3)
         self.run_hook(session="a", env={"CLAUDE_CODE_REMOTE": "true"})
         self.run_hook(session="b", env={"CLAUDE_CODE_REMOTE": "true",
                                         "USAGE_WRITER_APP_CLIENT_ID": "Iv1.example0client"})
         self.run_hook(session="c", env={"CLAUDE_CODE_REMOTE": "true", "USAGE_WRITER_APP_PEM": self.pem})
-        self.assertEqual(self.calls(), [])
-        self.assertEqual([r["uploaded"] for r in self.records()], [None, None, None])
+        shape = [(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in self.calls()]
+        self.assertEqual(shape, [("GET", PROBE)] * 3)
+        self.assertEqual([r["uploaded"] for r in self.records()], [False, False, False])
+
+    def test_session_credential_writes_when_the_repo_is_attached(self):
+        # A hosted session's proxy substitutes its own credential for any
+        # Authorization header, so this path sends none, and needs no App.
+        self.script([
+            {"status": 200, "body": {"permissions": {"push": True, "pull": True}}},
+            {"status": 404, "body": {"message": "Not Found"}},
+            {"status": 201, "body": {"content": {}}},
+        ])
+        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
+        [record] = self.records()
+        self.assertIs(record["uploaded"], True)
+        calls = self.calls()
+        shape = [(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in calls]
+        self.assertEqual(shape, [("GET", PROBE), ("GET", CONTENTS + "?ref=persistent/usage-events"),
+                                 ("PUT", CONTENTS)])
+        for c in calls:
+            self.assertNotIn("Authorization", c["stdin"])
+        line = json.loads(base64.b64decode(calls[2]["body"]["content"]).decode().splitlines()[-1])
+        self.assertEqual({k: v for k, v in record.items() if k != "uploaded"}, line)
+
+    def test_read_only_session_credential_falls_back_to_the_app(self):
+        self.script([
+            {"status": 200, "body": {"permissions": {"push": False, "pull": True}}},
+            {"status": 200, "body": {"id": 7}},
+            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
+            {"status": 404, "body": {}},
+            {"status": 201, "body": {"content": {}}},
+        ])
+        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
+        self.assertIs(self.records()[0]["uploaded"], True)
+        self.assertIn("Bearer ghs_EXAMPLEINSTALLATIONTOKEN", self.calls()[4]["stdin"])
 
     def test_append_with_one_retry_on_conflict(self):
         earlier = '{"v":1,"kind":"guidance-load","session":"0000000000000000"}\n'
         between = '{"v":1,"kind":"guidance-load","session":"1111111111111111"}\n'
         self.script([
+            NOT_ATTACHED,
             {"status": 200, "body": {"id": 4242}},
             {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
             {"status": 200, "body": {"sha": "sha-one", "encoding": "base64",
@@ -364,6 +402,8 @@ class UploadTests(HookTestCase):
         [record] = self.records()
         self.assertIs(record["uploaded"], True)
         calls = self.calls()
+        self.assertNotIn("Authorization", calls[0]["stdin"])
+        calls = calls[1:]
         shape = [(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in calls]
         self.assertEqual(shape, [
             ("GET", f"https://api.example.com/repos/{REPO}/installation"),
@@ -412,6 +452,7 @@ class UploadTests(HookTestCase):
 
     def test_new_month_file_is_created_without_sha(self):
         self.script([
+            NOT_ATTACHED,
             {"status": 200, "body": {"id": 7}},
             {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
             {"status": 404, "body": {"message": "Not Found"}},
@@ -419,12 +460,13 @@ class UploadTests(HookTestCase):
         ])
         self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE_SESSION_ID="example-remote"))
         self.assertIs(self.records()[0]["uploaded"], True)
-        put = self.calls()[3]["body"]
+        put = self.calls()[4]["body"]
         self.assertNotIn("sha", put)
         self.assertEqual(len(base64.b64decode(put["content"]).decode().splitlines()), 1)
 
     def test_a_base64_encoded_key_works_too(self):
         self.script([
+            NOT_ATTACHED,
             {"status": 200, "body": {"id": 7}},
             {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
             {"status": 404, "body": {"message": "Not Found"}},
@@ -433,10 +475,11 @@ class UploadTests(HookTestCase):
         encoded = base64.b64encode(self.pem.encode()).decode()
         self.run_hook(env=dict(self.creds, USAGE_WRITER_APP_PEM=encoded, CLAUDE_CODE_REMOTE="true"))
         self.assertIs(self.records()[0]["uploaded"], True)
-        self.assertEqual(len(self.calls()), 4)
+        self.assertEqual(len(self.calls()), 5)
 
     def test_second_conflict_gives_up(self):
         self.script([
+            NOT_ATTACHED,
             {"status": 200, "body": {"id": 7}},
             {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
             {"status": 404, "body": {}},
@@ -446,22 +489,23 @@ class UploadTests(HookTestCase):
         ])
         self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
         self.assertIs(self.records()[0]["uploaded"], False)
-        self.assertEqual(len(self.calls()), 6)
+        self.assertEqual(len(self.calls()), 7)
 
     def test_failed_installation_lookup_records_false_and_marks_done(self):
-        self.script([{"status": 404, "body": {"message": "Not Found"}}])
+        self.script([NOT_ATTACHED, {"status": 404, "body": {"message": "Not Found"}}])
         env = dict(self.creds, CLAUDE_CODE_REMOTE="true")
         self.run_hook(env=env)
         self.run_hook(env=env)
         [record] = self.records()
         self.assertIs(record["uploaded"], False)
-        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual(len(self.calls()), 2)
 
-    def test_bad_pem_records_false_without_calling_the_api(self):
+    def test_bad_pem_records_false_without_calling_the_app_api(self):
+        self.script([NOT_ATTACHED])
         self.run_hook(env={"CLAUDE_CODE_REMOTE": "true", "USAGE_WRITER_APP_CLIENT_ID": "Iv1.example0client",
                            "USAGE_WRITER_APP_PEM": "not a key"})
         self.assertIs(self.records()[0]["uploaded"], False)
-        self.assertEqual(self.calls(), [])
+        self.assertEqual([c["argv"][-1] for c in self.calls()], [PROBE])
 
 
 if __name__ == "__main__":
