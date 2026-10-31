@@ -19,13 +19,18 @@
 # commit sha of this repo (a cross-repo reusable is never locked, ADR 0024).
 #
 # WHERE THE AUDIT SCRIPT COMES FROM. The scripts stay in cms-platform, so
-# there is one copy of the audit logic. This job reads cms-platform's latest
-# release at run time and checks the scripts out at that release's commit.
-# cms-platform releases are this account's own code, gated by its required
-# checks before a tag exists (the same reason dependabot.yml exempts them
-# from the cooldown). Because the release is resolved, never pinned, a caller
-# cannot fall behind, so the platform reusable's currency lane has nothing to
-# measure here and is left out.
+# there is one copy of the audit logic. The release they are fetched at is
+# the one line in .github/health-audit-platform-ref, read from THIS repo's
+# default branch rather than from the commit a caller pinned. So one merged
+# bump moves every caller, and a caller's stale sha pin cannot leave it on an
+# old release. It is a data file rather than a value in this workflow so a bot
+# can move it without permission to edit workflows: the daily
+# health-reusable-parity.yml opens that bump PR, and the currency lane below
+# goes red if one has not merged within 14 days of a release.
+#
+# KEEP IT IN STEP WITH THE PLATFORM. scripts/check-health-reusable-parity.js,
+# run daily, fails when this file and cms-platform's scheduled-run-health.yml
+# at its latest release stop doing the same thing.
 #
 # Everything else matches the platform reusable: one `ci`-labelled tracking
 # issue per repo, the run stays green when it filed its alert and goes red
@@ -44,6 +49,11 @@ on:
       push_scan:    { type: boolean, default: true }
       stale_days:   { type: string, default: "14" }
       stale_scan:   { type: boolean, default: true }
+      # The currency lane, as on the platform: red when the release pinned in
+      # .github/health-audit-platform-ref has been superseded for longer
+      # than behind_days.
+      currency_scan: { type: boolean, default: true }
+      behind_days:   { type: string, default: "14" }
 
 # A caller's grant caps a reusable's: the caller must give actions: read
 # (list workflow runs) and issues: write (the tracking issue).
@@ -57,19 +67,42 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Resolve cms-platform's latest release
-        id: platform
+      - name: Find the repo this reusable lives in
+        id: home
+        env:
+          # Read through toJSON(job), never ${{ job.workflow_repository }}: the
+          # same reason as the platform reusable (actionlint does not know
+          # that property yet; the runtime object carries it).
+          JOB_CONTEXT: ${{ toJSON(job) }}
+        run: |
+          repo=$(jq -r '.workflow_repository // ""' <<<"$JOB_CONTEXT")
+          if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::the job context carries no usable workflow_repository ('${repo}'); refusing to guess where the platform pin lives."
+            exit 1
+          fi
+          echo "repository=$repo" >>"$GITHUB_OUTPUT"
+      - name: Fetch the platform pin from that repo's default branch
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ steps.home.outputs.repository }}
+          sparse-checkout: |
+            .github/health-audit-platform-ref
+          sparse-checkout-cone-mode: false
+          path: .self
+          persist-credentials: false
+      - name: Resolve the pinned cms-platform release
+        id: self
         env:
           GH_TOKEN: ${{ github.token }}
           PLATFORM_REPO: Adam-S-Daniel/cms-platform
         run: |
-          tag=$(gh api "repos/$PLATFORM_REPO/releases/latest" --jq '.tag_name')
+          tag=$(tr -d '[:space:]' < .self/.github/health-audit-platform-ref)
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::$PLATFORM_REPO's latest release tag '${tag}' is not vX.Y.Z; refusing to guess which audit script to run."
+            echo "::error::.github/health-audit-platform-ref holds '${tag}', not a vX.Y.Z release tag."
             exit 1
           fi
-          # Resolve to a commit so the checkout below names an immutable
-          # object; an annotated tag is dereferenced to its commit.
+          # Resolve to a commit so the checkout names an immutable object; an
+          # annotated tag is dereferenced to its commit.
           sha=$(gh api "repos/$PLATFORM_REPO/commits/$tag" --jq '.sha')
           if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::could not resolve $PLATFORM_REPO@${tag} to a commit ('${sha}')."
@@ -77,17 +110,18 @@ jobs:
           fi
           {
             echo "repository=$PLATFORM_REPO"
-            echo "tag=$tag"
+            echo "ref=$tag"
             echo "sha=$sha"
           } >>"$GITHUB_OUTPUT"
           echo "Audit script: ${PLATFORM_REPO}@${tag} (${sha})"
       - name: Fetch the audit script from the platform
         uses: actions/checkout@v7.0.1
         with:
-          repository: ${{ steps.platform.outputs.repository }}
-          ref: ${{ steps.platform.outputs.sha }}
+          repository: ${{ steps.self.outputs.repository }}
+          ref: ${{ steps.self.outputs.sha }}
           sparse-checkout: |
             scripts/audit-scheduled-runs.js
+            scripts/check-platform-currency.js
           sparse-checkout-cone-mode: false
           path: .cms-platform
           persist-credentials: false
@@ -119,3 +153,19 @@ jobs:
           args+=(--stale-days "$AUDIT_STALE_DAYS")
           if [[ "$AUDIT_STALE_SCAN" != "true" ]]; then args+=(--no-stale-scan); fi
           node .cms-platform/scripts/audit-scheduled-runs.js "${args[@]}"
+      - name: Check this caller is on a current platform release
+        # As on the platform: runs after the audit, so a stale pin still gets
+        # its scheduled-run health checked; the next day's audit reports this
+        # step's red into the same tracking issue.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENCY_REPO: ${{ steps.self.outputs.repository }}
+          CURRENCY_REF: ${{ steps.self.outputs.ref }}
+          CURRENCY_BEHIND_DAYS: ${{ inputs.behind_days }}
+          CURRENCY_SCAN: ${{ inputs.currency_scan }}
+        run: |
+          if [[ "$CURRENCY_SCAN" != "true" ]]; then
+            echo "Currency scan disabled by the caller (currency_scan: false)."
+            exit 0
+          fi
+          node .cms-platform/scripts/check-platform-currency.js --platform-repo "$CURRENCY_REPO" --ref "$CURRENCY_REF" --behind-days "$CURRENCY_BEHIND_DAYS"

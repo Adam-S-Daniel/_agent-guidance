@@ -19498,6 +19498,34 @@ test_discrepancy_alert() {
     fi
 }
 
+test_health_reusable_parity() {
+    echo ""
+    echo "=== Test: check-health-reusable-parity.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the discrepancy alert gate: the script
+    # parses both workflows with `yaml`, so a missing node_modules must fail
+    # loudly, never skip. CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "health reusable parity: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/health-reusable-parity-tap.txt" rc=0
+    # Never piped: under pipefail the status would be the last command's.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-health-reusable-parity.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # A minimum count proves the suite ran: zero defined tests exits 0 too.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 9 ]]; then
+        pass "health reusable parity: node:test suite is green ($pass_n passed)"
+    else
+        fail "health reusable parity: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=9): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_routine_merge_gate() {
     echo ""
     echo "=== Test: routine-merge-gate.js (node:test suite) ==="
@@ -24587,6 +24615,7 @@ GROUP_self_hosted=(
     test_dependabot_config_health
     test_impact_report
     test_discrepancy_alert
+    test_health_reusable_parity
     test_routine_merge_gate
     test_fleet_guidance_mirror
     test_check_agent_markdown
