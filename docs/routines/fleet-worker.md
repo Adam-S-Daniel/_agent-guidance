@@ -22,8 +22,12 @@ Each run does three passes, in this order:
    in the fleet's agent-checks runner, in PRs that auto-merge when green.
 
 Its work sources are the `agent-ready` issues the
-[prompt-audit sweep](prompt-audit-sweep.md), the agent changelog routine and
-the [memory curation routine](memory-curation.md) file. A memory-promotion
+[prompt-audit sweep](prompt-audit-sweep.md), the agent changelog routine,
+the [memory curation routine](memory-curation.md) and the daily
+scheduled-run health audit file. The audit is the fleet's one detector for
+failing workflow runs: scheduled runs, plus push, dispatch and other runs on
+the default branch. It labels its `ci` tracking issue `agent-ready`, so a
+failure the audit finds reaches a fix PR within the hour. A memory-promotion
 issue (`Memory promotion <date>: ...`) proposes facts from agent memory for
 the repo's own files. When its target is the repo-specific half of an
 `AGENTS.md`, a `CLAUDE.md`, a `SKILL.md` body or the fleet guidance, its fix

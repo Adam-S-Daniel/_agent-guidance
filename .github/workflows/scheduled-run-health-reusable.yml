@@ -47,6 +47,12 @@ on:
       issue_label:  { type: string, default: "ci" }
       dry_run:      { type: boolean, default: false }
       push_scan:    { type: boolean, default: true }
+      # Failing workflow_dispatch / workflow_run / repository_dispatch /
+      # dynamic runs on the default branch, as on the platform.
+      other_scan:   { type: boolean, default: true }
+      # The label that queues the tracking issue for the fleet worker
+      # (docs/routines/fleet-worker.md). Empty turns that off.
+      work_label:   { type: string, default: "agent-ready" }
       stale_days:   { type: string, default: "14" }
       stale_scan:   { type: boolean, default: true }
       # The currency lane, as on the platform: red when the release pinned in
@@ -142,6 +148,8 @@ jobs:
           AUDIT_LABEL: ${{ inputs.issue_label }}
           AUDIT_DRY_RUN: ${{ inputs.dry_run }}
           AUDIT_PUSH_SCAN: ${{ inputs.push_scan }}
+          AUDIT_OTHER_SCAN: ${{ inputs.other_scan }}
+          AUDIT_WORK_LABEL: ${{ inputs.work_label }}
           AUDIT_STALE_DAYS: ${{ inputs.stale_days }}
           AUDIT_STALE_SCAN: ${{ inputs.stale_scan }}
         run: |
@@ -150,6 +158,8 @@ jobs:
           args=(--repo "$AUDIT_REPO" --window-hours "$AUDIT_WINDOW_HOURS" --label "$AUDIT_LABEL")
           if [[ "$AUDIT_DRY_RUN" == "true" ]]; then args+=(--dry-run); fi
           if [[ "$AUDIT_PUSH_SCAN" != "true" ]]; then args+=(--no-push-scan); fi
+          if [[ "$AUDIT_OTHER_SCAN" != "true" ]]; then args+=(--no-other-scan); fi
+          if [[ -n "$AUDIT_WORK_LABEL" ]]; then args+=(--work-label "$AUDIT_WORK_LABEL"); fi
           args+=(--stale-days "$AUDIT_STALE_DAYS")
           if [[ "$AUDIT_STALE_SCAN" != "true" ]]; then args+=(--no-stale-scan); fi
           node .cms-platform/scripts/audit-scheduled-runs.js "${args[@]}"
