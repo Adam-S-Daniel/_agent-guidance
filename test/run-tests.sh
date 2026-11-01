@@ -13668,10 +13668,10 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "13" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 13 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "14" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 14 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=13, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=14, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -19560,6 +19560,38 @@ test_routine_merge_gate() {
 }
 
 
+test_eval_protected() {
+    echo ""
+    echo "=== Test: eval-protected.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the merge gate: the script parses base.md
+    # with markdown-it and the coverage file with yaml, so a missing
+    # node_modules must fail loudly. CI installs it with `npm ci`.
+    local dep
+    for dep in markdown-it yaml; do
+        if [[ ! -d "$REPO_ROOT/node_modules/$dep" ]]; then
+            fail "eval protected: node_modules/$dep is missing — run \`npm ci\` first"
+            return
+        fi
+    done
+
+    local out="$TEST_DIR/eval-protected-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-eval-protected.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 59 is the suite's actual count, so a test deleted without updating this
+    # number fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 59 ]]; then
+        pass "eval protected: node:test suite is green ($pass_n passed)"
+    else
+        fail "eval protected: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=59): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_fleet_guidance_mirror() {
     echo ""
     echo "=== Test: check-fleet-guidance-mirror.js (payload mirror + evidence pointers) ==="
@@ -24617,6 +24649,7 @@ GROUP_self_hosted=(
     test_discrepancy_alert
     test_health_reusable_parity
     test_routine_merge_gate
+    test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown
     test_check_ci_shards

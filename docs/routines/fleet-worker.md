@@ -164,6 +164,24 @@ each read fresh:
 6. The PR carries a comment from `Adam-S-Daniel` whose first line is
    exactly `Independent review: CLEAN at <the full head sha>`, written by
    step 2a of this pass. A push after the stamp makes it stale.
+7. **The eval-protection gate exits 0**
+   ([ADR 0033](../decisions/0033-audits-leave-eval-protected-subjects-alone-except-for-correctness.md)).
+   Fetch `explorer/latest.json` fresh from `Adam-S-Daniel/skills-evals`
+   branch `persistent/eval-results`, save the PR (`GET /pulls/<n>`) and its
+   file list (`GET /pulls/<n>/files?per_page=100`), and, when
+   `agents-md/base.md` changed, the head version of that file. In the
+   `_agent-guidance` checkout run
+   `node scripts/eval-protected.js pr --explorer <file> --repo <owner>/<repo> --files <files.json> --body <pr.json> [--base-md <head base.md>]`.
+   It finds every skill or guidance section the PR edits whose verdict is
+   `keep` or that has eval runs on its current text, and refuses unless the
+   body carries `Correctness fix: <subject> — <class>: <one line>` for each,
+   with a class of `wrong-command`, `broken-path`, `contradiction` or
+   `safety-gap`. Any edit resets that subject's evidence, so a kept subject
+   changes only to fix something wrong; wording waits for an eval-backed
+   improve run (skills-evals' improve lane, which this rule does not touch)
+   or for a verdict that stops protecting it. Exit 2 is a refusal (step 2c).
+   Exit 1 (unreadable explorer or bad input) is no decision: do not merge,
+   leave the PR as it is, and retry next run; it is not news to the owner.
 
 **2a. The independent review.** For a PR meeting items 1 to 3 that has no
 review comment for its current head, start one subagent with a fresh prompt.
@@ -180,7 +198,11 @@ file, and `CLEAN` also requires that the added text holds no personal data
 environment, session or thread id) and repeats nothing the file already
 says. In a `SKILL.md`, `CLEAN` also requires that the frontmatter is
 untouched and that no hunk adds a command, script, tool use or step that runs
-code beyond what its finding asked for. A line removed from a
+code beyond what its finding asked for. For each `Correctness fix:` line in
+the body, `CLEAN` also requires that the finding really is of the class it
+names (a command that fails, a path that does not resolve, two texts that
+say opposite things, or a safety gap), and that every hunk in that subject
+fixes it and nothing else: no rewording along the way. A line removed from a
 `.freshness-allow.yml` is `CLEAN` only when the text it allowed is removed
 in the same diff. In the fleet guidance, which every session in every
 fleet repo loads, `CLEAN` also requires that no rule is weakened or dropped
@@ -200,7 +222,7 @@ findings. At most 5 reviews per run. If the subagent cannot run or gives
 no verdict, post nothing: the PR has no stamp, so it is never merged, and it
 goes to the owner under step 3.
 
-**2b. The merge.** For a PR meeting all six items, merge it with
+**2b. The merge.** For a PR meeting all seven items, merge it with
 `expected_head_sha` set to the reviewed head: a merge commit, except in the
 three cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
 `jodidaniel.com`), which squash. Then comment `Merged by the fleet worker:
@@ -213,6 +235,26 @@ and listed under "Needs you".
 
 A `FINDINGS` review is not fixed by this routine. The PR goes to the owner
 under "Needs you".
+
+**2c. Park an edit to an eval-protected subject.** When the gate in item 7
+exits 2, the PR does not go to the owner: the owner's standing rule is a
+closed loop that puts as few decisions to him as possible. Instead, unless
+the PR or the issue carries `on-hold`:
+
+- comment on the PR `Parked by the fleet worker: it edits <subjects>, which
+  eval evidence currently supports, without a correctness fix (ADR 0033).
+  Any edit restarts that evidence. A wording change waits for an eval-backed
+  improve run or for a verdict that stops protecting the subject.`, and
+  close the PR without merging. Delete nothing; the branch stays.
+- comment on the issue which findings were held. If no finding of the issue
+  is left to fix, close the issue as not planned. Otherwise swap
+  `agent-working` for `agent-ready`, so a later issue pass takes the rest
+  and skips the held ones (**The issue pass**, below).
+- list the PR in the summary under "Parked (eval-protected)". It is not
+  news and gets no `needs-owner` label.
+
+The held findings are not lost: the sweep re-reads every file each run, so
+it raises them again once the subject is no longer protected.
 
 ### 3. Tell the owner which PRs need him
 
@@ -227,6 +269,8 @@ A PR **needs the owner** when any of these holds:
   in merge rule item 4, `mergeable_state` `clean`, and the merge rule does not
   allow this routine to merge it, or a review answered `FINDINGS`. A
   lesson-check PR with auto-merge armed is not one: it merges itself. Nor is
+  a PR held only by merge rule item 7: one it refused is parked (step 2c),
+  and one it could not decide is retried next run. Nor is
   a Decap CMS post that is still a draft or in review (a `decap-cms/draft`
   or `decap-cms/pending_review` label): merging one publishes it, and the
   owner moves it to `decap-cms/pending_publish` in the CMS when it is
@@ -253,6 +297,17 @@ Follow [`agent-issue-worker.md`](../reference/agent-issue-worker.md), "Each
 run", with the cloud notes in its "Where it runs" section. Skip an issue
 titled `Memory promotion <YYYY-MM-DD>: <n> agent-checks`: the lesson-check
 pass takes it.
+
+Before fixing a sweep or memory-promotion issue, run
+`node scripts/eval-protected.js list` on a fresh `explorer/latest.json`
+(merge rule item 7). Fix a finding on a listed subject only when the issue
+tags it with a correctness class (`wrong-command`, `broken-path`,
+`contradiction` or `safety-gap`) and it holds up when checked; put its
+`Correctness fix:` line in the PR body. Hold every other finding on a listed
+subject: name it as held (eval-protected) in the issue comment and leave it
+out of the PR. If the explorer cannot be read, hold every finding on a skill
+or guidance section this run. An issue whose findings are all held is
+closed as not planned, with that comment.
 
 ## The lesson-check pass
 
@@ -339,5 +394,7 @@ The run's final message has, in this order:
 1. `Needs you:` and its list, only when something is news (above).
 2. One line each for: PRs brought up to date, reviews posted (with their
    verdicts), PRs merged, issues taken and their PRs, issues blocked and
-   why, lessons handled and their verdicts or PRs, stale claims, conflicts, `NOT REACHED` repos, and `on hold` items.
+   why, lessons handled and their verdicts or PRs, PRs parked
+   (eval-protected), stale claims, conflicts, `NOT REACHED` repos, and
+   `on hold` items.
 3. If nothing happened at all: `Nothing to do.` and nothing else.
