@@ -251,6 +251,17 @@ skills_bootstrap:
         Machine-written feed repo (one JSON file, committed by a scheduled
         script); no session happens there to spend the context.
 
+    # A single-procedure routine repo: the daily security alert triage routine
+    # pulls it and follows TRIAGE.md on main (dismiss via dismiss.yml, open
+    # plain bump PRs, record triage/triage.json on persistent/alerts-data).
+    # Its sessions are real, unlike the dormant entries above, but none of the
+    # bundled skills serve that procedure. Owner's decision, 2026-11-01
+    # (_agent-guidance#353).
+    - repo: security-alerts
+      reason: >-
+        Only the daily triage routine works here, and it follows TRIAGE.md;
+        the bundled skills would cost always-on context it does not use.
+
   # Forks and archived repos are NOT listed above: discovery never reaches
   # them (`gh repo list --source --no-archived`), so their absence from
   # delivery is not a choice this key can express. See the header of
