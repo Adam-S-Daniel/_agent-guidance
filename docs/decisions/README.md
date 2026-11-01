@@ -48,6 +48,7 @@ a page.
 | [0030](0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md) | A section's worth is measured by ablation and weighed against its bytes, and retirement is automatic (see also 0002) |
 | [0031](0031-guidance-eval-fixtures-are-unprompted.md) | Guidance eval fixtures are unprompted (see also 0002) |
 | [0032](0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md) | Guidance evals deliver through user memory and prove it per arm |
+| [0033](0033-audits-leave-eval-protected-subjects-alone-except-for-correctness.md) | Audits leave eval-protected subjects alone except for correctness fixes |
 
 ## Format
 
