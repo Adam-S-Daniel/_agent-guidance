@@ -66,10 +66,14 @@
 # A developer's own global instructions are theirs; everything outside the
 # markers is preserved. Normal mode orders deliveries by the payload's last
 # commit time (or its mtime when dirty) so an older checkout cannot replace a
-# newer version. The `fleet-guidance-delivered` marker records that integer
-# epoch beside the version in normal-mode blocks. A tie favors this checkout;
-# the same hash only refreshes an older stamp. Replacements are atomic and
-# follow destination symlinks.
+# newer version. A caller whose payload has no checkout (for example a plugin
+# hook that fetched base.md from GitHub) passes that file's commit time as
+# FLEET_GUIDANCE_PAYLOAD_STAMP (decimal epoch seconds) beside
+# FLEET_GUIDANCE_PAYLOAD; a non-decimal value is ignored, and so is the stamp
+# when --workspace picked another payload. The `fleet-guidance-delivered`
+# marker records that integer epoch beside the version in normal-mode blocks.
+# A tie favors this checkout; the same hash only refreshes an older stamp.
+# Replacements are atomic and follow destination symlinks.
 #
 # CODEX CLOUD MODE
 # ----------------
@@ -441,6 +445,8 @@ normalize_stamp() {
         NORMAL_STAMP="${NORMAL_STAMP:1}"
     done
 }
+# A payload with no checkout stamps zero here; the caller can supply the real
+# commit time as FLEET_GUIDANCE_PAYLOAD_STAMP (see the normal-path use below).
 payload_stamp() {
     local source="$1" source_dir source_name git_worktree status stamp=0
     source_dir="$(dirname "$source")"
@@ -946,8 +952,19 @@ emit_payload() {
 }
 
 # See docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md.
-payload_stamp "$PAYLOAD"
-delivered="$PAYLOAD_STAMP"
+# A caller whose payload has no checkout supplies its commit time. The stamp
+# describes the caller's file, so it applies only when that file is the payload
+# in use (--workspace did not pick a child) and only when it is all ASCII digits.
+caller_stamp="${FLEET_GUIDANCE_PAYLOAD_STAMP:-}"
+case "$caller_stamp" in ""|*[!0-9]*) caller_stamp="" ;; esac
+if [ -n "$caller_stamp" ] && [ -n "${FLEET_GUIDANCE_PAYLOAD:-}" ] &&
+    [ "$PAYLOAD" = "$FLEET_GUIDANCE_PAYLOAD" ]; then
+    normalize_stamp "$caller_stamp"
+    delivered="$NORMAL_STAMP"
+else
+    payload_stamp "$PAYLOAD"
+    delivered="$PAYLOAD_STAMP"
+fi
 
 # Read metadata from inside the managed block only. A developer's own prose
 # may mention either marker text without being delivery metadata.

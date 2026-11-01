@@ -49,7 +49,10 @@ with the hook, though: a checkout last pulled before this change carries the
 old hook along with its old payload, so it still downgrades both blocks until
 it is pulled once. A dirty payload can win by mtime until a later commit has a
 greater stamp. Without Git, or outside a Git work tree, the stamp is zero and
-cannot displace a different version with a positive stamp.
+cannot displace a different version with a positive stamp. A caller that holds
+a payload outside any checkout can supply the payload's commit time as
+`FLEET_GUIDANCE_PAYLOAD_STAMP` beside `FLEET_GUIDANCE_PAYLOAD`; a non-decimal
+value, or one given with `--workspace` picking a different payload, is ignored.
 Commit times and file mtimes assume reasonably ordered clocks, so the stamp is
 a practical freshness signal rather than proof of causal order. There is no
 cross-process lock: simultaneous hooks can still race, and the last atomic

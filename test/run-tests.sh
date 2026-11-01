@@ -21714,6 +21714,149 @@ test_fleet_memory_freshness() {
     fi
 }
 
+# A caller that holds the payload outside any checkout (a plugin hook that
+# fetched base.md from GitHub) passes the file's commit time as
+# FLEET_GUIDANCE_PAYLOAD_STAMP. Without it that copy stamps zero and can never
+# replace an older checkout's block (docs/decisions/0016).
+test_fleet_memory_payload_stamp() {
+    echo ""
+    echo "TEST: fleet-memory.sh (caller-supplied payload stamp)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-payload-stamp" cfg="$TEST_DIR/fleetmem-payload-stamp/cfg"
+    local out rc repo bad n
+    mkdir -p "$d" "$cfg"
+    # Normal mode, Claude destination only (CODEX_HOME does not exist). Extra
+    # arguments are NAME=VALUE assignments for the run, so a case can set the
+    # stamp to nothing, to junk, or leave it unset.
+    run_payload_stamp() {
+        local run_cfg="$1" run_payload="$2"
+        shift 2
+        env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+            CLAUDE_CONFIG_DIR="$run_cfg" CODEX_HOME="$d/no-codex" \
+            FLEET_GUIDANCE_PAYLOAD="$run_payload" "$@" bash "$hook"
+    }
+
+    # (a) A payload outside any work tree takes the caller's stamp.
+    printf 'STAMP PAYLOAD ONE\n' > "$d/one.md"
+    out="$(run_payload_stamp "$cfg" "$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000300)"; rc=$?
+    [[ $rc -eq 0 ]] && pass 'fleet payload stamp: outside-git payload with a stamp exits 0' \
+        || fail "fleet payload stamp: outside-git payload with a stamp exited $rc"
+    [[ "$out" == "fleet-guidance: installed"* ]] \
+        && pass 'fleet payload stamp: outside-git payload with a stamp reports installed' \
+        || fail "fleet payload stamp: outside-git payload with a stamp did not report installed — got '$out'"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000300' \
+        'fleet payload stamp: caller stamp is recorded for an outside-git payload'
+    assert_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD ONE' \
+        'fleet payload stamp: outside-git payload text is delivered'
+
+    # (b) A different payload with a lower caller stamp cannot replace it.
+    printf 'STAMP PAYLOAD TWO\n' > "$d/two.md"
+    cp "$cfg/CLAUDE.md" "$d/b.before"
+    out="$(run_payload_stamp "$cfg" "$d/two.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000200)"
+    cmp -s "$d/b.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet payload stamp: lower caller stamp leaves bytes unchanged' \
+        || fail 'fleet payload stamp: lower caller stamp changed the destination'
+    [[ "$out" == *"kept newer"* ]] \
+        && pass 'fleet payload stamp: lower caller stamp reports kept newer' \
+        || fail "fleet payload stamp: lower caller stamp did not report kept newer — got '$out'"
+
+    # (c) A different payload with a higher caller stamp replaces it.
+    printf 'STAMP PAYLOAD THREE\n' > "$d/three.md"
+    out="$(run_payload_stamp "$cfg" "$d/three.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000400)"
+    assert_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD THREE' \
+        'fleet payload stamp: higher caller stamp installs the new payload'
+    assert_not_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD ONE' \
+        'fleet payload stamp: higher caller stamp removes the old payload'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000400' \
+        'fleet payload stamp: higher caller stamp is recorded'
+
+    # (d) The same payload with a later stamp only advances the ordering key.
+    out="$(run_payload_stamp "$cfg" "$d/three.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000450)"
+    [[ "$out" == "fleet-guidance: current"* ]] \
+        && pass 'fleet payload stamp: same payload with a later stamp reports current' \
+        || fail "fleet payload stamp: same payload with a later stamp did not report current — got '$out'"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000450' \
+        'fleet payload stamp: same payload with a later stamp advances the key'
+    assert_not_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000400' \
+        'fleet payload stamp: the superseded stamp line is gone'
+    assert_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD THREE' \
+        'fleet payload stamp: same payload with a later stamp keeps the payload text'
+
+    # (e) A stamp that is not all ASCII digits is ignored: the payload's own
+    # commit time is recorded instead.
+    repo="$d/e-repo"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    git -C "$repo" config commit.gpgsign false
+    printf 'STAMP PAYLOAD COMMITTED\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000500 +0000' GIT_COMMITTER_DATE='@1700000500 +0000' \
+        git -C "$repo" commit -qm 'committed fixture'
+    n=0
+    for bad in abc -5 ''; do
+        n=$((n + 1))
+        mkdir -p "$d/e-cfg-$n"
+        out="$(run_payload_stamp "$d/e-cfg-$n" "$repo/payload.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$bad")"
+        assert_contains "$d/e-cfg-$n/CLAUDE.md" 'fleet-guidance-delivered: 1700000500' \
+            "fleet payload stamp: stamp '$bad' is ignored and the commit time is recorded"
+    done
+
+    # (f) A stamp without FLEET_GUIDANCE_PAYLOAD is ignored. The hook copy and
+    # its payload sit beside each other in a work tree, as in a checkout.
+    repo="$d/f-repo"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    git -C "$repo" config commit.gpgsign false
+    cp "$hook" "$repo/fleet-memory.sh"
+    printf 'STAMP PAYLOAD BESIDE HOOK\n' > "$repo/fleet-guidance.md"
+    git -C "$repo" add fleet-memory.sh fleet-guidance.md
+    GIT_AUTHOR_DATE='@1700000600 +0000' GIT_COMMITTER_DATE='@1700000600 +0000' \
+        git -C "$repo" commit -qm 'beside-hook fixture'
+    mkdir -p "$d/f-cfg"
+    out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD \
+        CLAUDE_CONFIG_DIR="$d/f-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD_STAMP=1700000999 bash "$repo/fleet-memory.sh")"
+    assert_contains "$d/f-cfg/CLAUDE.md" 'STAMP PAYLOAD BESIDE HOOK' \
+        'fleet payload stamp: the payload beside the hook is delivered without FLEET_GUIDANCE_PAYLOAD'
+    assert_contains "$d/f-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000600' \
+        'fleet payload stamp: stamp without FLEET_GUIDANCE_PAYLOAD is ignored'
+    assert_not_contains "$d/f-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000999' \
+        'fleet payload stamp: stamp without FLEET_GUIDANCE_PAYLOAD is not recorded'
+
+    # (g) When --workspace replaces the payload, the stamp described the
+    # caller's file, not the child's, and is ignored.
+    mkdir -p "$d/g-ws/child/.claude/hooks" "$d/g-cfg"
+    repo="$d/g-ws/child"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    git -C "$repo" config commit.gpgsign false
+    printf 'STAMP PAYLOAD WORKSPACE CHILD\n' > "$repo/.claude/hooks/fleet-guidance.md"
+    git -C "$repo" add .claude/hooks/fleet-guidance.md
+    GIT_AUTHOR_DATE='@1700000700 +0000' GIT_COMMITTER_DATE='@1700000700 +0000' \
+        git -C "$repo" commit -qm 'workspace child fixture'
+    printf 'STAMP PAYLOAD CALLER FILE\n' > "$d/g-other.md"
+    out="$(env -u FLEET_GUIDANCE_SKIP \
+        CLAUDE_CONFIG_DIR="$d/g-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/g-other.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000999 \
+        bash "$hook" --workspace "$d/g-ws")"
+    assert_contains "$d/g-cfg/CLAUDE.md" 'STAMP PAYLOAD WORKSPACE CHILD' \
+        'fleet payload stamp: --workspace delivers the child payload'
+    assert_not_contains "$d/g-cfg/CLAUDE.md" 'STAMP PAYLOAD CALLER FILE' \
+        'fleet payload stamp: --workspace does not deliver the caller payload'
+    assert_contains "$d/g-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000700' \
+        'fleet payload stamp: --workspace ignores the caller stamp'
+
+    # (h) Leading zeros normalize, so the key never reads as octal or as a
+    # longer number than it is.
+    mkdir -p "$d/h-cfg"
+    out="$(run_payload_stamp "$d/h-cfg" "$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=0001700000800)"
+    assert_contains "$d/h-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000800' \
+        'fleet payload stamp: leading zeros are stripped from the caller stamp'
+}
+
 # Codex's generated records are audited after generation; all memory, sidecar,
 # and CLI configuration paths in this group are synthetic and isolated.
 # The memory curation audit (docs/decisions/0026). Its unittest module owns
@@ -24674,6 +24817,7 @@ GROUP_codex=(
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness
+    test_fleet_memory_payload_stamp
     test_fleet_memory_repo_header
     test_fleet_memory_workspace
 )
