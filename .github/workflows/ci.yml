@@ -185,6 +185,11 @@ jobs:
   # to have to sit ahead of it.
   checks:
     runs-on: ubuntu-latest
+    # pull-requests: read for the eval-protection step, which reads the PR's
+    # body and file list fresh from the API so a re-run sees an edited body.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       # fetch-depth: 0 (full history), not a targeted fetch of just the PR's
       # base sha: scripts/check-guidance-touch.js (the "Guidance touch gate"
@@ -309,6 +314,34 @@ jobs:
       - name: Guidance touch gate
         if: github.event_name == 'pull_request'
         run: node scripts/check-guidance-touch.js
+
+      # ADR 0034: an edit to a guidance section that eval evidence currently
+      # supports (verdict keep, or runs on its current text) passes only as a
+      # marked correctness fix, because any edit restarts that evidence. The
+      # PR body and file list are read from the API, not the event, so a
+      # re-run after a body edit sees the new body. The explorer fetch may
+      # fail: the gate reads it only when a section is touched, and then an
+      # unreadable explorer fails closed (exit 1); re-run the check.
+      - name: Eval-protected sections take correctness fixes only
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/eval-protected"
+          mkdir -p "$d"
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          head="$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$n/files?per_page=100" \
+            | jq 'add // []' > "$d/files.json"
+          git show "$head:agents-md/base.md" > "$d/base.md"
+          curl -fsSL --retry 3 -o "$d/explorer.json" \
+            https://raw.githubusercontent.com/Adam-S-Daniel/skills-evals/persistent/eval-results/explorer/latest.json \
+            || rm -f "$d/explorer.json"
+          node scripts/eval-protected.js ci --repo "$GITHUB_REPOSITORY" \
+            --pr-json "$d/pr.json" --files "$d/files.json" --base-md "$d/base.md" \
+            --explorer "$d/explorer.json"
 
       # This repo is excluded from its own sync (SYNC_SELF_REPO), so nothing
       # ever wrote an AGENTS.md here — it was the one repo in the fleet whose

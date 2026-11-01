@@ -29,14 +29,23 @@
  *     Prints {"skills":[{name,registry,verdict,current_text_runs}],
  *     "sections":[{id,heading,verdict,current_text_runs}]}: protected subjects
  *     only, sorted. Exit 0.
- *   pr --explorer <latest.json> --repo <owner/name> --files <files.json> \
- *      --body <pr.json> [--base-md <path>] [--coverage <path>]
+ *   pr (--explorer <latest.json> | --no-evidence) --repo <owner/name> \
+ *      --files <files.json> --body <pr.json> [--base-md <path>] \
+ *      [--coverage <path>] [--head-ref <ref>] [--author-type <type>]
  *     files.json  GET /repos/{o}/{r}/pulls/{n}/files?per_page=100 (array)
- *     pr.json     GET /repos/{o}/{r}/pulls/{n} (only .body is read)
- *     Maps changed files to subjects:
- *       Adam-S-Daniel/adam-agentskills: plugins/<bundle>/skills/<name>/** is
- *         skill <name> (any file in the directory moves its digest), matched
- *         against explorer skills whose registry is adam-agentskills.
+ *     pr.json     GET /repos/{o}/{r}/pulls/{n} (.body, .head.ref, .user.type)
+ *     --no-evidence treats the explorer as empty (nothing protected), for a
+ *     repo with no eval results yet; it excludes --explorer. The explorer is
+ *     read only when a changed file maps to a subject path: a PR that touches
+ *     none exits 0 without reading it, so --explorer may then be omitted or
+ *     name a missing file. When a subject path is touched, a missing or
+ *     unreadable explorer is exit 1 (fail closed).
+ *     Maps changed files to subjects (REPOS table):
+ *       Adam-S-Daniel/adam-agentskills and Adam-S-Daniel/adam-agentskills-private:
+ *         plugins/<bundle>/skills/<name>/** is skill <name> (any file in the
+ *         directory moves its digest), matched against explorer skills whose
+ *         registry is the repo's own (adam-agentskills or
+ *         adam-agentskills-private).
  *       Adam-S-Daniel/_agent-guidance: agents-md/sections/<x>.md is the
  *         coverage row whose `file` is that path; agents-md/base.md is mapped
  *         by hunk: every added line, and every removed line (at its new-side
@@ -55,7 +64,23 @@
  *     section id; <class> is wrong-command, broken-path, contradiction or
  *     safety-gap).
  *     Prints {"merge", "touched", "protected", "unmarked", "unmapped",
- *     "reasons"}. Every reason is collected, not just the first.
+ *     "reasons"} (plus "exempt" when exempt). Every reason is collected, not
+ *     just the first.
+ *     Eval-lane exemption: skills-evals' eval-backed improve (eval-improve/,
+ *     eval-guidance-improve/), retirement (retire-skill/, retire-guidance/)
+ *     and new-skill (draft-skill/) PRs are opened by a GitHub App, and evals,
+ *     not this audit, judge their changes. A PR whose head ref (--head-ref, or
+ *     pr.json .head.ref) starts with one of those prefixes AND whose author
+ *     type (--author-type, or pr.json .user.type) is exactly "Bot" is exempt:
+ *     merge is true, "exempt" names the prefix, and the other fields are still
+ *     computed for the record. Anyone can name a branch, so the same prefix
+ *     from a "User" is not exempt.
+ *   ci --repo <owner/name> --pr-json <pr.json> --files <files.json> \
+ *      (--explorer <file> | --no-evidence) [--base-md <path>] [--coverage <path>]
+ *     The `pr` decision for GitHub Actions. On refusal (exit 2) it also writes
+ *     one `::error title=eval-protected::<reason>` annotation per reason to
+ *     stderr, plus one line saying how to fix it. Reasons hold only subject
+ *     names and section ids, never file contents. JSON still goes to stdout.
  *
  * Exit codes: 0 allowed (or list ok), 2 refused, 1 bad input or usage (message
  * to stderr; file contents are never echoed). An unreadable or malformed
@@ -68,9 +93,16 @@ const YAML = require("yaml");
 
 const parser = new MarkdownIt();
 
-const SKILLS_REPO = "Adam-S-Daniel/adam-agentskills";
-const GUIDANCE_REPO = "Adam-S-Daniel/_agent-guidance";
-const SKILLS_REGISTRY = "adam-agentskills";
+// repo -> how its paths map to subjects. `skills`: plugins/<bundle>/skills/<name>
+// is skill <name> in explorer registry `registry`; `guidance`: base.md and
+// sections/*.md. Any repo not listed maps to nothing.
+const REPOS = {
+  "Adam-S-Daniel/adam-agentskills": { kind: "skills", registry: "adam-agentskills" },
+  "Adam-S-Daniel/adam-agentskills-private": { kind: "skills", registry: "adam-agentskills-private" },
+  "Adam-S-Daniel/_agent-guidance": { kind: "guidance" },
+};
+const LANE_PREFIXES = ["eval-improve/", "eval-guidance-improve/", "retire-skill/", "retire-guidance/", "draft-skill/"];
+const EMPTY_EXPLORER = { skills: [], guidance: { sections: [] } };
 const BASE_MD = "agents-md/base.md";
 const DEFAULT_COVERAGE = path.join(__dirname, "..", "agents-md", "eval-coverage.yml");
 const SKILL_PATH = /^plugins\/[^/]+\/skills\/([^/]+)\/.+$/;
@@ -221,9 +253,19 @@ function markerSubjects(body) {
   return out;
 }
 
-// decidePr({explorer, repo, files, body, baseMd, coverage}) — the `pr` result.
-function decidePr({ explorer, repo, files, body, baseMd, coverage }) {
-  validateExplorer(explorer);
+// laneExemption(headRef, authorType) — the matching lane prefix, or undefined.
+function laneExemption(headRef, authorType) {
+  if (authorType !== "Bot" || typeof headRef !== "string") return undefined;
+  return LANE_PREFIXES.find((p) => headRef.startsWith(p));
+}
+
+// decidePr({explorer, repo, files, body, baseMd, coverage, headRef, authorType})
+// — the `pr` result. `explorer` is an object, or a function returning one that
+// is called only when a subject path is touched.
+function decidePr({ explorer, repo, files, body, baseMd, coverage, headRef, authorType }) {
+  if (typeof explorer !== "function") validateExplorer(explorer);
+  const repoInfo = Object.hasOwn(REPOS, repo) ? REPOS[repo] : undefined;
+  let subjectPath = false;
   need(typeof repo === "string" && repo !== "", "repo missing");
   need(Array.isArray(files), "files must be a JSON array");
   const rows = coverage || [];
@@ -241,13 +283,15 @@ function decidePr({ explorer, repo, files, body, baseMd, coverage }) {
     const hasPatch = typeof f.patch === "string" && f.patch !== "";
 
     for (const name of names) {
-      if (repo === SKILLS_REPO) {
+      if (repoInfo && repoInfo.kind === "skills") {
         const m = SKILL_PATH.exec(name);
         if (!m) continue;
+        subjectPath = true;
         touched.add(`skill:${m[1]}`);
         if (name === f.filename && !hasPatch) noPatch(name);
-      } else if (repo === GUIDANCE_REPO) {
+      } else if (repoInfo && repoInfo.kind === "guidance") {
         if (name === BASE_MD) {
+          subjectPath = true;
           if (name === f.filename && !hasPatch) {
             noPatch(name);
             continue;
@@ -260,6 +304,7 @@ function decidePr({ explorer, repo, files, body, baseMd, coverage }) {
             else unmapped.add(text);
           }
         } else if (/^agents-md\/sections\/[^/]+\.md$/.test(name)) {
+          subjectPath = true;
           const row = rows.find((r) => r.file === name);
           if (row) touched.add(`section:${row.id}`);
           else unmapped.add(name);
@@ -269,8 +314,16 @@ function decidePr({ explorer, repo, files, body, baseMd, coverage }) {
     }
   }
 
+  if (!subjectPath) {
+    return { merge: true, touched: [], protected: [], unmarked: [], unmapped: [], reasons: [] };
+  }
+  if (typeof explorer === "function") {
+    explorer = explorer();
+    validateExplorer(explorer);
+  }
+  const registry = repoInfo.kind === "skills" ? repoInfo.registry : undefined;
   const skillIndex = new Map(
-    explorer.skills.filter((s) => s.registry === SKILLS_REGISTRY).map((s) => [s.name, s]),
+    explorer.skills.filter((s) => s.registry === registry).map((s) => [s.name, s]),
   );
   const sectionIndex = new Map(explorer.guidance.sections.map((s) => [s.id, s]));
   const marked = markerSubjects(body);
@@ -294,14 +347,17 @@ function decidePr({ explorer, repo, files, body, baseMd, coverage }) {
     reasons.push(`changed text maps to "${u}", which has no coverage row: protection unknown, refusing`);
   }
 
-  return {
-    merge: reasons.length === 0,
+  const exempt = laneExemption(headRef, authorType);
+  const result = {
+    merge: exempt !== undefined || reasons.length === 0,
     touched: [...touched].sort().map((k) => k.slice(k.indexOf(":") + 1)),
     protected: prot,
     unmarked,
     unmapped: unmappedList,
     reasons,
   };
+  if (exempt !== undefined) result.exempt = exempt;
+  return result;
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────
@@ -311,27 +367,52 @@ const FLAGS = {
   "--repo": "repo",
   "--files": "files",
   "--body": "body",
+  "--pr-json": "prJson",
   "--base-md": "baseMd",
   "--coverage": "coverage",
+  "--head-ref": "headRef",
+  "--author-type": "authorType",
 };
+const BOOLEAN_FLAGS = { "--no-evidence": "noEvidence" };
+const flagName = (key) => "--" + key.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+
+const USAGE = [
+  "usage:",
+  "  eval-protected.js list --explorer <latest.json>",
+  "  eval-protected.js pr (--explorer <latest.json> | --no-evidence) --repo <owner/name> --files <files.json> --body <pr.json>",
+  "      [--base-md <path>] [--coverage <path>] [--head-ref <ref>] [--author-type <type>]",
+  "  eval-protected.js ci (--explorer <latest.json> | --no-evidence) --repo <owner/name> --files <files.json> --pr-json <pr.json>",
+  "      [--base-md <path>] [--coverage <path>]",
+].join("\n");
 
 function parseArgs(argv) {
   const cmd = argv[0];
-  need(cmd === "list" || cmd === "pr", "usage: eval-protected.js list|pr [flags]");
+  need(cmd === "list" || cmd === "pr" || cmd === "ci", USAGE);
   const out = { cmd };
   const rest = argv.slice(1);
-  for (let i = 0; i < rest.length; i += 2) {
+  for (let i = 0; i < rest.length; i++) {
+    const bool = BOOLEAN_FLAGS[rest[i]];
+    if (bool) {
+      need(out[bool] === undefined, `${rest[i]} given twice`);
+      out[bool] = true;
+      continue;
+    }
     const key = FLAGS[rest[i]];
     need(key, `unknown argument ${rest[i]}`);
     need(i + 1 < rest.length && !rest[i + 1].startsWith("--"), `${rest[i]} needs a value`);
     need(out[key] === undefined, `${rest[i]} given twice`);
-    out[key] = rest[i + 1];
+    out[key] = rest[++i];
   }
-  const required = cmd === "list" ? ["explorer"] : ["explorer", "repo", "files", "body"];
-  for (const req of required) need(out[req] !== undefined, `missing --${req.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())}`);
-  if (cmd === "list") {
-    for (const k of Object.keys(out)) need(k === "cmd" || k === "explorer", `--${k} does not apply to list`);
-  }
+  const allowed = {
+    list: ["explorer"],
+    pr: ["explorer", "noEvidence", "repo", "files", "body", "baseMd", "coverage", "headRef", "authorType"],
+    ci: ["explorer", "noEvidence", "repo", "files", "prJson", "baseMd", "coverage"],
+  }[cmd];
+  for (const k of Object.keys(out)) need(k === "cmd" || allowed.includes(k), `${flagName(k)} does not apply to ${cmd}`);
+  const required = { list: ["explorer"], pr: ["repo", "files", "body"], ci: ["repo", "files", "prJson"] }[cmd];
+  for (const req of required) need(out[req] !== undefined, `missing ${flagName(req)}`);
+  need(!(out.explorer !== undefined && out.noEvidence), "--explorer and --no-evidence are mutually exclusive");
+  if (out.prJson !== undefined) out.body = out.prJson;
   return out;
 }
 
@@ -352,25 +433,41 @@ function readJson(flag, file) {
   }
 }
 
+function annotations(result) {
+  const lines = result.reasons.map((r) => `::error title=eval-protected::${r.replace(/[\r\n]+/g, " ")}`);
+  lines.push(
+    "eval-protected: for a real error, add a PR body line `Correctness fix: <subject> — <class>: <what was wrong>` " +
+      `(class: ${CLASSES.join(", ")}) and re-run this check; wording changes to a protected subject go through skills-evals' eval-backed improve lane instead.`,
+  );
+  return lines.join("\n") + "\n";
+}
+
 function main(argv) {
   try {
     const args = parseArgs(argv);
-    const explorer = readJson("--explorer", args.explorer);
     if (args.cmd === "list") {
-      process.stdout.write(JSON.stringify(listProtected(explorer)) + "\n");
+      process.stdout.write(JSON.stringify(listProtected(readJson("--explorer", args.explorer))) + "\n");
       process.exit(0);
     }
-    const pr = readJson("--body", args.body);
-    need(isObject(pr), "--body must be a JSON object");
+    const pr = readJson(args.cmd === "ci" ? "--pr-json" : "--body", args.body);
+    need(isObject(pr), "the PR json must be a JSON object");
+    const loadExplorer = () => {
+      if (args.noEvidence) return EMPTY_EXPLORER;
+      need(args.explorer !== undefined, "--explorer or --no-evidence is required when a subject path changed");
+      return readJson("--explorer", args.explorer);
+    };
     const result = decidePr({
-      explorer,
+      explorer: loadExplorer,
       repo: args.repo,
       files: readJson("--files", args.files),
       body: typeof pr.body === "string" ? pr.body : "",
       baseMd: args.baseMd === undefined ? undefined : readText("--base-md", args.baseMd),
       coverage: parseCoverage(readText("--coverage", args.coverage || DEFAULT_COVERAGE)),
+      headRef: args.headRef !== undefined ? args.headRef : isObject(pr.head) ? pr.head.ref : undefined,
+      authorType: args.authorType !== undefined ? args.authorType : isObject(pr.user) ? pr.user.type : undefined,
     });
     process.stdout.write(JSON.stringify(result) + "\n");
+    if (!result.merge && args.cmd === "ci") process.stderr.write(annotations(result));
     process.exit(result.merge ? 0 : 2);
   } catch (e) {
     // Only the message: never a file's contents.
@@ -392,6 +489,7 @@ module.exports = {
   parseCoverage,
   markerSubjects,
   decidePr,
+  laneExemption,
   parseArgs,
   main,
 };
