@@ -19583,12 +19583,12 @@ test_eval_protected() {
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
-    # 59 is the suite's actual count, so a test deleted without updating this
+    # 73 is the suite's actual count, so a test deleted without updating this
     # number fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 59 ]]; then
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 73 ]]; then
         pass "eval protected: node:test suite is green ($pass_n passed)"
     else
-        fail "eval protected: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=59): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "eval protected: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=73): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 

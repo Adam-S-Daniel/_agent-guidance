@@ -498,3 +498,179 @@ test("cli: usage errors exit 1", () => {
   assert.equal(cli(["list", "--nope", "x"]).code, 1);
   assert.equal(cli(["pr", "--explorer", EXPLORER_PATH]).code, 1);
 });
+
+// ── private registry, eval-lane exemption, optional explorer, ci ───────────
+
+const PRIVATE = "Adam-S-Daniel/adam-agentskills-private";
+const PRIVATE_EXPLORER = {
+  skills: [
+    { name: "example-secret", registry: "adam-agentskills-private", verdict: null, current_text_runs: 3 },
+    { name: "example-runs", registry: "adam-agentskills", verdict: "keep", current_text_runs: 5 },
+  ],
+  guidance: { sections: [] },
+};
+const LANES = ["eval-improve/", "eval-guidance-improve/", "retire-skill/", "retire-guidance/", "draft-skill/"];
+
+test("private registry: maps skill paths to explorer skills of that registry only", () => {
+  const r = run({ explorer: PRIVATE_EXPLORER, repo: PRIVATE, files: [skillFile("example-secret", "SKILL.md")] });
+  assert.deepEqual(r.protected, ["example-secret"]);
+  assert.equal(r.merge, false);
+  // A same-named skill that lives in the public registry does not protect it.
+  const other = run({ explorer: PRIVATE_EXPLORER, repo: PRIVATE, files: [skillFile("example-runs", "SKILL.md")] });
+  assert.deepEqual(other.touched, ["example-runs"]);
+  assert.deepEqual(other.protected, []);
+  assert.equal(other.merge, true);
+  // And the public repo does not see the private entry.
+  assert.deepEqual(run({ explorer: PRIVATE_EXPLORER, files: [skillFile("example-secret", "SKILL.md")] }).protected, []);
+});
+
+test("exemption: each lane prefix with a Bot author is exempt", () => {
+  for (const prefix of LANES) {
+    const r = run({ files: [skillFile("example-runs", "SKILL.md")], headRef: `${prefix}example-runs`, authorType: "Bot" });
+    assert.equal(r.merge, true, prefix);
+    assert.equal(r.exempt, prefix);
+    assert.deepEqual(r.protected, ["example-runs"], "still computed for the record");
+  }
+});
+
+test("exemption: the same prefixes from a User are not exempt", () => {
+  for (const prefix of LANES) {
+    const r = run({ files: [skillFile("example-runs", "SKILL.md")], headRef: `${prefix}example-runs`, authorType: "User" });
+    assert.equal(r.merge, false, prefix);
+    assert.equal(r.exempt, undefined);
+  }
+  assert.equal(run({ files: [skillFile("example-runs", "SKILL.md")], headRef: "eval-improve/x" }).merge, false);
+});
+
+test("exemption: a non-lane prefix from a Bot is not exempt", () => {
+  for (const ref of ["dependabot/npm/x", "claude/eval-improve/x", "eval-improvement/x", "main"]) {
+    const r = run({ files: [skillFile("example-runs", "SKILL.md")], headRef: ref, authorType: "Bot" });
+    assert.equal(r.merge, false, ref);
+    assert.equal(r.exempt, undefined);
+  }
+});
+
+function prArgs(dir, { files, pr, extra }) {
+  return [
+    "--repo", SKILLS,
+    "--files", writeJson(dir, "files.json", files),
+    "--body", writeJson(dir, "pr.json", pr),
+    "--coverage", COVERAGE_PATH,
+    ...extra,
+  ];
+}
+
+test("cli pr: head ref and author type are read from pr.json", () => {
+  withTmp((dir) => {
+    const files = [skillFile("example-runs", "SKILL.md")];
+    const lane = { body: "", head: { ref: "retire-skill/example-runs" }, user: { type: "Bot" } };
+    const r = cli(["pr", ...prArgs(dir, { files, pr: lane, extra: ["--explorer", EXPLORER_PATH] })]);
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).exempt, "retire-skill/");
+    const asUser = { ...lane, user: { type: "User" } };
+    assert.equal(cli(["pr", ...prArgs(dir, { files, pr: asUser, extra: ["--explorer", EXPLORER_PATH] })]).code, 2);
+  });
+});
+
+test("cli pr: --head-ref and --author-type override pr.json", () => {
+  withTmp((dir) => {
+    const files = [skillFile("example-runs", "SKILL.md")];
+    const pr = { body: "", head: { ref: "main" }, user: { type: "User" } };
+    const extra = ["--explorer", EXPLORER_PATH, "--head-ref", "draft-skill/example-runs", "--author-type", "Bot"];
+    const r = cli(["pr", ...prArgs(dir, { files, pr, extra })]);
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).exempt, "draft-skill/");
+  });
+});
+
+test("cli pr: untouched subject paths need no explorer (omitted or missing)", () => {
+  withTmp((dir) => {
+    const files = [{ filename: "docs/notes.md", status: "modified", patch: "@@ -1 +1 @@\n-a\n+b" }];
+    const pr = { body: "" };
+    const missing = path.join(dir, "no-such-explorer.json");
+    assert.equal(cli(["pr", ...prArgs(dir, { files, pr, extra: [] })]).code, 0);
+    const r = cli(["pr", ...prArgs(dir, { files, pr, extra: ["--explorer", missing] })]);
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).merge, true);
+  });
+});
+
+test("cli pr: a touched skill with a missing or absent explorer fails closed (exit 1)", () => {
+  withTmp((dir) => {
+    const files = [skillFile("example-plain", "SKILL.md")];
+    const pr = { body: "" };
+    const missing = path.join(dir, "no-such-explorer.json");
+    assert.equal(cli(["pr", ...prArgs(dir, { files, pr, extra: ["--explorer", missing] })]).code, 1);
+    assert.equal(cli(["pr", ...prArgs(dir, { files, pr, extra: [] })]).code, 1);
+  });
+});
+
+test("cli pr: --no-evidence protects nothing", () => {
+  withTmp((dir) => {
+    const files = [skillFile("example-runs", "SKILL.md")];
+    const r = cli(["pr", ...prArgs(dir, { files, pr: { body: "" }, extra: ["--no-evidence"] })]);
+    assert.equal(r.code, 0);
+    const out = JSON.parse(r.out);
+    assert.deepEqual(out.protected, []);
+    assert.deepEqual(out.touched, ["example-runs"]);
+  });
+});
+
+test("cli pr: --no-evidence with --explorer exits 1", () => {
+  withTmp((dir) => {
+    const r = cli(["pr", ...prArgs(dir, { files: [], pr: { body: "" }, extra: ["--no-evidence", "--explorer", EXPLORER_PATH] })]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /mutually exclusive/);
+    assert.equal(cli(["list", "--no-evidence"]).code, 1);
+  });
+});
+
+function ciArgs(dir, { files, pr, extra }) {
+  return [
+    "ci",
+    "--repo", SKILLS,
+    "--files", writeJson(dir, "files.json", files),
+    "--pr-json", writeJson(dir, "pr.json", pr),
+    "--coverage", COVERAGE_PATH,
+    ...extra,
+  ];
+}
+
+test("cli ci: a refusal prints one annotation per reason plus the fix, and exits 2", () => {
+  withTmp((dir) => {
+    const files = [skillFile("example-runs", "SKILL.md"), skillFile("example-keep", "SKILL.md")];
+    const r = cli(ciArgs(dir, { files, pr: { body: "" }, extra: ["--explorer", EXPLORER_PATH] }));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).merge, false);
+    const errors = r.err.split("\n").filter((l) => l.startsWith("::error title=eval-protected::"));
+    assert.equal(errors.length, 2);
+    assert.ok(errors.some((l) => l.includes("example-runs is eval-protected")));
+    assert.match(r.err, /Correctness fix: <subject> — <class>: <what was wrong>/);
+    assert.match(r.err, /eval-backed improve lane/);
+  });
+});
+
+test("cli ci: success and exemption print no annotation", () => {
+  withTmp((dir) => {
+    const files = [skillFile("example-runs", "SKILL.md")];
+    const ok = cli(ciArgs(dir, { files, pr: { body: marker("example-runs") }, extra: ["--explorer", EXPLORER_PATH] }));
+    assert.equal(ok.code, 0);
+    assert.ok(!ok.err.includes("::error"));
+    const lane = { body: "", head: { ref: "eval-improve/example-runs" }, user: { type: "Bot" } };
+    const ex = cli(ciArgs(dir, { files, pr: lane, extra: ["--explorer", EXPLORER_PATH] }));
+    assert.equal(ex.code, 0);
+    assert.equal(ex.err, "");
+  });
+});
+
+test("cli ci: the private repo with --no-evidence and no body marker passes", () => {
+  withTmp((dir) => {
+    const args = ciArgs(dir, { files: [skillFile("example-secret", "SKILL.md")], pr: { body: "" }, extra: ["--no-evidence"] });
+    args[2] = PRIVATE;
+    assert.equal(cli(args).code, 0);
+  });
+});
+
+test("cli ci: --body is not accepted", () => {
+  assert.equal(cli(["ci", "--repo", SKILLS, "--files", "x", "--body", "y", "--no-evidence"]).code, 1);
+});

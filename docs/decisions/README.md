@@ -49,6 +49,7 @@ a page.
 | [0031](0031-guidance-eval-fixtures-are-unprompted.md) | Guidance eval fixtures are unprompted (see also 0002) |
 | [0032](0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md) | Guidance evals deliver through user memory and prove it per arm |
 | [0033](0033-audits-leave-eval-protected-subjects-alone-except-for-correctness.md) | Audits leave eval-protected subjects alone except for correctness fixes |
+| [0034](0034-the-eval-protection-gate-runs-in-required-ci.md) | The eval-protection gate runs in required CI |
 
 ## Format
 
