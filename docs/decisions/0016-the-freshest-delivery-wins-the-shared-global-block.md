@@ -50,9 +50,12 @@ old hook along with its old payload, so it still downgrades both blocks until
 it is pulled once. A dirty payload can win by mtime until a later commit has a
 greater stamp. Without Git, or outside a Git work tree, the stamp is zero and
 cannot displace a different version with a positive stamp. A caller that holds
-a payload outside any checkout can supply the payload's commit time as
-`FLEET_GUIDANCE_PAYLOAD_STAMP` beside `FLEET_GUIDANCE_PAYLOAD`; a non-decimal
-value, or one given with `--workspace` picking a different payload, is ignored.
+a payload outside any checkout can supply the time of the commit the payload was
+taken from as `FLEET_GUIDANCE_PAYLOAD_STAMP` beside `FLEET_GUIDANCE_PAYLOAD` (a
+plugin passes the committer time of the `main` commit it downloaded `base.md`
+from). The installed stamp never decreases, so a value that is not decimal, has
+more than 10 digits, or is more than a day in the future is ignored, and so is
+one given with `--workspace` picking a different payload.
 Commit times and file mtimes assume reasonably ordered clocks, so the stamp is
 a practical freshness signal rather than proof of causal order. There is no
 cross-process lock: simultaneous hooks can still race, and the last atomic

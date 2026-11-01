@@ -50,6 +50,10 @@ export AGENT_CHECKS_LOG=off
 # copy CI's `npm ci` puts in this repo's node_modules themselves.
 export AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/no-markdown-it"
 
+# A stamp exported in the developer's shell would otherwise skew the older
+# fleet-memory tests that never set it.
+unset FLEET_GUIDANCE_PAYLOAD_STAMP
+
 # Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
 # means rather than the directory several artifacts share.
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
@@ -21855,6 +21859,33 @@ test_fleet_memory_payload_stamp() {
     out="$(run_payload_stamp "$d/h-cfg" "$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=0001700000800)"
     assert_contains "$d/h-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000800' \
         'fleet payload stamp: leading zeros are stripped from the caller stamp'
+
+    # (i) A stamp that is not plausible epoch seconds is ignored, so the
+    # payload's own commit time (case (e)'s fixture) is recorded. The installed
+    # stamp never decreases: a millisecond epoch (13 digits), a YYYYMMDDhhmmss
+    # date (14 digits) or a time far ahead of the clock would otherwise pin the
+    # global block and keep every later delivery out. A trailing carriage
+    # return and a leading space are not digits and are ignored too.
+    n=0
+    for bad in 1700000000000 20231114221320 9999999999 $'1700000300\r' ' 1700000300'; do
+        n=$((n + 1))
+        mkdir -p "$d/i-cfg-$n"
+        out="$(run_payload_stamp "$d/i-cfg-$n" "$d/e-repo/payload.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$bad")"
+        assert_contains "$d/i-cfg-$n/CLAUDE.md" 'fleet-guidance-delivered: 1700000500' \
+            "fleet payload stamp: implausible stamp $(printf '%q' "$bad") is ignored and the commit time is recorded"
+    done
+
+    # (j) --workspace over a directory with no child payload leaves the
+    # caller's payload in use, so the caller's stamp still applies.
+    mkdir -p "$d/j-ws" "$d/j-cfg"
+    out="$(env -u FLEET_GUIDANCE_SKIP \
+        CLAUDE_CONFIG_DIR="$d/j-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000300 \
+        bash "$hook" --workspace "$d/j-ws")"
+    assert_contains "$d/j-cfg/CLAUDE.md" 'STAMP PAYLOAD ONE' \
+        'fleet payload stamp: --workspace with no child payload delivers the caller payload'
+    assert_contains "$d/j-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000300' \
+        'fleet payload stamp: --workspace with no child payload keeps the caller stamp'
 }
 
 # Codex's generated records are audited after generation; all memory, sidecar,
