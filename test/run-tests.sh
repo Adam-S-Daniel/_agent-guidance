@@ -21888,6 +21888,249 @@ test_fleet_memory_payload_stamp() {
         'fleet payload stamp: --workspace with no child payload keeps the caller stamp'
 }
 
+# The check value (see CHECK VALUE in fleet-memory.sh, docs/decisions/0035): a
+# plain-text line that ends every block the hook writes, so a session's report
+# of what loaded can be compared with what it loaded. It is the LAST 8 hex of
+# the payload's sha256 (the version id the verdict prints is the first 8), it
+# exists only in the written block, and it never reaches stdout.
+test_fleet_memory_check_value() {
+    echo ""
+    echo "TEST: fleet-memory.sh (check value line)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-check-value"
+    local end_mark='<!-- END FLEET GUIDANCE -->'
+    local out rc digest check version line cfg n bytes
+    mkdir -p "$d"
+    # Normal mode with the Claude destination alone unless a case gives Codex a
+    # home. Receipts are off: the detached writer would race the fixtures.
+    run_check_value() {
+        local run_cfg="$1" run_payload="$2"
+        shift 2
+        env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+            CLAUDE_CONFIG_DIR="$run_cfg" CODEX_HOME="$d/no-codex" \
+            FLEET_GUIDANCE_PAYLOAD="$run_payload" FLEET_GUIDANCE_RECEIPT=0 "$@" bash "$hook"
+    }
+    # The line immediately before the END marker, and the marker's own line.
+    line_before_end() { grep -B1 -x -F -- "$end_mark" "$1" | head -1; }
+
+    # (a) A fresh block ends with the line, computed here from the payload.
+    cfg="$d/a-cfg"; mkdir -p "$cfg"
+    printf '# Fleet guidance\n\nThe canary is JADE-OTTER-35.\n' > "$d/a.md"
+    digest="$(sha256sum "$d/a.md" | cut -d' ' -f1)"
+    version="$(printf '%s' "$digest" | cut -c1-8)"
+    bytes="$(wc -c < "$d/a.md" | tr -d ' ')"
+    check="$(printf '%s' "$digest" | cut -c57-64)"
+    line="fleet-guidance check value: $check"
+    out="$(run_check_value "$cfg" "$d/a.md")"; rc=$?
+    [[ $rc -eq 0 ]] && pass 'fleet check value: fresh install exits 0' \
+        || fail "fleet check value: fresh install exited $rc"
+    [[ "$out" == "fleet-guidance: installed (v$version, $bytes bytes) -> ~/.claude/CLAUDE.md" ]] \
+        && pass 'fleet check value: the verdict is unchanged and names the first 8 hex' \
+        || fail "fleet check value: fresh verdict differs: '$out'"
+    [[ "$check" != "$version" && ${#check} -eq 8 ]] \
+        && pass 'fleet check value: the value is 8 hex and differs from the version id' \
+        || fail "fleet check value: check '$check' vs version '$version'"
+    [[ "$(grep -c -x -F -- "$line" "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: the line is present exactly once' \
+        || fail 'fleet check value: the line is not present exactly once'
+    [[ "$(grep -c -F -- 'fleet-guidance check value:' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: no other line carries the label' \
+        || fail 'fleet check value: the label appears on more than one line'
+    [[ "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the line sits immediately before the END marker' \
+        || fail "fleet check value: line before END is '$(line_before_end "$cfg/CLAUDE.md")'"
+    [[ "$(tail -n 1 "$cfg/CLAUDE.md")" == "$end_mark" ]] \
+        && pass 'fleet check value: the END marker closes the file' \
+        || fail 'fleet check value: the END marker does not close the file'
+    [[ "$(sed -n '/^The canary is /{n;p}' "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the line follows the payload with nothing between' \
+        || fail 'fleet check value: something sits between the payload and the line'
+    [[ "$out" != *"$check"* && "$out" != *"check value"* ]] \
+        && pass 'fleet check value: stdout never carries the value' \
+        || fail "fleet check value: stdout carries the value: '$out'"
+
+    # (b) A second run is current and leaves the bytes alone.
+    cp "$cfg/CLAUDE.md" "$d/a.before"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: current ("* && "$out" != *"$check"* ]] \
+        && pass 'fleet check value: a second run reports current without the value' \
+        || fail "fleet check value: second run printed '$out'"
+    cmp -s "$d/a.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: a second run is byte-identical' \
+        || fail 'fleet check value: a second run changed the file'
+
+    # (c) A block of the same version WITHOUT the line (the shape a hook
+    # without the line writes) is rewritten, reports installed, and keeps the higher stamp. The
+    # payload is outside any work tree, so its own stamp is 0.
+    cfg="$d/c-cfg"; mkdir -p "$cfg"
+    printf 'MY NOTE ABOVE\n' > "$cfg/CLAUDE.md"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    sed -i -e '/^fleet-guidance check value: /d' \
+        -e 's/^<!-- fleet-guidance-delivered: .* -->$/<!-- fleet-guidance-delivered: 1700000900 -->/' \
+        "$cfg/CLAUDE.md"
+    assert_not_contains "$cfg/CLAUDE.md" 'check value' 'fleet check value: fixture block lacks the line'
+    assert_contains "$cfg/CLAUDE.md" "fleet-guidance-version: $version" 'fleet check value: fixture block has the same version'
+    out="$(run_check_value "$cfg" "$d/a.md")"; rc=$?
+    [[ $rc -eq 0 && "$out" == "fleet-guidance: installed (v$version, $bytes bytes) -> ~/.claude/CLAUDE.md" ]] \
+        && pass 'fleet check value: a same-version block without the line is rewritten and reports installed' \
+        || fail "fleet check value: line-less block run exited $rc with '$out'"
+    [[ "$(grep -c -x -F -- "$line" "$cfg/CLAUDE.md")" -eq 1 && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the rewrite adds the line before the END marker' \
+        || fail 'fleet check value: the rewrite did not add the line'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000900 -->' \
+        'fleet check value: the rewrite keeps the higher existing stamp'
+    [[ "$(grep -c 'fleet-guidance-delivered:' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: exactly one stamp line after the rewrite' \
+        || fail 'fleet check value: the rewrite left more than one stamp line'
+    assert_contains "$cfg/CLAUDE.md" 'MY NOTE ABOVE' 'fleet check value: personal content survives the rewrite'
+    [[ "$(grep -c -F 'MY NOTE ABOVE' "$cfg/CLAUDE.md")" -eq 1 && "$(grep -c 'BEGIN FLEET GUIDANCE' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: the rewrite leaves one note and one block' \
+        || fail 'fleet check value: the rewrite duplicated the note or the block'
+    cp "$cfg/CLAUDE.md" "$d/c.before"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: current ("* ]] && cmp -s "$d/c.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: after the rewrite the next run is current and byte-identical' \
+        || fail "fleet check value: the run after the rewrite printed '$out' or changed the file"
+
+    # (c2) A higher stamp from the caller wins over a lower existing one.
+    sed -i -e '/^fleet-guidance check value: /d' \
+        -e 's/^<!-- fleet-guidance-delivered: .* -->$/<!-- fleet-guidance-delivered: 1700000500 -->/' \
+        "$cfg/CLAUDE.md"
+    out="$(run_check_value "$cfg" "$d/a.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700001000)"
+    [[ "$out" == "fleet-guidance: installed ("* ]] \
+        && pass 'fleet check value: a line-less block is rewritten under a higher caller stamp' \
+        || fail "fleet check value: higher-stamp rewrite printed '$out'"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700001000 -->' \
+        'fleet check value: the rewrite records the higher caller stamp'
+    assert_not_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000500' \
+        'fleet check value: the lower stamp is gone'
+
+    # (d) A line with another value, or one outside the block, is not the line.
+    cfg="$d/d-cfg"; mkdir -p "$cfg"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    sed -i "s/^fleet-guidance check value: .*/fleet-guidance check value: 0badc0de/" "$cfg/CLAUDE.md"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: installed ("* && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: a stale value is replaced by the right one' \
+        || fail "fleet check value: stale value run printed '$out'"
+    assert_not_contains "$cfg/CLAUDE.md" '0badc0de' 'fleet check value: the stale value is gone'
+    cfg="$d/d2-cfg"; mkdir -p "$cfg"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    sed -i '/^fleet-guidance check value: /d' "$cfg/CLAUDE.md"
+    { printf '%s\n' "$line"; cat "$cfg/CLAUDE.md"; } > "$d/d2.tmp" && mv "$d/d2.tmp" "$cfg/CLAUDE.md"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: installed ("* && "$(grep -c -x -F -- "$line" "$cfg/CLAUDE.md")" -eq 2 \
+        && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the same line outside the block does not stand in for it' \
+        || fail "fleet check value: outside-block run printed '$out'"
+
+    # (e) A payload with no final newline gets the line on its own line.
+    cfg="$d/e-cfg"; mkdir -p "$cfg"
+    printf 'NO FINAL NEWLINE' > "$d/e.md"
+    check="$(sha256sum "$d/e.md" | cut -c57-64)"
+    run_check_value "$cfg" "$d/e.md" >/dev/null
+    [[ "$(tail -n 3 "$cfg/CLAUDE.md" | head -1)" == 'NO FINAL NEWLINE' \
+        && "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
+        && pass 'fleet check value: a payload with no final newline gets the line on its own line' \
+        || fail "fleet check value: no-newline layout is '$(tail -n 3 "$cfg/CLAUDE.md" | tr '\n' '|')'"
+    assert_not_contains "$cfg/CLAUDE.md" 'NO FINAL NEWLINEfleet-guidance' \
+        'fleet check value: the line is not glued to the last payload line'
+    cp "$cfg/CLAUDE.md" "$d/e.before"
+    run_check_value "$cfg" "$d/e.md" >/dev/null
+    cmp -s "$d/e.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: the no-newline block is stable on a second run' \
+        || fail 'fleet check value: the no-newline block changed on a second run'
+
+    # (f) The value comes from the payload FILE, repo-only header included,
+    # though the header is not delivered.
+    cfg="$d/f-cfg"; mkdir -p "$cfg"
+    printf '# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**\n> Edit only below the `## Repo-specific additions` header.\n> Everything above it will be overwritten on the next sync.\n\nHEADED BODY\n' > "$d/f.md"
+    check="$(sha256sum "$d/f.md" | cut -c57-64)"
+    run_check_value "$cfg" "$d/f.md" >/dev/null
+    assert_not_contains "$cfg/CLAUDE.md" 'Edit only below' 'fleet check value: the repo-only header is dropped'
+    [[ "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
+        && pass 'fleet check value: the value is taken from the whole payload file' \
+        || fail 'fleet check value: the headed payload got another value'
+
+    # (g) Codex: both destinations carry it, and each is judged on its own.
+    cfg="$d/g-cfg"; mkdir -p "$cfg" "$d/g-codex"
+    run_check_value "$cfg" "$d/a.md" CODEX_HOME="$d/g-codex" >/dev/null
+    line="fleet-guidance check value: $(sha256sum "$d/a.md" | cut -c57-64)"
+    [[ "$(line_before_end "$d/g-codex/AGENTS.md")" == "$line" && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: Claude and Codex blocks both end with the line' \
+        || fail 'fleet check value: a destination lacks the line'
+    sed -i '/^fleet-guidance check value: /d' "$d/g-codex/AGENTS.md"
+    cp "$cfg/CLAUDE.md" "$d/g.claude.before"
+    out="$(run_check_value "$cfg" "$d/a.md" CODEX_HOME="$d/g-codex")"
+    [[ "$out" == "fleet-guidance: installed (v$version, $bytes bytes) -> ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md" ]] \
+        && pass 'fleet check value: a run that rewrote one destination reports installed for both' \
+        || fail "fleet check value: mixed run printed '$out'"
+    cmp -s "$d/g.claude.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: the destination that had the line is untouched' \
+        || fail 'fleet check value: the destination that had the line changed'
+    [[ "$(line_before_end "$d/g-codex/AGENTS.md")" == "$line" ]] \
+        && pass 'fleet check value: the Codex block is rewritten with the line' \
+        || fail 'fleet check value: the Codex block lacks the line'
+
+    # (h) Workspace mode: the child's payload is the source, stdout stays clean.
+    mkdir -p "$d/h-ws/child/.git" "$d/h-ws/child/.claude/hooks" "$d/h-cfg"
+    printf '# child\n' > "$d/h-ws/child/AGENTS.md"
+    printf 'WORKSPACE CHILD PAYLOAD\n' > "$d/h-ws/child/.claude/hooks/fleet-guidance.md"
+    check="$(sha256sum "$d/h-ws/child/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
+    out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD CLAUDE_CONFIG_DIR="$d/h-cfg" \
+        CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --workspace "$d/h-ws")"
+    [[ "$(line_before_end "$d/h-cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
+        && pass 'fleet check value: workspace mode writes the value of the child payload' \
+        || fail 'fleet check value: workspace mode wrote another value'
+    [[ "$out" == *"fleet-workspace:"* && "$out" != *"$check"* && "$out" != *"check value"* ]] \
+        && pass 'fleet check value: workspace stdout never carries the value' \
+        || fail "fleet check value: workspace stdout is '$out'"
+
+    # (i) Skip removes the whole block, line included, and leaves the rest.
+    cfg="$d/i-cfg"; mkdir -p "$cfg"
+    printf 'KEEP ME\n' > "$cfg/CLAUDE.md"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    assert_contains "$cfg/CLAUDE.md" 'check value' 'fleet check value: fixture has the line before skip'
+    out="$(run_check_value "$cfg" "$d/a.md" FLEET_GUIDANCE_SKIP=1)"
+    [[ "$out" == "fleet-guidance: skipped"* ]] \
+        && pass 'fleet check value: skip reports skipped' \
+        || fail "fleet check value: skip printed '$out'"
+    assert_not_contains "$cfg/CLAUDE.md" 'check value' 'fleet check value: skip removes the line with the block'
+    assert_not_contains "$cfg/CLAUDE.md" 'FLEET GUIDANCE' 'fleet check value: skip removes both markers'
+    [[ "$(cat "$cfg/CLAUDE.md")" == 'KEEP ME' ]] \
+        && pass 'fleet check value: skip leaves only the personal content' \
+        || fail 'fleet check value: skip left something besides the personal content'
+
+    # (j) No digest tool: the version is unknown and no line is written.
+    mkdir -p "$d/j-bin" "$d/j-cfg"
+    for n in cat basename dirname mktemp awk cmp mv rm mkdir readlink tr grep head tail wc stat chmod git; do
+        if command -v "$n" >/dev/null 2>&1; then ln -sf "$(command -v "$n")" "$d/j-bin/$n"; fi
+    done
+    out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD_STAMP PATH="$d/j-bin" \
+        CLAUDE_CONFIG_DIR="$d/j-cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 \
+        FLEET_GUIDANCE_PAYLOAD="$d/a.md" "$(command -v bash)" "$hook" 2>&1)"
+    [[ "$out" == "fleet-guidance: installed (vunknown, $bytes bytes)"* ]] \
+        && pass 'fleet check value: with no digest tool the version reads unknown' \
+        || fail "fleet check value: no-digest run printed '$out'"
+    assert_contains "$d/j-cfg/CLAUDE.md" 'The canary is JADE-OTTER-35.' 'fleet check value: no-digest run delivers the payload'
+    assert_not_contains "$d/j-cfg/CLAUDE.md" 'check value' 'fleet check value: no digest, no check line'
+
+    # (k) The shipped payload, and base.md it mirrors, never carry the line:
+    # only a block this hook writes does.
+    assert_not_contains "$REPO_ROOT/agents-md/base.md" 'fleet-guidance check value:' \
+        'fleet check value: base.md carries no check value line'
+    assert_not_contains "$REPO_ROOT/.claude/hooks/fleet-guidance.md" 'fleet-guidance check value:' \
+        'fleet check value: the delivered payload copy carries no check value line'
+    cfg="$d/k-cfg"; mkdir -p "$cfg"
+    env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+        CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" >/dev/null
+    check="$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
+    [[ "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" \
+        && "$(grep -c -F 'fleet-guidance check value:' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: the shipped payload is delivered with exactly one line' \
+        || fail 'fleet check value: the shipped payload block lacks its one line'
+}
+
 # Codex's generated records are audited after generation; all memory, sidecar,
 # and CLI configuration paths in this group are synthetic and isolated.
 # The memory curation audit (docs/decisions/0026). Its unittest module owns
@@ -24849,6 +25092,7 @@ GROUP_codex=(
     test_fleet_memory_codex
     test_fleet_memory_freshness
     test_fleet_memory_payload_stamp
+    test_fleet_memory_check_value
     test_fleet_memory_repo_header
     test_fleet_memory_workspace
 )

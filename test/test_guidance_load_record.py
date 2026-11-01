@@ -23,7 +23,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / ".claude" / "hooks" / "guidance-load-record.sh"
 NOW = "2026-10-31T12:00:00Z"
 KEYS = ["v", "ts", "kind", "session", "surface", "remote", "cli", "state",
-        "repos", "guidance_version", "registry_sha", "uploaded"]
+        "repos", "guidance_version", "check_expected", "check_reported",
+        "registry_sha", "uploaded"]
 FULL = "guidance-marker: fleet-full (transcript counts use this line; keep it)"
 STUB = "guidance-marker: fleet-stub (transcript counts use this line; keep it)"
 REPO = "Adam-S-Daniel/adam-agentskills-private"
@@ -70,6 +71,13 @@ def instructions(*files):
 def assistant(n):
     return {"type": "assistant", "version": "2.1.312", "entrypoint": "remote_projects",
             "message": {"id": f"msg_{n}", "role": "assistant", "content": []}}
+
+
+def assistant_text(n, *texts, extra=()):
+    """One assistant message whose content is text blocks, then any extra blocks."""
+    content = [{"type": "text", "text": text} for text in texts] + list(extra)
+    return {"type": "assistant", "version": "2.1.312", "entrypoint": "remote_projects",
+            "message": {"id": f"msg_{n}", "role": "assistant", "content": content}}
 
 
 def user():
@@ -212,6 +220,7 @@ class RecordTests(HookTestCase):
             "session": hashlib.sha256(b"session-one").hexdigest()[:16],
             "surface": "remote_projects", "remote": False, "cli": "2.1.312",
             "state": "full", "repos": 3, "guidance_version": "0a1b2c3d",
+            "check_expected": False, "check_reported": "absent",
             "registry_sha": None, "uploaded": None})
 
     def test_record_holds_no_path_content_or_session_id(self):
@@ -262,6 +271,242 @@ class RecordTests(HookTestCase):
         self.run_hook(session="b", env={"CLAUDE_CODE_REMOTE_SESSION_ID": "example-remote"})
         self.run_hook(session="c", env={"CLAUDE_CODE_REMOTE": "false"})
         self.assertEqual([r["remote"] for r in self.records()], [True, True, False])
+
+
+# Invented 8-hex check values; the real one is the last 8 hex of a payload digest.
+CHECK = "5ea40d61"
+OTHER = "0badc0de"
+CHECK_FILE = f"intro\nfleet-guidance check value: {CHECK}\nmore\n"
+
+
+class CheckValueTests(HookTestCase):
+    """check_expected and check_reported: a session's quote of the check value
+    compared with the User-type memory file it loaded. Neither field holds a
+    value string."""
+
+    def record_for(self, entries):
+        # A fresh session per call: the hook records each session once.
+        self.sessions = getattr(self, "sessions", 0) + 1
+        session = f"check-session-{self.sessions}"
+        self.write_transcript(entries)
+        self.run_hook(session=session)
+        [record] = [r for r in self.records()
+                    if r["session"] == hashlib.sha256(session.encode()).hexdigest()[:16]]
+        return record
+
+    def expected_for(self, *files):
+        record = self.record_for([user(), instructions(*files), assistant(1)])
+        self.assertEqual(record["check_reported"], "absent")
+        return record["check_expected"]
+
+    def reported_for(self, *texts, files=None, extra_entries=()):
+        files = files if files is not None else [memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)]
+        entries = [user(), instructions(*files)]
+        entries += [assistant_text(n + 1, text) for n, text in enumerate(texts)]
+        entries += list(extra_entries)
+        return self.record_for(entries)["check_reported"]
+
+    # check_expected -------------------------------------------------------
+
+    def test_expected_true_for_a_user_file_with_the_line(self):
+        self.assertIs(self.expected_for(memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)), True)
+
+    def test_expected_false_when_no_loaded_file_has_the_line(self):
+        self.assertIs(self.expected_for(memfile("/w/u/.claude/CLAUDE.md", "User", FULL)), False)
+
+    def test_expected_false_for_a_line_in_a_project_file(self):
+        # A repo file, base.md copy or stub included, cannot supply the value.
+        self.assertIs(self.expected_for(
+            memfile("/w/u/.claude/CLAUDE.md", "User", FULL),
+            memfile("/w/repo-a/AGENTS.md", "Project", CHECK_FILE),
+            memfile("/w/repo-a/CLAUDE.local.md", "Local", CHECK_FILE)), False)
+
+    def test_expected_needs_the_whole_line(self):
+        for name, text in {
+            "stub prose": "ends with a line `fleet-guidance check value: <8 hex>`.\n",
+            "inline quote": f"see `fleet-guidance check value: {CHECK}` here\n",
+            "leading text": f"x fleet-guidance check value: {CHECK}\n",
+            "trailing text": f"fleet-guidance check value: {CHECK} x\n",
+            "nine hex": f"fleet-guidance check value: {CHECK}a\n",
+            "seven hex": f"fleet-guidance check value: {CHECK[:7]}\n",
+            "uppercase": f"fleet-guidance check value: {CHECK.upper().replace('E', 'F')}\n",
+            "no value": "fleet-guidance check value: \n",
+            "wrong label": f"fleet-guidance check: {CHECK}\n",
+        }.items():
+            with self.subTest(name=name):
+                self.assertIs(self.expected_for(memfile("/w/u/.claude/CLAUDE.md", "User", text)), False)
+
+    def test_expected_true_with_the_line_first_last_or_without_a_final_newline(self):
+        for name, text in {
+            "first": f"fleet-guidance check value: {CHECK}\nrest\n",
+            "last, no newline": f"rest\nfleet-guidance check value: {CHECK}",
+            "alone": f"fleet-guidance check value: {CHECK}",
+        }.items():
+            with self.subTest(name=name):
+                self.assertIs(self.expected_for(memfile("/w/u/.claude/CLAUDE.md", "User", text)), True)
+
+    def test_expected_is_null_when_the_state_is_unknown(self):
+        record = self.record_for([user(), assistant(1), assistant(2), assistant(3)])
+        self.assertEqual((record["state"], record["check_expected"], record["check_reported"]),
+                         ("unknown", None, "absent"))
+
+    # check_reported -------------------------------------------------------
+
+    def test_reported_match(self):
+        self.assertEqual(self.reported_for(f"fleet-guidance check: {CHECK}\n\nHello."), "match")
+
+    def test_reported_match_is_found_anywhere_in_the_text(self):
+        self.assertEqual(self.reported_for(f"Sure.\nfleet-guidance check: {CHECK}, then the answer."), "match")
+
+    def test_reported_mismatch_for_a_different_value(self):
+        self.assertEqual(self.reported_for(f"fleet-guidance check: {OTHER}"), "mismatch")
+
+    def test_reported_mismatch_when_nothing_was_expected(self):
+        # The session quoted a value no loaded User file carries.
+        files = [memfile("/w/u/.claude/CLAUDE.md", "User", FULL)]
+        self.assertEqual(self.reported_for(f"fleet-guidance check: {CHECK}", files=files), "mismatch")
+        files = [memfile("/w/repo-a/AGENTS.md", "Project", CHECK_FILE)]
+        self.assertEqual(self.reported_for(f"fleet-guidance check: {CHECK}", files=files), "mismatch")
+
+    def test_reported_none(self):
+        self.assertEqual(self.reported_for("fleet-guidance check: none\n"), "none")
+
+    def test_reported_none_is_a_report_even_when_a_value_was_expected(self):
+        # The session saw the line in memory but said it did not: recorded as
+        # what it said, with check_expected true to show the contradiction.
+        record = self.record_for([user(), instructions(
+            memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)),
+            assistant_text(1, "fleet-guidance check: none")])
+        self.assertEqual((record["check_expected"], record["check_reported"]), (True, "none"))
+
+    def test_reported_absent_without_any_assistant_text(self):
+        self.assertEqual(self.reported_for(), "absent")
+        self.assertEqual(self.reported_for("Hello, no report here."), "absent")
+
+    def test_reported_absent_for_text_that_only_resembles_a_report(self):
+        for name, text in {
+            "placeholder": "fleet-guidance check: <the value>",
+            "nine hex": f"fleet-guidance check: {CHECK}a",
+            "seven hex": f"fleet-guidance check: {CHECK[:7]}",
+            "uppercase hex": f"fleet-guidance check: {CHECK.upper().replace('E', 'F')}",
+            "none prefix": "fleet-guidance check: nonexistent",
+            "value label": f"fleet-guidance check value: {CHECK}",
+            "verdict line": "fleet-guidance: current (v12345678, 100 bytes)",
+        }.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.reported_for(text), "absent")
+
+    def test_reported_boundary_accepts_punctuation_after_the_value(self):
+        for tail in (".", ",", ")", "`", "\n", " "):
+            with self.subTest(tail=repr(tail)):
+                self.assertEqual(self.reported_for(f"fleet-guidance check: {CHECK}{tail}"), "match")
+                self.assertEqual(self.reported_for(f"fleet-guidance check: none{tail}"), "none")
+
+    def test_reported_takes_the_first_report_in_transcript_order(self):
+        self.assertEqual(self.reported_for("fleet-guidance check: none", f"fleet-guidance check: {CHECK}"), "none")
+        self.assertEqual(self.reported_for(f"fleet-guidance check: {CHECK}", f"fleet-guidance check: {OTHER}"), "match")
+        self.assertEqual(self.reported_for(f"fleet-guidance check: {OTHER}", f"fleet-guidance check: {CHECK}"), "mismatch")
+        self.assertEqual(self.reported_for("No report here.", f"fleet-guidance check: {CHECK}"), "match")
+
+    def test_reported_takes_the_first_match_inside_one_text(self):
+        self.assertEqual(self.reported_for(
+            f"fleet-guidance check: {OTHER} then fleet-guidance check: {CHECK}"), "mismatch")
+
+    def test_reported_reads_every_text_block_of_a_message_in_order(self):
+        record = self.record_for([user(), instructions(
+            memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)),
+            assistant_text(1, "thinking out loud", f"fleet-guidance check: {CHECK}",
+                           f"fleet-guidance check: {OTHER}")])
+        self.assertEqual(record["check_reported"], "match")
+
+    def test_reported_ignores_blocks_that_are_not_assistant_text(self):
+        tool_use = {"type": "tool_use", "id": "toolu_1", "name": "Bash",
+                    "input": {"command": f"echo fleet-guidance check: {CHECK}"}}
+        thinking = {"type": "thinking", "thinking": f"fleet-guidance check: {CHECK}"}
+        # Not a text block, whatever else it carries.
+        document = {"type": "document", "text": f"fleet-guidance check: {CHECK}"}
+        entries = [
+            user(),
+            instructions(memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)),
+            # The user's own words, a tool result and a system entry do not count.
+            {"type": "user", "message": {"role": "user", "content": f"fleet-guidance check: {CHECK}"}},
+            {"type": "user", "message": {"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": "toolu_1",
+                "content": f"fleet-guidance check: {CHECK}"}]}},
+            {"type": "system", "content": f"fleet-guidance check: {CHECK}"},
+            assistant_text(1, extra=[tool_use, thinking, document]),
+        ]
+        self.assertEqual(self.record_for(entries)["check_reported"], "absent")
+
+    def test_reported_reads_text_split_across_entries_of_one_message(self):
+        # Claude Code writes the blocks of one API message as separate entries
+        # that share the message id.
+        first = assistant_text(1, "On it.")
+        second = assistant_text(1, f"fleet-guidance check: {CHECK}")
+        self.assertEqual(self.record_for([user(), instructions(
+            memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)), first, second])["check_reported"], "match")
+
+    def test_reported_accepts_plain_string_assistant_content(self):
+        entry = {"type": "assistant", "message": {"id": "msg_1", "role": "assistant",
+                                                    "content": f"fleet-guidance check: {CHECK}"}}
+        self.assertEqual(self.record_for([user(), instructions(
+            memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)), entry])["check_reported"], "match")
+
+    def test_reported_survives_malformed_entries(self):
+        good = assistant_text(2, f"fleet-guidance check: {CHECK}")
+        odd = [
+            {"type": "assistant"},
+            {"type": "assistant", "message": "text"},
+            {"type": "assistant", "message": {"content": None}},
+            {"type": "assistant", "message": {"content": [None, "x", {"type": "text"},
+                                                           {"type": "text", "text": 7}]}},
+        ]
+        self.write_transcript([user(), instructions(memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE))]
+                              + odd + [good])
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write("{not json\n")
+        self.run_hook()
+        self.assertEqual(self.records()[0]["check_reported"], "match")
+
+    def test_reported_with_an_unknown_state_has_no_expected_value(self):
+        entries = [user(), assistant_text(1, f"fleet-guidance check: {CHECK}"), assistant(2), assistant(3)]
+        record = self.record_for(entries)
+        self.assertEqual((record["state"], record["check_expected"], record["check_reported"]),
+                         ("unknown", None, "mismatch"))
+        record = self.record_for([user(), assistant_text(1, "fleet-guidance check: none"), assistant(2),
+                                  assistant(3)])
+        self.assertEqual((record["check_expected"], record["check_reported"]), (None, "none"))
+
+    def test_a_report_arriving_after_the_record_is_not_picked_up(self):
+        # The record is written once, at the first Stop that has instructions.
+        files = [memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE)]
+        self.write_transcript([user(), instructions(*files), assistant(1)])
+        self.run_hook()
+        self.write_transcript([user(), instructions(*files), assistant_text(1, f"fleet-guidance check: {CHECK}")])
+        self.run_hook()
+        [record] = self.records()
+        self.assertEqual(record["check_reported"], "absent")
+
+    # what the record holds ------------------------------------------------
+
+    def test_record_holds_no_value_string(self):
+        self.write_transcript([user(), instructions(
+            memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE),
+            memfile("/w/repo-a/AGENTS.md", "Project", STUB)),
+            assistant_text(1, f"fleet-guidance check: {CHECK}")])
+        self.run_hook()
+        text = (self.state / "sessions.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn(CHECK, text)
+        self.assertNotIn("check value", text)
+        [record] = self.records()
+        self.assertEqual((record["check_expected"], record["check_reported"]), (True, "match"))
+        self.assertIsInstance(record["check_expected"], bool)
+
+    def test_record_shape_is_unchanged_apart_from_the_two_fields(self):
+        self.assertEqual(KEYS[8:12], ["repos", "guidance_version", "check_expected", "check_reported"])
+        record = self.record_for([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)), assistant(1)])
+        self.assertEqual(record["v"], 1)
+        self.assertEqual(list(record), KEYS)
 
 
 class OncePerSessionTests(HookTestCase):
@@ -403,6 +648,21 @@ class UploadTests(HookTestCase):
         self.assertEqual(json.loads(lines[1]), {k: v for k, v in record.items() if k != "uploaded"})
         self.assertEqual(len(lines), 2)
         self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+    def test_the_uploaded_line_carries_the_check_fields_and_no_value(self):
+        self.write_transcript([user(), instructions(
+            memfile("/w/u/.claude/CLAUDE.md", "User", CHECK_FILE),
+            memfile("/w/r/AGENTS.md", "Project", STUB)),
+            assistant_text(1, f"fleet-guidance check: {OTHER}")])
+        bare = self.bare_remote()
+        self.script([{"status": 200, "body": {"permissions": {"push": True}}}])
+        self.run_hook(env={"CLAUDE_CODE_REMOTE": "true", "GUIDANCE_RECORD_GIT": str(bare)})
+        [line] = self.remote_file(bare).splitlines()
+        uploaded = json.loads(line)
+        self.assertEqual((uploaded["check_expected"], uploaded["check_reported"]), (True, "mismatch"))
+        self.assertNotIn("uploaded", uploaded)
+        for value in (CHECK, OTHER):
+            self.assertNotIn(value, line)
 
     def test_git_path_creates_the_month_file_and_retries_a_rejected_push(self):
         bare = self.bare_remote(reject_first_push=True)

@@ -270,6 +270,43 @@ class DeliveryReceiptTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(block).hexdigest(), delivery["sha256"])
             self.assertEqual(len(block), delivery["bytes"])
 
+    def test_receipts_never_carry_the_check_value(self):
+        digest = hashlib.sha256(self.payload.read_bytes()).hexdigest()
+        check = digest[56:]
+        line = f"fleet-guidance check value: {check}\n".encode()
+        for args in ((), ("--codex-cloud",)):
+            with self.subTest(args=args):
+                self.reset()
+                result = self.run_hook(args)
+                self.assertNotIn(check, result.stdout.decode() + result.stderr.decode())
+                text = self.log(bool(args)).read_text()
+                self.assertNotIn(check, text)
+                self.assertNotIn("check value", text)
+                # The receipt hashes the block, which does hold the line.
+                for delivery in self.records(bool(args))[-1]["deliveries"]:
+                    raw = (self.home / ("." + delivery["file_path"])).read_bytes()
+                    block = raw[raw.index(BEGIN.encode()): raw.index(END.encode()) + len(END.encode()) + 1]
+                    self.assertIn(line + END.encode() + b"\n", block)
+                    self.assertEqual(hashlib.sha256(block).hexdigest(), delivery["sha256"])
+
+    def test_block_without_the_check_value_line_is_a_receipted_write(self):
+        line = f"fleet-guidance check value: {hashlib.sha256(self.payload.read_bytes()).hexdigest()[56:]}\n"
+        for args, written in (((), "written"), (("--codex-cloud",), "installed")):
+            with self.subTest(args=args):
+                self.reset()
+                self.run_hook(args)
+                surfaces = [self.codex / "AGENTS.md"] if args else [self.claude / "CLAUDE.md", self.codex / "AGENTS.md"]
+                for file in surfaces:
+                    file.write_text(file.read_text().replace(line, ""))
+                self.run_hook(args)
+                deliveries = self.records(bool(args))[-1]["deliveries"]
+                self.assertEqual([written] * len(surfaces), [d["outcome"] for d in deliveries])
+                for delivery in deliveries:
+                    self.assertIsNotNone(delivery["sha256"])
+                    self.assertGreater(delivery["bytes"], 0)
+                for file in surfaces:
+                    self.assertIn(line, file.read_text())
+
     def test_skip_degraded_and_invalid_args_identity(self):
         for args in ((), ("--codex-cloud",)):
             for installed in (False, True):
