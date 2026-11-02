@@ -450,6 +450,129 @@ if [[ "$(read_repos_yml '.agent_checks.deliver // false')" == "true" ]]; then
     fi
 fi
 
+# ── agent-checks workflow trigger (ADR 0021, 2026-11-02 addendum) ──────────
+# The workflow is added once and never overwritten, so a repo that received it
+# before the runner's pr-tldr check has a bare `pull_request:` trigger, and an
+# edit to a pull request's description would not re-run the check. These two
+# functions make the one narrow edit the sync allows itself in that file:
+# adding `edited` to the pull_request trigger's types. The shape is read with
+# yq, never a regex. The edit is lexical (one line inserted, or one word added
+# to a one-line flow list), so comments and layout survive, and yq then proves
+# that nothing but those types changed, or the original bytes are restored.
+
+# ac_trigger_status <workflow> — prints current, missing-edited, or
+# "skipped: <why>" for a shape this lane does not edit.
+ac_trigger_status() {
+    local wf="$1" got
+    got=$(yq '.on | type' "$wf" 2>/dev/null) || { echo "skipped: yq could not parse it"; return 0; }
+    [[ "$got" == '!!map' ]] || { echo "skipped: its on: is not a map of triggers"; return 0; }
+    got=$(yq '.on | has("pull_request")' "$wf" 2>/dev/null) || got=""
+    [[ "$got" == true ]] || { echo "skipped: it has no pull_request trigger"; return 0; }
+    got=$(yq '.on.pull_request | type' "$wf" 2>/dev/null) || got=""
+    case "$got" in
+        '!!null') echo missing-edited; return 0 ;;
+        '!!map') ;;
+        *) echo "skipped: its pull_request trigger is not a map"; return 0 ;;
+    esac
+    got=$(yq '.on.pull_request.types | type' "$wf" 2>/dev/null) || got=""
+    case "$got" in
+        '!!null') echo missing-edited ;;
+        '!!seq')
+            got=$(yq '.on.pull_request.types | any_c(. == "edited")' "$wf" 2>/dev/null) || got=""
+            case "$got" in
+                true) echo current ;;
+                false) echo missing-edited ;;
+                *) echo "skipped: yq could not read its pull_request types" ;;
+            esac ;;
+        *) echo "skipped: its pull_request types are not a list" ;;
+    esac
+}
+
+# The lexical edit ac_trigger_patch makes, run by python3 with the workflow
+# and a mode. insert: a `    types: [...]` line right after the one
+# `  pull_request:` line under top-level `on:`. flow: `edited` added to the
+# one single-line `types: [...]` list in that trigger's block, after `opened`
+# when it is listed. Any other shape prints why and exits 1, writing nothing.
+AC_TRIGGER_EDIT_PY=""
+IFS= read -r -d '' AC_TRIGGER_EDIT_PY <<'EDIT_PY' || true
+import re
+import sys
+
+path, mode = sys.argv[1], sys.argv[2]
+
+
+def stop(why):
+    print(why)
+    sys.exit(1)
+
+
+with open(path, "rb") as fh:
+    lines = fh.read().decode("utf-8").splitlines(keepends=True)
+on = [i for i, line in enumerate(lines) if re.fullmatch(r"on:[ \t]*(#.*)?\r?\n?", line)]
+if len(on) != 1:
+    stop("it has no single top-level `on:` line")
+end = on[0] + 1
+while end < len(lines) and (not lines[end].strip() or lines[end][:1] in (" ", "\t", "#")):
+    end += 1
+pr = [i for i in range(on[0] + 1, end)
+      if re.fullmatch(r"  pull_request:[ \t]*(#.*)?\r?\n?", lines[i])]
+if len(pr) != 1:
+    stop("it has no single `  pull_request:` line under `on:`")
+at = pr[0]
+eol = "\r\n" if lines[at].endswith("\r\n") else "\n"
+if mode == "insert":
+    if not lines[at].endswith("\n"):
+        lines[at] += eol
+    lines.insert(at + 1, "    types: [opened, edited, reopened, synchronize]" + eol)
+else:
+    block = at + 1
+    while block < end and (not lines[block].strip() or lines[block].startswith("   ")
+                           or lines[block].lstrip().startswith("#")):
+        block += 1
+    shape = r"([ \t]+types:[ \t]*\[)([^\]\n]*)(\][ \t]*(#.*)?\r?\n?)"
+    hits = [i for i in range(at + 1, block) if re.fullmatch(shape, lines[i])]
+    if len(hits) != 1:
+        stop("its pull_request types are not one single-line [ ... ] list")
+    m = re.fullmatch(shape, lines[hits[0]])
+    items = [s.strip() for s in m.group(2).split(",") if s.strip()]
+    names = [s.strip("'\"") for s in items]
+    items.insert(names.index("opened") + 1 if "opened" in names else 0, "edited")
+    lines[hits[0]] = m.group(1) + ", ".join(items) + m.group(3)
+with open(path, "wb") as fh:
+    fh.write("".join(lines).encode("utf-8"))
+EDIT_PY
+
+# ac_trigger_patch <workflow> — add `edited` to the pull_request types of a
+# workflow ac_trigger_status called missing-edited. Prints "patched", or
+# "skipped: <why>" with the file's original bytes put back.
+ac_trigger_patch() {
+    local wf="$1" mode backup why before after before_types after_types want edited
+    local norm='.on.pull_request = (.on.pull_request // {}) | del(.on.pull_request.types)'
+    mode=insert
+    [[ "$(yq '.on.pull_request.types | type' "$wf" 2>/dev/null)" == '!!seq' ]] && mode=flow
+    backup=$(mktemp -p "$WORK_DIR") || { echo "skipped: could not create a temp file"; return 0; }
+    cp "$wf" "$backup"
+    before=$(yq -o=json -I0 "$norm" "$wf" 2>/dev/null) || before=""
+    before_types=$(yq -o=json -I0 '.on.pull_request.types // []' "$wf" 2>/dev/null) || before_types=""
+    if ! why=$(python3 -c "$AC_TRIGGER_EDIT_PY" "$wf" "$mode" 2>&1); then
+        cp "$backup" "$wf"; rm -f "$backup"
+        echo "skipped: ${why:-the edit failed}"
+        return 0
+    fi
+    after=$(yq -o=json -I0 "$norm" "$wf" 2>/dev/null) || after=""
+    after_types=$(yq -o=json -I0 '.on.pull_request.types // [] | map(select(. != "edited"))' "$wf" 2>/dev/null) || after_types=""
+    edited=$(yq '.on.pull_request.types | any_c(. == "edited")' "$wf" 2>/dev/null) || edited=""
+    want=$before_types
+    [[ "$mode" == insert ]] && want='["opened","reopened","synchronize"]'
+    if [[ -n "$before" && "$before" == "$after" && -n "$want" && "$after_types" == "$want" && "$edited" == true ]]; then
+        rm -f "$backup"
+        echo patched
+    else
+        cp "$backup" "$wf"; rm -f "$backup"
+        echo "skipped: after the edit yq did not read the same workflow with edited added, so the file was restored"
+    fi
+}
+
 bootstrap_allowlisted() {
     local short="${1##*/}" entry
     for entry in ${BOOTSTRAP_REPOS[@]+"${BOOTSTRAP_REPOS[@]}"}; do
@@ -1197,8 +1320,11 @@ for repo_name in "${REPOS[@]}"; do
     #   guard     the PreToolUse hook; delivered only where fleet-memory can
     #             be (same .claude/ and settings.json refusals).
     #   eol       the `.githooks/* text eol=lf` line in .gitattributes.
+    #   trigger   an existing agent-checks.yml's pull_request types:
+    #             current | missing-edited | skipped (a shape not edited) | n/a
     ac_runner_state="n/a"; ac_dated_state="n/a"; ac_wf_state="n/a"; ac_guard_state="n/a"
     ac_reg_state="n/a"; ac_eol_state="n/a"; ac_guard_deliver=false
+    ac_trigger_state="n/a"
     if $AGENT_CHECKS_ENABLED; then
         if git check-ignore -q "$AC_RUNNER_REL_PATH" 2>/dev/null; then
             ac_runner_state="skipped"
@@ -1264,12 +1390,25 @@ for repo_name in "${REPOS[@]}"; do
             ac_eol_state=$(HOOK_EOL_LINE="$AC_EOL_LINE" HOOK_EOL_COMMENT="$AC_EOL_COMMENT" \
                            "$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")
         fi
-        log "agent-checks: runner=$ac_runner_state dated=$ac_dated_state workflow=$ac_wf_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state"
+
+        # The delivered workflow's pull_request trigger must list `edited`
+        # (see ac_trigger_status). Only that file, and only where it runs the
+        # runner; a repo running it from another workflow is left alone.
+        if [[ -f "$AC_WF_REL_PATH" ]] && grep -qF "$AC_RUNNER_REL_PATH" "$AC_WF_REL_PATH" \
+           && ! git check-ignore -q "$AC_WF_REL_PATH" 2>/dev/null; then
+            ac_trigger_state=$(ac_trigger_status "$AC_WF_REL_PATH")
+            if [[ "$ac_trigger_state" == skipped:* ]]; then
+                log "WARN: $repo_name's $AC_WF_REL_PATH is not patched to re-run on a description edit (${ac_trigger_state#skipped: }) — add edited to its pull_request types by hand."
+                ac_trigger_state="skipped"
+            fi
+        fi
+        log "agent-checks: runner=$ac_runner_state dated=$ac_dated_state workflow=$ac_wf_state trigger=$ac_trigger_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state"
     fi
     ac_up_to_date=true
     if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" \
           || "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" \
-          || "$ac_wf_state" == "missing" || "$ac_eol_state" == "missing" ]]; then
+          || "$ac_wf_state" == "missing" || "$ac_eol_state" == "missing" \
+          || "$ac_trigger_state" == "missing-edited" ]]; then
         ac_up_to_date=false
     fi
     if $ac_guard_deliver && { [[ "$ac_guard_state" != "current" ]] || [[ "$ac_reg_state" != "registered" ]]; }; then
@@ -1390,6 +1529,8 @@ for repo_name in "${REPOS[@]}"; do
                 && log "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing $ac_dated_state)"
             [[ "$ac_wf_state" == "missing" ]] \
                 && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check)"
+            [[ "$ac_trigger_state" == "missing-edited" ]] \
+                && log "[DRY RUN] Would add edited to the pull_request types in $AC_WF_REL_PATH (a description edit must re-run the pr-tldr check)"
             [[ "$ac_eol_state" == "missing" ]] \
                 && log "[DRY RUN] Would append the agent-checks LF line to $GITATTR_REL_PATH"
             if $ac_guard_deliver; then
@@ -1609,7 +1750,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── agent-checks: write ────────────────────────────────────────────
     ac_runner_written=false; ac_dated_written=false; ac_wf_written=false; ac_eol_written=false
-    ac_guard_written=false; ac_registered_now=false
+    ac_guard_written=false; ac_registered_now=false; ac_trigger_written=false
     if ! $ac_up_to_date; then
         if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]]; then
             mkdir -p "$(dirname "$AC_RUNNER_REL_PATH")"
@@ -1628,6 +1769,14 @@ for repo_name in "${REPOS[@]}"; do
             mkdir -p "$(dirname "$AC_WF_REL_PATH")"
             cp "$AGENT_CHECKS_TEMPLATE_DIR/agent-checks.yml" "$AC_WF_REL_PATH"
             ac_wf_written=true
+        fi
+        if [[ "$ac_trigger_state" == "missing-edited" ]]; then
+            ac_trigger_result=$(ac_trigger_patch "$AC_WF_REL_PATH")
+            if [[ "$ac_trigger_result" == patched ]]; then
+                ac_trigger_written=true
+            else
+                log "WARN: $repo_name's $AC_WF_REL_PATH was not patched (${ac_trigger_result#skipped: }) — add edited to its pull_request types by hand."
+            fi
         fi
         if [[ "$ac_eol_state" == "missing" ]]; then
             if ac_eol_result=$(HOOK_EOL_LINE="$AC_EOL_LINE" HOOK_EOL_COMMENT="$AC_EOL_COMMENT" \
@@ -1660,7 +1809,7 @@ for repo_name in "${REPOS[@]}"; do
                 fi
             fi
         fi
-        log "agent-checks: runner=$ac_runner_written dated=$ac_dated_written workflow=$ac_wf_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
+        log "agent-checks: runner=$ac_runner_written dated=$ac_dated_written workflow=$ac_wf_written trigger=$ac_trigger_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
     fi
     # ── skill shell execution: write ───────────────────────────────────
     skillshell_written=false
@@ -1675,7 +1824,7 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     ac_any_written=false
-    if $ac_runner_written || $ac_dated_written || $ac_wf_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
+    if $ac_runner_written || $ac_dated_written || $ac_wf_written || $ac_trigger_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
         ac_any_written=true
     fi
 
@@ -1685,6 +1834,7 @@ for repo_name in "${REPOS[@]}"; do
         for ac_dated_file in "${AC_DATED_FILES[@]}"; do add_paths+=(".githooks/$ac_dated_file"); done
     fi
     $ac_wf_written && add_paths+=("$AC_WF_REL_PATH")
+    $ac_trigger_written && add_paths+=("$AC_WF_REL_PATH")
     $ac_guard_written && add_paths+=("$AC_GUARD_REL_PATH")
     # git add takes a path twice without complaint, so the files the other
     # lanes may also have touched need no once-only bookkeeping here.
@@ -1785,6 +1935,14 @@ runs it over every change, and a Claude Code PreToolUse guard against
 --no-verify. Owner machines run the runner from config-based git hooks; CI is
 the enforcement. Managed by _agent-guidance's templates/agent-checks/; see its
 docs/decisions/0021."
+        if $ac_trigger_written; then
+            bootstrap_note="${bootstrap_note}
+
+Adds edited to the pull_request types of $AC_WF_REL_PATH, so editing a pull
+request's description re-runs the check: its pr-tldr rule requires every
+description to begin with a TLDR. The sync otherwise never edits that
+workflow; see the 2026-11-02 addendum to docs/decisions/0021."
+        fi
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \

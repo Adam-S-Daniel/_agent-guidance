@@ -24149,11 +24149,20 @@ test_sync_dependabot_auto_merge() {
 # ── agent-checks delivery (repos.yml agent_checks, ADR 0021) ─────────────────
 # acorg in a MOCK_BARE_DIR of its own. Steps run in order: switch off → dry
 # run → real run → re-run (no-op).
+
+# ac_trig_wf [<types line>] — an agent-checks.yml as an older sync delivered
+# it: a pull_request trigger with a trailing comment, then <types line> (a
+# whole line with its newline, or nothing for the bare trigger).
+ac_trig_wf() {
+    printf 'name: agent-checks\non:\n  pull_request:  # pull request runs\n%s  push:\n    branches: [main, master]\n\njobs:\n  agent-checks:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"\n' "${1:-}"
+}
+
 setup_ac_repos() {
     local bare_dir="$1" work="$TEST_DIR/ac-work" name
     rm -rf "$bare_dir" "$work"
     mkdir -p "$bare_dir" "$work"
-    for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored; do
+    for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored \
+                ac-trig-bare ac-trig-types ac-trig-current ac-trig-list; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/acorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
@@ -24172,6 +24181,16 @@ setup_ac_repos() {
             ac-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
             ac-platform) echo "platform_ref: v0.0.1" > "$work/$name/platform.lock" ;;
             ac-ignored) echo ".claude/" > "$work/$name/.gitignore" ;;
+            ac-trig-bare) ac_trig_wf > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-trig-types)
+                ac_trig_wf '    types: [opened, synchronize]
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-trig-current)
+                ac_trig_wf '    types: [opened, edited]
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-trig-list)
+                printf 'name: agent-checks\non: [pull_request, push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n' \
+                    > "$work/$name/.github/workflows/agent-checks.yml" ;;
         esac
         gattr_git -C "$work/$name" add -A
         gattr_git -C "$work/$name" commit -q -m init
@@ -24243,6 +24262,14 @@ test_sync_agent_checks() {
         "agent-checks (dry run): the dated-phrasing files are reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would register the agent-checks guard on PreToolUse" \
         "agent-checks (dry run): the guard registration is reported"
+    ac_section "$out-dry.log" ac-trig-bare > "$out-dry-trig"
+    assert_contains "$out-dry-trig" "[DRY RUN] Would add edited to the pull_request types in $wf" \
+        "agent-checks (dry run): a workflow whose pull_request trigger lacks edited is reported"
+    if cmp -s <(ac_show ac-trig-bare "$wf") <(ac_trig_wf); then
+        pass "agent-checks (dry run): the workflow lacking edited is left as it was"
+    else
+        fail "agent-checks (dry run): the workflow lacking edited is left as it was"
+    fi
 
     # ── The real run ──
     rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-1.log" || rc=$?
@@ -24308,7 +24335,9 @@ for g in doc["hooks"]["PreToolUse"]:
     echo "TOKEN=x" > "$clone/.env"
     gattr_git -C "$clone" add .env
     gattr_git -C "$clone" commit -q -m "add env"
-    rc=0; (cd "$clone" && bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
+    # No GITHUB_EVENT_*: under CI they name this suite's own pull request, and
+    # the runner's pr-tldr check would read its description.
+    rc=0; (cd "$clone" && env -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
     if [[ $rc -ne 0 ]] && grep -q '\.env' "$out-ci.log"; then
         pass "agent-checks (sync): the delivered runner's ci mode refuses a committed .env"
     else
@@ -24351,6 +24380,47 @@ for g in doc["hooks"]["PreToolUse"]:
         pass "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
     else
         fail "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
+    fi
+
+    # The one edit the sync makes to an existing workflow (ADR 0021's
+    # 2026-11-02 addendum): edited added to the pull_request types.
+    if cmp -s <(ac_show ac-trig-bare "$wf") <(ac_trig_wf '    types: [opened, edited, reopened, synchronize]
+'); then
+        pass "agent-checks (trigger): a bare pull_request: gets a types line with edited, and nothing else changes"
+    else
+        fail "agent-checks (trigger): a bare pull_request: gets a types line with edited, and nothing else changes — got: $(ac_show ac-trig-bare "$wf" | head -6 | tr '\n' '|')"
+    fi
+    if cmp -s <(ac_show ac-trig-types "$wf") <(ac_trig_wf '    types: [opened, edited, synchronize]
+'); then
+        pass "agent-checks (trigger): a types list without edited gets edited added after opened"
+    else
+        fail "agent-checks (trigger): a types list without edited gets edited added after opened — got: $(ac_show ac-trig-types "$wf" | head -6 | tr '\n' '|')"
+    fi
+    if cmp -s <(ac_show ac-trig-current "$wf") <(ac_trig_wf '    types: [opened, edited]
+'); then
+        pass "agent-checks (trigger): a types list that has edited is left alone"
+    else
+        fail "agent-checks (trigger): a types list that has edited is left alone"
+    fi
+    if cmp -s <(ac_show ac-trig-list "$wf") <(printf 'name: agent-checks\non: [pull_request, push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n'); then
+        pass "agent-checks (trigger): an on: list is left alone"
+    else
+        fail "agent-checks (trigger): an on: list is left alone"
+    fi
+    ac_section "$out-1.log" ac-trig-list > "$out-trig-list"
+    assert_contains "$out-trig-list" "WARN: acorg/ac-trig-list's $wf is not patched to re-run on a description edit (its on: is not a map of triggers)" \
+        "agent-checks (trigger): the on: list is named in a WARN"
+    ac_section "$out-1.log" ac-trig-bare > "$out-trig-bare"
+    assert_contains "$out-trig-bare" "trigger=missing-edited" \
+        "agent-checks (trigger): the classify line reports the missing edited"
+    ac_section "$out-1.log" ac-trig-current > "$out-trig-current"
+    assert_contains "$out-trig-current" "trigger=current" \
+        "agent-checks (trigger): the classify line reports a current trigger"
+    got=$(gattr_git -C "$bare/acorg_ac-trig-bare" log -1 --format=%B main)
+    if [[ "$got" == *"Adds edited to the pull_request types of $wf"* ]]; then
+        pass "agent-checks (trigger): the commit says why the workflow was edited"
+    else
+        fail "agent-checks (trigger): the commit says why the workflow was edited — got: $(head -1 <<< "$got")"
     fi
 
     # ── Re-run: nothing left to do ──
