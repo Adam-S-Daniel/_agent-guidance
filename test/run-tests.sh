@@ -22408,6 +22408,14 @@ PY_SCOPE
     mkdir "$CMA_HOME/memories_v3"
     cma_run
     cma_status 2 "unknown memories_v3 namespace cannot be reported clean"
+    cma_fixture v2-lock empty memories_v2
+    : > "$CMA_HOME/memories_v2.lock"
+    cma_run
+    cma_status 0 "Codex 0.166.0's empty memories_v2.lock is accepted (#363)"
+    cma_fixture v2-lock-dir empty memories_v2
+    mkdir "$CMA_HOME/memories_v2.lock"
+    cma_run
+    cma_status 2 "a memories_v2.lock that is not a regular file is unsupported"
     cma_fixture missing-table
     cma_sql "DROP TABLE stage1_outputs"
     cma_run
