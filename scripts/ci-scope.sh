@@ -4,9 +4,10 @@ set -euo pipefail
 # ci-scope.sh — Decide how much of CI a change needs.
 #
 # ci.yml's `test` is the one required check, so its jobs cannot use
-# `on.paths` (a check that never reports blocks the merge). Instead each job
-# runs this first and gates its later steps on the answer, so a skipped job
-# still reports success.
+# `on.paths` (a check that never reports blocks the merge). Instead each
+# `suite` shard runs this first and gates its later steps on the answer, so a
+# shard with nothing to test still reports success. `checks` does not use it:
+# its gates are cheap and other tests pin them as always-on.
 #
 # Prints one line, `scope=<value>`:
 #   full      run everything. Any file outside docs/, any docs file a
@@ -23,7 +24,7 @@ set -euo pipefail
 #
 # With MATRIX_GROUPS set (a suite shard's own groups), it also prints
 # `run=true|false`: true when scope is full, or names a group in MATRIX_GROUPS.
-# Without it, `run` is true only for full scope (the `checks` job).
+# Without it, `run` is true only for full scope.
 #
 # Usage: ci-scope.sh [<repo dir>]   (default: the current directory)
 # Reads GITHUB_EVENT_NAME and GITHUB_EVENT_PATH; shas come from the event

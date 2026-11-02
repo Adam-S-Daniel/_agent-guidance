@@ -230,15 +230,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Same scope step as `suite`, with no groups of its own: these gates read
-      # guidance, workflows and scripts, so they run only at full scope. The
-      # Markdown warnings below stay unconditional (they read docs too).
-      - name: Does this change need the gates?
-        id: scope
-        run: |
-          set -euo pipefail
-          bash scripts/ci-scope.sh . | tee -a "$GITHUB_OUTPUT"
-
       # Every gate below is a Node script, and several parse workflow YAML or
       # Markdown with the pinned dev dependencies (`yaml`, `markdown-it`), so
       # they have to be here as well as in `suite`. `npm ci`, not
@@ -257,8 +248,8 @@ jobs:
       # tests), so this step cannot fail this job (and through it the
       # required `test` context) and needs no `continue-on-error`. Placed
       # first among the checks so its annotations print even when a later
-      # step fails, and kept unconditional, unlike the gates below, which wait
-      # on the scope step.
+      # step fails, and kept unconditional with no `paths:` filter, like the
+      # rest of this job.
       - name: Agent Markdown warnings (spelling, dangling references)
         run: node scripts/check-agent-markdown.js
 
@@ -266,8 +257,7 @@ jobs:
       # hand-made byte-identical copy of agents-md/base.md that nothing syncs
       # (SYNC_SELF_REPO) and no drift report names; the same step proves every
       # docs/evidence/ file that base.md and stub.md point at still exists.
-      # Gated only on the scope step: deleting or renaming an evidence file
-      # that base.md names is full scope, because base.md names it. The
+      # Unconditional and not path-filtered, like the rest of this job. The
       # integration suite compares the same two files and fails on the same
       # drift, but with a FAIL line buried in a shard's log; this step's
       # message names the one-line fix. So it must never be skipped behind a
@@ -276,7 +266,6 @@ jobs:
       # ahead of every step that can fail, because a later step without
       # `if: always()` is skipped once an earlier one fails.
       - name: Fleet payload mirrors base.md
-        if: steps.scope.outputs.run == 'true'
         run: node scripts/check-fleet-guidance-mirror.js
 
       # This repo runs crons of its own (drift-report, the Dependabot sweep),
@@ -287,7 +276,6 @@ jobs:
       # clones on a disk: a runner has exactly one repo, so a disk-root gate
       # could never run here and would rot while looking like a guarantee.
       - name: Cron-coverage self-check
-        if: steps.scope.outputs.run == 'true'
         run: node scripts/check-cron-coverage.js
 
       # The sibling gate, over the OTHER two-key scope block. It asserts that
@@ -299,7 +287,6 @@ jobs:
       # the two keys together still cover the account is a discovery question
       # and belongs to the nightly drift report, so the two never contend.
       - name: Skills-bootstrap scope is a partition
-        if: steps.scope.outputs.run == 'true'
         run: node scripts/check-registry.js
 
       # Structure BEFORE staleness: the staleness diff below only proves
@@ -312,7 +299,6 @@ jobs:
       # so this runs first and a failure here is reported as a structural
       # defect rather than an unreadable multi-hundred-line diff.
       - name: AGENTS.md structure is sound
-        if: steps.scope.outputs.run == 'true'
         run: ./scripts/check-agents-md.sh AGENTS.md
 
       # The graduation gate (_agent-guidance#119): every `##` heading in
@@ -327,7 +313,6 @@ jobs:
       # any row here is `covered`, a fixture rename on that branch reds THIS
       # repo's CI on the next run, with no change on this side at all.
       - name: Check out skills-evals (read-only, for fixture existence)
-        if: steps.scope.outputs.run == 'true'
         uses: actions/checkout@v7.0.1
         with:
           repository: Adam-S-Daniel/skills-evals
@@ -335,7 +320,6 @@ jobs:
           persist-credentials: false
 
       - name: Section manifest covers every guidance heading
-        if: steps.scope.outputs.run == 'true'
         run: node scripts/check-guidance-coverage.js --skills-evals skills-evals --check-bytes
 
       # The touch gate (_agent-guidance#120), after the graduation gate above
@@ -347,7 +331,7 @@ jobs:
       # $GITHUB_EVENT_PATH, so nothing PR-shaped is ever interpolated into a
       # `run:` block, where it would be echoed into the log.
       - name: Guidance touch gate
-        if: github.event_name == 'pull_request' && steps.scope.outputs.run == 'true'
+        if: github.event_name == 'pull_request'
         run: node scripts/check-guidance-touch.js
 
       # ADR 0034: an edit to a guidance section that eval evidence currently
@@ -358,7 +342,7 @@ jobs:
       # fail: the gate reads it only when a section is touched, and then an
       # unreadable explorer fails closed (exit 1); re-run the check.
       - name: Eval-protected sections take correctness fixes only
-        if: github.event_name == 'pull_request' && steps.scope.outputs.run == 'true'
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -386,7 +370,6 @@ jobs:
       # with its trailing newlines stripped, then the marker line and everything
       # under it, then exactly one closing newline.
       - name: Self-guidance is current
-        if: steps.scope.outputs.run == 'true'
         run: |
           printf '%s\n%s\n' \
             "$(./scripts/build-agents-md.sh)" \
@@ -409,7 +392,6 @@ jobs:
       # named in a comment would satisfy) and takes the canonical list from
       # `./test/run-tests.sh --list-groups` rather than from the script's text.
       - name: CI shards cover every test group
-        if: steps.scope.outputs.run == 'true'
         run: node scripts/check-ci-shards.js
 
       # THE ADOPTION KIT (docs/reference/adopt-the-whole-system/): its own

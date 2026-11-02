@@ -24878,12 +24878,12 @@ test_ci_scope() {
     }
 
     scope_case "an unread doc skips a shard" "scope=none run=false" "agent_checks sync" docs/unread.md
-    scope_case "an unread doc skips the gates" "scope=none run=false" "" docs/unread.md
+    scope_case "an unread doc with no shard groups reads run=false" "scope=none run=false" "" docs/unread.md
     scope_case "the lessons ledger runs the shard that tests its reader" \
         "scope=agent_checks run=true" "sync agent_checks" docs/agent-checks-lessons.md
     scope_case "the lessons ledger skips other shards" \
         "scope=agent_checks run=false" "bump drift" docs/agent-checks-lessons.md
-    scope_case "the lessons ledger skips the gates" "scope=agent_checks run=false" "" docs/agent-checks-lessons.md
+    scope_case "the lessons ledger with no shard groups reads run=false" "scope=agent_checks run=false" "" docs/agent-checks-lessons.md
     scope_case "a doc a script names runs everything" "scope=full run=true" "bump" docs/read-by-code.md
     scope_case "code runs everything" "scope=full run=true" "bump" scripts/code.py
     scope_case "docs plus code runs everything" "scope=full run=true" "bump" docs/unread.md scripts/code.py
@@ -24916,18 +24916,15 @@ test_ci_scope() {
         && pass "ci-scope: the ledger's readers match DATA_FILES" \
         || fail "ci-scope: the ledger's readers match DATA_FILES — found '$readers'"
 
-    # And ci.yml gates every suite and checks step after the scope step on it.
+    # And ci.yml gates every suite step after the scope step on it. `checks`
+    # stays unconditional: its gates are cheap and other tests pin them as always-on.
     # Parsed, never grepped.
     local wired
     wired=$(node -e '
       const YAML = require("yaml"), fs = require("fs");
       const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
-      const keep = new Set(["Setup Node", "Install the workflow parser",
-        "Agent Markdown warnings (spelling, dangling references)",
-        "Did the adoption kit change?", "Set up Python for the adoption kit",
-        "Adoption kit tests and export check"]);
       const bad = [];
-      for (const id of ["suite", "checks"]) {
+      for (const id of ["suite"]) {
         const steps = d.jobs[id].steps;
         const i = steps.findIndex(s => s.id === "scope");
         if (i !== 1) { bad.push(`${id}: scope is not the step after checkout`); continue; }
@@ -24935,13 +24932,12 @@ test_ci_scope() {
         if (id === "suite" && !/matrix\.groups/.test((steps[i].env || {}).MATRIX_GROUPS || ""))
           bad.push("suite: scope step does not pass MATRIX_GROUPS");
         for (const s of steps.slice(i + 1)) {
-          if (id === "checks" && keep.has(s.name)) continue;
           if (!/steps\.scope\.outputs\.run == .true./.test(s.if || "")) bad.push(`${id}: ${s.name} is not gated`);
         }
       }
       process.stdout.write(bad.join("; ") || "ok");
     ' "$REPO_ROOT/.github/workflows/ci.yml" 2>&1)
-    [[ "$wired" == "ok" ]] && pass "ci-scope: ci.yml gates its steps on the scope step" \
+    [[ "$wired" == "ok" ]] && pass "ci-scope: ci.yml gates its suite steps on the scope step" \
         || fail "ci-scope: ci.yml gates its steps on the scope step — $wired"
 }
 
