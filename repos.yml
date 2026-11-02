@@ -24,7 +24,14 @@
 #
 # What remains below is the policy exclusion list: repos that discovery WOULD
 # reach and that we choose not to sync.
-exclude: []
+#
+#   • acsi-kit, the public adoption kit. Adopters clone it and run Claude
+#     Code in the clone, so a managed AGENTS.md there (and the hooks the sync
+#     delivers with it) would load this fleet's rules into their setup
+#     session. Its agent-checks workflow and .githooks/ are copied by hand
+#     instead, as for verify-actions-lock.
+exclude:
+  - acsi-kit
 default_sections: []
 
 # ── skills-bootstrap hook delivery ─────────────────────────────────────────
@@ -378,6 +385,9 @@ cron_coverage:
     # workflow runs on pull requests and pushes; there is no cron to watch.
     # Give it one and it moves to `fleet:`.
     - verify-actions-lock
+    # The public adoption kit, excluded from the sync above. Its workflows run
+    # on pull requests and pushes; there is no cron to watch.
+    - acsi-kit
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file

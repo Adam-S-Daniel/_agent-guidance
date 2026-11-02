@@ -1,2 +1,0 @@
-  - path: evals/review-bash-ci-reliability/release-pipeline
-    readiness: "Isolation pair on pins since removed (agent claude-sonnet-5, judge claude-opus-4-8). Local N=3 judged baseline: objective with 8/11 vs without 5.67/11; judge 6.05 vs 4.95."
