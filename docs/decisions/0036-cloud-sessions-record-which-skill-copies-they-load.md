@@ -1,6 +1,6 @@
 # 0036 — Cloud sessions record which skill copies they load
 
-**Status:** Proposed — awaiting Adam's approval (2026-11-02). Extends [ADR 0035](0035-sessions-prove-the-guidance-loaded-with-a-check-value.md), whose record holds no names beyond registry names.
+**Status:** Accepted (Adam, 2026-11-02). Extends [ADR 0035](0035-sessions-prove-the-guidance-loaded-with-a-check-value.md), whose record holds no names beyond registry names.
 
 ## Context
 
@@ -53,3 +53,11 @@ The integrator's cloud probe (2026-11-02) measured what the upload needs:
 - **Add the fields to phase 1's record.** Rejected: that record is written once per session, at the first Stop with an `instructions` entry, so it misses later Skill uses. It is also the record ADR 0035 promised holds no names beyond registry names.
 - **Record only a digest prefix.** Rejected: the private store is where full digests are resolved against registry commits; the public rows truncate later.
 - **Upload through a GitHub App with the contents API.** Deferred: no App credential is configured, and the session's git path is the one measured.
+
+## Addendum (2026-11-02, implementation review)
+
+The implementation review changed three points of the Decision above. The rest of the Decision stands.
+
+- **Phase 2 runs only when `CLAUDE_CODE_REMOTE=true`.** That is narrower than Decision point 1, which also counts `CLAUDE_CODE_REMOTE_SESSION_ID` alone as a cloud session. A session with only `CLAUDE_CODE_REMOTE_SESSION_ID` set does no phase-2 work: no file is created and no git or network call is made. Phase 1 keeps its own test, either variable, unchanged.
+- **A rejected push fetches the new tip and rebuilds until the deadline.** This replaces Decision point 5's "one fresh clone and one retry". After a rejection the hook shallow-fetches the branch tip, reads its tree into the private index, re-reads the existing shard from that tip, then commits and pushes again, until the network deadline. Only a network error, a 5xx or a timeout counts as a failure for the backoff. A race that is still lost when time runs out tries again at the next Stop.
+- **When phase 1 is also due, both files go in one commit.** This reverses the "Cut, for now" item under Consequences that ruled out a combined phase-1 and phase-2 push. When phase 1 uploads in the same Stop as phase 2, the hook makes one probe and one commit carrying both files, then one push. Later Stops push phase 2 alone.
