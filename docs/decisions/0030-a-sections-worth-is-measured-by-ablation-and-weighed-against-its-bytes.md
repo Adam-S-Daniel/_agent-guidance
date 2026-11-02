@@ -33,3 +33,15 @@ A skill costs context only when it is invoked. A `##` section of `agents-md/base
 
 - [skills-evals DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md), "Section fixtures, verdicts and removal".
 - [`scripts/check-guidance-coverage.js`](../../scripts/check-guidance-coverage.js) and [`scripts/check-guidance-touch.js`](../../scripts/check-guidance-touch.js).
+
+## Addendum (2026-11-02): the removal rule, pooling across versions, and reversal
+
+Adam set the removal rule on 2026-11-02 ([skills-evals#557](https://github.com/Adam-S-Daniel/skills-evals/issues/557)), the same for sections and skills. It amends decisions 1, 3 and 4.
+
+- **Decision 1, the threshold.** A section is retired when the gate is 90% confident that it does not improve results by 0.15 or more. In skills-evals' `gate-policy.yml` that is `retire_confidence` 0.90 and `objective_margin` 0.15, with `judge_margin` 1.5, the same margin on the judge's 0-to-10 scale. There is no separate confirmation step. Keeping a section stays at 85%, applied across all of its cells and routes together rather than per cell ([skills-evals#578](https://github.com/Adam-S-Daniel/skills-evals/pull/578)).
+- **Decision 1, the evidence.** The in-situ pair now pools across versions of the rest of this file. Runs beside different versions of the rest are separate strata, combined by precision weight, so an edit elsewhere in `base.md` no longer starts a section's evidence over ([skills-evals#565](https://github.com/Adam-S-Daniel/skills-evals/pull/565)).
+- **Decision 3.** `shorten-or-merge` still applies only to a section whose in-situ verdict is `retire`.
+- **Decision 4, reversal.** Each removal pull request is followed by an `agent-authored` notice issue in skills-evals. It mentions Adam, links the pull request, and says how to reverse the removal: close the pull request before it merges, or press Revert on it after. The skills-evals explorer lists every removed section with its date and that link, read from this repository's `docs/guidance-impact.md` `remove` entries ([skills-evals#567](https://github.com/Adam-S-Daniel/skills-evals/pull/567)). The trade Adam accepted with no confirmation step: a section that helps only beside today's version of the rest can still be removed, and the notice is the backstop.
+- **Consequences.** The first consequence above ("needs at least five runs per arm at the first look") predates the anytime bound, which skills-evals now checks after every run. An in-situ cell still needs about 11 runs per arm before its own variance replaces the conservative fallback.
+
+[ADR 0033](0033-audits-leave-eval-protected-subjects-alone-except-for-correctness.md) needs no change: a section is protected while its verdict is `keep` or it has runs of its current text.
