@@ -204,8 +204,9 @@ python3 scripts/check-codex-cloud-context.py \
 The checker fails closed unless that envelope contains the payload exactly
 as the hook delivers it (byte-exact after dropping the repo-only `# AGENTS.md`
 header that the hook's `PAYLOAD_REPO_HEADER` names) inside one complete
-managed block, its one persisted installed verdict, and
-the expected repo-specific additions through end of file. It prints only a
+managed block, its one persisted installed verdict, the check value line that
+ends the block ([ADR 0035](decisions/0035-sessions-prove-the-guidance-loaded-with-a-check-value.md)),
+and the expected repo-specific additions through end of file. It prints only a
 non-identifying result; it does not fetch authenticated task data. Raw task
 captures are authenticated and stay local—do not commit them or paste private
 environment IDs or task URLs into the repo. This response shape is an observed

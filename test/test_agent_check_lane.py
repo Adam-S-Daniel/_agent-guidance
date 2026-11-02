@@ -4,10 +4,15 @@ Every repo is a temp directory with a temp HOME and no global or system git
 config. The candidate runners are temp copies of the template with one arm
 inserted into check_lessons, the way the lesson-check lane adds one.
 
+GITHUB_EVENT_NAME, GITHUB_EVENT_PATH and GITHUB_ACTIONS are dropped from every
+environment here: under GitHub Actions they describe the real pull request,
+and the runner's pr-tldr check would read that pull request's description.
+
 Run: python3 -m unittest discover -s test -p 'test_agent_check_lane.py'
 (test/run-tests.sh's agent_checks group runs it that way).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -24,6 +29,7 @@ LANE = REPO_ROOT / "scripts" / "agent_check_lane.py"
 RUNNER = REPO_ROOT / "templates" / "agent-checks" / "agent-checks"
 CASES = REPO_ROOT / "test" / "fixtures" / "agent-checks-cases.jsonl"
 EMPTY_LESSONS = "check_lessons() {\n  :\n}\n"
+GITHUB_RUN_VARS = ("GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_ACTIONS")
 
 # A path-based lesson: refuse any *.notes-secret file.
 PATH_ARM = """check_lessons() {
@@ -60,7 +66,8 @@ class LaneTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         home = self.tmp / "home"
         home.mkdir()
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith("GIT_") and k not in GITHUB_RUN_VARS}
         self.env.update(HOME=str(home), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
                         AGENT_CHECKS_LOG="off")
 
@@ -135,6 +142,108 @@ class CasesTests(LaneTestCase):
         out = self.lane("cases", "--runner", str(RUNNER), "--cases", str(cases))
         self.assertEqual(out.returncode, 1, out.stdout)
         self.assertIn("FAIL env-other-message (refused, but stderr lacks the expected message)", out.stdout)
+
+
+class CaseFieldTests(LaneTestCase):
+    """The ci cases' optional `pr` and the pass cases' optional `warning`."""
+
+    def run_cases(self, *lines):
+        cases = self.cases_file(*lines, include_default=False)
+        return self.lane("cases", "--runner", str(RUNNER), "--cases", str(cases))
+
+    def test_invalid_pr_and_warning_fields_are_refused(self):
+        bad = {
+            "pr on a pre-commit case": '{"id": "x", "event": "pre-commit", "files": {"a": "b"}, "pr": {"body": ""}, "expect": "pass"}',
+            "pr without body": '{"id": "x", "event": "ci", "files": {"a": "b"}, "pr": {"user_type": "User"}, "expect": "pass"}',
+            "pr unknown key": '{"id": "x", "event": "ci", "files": {"a": "b"}, "pr": {"body": "", "number": 1}, "expect": "pass"}',
+            "pr body a number": '{"id": "x", "event": "ci", "files": {"a": "b"}, "pr": {"body": 3}, "expect": "pass"}',
+            "pr empty user_type": '{"id": "x", "event": "ci", "files": {"a": "b"}, "pr": {"body": "", "user_type": ""}, "expect": "pass"}',
+            "warning on a refuse case": '{"id": "x", "event": "ci", "files": {".env": "b"}, "expect": "refuse", "message": "m", "warning": "w"}',
+            "empty warning": '{"id": "x", "event": "ci", "files": {"a": "b"}, "expect": "pass", "warning": ""}',
+        }
+        for label, line in bad.items():
+            out = self.run_cases(line)
+            self.assertEqual(out.returncode, 1, label)
+            self.assertIn("cases.jsonl:1:", out.stdout, label)
+
+    def test_missing_warning_is_reported(self):
+        out = self.run_cases('{"id": "tldr-ok", "event": "ci", "files": {"a.py": "x\\n"}, '
+                             '"pr": {"body": "## TLDR\\nAdds a retry.\\n"}, "expect": "pass", '
+                             '"warning": "agent-checks (warning):"}')
+        self.assertEqual(out.returncode, 1, out.stdout)
+        self.assertIn("FAIL tldr-ok (passed, but the output lacks the expected warning)", out.stdout)
+
+    def test_the_lanes_own_github_event_never_reaches_a_case(self):
+        # A ci case with no `pr`, run by a lane whose own environment names a
+        # pull_request event with an unreadable payload, still passes.
+        env = dict(self.env, GITHUB_EVENT_NAME="pull_request", GITHUB_ACTIONS="true",
+                   GITHUB_EVENT_PATH=str(self.tmp / "no-such-event.json"))
+        cases = self.cases_file('{"id": "ci-plain", "event": "ci", "files": {"a.py": "x\\n"}, "expect": "pass"}',
+                                include_default=False)
+        out = self.lane("cases", "--runner", str(RUNNER), "--cases", str(cases), env=env)
+        self.assertEqual(out.returncode, 0, out.stdout)
+
+
+class PrTldrRunnerTests(LaneTestCase):
+    """The runner's pr-tldr check, for what the case table cannot express."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = self.new_repo("r", {"README.md": "# Example\n"})
+
+    def run_ci(self, event_path, env=None):
+        env = dict(env or self.env, GITHUB_EVENT_NAME="pull_request", GITHUB_EVENT_PATH=str(event_path))
+        return subprocess.run(["bash", str(RUNNER), "ci", "HEAD~1", "HEAD"], cwd=str(self.repo), env=env,
+                              capture_output=True, text=True)
+
+    def event(self, payload):
+        path = self.tmp / "event.json"
+        path.write_text(payload, encoding="utf-8")
+        return path
+
+    def test_unreadable_event_file_is_refused(self):
+        out = self.run_ci(self.tmp / "no-such-event.json")
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("agent-checks: pull request description: the event payload at GITHUB_EVENT_PATH "
+                      "could not be read", out.stderr)
+
+    def test_malformed_or_non_pull_request_payload_is_refused(self):
+        for payload in ("{not json", '{"ref": "refs/heads/main"}', '{"pull_request": "text"}'):
+            out = self.run_ci(self.event(payload))
+            self.assertEqual(out.returncode, 1, payload)
+            self.assertIn("could not be read as a pull request event", out.stderr, payload)
+
+    def test_no_node_is_refused(self):
+        nonode = self.tmp / "nonode"
+        nonode.mkdir()
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            if not os.path.isdir(d):
+                continue
+            for name in os.listdir(d):
+                src = os.path.join(d, name)
+                if name in ("node", "npm", "npx", "corepack") or (nonode / name).exists():
+                    continue
+                if os.path.isfile(src) and os.access(src, os.X_OK):
+                    (nonode / name).symlink_to(src)
+        out = self.run_ci(self.event('{"pull_request": {"body": "## TLDR\\nx\\n"}}'),
+                          env=dict(self.env, PATH=str(nonode)))
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("pull request description: node is not on PATH", out.stderr)
+
+    def test_bot_warning_is_an_annotation_under_github_actions(self):
+        path = self.event('{"pull_request": {"body": "Bumps a pin.", "user": {"type": "Bot"}, '
+                          '"created_at": "2026-12-01T00:00:00Z"}}')
+        out = self.run_ci(path, env=dict(self.env, GITHUB_ACTIONS="true"))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("::warning::agent-checks (warning): pull request description: it does not begin",
+                      out.stderr)
+
+    def test_the_body_is_never_printed(self):
+        path = self.event('{"pull_request": {"body": "SENTINEL-TEXT-1234 and no heading", '
+                          '"created_at": "2026-12-01T00:00:00Z"}}')
+        out = self.run_ci(path)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertNotIn("SENTINEL-TEXT-1234", out.stdout + out.stderr)
 
 
 class RedGreenTests(LaneTestCase):
@@ -369,7 +478,7 @@ class ScopeTests(LaneTestCase):
         self.assertIn("is not byte-identical", out.stdout)
 
 
-LOG_KEYS = ["v", "ts", "event", "repo", "checks", "failed"]
+LOG_KEYS = ["v", "ts", "event", "repo", "checks", "failed", "runner"]
 KEBAB = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 
@@ -412,6 +521,20 @@ class RunLogTests(LaneTestCase):
         self.assertEqual(entry["repo"], "example-owner/widgets")
         self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell"])
         self.assertEqual(entry["failed"], [])
+        self.assertEqual(entry["runner"], hashlib.sha256(RUNNER.read_bytes()).hexdigest()[:12])
+
+    def test_runner_digest_follows_the_runner_file(self):
+        self.stage({"README.md": "# Example\n"})
+        copy = self.tmp / "copy" / "agent-checks"
+        copy.parent.mkdir()
+        copy.write_bytes(RUNNER.read_bytes() + b"# a later version\n")
+        env = dict(self.env, AGENT_CHECKS_LOG=str(self.log))
+        out = subprocess.run(["bash", str(copy), "pre-commit"], cwd=str(self.repo), env=env,
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        [entry] = self.entries()
+        self.assertEqual(entry["runner"], hashlib.sha256(copy.read_bytes()).hexdigest()[:12])
+        self.assertNotEqual(entry["runner"], hashlib.sha256(RUNNER.read_bytes()).hexdigest()[:12])
 
     def test_refused_pre_commit_lists_the_check_and_keeps_the_message(self):
         self.stage({".env": "A=1\n"})
@@ -570,7 +693,7 @@ class CheckIdTests(unittest.TestCase):
     def test_core_check_ids(self):
         ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
         self.assertLessEqual({"rules-dir", "secret-file", "skill-shell", "staged-index", "push-to-default", "persistent-delete",
-                              "repo-local"}, ids)
+                              "repo-local", "pr-tldr"}, ids)
 
     def test_lesson_arms_and_lesson_checks_agree(self):
         for arm in (None, PATH_ARM):

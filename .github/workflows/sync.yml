@@ -35,6 +35,8 @@ on:
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
       # a fix to it would sit here firing no run to deliver itself.
       - ".claude/hooks/fleet-memory.sh"
+      # Delivered and refreshed with fleet-memory.sh, for the same reason.
+      - ".claude/hooks/guidance-load-record.sh"
       # templates/dependabot-auto-merge/ is COPIED into every synced repo that
       # runs Dependabot with no merge path (repos.yml's dependabot_auto_merge).
       # Only ever added, never refreshed, so an edit here reaches only repos

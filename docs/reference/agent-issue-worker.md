@@ -4,9 +4,12 @@ The issue pass of the cloud [fleet worker](../routines/fleet-worker.md). It
 takes the issues that the agent changelog routine
 ([`agent-changelog-routine.md`](agent-changelog-routine.md)) and the
 prompt-audit sweep ([`prompt-audit-sweep.md`](../routines/prompt-audit-sweep.md))
-file, and the memory-promotion issues the memory curation routine
-([`memory-curation.md`](../routines/memory-curation.md)) files, each labeled
-`agent-ready`, and turns each one into a ready-for-review
+file, the memory-promotion issues the memory curation routine
+([`memory-curation.md`](../routines/memory-curation.md)) files, and the
+`ci` tracking issues the daily scheduled-run health audit files in each
+fleet repo (cms-platform's `scripts/audit-scheduled-runs.js`, called through
+`scheduled-run-health-reusable.yml` here or cms-platform's reusable), each
+labeled `agent-ready`, and turns each one into a ready-for-review
 PR in that issue's repo. The worker never merges. The fleet worker's PR pass
 may later merge one narrow kind of fix PR
 ([ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md));
@@ -80,7 +83,13 @@ blocked comments. The on-hold stop overrides step 7 below.
 3. **Branch and work.** On a branch named `agent/issue-<n>-<short-slug>`
    from `origin/<default branch>`, read the repo's `AGENTS.md` and
    `CLAUDE.md` and follow them. Do the issue's "To check" items, plus any in
-   a later `Prompt-audit sweep <date>: <n> new findings` comment on it. If a
+   a later `Prompt-audit sweep <date>: <n> new findings` comment on it, or
+   in a later comment the health audit posted on its tracking issue (its
+   comments carry their own `## To check` list). For a health-audit issue,
+   each item is a failing workflow: read the run logs it links, fix the root
+   cause, and say in the PR which items it fixes. A failure that is not the
+   repo's to fix (an outage, a revoked secret, a setting only the owner can
+   change) is a stop under step 7, with the evidence. If a
    merged `Refs` PR already fixed some findings (the fleet worker comments
    which), do only the findings no merged PR fixed; when none are left,
    close the issue as completed with a comment naming the merged PRs. In

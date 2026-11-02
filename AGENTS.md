@@ -9,6 +9,8 @@
 > Edit only below the `## Repo-specific additions` header.
 > Everything above it will be overwritten on the next sync.
 
+guidance-marker: fleet-stub (transcript counts use this line; keep it)
+
 ## Fleet guidance is delivered once per session — not by this file
 
 The account's full guidance — incidents, fleet policy, machine layout, the
@@ -34,6 +36,14 @@ line:
   would when degraded — just don't report it as a problem or try to "fix" it.
 
 No verdict at all means the hook never ran — treat that as DEGRADED.
+
+**Say what loaded, in your first reply to the user in a session.** The
+installed guidance ends with a line `fleet-guidance check value: <8 hex>`.
+Begin that reply with `fleet-guidance check: <the value>`, copied from that
+line, or `fleet-guidance check: none` when no such line is in your context.
+Never guess a value or copy one from anywhere else: the session's record
+compares it with what actually loaded. Only in replies to the user — never in
+commits, PR or issue text, files or prompts for other agents.
 
 ## Codex reads the same block, from `~/.codex/AGENTS.md`
 
@@ -153,6 +163,26 @@ as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
 (`scripts/check-ci-shards.js`) fails unless the shards' lists name every group
 from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
 per-group seconds in the suite's `Groups` table, not by count.
+
+**Each `suite` shard starts with a scope step** (`scripts/ci-scope.sh`), and
+every later step waits on its `run` output, so a shard a change does not need
+still reports success. `checks` always runs: its gates are cheap and tests
+pin them as unconditional. A doc that no file outside `docs/` names skips
+every shard; a doc a script reads as data runs only the groups listed for it in
+the script's `DATA_FILES` table (do not name such a doc here: this file
+would become one more reader and put it back to full scope); anything else, a dispatch, or a range it cannot read
+runs everything. When a script starts reading a doc, either let it fall to
+full scope or add a `DATA_FILES` row and update `test_ci_scope`.
+
+**Guidance sections are measured elsewhere, and two CI gates keep the record.**
+[`scripts/check-guidance-coverage.js`](scripts/check-guidance-coverage.js) (the
+manifest gate) holds [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml)
+to one row per `##` heading, and [`scripts/check-guidance-touch.js`](scripts/check-guidance-touch.js)
+(the touch gate) requires an entry in [`docs/guidance-impact.md`](docs/guidance-impact.md)
+for every section whose body a pull request changes. Whether a section earns its
+bytes is decided by skills-evals' ablation fixtures, and a section that adds
+nothing is removed by an automatic pull request, not by a person
+([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md)).
 
 **Action pins.** This repo's own workflows name third-party actions by exact
 release tag, and [`.github/workflows/actions.lock`](.github/workflows/actions.lock)

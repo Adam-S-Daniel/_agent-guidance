@@ -40,6 +40,11 @@
  * minutes, few enough to stay under GitHub's secondary rate limit of 900
  * REST points a minute.
  *
+ * RETRIES. A single 5xx, 429 or network error (gh reports no HTTP status)
+ * once cost the whole day's run. Each call is retried up to RETRY_DELAYS_MS
+ * times with growing waits, outside the limiter so a waiting retry holds no
+ * slot. Any other status (404, 403, ...) is never retried.
+ *
  * Counts are exact or absent: any listing failure, truncated pagination or
  * unparseable timestamp fails the run (exit 1) and nothing is written, so the
  * dashboard never shows a partial week as a real one.
@@ -61,6 +66,7 @@ const DAY_MS = 86400000;
 const REFRESH_DAYS = 6;
 const MAX_PAGES = 10;
 const CONCURRENCY = 6;
+const RETRY_DELAYS_MS = [2000, 8000, 30000];
 const AGENT_LABEL = "agent-authored";
 const HOOK_NAME = "agent-checks";
 const HOOK_WORKFLOW_PATH = ".github/workflows/agent-checks.yml";
@@ -100,6 +106,29 @@ function limiter(n) {
   return (task) => new Promise((resolve, reject) => { queue.push({ task, resolve, reject }); next(); });
 }
 
+// Worth another try: a server error, a rate limit, or no status at all
+// (a dropped connection, or a body that did not parse).
+function isTransient(e) {
+  return e instanceof ApiError && (e.status === null || e.status === 429 || e.status >= 500);
+}
+
+// Runs `task`, retrying a transient failure once per entry of `delays`
+// after waiting that long through `wait(ms)`; the last failure is rethrown.
+async function withRetry(task, delays = RETRY_DELAYS_MS, wait = defaultWait) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await task();
+    } catch (e) {
+      if (attempt >= delays.length || !isTransient(e)) throw e;
+      await wait(delays[attempt]);
+    }
+  }
+}
+
+function defaultWait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ── gh plumbing: the only impure layer ─────────────────────────────────────
 
 function ownerTokenEnvName(owner) {
@@ -108,7 +137,7 @@ function ownerTokenEnvName(owner) {
 
 function buildApi(env, concurrency = CONCURRENCY) {
   const slot = limiter(concurrency);
-  const call = (owner, args) => slot(() => new Promise((resolve, reject) => {
+  const call = (owner, args) => withRetry(() => slot(() => new Promise((resolve, reject) => {
     const token = env[ownerTokenEnvName(owner)];
     execFile("gh", args, {
       encoding: "utf8",
@@ -127,7 +156,7 @@ function buildApi(env, concurrency = CONCURRENCY) {
         reject(new ApiError(null));
       }
     });
-  }));
+  })));
   return {
     async listRepos(owner) {
       return (await call(owner, [
@@ -417,7 +446,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  WEEKS, REFRESH_DAYS, CONCURRENCY, HOOK_NAME, HOOK_WORKFLOW_PATH, AGENT_LABEL,
+  WEEKS, REFRESH_DAYS, CONCURRENCY, RETRY_DELAYS_MS, HOOK_NAME, HOOK_WORKFLOW_PATH, AGENT_LABEL,
   ApiError, describeError, ownerTokenEnvName,
-  limiter, weekOf, windowFor, measureRepo, buildRows, runReport, shouldPublish, buildApi,
+  limiter, isTransient, withRetry, weekOf, windowFor, measureRepo, buildRows, runReport, shouldPublish, buildApi,
 };

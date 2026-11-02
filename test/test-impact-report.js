@@ -12,8 +12,8 @@ const path = require("node:path");
 const YAML = require("yaml");
 
 const {
-  ApiError, HOOK_NAME, HOOK_WORKFLOW_PATH, CONCURRENCY,
-  limiter, weekOf, windowFor, runReport, shouldPublish,
+  ApiError, HOOK_NAME, HOOK_WORKFLOW_PATH, CONCURRENCY, RETRY_DELAYS_MS,
+  limiter, isTransient, withRetry, weekOf, windowFor, runReport, shouldPublish,
 } = require("../scripts/impact-report.js");
 
 const ROOT = path.join(__dirname, "..");
@@ -220,6 +220,40 @@ test("a failed check-run lookup fails its repo and logs only status and type", a
   assert.equal(exitCode, 1);
   assert.equal(doc, null);
   assert.ok(lines.some((l) => l === "::error::impact-report: repo: ApiError HTTP 502"));
+});
+
+test("only 5xx, 429 and status-less errors are transient", () => {
+  for (const s of [null, 429, 500, 502, 503]) assert.equal(isTransient(new ApiError(s)), true, String(s));
+  for (const s of [400, 401, 403, 404, 422]) assert.equal(isTransient(new ApiError(s)), false, String(s));
+  assert.equal(isTransient(new RangeError("pagination ceiling reached")), false);
+});
+
+test("withRetry retries a transient failure with the given waits, then succeeds", async () => {
+  const waits = [];
+  let calls = 0;
+  const value = await withRetry(async () => {
+    calls++;
+    if (calls === 1) throw new ApiError(null);
+    if (calls === 2) throw new ApiError(502);
+    return "ok";
+  }, [5, 10, 20], async (ms) => { waits.push(ms); });
+  assert.equal(value, "ok");
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [5, 10]);
+});
+
+test("withRetry gives up after the last wait, and never retries a 404", async () => {
+  const waits = [];
+  let calls = 0;
+  await assert.rejects(withRetry(async () => { calls++; throw new ApiError(503); }, [1, 2], async (ms) => { waits.push(ms); }),
+    (e) => e instanceof ApiError && e.status === 503);
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [1, 2]);
+  calls = 0;
+  await assert.rejects(withRetry(async () => { calls++; throw new ApiError(404); }, [1, 2], async () => {}),
+    (e) => e.status === 404);
+  assert.equal(calls, 1);
+  assert.equal(RETRY_DELAYS_MS.length >= 2, true);
 });
 
 // ── The workflow and the template it measures (parsed, never regexed) ──────

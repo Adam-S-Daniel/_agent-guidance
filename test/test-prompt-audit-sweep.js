@@ -64,6 +64,8 @@ const mutations = {
   closeall: [spec, 'leave the issue\n  open and add the `agent-ready` label', 'close the issue\n  and add the `agent-ready` label'],
   skillimpact: [worker, '`docs/skill-impact.md`, whose diff only\n     adds lines', '`docs/skill-impact.md`, any change'],
   refsrequeue: [worker, 'swap\n`agent-working` for `agent-ready`', 'leave\n`agent-working` on the issue, not'],
+  protectedsweep: [spec, 'On a protected subject, keep a finding only if it is one of these', 'On a protected subject, keep every finding'],
+  protectedmerge: [worker, '7. **The eval-protection gate exits 0**', '7. **The eval-protection gate is advisory**'],
   argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
@@ -254,4 +256,14 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
   includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`']);
+});
+
+test('eval-protected subjects get correctness findings and fixes only (ADR 0033)', () => {
+  const route = prose(section(spec, '3. Route every finding'));
+  includes(route, ['On a protected subject, keep a finding only if it is one of these', '`node scripts/eval-protected.js list --explorer <that file>`', '`wrong-command`', '`broken-path`', '`contradiction`', '`safety-gap`', 'files no issue', '`<n> held (eval-protected)`', 'treat every skill and section as protected for this run']);
+  includes(prose(section(spec, '4. Render one issue per repo')), ['`Correctness fix: <skill name or section id> — <class>: <one line>`']);
+  const merge = prose(section(worker, '2. Review and merge a narrow instruction fix'));
+  includes(merge, ['**The eval-protection gate exits 0**', '`node scripts/eval-protected.js pr', 'Exit 2 is a refusal', 'do not merge, leave the PR as it is, and retry next run', 'all seven items', 'the finding really is of the class it names', 'close the PR without merging', 'gets no `needs-owner` label']);
+  includes(prose(section(worker, 'The issue pass')), ['Hold every other finding on a listed subject', 'closed as not planned']);
+  assert.ok(fs.existsSync(path.join(root, 'scripts/eval-protected.js')), 'the gate script the specs name is missing');
 });

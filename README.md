@@ -348,6 +348,36 @@ It never approximates: a row the exact match cannot resolve is exit 2 naming
 that row and the remedy — merge or rebase onto the base branch, after which
 the manifest exists at both shas and no fallback runs at all.
 
+### Guidance evals
+
+Whether a section is worth its bytes is measured in
+[skills-evals](https://github.com/Adam-S-Daniel/skills-evals), not here. The
+flow: a pull request edits `agents-md/base.md`; the
+[manifest gate](#section-manifest) requires a row for every heading and the
+[touch gate](#touch-gate) requires a [`docs/guidance-impact.md`](docs/guidance-impact.md)
+entry for every changed section. Fixtures under skills-evals'
+[`evals/guidance/<section id>/`](https://github.com/Adam-S-Daniel/skills-evals/tree/main/evals/guidance)
+are named by the manifest's `covered` rows and are unprompted
+([ADR 0031](docs/decisions/0031-guidance-eval-fixtures-are-unprompted.md)). The
+weekly routine fires each against the model roster, delivering the guidance
+through the real `fleet-memory.sh` and proving each arm got it
+([ADR 0032](docs/decisions/0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md));
+results go to skills-evals' [`persistent/eval-results`](https://github.com/Adam-S-Daniel/skills-evals/tree/persistent/eval-results)
+branch. From there the regression detector and the gates read them. A section
+is retired when its `full` against `full-minus-section` pair, pooled across
+versions of the rest of the guidance, shows with 90% confidence that it does
+not improve results by 0.15 or more. Retirement is an auto-merging pull
+request in this repo, with no human approval. Each removal is followed by a
+skills-evals notice issue to Adam with the way to revert it, and a section
+that helps only alone gets a shorten-or-merge issue
+([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md),
+2026-11-02 addendum).
+The results are public in the
+[Evals Explorer](https://adamdaniel.ai/tools/evals/)'s
+guidance view.
+The harness is described in skills-evals'
+[DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
+
 ### Payload mirror
 
 This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
@@ -723,8 +753,14 @@ with Contents: write for the publish.
 A `schedule:`-triggered workflow fails silently — no PR goes red, nothing
 notifies. This repo's own `drift-report.yml` was red for 26 consecutive nights
 before anyone noticed. `scripts/check-cron-coverage.js` is the gate that says a
-repo running crons actually calls cms-platform's `scheduled-run-health`
-reusable, and that the caller it has can fire and can file.
+repo running crons actually calls a `scheduled-run-health` reusable, and that
+the caller it has can fire and can file. A repo without an `actions.lock` calls
+cms-platform's. A repo with one calls this repo's
+`scheduled-run-health-reusable.yml`, because a reusable is covered by the
+lockfile of the repo that defines it and cms-platform has none (ADR 0024's
+2026-10-31 addendum). The daily `health-reusable-parity.yml` keeps that copy in
+step with cms-platform's and moves its release pin,
+`.github/health-audit-platform-ref`, in a self-merging PR.
 
 Two forms, answering two different questions:
 

@@ -301,6 +301,39 @@ Then apply the standing rules:
 - **Confidence Low** stays in the run log, not an issue.
 - **Already tracked:** a finding an open issue already covers (search the
   repo's open issues and PRs) is cited by link, not repeated.
+- **Eval-protected subjects** ([ADR 0033](../decisions/0033-audits-leave-eval-protected-subjects-alone-except-for-correctness.md)).
+  Any edit to a skill's directory or to a guidance section starts that
+  subject's eval evidence over, so a subject that is doing well is edited
+  only to fix something wrong. Once per run, fetch `explorer/latest.json`
+  from `Adam-S-Daniel/skills-evals` on its branch `persistent/eval-results`
+  (`git fetch` that branch, then `git show`), and in the `_agent-guidance`
+  checkout run
+  `node scripts/eval-protected.js list --explorer <that file>`. A skill or
+  section it lists is **protected**: its verdict is `keep`, or it has eval
+  runs on its current text, and it is not being removed (`retire` or
+  `shorten-or-merge`). A finding maps to a subject by its file: anything
+  under `plugins/<bundle>/skills/<name>/` in `adam-agentskills` is skill
+  `<name>`; a line of `agents-md/base.md` (including a consumer's managed
+  block routed there) is the section whose `##` heading it sits under, by
+  `agents-md/eval-coverage.yml`; `agents-md/sections/<x>.md` is that file's
+  row. On a protected subject, keep a finding only if it is one of these
+  correctness classes, and tag it with the class:
+  - `wrong-command`: a command, flag, API call or setting that does not work
+    as written;
+  - `broken-path`: a path, link, file or name that does not resolve;
+  - `contradiction`: it says the opposite of another rule, of the code it
+    describes, or of itself;
+  - `safety-gap`: following it as written can leak data, lose work or get
+    past a guard.
+
+  Every other finding on a protected subject (wording, padding, style,
+  structure, a dated-evidence move, a missing example) files no issue. Log
+  it in the run log only, as a count: `<n> held (eval-protected)`. If the
+  explorer cannot be fetched or the script exits non-zero, treat every skill
+  and section as protected for this run and log `explorer unreadable`.
+  Private-registry skills are not in the public explorer, so this rule does
+  not cover them yet. Untested subjects and subjects being removed are
+  routed as before.
 - **A defect class found in two or more repos** this run (counting private
   repos, but naming only public ones in `_agent-guidance`'s item) (a British
   spelling, a dangling "see X above", a hard-coded count) also becomes one
@@ -336,7 +369,11 @@ A new issue has these parts; a comment reuses them as above.
   run on <model>. Advisory: an LLM audit, not a verified defect list.`
 - **`## Findings`:** one bullet per finding: `file:line`, the exact quoted
   text in a code span, the pattern, why it matters, the confidence, and the
-  action. Every finding is something to verify, not a change to make.
+  action. Every finding is something to verify, not a change to make. A
+  finding on an eval-protected subject (step 3) also carries, in a code
+  span, the line its fix PR must copy into its body:
+  `Correctness fix: <skill name or section id> — <class>: <one line>`.
+  The fleet worker merges no edit to a protected subject without it.
 - **`## To check`:** checkboxes, one per finding, phrased as "verify, then
   fix if confirmed". Include the repo's gates (`docs/guidance-impact.md`,
   coverage rows, `docs/skill-impact.md`, version bumps) where the edit would
@@ -381,7 +418,8 @@ redo the edit, up to 3 times. It records:
 - the switches;
 - the step 0 probe answers and the model the audits ran on;
 - every repo in **Repos considered**, by canonical `full_name`:
-  `reached <sha>`, with its finding count and any `not audited` paths, or
+  `reached <sha>`, with its finding count, its `<n> held (eval-protected)`
+  count (step 3) and any `not audited` paths, or
   `NOT REACHED (<reason>)`. A private repo gets `private, reached` and its
   finding count, or `private, NOT REACHED`, and nothing more (**Private
   repos**);

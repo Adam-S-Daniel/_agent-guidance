@@ -117,7 +117,11 @@ def delivered_payload(payload):
 
 def expected_cloud_block(payload):
     raw = payload.encode("utf-8")
-    version = hashlib.sha256(raw).hexdigest()[:8]
+    digest = hashlib.sha256(raw).hexdigest()
+    version = digest[:8]
+    # The hook ends the block with a plain-text check value: the last 8 hex of
+    # the payload's digest (see CHECK VALUE in fleet-memory.sh).
+    check = digest[56:]
     delivered = delivered_payload(payload)
     payload_with_newline = delivered if delivered.endswith("\n") else delivered + "\n"
     verdict = (
@@ -129,6 +133,7 @@ def expected_cloud_block(payload):
         f"<!-- fleet-guidance-version: {version} -->\n"
         f"{verdict}\n"
         f"{payload_with_newline}"
+        f"fleet-guidance check value: {check}\n"
         f"{END}\n"
     )
     return block

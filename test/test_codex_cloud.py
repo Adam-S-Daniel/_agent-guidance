@@ -104,13 +104,15 @@ class CodexCloudDeliveryTests(unittest.TestCase):
     def expected_installed_block(self, payload=None):
         payload = payload or self.payload
         raw = payload.read_bytes()
-        version = hashlib.sha256(raw).hexdigest()[:8]
+        digest = hashlib.sha256(raw).hexdigest()
+        version, check = digest[:8], digest[56:]
         body = raw.decode("utf-8")
         return (
             f"{BEGIN}\n"
             f"<!-- fleet-guidance-version: {version} -->\n"
             f"fleet-guidance: installed (v{version}, {len(raw)} bytes) — Codex Cloud setup and maintenance\n"
             f"{body}"
+            f"fleet-guidance check value: {check}\n"
             f"{END}\n"
         )
 
@@ -360,6 +362,121 @@ class CodexCloudDeliveryTests(unittest.TestCase):
                     self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                     self.assertNotIn("fleet-guidance: skipped", result.stdout)
                     self.assertIn("ORANGE-TERN-130", (codex_home / "AGENTS.md").read_text(encoding="utf-8"))
+
+    def check_line_for(self, payload):
+        """The line the hook must write, computed here from the payload bytes:
+        the LAST 8 hex of the sha256 (the version id is the first 8)."""
+        digest = hashlib.sha256(payload.read_bytes()).hexdigest()
+        self.assertEqual(64, len(digest))
+        return f"fleet-guidance check value: {digest[-8:]}"
+
+    def test_check_value_line_ends_the_block_and_stays_off_stdout(self):
+        result = self.run_cloud()
+        content = (self.codex_home / "AGENTS.md").read_text(encoding="utf-8")
+        line = self.check_line_for(self.payload)
+        digest = hashlib.sha256(self.payload.read_bytes()).hexdigest()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(1, content.splitlines().count(line))
+        self.assertEqual(1, content.count("fleet-guidance check value:"))
+        self.assertTrue(content.endswith(f"{line}\n{END}\n"), content)
+        self.assertEqual(digest[-8:], line.rsplit(" ", 1)[1])
+        self.assertNotEqual(digest[:8], digest[-8:])
+        self.assertNotIn(digest[-8:], result.stdout + result.stderr)
+        self.assertNotIn("check value", result.stdout + result.stderr)
+        self.assertIn(f"(v{digest[:8]}, ", result.stdout)
+
+    def test_check_value_line_stands_alone_after_a_payload_without_a_final_newline(self):
+        bare = self.root / "no-final-newline.md"
+        bare.write_bytes(b"# Fleet guidance\n\nNo newline at the end")
+
+        result = self.run_cloud(payload=bare)
+        content = (self.codex_home / "AGENTS.md").read_bytes()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(
+            b"No newline at the end\n" + self.check_line_for(bare).encode() + b"\n" + END.encode() + b"\n",
+            content,
+        )
+
+    def test_check_value_covers_the_whole_payload_when_the_repo_header_is_dropped(self):
+        headed = self.root / "headed.md"
+        headed.write_text(
+            "# AGENTS.md\n\n"
+            "> **Managed by [`_agent-guidance`].**\n"
+            "> Edit only below the `## Repo-specific additions` header.\n"
+            "> Everything above it will be overwritten on the next sync.\n\n"
+            "Body after the header.\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_cloud(payload=headed)
+        content = (self.codex_home / "AGENTS.md").read_text(encoding="utf-8")
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertNotIn("Edit only below", content)
+        self.assertTrue(content.endswith(f"Body after the header.\n{self.check_line_for(headed)}\n{END}\n"))
+
+    def test_block_without_the_check_value_line_is_rewritten_with_it(self):
+        self.assertEqual(0, self.run_cloud().returncode)
+        destination = self.codex_home / "AGENTS.md"
+        line = self.check_line_for(self.payload)
+        complete = destination.read_text(encoding="utf-8")
+        # The shape of a block written without the line: same version, no check line.
+        destination.write_text(complete.replace(f"{line}\n", ""), encoding="utf-8")
+        self.assertNotIn("check value", destination.read_text(encoding="utf-8"))
+
+        rewritten = self.run_cloud()
+
+        self.assertEqual(0, rewritten.returncode, rewritten.stdout + rewritten.stderr)
+        self.assertIn("fleet-guidance: installed", rewritten.stdout)
+        self.assertEqual(complete, destination.read_text(encoding="utf-8"))
+        repeat = self.run_cloud()
+        self.assertIn("fleet-guidance: current", repeat.stdout)
+        self.assertEqual(complete, destination.read_text(encoding="utf-8"))
+
+    def test_stale_check_value_line_is_replaced_and_operator_text_is_kept(self):
+        self.assertEqual(0, self.run_cloud().returncode)
+        destination = self.codex_home / "AGENTS.md"
+        line = self.check_line_for(self.payload)
+        complete = destination.read_bytes()
+        stale = complete.replace(line.encode(), b"fleet-guidance check value: 0badc0de")
+        self.assertNotEqual(complete, stale)
+        destination.write_bytes(b"before\n" + stale + b"after")
+
+        result = self.run_cloud()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("fleet-guidance: installed", result.stdout)
+        self.assertEqual(b"before\n" + complete + b"after", destination.read_bytes())
+
+    def test_skip_removes_the_check_value_line(self):
+        self.assertEqual(0, self.run_cloud().returncode)
+        destination = self.codex_home / "AGENTS.md"
+        self.assertIn("check value", destination.read_text(encoding="utf-8"))
+
+        skipped = self.run_cloud(skip="1")
+
+        self.assertEqual(0, skipped.returncode, skipped.stdout + skipped.stderr)
+        self.assertNotIn("check value", destination.read_text(encoding="utf-8"))
+
+    def test_normal_mode_writes_the_same_check_value_line(self):
+        normal_home = self.root / "normal-codex"
+        normal_home.mkdir()  # normal mode writes Codex only when its home exists
+        line = self.check_line_for(self.payload)
+
+        cloud = self.run_cloud()
+        normal = self.run_cloud(args=[], codex_home=normal_home)
+
+        self.assertEqual(0, cloud.returncode, cloud.stdout + cloud.stderr)
+        self.assertEqual(0, normal.returncode, normal.stdout + normal.stderr)
+        for path in (self.codex_home / "AGENTS.md", normal_home / "AGENTS.md",
+                     self.claude_config / "CLAUDE.md"):
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(1, text.splitlines().count(line))
+                self.assertTrue(text.endswith(f"{line}\n{END}\n"))
+        self.assertNotIn(line.rsplit(" ", 1)[1], normal.stdout)
 
     def test_codex_home_alone_does_not_select_cloud_mode(self):
         self.codex_home.mkdir(parents=True)
