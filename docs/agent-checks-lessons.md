@@ -16,3 +16,4 @@ examples or subject text.
 | Date | Lesson id | Source | Verdict | PR |
 |------|-----------|--------|---------|----|
 | 2026-10-26 | closing-keyword-in-commit-message | https://github.com/Adam-S-Daniel/skills-evals/issues/424 | not checkable | none |
+| 2026-11-02 | 83a91a2915a3 | private proposal | not checkable | none |
