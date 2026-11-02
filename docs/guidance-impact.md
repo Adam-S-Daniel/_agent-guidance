@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-02 — two-github-connectors — edit
+- Motivation: _agent-guidance#291: the org connector (`github-mcp`) returned `403 Resource not accessible by integration` on issue writes (`issue_write` 2026-10-10, `add_issue_comment` 2026-10-31) in cloud sessions, while the section said it has the same issue writes.
+- Change: the bullet drops "issue" from the connector's write list and says issue writes can 403; no bytes added elsewhere (base.md stays under its 25 KiB cap).
+- Eval: evals/guidance/two-github-connectors/org-connector-ci, local run on the edited text, claude-sonnet-5-5, n=1 per arm, exit 0; objective 2/2 section, 1/2 none, 2/2 full, 1/2 full-minus-section. The fixture tests the CI-read and Actions-gap lines, not the changed sentence.
+- Outcome: pending
+
 ## 2026-11-02 — pr-tldr — create
 - Motivation: owner asked on 2026-11-02 that every pull request description begin with a plain-English TLDR.
 - Change: new section after the contribution-marker section: open each PR description with a `## TLDR` heading and one to three sentences; agent-checks' new pr-tldr check fails a PR without one, and editing the description re-runs it.
