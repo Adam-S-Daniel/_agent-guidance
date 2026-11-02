@@ -168,8 +168,8 @@ per-group seconds in the suite's `Groups` table, not by count.
 and every later step waits on its `run` output, so a change that needs none
 of them still reports `test` green. A doc that no file outside `docs/` names
 skips both; a doc a script reads as data runs only the groups listed for it in
-the script's `DATA_FILES` table (today `docs/agent-checks-lessons.md`, which
-runs `agent_checks`); anything else, a dispatch, or a range it cannot read
+the script's `DATA_FILES` table (do not name such a doc here: this file
+would become one more reader and put it back to full scope); anything else, a dispatch, or a range it cannot read
 runs everything. When a script starts reading a doc, either let it fall to
 full scope or add a `DATA_FILES` row and update `test_ci_scope`.
 
