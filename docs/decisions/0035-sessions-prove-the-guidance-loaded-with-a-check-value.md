@@ -34,3 +34,7 @@ Two obvious values do not work. The version id in the verdict is printed by the 
 - **A value written into `base.md`, with an exemption from the guidance-impact touch gate.** Rejected: it needs an edit per release plus a gate exemption, and every repo copy of `base.md` would carry it, so a session that only read the file by hand could quote it.
 - **The version id the verdict prints.** Rejected: the hook prints it whether or not memory loaded, so quoting it proves only that the hook ran.
 - **An HTML comment.** Rejected: Claude Code strips HTML comments from memory files before the model sees them.
+
+## Addendum (2026-11-02): the registry commits
+
+The record gains `sources` and `sources_dropped` ([#398](https://github.com/Adam-S-Daniel/_agent-guidance/issues/398)), placed after `registry_sha`, under point 5's rule: added keys, `v` stays 1. `sources` lists the GitHub `owner/repo` and 40-hex commit of each skills registry that skills-bootstrap.sh's install record names, and is null when that record has no `sources` list. `registry_sha` stays null. These are the first names the record holds; they are registry repos, never paths or content.

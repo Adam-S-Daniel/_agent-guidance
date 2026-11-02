@@ -24,7 +24,7 @@ HOOK = REPO_ROOT / ".claude" / "hooks" / "guidance-load-record.sh"
 NOW = "2026-10-31T12:00:00Z"
 KEYS = ["v", "ts", "kind", "session", "surface", "remote", "cli", "state",
         "repos", "guidance_version", "check_expected", "check_reported",
-        "registry_sha", "uploaded"]
+        "registry_sha", "sources", "sources_dropped", "uploaded"]
 FULL = "guidance-marker: fleet-full (transcript counts use this line; keep it)"
 STUB = "guidance-marker: fleet-stub (transcript counts use this line; keep it)"
 REPO = "Adam-S-Daniel/adam-agentskills-private"
@@ -135,9 +135,9 @@ class HookTestCase(unittest.TestCase):
             return []
         out = []
         for line in log.read_text(encoding="utf-8").splitlines():
-            pairs = json.loads(line, object_pairs_hook=lambda p: p)
-            self.assertEqual([k for k, _ in pairs], KEYS, line)
-            out.append(dict(pairs))
+            record = json.loads(line)
+            self.assertEqual(list(record), KEYS, line)
+            out.append(record)
         return out
 
     def calls(self):
@@ -221,7 +221,7 @@ class RecordTests(HookTestCase):
             "surface": "remote_projects", "remote": False, "cli": "2.1.312",
             "state": "full", "repos": 3, "guidance_version": "0a1b2c3d",
             "check_expected": False, "check_reported": "absent",
-            "registry_sha": None, "uploaded": None})
+            "registry_sha": None, "sources": None, "sources_dropped": None, "uploaded": None})
 
     def test_record_holds_no_path_content_or_session_id(self):
         self.write_transcript([instructions(
@@ -507,6 +507,120 @@ class CheckValueTests(HookTestCase):
         record = self.record_for([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)), assistant(1)])
         self.assertEqual(record["v"], 1)
         self.assertEqual(list(record), KEYS)
+
+
+# Invented 40-hex commits; the real ones are what skills-bootstrap.sh fetched.
+SHA_A = "a" * 40
+SHA_B = "0123456789abcdef0123456789abcdef01234567"
+GOOD = {"registry": "https://github.com/example/good.git", "ref": SHA_A}
+
+
+class SourcesTests(HookTestCase):
+    """sources and sources_dropped: the registry commits read from
+    skills-bootstrap.sh's install record (_agent-guidance#398)."""
+
+    def setUp(self):
+        super().setUp()
+        self.install_record = self.home / ".claude" / "skills" / ".skills-bootstrap-installed.json"
+        self.install_record.parent.mkdir(parents=True)
+        self.write_transcript([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)), assistant(1)])
+
+    def record_for(self, session="session-one"):
+        self.run_hook(session=session)
+        [record] = [r for r in self.records()
+                    if r["session"] == hashlib.sha256(session.encode()).hexdigest()[:16]]
+        return record
+
+    def sources_for(self, doc=None):
+        if doc is not None:
+            self.install_record.write_text(json.dumps(doc), encoding="utf-8")
+        record = self.record_for()
+        return record["sources"], record["sources_dropped"]
+
+    def test_no_install_record_is_null(self):
+        self.assertEqual(self.sources_for(), (None, None))
+
+    def test_an_install_record_without_sources_is_null(self):
+        # What skills-bootstrap.sh wrote before it recorded commits.
+        self.assertEqual(self.sources_for({"version": 1, "skills": [
+            {"name": "x", "registry": "https://github.com/example/good.git"}]}), (None, None))
+
+    def test_sources_that_are_not_a_list_are_null(self):
+        self.assertEqual(self.sources_for({"sources": GOOD}), (None, None))
+
+    def test_an_empty_list_records_an_empty_list(self):
+        self.assertEqual(self.sources_for({"sources": []}), ([], 0))
+
+    def test_valid_sources_are_normalized_deduped_and_sorted(self):
+        self.assertEqual(self.sources_for({"sources": [
+            {"registry": "https://github.com/Example-Owner/zeta-skills.git", "ref": SHA_B},
+            {"registry": "https://github.com/Example-Owner/alpha.skills", "ref": SHA_A},
+            {"registry": "https://github.com/Example-Owner/zeta-skills", "ref": SHA_B},
+        ]}), ([{"registry": "Example-Owner/alpha.skills", "ref": SHA_A},
+               {"registry": "Example-Owner/zeta-skills", "ref": SHA_B}], 0))
+
+    def test_invalid_items_are_dropped_and_counted(self):
+        sources, dropped = self.sources_for({"sources": [
+            GOOD,
+            {"registry": "file:///tmp/example/registry", "ref": SHA_A},
+            {"registry": "https://example.com/example/repo.git", "ref": SHA_A},
+            {"registry": "http://github.com/example/repo.git", "ref": SHA_A},
+            {"registry": "https://github.com/example/repo/extra", "ref": SHA_A},
+            {"registry": "https://github.com/example/repo.git\n", "ref": SHA_A},
+            {"registry": "https://github.com/-example/repo", "ref": SHA_A},
+            {"registry": GOOD["registry"], "ref": SHA_A.upper()},
+            {"registry": GOOD["registry"], "ref": SHA_A[:39]},
+            {"registry": GOOD["registry"], "ref": SHA_A + "\n"},
+            {"registry": GOOD["registry"]},
+            {"registry": 7, "ref": SHA_A},
+            GOOD["registry"],
+            None,
+        ]})
+        self.assertEqual(sources, [{"registry": "example/good", "ref": SHA_A}])
+        self.assertEqual(dropped, 13)
+
+    def test_a_seventeenth_source_is_dropped_and_counted(self):
+        items = [{"registry": "https://github.com/example/r%02d.git" % n, "ref": SHA_A} for n in range(17)]
+        sources, dropped = self.sources_for({"sources": list(reversed(items))})
+        self.assertEqual(sources, [{"registry": "example/r%02d" % n, "ref": SHA_A} for n in range(16)])
+        self.assertEqual(dropped, 1)
+
+    def test_unreadable_install_records_are_null_and_the_record_is_still_written(self):
+        cases = {
+            "malformed": b"{not json",
+            "deeply nested": b"[" * 100000 + b"]" * 100000,
+            "over 1 MiB": json.dumps({"sources": [GOOD], "pad": "x" * (1 << 20)}).encode(),
+            "not utf-8": b'{"sources": [], "x": "\xff"}',
+            "not an object": json.dumps([GOOD]).encode(),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                self.install_record.write_bytes(raw)
+                record = self.record_for(session="sources-" + name)
+                self.assertEqual((record["sources"], record["sources_dropped"]), (None, None))
+                self.assertEqual(record["state"], "stub-only")
+
+    def test_a_directory_at_the_path_is_null(self):
+        self.install_record.mkdir()
+        self.assertEqual(self.sources_for(), (None, None))
+
+    def test_a_fifo_at_the_path_is_null_and_does_not_block(self):
+        # A FIFO with no writer blocks a plain open() for read; run_hook's
+        # timeout would fail the test if the hook opened it.
+        os.mkfifo(self.install_record)
+        self.assertEqual(self.sources_for(), (None, None))
+
+    def test_a_symlink_at_the_path_is_null(self):
+        target = self.tmp / "elsewhere.json"
+        target.write_text(json.dumps({"sources": [GOOD]}), encoding="utf-8")
+        self.install_record.symlink_to(target)
+        self.assertEqual(self.sources_for(), (None, None))
+
+    def test_registry_sha_stays_null_beside_sources(self):
+        self.install_record.write_text(json.dumps({"sources": [GOOD]}), encoding="utf-8")
+        record = self.record_for()
+        self.assertIsNone(record["registry_sha"])
+        self.assertEqual(record["sources"], [{"registry": "example/good", "ref": SHA_A}])
 
 
 class OncePerSessionTests(HookTestCase):
