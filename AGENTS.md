@@ -164,6 +164,16 @@ as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
 from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
 per-group seconds in the suite's `Groups` table, not by count.
 
+**Each `suite` shard starts with a scope step** (`scripts/ci-scope.sh`), and
+every later step waits on its `run` output, so a shard a change does not need
+still reports success. `checks` always runs: its gates are cheap and tests
+pin them as unconditional. A doc that no file outside `docs/` names skips
+every shard; a doc a script reads as data runs only the groups listed for it in
+the script's `DATA_FILES` table (do not name such a doc here: this file
+would become one more reader and put it back to full scope); anything else, a dispatch, or a range it cannot read
+runs everything. When a script starts reading a doc, either let it fall to
+full scope or add a `DATA_FILES` row and update `test_ci_scope`.
+
 **Guidance sections are measured elsewhere, and two CI gates keep the record.**
 [`scripts/check-guidance-coverage.js`](scripts/check-guidance-coverage.js) (the
 manifest gate) holds [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml)

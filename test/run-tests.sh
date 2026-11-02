@@ -24834,6 +24834,113 @@ test_self_agent_checks() {
 
 # The lesson-check lane (ADR 0027): the case table holds against the template
 # runner the fleet receives, as the lane's `cases` gate runs it.
+# ── ci-scope.sh: how much of CI a change needs ────────────────────────────
+# ci.yml's suite shards and gates skip their steps when this says the change
+# does not need them, so every answer that lets a step skip is pinned here:
+# an unread doc skips everything, a doc a script reads runs only the groups
+# that test it, and anything else (code, an extra reader, the adoption kit, an
+# unreadable range, a dispatch) runs everything.
+test_ci_scope() {
+    echo ""
+    echo "=== Test: ci-scope.sh decides which CI steps a change needs ==="
+    local dir="$TEST_DIR/ci-scope" ev="$TEST_DIR/ci-scope-event.json" base out
+    rm -rf "$dir"; mkdir -p "$dir/docs/reference/adopt-the-whole-system" "$dir/scripts" "$dir/test"
+    git -C "$dir" init -q
+    git -C "$dir" config user.email ci@example.com
+    git -C "$dir" config user.name ci
+    printf '# unread\n' > "$dir/docs/unread.md"
+    printf '# read\n' > "$dir/docs/read-by-code.md"
+    printf '# ledger\n' > "$dir/docs/agent-checks-lessons.md"
+    printf '# kit\n' > "$dir/docs/reference/adopt-the-whole-system/kit.md"
+    printf 'see read-by-code.md\n' > "$dir/scripts/reader.sh"
+    printf 'p = "docs/agent-checks-lessons.md"\n' > "$dir/scripts/agent_check_lane.py"
+    printf 'x = 1\n' > "$dir/scripts/code.py"
+    git -C "$dir" add -A; git -C "$dir" commit -qm base
+    base=$(git -C "$dir" rev-parse HEAD)
+
+    # $1 label, $2 expected output (two lines joined by a space), $3 MATRIX_GROUPS,
+    # then the files to append to before committing (relative to $dir).
+    scope_case() {
+        local label="$1" want="$2" groups="$3" f head got
+        shift 3
+        git -C "$dir" checkout -q "$base"
+        for f in "$@"; do printf 'more\n' >> "$dir/$f"; done
+        git -C "$dir" add -A; git -C "$dir" commit -qm "$label" --allow-empty
+        head=$(git -C "$dir" rev-parse HEAD)
+        jq -n --arg b "$base" --arg h "$head" '{pull_request:{base:{sha:$b},head:{sha:$h}}}' > "$ev"
+        got=$(GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" MATRIX_GROUPS="$groups" \
+            bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ' | sed 's/ $//')
+        if [[ "$got" == "$want" ]]; then
+            pass "ci-scope: $label -> $want"
+        else
+            fail "ci-scope: $label -> got '$got', want '$want'"
+        fi
+    }
+
+    scope_case "an unread doc skips a shard" "scope=none run=false" "agent_checks sync" docs/unread.md
+    scope_case "an unread doc with no shard groups reads run=false" "scope=none run=false" "" docs/unread.md
+    scope_case "the lessons ledger runs the shard that tests its reader" \
+        "scope=agent_checks run=true" "sync agent_checks" docs/agent-checks-lessons.md
+    scope_case "the lessons ledger skips other shards" \
+        "scope=agent_checks run=false" "bump drift" docs/agent-checks-lessons.md
+    scope_case "the lessons ledger with no shard groups reads run=false" "scope=agent_checks run=false" "" docs/agent-checks-lessons.md
+    scope_case "a doc a script names runs everything" "scope=full run=true" "bump" docs/read-by-code.md
+    scope_case "code runs everything" "scope=full run=true" "bump" scripts/code.py
+    scope_case "docs plus code runs everything" "scope=full run=true" "bump" docs/unread.md scripts/code.py
+    scope_case "the adoption kit runs everything" "scope=full run=true" "bump" \
+        docs/reference/adopt-the-whole-system/kit.md
+    scope_case "an empty diff runs everything" "scope=full run=true" "bump"
+
+    # A reader the table does not list puts the ledger back to full scope.
+    git -C "$dir" checkout -q "$base"
+    printf 'open("agent-checks-lessons.md")\n' > "$dir/scripts/new_reader.py"
+    git -C "$dir" add -A; git -C "$dir" commit -qm reader
+    base=$(git -C "$dir" rev-parse HEAD)
+    scope_case "the ledger with an unlisted reader runs everything" "scope=full run=true" "bump" \
+        docs/agent-checks-lessons.md
+
+    out=$(GITHUB_EVENT_NAME=workflow_dispatch bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a dispatch runs everything" \
+        || fail "ci-scope: a dispatch runs everything — got '$out'"
+    jq -n '{pull_request:{base:{sha:"0000000000000000000000000000000000000000"},head:{sha:"not-a-sha"}}}' > "$ev"
+    out=$(GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: an unreadable range runs everything" \
+        || fail "ci-scope: an unreadable range runs everything — got '$out'"
+
+    # The real table's readers are still the only files outside docs/ that
+    # name the ledger, so the lessons shortcut is live and not stale.
+    local readers
+    readers=$(git -C "$REPO_ROOT" grep -lF -e agent-checks-lessons.md -- . ':(exclude)docs/' \
+        | sort | tr '\n' ' ')
+    [[ "$readers" == "scripts/agent_check_lane.py scripts/ci-scope.sh test/run-tests.sh test/test_agent_check_lane.py " ]] \
+        && pass "ci-scope: the ledger's readers match DATA_FILES" \
+        || fail "ci-scope: the ledger's readers match DATA_FILES — found '$readers'"
+
+    # And ci.yml gates every suite step after the scope step on it. `checks`
+    # stays unconditional: its gates are cheap and other tests pin them as always-on.
+    # Parsed, never grepped.
+    local wired
+    wired=$(node -e '
+      const YAML = require("yaml"), fs = require("fs");
+      const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const bad = [];
+      for (const id of ["suite"]) {
+        const steps = d.jobs[id].steps;
+        const i = steps.findIndex(s => s.id === "scope");
+        if (i !== 1) { bad.push(`${id}: scope is not the step after checkout`); continue; }
+        if (!/scripts\/ci-scope\.sh/.test(steps[i].run || "")) bad.push(`${id}: scope step does not run ci-scope.sh`);
+        if (id === "suite" && !/matrix\.groups/.test((steps[i].env || {}).MATRIX_GROUPS || ""))
+          bad.push("suite: scope step does not pass MATRIX_GROUPS");
+        for (const s of steps.slice(i + 1)) {
+          if (!/steps\.scope\.outputs\.run == .true./.test(s.if || "")) bad.push(`${id}: ${s.name} is not gated`);
+        }
+      }
+      process.stdout.write(bad.join("; ") || "ok");
+    ' "$REPO_ROOT/.github/workflows/ci.yml" 2>&1)
+    [[ "$wired" == "ok" ]] && pass "ci-scope: ci.yml gates its suite steps on the scope step" \
+        || fail "ci-scope: ci.yml gates its steps on the scope step — $wired"
+}
+
 test_agent_check_lane_cases() {
     echo ""
     echo "=== Test: the agent-checks case table holds against the template runner ==="
@@ -25196,6 +25303,7 @@ GROUP_memory_audit=(
 GROUP_runner=(
     test_runner_zero_counts
     test_runner_group_selection
+    test_ci_scope
 )
 
 runner_probe_no_assert() { :; }

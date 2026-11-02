@@ -106,6 +106,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # SCOPE FIRST (Adam, 2026-11-02: a one-file lessons PR ran all four
+      # shards). `test` is required, so this job cannot use `on.paths`;
+      # scripts/ci-scope.sh decides from the event's own range whether this
+      # shard's groups are needed, and every later step is gated on it, so a
+      # shard with nothing to test still reports success. A doc nothing outside
+      # docs/ reads needs no shard; a doc a script reads runs the groups that
+      # test that script; anything else, or a range it cannot read, runs all.
+      - name: Does this change need this shard?
+        id: scope
+        env:
+          MATRIX_GROUPS: ${{ matrix.groups }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci-scope.sh . | tee -a "$GITHUB_OUTPUT"
+
       # A `run:` block is the blind spot in the fleet's SHA-pinning rule: that
       # rule governs `uses:`, and this step downloads a third-party binary,
       # marks it executable and runs it as root — the same trust the rule
@@ -120,6 +135,7 @@ jobs:
       # sync.yml, drift-report.yml and skills-lock-bump.yml and test 7h asserts
       # all four stay byte-identical, so edit it in one place and copy.
       - name: Install yq
+        if: steps.scope.outputs.run == 'true'
         env:
           # Pinned exactly like a `uses:`, and for the same reason — see
           # docs/decisions/0008. Bump the two together: the digest is
@@ -158,11 +174,13 @@ jobs:
       # the one pinned dev dependency behind it has to be here. `npm ci`, not
       # `npm install`: the lockfile is the version under test.
       - name: Setup Node
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@v7.1.0
         with:
           node-version: "20"
 
       - name: Install the workflow parser
+        if: steps.scope.outputs.run == 'true'
         run: npm ci
 
       # TEST_GROUPS_ONLY arrives through `env:`, never as a `${{ }}` inside
@@ -170,6 +188,7 @@ jobs:
       # command. The checker in `checks` asserts exactly this wiring, so a
       # matrix whose lists nothing reads cannot pass it.
       - name: Run integration tests
+        if: steps.scope.outputs.run == 'true'
         env:
           TEST_GROUPS_ONLY: ${{ matrix.groups }}
         run: |
