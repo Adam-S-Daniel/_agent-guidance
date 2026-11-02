@@ -123,3 +123,44 @@ line.
   `.agent-checks/dated-phrasing-allowlist.txt`, which the sync never touches.
   An entry, `<owner/repo> <path> :: <text>`, silences the Markdown block
   whose source holds `<text>`.
+
+## Addendum (2026-11-02): pr-tldr, and one edit to the added-once workflow
+
+The owner asked that every pull request description begin with a
+plain-English TLDR. The runner's `ci` event gains a `pr-tldr` check for it,
+because this workflow is already a required check in every fleet repo, so
+the rule reaches the fleet with no ruleset change.
+
+- **The test is lexical, never a model.** In a `pull_request` or
+  `pull_request_target` run the runner reads the description from the event
+  payload (`$GITHUB_EVENT_PATH`) with node: after HTML comments, blank lines
+  and a `_Requested by ..._` attribution line, the first line must be an ATX
+  heading reading TLDR or TL;DR, with text under it before the next heading.
+  The same description always gets the same answer, and the refusal says
+  what is wrong and how to fix it. It never prints the description.
+- **Bots are warned, not refused.** A pull request whose author's type is
+  `Bot` (Dependabot, a GitHub App, github-actions) gets a warning line, so
+  automation that cannot write a TLDR is not blocked. The runner decides this
+  in one place, so it can be tightened later.
+- **Pull requests opened before the cutoff are exempt**
+  (`pr_tldr_cutoff`, 2026-11-03T00:00:00Z), so a pull request already open
+  when the rule ships is not failed retroactively.
+- **The sync makes one narrow edit to the workflow.** Item 2 above adds the
+  workflow once and never overwrites it. A re-run reads the payload of the
+  event that started the run, so only a new `edited` event sees a corrected
+  description, and a repo whose workflow has a bare `pull_request:` trigger
+  would stay red after the fix. The template lists
+  `types: [opened, edited, reopened, synchronize]`, and for an existing
+  `.github/workflows/agent-checks.yml` that runs the runner the sync adds
+  `edited` to that trigger: a `types` line under a bare `pull_request:`, or
+  the word added to a one-line `types: [...]` list. It reads the shape with
+  yq, edits one line, and keeps the edit only when yq reads the same
+  document with `edited` added; any other shape (an `on:` list, a block
+  list) is left alone with a WARN naming the repo. A repo that runs the
+  runner from another workflow (adam-agentskills' `ci.yml`) is not edited.
+- **This does not conflict with Dependabot keeping the pin current.** The
+  reason for item 2 is that Dependabot rewrites the workflow's `uses:` line,
+  and an overwrite from the template would undo its bump. This edit never
+  touches `uses:` or anything outside the `pull_request` trigger's `types`,
+  so Dependabot's pin and the sync's trigger edit change different lines, and
+  once `edited` is listed the sync leaves the file alone again.

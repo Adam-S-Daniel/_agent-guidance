@@ -101,6 +101,16 @@
   fixture: evals/guidance/agent-contribution-markers/
   bytes: 622
 
+- id: pr-tldr
+  heading: PR descriptions open with a TLDR
+  file: agents-md/base.md
+  status: skipped
+  reason: >-
+    Enforced mechanically by agent-checks' pr-tldr check, whose refusal message
+    teaches the rule when a PR breaks it.
+  since: 2026-11-02
+  bytes: 324
+
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
   file: agents-md/base.md

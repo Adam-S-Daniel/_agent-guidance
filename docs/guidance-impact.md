@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-02 — pr-tldr — create
+- Motivation: owner asked on 2026-11-02 that every pull request description begin with a plain-English TLDR.
+- Change: new section after the contribution-marker section: open each PR description with a `## TLDR` heading and one to three sentences; agent-checks' new pr-tldr check fails a PR without one, and editing the description re-runs it.
+- Eval: exempt (skipped row)
+- Outcome: pending
+
 ## 2026-10-29 — automation-vs-branch-protection — edit
 - Motivation: the bullet said PR + auto-merge is sanctioned only for skills-evals' roster PR, but repo-settings ADRs 0012-0015 have since sanctioned it for the eval and guidance loops, lesson-check PRs and the changelog routine; owner asked for the fix 2026-10-29.
 - Change: the bullet now names where a repo-settings ADR declares the exception, the loops' PRs (0003, 0012, 0014), lesson-check PRs (0013) and the changelog routine's (0015).
