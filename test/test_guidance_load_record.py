@@ -927,5 +927,781 @@ class UploadTests(HookTestCase):
         self.assertEqual([c["argv"][-1] for c in self.calls()], [PROBE])
 
 
+
+# ── phase 2: cloud skill records (ADR 0036) ─────────────────────────────────
+
+# The lock-kind digest's shared test vector: skills-evals
+# test/issues/test_issue_skill_digest.py commits the same two constants for the
+# same tree, so a change here is a change to the digest every skills.lock names.
+VECTOR_ALL_FILES = "681c4d1df407b995d4a9b9d2dbf56a701aed027ce41258fd2868092f1997b4f2"
+VECTOR_GIT_IGNORED_SKIPPED = "800541b28e245722ce9d8d6a6e69223ae8359b7b818a64c344ef060af52e2096"
+SHARD_KEYS = {"v", "id", "ts", "kind", "surface", "session", "cli", "name", "base_kind",
+              "registry", "ref", "digest", "digest_null_reason"}
+CLOUD_SESSION = "cloud-session-canary-1"
+CLOUD_SID = hashlib.sha256(CLOUD_SESSION.encode()).hexdigest()
+USE_TS = "2099-01-01T00:00:00.000Z"
+PUSH_OK = {"status": 200, "body": {"permissions": {"push": True, "pull": True}}}
+REAL_GIT = shutil.which("git")
+
+# The fake git: logs argv to $FAKE_GIT_LOG, then runs the real git, except
+# that FAKE_GIT_MODE=fail-cat-file fails every cat-file, and hang-network
+# makes clone, fetch and push hang with a child holding the pipe open, so only
+# a process-group kill ends them.
+FAKE_GIT = textwrap.dedent("""\
+    #!/usr/bin/env python3
+    import json, os, subprocess, sys, time
+    argv = sys.argv[1:]
+    with open(os.environ["FAKE_GIT_LOG"], "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(argv) + "\\n")
+    if "GIT_CONFIG_NOSYSTEM" in os.environ:
+        with open(os.environ["FAKE_GIT_LOG"] + ".nosystem", "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(argv) + "\\n")
+    mode = os.environ.get("FAKE_GIT_MODE", "")
+    if mode == "fail-cat-file" and "cat-file" in argv:
+        sys.exit(1)
+    if mode == "hang-network" and any(a in argv for a in ("clone", "fetch", "push")):
+        child = subprocess.Popen(["sleep", "300"])
+        with open(os.environ["FAKE_GIT_LOG"] + ".children", "a", encoding="utf-8") as handle:
+            handle.write("%d\\n" % child.pid)
+        time.sleep(300)
+    os.execv(os.environ["FAKE_GIT_REAL"], ["git"] + argv)
+    """)
+
+# The fake curl for the time-bound test: answers the probe with push true,
+# but only after using all but 0.02 s of its --max-time.
+SLOW_CURL = textwrap.dedent("""\
+    #!/usr/bin/env python3
+    import json, sys, time
+    argv = sys.argv[1:]
+    sys.stdin.read()
+    time.sleep(max(0, float(argv[argv.index("--max-time") + 1]) - 0.02))
+    with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as handle:
+        json.dump({"permissions": {"push": True}}, handle)
+    sys.stdout.write("200")
+    """)
+
+
+def fixture_git(*args, cwd):
+    env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+               GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
+               GIT_AUTHOR_EMAIL="fixture@example.com", GIT_COMMITTER_EMAIL="fixture@example.com")
+    return subprocess.run([REAL_GIT, *args], cwd=cwd, env=env, check=True,
+                          capture_output=True, text=True).stdout
+
+
+VECTOR_FILES = {
+    ".gitignore": b"__pycache__/\n*.log\n",
+    "SKILL.md": b"---\nname: vector\n---\n# Vector\n",
+    "a/b/c.txt": b"nested\n",
+    "has-nul-byte.bin": b"before\x00after",
+    "données.md": "café\n".encode("utf-8"),
+    "empty.txt": b"",
+    "__pycache__/x.pyc": b"\x00compiled",
+    "build/keep.log": b"kept though ignored\n",
+}
+
+
+def write_vector(root):
+    for relpath, data in VECTOR_FILES.items():
+        path = root / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return root
+
+
+def build_vector_repo(work, relpath):
+    """skills-evals' build_vector_tree recipe, with the tree at `relpath`
+    inside the git work tree `work`: `add .`, then the force-added ignored file."""
+    root = write_vector(work / relpath)
+    fixture_git("init", "-q", cwd=work)
+    fixture_git("add", ".", cwd=root)
+    fixture_git("add", "-f", "build/keep.log", cwd=root)
+    fixture_git("commit", "-q", "-m", "vector", cwd=work)
+    return root
+
+
+def skill_use(call, skill, ts=USE_TS, session=CLOUD_SESSION):
+    return {"type": "assistant", "sessionId": session, "timestamp": ts, "version": "2.1.312",
+            "uuid": "a-" + call, "message": {"id": "msg_" + call, "role": "assistant", "content": [
+                {"type": "tool_use", "id": call, "name": "Skill", "input": {"skill": skill}}]}}
+
+
+def skill_result(call, session=CLOUD_SESSION):
+    return {"type": "user", "sessionId": session, "timestamp": USE_TS, "message": {
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": call,
+                                     "content": "Launching skill"}]}}
+
+
+def base_dir(base, call=None, parent=None, session=CLOUD_SESSION):
+    entry = {"type": "user", "isMeta": True, "sessionId": session, "timestamp": USE_TS,
+             "message": {"role": "user", "content": [
+                 {"type": "text", "text": f"Base directory for this skill: {base}\n\n# Body"}]}}
+    if call:
+        entry["sourceToolUseID"] = call
+    if parent:
+        entry["parentUuid"] = parent
+    return entry
+
+
+def typed(uuid, command, ts=USE_TS):
+    return {"type": "user", "sessionId": CLOUD_SESSION, "timestamp": ts, "uuid": uuid,
+            "version": "2.1.312", "message": {
+                "role": "user", "content": f"<command-name>/{command}</command-name>"}}
+
+
+def later_turn(n):
+    return {"type": "assistant", "sessionId": CLOUD_SESSION, "timestamp": USE_TS,
+            "message": {"id": f"msg_later_{n}", "role": "assistant",
+                        "content": [{"type": "text", "text": "done"}]}}
+
+
+class CloudTestCase(HookTestCase):
+    def setUp(self):
+        super().setUp()
+        git = self.bin / "git"
+        git.write_text(FAKE_GIT, encoding="utf-8")
+        git.chmod(0o755)
+        self.git_log = self.tmp / "git.log"
+        self.env.update(FAKE_GIT_LOG=str(self.git_log), FAKE_GIT_REAL=REAL_GIT,
+                        GIT_CONFIG_GLOBAL=os.devnull)
+        self.bare = self.bare_remote()
+        self.cloud_env = {"CLAUDE_CODE_REMOTE": "true", "GUIDANCE_RECORD_GIT": str(self.bare)}
+        self.cloud = self.state / "cloud-skills"
+        self.skills = self.home / ".claude" / "skills"
+        self.skills.mkdir(parents=True)
+
+    def bare_remote(self, rejections=0):
+        bare = self.tmp / "remote.git"
+        seed = self.tmp / "seed"
+        fixture_git("init", "-q", "--bare", str(bare), cwd=self.tmp)
+        fixture_git("init", "-q", "-b", "persistent/usage-events", str(seed), cwd=self.tmp)
+        (seed / "README.md").write_text("events\n", encoding="utf-8")
+        (seed / "events" / "2026-10").mkdir(parents=True)
+        (seed / "events" / "2026-10" / "cloud-guidance.jsonl").write_text('{"v":1}\n', encoding="utf-8")
+        (seed / "events" / "2026-10" / "a-machine.jsonl").write_text('{"v":1}\n', encoding="utf-8")
+        fixture_git("add", "-A", cwd=seed)
+        fixture_git("commit", "-q", "-m", "seed", cwd=seed)
+        fixture_git("push", "-q", str(bare), "persistent/usage-events", cwd=seed)
+        return bare
+
+    def reject_pushes(self, count):
+        counter = self.tmp / "rejections"
+        counter.write_text("0", encoding="utf-8")
+        hook = self.bare / "hooks" / "pre-receive"
+        hook.write_text(textwrap.dedent(f"""\
+            #!/bin/sh
+            n=$(cat "{counter}")
+            [ "$n" -ge {count} ] && exit 0
+            echo $((n + 1)) > "{counter}"
+            exit 1
+            """), encoding="utf-8")
+        hook.chmod(0o755)
+        return counter
+
+    def done_phase1(self, session=CLOUD_SESSION):
+        flag = self.state / "done" / hashlib.sha256(session.encode()).hexdigest()
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.touch()
+
+    def script(self, replies):
+        self.curl_script.write_text(json.dumps(replies), encoding="utf-8")
+
+    def stop(self, env=None, session=CLOUD_SESSION, now=None):
+        merged = dict(self.cloud_env, **(env or {}))
+        if now:
+            merged["GUIDANCE_RECORD_NOW"] = now
+        return self.run_hook(session=session, env=merged)
+
+    def remote_text(self, path):
+        out = subprocess.run([REAL_GIT, "--git-dir", str(self.bare), "show",
+                              f"persistent/usage-events:{path}"], capture_output=True, text=True)
+        return out.stdout if out.returncode == 0 else None
+
+    def remote_files(self):
+        return set(subprocess.run([REAL_GIT, "--git-dir", str(self.bare), "ls-tree", "-r", "--name-only",
+                                   "persistent/usage-events"], capture_output=True, text=True,
+                                  check=True).stdout.split())
+
+    def shard(self, month="2099-01"):
+        text = self.remote_text(f"events/{month}/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        return [json.loads(l) for l in text.splitlines()] if text is not None else []
+
+    def pending(self):
+        path = self.cloud / f"{CLOUD_SID}.pending.jsonl"
+        return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
+
+    def state_doc(self):
+        return json.loads((self.cloud / f"{CLOUD_SID}.state.json").read_text())
+
+    def git_calls(self):
+        if not self.git_log.exists():
+            return []
+        return [json.loads(l) for l in self.git_log.read_text(encoding="utf-8").splitlines()]
+
+    def commits(self):
+        return int(subprocess.run([REAL_GIT, "--git-dir", str(self.bare), "rev-list", "--count",
+                                   "persistent/usage-events"], capture_output=True, text=True,
+                                  check=True).stdout)
+
+    def use_with_base(self, call, skill, base, ts=USE_TS):
+        return [skill_use(call, skill, ts), skill_result(call), base_dir(base, call=call)]
+
+
+class CloudVectorTests(CloudTestCase):
+    """The hook's digest is the #536 function: bound to the shared vector."""
+
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.script([PUSH_OK])
+
+    def test_user_skills_copy_has_the_all_files_digest_and_its_install_record(self):
+        write_vector(self.skills / "vector")
+        (self.skills / ".skills-bootstrap-installed.json").write_text(json.dumps({"installed": [
+            {"name": "vector", "registry": "https://github.com/example/skills.git", "bundle": "b",
+             "digest": "sha256:" + VECTOR_ALL_FILES, "ref": SHA_B}]}), encoding="utf-8")
+        self.write_transcript(self.use_with_base("toolu_v1", "example:vector", self.skills / "vector"))
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual(line, {
+            "v": 1, "id": "toolu_v1", "ts": "2099-01-01T00:00:00Z", "kind": "skill",
+            "surface": "cloud", "session": CLOUD_SID[:16], "cli": "2.1.312",
+            "name": "example:vector", "base_kind": "user-skills", "registry": "example/skills",
+            "ref": SHA_B, "digest": VECTOR_ALL_FILES, "digest_null_reason": None})
+
+    def test_repo_copy_skips_git_ignored_files_and_keeps_no_remote_url(self):
+        checkout = self.tmp / "checkout"
+        checkout.mkdir()
+        root = build_vector_repo(checkout, ".claude/skills/vector")
+        fixture_git("remote", "add", "origin", "http://user:tok-canary-9@127.0.0.1:1/git/o/r", cwd=checkout)
+        self.write_transcript(self.use_with_base("toolu_v2", "vector", root))
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual((line["base_kind"], line["digest"], line["registry"], line["ref"]),
+                         ("repo", VECTOR_GIT_IGNORED_SKIPPED, "o/r", None))
+        text = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        for needle in ("tok-canary-9", "user:", "127.0.0.1", str(checkout)):
+            self.assertNotIn(needle, text)
+
+    def test_any_checkout_is_a_repo_copy(self):
+        checkout = self.tmp / "elsewhere"
+        checkout.mkdir()
+        root = build_vector_repo(checkout, "skills/vector")
+        self.write_transcript(self.use_with_base("toolu_v3", "vector", root))
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual((line["base_kind"], line["digest"], line["registry"]),
+                         ("repo", VECTOR_GIT_IGNORED_SKIPPED, None))
+
+    def test_a_copy_changed_after_the_use_has_no_digest(self):
+        write_vector(self.skills / "vector")
+        self.write_transcript(self.use_with_base("toolu_v4", "vector", self.skills / "vector",
+                                                 ts="2000-01-01T00:00:00.000Z"))
+        self.stop()
+        [line] = self.shard("2000-01")
+        self.assertEqual((line["digest"], line["digest_null_reason"]), (None, "changed-since-load"))
+
+    def test_the_key_set_is_exactly_the_readers(self):
+        # skills-evals' reader skips a whole line with any other key.
+        write_vector(self.skills / "vector")
+        self.write_transcript(self.use_with_base("toolu_k1", "vector", self.skills / "vector")
+                              + [skill_use("toolu_k2", "no such/skill"), skill_result("toolu_k2"),
+                                 skill_use("toolu_k3", "missing"), skill_result("toolu_k3")])
+        self.stop()
+        lines = self.shard()
+        self.assertEqual([l["id"] for l in lines], ["toolu_k1", "toolu_k2", "toolu_k3"])
+        for line in lines:
+            self.assertEqual(set(line), SHARD_KEYS)
+            self.assertEqual(line["session"], CLOUD_SID[:16])
+            self.assertEqual(line["ts"][:7], "2099-01")
+            self.assertTrue(line["ts"].endswith("Z"))
+            self.assertIs(line["v"], 1)
+        self.assertEqual((lines[1]["name"], lines[1]["digest_null_reason"]), ("invalid", "bad-name"))
+        self.assertEqual(lines[2]["digest_null_reason"], "no-base-dir")
+
+
+class CloudStorageTests(CloudTestCase):
+    def setUp(self):
+        super().setUp()
+        write_vector(self.skills / "vector")
+
+    def test_every_other_file_on_the_branch_survives(self):
+        self.done_phase1()
+        self.script([PUSH_OK])
+        before = self.remote_files()
+        self.write_transcript(self.use_with_base("toolu_s1", "vector", self.skills / "vector"))
+        self.stop()
+        self.assertEqual(self.remote_files(),
+                         before | {f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl"})
+        self.assertEqual(self.remote_text("events/2026-10/a-machine.jsonl"), '{"v":1}\n')
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+    def test_each_use_goes_to_the_month_of_its_own_timestamp(self):
+        self.done_phase1()
+        self.script([PUSH_OK])
+        self.write_transcript(
+            [skill_use("toolu_m1", "a", ts="2099-01-31T23:59:59.000Z"), skill_result("toolu_m1"),
+             skill_use("toolu_m2", "b", ts="2099-02-01T00:00:00.000Z"), skill_result("toolu_m2")])
+        self.stop(now="2099-03-05T00:00:00Z")
+        self.assertEqual([l["id"] for l in self.shard("2099-01")], ["toolu_m1"])
+        self.assertEqual([l["id"] for l in self.shard("2099-02")], ["toolu_m2"])
+        self.assertEqual(self.commits(), 2)
+
+    def test_rejected_pushes_rebuild_on_the_new_tip_until_one_lands(self):
+        self.done_phase1()
+        self.script([PUSH_OK])
+        counter = self.reject_pushes(2)
+        self.write_transcript(self.use_with_base("toolu_r1", "vector", self.skills / "vector"))
+        self.stop()
+        self.assertEqual(counter.read_text().strip(), "2")
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_r1"])
+        self.assertIn("events/2026-10/a-machine.jsonl", self.remote_files())
+        self.assertEqual(sum(1 for c in self.git_calls() if "fetch" in c), 2)
+        self.assertEqual(self.pending(), [])
+
+    def test_an_existing_shard_is_extended_not_replaced_and_ids_are_not_repeated(self):
+        self.done_phase1()
+        self.script([PUSH_OK, PUSH_OK])
+        self.write_transcript([skill_use("toolu_e1", "a"), skill_result("toolu_e1")])
+        self.stop()
+        self.write_transcript([skill_use("toolu_e1", "a"), skill_result("toolu_e1"),
+                               skill_use("toolu_e2", "b"), skill_result("toolu_e2")])
+        self.stop()
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_e1", "toolu_e2"])
+
+    def test_a_failed_read_of_an_existing_shard_never_overwrites_it(self):
+        self.done_phase1()
+        self.script([PUSH_OK, PUSH_OK])
+        self.write_transcript([skill_use("toolu_f1", "a"), skill_result("toolu_f1")])
+        self.stop()
+        before = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        head = self.commits()
+        self.write_transcript([skill_use("toolu_f1", "a"), skill_result("toolu_f1"),
+                               skill_use("toolu_f2", "b"), skill_result("toolu_f2")])
+        self.stop(env={"FAKE_GIT_MODE": "fail-cat-file"})
+        self.assertEqual(self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl"), before)
+        self.assertEqual(self.commits(), head)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_f2"])
+        self.assertEqual(self.state_doc()["fails"], 1)
+
+    def test_phase_1_and_phase_2_share_one_commit(self):
+        self.script([PUSH_OK])
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_c1", "a"), skill_result("toolu_c1")])
+        self.stop()
+        self.assertEqual(self.commits(), 2)
+        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual(len(self.remote_text("events/2026-10/cloud-guidance.jsonl").splitlines()), 2)
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_c1"])
+        self.assertIs(self.records()[0]["uploaded"], True)
+        # A later Stop pushes phase 2 alone.
+        self.script([PUSH_OK])
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(skill_use("toolu_c2", "b")) + "\n" + json.dumps(skill_result("toolu_c2")) + "\n")
+        self.stop()
+        self.assertEqual(self.commits(), 3)
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual(len(self.remote_text("events/2026-10/cloud-guidance.jsonl").splitlines()), 2)
+
+    def test_stale_temp_dirs_of_this_user_are_swept(self):
+        self.done_phase1()
+        self.script([PUSH_OK])
+        old, fresh = self.tmpdir / "guidance-record.old", self.tmpdir / "guidance-record.fresh"
+        old.mkdir()
+        fresh.mkdir()
+        os.utime(old, (1_000_000_000, 1_000_000_000))
+        self.write_transcript([skill_use("toolu_t1", "a"), skill_result("toolu_t1")])
+        self.stop()
+        self.assertEqual(list(self.tmpdir.iterdir()), [fresh])
+
+    def test_a_symlinked_tmpdir_refuses_the_upload_silently(self):
+        self.done_phase1()
+        self.script([PUSH_OK])
+        link = self.tmp / "tlink"
+        link.symlink_to(self.tmpdir)
+        self.write_transcript([skill_use("toolu_l1", "a"), skill_result("toolu_l1")])
+        self.stop(env={"TMPDIR": str(link)})
+        self.assertEqual(self.shard(), [])
+        self.assertEqual(self.calls(), [])
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_l1"])
+        self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+
+class CloudWatermarkTests(CloudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.script([PUSH_OK] * 6)
+
+    def ids(self):
+        return [l["id"] for l in self.shard()]
+
+    def test_a_torn_last_line_waits_for_the_next_stop(self):
+        whole = [skill_use("toolu_w1", "a"), skill_result("toolu_w1")]
+        torn = json.dumps(skill_use("toolu_w2", "b"))
+        self.transcript.write_text("".join(json.dumps(e) + "\n" for e in whole) + torn[:40],
+                                   encoding="utf-8")
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_w1"])
+        self.write_transcript(whole + [skill_use("toolu_w2", "b"), skill_result("toolu_w2")])
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_w1", "toolu_w2"])
+
+    def test_a_replaced_or_truncated_transcript_is_read_again_without_repeats(self):
+        entries = [skill_use("toolu_w3", "a"), skill_result("toolu_w3")]
+        self.write_transcript(entries)
+        self.stop()
+        replacement = self.tmp / "replacement.jsonl"
+        replacement.write_text("".join(json.dumps(e) + "\n" for e in entries
+                                       + [skill_use("toolu_w4", "b"), skill_result("toolu_w4")]))
+        os.replace(replacement, self.transcript)
+        self.stop()
+        self.write_transcript([skill_use("toolu_w5", "c"), skill_result("toolu_w5")])  # shorter
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_w3", "toolu_w4", "toolu_w5"])
+
+    def test_entries_of_another_session_are_ignored(self):
+        self.write_transcript([skill_use("toolu_o1", "a", session="other"),
+                               skill_result("toolu_o1", session="other"),
+                               skill_use("toolu_o2", "b"), skill_result("toolu_o2")])
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_o2"])
+
+    def test_an_unsettled_use_holds_the_watermark_until_it_settles(self):
+        write_vector(self.skills / "vector")
+        self.write_transcript([skill_use("toolu_u1", "vector")])
+        self.stop()
+        self.assertEqual((self.ids(), self.pending()), ([], []))
+        self.write_transcript([skill_use("toolu_u1", "vector"),
+                               base_dir(self.skills / "vector", call="toolu_u1")])
+        self.stop()
+        self.assertEqual([l["digest"] for l in self.shard()], [VECTOR_ALL_FILES])
+        # Settled by a later turn alone: no base directory.
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(skill_use("toolu_u2", "other")) + "\n")
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_u1"])
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(later_turn(1)) + "\n")
+        self.stop()
+        self.assertEqual([(l["id"], l["digest_null_reason"]) for l in self.shard()],
+                         [("toolu_u1", None), ("toolu_u2", "no-base-dir")])
+
+    def test_at_most_fifty_uses_per_stop_and_the_rest_next_stop(self):
+        entries = []
+        for n in range(51):
+            entries += [skill_use(f"toolu_n{n:02d}", "a"), skill_result(f"toolu_n{n:02d}")]
+        self.write_transcript(entries)
+        self.stop()
+        self.assertEqual(len(self.ids()), 50)
+        self.stop()
+        self.assertEqual(self.ids(), [f"toolu_n{n:02d}" for n in range(51)])
+
+    def test_subagent_transcripts_are_read_with_their_own_watermark(self):
+        self.write_transcript([skill_use("toolu_p1", "a"), skill_result("toolu_p1")])
+        sub = self.tmp / CLOUD_SESSION / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-1.jsonl").write_text(json.dumps(skill_use("toolu_p2", "b")) + "\n"
+                                           + json.dumps(skill_result("toolu_p2")) + "\n")
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_p1", "toolu_p2"])
+        self.assertEqual(set(self.state_doc()["files"]), {"main", "sub:agent-1.jsonl"})
+
+    def test_typed_commands(self):
+        write_vector(self.skills / "vector")
+        (self.skills / ".skills-bootstrap-installed.json").write_text(json.dumps({"installed": [
+            {"name": "listed", "registry": "https://github.com/example/skills", "digest": "0" * 64}]}))
+        self.write_transcript([
+            typed("11111111-aaaa-4aaa-8aaa-000000000001", "vector"),
+            base_dir(self.skills / "vector", parent="11111111-aaaa-4aaa-8aaa-000000000001"),
+            typed("11111111-aaaa-4aaa-8aaa-000000000002", "clear"),
+            typed("11111111-aaaa-4aaa-8aaa-000000000003", "example:listed"),
+            typed("11111111-aaaa-4aaa-8aaa-000000000004", "loop"),
+            later_turn(1)])
+        self.stop()
+        self.assertEqual([(l["name"], l["digest"], l["digest_null_reason"], l["base_kind"]) for l in self.shard()], [
+            ("vector", VECTOR_ALL_FILES, None, "user-skills"),
+            ("example:listed", None, "no-base-dir", "unknown"),
+            ("loop", None, "builtin", "builtin")])
+
+
+class CloudRetryTests(CloudTestCase):
+    T0 = "2026-10-31T12:00:00Z"
+
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.write_transcript([skill_use("toolu_b1", "a"), skill_result("toolu_b1")])
+
+    def at(self, seconds):
+        import datetime
+        base = datetime.datetime.strptime(self.T0, "%Y-%m-%dT%H:%M:%SZ")
+        return (base + datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def probes(self):
+        return len(self.calls())
+
+    def test_a_failure_backs_off_two_minutes_then_doubles(self):
+        self.script([{"status": 500, "body": {}}] * 5)
+        self.stop(now=self.at(0))
+        self.assertEqual(self.probes(), 1)
+        self.stop(now=self.at(119))
+        self.assertEqual(self.probes(), 1)
+        self.stop(now=self.at(121))
+        self.assertEqual(self.probes(), 2)
+        self.stop(now=self.at(121 + 239))
+        self.assertEqual(self.probes(), 2)
+        self.stop(now=self.at(121 + 241))
+        self.assertEqual(self.probes(), 3)
+        self.assertFalse(self.state_doc()["nocred"])
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_b1"])
+
+    def test_success_then_the_next_stop_uploads_again(self):
+        self.script([PUSH_OK, PUSH_OK])
+        self.stop()
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(skill_use("toolu_b2", "b")) + "\n" + json.dumps(skill_result("toolu_b2")) + "\n")
+        self.stop()
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_b1", "toolu_b2"])
+        self.assertEqual(self.probes(), 2)
+        self.stop()  # nothing pending: no call
+        self.assertEqual(self.probes(), 2)
+
+    def test_a_definite_no_stops_uploads_for_the_session(self):
+        for name, reply in {"404": {"status": 404, "body": {}}, "403": NOT_ATTACHED,
+                            "push false": {"status": 200, "body": {"permissions": {"push": False}}}}.items():
+            with self.subTest(name=name):
+                shutil.rmtree(self.cloud, ignore_errors=True)
+                self.curl_log.unlink(missing_ok=True)
+                self.script([reply, PUSH_OK])
+                self.stop()
+                self.assertTrue(self.state_doc()["nocred"])
+                with open(self.transcript, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(skill_use("toolu_x" + name[:2].strip(), "b")) + "\n"
+                                 + json.dumps(later_turn(9)) + "\n")
+                self.stop(now=self.at(10_000))
+                self.assertEqual(self.probes(), 1)
+                self.assertEqual(self.shard(), [])
+
+    def test_phase_2_network_calls_are_capped_at_six_seconds(self):
+        self.script([PUSH_OK])
+        self.stop()
+        [call] = self.calls()
+        self.assertLessEqual(int(call["argv"][call["argv"].index("--max-time") + 1]), 6)
+        self.assertNotIn("Authorization", call["stdin"])
+
+
+class CloudSeamTests(CloudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.write_transcript([skill_use("toolu_q1", "a"), skill_result("toolu_q1")])
+
+    def max_time(self, env):
+        self.script([{"status": 500, "body": {}}])
+        shutil.rmtree(self.cloud, ignore_errors=True)
+        self.curl_log.unlink(missing_ok=True)
+        self.stop(env=env)
+        [call] = self.calls()
+        return call["argv"][call["argv"].index("--max-time") + 1]
+
+    def test_the_budget_scale_needs_the_test_marker_and_only_shrinks(self):
+        self.assertIn(self.max_time({"GUIDANCE_RECORD_TEST_SCALE": "0.1"}), ("5", "6"))
+        self.assertIn(self.max_time({"GUIDANCE_RECORD_TEST": "1", "GUIDANCE_RECORD_TEST_SCALE": "5"}), ("5", "6"))
+        scaled = float(self.max_time({"GUIDANCE_RECORD_TEST": "1", "GUIDANCE_RECORD_TEST_SCALE": "0.1"}))
+        self.assertTrue(0.4 < scaled <= 0.6, scaled)
+
+    def test_git_keeps_the_system_config(self):
+        # The hosted proxy may rely on system git config (an insteadOf rule, a
+        # CA); the measured cloud probe ran with it.
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_q1"])
+        self.assertTrue(self.git_calls())
+        self.assertFalse(pathlib.Path(str(self.git_log) + ".nosystem").exists())
+
+
+class CloudLockTests(CloudTestCase):
+    def test_a_held_lock_skips_phase_2_and_phase_1_still_records(self):
+        import fcntl
+        self.script([PUSH_OK])
+        self.cloud.mkdir(parents=True, mode=0o700)
+        fd = os.open(self.cloud / f"{CLOUD_SID}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_h1", "a"), skill_result("toolu_h1")])
+        self.stop()
+        [record] = self.records()
+        self.assertIs(record["uploaded"], True)
+        self.assertFalse((self.cloud / f"{CLOUD_SID}.pending.jsonl").exists())
+        self.assertEqual(self.shard(), [])
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_h1"])
+
+    def test_state_files_are_private(self):
+        self.done_phase1()
+        self.script([{"status": 500, "body": {}}])
+        self.write_transcript([skill_use("toolu_h2", "a"), skill_result("toolu_h2")])
+        self.stop()
+        self.assertEqual(stat_mode(self.cloud), 0o700)
+        for path in self.cloud.iterdir():
+            self.assertEqual(stat_mode(path), 0o600, path.name)
+
+    def test_a_symlinked_state_dir_is_refused(self):
+        self.done_phase1()
+        elsewhere = self.tmp / "elsewhere-state"
+        elsewhere.mkdir()
+        self.state.mkdir(parents=True, exist_ok=True)
+        self.cloud.symlink_to(elsewhere)
+        self.write_transcript([skill_use("toolu_h3", "a"), skill_result("toolu_h3")])
+        self.stop()
+        self.assertEqual(list(elsewhere.iterdir()), [])
+        self.assertEqual(self.calls(), [])
+
+
+def alive(pid):
+    """True when `pid` runs and is not a zombie. Only probes (signal 0), and
+    only a real child pid."""
+    if not isinstance(pid, int) or pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        state = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state != "Z"
+
+
+def stat_mode(path):
+    return os.lstat(path).st_mode & 0o777
+
+
+class CloudSafetyTests(CloudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.script([PUSH_OK])
+
+    def reason_for(self, base, name="vector"):
+        self.write_transcript(self.use_with_base("toolu_z1", name, base))
+        self.stop()
+        [line] = self.shard()
+        return line["digest_null_reason"]
+
+    def test_a_link_to_outside_the_roots_is_not_read(self):
+        outside = self.tmp / "outside" / "vector"
+        write_vector(outside)
+        (outside / "SKILL.md").chmod(0)       # read, it would be `gone`
+        (self.skills / "vector").symlink_to(outside)
+        self.assertEqual(self.reason_for(self.skills / "vector"), "outside-known-roots")
+
+    def test_a_base_dir_named_otherwise_is_no_base_dir(self):
+        write_vector(self.skills / "other")
+        self.assertEqual(self.reason_for(self.skills / "other"), "no-base-dir")
+
+    def test_a_fifo_in_the_tree_is_refused_without_blocking(self):
+        write_vector(self.skills / "vector")
+        os.mkfifo(self.skills / "vector" / "pipe")
+        self.assertEqual(self.reason_for(self.skills / "vector"), "refused-by-registry-rules")
+
+    def test_a_link_inside_the_tree_is_refused(self):
+        write_vector(self.skills / "vector")
+        (self.skills / "vector" / "link").symlink_to(self.tmp)
+        self.assertEqual(self.reason_for(self.skills / "vector"), "refused-by-registry-rules")
+
+    def test_a_tree_past_two_thousand_files_is_too_large(self):
+        root = self.skills / "vector"
+        root.mkdir()
+        for n in range(2001):
+            (root / f"f{n}").write_bytes(b"")
+        self.assertEqual(self.reason_for(root), "too-large")
+
+    def test_a_relative_or_missing_base_dir(self):
+        self.assertEqual(self.reason_for("relative/vector"), "outside-known-roots")
+
+    def test_plugin_cache_copy_names_its_marketplace_and_commit(self):
+        plugins = self.home / ".claude" / "plugins"
+        version = plugins / "cache" / "mkt" / "plug" / "1.0.0"
+        write_vector(version / "skills" / "vector")
+        (plugins / "known_marketplaces.json").write_text(json.dumps(
+            {"mkt": {"source": {"source": "github", "repo": "example/market"}}}))
+        (plugins / "installed_plugins.json").write_text(json.dumps(
+            {"version": 2, "plugins": {"plug@mkt": [{"installPath": str(version), "gitCommitSha": SHA_A}]}}))
+        self.write_transcript(self.use_with_base("toolu_z2", "plug:vector", version / "skills" / "vector"))
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual((line["base_kind"], line["registry"], line["ref"], line["digest"]),
+                         ("plugin-cache", "example/market", SHA_A, VECTOR_ALL_FILES))
+
+    def test_the_shard_holds_no_path_title_or_session_id(self):
+        write_vector(self.skills / "vector")
+        self.write_transcript(self.use_with_base("toolu_z3", "vector", self.skills / "vector") + [
+            {"type": "summary", "sessionId": CLOUD_SESSION, "summary": "TITLE-CANARY-5"}])
+        self.stop()
+        text = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        for needle in (str(self.home), str(self.tmp), "skills/vector", "TITLE-CANARY-5",
+                       CLOUD_SESSION, "# Body", "Launching skill"):
+            self.assertNotIn(needle, text)
+
+
+class CloudGateTests(CloudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.script([PUSH_OK] * 3)
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_g1", "a"), skill_result("toolu_g1")])
+
+    def test_a_local_session_does_no_phase_2_work(self):
+        self.run_hook(session=CLOUD_SESSION)
+        self.assertEqual((self.calls(), self.git_calls()), ([], []))
+        self.assertFalse(self.cloud.exists())
+        self.assertEqual(len(self.records()), 1)
+
+    def test_remote_session_id_alone_does_no_phase_2_work(self):
+        self.done_phase1()
+        self.run_hook(session=CLOUD_SESSION, env={"CLAUDE_CODE_REMOTE_SESSION_ID": "example-remote",
+                                                  "GUIDANCE_RECORD_GIT": str(self.bare)})
+        self.assertEqual((self.calls(), self.git_calls()), ([], []))
+        self.assertFalse(self.cloud.exists())
+        self.assertFalse((self.state / "sessions.jsonl").exists())
+
+    def test_phase_2_still_runs_after_phase_1_is_done(self):
+        self.stop()
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(skill_use("toolu_g2", "b")) + "\n" + json.dumps(skill_result("toolu_g2")) + "\n")
+        self.stop()
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_g1", "toolu_g2"])
+
+    def test_phase_1_and_phase_2_stay_under_the_stop_timeout_when_every_call_hangs(self):
+        # Every curl uses its whole --max-time; every clone, fetch and push
+        # hangs with a child holding its pipe. The hook must still end inside
+        # the 20-second Stop timeout. Every budget is scaled by SCALE (the
+        # test-only seam), so the bound checked is 20 s * SCALE.
+        scale = 0.12
+        (self.bin / "curl").write_text(SLOW_CURL, encoding="utf-8")
+        import time
+        began = time.monotonic()
+        self.stop(env={"FAKE_GIT_MODE": "hang-network", "GUIDANCE_RECORD_TEST": "1",
+                       "GUIDANCE_RECORD_TEST_SCALE": str(scale)})
+        self.assertLess(time.monotonic() - began, 20 * scale)
+        # It did wait on the hung calls, rather than skip them.
+        self.assertTrue(any("clone" in c for c in self.git_calls()))
+        # The timeout killed the whole process group, the hung child included.
+        children = [int(p) for p in pathlib.Path(str(self.git_log) + ".children").read_text().split()]
+        self.assertTrue(children)
+        for pid in children:
+            self.assertFalse(alive(pid), pid)
+        self.assertIs(self.records()[0]["uploaded"], False)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_g1"])
+
+
 if __name__ == "__main__":
     unittest.main()
