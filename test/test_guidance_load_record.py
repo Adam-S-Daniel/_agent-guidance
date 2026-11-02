@@ -112,6 +112,8 @@ class HookTestCase(unittest.TestCase):
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}",
             "HOME": str(self.home),
             "GUIDANCE_RECORD_NOW": NOW,
+            # The API and git seams are read only under this test marker.
+            "GUIDANCE_RECORD_TEST": "1",
             "GUIDANCE_RECORD_API": "https://api.example.com",
             "FAKE_CURL_LOG": str(self.curl_log),
             "FAKE_CURL_SCRIPT": str(self.curl_script),
@@ -959,6 +961,10 @@ FAKE_GIT = textwrap.dedent("""\
     mode = os.environ.get("FAKE_GIT_MODE", "")
     if mode == "fail-cat-file" and "cat-file" in argv:
         sys.exit(1)
+    if mode == "fail-shard-cat-file" and "cat-file" in argv and any("/cloud-skills/" in a for a in argv):
+        sys.exit(1)
+    if mode == "refuse-clone" and "clone" in argv:
+        sys.exit(128)
     if mode == "hang-network" and any(a in argv for a in ("clone", "fetch", "push")):
         child = subprocess.Popen(["sleep", "300"])
         with open(os.environ["FAKE_GIT_LOG"] + ".children", "a", encoding="utf-8") as handle:
@@ -1097,6 +1103,16 @@ class CloudTestCase(HookTestCase):
             """), encoding="utf-8")
         hook.chmod(0o755)
         return counter
+
+    def seed_shard(self, text, month="2099-01"):
+        work = self.tmp / "seed-shard"
+        fixture_git("clone", "-q", "-b", "persistent/usage-events", str(self.bare), str(work), cwd=self.tmp)
+        path = work / "events" / month / "cloud-skills" / f"{CLOUD_SID[:16]}.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
+        fixture_git("add", "-A", cwd=work)
+        fixture_git("commit", "-q", "-m", "shard", cwd=work)
+        fixture_git("push", "-q", "origin", "persistent/usage-events", cwd=work)
 
     def done_phase1(self, session=CLOUD_SESSION):
         flag = self.state / "done" / hashlib.sha256(session.encode()).hexdigest()
@@ -1315,17 +1331,43 @@ class CloudStorageTests(CloudTestCase):
         self.stop()
         self.assertEqual(list(self.tmpdir.iterdir()), [fresh])
 
-    def test_a_symlinked_tmpdir_refuses_the_upload_silently(self):
-        self.done_phase1()
+    def test_a_symlinked_tmpdir_still_uploads(self):
+        # A symlinked temp root (macOS /tmp) is resolved once, not refused.
         self.script([PUSH_OK])
         link = self.tmp / "tlink"
         link.symlink_to(self.tmpdir)
-        self.write_transcript([skill_use("toolu_l1", "a"), skill_result("toolu_l1")])
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_l1", "a"), skill_result("toolu_l1")])
         self.stop(env={"TMPDIR": str(link)})
-        self.assertEqual(self.shard(), [])
-        self.assertEqual(self.calls(), [])
-        self.assertEqual([p["id"] for p in self.pending()], ["toolu_l1"])
+        self.assertIs(self.records()[0]["uploaded"], True)
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_l1"])
+        self.assertEqual(self.pending(), [])
         self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+    def test_a_phase_2_failure_does_not_cost_phase_1_its_record(self):
+        # The shard exists and cannot be read, so the combined commit aborts;
+        # phase 1's file is then pushed alone.
+        self.seed_shard('{"id":"toolu_old"}\n')
+        before = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        self.script([PUSH_OK])
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_l2", "a"), skill_result("toolu_l2")])
+        self.stop(env={"FAKE_GIT_MODE": "fail-shard-cat-file"})
+        self.assertIs(self.records()[0]["uploaded"], True)
+        self.assertEqual(len(self.remote_text("events/2026-10/cloud-guidance.jsonl").splitlines()), 2)
+        self.assertEqual(self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl"), before)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_l2"])
+        self.assertEqual(self.state_doc()["fails"], 1)
+
+    def test_rebuilding_after_rejections_runs_until_the_deadline(self):
+        # More rejections than any fixed retry count the ADR once named.
+        self.done_phase1()
+        self.script([PUSH_OK])
+        counter = self.reject_pushes(7)
+        self.write_transcript([skill_use("toolu_l3", "a"), skill_result("toolu_l3")])
+        self.stop()
+        self.assertEqual(counter.read_text().strip(), "7")
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_l3"])
 
 
 class CloudWatermarkTests(CloudTestCase):
@@ -1360,6 +1402,14 @@ class CloudWatermarkTests(CloudTestCase):
         self.write_transcript([skill_use("toolu_w5", "c"), skill_result("toolu_w5")])  # shorter
         self.stop()
         self.assertEqual(self.ids(), ["toolu_w3", "toolu_w4", "toolu_w5"])
+
+    def test_an_undated_use_is_skipped(self):
+        self.write_transcript([skill_use("toolu_d1", "a", ts="not a time"), skill_result("toolu_d1"),
+                               skill_use("toolu_d2", "b", ts="1999-12-31T00:00:00.000Z"), skill_result("toolu_d2"),
+                               skill_use("toolu_d3", "c"), skill_result("toolu_d3")])
+        self.stop()
+        self.assertEqual(self.ids(), ["toolu_d3"])
+        self.assertEqual(self.state_doc()["seen"], ["toolu_d3"])
 
     def test_entries_of_another_session_are_ignored(self):
         self.write_transcript([skill_use("toolu_o1", "a", session="other"),
@@ -1424,6 +1474,8 @@ class CloudWatermarkTests(CloudTestCase):
             ("vector", VECTOR_ALL_FILES, None, "user-skills"),
             ("example:listed", None, "no-base-dir", "unknown"),
             ("loop", None, "builtin", "builtin")])
+        # Only recorded ids count as seen: the dropped /clear does not.
+        self.assertEqual(self.state_doc()["seen"], [l["id"] for l in self.shard()])
 
 
 class CloudRetryTests(CloudTestCase):
@@ -1507,10 +1559,23 @@ class CloudSeamTests(CloudTestCase):
         return call["argv"][call["argv"].index("--max-time") + 1]
 
     def test_the_budget_scale_needs_the_test_marker_and_only_shrinks(self):
-        self.assertIn(self.max_time({"GUIDANCE_RECORD_TEST_SCALE": "0.1"}), ("5", "6"))
+        self.assertIn(self.max_time({"GUIDANCE_RECORD_TEST": "0", "GUIDANCE_RECORD_TEST_SCALE": "0.1"}),
+                      ("5", "6"))
         self.assertIn(self.max_time({"GUIDANCE_RECORD_TEST": "1", "GUIDANCE_RECORD_TEST_SCALE": "5"}), ("5", "6"))
         scaled = float(self.max_time({"GUIDANCE_RECORD_TEST": "1", "GUIDANCE_RECORD_TEST_SCALE": "0.1"}))
         self.assertTrue(0.4 < scaled <= 0.6, scaled)
+
+    def test_leaked_api_and_git_seams_are_ignored_without_the_marker(self):
+        # A real session that happens to carry these variables must still talk
+        # to GitHub and the real private repo (both faked here: no network).
+        self.script([PUSH_OK])
+        self.stop(env={"GUIDANCE_RECORD_TEST": "0", "FAKE_GIT_MODE": "refuse-clone"})
+        [call] = self.calls()
+        self.assertEqual(call["argv"][-1], f"https://api.github.com/repos/{REPO}")
+        [clone] = [c for c in self.git_calls() if "clone" in c]
+        self.assertIn(f"https://github.com/{REPO}", clone)
+        self.assertNotIn(str(self.bare), clone)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_q1"])
 
     def test_git_keeps_the_system_config(self):
         # The hosted proxy may rely on system git config (an insteadOf rule, a

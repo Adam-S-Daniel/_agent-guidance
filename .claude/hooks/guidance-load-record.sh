@@ -107,7 +107,9 @@
 #    (`ls-tree`) and cannot be read (`cat-file`) aborts the upload rather than
 #    being overwritten. A rejected push fetches the new tip, rebuilds on it and
 #    pushes again until the deadline. When phase 2 has lines to send in the same
-#    Stop, both files go in that one commit.
+#    Stop, both files go in that one commit; if that commit does not land and
+#    time remains, phase 1's file is tried again alone, so a phase-2 problem
+#    never costs phase 1's once-per-session record.
 # 2. A GitHub App, where no proxy rewrites the header: when
 #    USAGE_WRITER_APP_CLIENT_ID and USAGE_WRITER_APP_PEM (the PEM text, or that
 #    text base64-encoded) are set, an installation token minted from that App,
@@ -119,9 +121,10 @@
 # /dev/null for stdin and its own process group, which a timeout kills whole;
 # git runs with credential.interactive=never and core.hooksPath=/dev/null, and
 # keeps the machine's system and global config (the hosted proxy may rely on
-# them; the integrator's cloud probe ran with them). The temp dir is refused when the temp root resolves
-# elsewhere (a symlinked TMPDIR), and this user's guidance-record.* dirs left
-# over 10 minutes ago are swept first.
+# them; the integrator's cloud probe ran with them). The temp root is resolved
+# once (a symlinked /tmp is fine) and the temp dir must resolve to a direct
+# child of it, or the upload is refused; this user's guidance-record.* dirs
+# left over 10 minutes ago are swept first.
 #
 # CLOUD SKILL RECORDS (phase 2, ADR 0036)
 # ---------------------------------------
@@ -140,7 +143,8 @@
 # assistant turn yet). Each copy is resolved as skills-evals' LoadedCopies
 # does: where it lives, a 64-hex lock-kind digest (the #536 function, bound by
 # a shared test vector) or one of eight null reasons, the registry and commit
-# where known. A typed command with no base directory is kept only for a
+# where known. A use whose timestamp does not parse is skipped, as the local
+# census skips it. A typed command with no base directory is kept only for a
 # built-in skill or a name skills-bootstrap.sh installed. Bounds per Stop: 50
 # uses, 1.5 s parsing, 3 s hashing, 4 s in all; a use the hash budget did not
 # reach holds the watermark. At most 2000 lines per session.
@@ -175,6 +179,7 @@
 #
 # Test seams: GUIDANCE_RECORD_NOW (an ISO 8601 UTC time, e.g.
 # 2026-10-31T12:00:00Z) replaces the clock, phase 2's backoff included;
+# and, read only when GUIDANCE_RECORD_TEST=1 (a leaked value is ignored),
 # GUIDANCE_RECORD_API (default https://api.github.com) replaces the API base
 # URL; GUIDANCE_RECORD_GIT (default
 # https://github.com/Adam-S-Daniel/adam-agentskills-private) replaces the git
@@ -216,6 +221,12 @@ SOURCE_REF = re.compile(r"[0-9a-f]{40}")
 MAX_SOURCES = 16
 MAX_INSTALL_RECORD = 1 << 20
 START = time.monotonic()
+
+
+def seam(name):
+    """A test seam's value: read only when GUIDANCE_RECORD_TEST=1 marks a test
+    run, so a value leaked into a real session's environment is ignored."""
+    return os.environ.get(name) if os.environ.get("GUIDANCE_RECORD_TEST") == "1" else None
 
 
 def test_scale():
@@ -665,17 +676,17 @@ def git_identity(clone, deadline):
             "-c", "user.email=guidance-load-record@users.noreply.github.com"]
 
 
-def git_commit(work, edits, deadline, message):
+def git_commit(work, edits, deadline, message, name="c"):
     """One commit carrying every edit, pushed to BRANCH: "ok", "race" (every
     push lost to another writer until the deadline), or "fail". Plumbing only:
     a depth-1 clone with no checkout, the tip's whole tree read into a private
     index, each file's new blob added to it, then write-tree and commit-tree."""
-    remote = os.environ.get("GUIDANCE_RECORD_GIT") or "https://github.com/%s" % REPO
-    clone = os.path.join(work, "c")
+    remote = seam("GUIDANCE_RECORD_GIT") or "https://github.com/%s" % REPO
+    clone = os.path.join(work, name)
     if not git(["clone", "-q", "--depth", "1", "--no-checkout", "--single-branch",
                 "--branch", BRANCH, remote, clone], deadline=deadline):
         return "fail"
-    index_path = os.path.join(work, "index")
+    index_path = os.path.join(work, name + ".index")
     index = {"GIT_INDEX_FILE": index_path}
     who = git_identity(clone, deadline)
     tip_ref, rejected = "HEAD", False
@@ -684,7 +695,9 @@ def git_commit(work, edits, deadline, message):
         # Out of time after losing a push is a lost race, not a failure.
         return "race" if rejected and cap_for(deadline) < MIN_CALL else "fail"
 
-    for _round in range(5):
+    while True:
+        if cap_for(deadline) < MIN_CALL:
+            return "race" if rejected else "fail"
         code, out = git_out(["rev-parse", "--verify", "-q", tip_ref + "^{commit}"], cwd=clone,
                             deadline=deadline)
         tip = out.decode("ascii", "replace").strip()
@@ -747,7 +760,6 @@ def git_commit(work, edits, deadline, message):
                    deadline=deadline):
             return failed()
         tip_ref = "FETCH_HEAD"
-    return "race"
 
 
 def app_token(work, base, when):
@@ -776,12 +788,11 @@ def app_token(work, base, when):
 
 
 def work_dir():
-    """A private temp dir for one upload, or None. Refused when the temp root
-    or the new dir resolves anywhere else (a symlinked TMPDIR). First sweeps
-    this user's own guidance-record.* dirs left over 10 minutes ago."""
-    root = tempfile.gettempdir()
-    if os.path.realpath(root) != os.path.abspath(root):
-        return None
+    """A private temp dir for one upload, or None. The temp root is resolved
+    once (a symlinked /tmp, as on macOS, is fine), and the new dir must
+    resolve to a direct child of it, or it is refused. First sweeps this
+    user's own guidance-record.* dirs left over 10 minutes ago."""
+    root = os.path.realpath(tempfile.gettempdir())
     try:
         uid, cutoff = os.getuid(), time.time() - STALE_TEMP
         with os.scandir(root) as entries:
@@ -793,8 +804,8 @@ def work_dir():
                     shutil.rmtree(entry.path, ignore_errors=True)
     except OSError:
         pass
-    work = tempfile.mkdtemp(prefix="guidance-record.")
-    if os.path.realpath(work) != os.path.abspath(work) or os.path.islink(work):
+    work = tempfile.mkdtemp(prefix="guidance-record.", dir=root)
+    if os.path.realpath(work) != os.path.join(root, os.path.basename(work)) or os.path.islink(work):
         try:
             os.rmdir(work)
         except OSError:
@@ -815,7 +826,7 @@ def upload(line, when, cloud=None):
     outcome = "fail"
     work = None
     try:
-        base = (os.environ.get("GUIDANCE_RECORD_API") or "https://api.github.com").rstrip("/")
+        base = (seam("GUIDANCE_RECORD_API") or "https://api.github.com").rstrip("/")
         if line is None:
             deadline = time.monotonic() + min(NET_BUDGET, remaining() - MIN_CALL / 2)
         else:
@@ -836,6 +847,11 @@ def upload(line, when, cloud=None):
             message = {(True, False): "guidance-load event", (False, True): "cloud skill events",
                        (True, True): "guidance-load and cloud skill events"}[(line is not None, bool(snap))]
             outcome = git_commit(work, edits, deadline, message)
+            if line is not None and snap and outcome != "ok" and cap_for(deadline) >= MIN_CALL:
+                # A phase-2 problem (an unreadable shard, say) must not cost
+                # phase 1's once-per-session record: try it again alone.
+                return git_commit(work, [guidance_edit(line, when)], deadline,
+                                  "guidance-load event", name="phase1") == "ok"
             return outcome == "ok" if line is not None else None
         if status in (403, 404) or (status == 200 and isinstance(doc, dict)):
             outcome = "nocred"       # a definite answer: this session cannot push there
@@ -978,7 +994,7 @@ def scan(path, mark, session, parse_end):
             off = 0                      # a new or truncated file starts over
         os.lseek(fd, off, os.SEEK_SET)
         chunks, got = [], 0
-        while got < MAX_SCAN:
+        while got < MAX_SCAN and time.monotonic() < parse_end:
             chunk = os.read(fd, min(1 << 20, MAX_SCAN - got))
             if not chunk:
                 break
@@ -1422,7 +1438,9 @@ class Cloud:
         raw = use["name"]
         name = raw[1:] if raw.startswith("/") else raw
         valid = NAME_RE.fullmatch(name) is not None
-        when = parse_ts(use["ts"]) or now()
+        when = parse_ts(use["ts"])
+        if when is None:
+            return None                  # undated: skipped, as the local census does
         copy = self.copies.resolve(name if valid else None, use["base"], when, hash_end)
         if use["typed"] and use["base"] is None:
             reason = copy["digest_null_reason"]
@@ -1474,14 +1492,14 @@ class Cloud:
                         cutoff, stop = use["start"], True
                         break
                     left -= 1
-                    seen.add(use["id"])
-                    st["seen"].append(use["id"])
                     if line is None:
                         continue
                     if st["n"] >= SESSION_CAP:
                         st["overflow"] += 1
                         continue
                     st["n"] += 1
+                    seen.add(use["id"])
+                    st["seen"].append(use["id"])
                     new.append(line)
                 st["files"][key] = {"off": cutoff, "dev": ident[0], "ino": ident[1]}
             if new:
