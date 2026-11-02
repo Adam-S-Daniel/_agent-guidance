@@ -19850,13 +19850,19 @@ console.log(out.join("\n"));
     if [[ "$verdict" == true ]]; then pass "adoption kit step: a dispatch runs the checks"
     else fail "adoption kit step: a dispatch should run the checks, got '$verdict'"; fi
 
-    # A missing or blank secret fails closed before anything runs.
+    # A missing or blank secret fails closed before anything runs, when kit
+    # files changed and the author is not Dependabot. The step reads the
+    # author from $GITHUB_EVENT_PATH, so this case names its own event file and
+    # KIT_CHANGED: inherited from the runner, a Dependabot pull request's event
+    # took the warn-and-run branch and failed this case on every such PR.
     local stub="$dir/stub" called="$dir/python-called" rc secret
     mkdir -p "$stub"
     printf '#!/usr/bin/env bash\necho "called CI=${CI-unset}" >> "%s"\n' "$called" > "$stub/python3"; chmod +x "$stub/python3"
+    printf '{"pull_request":{"user":{"login":"octocat"}}}' > "$ev"
     for secret in "" " "; do
         rm -f "$called"; rc=0
-        PRIVACY_DENYLIST="$secret" PATH="$stub:$PATH" bash -e "$dir/check.sh" > "$dir/check.out" 2>&1 || rc=$?
+        KIT_CHANGED=true GITHUB_EVENT_PATH="$ev" PRIVACY_DENYLIST="$secret" PATH="$stub:$PATH" \
+            bash -e "$dir/check.sh" > "$dir/check.out" 2>&1 || rc=$?
         if [[ "$rc" -ne 0 && ! -e "$called" ]] && grep -qF -- "PRIVACY_DENYLIST repository secret is unset or empty" "$dir/check.out"; then
             pass "adoption kit step: a blank PRIVACY_DENYLIST ('$secret') fails closed before any test runs"
         else
