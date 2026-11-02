@@ -372,8 +372,9 @@ skills-evals notice issue to Adam with the way to revert it, and a section
 that helps only alone gets a shorten-or-merge issue
 ([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md),
 2026-11-02 addendum).
-The results explorer is tracked in
-[adamdaniel.ai#3538](https://github.com/Adam-S-Daniel/adamdaniel.ai/issues/3538).
+The results are public in the
+[Evals Explorer](https://adamdaniel.ai/tools/evals/)'s
+guidance view.
 The harness is described in skills-evals'
 [DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
 
