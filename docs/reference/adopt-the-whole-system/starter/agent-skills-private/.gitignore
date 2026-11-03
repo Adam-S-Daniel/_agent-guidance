@@ -1,7 +1,0 @@
-# The adoption kit's copy-starter.sh skips these when it copies the tree;
-# ignoring them here keeps them out of the adopter's first commits too.
-__pycache__/
-*.pyc
-.pytest_cache/
-node_modules/
-.DS_Store

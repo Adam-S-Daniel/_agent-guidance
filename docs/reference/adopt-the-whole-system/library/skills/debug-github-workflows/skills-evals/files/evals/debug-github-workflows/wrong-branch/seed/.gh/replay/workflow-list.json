@@ -1,8 +1,0 @@
-[
-  {
-    "id": 55001,
-    "name": "CI",
-    "path": ".github/workflows/ci.yml",
-    "state": "active"
-  }
-]

@@ -1,5 +1,0 @@
-{
-  "name": "widgets",
-  "private": true,
-  "scripts": {"test": "node --test", "e2e": "node e2e/run.js"}
-}

@@ -428,14 +428,3 @@ drift-report-skills-unclassified.txt
 # registry claims that discovery did not return. Withheld rather than written
 # when an owner's listing failed, so it is not always present after a run.
 drift-report-skills-orphans.txt
-
-# The adoption kit's starter trees and export overlays are exported copies of
-# other repos, and must be committed whole: a seed's `bin/gh` or a fixture's
-# replay `.log` that the generic rules above drop would leave a clone of this
-# repo with a kit that fails its own tests. Each tree's own .gitignore still
-# applies inside it. Locked by the kit's export/tests/test_kit_tracked.py.
-!/docs/reference/adopt-the-whole-system/**
-/docs/reference/adopt-the-whole-system/**/__pycache__/
-/docs/reference/adopt-the-whole-system/**/*.py[cod]
-/docs/reference/adopt-the-whole-system/**/node_modules/
-/docs/reference/adopt-the-whole-system/**/.pytest_cache/
