@@ -40,6 +40,29 @@ report.
   `persistent/*` branches, published files and their timestamps) and report
   anything else as not checked.
 
+## What other checks already own
+
+This audit covers the gap between the fleet's other watchers. It does not
+redo their work. For each of them it checks only that the watcher itself is
+running, and it links to the watcher's open issues instead of filing
+duplicates:
+
+- Failing workflow runs: the daily scheduled-run health audit
+  (`scheduled-run-health.yml`), which files a `ci` issue labeled
+  `agent-ready`.
+- AGENTS.md delivery and drift: `drift-report.yml` and `sync.yml`.
+- Repo settings and rulesets: repo-settings' drift audit and weekly plan.
+- Whether a skill or guidance section earns its place: skills-evals'
+  regression, retirement and eval-scope lanes.
+- Security alerts: the daily security alert triage task.
+- Agent changelog impact: the agent changelog watcher.
+- Memory: the [memory curation routine](memory-curation.md).
+
+What none of them covers, and this audit does: whether every scheduled
+task is still healthy, and whether each documented feature exists at all.
+That includes features that never run, lanes that produce nothing, and
+promises with nothing behind them.
+
 ## What to look for
 
 Work through these each run. A finding needs evidence: a link, a run, a
