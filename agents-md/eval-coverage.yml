@@ -55,8 +55,11 @@
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
-  status: covered
-  fixture: evals/guidance/workstation-layout/
+  status: skipped
+  reason: >-
+    Account facts the model cannot know otherwise, so an eval's outcome is known
+    in advance; the risk is the fact going stale, checked for freshness instead.
+  since: 2026-11-03
   bytes: 149
 
 - id: security
@@ -76,8 +79,11 @@
 - id: read-before-you-start
   heading: Read before you start
   file: agents-md/base.md
-  status: covered
-  fixture: evals/guidance/read-before-you-start/
+  status: skipped
+  reason: >-
+    Account facts the model cannot know otherwise, so an eval's outcome is known
+    in advance; the risk is the fact going stale, checked for freshness instead.
+  since: 2026-11-03
   bytes: 295
 
 - id: automation-vs-branch-protection
@@ -177,8 +183,11 @@
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md
-  status: covered
-  fixture: evals/guidance/skills-ecosystem/
+  status: skipped
+  reason: >-
+    Account facts the model cannot know otherwise, so an eval's outcome is known
+    in advance; the risk is the fact going stale, checked for freshness instead.
+  since: 2026-11-03
   bytes: 1228
 
 - id: two-setup-gaps
@@ -198,48 +207,76 @@
 - id: section-docker
   heading: Docker
   file: agents-md/sections/docker.md
-  status: covered
-  fixture: evals/guidance/section-docker/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 447
 
 - id: section-dotnet
   heading: .NET / C#
   file: agents-md/sections/dotnet.md
-  status: covered
-  fixture: evals/guidance/section-dotnet/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 278
 
 - id: section-go
   heading: Go
   file: agents-md/sections/go.md
-  status: covered
-  fixture: evals/guidance/section-go/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 313
 
 - id: section-javascript
   heading: JavaScript
   file: agents-md/sections/javascript.md
-  status: covered
-  fixture: evals/guidance/section-javascript/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 249
 
 - id: section-python
   heading: Python
   file: agents-md/sections/python.md
-  status: covered
-  fixture: evals/guidance/section-python/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 786
 
 - id: section-rust
   heading: Rust
   file: agents-md/sections/rust.md
-  status: covered
-  fixture: evals/guidance/section-rust/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 305
 
 - id: section-typescript
   heading: TypeScript
   file: agents-md/sections/typescript.md
-  status: covered
-  fixture: evals/guidance/section-typescript/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 526
