@@ -13897,7 +13897,10 @@ class TestIssue81(unittest.TestCase):
         "github_pat_11ABCDEFG0abcdefghij_0123456789abcdefghijklmnop",
         "xoxp" + "-0123456789-0123456789012-abcdefghijklmnopqrstuvwx",
         "sk-proj-0123456789abcdefghijklmnopqrstuvwxyz",
-        "AIzaSy0123456789abcdefghijklmnopqrstuvw",
+        # Split for the same reason as the Slack token: GitHub secret
+        # scanning reads a whole one as a live Google API key. The
+        # characters are a counting run, not a key.
+        "AI" + "zaSy0123456789abcdefghijklmnopqrstuvw",
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.c2lnbmF0dXJl",
         # A private key pasted without its BEGIN header is still one.
         "MIIEowIBAAKCAQEAy0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ",
@@ -13945,7 +13948,7 @@ class TestIssue81(unittest.TestCase):
                       "gho_abcdefghijklmnopqrstuvwxyzABCDEFGH",
                       "github_pat_ABCDEFGabcdefghij_abcdefghijklmnopqrs",
                       "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEF",
-                      "AIzaSyAabcdefghijklmnopqrstuvwxyzABCDEF"):
+                      "AI" + "zaSyAabcdefghijklmnopqrstuvwxyzABCDEF"):
             with self.subTest(shape=shape):
                 self.assertNotRegex(shape, self._PHONE_RE)
                 self.assertRegex(shape, self._SECRET_RE)
