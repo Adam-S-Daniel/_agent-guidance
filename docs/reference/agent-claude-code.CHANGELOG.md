@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-03 — 2.1.317 through 2.1.317
+
+- **Checked:** 2026-11-03T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.317](https://github.com/anthropics/claude-code/releases/tag/v2.1.317), published 2026-11-03T01:25Z
+- **Window:** v2.1.317 (published 2026-11-03T01:25Z), the stable release after v2.1.316: 1 release, 99 bullets (none individually indexed: no group was drafted). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.317` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all fleet repos in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and assessed the local checkouts by fleet grep.
+
+No group met the name-the-surface bar. The closest candidate was the fix that makes `claude -p` run inside a cloud or self-hosted runner session stop sharing that session's ID (with the new `CLAUDE_CODE_DISABLE_NESTED_SESSION_ID` switch to restore the old behavior). `GHA-bench`'s `AGENTS.md` says its runner scrubs `CLAUDE_CODE_SESSION_ID` and forbids launching the benchmark from an ephemeral session, and `runner.py` sets neither variable, so nothing documented changes. No bullet adds a model, changes the default model or an alias, changes `/doctor` or `/skill-doctor`, or changes how instruction files load, so the prompt-audit sweep was not fired.
+
 ### 2026-10-31 — 2.1.314 through 2.1.316
 
 - **Checked:** 2026-10-31T01:25Z, [release log](https://github.com/anthropics/claude-code/releases)
