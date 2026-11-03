@@ -10,6 +10,7 @@ set -euo pipefail
 #   • Whether CLAUDE.md imports @AGENTS.md (the Claude Code bridge)
 #   • Whether the skills-bootstrap hook is delivered, current and REGISTERED
 #   • Whether the fleet-memory hook and guidance payload match their sources
+#   • Whether the plugin's bundled copies of both match (adam-agentskills#113)
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
 #
@@ -62,6 +63,11 @@ SKILLS_SIDECAR="${OUTPUT_FILE%.md}-skills-unclassified.txt"
 # repo, the other by looking a name up — and each has to be able to close while
 # the other stands.
 SKILLS_ORPHAN_SIDECAR="${OUTPUT_FILE%.md}-skills-orphans.txt"
+# The cron-coverage twin of SKILLS_SIDECAR, in its own file for the same
+# reason: `cron_coverage` and `skills_bootstrap` are classified separately
+# (ADR 0003 ruled against collapsing them), so each nudge must be able to close
+# while the other stands (_agent-guidance#423).
+CRON_SIDECAR="${OUTPUT_FILE%.md}-cron-unclassified.txt"
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -688,6 +694,11 @@ bootstrap_blocked() {
 # empty, because an empty one is this script saying it looked and found
 # nothing, and the nudge step reads that as "close the issue".
 : > "$SKILLS_ORPHAN_SIDECAR"
+# Same contract as the orphan sidecar: REMOVED after the loop on a run where an
+# owner could not be listed. That owner's repos never reached the cron
+# classification, so an empty file would read as "all classified" and close
+# the nudge on an enumeration that did not happen.
+: > "$CRON_SIDECAR"
 
 # Base GH_TOKEN captured before the per-owner loop, so each iteration can
 # restore it when the owner has no per-owner token of its own (owner A's
@@ -1438,6 +1449,10 @@ if [[ ${#CRON_UNCLASSIFIED[@]} -gt 0 ]]; then
             echo "> - \`$r\` — add it to \`repos.yml\` under \`cron_coverage.fleet\` or \`cron_coverage.out_of_scope\`"
         done
     } >> "$OUTPUT_FILE"
+    # The sidecar drift-report.yml turns into the "Unclassified for cron
+    # coverage" issue; a scheduled run notifies nobody, so the report alone
+    # was a finding only someone who opened it could see (#423).
+    printf '%s\n' "${CRON_UNCLASSIFIED[@]}" >> "$CRON_SIDECAR"
     echo "  ${#CRON_UNCLASSIFIED[@]} repo(s) unclassified for cron coverage"
 fi
 
@@ -1487,7 +1502,8 @@ done
 # The sidecar is WITHHELD rather than written empty on that path: empty means
 # "looked, found nothing", which the nudge step reads as permission to close.
 if [[ ${#OWNER_FAILURES[@]} -gt 0 ]]; then
-    rm -f "$SKILLS_ORPHAN_SIDECAR"
+    rm -f "$SKILLS_ORPHAN_SIDECAR" "$CRON_SIDECAR"
+    echo "  cron-coverage sidecar withheld too: an unread owner's repos were never classified"
     echo "  ${#OWNER_FAILURES[@]} owner(s) unread — registry-orphan check skipped and its sidecar withheld; nothing is concluded from a partial enumeration"
 else
     SKILLS_ORPHANS=()
@@ -1517,6 +1533,85 @@ else
         printf '%s\n' "${SKILLS_ORPHANS[@]}" >> "$SKILLS_ORPHAN_SIDECAR"
         echo "  ${#SKILLS_ORPHANS[@]} registry name(s) discovery did not return"
     fi
+fi
+
+# ── Plugin copies of the fleet guidance (adam-agentskills#113) ─────────────
+#
+# The adam-anything-anywhere plugin's fleet-guidance hook bundles two files
+# copied verbatim from this repo: `fleet-guidance.md` (agents-md/base.md, the
+# payload a session gets when the hook's live fetch fails) and
+# `fleet-memory.sh` (.claude/hooks/fleet-memory.sh, the installer). They are
+# refreshed only by a reviewed pull request there, because changing them is a
+# plugin runtime change, and nothing said when one fell behind: the fallback
+# silently served older rules. check-fleet-guidance-mirror.js cannot see them —
+# it is offline and covers this repo's own `.claude/hooks/` copy — so the
+# comparison lives here, where the other repos are already being read.
+#
+# Asked only when the copy's OWNER is one this run scans: that is the owner
+# whose token this run holds, and a fixture run over a mock org must not go
+# asking a real repo. FLEET_PLUGIN_REPO exists for the test, like REPOS_YML.
+# Reported, never an exit code, for the reason the classification blocks give.
+FLEET_PLUGIN_REPO="${FLEET_PLUGIN_REPO:-Adam-S-Daniel/adam-agentskills}"
+FLEET_PLUGIN_DIR="plugins/adam-anything-anywhere/hooks/fleet-guidance"
+plugin_owner="${FLEET_PLUGIN_REPO%%/*}"
+plugin_owner_scanned=false
+for scanned_owner in "${OWNERS[@]}"; do
+    if [[ "$scanned_owner" == "$plugin_owner" ]]; then
+        plugin_owner_scanned=true
+    fi
+done
+if ! $plugin_owner_scanned; then
+    echo "  plugin fleet-guidance copies not checked: $plugin_owner is not an owner this run scans"
+else
+    per_owner_var="GH_TOKEN_$(echo "$plugin_owner" | tr '[:lower:]-.' '[:upper:]__')"
+    per_owner_token="${!per_owner_var:-}"
+    if [[ -n "$per_owner_token" ]]; then
+        export GH_TOKEN="$per_owner_token"
+    elif [[ -n "$BASE_GH_TOKEN" ]]; then
+        export GH_TOKEN="$BASE_GH_TOKEN"
+    else
+        unset GH_TOKEN || true
+    fi
+    plugin_drifted=0
+    {
+        echo ""
+        echo "## Plugin copies of the fleet guidance"
+        echo ""
+        echo "Files [\`$FLEET_PLUGIN_REPO\`](https://github.com/$FLEET_PLUGIN_REPO) bundles verbatim from this repo. Anything but ok means its copy needs a refresh pull request there (a plugin runtime change, so it waits on that repo's review)."
+        echo ""
+        echo "| Copy | Source here | Status | sha256 expected / found |"
+        echo "|------|-------------|--------|-------------------------|"
+    } >> "$OUTPUT_FILE"
+    for pair in "fleet-guidance.md:agents-md/base.md" "fleet-memory.sh:$FLEET_HOOK_REL_PATH"; do
+        copy_path="$FLEET_PLUGIN_DIR/${pair%%:*}"
+        source_rel="${pair#*:}"
+        copy_file="$WORK_DIR/plugin-copy"
+        copy_rc=0
+        fetch_file_content "$FLEET_PLUGIN_REPO" "$copy_path" >"$copy_file" || copy_rc=$?
+        expected_sha=$(sha256sum "$REPO_ROOT/$source_rel")
+        found="—"
+        if [[ "$copy_rc" -ne 0 ]]; then
+            copy_cell="?"
+            found="unread"
+            plugin_drifted=$((plugin_drifted + 1))
+        elif [[ "$FETCH_FILE_PRESENT" != "yes" ]]; then
+            copy_cell="**missing**"
+            found="missing"
+            plugin_drifted=$((plugin_drifted + 1))
+        else
+            found_sha=$(sha256sum "$copy_file")
+            found="\`${found_sha:0:8}\`"
+            if cmp -s "$REPO_ROOT/$source_rel" "$copy_file"; then
+                copy_cell="ok"
+            else
+                copy_cell="**drifted**"
+                plugin_drifted=$((plugin_drifted + 1))
+            fi
+        fi
+        echo "| [\`$copy_path\`](https://github.com/$FLEET_PLUGIN_REPO/blob/HEAD/$copy_path) | \`$source_rel\` | $copy_cell | \`${expected_sha:0:8}\` / $found |" >> "$OUTPUT_FILE"
+    done
+    rm -f "$WORK_DIR/plugin-copy"
+    echo "  $plugin_drifted plugin fleet-guidance copy(ies) not matching their source"
 fi
 
 # ── Footer ─────────────────────────────────────────────────────────────────
