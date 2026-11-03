@@ -125,6 +125,29 @@ test("agent-checks hook rows count completed PR runs and their failures", async 
   assert.equal(doc.rows.some((r) => r.kind === "hook" && r.repo === "example-owner/gadgets"), false);
 });
 
+test("red_runs lists each red agent-checks run, newest first; a private one keeps only its week", async () => {
+  const { doc } = await report();
+  assert.deepEqual(doc.red_runs, [
+    { week: "2026-10-19", repo: "example-owner/widgets", created_at: "2026-10-25T23:59:59Z", conclusion: "failure",
+      url: "https://github.com/example-owner/widgets/actions/runs/9100002" },
+    { week: "2026-10-19", repo: "example-owner/widgets", created_at: "2026-10-21T08:00:00Z", conclusion: "timed_out",
+      url: "https://github.com/example-owner/widgets/actions/runs/9100006" },
+    { week: "2026-10-19", repo: "private", created_at: null, conclusion: null, url: null },
+  ]);
+  // One entry per counted failure: the list and the hook rows agree.
+  const counted = doc.rows.filter((r) => r.kind === "hook").reduce((n, r) => n + r.overridden, 0);
+  assert.equal(doc.red_runs.length, counted);
+  assert.equal(JSON.stringify(doc.red_runs).includes("9100007"), false, "a private run id is published");
+});
+
+test("a red run with no usable id is listed without a URL", async () => {
+  const runs = FLEET.workflow_runs["12"].map((r) => (r.id === 9100002 ? { ...r, id: "x" } : r));
+  const { doc } = await report({ workflowRunsPage: (owner, repo, id, since, p) =>
+    ({ workflow_runs: page(String(id) === "12" ? runs : FLEET.workflow_runs[String(id)], p) }) });
+  assert.equal(doc.red_runs[0].url, null);
+  assert.equal(doc.red_runs[0].created_at, "2026-10-25T23:59:59Z");
+});
+
 test("rows are sorted by week, kind, name", async () => {
   const { doc } = await report();
   assert.equal(doc.rows.length, 40);
@@ -178,6 +201,8 @@ test("shouldPublish skips unchanged rows younger than 6 days only", async () => 
   assert.equal(shouldPublish(old(6), doc, NOW), true);
   const changed = { ...old(1), rows: doc.rows.slice(1) };
   assert.equal(shouldPublish(changed, doc, NOW), true);
+  const redChanged = { ...old(1), red_runs: doc.red_runs.slice(1) };
+  assert.equal(shouldPublish(redChanged, doc, NOW), true);
 });
 
 // Resolves on a later macrotask, so concurrent calls genuinely overlap.

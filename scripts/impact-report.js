@@ -19,6 +19,9 @@
  *              on PR heads: invocations = completed runs, blocked = failed
  *              runs. `overridden` repeats `blocked`: a red CI run means the
  *              commit got past (or never met) the local hook.
+ *   red_runs   one entry per red agent-checks run counted above, newest
+ *              first: week, repo, created_at, conclusion and the run page's
+ *              URL. A private repo's entry is only {week, repo: "private"}.
  *
  * Runs are read from the agent-checks WORKFLOW's runs (event pull_request),
  * not from per-commit check runs: a PR listing only exposes the current head,
@@ -29,7 +32,8 @@
  *
  * PRIVACY. The output lands on a PUBLIC branch. Every private repo is folded
  * into one row per week and kind named "private"; no title, author, branch
- * name or PR number is ever copied into the output or a log line. Log lines
+ * name or PR number is ever copied into the output or a log line. A public
+ * repo's red run carries its run page URL, which is already public. Log lines
  * carry counts only, and an API error is reduced to its HTTP status and type
  * (gh's stderr names the URL, which names the repo).
  *
@@ -282,6 +286,7 @@ async function measureRepo(target, api, { weeks, fromMs, toMs }) {
   const workflows = await collectPages((p) => api.workflowsPage(owner, repo, p), (d) => d && d.workflows);
   const wf = workflows.find((w) => w && w.path === HOOK_WORKFLOW_PATH);
   let hook = null;
+  const redRuns = [];
   if (wf) {
     hook = Object.fromEntries(weeks.map((w) => [w, { runs: 0, failures: 0 }]));
     const since = weeks[0];
@@ -294,10 +299,13 @@ async function measureRepo(target, api, { weeks, fromMs, toMs }) {
       const ms = parseTime(run.created_at);
       if (!inWindow(ms)) continue;
       hook[weekOf(ms)].runs++;
-      if (RED.has(run.conclusion)) hook[weekOf(ms)].failures++;
+      if (RED.has(run.conclusion)) {
+        hook[weekOf(ms)].failures++;
+        redRuns.push({ ms, id: Number.isSafeInteger(run.id) && run.id > 0 ? run.id : null, conclusion: run.conclusion });
+      }
     }
   }
-  return { outcome, hook };
+  return { outcome, hook, redRuns };
 }
 
 function compareRows(a, b) {
@@ -344,6 +352,31 @@ function buildRows(measured, weeks) {
   return rows.sort((a, b) => compareRows(a, b) || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0));
 }
 
+// The red agent-checks runs behind the hook rows' `overridden` counts, newest
+// first. A public repo's entry links its run page, built from the repo name
+// and the numeric run id (never copied from a response's URL field). A private
+// repo's entry keeps only its week and the name "private": no time, id or URL.
+function buildRedRuns(measured) {
+  const out = [];
+  for (const m of measured) {
+    for (const r of m.redRuns || []) {
+      if (m.private) {
+        out.push({ week: weekOf(r.ms), repo: "private", created_at: null, conclusion: null, url: null });
+      } else {
+        out.push({
+          week: weekOf(r.ms), repo: m.repo, created_at: isoZ(r.ms), conclusion: r.conclusion,
+          url: r.id === null ? null : `https://github.com/${m.repo}/actions/runs/${r.id}`,
+        });
+      }
+    }
+  }
+  // Week, then time (a private entry, with none, last in its week), newest
+  // first; then repo and URL, so equal times keep a stable order.
+  const desc = (x, y) => (x < y ? 1 : x > y ? -1 : 0);
+  return out.sort((a, b) => desc(a.week, b.week) || desc(a.created_at || "", b.created_at || "")
+    || desc(a.repo, b.repo) || desc(a.url || "", b.url || ""));
+}
+
 async function runReport({ owners, api, nowMs, env, requireOwnerTokens, out }) {
   const log = out || console.log;
   const { weeks, fromMs } = windowFor(nowMs);
@@ -385,6 +418,7 @@ async function runReport({ owners, api, nowMs, env, requireOwnerTokens, out }) {
     schema: 1,
     sources: [{ surface: "ci", scope: "github", from: isoZ(fromMs), to: isoZ(nowMs), repos_scanned: measured.length }],
     rows: buildRows(measured, weeks),
+    red_runs: buildRedRuns(measured),
   };
   return { exitCode: 0, doc };
 }
@@ -393,6 +427,7 @@ async function runReport({ owners, api, nowMs, env, requireOwnerTokens, out }) {
 function shouldPublish(previous, next, nowMs) {
   if (!previous || !Array.isArray(previous.rows)) return true;
   if (JSON.stringify(previous.rows) !== JSON.stringify(next.rows)) return true;
+  if (JSON.stringify(previous.red_runs) !== JSON.stringify(next.red_runs)) return true;
   let age;
   try {
     age = nowMs - parseTime(previous.generated_at);
