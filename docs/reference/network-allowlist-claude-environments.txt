@@ -1,3 +1,4 @@
+adam-usage-sink-2026-11.s3.us-east-1.amazonaws.com
 *.adamdaniel.ai
 adamdaniel.ai
 *.agents.md
