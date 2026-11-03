@@ -118,6 +118,11 @@ jobs:
           if [ -f drift-report-skills-orphans.txt ]; then
             git add -f drift-report-skills-orphans.txt
           fi
+          # Withheld on the same runs and for the same reason as the orphan
+          # sidecar: an unread owner's repos were never classified.
+          if [ -f drift-report-cron-unclassified.txt ]; then
+            git add -f drift-report-cron-unclassified.txt
+          fi
           if git diff --cached --quiet; then
             echo "No changes to report — leaving the persistent/drift-report branch as is."
             exit 0
@@ -193,6 +198,66 @@ jobs:
             echo "updated #$existing"
           else
             gh issue create --title "$ISSUE_TITLE" --label ci --body-file /tmp/nudge-body.md
+          fi
+
+      # The cron-coverage twin of the step above, with its own issue: the two
+      # registry keys are classified separately (ADR 0003 ruled against
+      # collapsing them), so each issue must be able to close while the other
+      # stands. Until this step existed only the skills set raised an issue,
+      # and four repos sat unclassified for cron coverage with nobody told
+      # (#423). ABSENT concludes nothing, as for the orphan sidecar below:
+      # drift-report.sh withholds the file when an owner went unread.
+      - name: Nudge on repos nobody has classified for cron coverage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIDECAR: drift-report-cron-unclassified.txt
+          ISSUE_TITLE: "Unclassified for cron coverage"
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "$SIDECAR" ]]; then
+            echo "::warning::$SIDECAR was not written — this run did not classify every owner's repos, so nothing is concluded here"
+            exit 0
+          fi
+
+          existing=$(gh issue list --state open --label ci \
+            --search "$ISSUE_TITLE in:title" --json number,title \
+            --jq "[.[] | select(.title == env.ISSUE_TITLE)] | .[0].number // empty")
+
+          if [[ ! -s "$SIDECAR" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --comment \
+                "Every discovered repo is now classified under \`cron_coverage.fleet\` or \`cron_coverage.out_of_scope\`. Closed by the nightly drift report."
+              echo "closed #$existing — nothing unclassified for cron coverage"
+            else
+              echo "nothing unclassified for cron coverage, and no open nudge to close"
+            fi
+            exit 0
+          fi
+
+          # Body from a FILE, never an argument, for the reason the skills
+          # step gives: a name is untrusted input as far as this script is
+          # concerned.
+          {
+            echo "\`drift-report.sh\` discovered repositories that are in neither half of \`cron_coverage\`:"
+            echo
+            sed 's/^/- `/; s/$/`/' "$SIDECAR"
+            echo
+            echo "Each one needs a decision, not a default:"
+            echo
+            echo "- add it to \`cron_coverage.fleet\` when it runs a cron someone depends on (scheduled-run health, the fleet worker and the prompt-audit sweep then cover it), or"
+            echo "- add it to \`cron_coverage.out_of_scope\` with a comment saying why nobody is promising to watch it."
+            echo
+            echo "This issue closes itself on the next nightly run once every name is classified."
+            echo
+            echo "Background: [ADR 0003](../blob/main/docs/decisions/0003-cron-coverage-is-fleet-listed.md)."
+          } > /tmp/cron-nudge-body.md
+
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --body-file /tmp/cron-nudge-body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label ci --body-file /tmp/cron-nudge-body.md
           fi
 
       # THE OTHER DIRECTION, and its own issue rather than a second section of

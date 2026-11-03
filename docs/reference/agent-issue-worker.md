@@ -71,7 +71,8 @@ blocked comments. The on-hold stop overrides step 7 below.
    keep only issues in fleet repos (above), exclude `on-hold` issues and
    issues with a held linked PR before the 3-item limit, sort oldest first,
    and take at most 3 this run, one at a time. If there are none, say so
-   and end.
+   and end this pass (in the fleet worker, the lesson-check pass still
+   runs).
 2. **Claim it.** Re-read issue and linked PR labels before any mutation;
    skip if either carries `on-hold`. Skip an issue that already carries
    `agent-working` or `agent-blocked`. Otherwise remove `agent-ready`,
