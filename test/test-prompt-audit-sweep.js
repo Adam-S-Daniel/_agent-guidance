@@ -265,7 +265,7 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
 
 test('fleet worker runs the lesson-check pass every run and always reports it (#427)', () => {
   const intro = prose(tokens(worker).slice(0, tokens(worker).findIndex(t => t.type === 'heading_open' && t.tag === 'h2')));
-  includes(intro, ['**every run does all three**', 'No pass\'s cap, budget or empty result ends the run early', 'still does the lesson-check pass afterwards', '"Nothing to do" is decided after the third pass', 'that ends the issue pass, not the run']);
+  includes(intro, ['**every run does all three**', 'No pass\'s cap, budget or empty result ends the run early', 'still does the lesson-check pass afterwards', '"Nothing to do" is decided after the third pass', 'that ends the issue pass, not the run', 'A denied or failed write', 'is not a reason to stop either: skip that one write']);
   const inputs = prose(section(worker, 'Inputs'));
   includes(inputs, ['Call `add_repo` with owner `Adam-S-Daniel`, repo `adam-agentskills-private`', '`git clone --depth 1 --branch persistent/lessons --single-branch', '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`__agent-check.json`', 'never treat it as "no proposals"', '**read** is the number of lessons found', '**handled** is the number this run took']);
   includes(prose(section(worker, 'Summary')), ['**Always, as the last line, even when both numbers are zero:**', '`Lessons: read <n>, handled <m>`', '`; persistent/lessons NOT REACHED`', 'the lesson-check pass did not run']);

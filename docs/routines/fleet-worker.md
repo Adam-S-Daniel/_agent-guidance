@@ -21,6 +21,13 @@ whose PR and issue passes found nothing still does it too, so "Nothing to
 do" is decided after the third pass, never before it
 ([_agent-guidance#427](https://github.com/Adam-S-Daniel/_agent-guidance/issues/427):
 runs ended after the issue pass and never read a lesson).
+A denied or failed write (a permission prompt the session's mode refuses, a
+403, a label the classifier blocks) is not a reason to stop either: skip that
+one write, note it in the summary, and go on with the rest of the pass and
+the passes after it. The lesson-check pass's own writes are a branch, a push
+and a PR, so a denied label write elsewhere never stops it
+(the 2026-11-03 16:20 UTC run stopped after one denied `needs-owner` label and
+skipped both later passes).
 
 1. **The PR pass** (below): brings open PRs up to date when a required check
    never ran on them, reviews and merges the one kind of PR Claude may merge,
