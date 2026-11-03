@@ -52,6 +52,7 @@ a page.
 | [0034](0034-the-eval-protection-gate-runs-in-required-ci.md) | The eval-protection gate runs in required CI |
 | [0035](0035-sessions-prove-the-guidance-loaded-with-a-check-value.md) | Sessions prove the guidance loaded with a check value |
 | [0036](0036-cloud-sessions-record-which-skill-copies-they-load.md) | Cloud sessions record which skill copies they load |
+| [0037](0037-cloud-usage-records-go-to-a-private-s3-bucket.md) | Cloud usage records go to a private S3 bucket |
 
 ## Format
 
