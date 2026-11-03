@@ -95,10 +95,21 @@ or an assigned open issue already covers. Link to that PR or issue instead.
 - One issue per finding, in the repo the finding is about. For a finding about
   BOXY state, file it in `Adam-S-Daniel/wsl-automation`; for one about a
   scheduled task, file it in the repo its spec lives in.
-- Labels: `half-built-or-broken` always. Add `agent-ready` when the fix is
-  small and has a clear spec, so the [fleet worker](fleet-worker.md) picks it
-  up. Add `needs-owner` when only the owner can act (a setting, a credential,
-  a decision).
+- Labels: `half-built-or-broken` always. Add `needs-owner` when only the
+  owner can act (a setting, a credential, a decision).
+- Add `agent-ready`, so the [fleet worker](fleet-worker.md) picks the issue
+  up, only when every one of these holds:
+  - the kind is `broken` or `idle`, and the fix restores behavior the repo
+    already documents, or the recommendation is `remove` for stale text or
+    dead code with no caller;
+  - the fix stays in one repo and needs no decision;
+  - it changes no plugin runtime (hooks, plugin settings, a script a hook
+    calls), no workflow `permissions:`, secret, ruleset, repo setting or
+    scheduled task, and nothing on the owner's machine.
+
+  A `partial` or `implied-only` finding whose recommendation is `finish` never
+  gets `agent-ready`: finishing a feature means design choices. When in doubt,
+  leave the label off.
 - Create a missing label before using it.
 - The title says what is wrong, in plain words.
 - The body starts with these three lines, exactly:
