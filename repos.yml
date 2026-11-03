@@ -132,7 +132,7 @@ skills_bootstrap:
     # `blocked` is only reachable once a lock exists. The entry is INERT, not
     # wrong; what it buys is that nothing further is needed HERE once the
     # companion merges.
-    # lock + ignore: pending cms-platform#275 — inert until that merges.
+    # lock + ignore: committed — cms-platform#275 merged 2026-08-19.
     - cms-platform
     # lock: committed — PR #8 merged 2026-08-19.
     - fastmail-actions
@@ -155,7 +155,7 @@ skills_bootstrap:
     # The shared lockfile-check action (ADR 0024). Agents maintain it (digest
     # bumps, gh-actions-lock upgrades), and the bundles carry the Actions
     # skills that work needs. Added 2026-10-20.
-    # lock: pending — its first skills.lock lands in a verify-actions-lock PR.
+    # lock: committed — its default branch has carried a skills.lock since 2026-10-21.
     - verify-actions-lock
     # lock: committed — PR #9 merged 2026-08-19.
     - wsl-automation
@@ -234,7 +234,8 @@ skills_bootstrap:
         workflow from then; no session happens there to spend the context.
     - repo: rss-inator
       reason: >-
-        Dormant since 2026-03; no session happens there to spend the context.
+        Not adopted: its `feeds` workflow runs hourly, but no interactive agent
+        session is known there to spend the context.
     - repo: scratch-jules-001
       reason: >-
         Dormant since 2026-03; no session happens there to spend the context.

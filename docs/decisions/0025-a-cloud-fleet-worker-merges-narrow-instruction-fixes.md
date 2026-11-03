@@ -32,7 +32,7 @@ a PR needs his approval.
    trigger issue whose "To check" list has hands-on items stays open and
    gets `agent-ready`. Details: [`prompt-audit-sweep.md`](../routines/prompt-audit-sweep.md).
 2. **The issue worker runs in the cloud**, as the issue pass of a scheduled
-   task, `Fleet worker`, every 2 hours
+   task, `Fleet worker`, every 2 hours (amended 2026-11-03: it runs hourly, `20 * * * *`)
    ([`fleet-worker.md`](../routines/fleet-worker.md)). The laptop task is
    turned off.
 3. **The fleet worker may merge one kind of PR:** a fix for a prompt-audit
@@ -66,7 +66,7 @@ a PR needs his approval.
 - The run log on `main` stops at the 2026-10-23 run. The full log is on
   `persistent/prompt-audit-runs`, guarded from deletion by the
   `persistent/**` ruleset (repo-settings ADR 0007).
-- One scheduled task every 2 hours costs a cloud session per fire, even
+- One scheduled task every 2 hours (hourly since the amendment above) costs a cloud session per fire, even
   when there is nothing to do.
 - Alerts depend on the scheduled task's push notifications. If those stop,
   the `needs-owner` label is still on each PR, so a GitHub search for it
