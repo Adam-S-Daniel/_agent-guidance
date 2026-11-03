@@ -53,7 +53,10 @@ report.
     File one `broken` finding about that and treat the rest as not checked.
   - A task in `tasks[]` with `state` `missing` or `Disabled`, a nonzero
     `last_result`, or a `last_run_utc` older than its schedule allows, is a
-    finding.
+    finding. Two exceptions: skip the `Task Health Publish` row (it reads
+    itself mid-run as `Running`, `0x41301`; judge it by `generated_utc`), and
+    treat `0x41303` ("has not run yet") as a finding only once the task's
+    first scheduled run has passed.
   - An `outputs` time older than its task's schedule allows (for example a
     restic snapshot or keeper line more than a day old), or a nonzero
     `_last_exit`, is a finding.
