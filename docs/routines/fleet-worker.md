@@ -387,9 +387,11 @@ memory-promotion item. Skip any lesson whose id is already in
 oldest first, at most 2 lessons per run.
 
 Count, for the summary: **read** is the number of lessons found across the
-three inputs that are not already in the ledger, before the 2-per-run cap;
-**handled** is the number this run took through "Per lesson" below, whatever
-the verdict.
+three inputs that parsed and are valid, including ones already in the ledger,
+so a run that found only known lessons does not read as finding nothing;
+**new** is how many of those are not already in the ledger, before the
+2-per-run cap; **handled** is the number this run took through "Per lesson"
+below, whatever the verdict.
 
 ### Per lesson
 
@@ -448,8 +450,8 @@ The run's final message has, in this order:
    (eval-protected), stale claims, conflicts, `NOT REACHED` repos, and
    `on hold` items.
 3. If nothing else happened: `Nothing to do.`
-4. **Always, as the last line, even when both numbers are zero:**
-   `Lessons: read <n>, handled <m>`, with the counts defined under the
+4. **Always, as the last line, even when all three numbers are zero:**
+   `Lessons: read <n>, new <k>, handled <m>`, with the counts defined under the
    lesson-check pass's inputs. When the `persistent/lessons` branch could not
    be read, append `; persistent/lessons NOT REACHED`. A summary without
    this line means the lesson-check pass did not run, which is a defect in
