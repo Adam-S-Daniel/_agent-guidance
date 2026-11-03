@@ -227,6 +227,33 @@ FAIL_COUNT=0
 OK_COUNT=0
 SKIP_COUNT=0
 
+# retry_read <err_file> <stop_on_404> <cmd...>
+# Runs a read, stderr to <err_file>, stdout echoed. A failed read is retried
+# after each delay in SYNC_READ_RETRY_DELAYS (default "2 4 8" seconds, 14 in
+# all) so one transient API error does not count a repo as failed (issue 428).
+# With <stop_on_404> true a 404 is final and not retried: for the file read a
+# 404 is the ordinary "no .agents-sync.yml" answer. The last attempt's stderr
+# stays in <err_file> and its exit code is returned.
+retry_read() {
+    local err_file=$1 stop_404=$2 out rc i=0
+    local -a delays
+    read -r -a delays <<< "${SYNC_READ_RETRY_DELAYS:-2 4 8}"
+    shift 2
+    while :; do
+        rc=0
+        out=$("$@" 2>"$err_file") || rc=$?
+        [[ $rc -eq 0 || $i -ge ${#delays[@]} ]] && break
+        if [[ "$stop_404" == true ]] && { grep -qF '(HTTP 404)' "$err_file" \
+              || [[ "$out" =~ \"status\":[[:space:]]*\"404\" ]]; }; then
+            break
+        fi
+        sleep "${delays[$i]}"
+        i=$((i + 1))
+    done
+    printf '%s' "$out"
+    return "$rc"
+}
+
 # pick_diagnostic <producer> <file> — the ONE line of a captured stderr that a
 # one-line failure report should quote.
 #
@@ -801,8 +828,8 @@ for repo_name in "${REPOS[@]}"; do
         continue
     fi
     api_rc=0
-    remote_yaml=$(gh api "repos/$repo_name/contents/.agents-sync.yml" \
-        --jq '.content' 2>"$api_err_file") || api_rc=$?
+    remote_yaml=$(retry_read "$api_err_file" true gh api "repos/$repo_name/contents/.agents-sync.yml" \
+        --jq '.content') || api_rc=$?
     # BOTH reads happen here, unconditionally, so no `continue` below can leak
     # the file and neither can the success path; the two values are only ever
     # USED in the failure branch. Same shape as drift-report.sh's
@@ -865,7 +892,7 @@ for repo_name in "${REPOS[@]}"; do
             continue
         fi
         probe_rc=0
-        gh api "repos/$repo_name" --silent >/dev/null 2>"$probe_err_file" || probe_rc=$?
+        retry_read "$probe_err_file" false gh api "repos/$repo_name" --silent >/dev/null || probe_rc=$?
         # Read then removed unconditionally, before the branch, so neither the
         # `continue` below nor the success path can leak the file.
         probe_stderr=$(cat "$probe_err_file")
