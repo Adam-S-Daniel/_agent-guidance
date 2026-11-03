@@ -2588,7 +2588,10 @@ case "$1" in
                 lag_spec=" ${MOCK_REF_LAGS_AFTER_DELETE} "
                 lag_spec="${lag_spec##* $repo_slug:}"
                 echo "${lag_spec%% *}" > "$bare_path/mock-ref-lag-left"
-                echo '{"message":"Reference does not exist","status":"422"}'
+                # The body GitHub returned in run 41683254215, with gh's own
+                # error line run onto it as `2>&1` captures it there.
+                printf '%s' '{"message":"Reference does not exist","documentation_url":"https://docs.github.com/rest/git/refs#delete-a-reference","status":"404"}'
+                echo 'gh: Reference does not exist (HTTP 404)' >&2
                 exit 1
             fi
             if [[ -d "$bare_path" ]] \
@@ -12884,6 +12887,12 @@ test_bump_sweep_branch_cleanup() {
     # naming the repo would let the misread through under a reworded prefix.
     assert_not_contains "$log" "was already gone" \
         "branch cleanup: a 404 that could be a scope gap is not read as an already-deleted branch"
+    # The control for the long-lag case below: a ref still listed whose DELETE
+    # said `Not Found`, not `Reference does not exist`, stays a survivor.
+    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update — it is still on the repo" \
+        "branch cleanup: a listed ref whose DELETE said Not Found is still reported as on the repo"
+    assert_not_contains "$log" "was already deleted" \
+        "branch cleanup: and its 404 body is not read as already deleted"
     if [[ "$(sweep_bump_branch_sha repo-nochecks)" == "$nochecks_tip" ]]; then
         pass "branch cleanup: the branch the delete failed on is still on the repo"
     else
@@ -13004,17 +13013,23 @@ test_bump_sweep_branch_cleanup() {
     else
         fail "branch cleanup (lag): the lagging branch really is absent"
     fi
-    # Control: still listed after every re-query (more lag than the retries
-    # cover) is still a WARN naming the survivor, and a counted failure.
+    # Lag that outlasts every re-query: the listing still names the ref, but
+    # the DELETE said `Reference does not exist` while the listing query was
+    # answering, so the branch is already deleted. Not a failure, and not the
+    # "it is still on the repo" line, which would be false.
     setup_sweep_repos
     BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:99" \
         run_sweep "$TEST_DIR/sweep-delete-lag-stays.txt"
     unset BUMP_REF_LAGS_FOR_RUN
     log="$TEST_DIR/sweep-delete-lag-stays.txt"
-    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update — it is still on the repo" \
-        "branch cleanup (lag, control): a ref that stays listed is still a WARN"
-    assert_not_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone" \
-        "branch cleanup (lag, control): and is not read as already gone"
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already deleted — the delete answered \"Reference does not exist\"" \
+        "branch cleanup (long lag): a DELETE that says the ref does not exist is success while the listing lags"
+    assert_not_contains "$log" "it is still on the repo" \
+        "branch cleanup (long lag): and does not claim the ref is still on the repo"
+    assert_not_contains "$log" "WARN could not delete" \
+        "branch cleanup (long lag): and nothing warns about it"
+    assert_not_contains "$log" "was not deleted" \
+        "branch cleanup (long lag): and it is not a counted failure"
 
     # ── THE PREFIX. matching-refs matches a STRING PREFIX over the whole ref
     # name, as GitHub's does, so asking for `heads/skills-lock-bump/update`
