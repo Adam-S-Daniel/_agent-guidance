@@ -4308,6 +4308,93 @@ push_fleet_payload_fixture() {
     git -C "$TEST_DIR/work/fleet-payload" push origin HEAD:main >/dev/null 2>&1
 }
 
+# ── The plugin's bundled copies of the fleet guidance (adam-agentskills#113) ──
+#
+# adam-agentskills' fleet-guidance hook ships verbatim copies of base.md and
+# fleet-memory.sh. The mirror check here is offline and covers only this repo's
+# own copy, so a stale plugin fallback went unreported. The drift report reads
+# the copies and says, per file, whether each still matches its source.
+run_plugin_copy_report() {
+    FLEET_PLUGIN_REPO="$1" \
+    GITHUB_REPOSITORY_OWNER=fleetorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-plugin-copy.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-plugin-copy-output.txt" 2>&1
+}
+
+test_drift_report_plugin_copies() {
+    echo ""
+    echo "=== Test: drift-report.sh (plugin copies of the fleet guidance) ==="
+
+    local bare="$TEST_DIR/bare/fleetorg_plugin-registry"
+    local work="$TEST_DIR/work/plugin-registry"
+    local dir="plugins/adam-anything-anywhere/hooks/fleet-guidance"
+    local rpt="$TEST_DIR/drift-plugin-copy.md"
+    local rc expected_sha found_sha
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work/$dir"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    git -C "$work" config commit.gpgsign false
+    git -C "$work" remote add origin "$bare"
+    push_plugin_fixture() {
+        git -C "$work" add -A
+        git -C "$work" commit -m "fixture state" >/dev/null 2>&1
+        git -C "$work" push origin HEAD:main >/dev/null 2>&1
+    }
+    cp "$REPO_ROOT/agents-md/base.md" "$work/$dir/fleet-guidance.md"
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/$dir/fleet-memory.sh"
+    push_plugin_fixture
+
+    rc=0; run_plugin_copy_report fleetorg/plugin-registry || rc=$?
+    assert_contains "$rpt" "## Plugin copies of the fleet guidance" \
+        "plugin copies: the report has the section when the copy's owner is scanned"
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "ok" \
+        "plugin copies: a current fleet-guidance.md reads ok"
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "ok" \
+        "plugin copies: a current fleet-memory.sh reads ok"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "0 plugin fleet-guidance copy(ies) not matching" \
+        "plugin copies: the run log counts zero when both match"
+    if [[ "$rc" -eq 0 ]]; then
+        pass "plugin copies: the report exits 0"
+    else
+        fail "plugin copies: the report exits 0 — got $rc"
+    fi
+
+    # A stale fallback, the state adam-agentskills#113 found: one line short.
+    head -n -1 "$REPO_ROOT/agents-md/base.md" >"$work/$dir/fleet-guidance.md"
+    push_plugin_fixture
+    run_plugin_copy_report fleetorg/plugin-registry || true
+    expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
+    found_sha=$(sha256sum "$work/$dir/fleet-guidance.md")
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "**drifted**" \
+        "plugin copies: a stale fleet-guidance.md is reported drifted"
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "\`${expected_sha:0:8}\` / \`${found_sha:0:8}\`" \
+        "plugin copies: the drifted row shows the expected and found hashes"
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "ok" \
+        "plugin copies (control): the untouched copy still reads ok"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "1 plugin fleet-guidance copy(ies) not matching" \
+        "plugin copies: the run log counts the drifted copy"
+
+    # A copy that is gone is as stale as one that changed.
+    git -C "$work" rm -q "$dir/fleet-memory.sh"
+    push_plugin_fixture
+    run_plugin_copy_report fleetorg/plugin-registry || true
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "**missing**" \
+        "plugin copies: an absent fleet-memory.sh is reported missing"
+
+    # An owner this run does not scan is not asked at all: no section, and the
+    # log says why. This is what keeps fixture runs off the real repo.
+    run_plugin_copy_report otherorg/plugin-registry || true
+    assert_not_contains "$rpt" "## Plugin copies of the fleet guidance" \
+        "plugin copies: no section when the copy's owner is not scanned"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "not checked: otherorg is not an owner this run scans" \
+        "plugin copies: the log says the copies were not checked, and why"
+    unset -f push_plugin_fixture
+}
+
 test_drift_report_fleet_payload() {
     echo ""
     echo "=== Test: drift-report.sh (fleet-memory hook and payload) ==="
@@ -25161,6 +25248,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
+    test_drift_report_plugin_copies
     # Immediately after the test that establishes bootorg/repo-adopted's
     # confident verdicts, because those are exactly what its control run
     # re-asserts before truncating one file at a time.
