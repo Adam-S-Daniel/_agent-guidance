@@ -40,6 +40,10 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # bit local runs; unsetting both here makes the run deterministic everywhere.
 unset GH_TOKEN GITHUB_TOKEN
 
+# sync.sh retries a failed per-repo read after 2, 4 and 8 seconds; a test never
+# sleeps, so the delays are zero here.
+export SYNC_READ_RETRY_DELAYS="0 0 0"
+
 # A runner started by a test must not append to the owner's agent-checks run
 # log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
 export AGENT_CHECKS_LOG=off
@@ -2757,6 +2761,20 @@ case "$1" in
                 echo "gh: your authentication token expires in 3 days" >&2
             fi
 
+            # MOCK_CONTENTS_FAIL_FIRST="<owner_repo> <n>" answers the first n
+            # reads of that repo's contents with a 502 and then serves it
+            # normally: the transient failure sync.sh's retry exists for.
+            if [[ -n "${MOCK_CONTENTS_FAIL_FIRST:-}" \
+                  && "${MOCK_CONTENTS_FAIL_FIRST%% *}" == "$repo_slug" ]]; then
+                fail_ctr="$MOCK_BARE_DIR/.contents-fail-count-$repo_slug"
+                fail_seen=$(cat "$fail_ctr" 2>/dev/null || echo 0)
+                if (( fail_seen < ${MOCK_CONTENTS_FAIL_FIRST##* } )); then
+                    echo $((fail_seen + 1)) > "$fail_ctr"
+                    echo "gh: Bad Gateway (HTTP 502)" >&2
+                    echo '{"message":"Bad Gateway","status":"502"}'
+                    exit 1
+                fi
+            fi
             if [[ " ${MOCK_CONTENTS_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
                 echo "gh: Resource not accessible by integration (HTTP 403)" >&2
                 echo '{"message":"Resource not accessible by integration","status":"403"}'
@@ -6568,6 +6586,40 @@ test_sync_agents_sync_yml_unreadable() {
     else
         fail "sync yml parse: the repo was written to"
     fi
+
+    # ── a transient read failure is retried, not counted ─────────────────
+    # The first two reads answer 502 and the third succeeds; the repo must sync.
+    # A fourth failure would still count (the 403 leg above fails every read).
+    sync_yaml_fixture_write 'sections: [python]
+'
+    rm -f "$TEST_DIR"/bare/.contents-fail-count-*
+    out="$TEST_DIR/sync-syncyml-transient.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_CONTENTS_FAIL_FIRST="sfailorg_repo-sync-yml 2" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+    assert_contains "$out" "Sections: python" \
+        "sync yml transient: two 502s then success reads the section list"
+    assert_contains "$out" "0 failed" \
+        "sync yml transient: a retried read is not a repo failure"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "sync yml transient: the run exits 0"
+    else
+        fail "sync yml transient: the run exits 0 - got $exit_code"
+    fi
+    rm -f "$TEST_DIR"/bare/.contents-fail-count-*
+    out="$TEST_DIR/sync-syncyml-transient4.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_CONTENTS_FAIL_FIRST="sfailorg_repo-sync-yml 9" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+    assert_contains "$out" "1 failed" \
+        "sync yml transient: a read that keeps failing past the retries still counts"
+    rm -f "$TEST_DIR"/bare/.contents-fail-count-*
 
     # ── the CONTROL, and it is what stops the two legs above passing over a
     # sync that simply refuses this repo whatever it reads.
