@@ -108,6 +108,12 @@ set -euo pipefail
 #   BUMP_UNKNOWN_RETRY_DELAY — seconds to wait between those re-reads
 #                             (default: 5). Tests set this to 0 so the suite
 #                             never sleeps.
+#   BUMP_REF_SETTLE_SECONDS — seconds to wait between the re-queries that
+#                             delete_bump_branch makes when a failed DELETE is
+#                             followed by a matching-refs answer that still
+#                             lists the ref (GitHub read-after-delete lag;
+#                             default: 5, three re-queries). Tests set this
+#                             to 0 so the suite never sleeps.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -802,9 +808,25 @@ delete_bump_branch() {
         log "$repo_name: deleted $branch."
         return 0
     fi
-    refs_exit=0
-    refs_out=$(gh api --paginate "repos/$repo_name/git/matching-refs/heads/$branch" \
-        --jq '.[].ref' 2>/dev/null) || { refs_exit=$?; refs_out=""; }
+    # The DELETE failing and the ref still being LISTED right after is not yet
+    # proof the ref survived: when the merge's own delete-on-merge reaped the
+    # branch, GitHub's reads can lag the removal, so the DELETE 404s with
+    # `Reference does not exist` while matching-refs still names the ref for a
+    # moment (run 41683254215 went red that way; `git ls-remote` showed it gone
+    # seconds later). So while the query SUCCEEDS and still lists our ref, ask
+    # again a few times, BUMP_REF_SETTLE_SECONDS apart (default 5; tests set 0
+    # so the suite never sleeps), before calling it still there. Only a
+    # SUCCESSFUL answer ever counts: a query that fails on any attempt leaves
+    # refs_exit non-zero and ends the loop into the could-not-establish WARN.
+    local settle_waits=3 settle_seconds="${BUMP_REF_SETTLE_SECONDS:-5}" settle_try
+    for ((settle_try = 0; settle_try <= settle_waits; settle_try++)); do
+        if ((settle_try > 0)); then sleep "$settle_seconds"; fi
+        refs_exit=0
+        refs_out=$(gh api --paginate "repos/$repo_name/git/matching-refs/heads/$branch" \
+            --jq '.[].ref' 2>/dev/null) || { refs_exit=$?; refs_out=""; }
+        [[ $refs_exit -eq 0 ]] || break
+        [[ $'\n'"$refs_out"$'\n' == *$'\n'"refs/heads/$branch"$'\n'* ]] || break
+    done
     # Pure bash, and NOT `grep -qxF … <<< "$refs_out"`. Two reasons, and the
     # second is why the here-string alone was not enough:
     #

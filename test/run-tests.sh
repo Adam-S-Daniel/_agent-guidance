@@ -2579,6 +2579,18 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
+            # MOCK_REF_LAGS_AFTER_DELETE names "<owner_repo>:<n>" pairs: GitHub's
+            # read-after-delete lag. The ref was reaped by the merge, so the
+            # DELETE answers the real 422, yet the next <n> matching-refs
+            # answers still list it before the repo catches up.
+            if [[ -d "$bare_path" && " ${MOCK_REF_LAGS_AFTER_DELETE:-} " == *" $repo_slug:"* ]] \
+               && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
+                lag_spec=" ${MOCK_REF_LAGS_AFTER_DELETE} "
+                lag_spec="${lag_spec##* $repo_slug:}"
+                echo "${lag_spec%% *}" > "$bare_path/mock-ref-lag-left"
+                echo '{"message":"Reference does not exist","status":"422"}'
+                exit 1
+            fi
             if [[ -d "$bare_path" ]] \
                && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
                 git -C "$bare_path" update-ref -d "refs/heads/$del_branch"
@@ -2634,6 +2646,18 @@ case "$1" in
             if [[ ! -d "$bare_path" ]]; then
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
+            fi
+            # Read-after-delete lag (see MOCK_REF_LAGS_AFTER_DELETE): answer
+            # with the ref listed while the counter is above zero, then let the
+            # repo catch up by removing the ref for real.
+            if [[ -e "$bare_path/mock-ref-lag-left" ]]; then
+                lag_left=$(<"$bare_path/mock-ref-lag-left")
+                if [[ "$lag_left" -le 0 ]]; then
+                    git -C "$bare_path" update-ref -d refs/heads/skills-lock-bump/update
+                    rm -f "$bare_path/mock-ref-lag-left"
+                else
+                    echo $((lag_left - 1)) > "$bare_path/mock-ref-lag-left"
+                fi
             fi
             # Each entry carries `object.sha` as GitHub's does: the sweep reads
             # a bump branch's tip from it.
@@ -8749,6 +8773,8 @@ run_bump() {   # <output file> [script args...]
     MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
+    MOCK_REF_LAGS_AFTER_DELETE="${BUMP_REF_LAGS_FOR_RUN:-}" \
+    BUMP_REF_SETTLE_SECONDS="${BUMP_REF_SETTLE_SECONDS_FOR_RUN:-0}" \
     MOCK_REF_PUSH_ON="${BUMP_REF_PUSH_ON_FOR_RUN:-}" \
     MOCK_REF_GARBLE_ON="${BUMP_REF_GARBLE_ON_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
@@ -12955,6 +12981,40 @@ test_bump_sweep_branch_cleanup() {
     # clean delete, so the failure is scoped to the repo the mock blinded.
     assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
         "branch cleanup (control): a repo the credential can still see is deleted in that same run"
+
+    # ── READ-AFTER-DELETE LAG. The merge's delete-on-merge reaped the branch,
+    # so our DELETE 404s, but matching-refs still lists the ref for a moment
+    # (run 41683254215 went red on exactly this). Listed on the first
+    # follow-up query and gone on the next must settle to already-gone, not a
+    # WARN. The control keeps a ref that STAYS listed a WARN, so the retry
+    # cannot have turned into believing anything.
+    setup_sweep_repos
+    BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:1" \
+        run_sweep "$TEST_DIR/sweep-delete-lag.txt"
+    unset BUMP_REF_LAGS_FOR_RUN
+    log="$TEST_DIR/sweep-delete-lag.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone." \
+        "branch cleanup (lag): a ref listed once after a failed DELETE, then gone, is success"
+    assert_not_contains "$log" "WARN could not delete" \
+        "branch cleanup (lag): and nothing warns about it"
+    assert_not_contains "$log" "was not deleted" \
+        "branch cleanup (lag): and it is not a counted failure"
+    if [[ -z "$(sweep_bump_branch_sha repo-nochecks)" ]]; then
+        pass "branch cleanup (lag): the lagging branch really is absent"
+    else
+        fail "branch cleanup (lag): the lagging branch really is absent"
+    fi
+    # Control: still listed after every re-query (more lag than the retries
+    # cover) is still a WARN naming the survivor, and a counted failure.
+    setup_sweep_repos
+    BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:99" \
+        run_sweep "$TEST_DIR/sweep-delete-lag-stays.txt"
+    unset BUMP_REF_LAGS_FOR_RUN
+    log="$TEST_DIR/sweep-delete-lag-stays.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update — it is still on the repo" \
+        "branch cleanup (lag, control): a ref that stays listed is still a WARN"
+    assert_not_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone" \
+        "branch cleanup (lag, control): and is not read as already gone"
 
     # ── THE PREFIX. matching-refs matches a STRING PREFIX over the whole ref
     # name, as GitHub's does, so asking for `heads/skills-lock-bump/update`
