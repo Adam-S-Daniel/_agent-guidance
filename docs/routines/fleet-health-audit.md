@@ -46,9 +46,21 @@ report.
   that fails often (say 3 or more of its last 20 runs) is this audit's
   finding.
 - The owner's durable machine (BOXY) is not reachable from a cloud session.
-  Use the evidence its tasks leave off the machine (commits on
-  `persistent/*` branches, published files and their timestamps) and report
-  anything else as not checked.
+  Read `task-health.json` on the `persistent/task-health` branch of the
+  private `Adam-S-Daniel/waiting-feed` repo (attach it with `add_repo`). It is
+  replaced daily and holds only names, states, exit codes and UTC times:
+  - `generated_utc` older than 36 hours: the publisher itself has stopped.
+    File one `broken` finding about that and treat the rest as not checked.
+  - A task in `tasks[]` with `state` `missing` or `Disabled`, a nonzero
+    `last_result`, or a `last_run_utc` older than its schedule allows, is a
+    finding.
+  - An `outputs` time older than its task's schedule allows (for example a
+    restic snapshot or keeper line more than a day old), or a nonzero
+    `_last_exit`, is a finding.
+
+  If the branch does not exist yet, use the evidence BOXY's tasks leave off
+  the machine (commits on `persistent/*` branches, published files and their
+  timestamps) and report the rest as not checked.
 
 ## What other checks already own
 
