@@ -9,14 +9,18 @@ example.com only.
 
 import base64
 import hashlib
+import hmac
+import http.server
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -50,7 +54,8 @@ FAKE_CURL = textwrap.dedent("""\
         with open(data[1:], encoding="utf-8") as handle:
             body = json.load(handle)
     with open(os.environ["FAKE_CURL_LOG"], "a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"argv": argv, "stdin": stdin, "body": body}) + "\\n")
+        handle.write(json.dumps({"argv": argv, "stdin": stdin, "body": body,
+                                 "sink_env": sorted(k for k in os.environ if k.startswith("USAGE_SINK"))}) + "\\n")
     path = os.environ["FAKE_CURL_SCRIPT"]
     with open(path, encoding="utf-8") as handle:
         queue = json.load(handle)
@@ -958,6 +963,9 @@ FAKE_GIT = textwrap.dedent("""\
     if "GIT_CONFIG_NOSYSTEM" in os.environ:
         with open(os.environ["FAKE_GIT_LOG"] + ".nosystem", "a", encoding="utf-8") as handle:
             handle.write(json.dumps(argv) + "\\n")
+    if any(k.startswith("USAGE_SINK") for k in os.environ):
+        with open(os.environ["FAKE_GIT_LOG"] + ".sinkenv", "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(argv) + "\\n")
     mode = os.environ.get("FAKE_GIT_MODE", "")
     if mode == "fail-cat-file" and "cat-file" in argv:
         sys.exit(1)
@@ -1766,6 +1774,437 @@ class CloudGateTests(CloudTestCase):
             self.assertFalse(alive(pid), pid)
         self.assertIs(self.records()[0]["uploaded"], False)
         self.assertEqual([p["id"] for p in self.pending()], ["toolu_g1"])
+
+
+
+# ── the S3 sink (ADR 0037) ──────────────────────────────────────────────────
+
+SINK_ENV = {"USAGE_SINK_BUCKET": "example-usage-sink", "USAGE_SINK_REGION": "us-east-1",
+            "USAGE_SINK_ACCESS_KEY_ID": "AKIAEXAMPLEEXAMPLE00",
+            "USAGE_SINK_SECRET_ACCESS_KEY": "example-sink-canary-value"}
+SINK_KEY = re.compile(r"^drop/\d{4}-\d{2}-\d{2}/[0-9a-f]{32}\.json$")
+SINK_BODY_KEYS = ["v", "kind", "sent", "guidance", "skills"]
+
+
+def hook_module():
+    """The hook's embedded Python, loaded as a module: main() does not run."""
+    text = HOOK.read_text(encoding="utf-8")
+    source = text.split("<<'PY' || true\n", 1)[1].rsplit("\nPY\n", 1)[0]
+    namespace = {"__name__": "guidance_hook"}
+    exec(compile(source, str(HOOK), "exec"), namespace)
+    return namespace
+
+
+def expected_signature(method, path, headers, signed_names, secret, region):
+    """SigV4 recomputed independently of the hook, from the request the
+    server received."""
+    canonical_headers = "".join("%s:%s\n" % (n, " ".join(headers[n].split())) for n in signed_names)
+    canonical = "\n".join([method, path, "", canonical_headers, ";".join(signed_names),
+                           headers["x-amz-content-sha256"]])
+    stamp = headers["x-amz-date"]
+    scope = f"{stamp[:8]}/{region}/s3/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", stamp, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    key = ("AWS4" + secret).encode()
+    for part in (stamp[:8], region, "s3", "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    return hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+
+
+class FakeS3(http.server.BaseHTTPRequestHandler):
+    """Answers each PUT from the server's scripted statuses (200 once they
+    run out) and records the request."""
+
+    def do_PUT(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.server.requests.append({"path": self.path, "body": body,
+                                     "headers": {k.lower(): v for k, v in self.headers.items()}})
+        status = self.server.statuses.pop(0) if self.server.statuses else 200
+        # A scripted "403-proxy" is a 403 without S3's request id header.
+        from_s3 = status != "403-proxy"
+        self.send_response(403 if status == "403-proxy" else status)
+        if from_s3:
+            self.send_header("x-amz-request-id", "EXAMPLEREQUESTID0")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class SinkTestCase(CloudTestCase):
+    def setUp(self):
+        super().setUp()
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), FakeS3)
+        self.server.requests, self.server.statuses = [], []
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.endpoint = "http://127.0.0.1:%d" % self.server.server_address[1]
+        self.cloud_env.update(SINK_ENV, USAGE_SINK_ENDPOINT=self.endpoint)
+
+    def puts(self):
+        return self.server.requests
+
+    def object_key(self, request):
+        prefix = "/" + SINK_ENV["USAGE_SINK_BUCKET"] + "/"
+        self.assertTrue(request["path"].startswith(prefix), request["path"])
+        return request["path"][len(prefix):]
+
+    def body(self, request):
+        doc = json.loads(request["body"].decode("utf-8"))
+        self.assertEqual(list(doc), SINK_BODY_KEYS)
+        return doc
+
+    def add_use(self, call, skill="b"):
+        with open(self.transcript, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(skill_use(call, skill)) + "\n" + json.dumps(skill_result(call)) + "\n")
+
+
+class SinkSignatureTests(unittest.TestCase):
+    def test_sigv4_matches_aws_published_s3_examples(self):
+        # AWS's S3 "Signature Calculations for the Authorization Header"
+        # examples (example credentials, 2013-05-24, us-east-1).
+        sign = hook_module()["sigv4_authorization"]
+        aws_id, aws_word = "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        payload = hashlib.sha256(b"Welcome to Amazon S3.").hexdigest()
+        self.assertEqual(payload, "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072")
+        put = sign("PUT", "/test%24file.text", "", {
+            "Host": "examplebucket.s3.amazonaws.com", "Date": "Fri, 24 May 2013 00:00:00 GMT",
+            "x-amz-date": "20130524T000000Z", "x-amz-storage-class": "REDUCED_REDUNDANCY",
+            "x-amz-content-sha256": payload}, payload, "us-east-1", "s3", aws_id, aws_word)
+        self.assertEqual(put, "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/"
+                              "aws4_request, SignedHeaders=date;host;x-amz-content-sha256;x-amz-date;"
+                              "x-amz-storage-class, Signature="
+                              "98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd")
+        empty = hashlib.sha256(b"").hexdigest()
+        get = sign("GET", "/test.txt", "", {
+            "Host": "examplebucket.s3.amazonaws.com", "Range": "bytes=0-9",
+            "x-amz-content-sha256": empty, "x-amz-date": "20130524T000000Z"},
+            empty, "us-east-1", "s3", aws_id, aws_word)
+        self.assertTrue(get.endswith(
+            "Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"), get)
+
+
+class SinkRouteTests(SinkTestCase):
+    def setUp(self):
+        super().setUp()
+        self.script([PUSH_OK] * 3)
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_k1", "a"), skill_result("toolu_k1")])
+
+    def test_the_sink_is_chosen_only_when_all_four_variables_are_set(self):
+        for name in SINK_ENV:
+            for missing in (None, ""):
+                with self.subTest(name=name, value=missing):
+                    shutil.rmtree(self.state, ignore_errors=True)
+                    self.curl_log.unlink(missing_ok=True)
+                    self.script([PUSH_OK])
+                    env = dict(self.cloud_env)
+                    if missing is None:
+                        env.pop(name)
+                    else:
+                        env[name] = missing
+                    self.run_hook(session=CLOUD_SESSION, env=env)
+                    self.assertEqual(self.puts(), [])
+                    self.assertEqual(len(self.calls()), 1)       # the git route's probe
+        shutil.rmtree(self.state, ignore_errors=True)
+        self.curl_log.unlink(missing_ok=True)
+        self.git_log.unlink(missing_ok=True)
+        before = self.commits()
+        self.stop()
+        self.assertEqual(len(self.puts()), 1)
+        self.assertEqual((self.calls(), self.commits()), ([], before))
+        self.assertFalse([c for c in self.git_calls() if {"clone", "push", "fetch"} & set(c)])
+
+    def test_one_object_carries_both_phases_with_exactly_the_spec_keys(self):
+        self.stop()
+        [put] = self.puts()
+        doc = self.body(put)
+        self.assertEqual((doc["v"], doc["kind"], doc["sent"]), (1, "usage-drop", NOW))
+        [record] = self.records()
+        self.assertIs(record["uploaded"], True)
+        # The guidance item is the git route's line: the record without `uploaded`,
+        # byte for byte.
+        line = json.dumps({k: v for k, v in record.items() if k != "uploaded"}, separators=(",", ":"))
+        self.assertIn(b'"guidance":[' + line.encode() + b"]", put["body"])
+        self.assertEqual(doc["guidance"], [json.loads(line)])
+        [skill] = doc["skills"]
+        self.assertEqual(set(skill), SHARD_KEYS)
+        self.assertEqual((skill["id"], skill["session"]), ("toolu_k1", CLOUD_SID[:16]))
+        self.assertEqual(self.pending(), [])
+
+    def test_the_request_has_a_valid_key_headers_and_signature(self):
+        self.stop()
+        [put] = self.puts()
+        key = self.object_key(put)
+        self.assertRegex(key, SINK_KEY)
+        self.assertTrue(key.startswith("drop/2026-10-31/"))
+        headers = put["headers"]
+        self.assertEqual(headers["if-none-match"], "*")
+        self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["x-amz-content-sha256"], hashlib.sha256(put["body"]).hexdigest())
+        self.assertEqual(headers["x-amz-date"], "20261031T120000Z")
+        found = re.fullmatch(r"AWS4-HMAC-SHA256 Credential=([^/]+)/20261031/us-east-1/s3/aws4_request, "
+                             r"SignedHeaders=([a-z0-9;-]+), Signature=([0-9a-f]{64})",
+                             headers["authorization"])
+        self.assertIsNotNone(found, headers["authorization"])
+        self.assertEqual(found.group(1), SINK_ENV["USAGE_SINK_ACCESS_KEY_ID"])
+        names = found.group(2).split(";")
+        self.assertEqual(names, ["content-type", "host", "if-none-match", "x-amz-content-sha256",
+                                 "x-amz-date"])
+        self.assertEqual(found.group(3), expected_signature(
+            "PUT", put["path"], headers, names, SINK_ENV["USAGE_SINK_SECRET_ACCESS_KEY"], "us-east-1"))
+
+    def test_the_secret_is_never_written_or_printed(self):
+        out = self.stop()
+        self.assertEqual((out.stdout, out.stderr), ("", ""))
+        secret = SINK_ENV["USAGE_SINK_SECRET_ACCESS_KEY"].encode()
+        for path in self.tmp.rglob("*"):
+            if path.is_file() and not path.is_symlink():
+                self.assertNotIn(secret, path.read_bytes(), path)
+        self.assertNotIn(secret, self.puts()[0]["body"])
+        self.assertNotIn(secret.decode(), json.dumps(self.puts()[0]["headers"]))
+
+    def test_phase_1_alone_sends_an_empty_skills_list(self):
+        self.run_hook(session=CLOUD_SESSION, env=dict(
+            {k: v for k, v in self.cloud_env.items() if k != "CLAUDE_CODE_REMOTE"},
+            CLAUDE_CODE_REMOTE_SESSION_ID="example-remote"))
+        [put] = self.puts()
+        doc = self.body(put)
+        self.assertEqual((len(doc["guidance"]), doc["skills"]), (1, []))
+        self.assertIs(self.records()[0]["uploaded"], True)
+
+    def test_a_later_stop_sends_phase_2_alone(self):
+        self.stop()
+        self.add_use("toolu_k2")
+        self.stop()
+        self.assertEqual(len(self.puts()), 2)
+        doc = self.body(self.puts()[1])
+        self.assertEqual(doc["guidance"], [])
+        self.assertEqual([s["id"] for s in doc["skills"]], ["toolu_k2"])
+        self.assertEqual(len(self.records()), 1)
+
+
+class SinkStatusTests(SinkTestCase):
+    T0 = NOW
+
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.write_transcript([skill_use("toolu_z1", "a"), skill_result("toolu_z1")])
+
+    def at(self, seconds):
+        import datetime
+        base = datetime.datetime.strptime(self.T0, "%Y-%m-%dT%H:%M:%SZ")
+        return (base + datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_200_clears_the_pending_lines(self):
+        self.stop()
+        self.assertEqual(len(self.puts()), 1)
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(self.state_doc()["fails"], 0)
+        self.stop()                                           # nothing pending: no request
+        self.assertEqual(len(self.puts()), 1)
+
+    def test_412_retries_once_under_a_new_key(self):
+        self.server.statuses = [412, 200]
+        self.stop()
+        first, second = self.puts()
+        self.assertNotEqual(self.object_key(first), self.object_key(second))
+        self.assertRegex(self.object_key(second), SINK_KEY)
+        self.assertEqual(self.pending(), [])
+
+    def test_a_second_412_is_a_failure_for_the_backoff(self):
+        self.server.statuses = [412, 412]
+        self.stop()
+        self.assertEqual(len(self.puts()), 2)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_z1"])
+        self.assertEqual(self.state_doc()["fails"], 1)
+
+    def test_403_stops_tries_for_the_session_and_keeps_the_lines(self):
+        self.server.statuses = [403]
+        self.stop()
+        self.assertTrue(self.state_doc()["nocred"])
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_z1"])
+        self.add_use("toolu_z2")
+        self.stop(now=self.at(10_000))
+        self.assertEqual(len(self.puts()), 1)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_z1", "toolu_z2"])
+
+    def test_a_5xx_backs_off_two_minutes_then_doubles(self):
+        self.server.statuses = [503, 500, 502]
+        self.stop(now=self.at(0))
+        self.assertEqual(len(self.puts()), 1)
+        self.stop(now=self.at(119))
+        self.assertEqual(len(self.puts()), 1)
+        self.stop(now=self.at(121))
+        self.assertEqual(len(self.puts()), 2)
+        self.stop(now=self.at(121 + 239))
+        self.assertEqual(len(self.puts()), 2)
+        self.stop(now=self.at(121 + 241))
+        self.assertEqual(len(self.puts()), 3)
+        self.assertFalse(self.state_doc()["nocred"])
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_z1"])
+
+    def test_no_answer_is_a_failure_for_the_backoff(self):
+        self.cloud_env["USAGE_SINK_ENDPOINT"] = "http://127.0.0.1:9"     # nothing listens
+        self.stop()
+        self.assertEqual(self.state_doc()["fails"], 1)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_z1"])
+
+    def test_a_malformed_bucket_sends_nothing_and_is_a_definite_no(self):
+        self.cloud_env["USAGE_SINK_BUCKET"] = "example.usage.sink"
+        self.stop()
+        self.assertEqual(self.puts(), [])
+        self.assertTrue(self.state_doc()["nocred"])
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_z1"])
+
+    def test_a_large_backlog_is_split_into_objects_within_the_limit(self):
+        self.stop()                                           # sets up the state dir
+        pad = "x" * 900
+        lines = [json.dumps({"v": 1, "id": "toolu_big%04d" % n, "ts": "2099-01-01T00:00:00Z",
+                             "kind": "skill", "name": pad}, separators=(",", ":")) for n in range(400)]
+        (self.cloud / f"{CLOUD_SID}.pending.jsonl").write_text("".join(l + "\n" for l in lines))
+        self.server.requests.clear()
+        self.stop()
+        self.assertGreater(len(self.puts()), 1)
+        sent = []
+        for put in self.puts():
+            self.assertLessEqual(len(put["body"]), 262144)
+            sent += [s["id"] for s in self.body(put)["skills"]]
+        self.assertEqual(sent, ["toolu_big%04d" % n for n in range(400)])
+        self.assertEqual(self.pending(), [])
+
+
+class SinkHardeningTests(SinkTestCase):
+    """The fixes from the 2026-11-03 review of the sink (M2, M7, L1-L3)."""
+
+    T0 = NOW
+
+    def at(self, seconds):
+        import datetime
+        base = datetime.datetime.strptime(self.T0, "%Y-%m-%dT%H:%M:%SZ")
+        return (base + datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def phase1_transcript(self, entrypoint="remote_projects", version="2.1.312"):
+        entry = instructions(memfile("/w/r/AGENTS.md", "Project", STUB))
+        entry.update(entrypoint=entrypoint, version=version)
+        use = skill_use("toolu_h1", "a")
+        use["version"] = version
+        self.write_transcript([entry, use, skill_result("toolu_h1")])
+
+    def held(self):
+        return self.cloud / f"{CLOUD_SID}.guidance.pending"
+
+    def test_a_403_without_the_s3_request_id_is_an_ordinary_failure(self):
+        self.done_phase1()
+        self.write_transcript([skill_use("toolu_p1", "a"), skill_result("toolu_p1")])
+        self.server.statuses = ["403-proxy", 200]
+        self.stop(now=self.at(0))
+        state = self.state_doc()
+        self.assertEqual((state["nocred"], state["fails"]), (False, 1))
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_p1"])
+        self.stop(now=self.at(121))                           # backed off, then tried again
+        self.assertEqual(len(self.puts()), 2)
+        self.assertEqual(self.pending(), [])
+
+    def test_surface_and_cli_the_reader_would_refuse_are_sent_as_null(self):
+        self.phase1_transcript(entrypoint="remote projects", version="2.1.312 (Claude Code)")
+        self.stop()
+        doc = self.body(self.puts()[0])
+        [guidance] = doc["guidance"]
+        self.assertEqual((guidance["surface"], guidance["cli"]), (None, None))
+        self.assertEqual(doc["skills"][0]["cli"], None)
+        [record] = self.records()
+        self.assertEqual((record["surface"], record["cli"]), (None, None))
+
+    def test_the_git_route_sends_the_same_clamped_line(self):
+        for name in SINK_ENV:
+            self.cloud_env.pop(name)
+        self.script([PUSH_OK])
+        self.phase1_transcript(entrypoint="remote projects", version="2.1.312 (Claude Code)")
+        self.stop()
+        [record] = self.records()
+        line = json.dumps({k: v for k, v in record.items() if k != "uploaded"}, separators=(",", ":"))
+        self.assertEqual(self.remote_text("events/2026-10/cloud-guidance.jsonl").splitlines()[-1], line)
+        self.assertIn('"surface":null', line)
+        self.assertIn('"cli":null', line)
+
+    def test_valid_surface_and_cli_are_kept(self):
+        self.phase1_transcript()
+        self.stop()
+        [guidance] = self.body(self.puts()[0])["guidance"]
+        self.assertEqual((guidance["surface"], guidance["cli"]), ("remote_projects", "2.1.312"))
+
+    def test_the_key_pattern_takes_ascii_digits_only(self):
+        hook = hook_module()
+        good = "drop/2026-11-03/" + "0" * 32 + ".json"
+        self.assertIsNotNone(hook["SINK_KEY_RE"].fullmatch(good))
+        self.assertIsNone(hook["SINK_KEY_RE"].fullmatch(
+            "drop/٢٠٢٦-١١-٠٣/" + "0" * 32 + ".json"))
+        self.assertIsNone(hook["SINK_SENT_RE"].fullmatch("٢٠٢٦-11-03T00:00:00Z"))
+
+    def test_phase_1_that_did_not_land_is_held_and_sent_again(self):
+        self.phase1_transcript()
+        self.server.statuses = [503]
+        self.stop(now=self.at(0))
+        [record] = self.records()
+        self.assertIs(record["uploaded"], False)
+        line = json.dumps({k: v for k, v in record.items() if k != "uploaded"}, separators=(",", ":"))
+        self.assertEqual(self.held().read_text(), line + "\n")
+        self.stop(now=self.at(60))                            # still backing off
+        self.assertEqual(len(self.puts()), 1)
+        self.stop(now=self.at(121))
+        retry = self.puts()[1]
+        self.assertIn(b'"guidance":[' + line.encode() + b"]", retry["body"])
+        self.assertEqual([s["id"] for s in self.body(retry)["skills"]], ["toolu_h1"])
+        self.assertFalse(self.held().exists())
+        self.assertEqual(self.pending(), [])
+        self.stop(now=self.at(500))                           # nothing left: no request
+        self.assertEqual(len(self.puts()), 2)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_a_held_phase_1_line_waits_out_a_definite_no(self):
+        self.phase1_transcript()
+        self.server.statuses = [403]
+        self.stop(now=self.at(0))
+        self.assertTrue(self.held().exists())
+        self.stop(now=self.at(10_000))
+        self.assertEqual(len(self.puts()), 1)
+
+    def test_no_subprocess_sees_the_sink_variables(self):
+        sinkenv = pathlib.Path(str(self.git_log) + ".sinkenv")
+        # A partial configuration: the git route runs, with the secret still set.
+        self.cloud_env["USAGE_SINK_BUCKET"] = ""
+        self.script([PUSH_OK])
+        root = build_vector_repo(self.tmp / "checkout", "skills/vector")
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))]
+                              + self.use_with_base("toolu_v1", "vector", root))
+        self.stop()
+        self.assertEqual(self.puts(), [])
+        self.assertTrue(self.calls())
+        self.assertEqual([c["sink_env"] for c in self.calls()], [[]] * len(self.calls()))
+        self.assertTrue(any("clone" in c for c in self.git_calls()))
+        self.assertTrue(any("--show-toplevel" in c for c in self.git_calls()))
+        self.assertFalse(sinkenv.exists())
+        # The full configuration: the S3 route, while phase 2 still runs git locally.
+        shutil.rmtree(self.state, ignore_errors=True)
+        self.git_log.unlink()
+        self.cloud_env["USAGE_SINK_BUCKET"] = SINK_ENV["USAGE_SINK_BUCKET"]
+        self.stop()
+        self.assertEqual(len(self.puts()), 1)
+        self.assertTrue(any("--show-toplevel" in c for c in self.git_calls()))
+        self.assertFalse(sinkenv.exists())
+
+
+class ClockSeamTests(HookTestCase):
+    def test_the_clock_seam_needs_the_test_marker(self):
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))])
+        self.run_hook(env={"GUIDANCE_RECORD_TEST": "0", "GUIDANCE_RECORD_NOW": "2001-01-01T00:00:00Z"})
+        [record] = self.records()
+        self.assertNotEqual(record["ts"], "2001-01-01T00:00:00Z")
+        self.run_hook(session="session-two", env={"GUIDANCE_RECORD_NOW": "2001-01-01T00:00:00Z"})
+        self.assertEqual(self.records()[1]["ts"], "2001-01-01T00:00:00Z")
 
 
 if __name__ == "__main__":

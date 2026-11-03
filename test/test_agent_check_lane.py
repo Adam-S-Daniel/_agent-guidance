@@ -238,6 +238,24 @@ class PrTldrRunnerTests(LaneTestCase):
         self.assertIn("::warning::agent-checks (warning): pull request description: it does not begin",
                       out.stderr)
 
+    def closing_output(self, body):
+        payload = json.dumps({"pull_request": {"body": body, "created_at": "2026-12-01T00:00:00Z"}})
+        out = self.run_ci(self.event(payload))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout + out.stderr
+
+    def test_closing_keywords_are_listed_once_each_and_never_refuse(self):
+        text = self.closing_output("## TLDR\nx\n\nFixes #1, closed #1 and RESOLVES: #2.\n")
+        self.assertIn("merging this pull request closes these: #1 #2.", text)
+        self.assertIn("drop the keyword", text)
+
+    def test_a_reference_without_a_closing_keyword_does_not_warn(self):
+        # Negative control: a reference, a keyword inside a word, a keyword in
+        # a comment, and a keyword not followed by a reference all stay quiet.
+        body = ("## TLDR\nx\n\nFor #1. Related to #2. Disclosed #3. Closes the gap in #4.\n"
+                "<!-- Closes #5 -->\n")
+        self.assertNotIn("closing keyword", self.closing_output(body))
+
     def test_the_body_is_never_printed(self):
         path = self.event('{"pull_request": {"body": "SENTINEL-TEXT-1234 and no heading", '
                           '"created_at": "2026-12-01T00:00:00Z"}}')

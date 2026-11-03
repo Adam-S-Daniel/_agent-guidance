@@ -66,6 +66,11 @@ const mutations = {
   refsrequeue: [worker, 'swap\n`agent-working` for `agent-ready`', 'leave\n`agent-working` on the issue, not'],
   protectedsweep: [spec, 'On a protected subject, keep a finding only if it is one of these', 'On a protected subject, keep every finding'],
   protectedmerge: [worker, '7. **The eval-protection gate exits 0**', '7. **The eval-protection gate is advisory**'],
+  curationline: ['docs/routines/memory-curation.md', '`Lessons: read <n>, promoted <m>`', '`Lessons promoted: <m>`'],
+  curationdedupe: ['docs/routines/memory-curation.md', 'search the target repo\'s\nissues, open and closed, for that line', 'trust your memory of\nearlier runs'],
+  everyrun: [worker, '**every run does all three**', '**a run may stop after any pass**'],
+  lessonsline: [worker, '`Lessons: read <n>, handled <m>`', '`Lessons handled: <m>`'],
+  lessonsfetch: [worker, '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`list the branch with the connector`'],
   argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
 };
 
@@ -256,6 +261,24 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
   includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`']);
+});
+
+test('fleet worker runs the lesson-check pass every run and always reports it (#427)', () => {
+  const intro = prose(tokens(worker).slice(0, tokens(worker).findIndex(t => t.type === 'heading_open' && t.tag === 'h2')));
+  includes(intro, ['**every run does all three**', 'No pass\'s cap, budget or empty result ends the run early', 'still does the lesson-check pass afterwards', '"Nothing to do" is decided after the third pass', 'that ends the issue pass, not the run', 'A denied or failed write', 'is not a reason to stop either: skip that one write']);
+  const inputs = prose(section(worker, 'Inputs'));
+  includes(inputs, ['Call `add_repo` with owner `Adam-S-Daniel`, repo `adam-agentskills-private`', '`git clone --depth 1 --branch persistent/lessons --single-branch', '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`__agent-check.json`', 'never treat it as "no proposals"', '**read** is the number of lessons found', '**handled** is the number this run took']);
+  includes(prose(section(worker, 'Summary')), ['**Always, as the last line, even when both numbers are zero:**', '`Lessons: read <n>, handled <m>`', '`; persistent/lessons NOT REACHED`', 'the lesson-check pass did not run']);
+  includes(prose(section(issueWorker, 'Each run')), ['end this pass (in the fleet worker, the lesson-check pass still runs)']);
+});
+
+test('memory curation reads memory-note and guidance-edit lessons every run (skills-evals#657)', () => {
+  const curation = 'docs/routines/memory-curation.md';
+  includes(prose(section(curation, 'Constraints')), ['never an `examples` entry, an excerpt']);
+  const read = prose(section(curation, "3b. Read the session miner's lesson proposals (once per run)"));
+  includes(read, ['`memory-note` and `guidance-edit`', 'Call `add_repo` with owner `Adam-S-Daniel`, repo `adam-agentskills-private`', '`git clone --depth 1 --branch persistent/lessons --single-branch', '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', 'Keep only the newest', '`__memory-note.json`', '`__guidance-edit.json`', 'Never treat it as "no proposals"', 'search the target repo\'s issues, open and closed, for that line', 'Its target is `agents-md/base.md`', 'git hook first rule']);
+  includes(prose(section(curation, '4. File promotions')), ['`Lesson: <id>`', 'never an example or excerpt from the proposal']);
+  includes(prose(section(curation, '5. Summary')), ['**Always, as the last line, even when both numbers are zero:**', '`Lessons: read <n>, promoted <m>`', '`; persistent/lessons NOT REACHED`']);
 });
 
 test('eval-protected subjects get correctness findings and fixes only (ADR 0033)', () => {

@@ -2579,6 +2579,18 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
+            # MOCK_REF_LAGS_AFTER_DELETE names "<owner_repo>:<n>" pairs: GitHub's
+            # read-after-delete lag. The ref was reaped by the merge, so the
+            # DELETE answers the real 422, yet the next <n> matching-refs
+            # answers still list it before the repo catches up.
+            if [[ -d "$bare_path" && " ${MOCK_REF_LAGS_AFTER_DELETE:-} " == *" $repo_slug:"* ]] \
+               && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
+                lag_spec=" ${MOCK_REF_LAGS_AFTER_DELETE} "
+                lag_spec="${lag_spec##* $repo_slug:}"
+                echo "${lag_spec%% *}" > "$bare_path/mock-ref-lag-left"
+                echo '{"message":"Reference does not exist","status":"422"}'
+                exit 1
+            fi
             if [[ -d "$bare_path" ]] \
                && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
                 git -C "$bare_path" update-ref -d "refs/heads/$del_branch"
@@ -2634,6 +2646,18 @@ case "$1" in
             if [[ ! -d "$bare_path" ]]; then
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
+            fi
+            # Read-after-delete lag (see MOCK_REF_LAGS_AFTER_DELETE): answer
+            # with the ref listed while the counter is above zero, then let the
+            # repo catch up by removing the ref for real.
+            if [[ -e "$bare_path/mock-ref-lag-left" ]]; then
+                lag_left=$(<"$bare_path/mock-ref-lag-left")
+                if [[ "$lag_left" -le 0 ]]; then
+                    git -C "$bare_path" update-ref -d refs/heads/skills-lock-bump/update
+                    rm -f "$bare_path/mock-ref-lag-left"
+                else
+                    echo $((lag_left - 1)) > "$bare_path/mock-ref-lag-left"
+                fi
             fi
             # Each entry carries `object.sha` as GitHub's does: the sweep reads
             # a bump branch's tip from it.
@@ -4308,6 +4332,93 @@ push_fleet_payload_fixture() {
     git -C "$TEST_DIR/work/fleet-payload" push origin HEAD:main >/dev/null 2>&1
 }
 
+# ── The plugin's bundled copies of the fleet guidance (adam-agentskills#113) ──
+#
+# adam-agentskills' fleet-guidance hook ships verbatim copies of base.md and
+# fleet-memory.sh. The mirror check here is offline and covers only this repo's
+# own copy, so a stale plugin fallback went unreported. The drift report reads
+# the copies and says, per file, whether each still matches its source.
+run_plugin_copy_report() {
+    FLEET_PLUGIN_REPO="$1" \
+    GITHUB_REPOSITORY_OWNER=fleetorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-plugin-copy.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-plugin-copy-output.txt" 2>&1
+}
+
+test_drift_report_plugin_copies() {
+    echo ""
+    echo "=== Test: drift-report.sh (plugin copies of the fleet guidance) ==="
+
+    local bare="$TEST_DIR/bare/fleetorg_plugin-registry"
+    local work="$TEST_DIR/work/plugin-registry"
+    local dir="plugins/adam-anything-anywhere/hooks/fleet-guidance"
+    local rpt="$TEST_DIR/drift-plugin-copy.md"
+    local rc expected_sha found_sha
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work/$dir"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    git -C "$work" config commit.gpgsign false
+    git -C "$work" remote add origin "$bare"
+    push_plugin_fixture() {
+        git -C "$work" add -A
+        git -C "$work" commit -m "fixture state" >/dev/null 2>&1
+        git -C "$work" push origin HEAD:main >/dev/null 2>&1
+    }
+    cp "$REPO_ROOT/agents-md/base.md" "$work/$dir/fleet-guidance.md"
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/$dir/fleet-memory.sh"
+    push_plugin_fixture
+
+    rc=0; run_plugin_copy_report fleetorg/plugin-registry || rc=$?
+    assert_contains "$rpt" "## Plugin copies of the fleet guidance" \
+        "plugin copies: the report has the section when the copy's owner is scanned"
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "ok" \
+        "plugin copies: a current fleet-guidance.md reads ok"
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "ok" \
+        "plugin copies: a current fleet-memory.sh reads ok"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "0 plugin fleet-guidance copy(ies) not matching" \
+        "plugin copies: the run log counts zero when both match"
+    if [[ "$rc" -eq 0 ]]; then
+        pass "plugin copies: the report exits 0"
+    else
+        fail "plugin copies: the report exits 0 — got $rc"
+    fi
+
+    # A stale fallback, the state adam-agentskills#113 found: one line short.
+    head -n -1 "$REPO_ROOT/agents-md/base.md" >"$work/$dir/fleet-guidance.md"
+    push_plugin_fixture
+    run_plugin_copy_report fleetorg/plugin-registry || true
+    expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
+    found_sha=$(sha256sum "$work/$dir/fleet-guidance.md")
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "**drifted**" \
+        "plugin copies: a stale fleet-guidance.md is reported drifted"
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "\`${expected_sha:0:8}\` / \`${found_sha:0:8}\`" \
+        "plugin copies: the drifted row shows the expected and found hashes"
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "ok" \
+        "plugin copies (control): the untouched copy still reads ok"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "1 plugin fleet-guidance copy(ies) not matching" \
+        "plugin copies: the run log counts the drifted copy"
+
+    # A copy that is gone is as stale as one that changed.
+    git -C "$work" rm -q "$dir/fleet-memory.sh"
+    push_plugin_fixture
+    run_plugin_copy_report fleetorg/plugin-registry || true
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "**missing**" \
+        "plugin copies: an absent fleet-memory.sh is reported missing"
+
+    # An owner this run does not scan is not asked at all: no section, and the
+    # log says why. This is what keeps fixture runs off the real repo.
+    run_plugin_copy_report otherorg/plugin-registry || true
+    assert_not_contains "$rpt" "## Plugin copies of the fleet guidance" \
+        "plugin copies: no section when the copy's owner is not scanned"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "not checked: otherorg is not an owner this run scans" \
+        "plugin copies: the log says the copies were not checked, and why"
+    unset -f push_plugin_fixture
+}
+
 test_drift_report_fleet_payload() {
     echo ""
     echo "=== Test: drift-report.sh (fleet-memory hook and payload) ==="
@@ -4932,6 +5043,18 @@ test_drift_report_registry_orphan_owner_failure() {
     fi
     assert_contains "$out" "registry-orphan check skipped" \
         "drift orphan: the run log says why the check did not run"
+    # The cron-coverage sidecar has the same exposure: the unread owner's
+    # repos were never classified, so an empty file would close its nudge.
+    if [[ -f "$TEST_DIR/drift-orphan-fail-cron-unclassified.txt" ]]; then
+        fail "drift orphan: the cron sidecar was written on a partial enumeration"
+    else
+        pass "drift orphan: the cron sidecar is withheld on a partial enumeration too"
+    fi
+    if [[ -f "$TEST_DIR/drift-orphan-fail-control-cron-unclassified.txt" ]]; then
+        pass "drift orphan (control): the cron sidecar IS written when every owner was read"
+    else
+        fail "drift orphan (control): the cron sidecar IS written when every owner was read — so the withholding assertion proves nothing"
+    fi
 
     # Unchanged from the owner-failure test this borrows its fixture shape
     # from: the report still publishes, so failing here would suppress it.
@@ -4985,6 +5108,51 @@ test_drift_report_cron_classification() {
         fail "drift report: a classified repo was reported unclassified"
     else
         pass "drift report: classified repos are not flagged"
+    fi
+
+    # THE SIDECAR drift-report.yml turns into the "Unclassified for cron
+    # coverage" issue (#423), exactly one name, so a classified repo leaking
+    # into it is visible too.
+    local side="$TEST_DIR/drift-cron-cron-unclassified.txt"
+    if [[ -f "$side" && "$(cat "$side")" == "bootorg/repo-not-allowed" ]]; then
+        pass "drift report: the cron sidecar names exactly the unclassified repo"
+    else
+        fail "drift report: the cron sidecar names exactly the unclassified repo — got: $(tr '\n' ' ' <"$side" 2>/dev/null)"
+    fi
+
+    # CONTROL: the unmodified registry writes the sidecar EMPTY, so absent can
+    # keep meaning "did not run" and empty "looked, found nothing".
+    local cside="$TEST_DIR/drift-cron-control-cron-unclassified.txt"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-cron-control.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+    if [[ -f "$cside" && ! -s "$cside" ]]; then
+        pass "drift report (control): the cron sidecar is written and empty when every repo is classified"
+    else
+        fail "drift report (control): the cron sidecar is written and empty when every repo is classified — present: $([[ -f "$cside" ]] && echo yes || echo no), got: $(tr '\n' ' ' <"$cside" 2>/dev/null)"
+    fi
+
+    # And the workflow actually reads it. PARSED, never grepped: a needle in a
+    # comment would satisfy a line scan.
+    local wired
+    wired=$(node -e '
+      const YAML = require("yaml"), fs = require("fs");
+      const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const steps = Object.values(d.jobs || {}).flatMap(j => j.steps || []);
+      const nudge = steps.find(s => (s.env || {}).SIDECAR === "drift-report-cron-unclassified.txt");
+      const publish = steps.find(s => /git add -f drift-report-cron-unclassified\.txt/.test(s.run || ""));
+      const ok = nudge && nudge.env.ISSUE_TITLE === "Unclassified for cron coverage"
+        && /gh issue close/.test(nudge.run) && /gh issue create/.test(nudge.run)
+        && publish && steps.indexOf(publish) < steps.indexOf(nudge);
+      process.stdout.write(ok ? "yes" : "no");
+    ' "$REPO_ROOT/.github/workflows/drift-report.yml" 2>/dev/null)
+    if [[ "$wired" == "yes" ]]; then
+        pass "drift report: drift-report.yml publishes the cron sidecar, then opens and closes its own issue from it"
+    else
+        fail "drift report: drift-report.yml publishes the cron sidecar, then opens and closes its own issue from it"
     fi
 }
 
@@ -8605,6 +8773,8 @@ run_bump() {   # <output file> [script args...]
     MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
+    MOCK_REF_LAGS_AFTER_DELETE="${BUMP_REF_LAGS_FOR_RUN:-}" \
+    BUMP_REF_SETTLE_SECONDS="${BUMP_REF_SETTLE_SECONDS_FOR_RUN:-0}" \
     MOCK_REF_PUSH_ON="${BUMP_REF_PUSH_ON_FOR_RUN:-}" \
     MOCK_REF_GARBLE_ON="${BUMP_REF_GARBLE_ON_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
@@ -12812,6 +12982,40 @@ test_bump_sweep_branch_cleanup() {
     assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
         "branch cleanup (control): a repo the credential can still see is deleted in that same run"
 
+    # ── READ-AFTER-DELETE LAG. The merge's delete-on-merge reaped the branch,
+    # so our DELETE 404s, but matching-refs still lists the ref for a moment
+    # (run 41683254215 went red on exactly this). Listed on the first
+    # follow-up query and gone on the next must settle to already-gone, not a
+    # WARN. The control keeps a ref that STAYS listed a WARN, so the retry
+    # cannot have turned into believing anything.
+    setup_sweep_repos
+    BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:1" \
+        run_sweep "$TEST_DIR/sweep-delete-lag.txt"
+    unset BUMP_REF_LAGS_FOR_RUN
+    log="$TEST_DIR/sweep-delete-lag.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone." \
+        "branch cleanup (lag): a ref listed once after a failed DELETE, then gone, is success"
+    assert_not_contains "$log" "WARN could not delete" \
+        "branch cleanup (lag): and nothing warns about it"
+    assert_not_contains "$log" "was not deleted" \
+        "branch cleanup (lag): and it is not a counted failure"
+    if [[ -z "$(sweep_bump_branch_sha repo-nochecks)" ]]; then
+        pass "branch cleanup (lag): the lagging branch really is absent"
+    else
+        fail "branch cleanup (lag): the lagging branch really is absent"
+    fi
+    # Control: still listed after every re-query (more lag than the retries
+    # cover) is still a WARN naming the survivor, and a counted failure.
+    setup_sweep_repos
+    BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:99" \
+        run_sweep "$TEST_DIR/sweep-delete-lag-stays.txt"
+    unset BUMP_REF_LAGS_FOR_RUN
+    log="$TEST_DIR/sweep-delete-lag-stays.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update — it is still on the repo" \
+        "branch cleanup (lag, control): a ref that stays listed is still a WARN"
+    assert_not_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone" \
+        "branch cleanup (lag, control): and is not read as already gone"
+
     # ── THE PREFIX. matching-refs matches a STRING PREFIX over the whole ref
     # name, as GitHub's does, so asking for `heads/skills-lock-bump/update`
     # also returns `heads/skills-lock-bump/update-2`. A test for an EMPTY
@@ -13672,10 +13876,10 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "14" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 14 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "16" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 16 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=14, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=16, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -14320,6 +14524,7 @@ test_bump_workflow() {
 
     local field
     for field in "on.schedule.0.cron:41 1,7,13,19 * * *" \
+                 "on.repository_dispatch.types.0:skills-lock-bump" \
                  "on.workflow_dispatch.inputs.dry_run.type:boolean" \
                  "permissions.contents:read" \
                  "concurrency.group:skills-lock-bump" \
@@ -24938,6 +25143,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
+    test_drift_report_plugin_copies
     # Immediately after the test that establishes bootorg/repo-adopted's
     # confident verdicts, because those are exactly what its control run
     # re-asserts before truncating one file at a time.

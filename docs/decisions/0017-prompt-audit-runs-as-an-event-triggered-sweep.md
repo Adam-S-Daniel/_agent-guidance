@@ -1,6 +1,6 @@
 # 0017 — Prompt-audit runs as an event-triggered sweep, never as a check or a schedule
 
-**Status:** Proposed (2026-10-05)
+**Status:** Accepted (proposed 2026-10-05; in effect since the sweep first ran, as the run log on `persistent/prompt-audit-runs` shows)
 
 ## Context
 
