@@ -14320,6 +14320,7 @@ test_bump_workflow() {
 
     local field
     for field in "on.schedule.0.cron:41 1,7,13,19 * * *" \
+                 "on.repository_dispatch.types.0:skills-lock-bump" \
                  "on.workflow_dispatch.inputs.dry_run.type:boolean" \
                  "permissions.contents:read" \
                  "concurrency.group:skills-lock-bump" \
