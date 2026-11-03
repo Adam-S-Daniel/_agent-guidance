@@ -50,6 +50,48 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-03 — section-docker — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/docker.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
+## 2026-11-03 — section-dotnet — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/dotnet.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
+## 2026-11-03 — section-go — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/go.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
+## 2026-11-03 — section-javascript — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/javascript.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
+## 2026-11-03 — section-python — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/python.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
+## 2026-11-03 — section-rust — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/rust.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
+## 2026-11-03 — section-typescript — remove
+- Motivation: owner direction (Adam, 2026-11-03): no repo receives the opt-in language sections — `repos.yml` has `default_sections: []` and no repo has a `.agents-sync.yml`.
+- Change: deleted `agents-md/sections/typescript.md` and its manifest row; the sections mechanism stays (`agents-md/sections/README.md`).
+- Eval: exempt (skipped row)
+- Outcome: merged 2026-11-03
+
 ## 2026-11-02 — two-github-connectors — edit
 - Motivation: _agent-guidance#291: the org connector (`github-mcp`) returned `403 Resource not accessible by integration` on issue writes (`issue_write` 2026-10-10, `add_issue_comment` 2026-10-31) in cloud sessions, while the section said it has the same issue writes.
 - Change: the bullet drops "issue" from the connector's write list and says issue writes can 403; no bytes added elsewhere (base.md stays under its 25 KiB cap).

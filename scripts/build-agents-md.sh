@@ -20,7 +20,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # the floor of rules that must hold even when the guidance did not load.
 STUB_FILE="$REPO_ROOT/agents-md/stub.md"
 PAYLOAD_FILE="$REPO_ROOT/agents-md/base.md"
-SECTIONS_DIR="$REPO_ROOT/agents-md/sections"
+# AGENTS_MD_SECTIONS_DIR lets the test suite build against fixture sections;
+# no real section ships today (agents-md/sections/README.md).
+SECTIONS_DIR="${AGENTS_MD_SECTIONS_DIR:-$REPO_ROOT/agents-md/sections}"
 SECTIONS=("${@}")
 
 # MODE decides whether this repo gets the always-on STUB (the default, and what

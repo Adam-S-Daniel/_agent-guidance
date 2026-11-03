@@ -25,6 +25,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# No real section ships in agents-md/sections/ (the language sections were
+# removed 2026-11-03: no repo used them). The build, sync and drift tests that
+# need sections to append build against these fixtures instead; every script
+# they run inherits the override.
+export AGENTS_MD_SECTIONS_DIR="$REPO_ROOT/test/fixtures/sections"
 TEST_DIR=$(mktemp -d)
 PASS=0
 FAIL=0
@@ -20191,7 +20196,7 @@ test_agents_md_size_budget() {
     # instead of being handed a file that is legal and unextendable.
     local full_bytes
     full_bytes=$(AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh" \
-        docker dotnet go javascript python rust typescript | wc -c | tr -d ' ')
+        docker go python rust | wc -c | tr -d ' ')
     if [[ "$full_bytes" -le 29696 ]]; then
         pass "size budget: full build with every section is $full_bytes bytes (<= 29696)"
     else

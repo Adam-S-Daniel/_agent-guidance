@@ -179,7 +179,8 @@ Evidence, measured 2026-10-02:
   `project_doc_max_bytes`, decision 3) and `~/.claude/CLAUDE.md`, not to a
   project file.
 - The full-build test assumes all seven language sections at once, which no
-  repo has.
+  repo has. (The seven language sections were removed on 2026-11-03 because no
+  repo used them; the test now builds against fixture sections.)
 
 ## Addendum — trust and daemon evidence boundaries (2026-10-04)
 

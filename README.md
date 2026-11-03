@@ -18,7 +18,9 @@ The skills that used to live here (`debug-github-workflows`,
 - `agents-md/base.md` + `agents-md/sections/<name>.md` — the managed guidance
   content, composed per-repo by `scripts/build-agents-md.sh`.
 - Consumer repos opt into sections by dropping a `.agents-sync.yml` in their root
-  (see `.agents-sync.example.yml`).
+  (see `.agents-sync.example.yml`). No sections ship today: the language
+  sections were removed on 2026-11-03 because no repo used them
+  (`agents-md/sections/README.md`).
 - `scripts/sync.sh` (CI: `sync.yml`) scans the account's repos, rebuilds each
   repo's managed `AGENTS.md` portion, preserves anything under
   `## Repo-specific additions`, and pushes the change directly to the

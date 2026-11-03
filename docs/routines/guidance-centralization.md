@@ -892,6 +892,10 @@ fences.
 python, rust, typescript). **Zero repos opt in today**, and `default_sections`
 is `[]`.
 
+*Update 2026-11-03: the owner removed all seven because no repo used them (see
+`agents-md/sections/README.md`); the paragraphs below describe the files as
+they stood when this was written.*
+
 That is a tension to surface, not to resolve unilaterally. The seven files are
 exactly the general engineering practice base.md says it deliberately does not
 carry, so mass-adding an `.agents-sync.yml` to every repo with a `.py` file
