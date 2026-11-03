@@ -260,7 +260,7 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   includes(update, ['`required_status_checks`', 'with **no** check run and **no** status at all', '`behind_by` above 0', 'with `expected_head_sha` set to the head you read', 'Skip Dependabot PRs:', 'do not resolve it here']);
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
-  includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`']);
+  includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`', 'I authorize the writes that file describes', 'Never approve anything.']);
 });
 
 test('fleet worker runs the lesson-check pass every run and always reports it (#427)', () => {
