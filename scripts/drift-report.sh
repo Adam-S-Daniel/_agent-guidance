@@ -62,6 +62,11 @@ SKILLS_SIDECAR="${OUTPUT_FILE%.md}-skills-unclassified.txt"
 # repo, the other by looking a name up — and each has to be able to close while
 # the other stands.
 SKILLS_ORPHAN_SIDECAR="${OUTPUT_FILE%.md}-skills-orphans.txt"
+# The cron-coverage twin of SKILLS_SIDECAR, in its own file for the same
+# reason: `cron_coverage` and `skills_bootstrap` are classified separately
+# (ADR 0003 ruled against collapsing them), so each nudge must be able to close
+# while the other stands (_agent-guidance#423).
+CRON_SIDECAR="${OUTPUT_FILE%.md}-cron-unclassified.txt"
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -688,6 +693,11 @@ bootstrap_blocked() {
 # empty, because an empty one is this script saying it looked and found
 # nothing, and the nudge step reads that as "close the issue".
 : > "$SKILLS_ORPHAN_SIDECAR"
+# Same contract as the orphan sidecar: REMOVED after the loop on a run where an
+# owner could not be listed. That owner's repos never reached the cron
+# classification, so an empty file would read as "all classified" and close
+# the nudge on an enumeration that did not happen.
+: > "$CRON_SIDECAR"
 
 # Base GH_TOKEN captured before the per-owner loop, so each iteration can
 # restore it when the owner has no per-owner token of its own (owner A's
@@ -1438,6 +1448,10 @@ if [[ ${#CRON_UNCLASSIFIED[@]} -gt 0 ]]; then
             echo "> - \`$r\` — add it to \`repos.yml\` under \`cron_coverage.fleet\` or \`cron_coverage.out_of_scope\`"
         done
     } >> "$OUTPUT_FILE"
+    # The sidecar drift-report.yml turns into the "Unclassified for cron
+    # coverage" issue; a scheduled run notifies nobody, so the report alone
+    # was a finding only someone who opened it could see (#423).
+    printf '%s\n' "${CRON_UNCLASSIFIED[@]}" >> "$CRON_SIDECAR"
     echo "  ${#CRON_UNCLASSIFIED[@]} repo(s) unclassified for cron coverage"
 fi
 
@@ -1487,7 +1501,8 @@ done
 # The sidecar is WITHHELD rather than written empty on that path: empty means
 # "looked, found nothing", which the nudge step reads as permission to close.
 if [[ ${#OWNER_FAILURES[@]} -gt 0 ]]; then
-    rm -f "$SKILLS_ORPHAN_SIDECAR"
+    rm -f "$SKILLS_ORPHAN_SIDECAR" "$CRON_SIDECAR"
+    echo "  cron-coverage sidecar withheld too: an unread owner's repos were never classified"
     echo "  ${#OWNER_FAILURES[@]} owner(s) unread — registry-orphan check skipped and its sidecar withheld; nothing is concluded from a partial enumeration"
 else
     SKILLS_ORPHANS=()

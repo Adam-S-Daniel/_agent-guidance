@@ -4932,6 +4932,18 @@ test_drift_report_registry_orphan_owner_failure() {
     fi
     assert_contains "$out" "registry-orphan check skipped" \
         "drift orphan: the run log says why the check did not run"
+    # The cron-coverage sidecar has the same exposure: the unread owner's
+    # repos were never classified, so an empty file would close its nudge.
+    if [[ -f "$TEST_DIR/drift-orphan-fail-cron-unclassified.txt" ]]; then
+        fail "drift orphan: the cron sidecar was written on a partial enumeration"
+    else
+        pass "drift orphan: the cron sidecar is withheld on a partial enumeration too"
+    fi
+    if [[ -f "$TEST_DIR/drift-orphan-fail-control-cron-unclassified.txt" ]]; then
+        pass "drift orphan (control): the cron sidecar IS written when every owner was read"
+    else
+        fail "drift orphan (control): the cron sidecar IS written when every owner was read — so the withholding assertion proves nothing"
+    fi
 
     # Unchanged from the owner-failure test this borrows its fixture shape
     # from: the report still publishes, so failing here would suppress it.
@@ -4985,6 +4997,51 @@ test_drift_report_cron_classification() {
         fail "drift report: a classified repo was reported unclassified"
     else
         pass "drift report: classified repos are not flagged"
+    fi
+
+    # THE SIDECAR drift-report.yml turns into the "Unclassified for cron
+    # coverage" issue (#423), exactly one name, so a classified repo leaking
+    # into it is visible too.
+    local side="$TEST_DIR/drift-cron-cron-unclassified.txt"
+    if [[ -f "$side" && "$(cat "$side")" == "bootorg/repo-not-allowed" ]]; then
+        pass "drift report: the cron sidecar names exactly the unclassified repo"
+    else
+        fail "drift report: the cron sidecar names exactly the unclassified repo — got: $(tr '\n' ' ' <"$side" 2>/dev/null)"
+    fi
+
+    # CONTROL: the unmodified registry writes the sidecar EMPTY, so absent can
+    # keep meaning "did not run" and empty "looked, found nothing".
+    local cside="$TEST_DIR/drift-cron-control-cron-unclassified.txt"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-cron-control.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+    if [[ -f "$cside" && ! -s "$cside" ]]; then
+        pass "drift report (control): the cron sidecar is written and empty when every repo is classified"
+    else
+        fail "drift report (control): the cron sidecar is written and empty when every repo is classified — present: $([[ -f "$cside" ]] && echo yes || echo no), got: $(tr '\n' ' ' <"$cside" 2>/dev/null)"
+    fi
+
+    # And the workflow actually reads it. PARSED, never grepped: a needle in a
+    # comment would satisfy a line scan.
+    local wired
+    wired=$(node -e '
+      const YAML = require("yaml"), fs = require("fs");
+      const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const steps = Object.values(d.jobs || {}).flatMap(j => j.steps || []);
+      const nudge = steps.find(s => (s.env || {}).SIDECAR === "drift-report-cron-unclassified.txt");
+      const publish = steps.find(s => /git add -f drift-report-cron-unclassified\.txt/.test(s.run || ""));
+      const ok = nudge && nudge.env.ISSUE_TITLE === "Unclassified for cron coverage"
+        && /gh issue close/.test(nudge.run) && /gh issue create/.test(nudge.run)
+        && publish && steps.indexOf(publish) < steps.indexOf(nudge);
+      process.stdout.write(ok ? "yes" : "no");
+    ' "$REPO_ROOT/.github/workflows/drift-report.yml" 2>/dev/null)
+    if [[ "$wired" == "yes" ]]; then
+        pass "drift report: drift-report.yml publishes the cron sidecar, then opens and closes its own issue from it"
+    else
+        fail "drift report: drift-report.yml publishes the cron sidecar, then opens and closes its own issue from it"
     fi
 }
 
