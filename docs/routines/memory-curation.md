@@ -10,7 +10,9 @@
   every Claude Code memory directory there,
   `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/memory/`. That memory is per
   machine ([ADR 0013](../decisions/0013-a-memory-note-outside-a-repo-names-its-home.md)),
-  so no cloud session can reach it.
+  so no cloud session can reach it. A Windows machine with WSL has two
+  Claude Code homes, the Windows profile's `.claude` and WSL's `~/.claude`,
+  each with its own memory; the machine task covers both.
 
 Why it exists and why it runs with no human:
 [ADR 0026](../decisions/0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md).
@@ -56,8 +58,12 @@ Each run, per memory directory:
 
 - **Machine task:** the same prompt with "for every directory under
   `~/.claude/projects/*/memory/`" in place of "for this project's memory
-  directory", weekly, on the owner's durable machine. Run it from an
-  `_agent-guidance` clone fetched to `origin/main`, so the script is current.
+  directory", weekly, on the owner's durable machine. On a Windows machine
+  with WSL, the prompt names both homes: WSL's `~/.claude` and the Windows
+  profile's `.claude` as WSL sees it (`/mnt/c/Users/<user>/.claude`,
+  resolved at run time). Run it from an `_agent-guidance` clone fetched to
+  `origin/main`, so the script is current. The owner's machine registers it
+  through wsl-automation's `register-tasks.ps1`, like its other tasks.
 
 ## Each run
 
