@@ -34,7 +34,7 @@ The first replacement idea was an encrypted drop: encrypt the records to a publi
 
 ## Consequences
 
-- **A write-only key sits in each cloud environment.** The writer IAM user may only `s3:PutObject` under `drop/`, and only with `If-None-Match`, so it cannot overwrite. It cannot list, read or delete.
+- **A write-only key sits in each cloud environment.** *Superseded by the 2026-11-04 addendum below: the key now lives in a network secret, not an environment variable.* The writer IAM user may only `s3:PutObject` under `drop/`, and only with `If-None-Match`, so it cannot overwrite. It cannot list, read or delete.
 - **The S3 host must be on each environment's network allowlist** (`<bucket>.s3.<region>.amazonaws.com`). Where it is not, every PUT fails and backs off, and records are lost as they are today.
 - **A leaked key can add records but read nothing.** Integrity is weaker than the git route's. Anyone holding the key can add plausible forged records, timestamped within the 48-hour window the ingest accepts around each object's `LastModified`. The ingest validates every field and dedupes by session and id, but it cannot tell a forged record from a real one. The key cannot read, overwrite or delete anything already stored. The census treats cloud records as "records seen", never as a complete count, so no record from either route proves a skill was or was not used.
 - **It costs about $0.10 a month**, and an optional $1 budget alarm watches it.
@@ -75,3 +75,13 @@ In the ingest and the stack (skills-evals and `adam-agentskills-private`):
 - **A GitHub App token from an environment secret.** Ruled out: the proxy replaces its header and refuses `/app/*`.
 - **Another non-GitHub sink** (a Cloudflare Worker, a Google Apps Script, an OTLP collector). Not chosen: each needs the same allowlist entry and a write token. S3 gives a write-only, no-overwrite key with no code of ours on the receiving end.
 - **Claude Code's OpenTelemetry export.** Deferred: whether its Skill events carry the skill name is unchecked, and it needs a collector too.
+
+## Addendum (2026-11-04): the writer key moves to a network secret
+
+A cloud environment's variables are readable by every session in that environment. The README and this ADR had put the AWS writer key there, and an earlier version of the hook had also taken a GitHub App private key from one. Both are secrets that any session, and anything a session runs, could read and send elsewhere.
+
+Anthropic's agent proxy can hold a secret itself. A network secret of type AWS SigV4 lets the proxy sign requests to S3 virtual-hosted hosts (`<bucket>.s3.<region>.amazonaws.com`), so the key never enters the VM. The hook gains a proxy-signed mode: with `USAGE_SINK_BUCKET`, `USAGE_SINK_REGION` and `USAGE_SINK_SIGNING=proxy` set, it sends the same PUT with `If-None-Match: *`, `Content-Type` and `x-amz-content-sha256`, but no `Authorization` and no `x-amz-date`; the proxy signs and dates it. Status handling is unchanged. Proxy mode wins when keys are also set, and any other `USAGE_SINK_SIGNING` value is ignored. None of the three variables is secret.
+
+The static-key mode (all four of the original variables, signed by the hook) stays only as a fallback for a host without that proxy. Do not set it in a cloud environment.
+
+The GitHub App fallback is removed, with its `USAGE_WRITER_APP_*` variables and the openssl dependency. The proxy rewrites any `Authorization` header to api.github.com and refuses `/app/*`, so the App key never worked in a cloud session (measured 2026-10-31), and the upload runs only in remote sessions. After the session-credential probe fails, the git route now records the upload as not done. The hook also strips `USAGE_WRITER_APP_*` from every subprocess environment while old environments still hold them; remove those variables from them.

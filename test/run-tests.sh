@@ -13933,8 +13933,8 @@ test_on_hold_label() {
 }
 
 # Prompt-audit sweep policy (ADR 0017): the sweep spec, the changelog
-# routine's step 4a that fires it, and the ADR index. Never piped: the count
-# and exit code are read from a file.
+# routine's step 4a that files the trigger, the fire workflow, and the ADR
+# index. Never piped: the count and exit code are read from a file.
 test_prompt_audit_sweep() {
     echo ""
     echo "=== Test: prompt-audit sweep policy and fire call ==="
@@ -13943,10 +13943,10 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "16" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 16 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "19" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 19 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=16, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=19, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -25096,8 +25096,8 @@ PY
 
 # The guidance-load-record Stop hook's own unit tests, counted as the lane
 # module above is: unittest's real count goes into PASS, so a module that
-# discovers nothing cannot pass, and under CI (where openssl is present) a
-# skipped upload case is a failure rather than a quiet gap.
+# discovers nothing cannot pass, and under CI a skipped case is a failure
+# rather than a quiet gap.
 test_guidance_load_record() {
     echo ""
     echo "=== Test: guidance-load-record.sh unit tests ==="
@@ -25119,7 +25119,7 @@ PY
     elif (( passed == 0 )); then
         fail "guidance-load-record: test/test_guidance_load_record.py ran zero tests"
     elif [[ "${CI:-}" == true ]] && (( skipped > 0 )); then
-        fail "guidance-load-record: $skipped unit test(s) skipped under CI, where openssl is installed"
+        fail "guidance-load-record: $skipped unit test(s) skipped under CI"
     else
         PASS=$((PASS + passed))
         echo "  guidance-load-record: $passed unit test(s) passed, $skipped skipped"
