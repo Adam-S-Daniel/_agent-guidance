@@ -98,6 +98,13 @@ half is under budget by construction, so an overrun is always in the repo's own
 - `scripts/drift-report.sh` adds a `codex-truncated: <bytes> > 32768` clause to
   that repo's **Notes**, explained in the report's own legend.
 
+A fourth gate does block, but only the change that causes the overrun: the
+agent-checks runner (`templates/agent-checks/agent-checks`, delivered to every
+fleet repo) refuses, with check id `agents-md-size`, any commit, push or pull
+request that touches the root `AGENTS.md` and leaves it over 32768 bytes. A
+change that does not touch it passes, so a repo already over budget is not
+blocked until someone edits the file.
+
 The managed half is held clear of the budget by `test_agents_md_size_budget`
 in `test/run-tests.sh`, which caps the **builds**, not `base.md` on its own: a
 full-mode build with every section ≤ 29696 bytes (29 KiB), so even a full-mode
