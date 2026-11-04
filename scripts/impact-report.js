@@ -19,6 +19,12 @@
  *              on PR heads: invocations = completed runs, blocked = failed
  *              runs. `overridden` repeats `blocked`: a red CI run means the
  *              commit got past (or never met) the local hook.
+ *              Per-check rows, one per (week, repo, check id): name = the
+ *              check id that refused, blocked = overridden = red runs that
+ *              week naming it, invocations = 0 (CI records which checks
+ *              refused, not which ran). The ids come from the red job's
+ *              `::error title=agent-checks <id>` annotations; a red run
+ *              without one (it predates the annotations) adds no such row.
  *   red_runs   one entry per red agent-checks run counted above, newest
  *              first: week, repo, created_at, conclusion and the run page's
  *              URL. A private repo's entry is only {week, repo: "private"}.
@@ -181,6 +187,12 @@ function buildApi(env, concurrency = CONCURRENCY) {
     workflowsPage(owner, repo, page) {
       return call(owner, ["api", `repos/${repo}/actions/workflows?per_page=100&page=${page}`]);
     },
+    jobsPage(owner, repo, runId, page) {
+      return call(owner, ["api", `repos/${repo}/actions/runs/${runId}/jobs?per_page=100&page=${page}`]);
+    },
+    annotationsPage(owner, repo, jobId, page) {
+      return call(owner, ["api", `repos/${repo}/check-runs/${jobId}/annotations?per_page=100&page=${page}`]);
+    },
     workflowRunsPage(owner, repo, workflowId, sinceDate, page) {
       return call(owner, [
         "api",
@@ -244,6 +256,23 @@ async function hasRedCheck(api, owner, repo, sha) {
   return runs.some((r) => RED.has(r.conclusion));
 }
 
+// The distinct check ids named by the `agent-checks <id>` annotations of the
+// run's `agent-checks` job. No such job (a run that never started one) or no
+// matching annotation yields no ids.
+const CHECK_TITLE = /^agent-checks ([a-z0-9-]+)$/;
+async function failedCheckIds(api, owner, repo, runId) {
+  const jobs = await collectPages((p) => api.jobsPage(owner, repo, runId, p), (d) => d && d.jobs);
+  const job = jobs.find((j) => j && j.name === HOOK_NAME);
+  if (!job || !Number.isSafeInteger(job.id) || job.id <= 0) return [];
+  const notes = await collectPages((p) => api.annotationsPage(owner, repo, job.id, p), (d) => d);
+  const ids = new Set();
+  for (const n of notes) {
+    const m = CHECK_TITLE.exec(n && typeof n.title === "string" ? n.title : "");
+    if (m) ids.add(m[1]);
+  }
+  return [...ids].sort();
+}
+
 // Counts for one repo, keyed by week. Throws on anything that would make a
 // count inexact; the caller turns that into a failed repo.
 async function measureRepo(target, api, { weeks, fromMs, toMs }) {
@@ -301,9 +330,14 @@ async function measureRepo(target, api, { weeks, fromMs, toMs }) {
       hook[weekOf(ms)].runs++;
       if (RED.has(run.conclusion)) {
         hook[weekOf(ms)].failures++;
-        redRuns.push({ ms, id: Number.isSafeInteger(run.id) && run.id > 0 ? run.id : null, conclusion: run.conclusion });
+        redRuns.push({ ms, id: Number.isSafeInteger(run.id) && run.id > 0 ? run.id : null, conclusion: run.conclusion, checks: [] });
       }
     }
+    const lookups = redRuns.filter((r) => r.id !== null).map((r) =>
+      failedCheckIds(api, owner, repo, r.id).then((ids) => { r.checks = ids; }));
+    const done = await Promise.allSettled(lookups);
+    const bad = done.find((s) => s.status === "rejected");
+    if (bad) throw bad.reason;
   }
   return { outcome, hook, redRuns };
 }
@@ -347,6 +381,25 @@ function buildRows(measured, weeks) {
         invocations: runs, sessions: null, blocked: failures, overridden: failures, outcome: null,
       });
     }
+  }
+  // Per-check rows: which check id refused, from the red runs' annotations.
+  const perCheck = new Map();
+  for (const m of measured) {
+    const repoName = m.private ? "private" : m.repo;
+    for (const r of m.redRuns || []) {
+      for (const id of r.checks || []) {
+        const key = [weekOf(r.ms), repoName, id].join("\u0000");
+        const e = perCheck.get(key) || { week: weekOf(r.ms), repo: repoName, id, n: 0 };
+        e.n++;
+        perCheck.set(key, e);
+      }
+    }
+  }
+  for (const { week, repo, id, n } of perCheck.values()) {
+    rows.push({
+      week, kind: "hook", name: id, repo, surface: "ci",
+      invocations: 0, sessions: null, blocked: n, overridden: n, outcome: null,
+    });
   }
   // `name` is the hook name on hook rows, so ties fall back to `repo`.
   return rows.sort((a, b) => compareRows(a, b) || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0));

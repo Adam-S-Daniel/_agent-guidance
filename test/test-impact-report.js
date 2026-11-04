@@ -32,6 +32,8 @@ function fixtureApi(overrides = {}) {
     checkRunsPage: (owner, repo, sha, p) => ({ check_runs: page(FLEET.check_runs[sha], p) }),
     workflowsPage: (owner, repo, p) => ({ workflows: page(FLEET.workflows[repo], p) }),
     workflowRunsPage: (owner, repo, id, since, p) => ({ workflow_runs: page(FLEET.workflow_runs[String(id)], p) }),
+    jobsPage: () => ({ jobs: [] }),
+    annotationsPage: () => [],
     ...overrides,
   };
 }
@@ -146,6 +148,60 @@ test("a red run with no usable id is listed without a URL", async () => {
     ({ workflow_runs: page(String(id) === "12" ? runs : FLEET.workflow_runs[String(id)], p) }) });
   assert.equal(doc.red_runs[0].url, null);
   assert.equal(doc.red_runs[0].created_at, "2026-10-25T23:59:59Z");
+});
+
+// Red runs 9100002 and 9100006 (widgets) and 9100007 (private) get one
+// agent-checks job each; ANNOTATIONS maps a job id to its annotation titles.
+const JOB_OF_RUN = { 9100002: 501, 9100006: 502, 9100007: 503 };
+function annotatedApi(annotations, extra = {}) {
+  return {
+    jobsPage: (owner, repo, runId) => ({ jobs: [
+      { id: 1, name: "other" },
+      ...(JOB_OF_RUN[runId] ? [{ id: JOB_OF_RUN[runId], name: HOOK_NAME }] : []),
+    ] }),
+    annotationsPage: (owner, repo, jobId) => (annotations[jobId] || []).map((title) => ({ title })),
+    ...extra,
+  };
+}
+const checkRows = (doc) => doc.rows.filter((r) => r.kind === "hook" && r.name !== HOOK_NAME);
+
+test("per-check hook rows count the red runs naming each check id, by week and repo", async () => {
+  const { doc } = await report(annotatedApi({
+    501: ["agent-checks secret-file", "agent-checks secret-file", "unrelated"],
+    502: ["agent-checks pr-tldr", "agent-checks secret-file"],
+  }));
+  const rows = checkRows(doc).filter((r) => r.repo === "example-owner/widgets");
+  const shape = (r) => [r.week, r.name, r.invocations, r.sessions, r.blocked, r.overridden, r.outcome, r.surface];
+  assert.deepEqual(rows.map(shape), [
+    ["2026-10-19", "pr-tldr", 0, null, 1, 1, null, "ci"],
+    ["2026-10-19", "secret-file", 0, null, 2, 2, null, "ci"],
+  ]);
+  // The agent-checks job rows are untouched.
+  assert.equal(row(doc, "2026-10-19", "hook", "example-owner/widgets").blocked, 2);
+});
+
+test("a private repo's per-check row is folded into repo private", async () => {
+  const { doc } = await report(annotatedApi({ 503: ["agent-checks secret-file"] }));
+  const rows = checkRows(doc);
+  assert.deepEqual(rows.map((r) => [r.week, r.repo, r.name, r.blocked]), [["2026-10-19", "private", "secret-file", 1]]);
+  assert.equal(JSON.stringify(doc).includes("secret-plans"), false);
+});
+
+test("a red run with no agent-checks annotation title adds no per-check row", async () => {
+  const { doc, exitCode } = await report(annotatedApi({
+    501: ["agent-checks", "agent-checks Secret-File", "agent-checks a b", "other agent-checks x"],
+  }));
+  assert.equal(exitCode, 0);
+  assert.deepEqual(checkRows(doc), []);
+});
+
+test("a failing annotations lookup fails the run and writes nothing", async () => {
+  const { exitCode, doc, lines } = await report(annotatedApi({}, {
+    annotationsPage: () => { throw new ApiError(403); },
+  }));
+  assert.equal(exitCode, 1);
+  assert.equal(doc, null);
+  assert.ok(lines.some((l) => l === "::error::impact-report: repo: ApiError HTTP 403"));
 });
 
 test("rows are sorted by week, kind, name", async () => {

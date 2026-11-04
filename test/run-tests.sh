@@ -24752,6 +24752,36 @@ dated_lines() {   # <stderr file> — the "path:line" of each warning, sorted
     sed -n 's/^agent-checks (warning): \([^:]*:[0-9]*\): dated phrasing: .*/\1/p' "$1" | sort | tr '\n' ' '
 }
 
+test_agent_checks_ci_annotation() {
+    echo ""
+    echo "=== Test: in CI a refusal is an ::error annotation titled with the check id ==="
+    local repo="$TEST_DIR/ac-annot" out="$TEST_DIR/ac-annot-run" rc
+    git init -q -b main "$repo"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com -c commit.gpgsign=false commit -q --allow-empty -m base
+    printf 'EXAMPLE=1\n' > "$repo/.env"
+    git -C "$repo" add -f .env
+    rc=0
+    (cd "$repo" && GITHUB_ACTIONS=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" pre-commit) \
+        > "$out.out" 2> "$out.err" < /dev/null || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks secret-file::agent-checks: .env: looks like a secret' "$out.err"; then
+        pass "agent-checks (CI): a refusal prints ::error title=agent-checks <id>::"
+    else
+        fail "agent-checks (CI): a refusal prints ::error title=agent-checks <id>:: — exit $rc: $(cat "$out.err")"
+    fi
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" pre-commit) \
+        > "$out.out" 2> "$out.err" < /dev/null || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: .env: looks like a secret' "$out.err" && ! grep -qF '::error' "$out.err"; then
+        pass "agent-checks (CI): outside GitHub Actions the refusal has no ::error line"
+    else
+        fail "agent-checks (CI): outside GitHub Actions the refusal has no ::error line — exit $rc: $(cat "$out.err")"
+    fi
+}
+
 test_agent_checks_dated_phrasing() {
     echo ""
     echo "=== Test: agent-checks warns on dated phrasing and never blocks ==="
@@ -25809,6 +25839,7 @@ GROUP_agent_checks=(
     test_agent_checks_guard
     test_agent_checks_persistent_delete
     test_agent_checks_agents_md_size
+    test_agent_checks_ci_annotation
     test_agent_checks_dated_phrasing
     test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
