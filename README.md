@@ -109,9 +109,10 @@ The managed half is held clear of the budget by `test_agents_md_size_budget`
 in `test/run-tests.sh`, which caps the **builds**, not `base.md` on its own: a
 full-mode build with every section ≤ 29696 bytes (29 KiB), so even a full-mode
 repo keeps ≥ 3 KiB for its own additions, and the stub build ≤ 8192 bytes (a
-stub-mode repo — all 19 today — keeps nearly all of it). No test caps
-`agents-md/base.md` itself; its "under 25 KiB" is a rule written in that file,
-held only indirectly because `base.md` is most of the full build. Measured
+stub-mode repo — all 19 today — keeps nearly all of it). `base.md` itself
+is held under 26 KiB (26,624 bytes) by an assertion in
+`test/test-on-hold-label.js`, raised from 25 KiB on 2026-11-04 to fit the
+"Turn lessons into checks, skills and guidance" section. Measured
 2026-10-04 with `wc -c`: `base.md` 24,930 bytes, full build 29,113, stub
 build 4,859.
 
