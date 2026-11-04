@@ -59,6 +59,17 @@ on:
 permissions:
   contents: read
 
+# One sync at a time. A push run and a dispatch six seconds apart both pushed
+# the same agents-md-sync/update branches; the loser got "cannot lock ref" and
+# "fetch first" and its fallback PRs failed, turning the run red with an
+# already-current fleet. Sync is not a required check, so a group is safe here.
+# cancel-in-progress stays false: a run that is writing PRs is never cut off
+# midway; a newer one waits for it (only the latest pending run is kept,
+# which still syncs the newest main).
+concurrency:
+  group: sync-agents-md
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
