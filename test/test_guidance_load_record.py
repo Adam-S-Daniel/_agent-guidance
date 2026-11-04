@@ -7,7 +7,6 @@ answers from a scripted list, and no network. Fixtures use invented paths and
 example.com only.
 """
 
-import base64
 import hashlib
 import hmac
 import http.server
@@ -55,7 +54,7 @@ FAKE_CURL = textwrap.dedent("""\
             body = json.load(handle)
     with open(os.environ["FAKE_CURL_LOG"], "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"argv": argv, "stdin": stdin, "body": body,
-                                 "sink_env": sorted(k for k in os.environ if k.startswith("USAGE_SINK"))}) + "\\n")
+                                 "sink_env": sorted(k for k in os.environ if k.startswith(("USAGE_SINK", "USAGE_WRITER_APP")))}) + "\\n")
     path = os.environ["FAKE_CURL_SCRIPT"]
     with open(path, encoding="utf-8") as handle:
         queue = json.load(handle)
@@ -678,27 +677,13 @@ class OncePerSessionTests(HookTestCase):
         self.assertEqual(self.records(), [])
 
 
-@unittest.skipIf(shutil.which("openssl") is None, "openssl is required to sign the App JWT")
 class UploadTests(HookTestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.keydir = tempfile.mkdtemp(prefix="grec-key-")
-        key = pathlib.Path(cls.keydir) / "app.pem"
-        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
-                        "-out", str(key)], check=True, capture_output=True)
-        subprocess.run(["openssl", "pkey", "-in", str(key), "-pubout",
-                        "-out", str(pathlib.Path(cls.keydir) / "app.pub")], check=True, capture_output=True)
-        cls.pem = key.read_text(encoding="utf-8")
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.keydir, ignore_errors=True)
-
     def setUp(self):
         super().setUp()
         self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))])
+        # Retired variables an old environment may still hold: never used.
         self.creds = {"USAGE_WRITER_APP_CLIENT_ID": "Iv1.example0client",
-                      "USAGE_WRITER_APP_PEM": self.pem}
+                      "USAGE_WRITER_APP_PEM": "example-retired-app-key-canary"}
 
     def script(self, replies):
         self.curl_script.write_text(json.dumps(replies), encoding="utf-8")
@@ -708,12 +693,12 @@ class UploadTests(HookTestCase):
         self.assertEqual(self.calls(), [])
         self.assertIsNone(self.records()[0]["uploaded"])
 
-    def test_no_app_credentials_and_no_attached_repo_records_false(self):
+    def test_no_attached_repo_records_false_and_makes_no_app_calls(self):
         self.script([NOT_ATTACHED] * 3)
         self.run_hook(session="a", env={"CLAUDE_CODE_REMOTE": "true"})
         self.run_hook(session="b", env={"CLAUDE_CODE_REMOTE": "true",
                                         "USAGE_WRITER_APP_CLIENT_ID": "Iv1.example0client"})
-        self.run_hook(session="c", env={"CLAUDE_CODE_REMOTE": "true", "USAGE_WRITER_APP_PEM": self.pem})
+        self.run_hook(session="c", env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
         shape = [(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in self.calls()]
         self.assertEqual(shape, [("GET", PROBE)] * 3)
         self.assertEqual([r["uploaded"] for r in self.records()], [False, False, False])
@@ -798,141 +783,23 @@ class UploadTests(HookTestCase):
         self.run_hook(env={"CLAUDE_CODE_REMOTE": "true", "GUIDANCE_RECORD_GIT": str(self.tmp / "missing.git")})
         self.assertIs(self.records()[0]["uploaded"], False)
 
-    def test_read_only_session_credential_falls_back_to_the_app(self):
-        self.script([
-            {"status": 200, "body": {"permissions": {"push": False, "pull": True}}},
-            {"status": 200, "body": {"id": 7}},
-            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
-            {"status": 404, "body": {}},
-            {"status": 201, "body": {"content": {}}},
-        ])
+    def test_read_only_session_credential_records_false_and_never_uses_an_app(self):
+        self.script([{"status": 200, "body": {"permissions": {"push": False, "pull": True}}}])
         self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
-        self.assertIs(self.records()[0]["uploaded"], True)
-        self.assertIn("Bearer ghs_EXAMPLEINSTALLATIONTOKEN", self.calls()[4]["stdin"])
-
-    def test_append_with_one_retry_on_conflict(self):
-        earlier = '{"v":1,"kind":"guidance-load","session":"0000000000000000"}\n'
-        between = '{"v":1,"kind":"guidance-load","session":"1111111111111111"}\n'
-        self.script([
-            NOT_ATTACHED,
-            {"status": 200, "body": {"id": 4242}},
-            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
-            {"status": 200, "body": {"sha": "sha-one", "encoding": "base64",
-                                     "content": base64.b64encode(earlier.encode()).decode()}},
-            {"status": 409, "body": {"message": "conflict"}},
-            {"status": 200, "body": {"sha": "sha-two", "encoding": "base64",
-                                     "content": base64.b64encode((earlier + between).encode()).decode()}},
-            {"status": 201, "body": {"content": {}}},
-        ])
-        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
-        [record] = self.records()
-        self.assertIs(record["uploaded"], True)
-        calls = self.calls()
-        self.assertNotIn("Authorization", calls[0]["stdin"])
-        calls = calls[1:]
-        shape = [(c["argv"][c["argv"].index("-X") + 1], c["argv"][-1]) for c in calls]
-        self.assertEqual(shape, [
-            ("GET", f"https://api.example.com/repos/{REPO}/installation"),
-            ("POST", "https://api.example.com/app/installations/4242/access_tokens"),
-            ("GET", CONTENTS + "?ref=persistent/usage-events"),
-            ("PUT", CONTENTS),
-            ("GET", CONTENTS + "?ref=persistent/usage-events"),
-            ("PUT", CONTENTS),
-        ])
-        self.assertEqual(calls[1]["body"], {"repositories": ["adam-agentskills-private"],
-                                            "permissions": {"contents": "write"}})
-        final = calls[5]["body"]
-        self.assertEqual((final["sha"], final["branch"]), ("sha-two", "persistent/usage-events"))
-        uploaded = base64.b64decode(final["content"]).decode()
-        self.assertTrue(uploaded.startswith(earlier + between))
-        line = json.loads(uploaded.splitlines()[-1])
-        self.assertNotIn("uploaded", line)
-        self.assertEqual({k: v for k, v in record.items() if k != "uploaded"}, line)
-        for c in calls:
-            self.assertIn("--max-time", c["argv"])
-            self.assertLessEqual(int(c["argv"][c["argv"].index("--max-time") + 1]), 10)
-
-        # The JWT, the token and the PEM never reach argv; they ride stdin.
-        jwt = calls[0]["stdin"].split("Bearer ", 1)[1].split('"', 1)[0]
-        self.assertEqual(jwt.count("."), 2)
-        self.assertIn("Bearer ghs_EXAMPLEINSTALLATIONTOKEN", calls[2]["stdin"])
-        pem_body = self.pem.splitlines()[1]
-        for c in calls:
-            argv = " ".join(c["argv"])
-            for secret in (jwt, "ghs_EXAMPLEINSTALLATIONTOKEN", pem_body, "PRIVATE KEY"):
-                self.assertNotIn(secret, argv)
-        claims = json.loads(base64.urlsafe_b64decode(jwt.split(".")[1] + "=="))
-        self.assertEqual(claims["exp"] - claims["iat"], 600)
-        self.assertEqual(claims["iss"], "Iv1.example0client")
-
-        # The signature verifies against the App key's public half.
-        head, body, sig = jwt.split(".")
-        sigfile = self.tmp / "sig"
-        sigfile.write_bytes(base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)))
-        check = subprocess.run(["openssl", "dgst", "-sha256", "-verify",
-                                str(pathlib.Path(self.keydir) / "app.pub"), "-signature", str(sigfile)],
-                               input=f"{head}.{body}".encode(), capture_output=True)
-        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
-        # Nothing, the temp key included, is left behind.
-        self.assertEqual(list(self.tmpdir.iterdir()), [])
-
-    def test_new_month_file_is_created_without_sha(self):
-        self.script([
-            NOT_ATTACHED,
-            {"status": 200, "body": {"id": 7}},
-            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
-            {"status": 404, "body": {"message": "Not Found"}},
-            {"status": 201, "body": {"content": {}}},
-        ])
-        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE_SESSION_ID="example-remote"))
-        self.assertIs(self.records()[0]["uploaded"], True)
-        put = self.calls()[4]["body"]
-        self.assertNotIn("sha", put)
-        self.assertEqual(len(base64.b64decode(put["content"]).decode().splitlines()), 1)
-
-    def test_a_base64_encoded_key_works_too(self):
-        self.script([
-            NOT_ATTACHED,
-            {"status": 200, "body": {"id": 7}},
-            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
-            {"status": 404, "body": {"message": "Not Found"}},
-            {"status": 201, "body": {"content": {}}},
-        ])
-        encoded = base64.b64encode(self.pem.encode()).decode()
-        self.run_hook(env=dict(self.creds, USAGE_WRITER_APP_PEM=encoded, CLAUDE_CODE_REMOTE="true"))
-        self.assertIs(self.records()[0]["uploaded"], True)
-        self.assertEqual(len(self.calls()), 5)
-
-    def test_second_conflict_gives_up(self):
-        self.script([
-            NOT_ATTACHED,
-            {"status": 200, "body": {"id": 7}},
-            {"status": 201, "body": {"token": "ghs_EXAMPLEINSTALLATIONTOKEN"}},
-            {"status": 404, "body": {}},
-            {"status": 422, "body": {}},
-            {"status": 404, "body": {}},
-            {"status": 409, "body": {}},
-        ])
-        self.run_hook(env=dict(self.creds, CLAUDE_CODE_REMOTE="true"))
-        self.assertIs(self.records()[0]["uploaded"], False)
-        self.assertEqual(len(self.calls()), 7)
-
-    def test_failed_installation_lookup_records_false_and_marks_done(self):
-        self.script([NOT_ATTACHED, {"status": 404, "body": {"message": "Not Found"}}])
-        env = dict(self.creds, CLAUDE_CODE_REMOTE="true")
-        self.run_hook(env=env)
-        self.run_hook(env=env)
-        [record] = self.records()
-        self.assertIs(record["uploaded"], False)
-        self.assertEqual(len(self.calls()), 2)
-
-    def test_bad_pem_records_false_without_calling_the_app_api(self):
-        self.script([NOT_ATTACHED])
-        self.run_hook(env={"CLAUDE_CODE_REMOTE": "true", "USAGE_WRITER_APP_CLIENT_ID": "Iv1.example0client",
-                           "USAGE_WRITER_APP_PEM": "not a key"})
         self.assertIs(self.records()[0]["uploaded"], False)
         self.assertEqual([c["argv"][-1] for c in self.calls()], [PROBE])
+        for c in self.calls():
+            self.assertNotIn("Bearer", c["stdin"])
+            self.assertEqual(c["sink_env"], [])    # the retired App variables are stripped too
+            self.assertNotIn("example-retired-app-key-canary", " ".join(c["argv"]) + c["stdin"])
+        self.assertEqual(list(self.tmpdir.iterdir()), [])
 
+    def test_the_hook_source_has_no_app_path_left(self):
+        text = HOOK.read_text(encoding="utf-8")
+        source = text.split("<<'PY' || true\n", 1)[1]
+        for gone in ("openssl", "app_jwt", "app_token", "def append(", "access_tokens",
+                     'os.environ.get("USAGE_WRITER_APP'):
+            self.assertNotIn(gone, source)
 
 
 # ── phase 2: cloud skill records (ADR 0036) ─────────────────────────────────
@@ -963,7 +830,7 @@ FAKE_GIT = textwrap.dedent("""\
     if "GIT_CONFIG_NOSYSTEM" in os.environ:
         with open(os.environ["FAKE_GIT_LOG"] + ".nosystem", "a", encoding="utf-8") as handle:
             handle.write(json.dumps(argv) + "\\n")
-    if any(k.startswith("USAGE_SINK") for k in os.environ):
+    if any(k.startswith(("USAGE_SINK", "USAGE_WRITER_APP")) for k in os.environ):
         with open(os.environ["FAKE_GIT_LOG"] + ".sinkenv", "a", encoding="utf-8") as handle:
             handle.write(json.dumps(argv) + "\\n")
     mode = os.environ.get("FAKE_GIT_MODE", "")
@@ -1985,6 +1852,90 @@ class SinkRouteTests(SinkTestCase):
         self.assertEqual(len(self.records()), 1)
 
 
+class SinkProxyModeTests(SinkTestCase):
+    """USAGE_SINK_SIGNING=proxy: the agent proxy signs, so no key is here."""
+
+    PROXY_ENV = {"USAGE_SINK_BUCKET": "example-usage-sink", "USAGE_SINK_REGION": "us-east-1",
+                 "USAGE_SINK_SIGNING": "proxy"}
+
+    def setUp(self):
+        super().setUp()
+        for name in ("USAGE_SINK_ACCESS_KEY_ID", "USAGE_SINK_SECRET_ACCESS_KEY"):
+            self.cloud_env.pop(name)
+        self.cloud_env.update(self.PROXY_ENV)
+        self.script([PUSH_OK] * 3)
+        self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               skill_use("toolu_k1", "a"), skill_result("toolu_k1")])
+
+    def test_the_request_is_unsigned_but_carries_the_other_headers(self):
+        self.stop()
+        [put] = self.puts()
+        headers = put["headers"]
+        self.assertNotIn("authorization", headers)
+        self.assertNotIn("x-amz-date", headers)
+        self.assertEqual(headers["if-none-match"], "*")
+        self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["x-amz-content-sha256"], hashlib.sha256(put["body"]).hexdigest())
+        self.assertRegex(self.object_key(put), SINK_KEY)
+        self.assertIs(self.records()[0]["uploaded"], True)
+        self.assertEqual(self.calls(), [])               # no GitHub call at all
+
+    def test_only_bucket_region_and_signing_are_needed(self):
+        for name in ("USAGE_SINK_BUCKET", "USAGE_SINK_REGION"):
+            with self.subTest(missing=name):
+                shutil.rmtree(self.state, ignore_errors=True)
+                self.curl_log.unlink(missing_ok=True)
+                self.script([PUSH_OK])
+                before = len(self.puts())
+                self.run_hook(session=CLOUD_SESSION,
+                              env={k: v for k, v in self.cloud_env.items() if k != name})
+                self.assertEqual(len(self.puts()), before)
+                self.assertEqual(len(self.calls()), 1)    # fell to the git route's probe
+        shutil.rmtree(self.state, ignore_errors=True)
+        self.curl_log.unlink(missing_ok=True)
+        self.stop()
+        self.assertEqual(len(self.puts()), 1)
+
+    def test_proxy_mode_wins_over_static_keys(self):
+        self.cloud_env.update(SINK_ENV, USAGE_SINK_SIGNING="proxy")
+        self.stop()
+        [put] = self.puts()
+        self.assertNotIn("authorization", put["headers"])
+        self.assertNotIn("x-amz-date", put["headers"])
+
+    def test_any_other_signing_value_uses_static_keys_or_git(self):
+        for value in ("", "Proxy", "proxy ", "static", "1"):
+            with self.subTest(value=value):
+                shutil.rmtree(self.state, ignore_errors=True)
+                self.curl_log.unlink(missing_ok=True)
+                self.script([PUSH_OK])
+                before = len(self.puts())
+                self.run_hook(session=CLOUD_SESSION, env=dict(self.cloud_env, USAGE_SINK_SIGNING=value))
+                self.assertEqual(len(self.puts()), before)   # no keys: the git route
+                self.assertEqual(len(self.calls()), 1)
+                shutil.rmtree(self.state, ignore_errors=True)
+                self.run_hook(session=CLOUD_SESSION, env=dict(self.cloud_env, USAGE_SINK_SIGNING=value,
+                                                              **{k: v for k, v in SINK_ENV.items()}))
+                put = self.puts()[-1]
+                self.assertTrue(put["headers"]["authorization"].startswith("AWS4-HMAC-SHA256 "))
+                self.assertIn("x-amz-date", put["headers"])
+
+    def test_status_handling_is_unchanged(self):
+        self.server.statuses = [412, 200]
+        self.stop()
+        keys = [self.object_key(p) for p in self.puts()]
+        self.assertEqual(len(keys), 2)
+        self.assertNotEqual(keys[0], keys[1])
+        for put in self.puts():
+            self.assertNotIn("authorization", put["headers"])
+        self.assertIs(self.records()[0]["uploaded"], True)
+
+    def test_a_malformed_bucket_sends_nothing(self):
+        self.cloud_env["USAGE_SINK_BUCKET"] = "example.usage.sink"
+        self.stop()
+        self.assertEqual(self.puts(), [])
+
+
 class SinkStatusTests(SinkTestCase):
     T0 = NOW
 
@@ -2174,6 +2125,9 @@ class SinkHardeningTests(SinkTestCase):
 
     def test_no_subprocess_sees_the_sink_variables(self):
         sinkenv = pathlib.Path(str(self.git_log) + ".sinkenv")
+        # A retired App credential an old environment still holds is stripped too.
+        self.cloud_env.update(USAGE_WRITER_APP_CLIENT_ID="Iv1.example0client",
+                              USAGE_WRITER_APP_PEM="example-retired-app-key-canary")
         # A partial configuration: the git route runs, with the secret still set.
         self.cloud_env["USAGE_SINK_BUCKET"] = ""
         self.script([PUSH_OK])

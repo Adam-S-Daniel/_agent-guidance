@@ -25096,8 +25096,8 @@ PY
 
 # The guidance-load-record Stop hook's own unit tests, counted as the lane
 # module above is: unittest's real count goes into PASS, so a module that
-# discovers nothing cannot pass, and under CI (where openssl is present) a
-# skipped upload case is a failure rather than a quiet gap.
+# discovers nothing cannot pass, and under CI a skipped case is a failure
+# rather than a quiet gap.
 test_guidance_load_record() {
     echo ""
     echo "=== Test: guidance-load-record.sh unit tests ==="
@@ -25119,7 +25119,7 @@ PY
     elif (( passed == 0 )); then
         fail "guidance-load-record: test/test_guidance_load_record.py ran zero tests"
     elif [[ "${CI:-}" == true ]] && (( skipped > 0 )); then
-        fail "guidance-load-record: $skipped unit test(s) skipped under CI, where openssl is installed"
+        fail "guidance-load-record: $skipped unit test(s) skipped under CI"
     else
         PASS=$((PASS + passed))
         echo "  guidance-load-record: $passed unit test(s) passed, $skipped skipped"
