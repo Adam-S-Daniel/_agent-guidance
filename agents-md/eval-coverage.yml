@@ -55,7 +55,8 @@
 - id: turn-lessons-into-checks
   heading: Turn lessons into checks, skills and guidance
   file: agents-md/base.md
-  status: gap
+  status: covered
+  fixture: evals/guidance/turn-lessons-into-checks/
   bytes: 705
 
 - id: workstation-layout
