@@ -30,6 +30,16 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-04 — 2.1.318 through 2.1.318
+
+- **Checked:** 2026-11-04T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.318](https://github.com/anthropics/claude-code/releases/tag/v2.1.318), published 2026-11-04T00:01Z
+- **Window:** v2.1.318 (published 2026-11-04T00:01Z), the stable release after v2.1.317: 1 release, 99 bullets (none individually indexed: no group was drafted). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.318` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all fleet repos in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and assessed the local checkouts by fleet grep.
+
+No group met the name-the-surface bar. The closest candidates were the `~/.claude.json` robustness fixes (a non-interactive launch no longer replaces an invalid file with defaults, and unattended runs stop rewriting an unchanged file) and the `Setup`-hook `CLAUDE_ENV_FILE` fix for cloud sessions. `wsl-automation`'s `Grant-ClaudeProjectTrust` only sets `hasTrustDialogAccepted` in that file and never creates it, so no documented behavior changes, and no fleet repo documents `CLAUDE_ENV_FILE`. No bullet adds a model, changes the default model or an alias, changes `/doctor` or `/skill-doctor`, or changes how instruction files load, so the prompt-audit sweep was not fired.
+
 ### 2026-11-03 — 2.1.317 through 2.1.317
 
 - **Checked:** 2026-11-03T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
