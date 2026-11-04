@@ -263,7 +263,7 @@ test('the fire workflow sends only the issue URL, keeps the bearer off argv and 
     assert.ok(args.includes(header), `missing header ${header}`);
   }
   assert.equal(args[args.indexOf('-X') + 1], 'POST');
-  assert.ok(args.includes('https://api.example.com/fire'));
+  assert.ok(args.some(a => a === 'https://api.example.com/fire'), 'curl must POST to the configured fire URL');
   assert.equal(posted.length, 1);
   assert.equal(commentBody(posted[0]), '<!-- prompt-audit-fired -->\nPrompt-audit sweep started: https://claude.ai/code/session_x');
 });
