@@ -24,6 +24,16 @@ A setting is one configurable thing; it takes a value.
    `permissions`, does not.
 3. **Other settings may have a default,** defined in one place and documented
    with the setting.
+4. **A value that names the owner's own resources is set in one place and
+   has no fallback in code.** A repository, URL, routine or trigger id, App
+   id or login is a setting, not a constant, even when only one value exists
+   today. Read it from one place (for a workflow, a GitHub Actions repository
+   variable; a secret if it is a credential), and when it is missing, fail
+   with an error that names the setting and where to set it. Never write
+   `${{ vars.X || '<literal>' }}`, `os.environ.get("X", "<literal>")` or a
+   `DEFAULT_` constant for one. An opt-out such as `none` is fine when it is
+   set explicitly; leaving the setting unset is an error, not an opt-out.
+   This rule takes precedence over rules 2 and 3 for these values.
 
 "Omitted" means the setting was not specified in that format's way: a key
 left out, a flag not passed, an environment variable unset.
@@ -33,6 +43,15 @@ left out, a flag not passed, an environment variable unset.
 The owner's words:
 
 > When I encounter different representations, I tend to go on a research expedition to figure out if they cause different behavior. I'd like to spare my future self or anyone else from such an ambiguity.
+
+Rule 4, in the owner's words (2026-11-04), about a workflow that fell back
+to a hard-coded routine id:
+
+> I don't like hard-coded defaults like that. It should need to be specified in one place, in this case, a GitHub variable I think, and fail descriptively if it's not there. The advent of ACSI-kit makes this principle all the more important in my view.
+
+A repository the kit exports to another owner keeps every fallback it was
+given, so a literal default there acts on the original owner's resources
+without an error.
 
 ## Terminology
 
