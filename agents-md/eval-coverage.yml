@@ -84,7 +84,7 @@
     Account facts the model cannot know otherwise, so an eval's outcome is known
     in advance; the risk is the fact going stale, checked for freshness instead.
   since: 2026-11-03
-  bytes: 322
+  bytes: 295
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
