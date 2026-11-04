@@ -60,7 +60,7 @@ const routine = 'docs/reference/agent-changelog-routine.md';
 test('fleet rule protects issues and PRs, with owner control and passive status', () => {
   const body = prose(section('agents-md/base.md', 'Working in these repos'));
   includes(body, ['issue or PR labeled `on-hold` is paused by the owner', 'no commits, reviews, merges, closing or follow-ups that do it', 'read, cite and list it as on hold without asking again', 'A held PR stays open', 'Only the owner adds or removes the label', 'an agent the owner directs in that session']);
-  assert.ok(Buffer.byteLength(read('agents-md/base.md')) < 25600);
+  assert.ok(Buffer.byteLength(read('agents-md/base.md')) < 26624);
   assert.equal(read('agents-md/base.md'), read('.claude/hooks/fleet-guidance.md'));
 });
 

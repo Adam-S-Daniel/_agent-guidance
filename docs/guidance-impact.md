@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-04 — turn-lessons-into-checks — create
+- Motivation: the owner asked (2026-11-04) that the fleet guidance tell every agent to make git hook checks, skills and guidance sections when a lesson could recur, and that the system can count what agents made and its impact. The routing rule lived only inside "Finding your unknowns", as where durable findings go, with no instruction to make them unasked and no marker to count them by.
+- Change: new section with the check, skill, guidance order, where each goes, and a `Captures: check|skill|section <id>` commit trailer that the evals dashboard counts; base.md's size cap goes from 25 KiB to 26 KiB to fit it, since every existing section is eval-protected and cannot be trimmed for room.
+- Eval: none — no fixture yet
+- Outcome: pending
+
 ## 2026-11-02 — two-github-connectors — edit
 - Motivation: _agent-guidance#291: the org connector (`github-mcp`) returned `403 Resource not accessible by integration` on issue writes (`issue_write` 2026-10-10, `add_issue_comment` 2026-10-31) in cloud sessions, while the section said it has the same issue writes.
 - Change: the bullet drops "issue" from the connector's write list and says issue writes can 403; no bytes added elsewhere (base.md stays under its 25 KiB cap).

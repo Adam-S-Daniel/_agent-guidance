@@ -52,6 +52,12 @@
   fixture: evals/guidance/finding-your-unknowns/
   bytes: 1015
 
+- id: turn-lessons-into-checks
+  heading: Turn lessons into checks, skills and guidance
+  file: agents-md/base.md
+  status: gap
+  bytes: 705
+
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
