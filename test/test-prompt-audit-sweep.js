@@ -47,7 +47,7 @@ const mutations = {
   label: [routine, '- **No label.** It is not `agent-ready`', '- **Label `agent-ready`.** It is'],
   prefix: [routine, '**Title:** `Prompt-audit sweep trigger: Claude', '**Title:** `Prompt audit trigger: Claude'],
   warn: [adr, '**warns and never blocks**', '**blocks**'],
-  payload: [routine, "'{text: $t}'", "'{text: ($t + \" DRY_RUN\")}'"],
+  payload: ['.github/workflows/prompt-audit-fire.yml', "'{text: $t}'", "'{text: ($t + \" DRY_RUN\")}'"],
   index: [index, '| [0016](0016-the-freshest', '| [0017](0016-the-freshest'],
   dedupe: [spec, '`^Prompt-audit sweep \\d{4}-\\d{2}-\\d{2}: `', '`^Prompt-audit sweep `'],
   canonical: [spec, 'dedupe on `full_name`', 'take the first that answers'],
@@ -71,7 +71,7 @@ const mutations = {
   everyrun: [worker, '**every run does all three**', '**a run may stop after any pass**'],
   lessonsline: [worker, '`Lessons: read <n>, new <k>, handled <m>`', '`Lessons handled: <m>`'],
   lessonsfetch: [worker, '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`list the branch with the connector`'],
-  argv: [routine, '|\n     curl -sS --config - ', '|\n     curl -sS -H "Authorization: Bearer $PROMPT_AUDIT_SWEEP_FIRE_BEARER" '],
+  argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
 
 const read = name => {
@@ -180,46 +180,130 @@ test('trigger issue prefix and payload agree between the routine and the sweep',
   const accepted = prose(section(spec, 'The trigger')).match(/title starts with exactly `([^`]+)`/);
   assert.ok(accepted, 'sweep names no accepted title prefix');
   assert.equal(title[1], accepted[1]);
-  includes(prose(step), ['**No label.** It is not `agent-ready`', 'never retry', 'File nothing and fire nothing', 'Codex releases never fire it']);
-  includes(prose(section(routine, 'Constraints')), ['which it files with no label at all', 'at most once per run']);
+  includes(prose(step), ['**No label.** It is not `agent-ready`', 'never fires by hand', 'File nothing, so nothing fires', 'Codex releases never fire it', '`sweep: requested <issue link>`']);
+  includes(prose(section(routine, 'Constraints')), ['which it files with no label at all', 'The run fires no routine']);
 });
 
-test('the documented fire call sends only the issue URL and never prints the bearer', () => {
-  const fence = section(routine, '4a. Fire the prompt-audit sweep').find(t => t.type === 'fence' && t.info === 'bash');
-  assert.ok(fence, 'no bash fence in step 4a');
+const fireWorkflow = '.github/workflows/prompt-audit-fire.yml';
+const fireDoc = () => YAML.parse(read(fireWorkflow));
+const fireStep = () => fireDoc().jobs.fire.steps[0];
+
+test('the fire workflow is narrow: owner-only trigger issues, no uses, no interpolation in run', () => {
+  const doc = fireDoc();
+  assert.deepEqual(Object.keys(doc.on).sort(), ['issues', 'workflow_dispatch']);
+  assert.deepEqual(doc.on.issues.types, ['opened']);
+  assert.equal(doc.on.workflow_dispatch.inputs.issue_number.required, true);
+  assert.deepEqual(doc.permissions, {});
+  const job = doc.jobs.fire;
+  assert.deepEqual(job.permissions, { issues: 'write' });
+  assert.equal(job['runs-on'], 'ubuntu-24.04');
+  assert.equal(job.concurrency['cancel-in-progress'], false);
+  assert.ok(job.concurrency.group.includes('issue.number') && job.concurrency.group.includes('inputs.issue_number'));
+  includes(job.if, ["startsWith(github.event.issue.title, 'Prompt-audit sweep trigger: ')", "github.event.issue.user.login == 'Adam-S-Daniel'", "github.event.issue.author_association == 'OWNER'"]);
+  assert.equal(doc.jobs.fire.steps.length, 1);
+  for (const step of Object.values(doc.jobs).flatMap(j => j.steps)) {
+    assert.ok(!('uses' in step), 'the fire workflow must have no uses: step');
+    assert.ok(!/\$\{\{/.test(step.run), 'no ${{ }} expression may reach a run: block');
+  }
+  assert.equal(fireStep().env.FIRE_BEARER, '${{ secrets.PROMPT_AUDIT_SWEEP_FIRE_BEARER }}');
+  assert.equal(fireStep().env.FIRE_URL, '${{ vars.PROMPT_AUDIT_SWEEP_FIRE_URL }}');
+});
+
+// Runs the workflow's own script with a fake gh and curl on PATH.
+function runFire({ issue, comments = [], url = 'https://api.example.com/fire', bearer = 'placeholder-value', status = 200, dispatch = false }) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-fire-test-'));
   try {
-    const log = path.join(temp, 'curl-args.json');
+    const log = path.join(temp, 'calls.jsonl');
+    const state = path.join(temp, 'state.json');
+    fs.writeFileSync(state, JSON.stringify({ issue, comments, status }));
     fs.writeFileSync(path.join(temp, 'curl'), `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const config = args[args.indexOf('--config') + 1] === '-' ? fs.readFileSync(0, 'utf8') : '';
-fs.writeFileSync(process.env.TEST_LOG, JSON.stringify({ args, config }));
-fs.writeFileSync(args[args.indexOf('-o') + 1], '{"claude_code_session_url":"https://claude.ai/code/session_x"}');
-process.stdout.write('200');
+fs.appendFileSync(process.env.TEST_LOG, JSON.stringify({ tool: 'curl', args, config }) + '\\n');
+const { status } = JSON.parse(fs.readFileSync(process.env.TEST_STATE, 'utf8'));
+fs.writeFileSync(args[args.indexOf('-o') + 1], '{"claude_code_session_url":"https://claude.ai/code/session_x","secret_field":"response-canary"}');
+process.stdout.write(String(status));
 `, { mode: 0o755 });
-    const issue = 'https://github.com/Adam-S-Daniel/_agent-guidance/issues/1';
-    const script = `${fence.content}\nprintf '%s' "$code"`;
-    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, PATH: [temp, process.env.PATH].join(path.delimiter), TEST_LOG: log, TRIGGER_ISSUE_URL: issue, PROMPT_AUDIT_SWEEP_FIRE_URL: 'https://api.example.com/fire', PROMPT_AUDIT_SWEEP_FIRE_BEARER: 'placeholder-value' } });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, '200');
-    assert.ok(!result.stdout.includes('placeholder-value') && !result.stderr.includes('placeholder-value'));
-    const { args, config } = JSON.parse(fs.readFileSync(log, 'utf8'));
-    assert.deepEqual(JSON.parse(args[args.indexOf('-d') + 1]), { text: issue });
-    assert.ok(!args.some(a => a.includes('placeholder-value')), 'bearer must not be in curl argv');
-    assert.equal(config, 'header = "Authorization: Bearer placeholder-value"\n');
-    for (const header of ['anthropic-beta: experimental-cc-routine-2026-04-01', 'anthropic-version: 2023-06-01', 'Content-Type: application/json']) {
-      assert.ok(args.includes(header), `missing header ${header}`);
-    }
-    assert.equal(args[args.indexOf('-X') + 1], 'POST');
-    assert.ok(args.includes('https://api.example.com/fire'));
+    fs.writeFileSync(path.join(temp, 'gh'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.TEST_LOG, JSON.stringify({ tool: 'gh', args }) + '\\n');
+const st = JSON.parse(fs.readFileSync(process.env.TEST_STATE, 'utf8'));
+if (args[0] === 'api' && args.some(a => a.endsWith('/comments'))) process.stdout.write(st.comments.join('\\n') + '\\n');
+else if (args[0] === 'api') process.stdout.write(JSON.stringify(st.issue));
+`, { mode: 0o755 });
+    const event = path.join(temp, 'event.json');
+    fs.writeFileSync(event, JSON.stringify(dispatch
+      ? { repository: { full_name: 'Adam-S-Daniel/_agent-guidance' }, inputs: { issue_number: String(issue.number) } }
+      : { repository: { full_name: 'Adam-S-Daniel/_agent-guidance' }, issue: { number: issue.number } }));
+    const result = spawnSync('bash', ['-c', fireStep().run], { encoding: 'utf8', env: {
+      PATH: [temp, process.env.PATH].join(path.delimiter), TEST_LOG: log, TEST_STATE: state,
+      GITHUB_EVENT_PATH: event, GITHUB_EVENT_NAME: dispatch ? 'workflow_dispatch' : 'issues',
+      GH_TOKEN: 'placeholder-token', FIRE_URL: url, FIRE_BEARER: bearer } });
+    const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+    return { result, calls, curl: calls.filter(c => c.tool === 'curl'), posted: calls.filter(c => c.tool === 'gh' && c.args[0] === 'issue') };
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+}
+const triggerIssue = (over = {}) => ({ number: 7, title: 'Prompt-audit sweep trigger: Claude Code 2.1.999 adds a model', user: { login: 'Adam-S-Daniel' }, author_association: 'OWNER', html_url: 'https://github.com/Adam-S-Daniel/_agent-guidance/issues/7', ...over });
+const commentBody = call => call.args[call.args.indexOf('--body') + 1];
+
+test('the fire workflow sends only the issue URL, keeps the bearer off argv and out of every output, and comments once', () => {
+  const { result, curl, posted } = runFire({ issue: triggerIssue() });
+  assert.equal(result.status, 0, result.stderr);
+  for (const text of [result.stdout, result.stderr, ...posted.map(commentBody)]) {
+    for (const canary of ['placeholder-value', 'response-canary']) assert.ok(!text.includes(canary), `leaked ${canary}`);
+  }
+  assert.equal(curl.length, 1);
+  const { args, config } = curl[0];
+  assert.deepEqual(JSON.parse(args[args.indexOf('-d') + 1]), { text: 'https://github.com/Adam-S-Daniel/_agent-guidance/issues/7' });
+  assert.ok(!args.some(a => a.includes('placeholder-value')), 'bearer must not be in curl argv');
+  assert.equal(config, 'header = "Authorization: Bearer placeholder-value"\n');
+  for (const header of ['anthropic-beta: experimental-cc-routine-2026-04-01', 'anthropic-version: 2023-06-01', 'Content-Type: application/json']) {
+    assert.ok(args.includes(header), `missing header ${header}`);
+  }
+  assert.equal(args[args.indexOf('-X') + 1], 'POST');
+  assert.ok(args.includes('https://api.example.com/fire'));
+  assert.equal(posted.length, 1);
+  assert.equal(commentBody(posted[0]), '<!-- prompt-audit-fired -->\nPrompt-audit sweep started: https://claude.ai/code/session_x');
+});
+
+test('the fire workflow skips an issue it already fired for and anything that is not the owner\'s trigger issue', () => {
+  const again = runFire({ issue: triggerIssue(), comments: ['<!-- prompt-audit-fired -->\nPrompt-audit sweep started: https://claude.ai/code/session_y'] });
+  assert.equal(again.result.status, 0, again.result.stderr);
+  assert.deepEqual([again.curl.length, again.posted.length], [0, 0]);
+  for (const [name, over] of [['title', { title: 'Something else' }], ['author', { user: { login: 'someone-else' } }], ['association', { author_association: 'CONTRIBUTOR' }], ['pull request', { pull_request: {} }]]) {
+    for (const dispatch of [false, true]) {
+      const run = runFire({ issue: triggerIssue(over), dispatch });
+      assert.notEqual(run.result.status, 0, `${name} (dispatch ${dispatch}) must not fire`);
+      assert.deepEqual([run.curl.length, run.posted.length], [0, 0], name);
+    }
+  }
+  assert.equal(runFire({ issue: triggerIssue(), dispatch: true }).curl.length, 1);
+});
+
+test('the fire workflow comments instead of firing when unconfigured, and fails on a bad status', () => {
+  for (const missing of [{ url: '' }, { bearer: '' }]) {
+    const run = runFire({ issue: triggerIssue(), ...missing });
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(run.curl.length, 0);
+    assert.equal(run.posted.length, 1);
+    assert.ok(commentBody(run.posted[0]).includes('start the sweep by hand'));
+    assert.ok(!commentBody(run.posted[0]).includes('<!-- prompt-audit-fired -->'));
+    assert.ok(run.result.stdout.includes('fire URL or bearer not configured'));
+  }
+  const failed = runFire({ issue: triggerIssue(), status: 401 });
+  assert.notEqual(failed.result.status, 0);
+  assert.equal(failed.posted.length, 1);
+  assert.equal(commentBody(failed.posted[0]), 'Prompt-audit sweep fire failed (HTTP 401)');
+  assert.ok(!failed.posted.map(commentBody).join('').includes('response-canary'));
 });
 
 test('ADR 0017 records the trigger, subscription usage and warn-only checks', () => {
   includes(prose(section(adr, 'Decision')), ['**no schedule**', 'The changelog routine fires it', 'The owner starts it by hand', 'subscription', '`agent-ready`', '**warns and never blocks**', 'never merges or auto-merges']);
   includes(prose(section(adr, 'Consequences')), ['`CLAUDE_CODE_REMOTE`', 'never attached to `api.anthropic.com`', 'dedicated `Changelog Routine`', 'metered overage']);
-  includes(prose(section(routine, 'The trigger')), ['dedicated `Changelog Routine`', 'plus `api.anthropic.com`', 'only environment that holds']);
+  includes(prose(section(routine, 'The trigger')), ['dedicated `Changelog Routine`', 'plus `api.anthropic.com`', 'It holds no secret']);
+  includes(prose(section(adr, 'Addendum (2026-11-04): the fire bearer moves to GitHub Actions')), ['readable by every session', 'never attaches secrets to `api.anthropic.com`', '`prompt-audit-fire.yml`', 'Actions secret']);
   for (const doc of [adr, spec]) {
     for (const href of links(tokens(doc)).filter(h => !/^[a-z]+:/.test(h))) {
       assert.ok(fs.existsSync(path.join(root, path.dirname(doc), href.split('#')[0])), `${doc}: dangling link ${href}`);

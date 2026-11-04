@@ -1,0 +1,118 @@
+name: Fire prompt-audit sweep
+
+# Starts the prompt-audit sweep routine (docs/routines/prompt-audit-sweep.md)
+# for a trigger issue the vendor changelog routine filed. The fire bearer used
+# to sit in the Changelog Routine cloud environment's variables, readable by
+# every session there; it lives in an Actions secret instead (ADR 0017,
+# 2026-11-04 addendum).
+#
+# * `issues: opened` and `workflow_dispatch` only. No pull_request or push, so
+#   no path filter and not a required check.
+# * Nothing from the event or the inputs is interpolated into a `run:` block
+#   (the rendered command is echoed into a public log): the script reads
+#   $GITHUB_EVENT_PATH with jq. The only `${{ }}` uses are the job `if:`, the
+#   concurrency group and the `env:` that hands the token, URL and bearer to
+#   the one step that needs them.
+# * Only an issue titled `Prompt-audit sweep trigger: ` that the owner's own
+#   account opened fires; a dispatch re-checks the same facts by reading the
+#   issue. A comment holding the marker below makes a second attempt a no-op.
+# * No `uses:` step, so actions.lock is untouched.
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Number of the trigger issue to fire the sweep for
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  fire:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.issue.title, 'Prompt-audit sweep trigger: ')
+       && github.event.issue.user.login == 'Adam-S-Daniel'
+       && github.event.issue.author_association == 'OWNER')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: prompt-audit-fire-${{ github.event.issue.number || inputs.issue_number }}
+      cancel-in-progress: false
+    steps:
+      - name: Fire the sweep once for the trigger issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIRE_URL: ${{ vars.PROMPT_AUDIT_SWEEP_FIRE_URL }}
+          FIRE_BEARER: ${{ secrets.PROMPT_AUDIT_SWEEP_FIRE_BEARER }}
+        run: |
+          set -euo pipefail
+          marker='<!-- prompt-audit-fired -->'
+          repo=$(jq -r '.repository.full_name' "$GITHUB_EVENT_PATH")
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            number=$(jq -r '.inputs.issue_number // ""' "$GITHUB_EVENT_PATH")
+          else
+            number=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")
+          fi
+          if [[ ! "$number" =~ ^[0-9]+$ ]]; then
+            echo "::error::issue_number is not a number"
+            exit 1
+          fi
+
+          # Re-read the issue from the API: a dispatch has not been checked by
+          # the job `if:`, and the title is judged on what the API returns now.
+          issue=$(gh api "repos/$repo/issues/$number")
+          title=$(jq -r '.title' <<<"$issue")
+          author=$(jq -r '.user.login' <<<"$issue")
+          assoc=$(jq -r '.author_association' <<<"$issue")
+          url=$(jq -r '.html_url' <<<"$issue")
+          is_pr=$(jq -r 'has("pull_request")' <<<"$issue")
+          if [[ "$is_pr" == true || "$title" != "Prompt-audit sweep trigger: "* \
+                || "$author" != Adam-S-Daniel || "$assoc" != OWNER ]]; then
+            echo "::error::issue $number is not a trigger issue opened by the owner"
+            exit 1
+          fi
+
+          # One fire per issue: a comment with the marker means it already ran.
+          comments=$(gh api --paginate "repos/$repo/issues/$number/comments" --jq '.[].body')
+          if grep -qF -- "$marker" <<<"$comments"; then
+            echo "::notice::the sweep was already fired for issue $number"
+            exit 0
+          fi
+
+          if [[ -z "$FIRE_URL" || -z "$FIRE_BEARER" ]]; then
+            echo "::notice::fire URL or bearer not configured"
+            gh issue comment "$number" --repo "$repo" --body \
+              "The prompt-audit sweep fire URL or bearer is not configured in this repository, so nothing fired. The owner should start the sweep by hand with Run now."
+            exit 0
+          fi
+
+          # The bearer reaches curl on stdin through --config -, never argv.
+          body=$(jq -n --arg t "$url" '{text: $t}')
+          response=$(mktemp)
+          code=$(printf 'header = "Authorization: Bearer %s"\n' "$FIRE_BEARER" |
+            curl -sS --config - -o "$response" -w '%{http_code}' -X POST \
+              "$FIRE_URL" \
+              -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "Content-Type: application/json" \
+              -d "$body") || code="curl-error"
+
+          if [[ "$code" == 200 ]]; then
+            session=$(jq -r '.claude_code_session_url // ""' "$response")
+            rm -f "$response"
+            gh issue comment "$number" --repo "$repo" --body \
+              "$marker
+          Prompt-audit sweep started: $session"
+          else
+            rm -f "$response"
+            gh issue comment "$number" --repo "$repo" --body \
+              "Prompt-audit sweep fire failed (HTTP $code)"
+            echo "::error::fire failed (HTTP $code)"
+            exit 1
+          fi
