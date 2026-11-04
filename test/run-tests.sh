@@ -13815,6 +13815,29 @@ for (const v of (Array.isArray(cursor) ? cursor : [cursor])) console.log(String(
 ' "$REPO_ROOT" "$1" "$2" "${3:-}"
 }
 
+# ── Test 7a2: sync.yml runs one at a time ────────────────────────────────
+#
+# Two overlapping runs pushed the same agents-md-sync/update branches and the
+# loser went red ("cannot lock ref", "fetch first"). A workflow-level group
+# without cancel-in-progress serializes them and never cuts a writing run off.
+test_sync_workflow_serialized() {
+    echo ""
+    echo "=== Test: sync.yml serializes its runs ==="
+    local wf="$REPO_ROOT/.github/workflows/sync.yml" group cancel
+    group=$(yaml_field "$wf" "concurrency.group" 2>/dev/null) || group=""
+    cancel=$(yaml_field "$wf" "concurrency.cancel-in-progress" 2>/dev/null) || cancel=""
+    if [[ "$group" == "sync-agents-md" ]]; then
+        pass "sync serialized: workflow concurrency group is sync-agents-md"
+    else
+        fail "sync serialized: workflow concurrency group is '${group}', want sync-agents-md"
+    fi
+    if [[ "$cancel" == "false" ]]; then
+        pass "sync serialized: cancel-in-progress is false"
+    else
+        fail "sync serialized: cancel-in-progress is '${cancel}', want false (never cut off a run mid-push)"
+    fi
+}
+
 # ── Test 7a: sync.yml fires on every file that decides what a run does ────
 #
 # THE BUG THIS PINS. sync.sh reads its policy out of this checkout while it
@@ -25482,6 +25505,7 @@ GROUP_self_hosted=(
     test_on_hold_label
     test_prompt_audit_sweep
     test_sync_workflow_trigger
+    test_sync_workflow_serialized
     test_self_hosted_hook_pin
     test_self_hosted_fleet_payload
     test_bootstrap_allowlist_disjoint
