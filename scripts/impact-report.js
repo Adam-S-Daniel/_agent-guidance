@@ -74,7 +74,9 @@ const { execFile } = require("node:child_process");
 const WEEKS = 8;
 const DAY_MS = 86400000;
 const REFRESH_DAYS = 6;
-const MAX_PAGES = 10;
+// 30 pages = 3,000 items per listing. A busy content repo opens over 1,000
+// pull requests in the 8-week window, which overran a 10-page ceiling.
+const MAX_PAGES = 30;
 const CONCURRENCY = 6;
 const RETRY_DELAYS_MS = [2000, 8000, 30000];
 const AGENT_LABEL = "agent-authored";
@@ -534,7 +536,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  WEEKS, REFRESH_DAYS, CONCURRENCY, RETRY_DELAYS_MS, HOOK_NAME, HOOK_WORKFLOW_PATH, AGENT_LABEL,
+  WEEKS, REFRESH_DAYS, MAX_PAGES, CONCURRENCY, RETRY_DELAYS_MS, HOOK_NAME, HOOK_WORKFLOW_PATH, AGENT_LABEL,
   ApiError, describeError, ownerTokenEnvName,
   limiter, isTransient, withRetry, weekOf, windowFor, measureRepo, buildRows, runReport, shouldPublish, buildApi,
 };
