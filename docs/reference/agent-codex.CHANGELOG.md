@@ -30,6 +30,18 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-06 — 0.167.0 through 0.167.0
+
+- **Checked:** 2026-11-06T02:10Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.167.0](https://github.com/openai/codex/releases/tag/rust-v0.167.0), published 2026-11-06T01:40Z
+- **Window:** 0.167.0 (published 2026-11-06T01:40Z), the first stable release after 0.166.0: 1 stable release, 136 bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list page 1 and the tag page; page 1 included `rust-v0.166.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+No group met the name-the-surface bar. The highlights (`codex agents --no-daemon`, backend switching in the session picker, image previews, a Vertex AI setup wizard, system proxy opt-in, network approval prompt fixes) and the hook, plugin and `permissions.network` changelog lines touch no command line, setting or documented behavior in the fleet. The new `--no-daemon` flag is on `codex agents` only; the `codex app-server ... --managed-daemon` liveness check in wsl-automation is unchanged by this release's notes.
+
+**Issues:** none.
+
 ### 2026-10-30 — 0.166.0 through 0.166.0
 
 - **Checked:** 2026-10-30T01:20Z, [release log](https://github.com/openai/codex/releases)
