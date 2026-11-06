@@ -12,7 +12,7 @@ const path = require("node:path");
 const YAML = require("yaml");
 
 const {
-  ApiError, HOOK_NAME, HOOK_WORKFLOW_PATH, CONCURRENCY, RETRY_DELAYS_MS,
+  ApiError, HOOK_NAME, HOOK_WORKFLOW_PATH, MAX_PAGES, CONCURRENCY, RETRY_DELAYS_MS,
   limiter, isTransient, withRetry, weekOf, windowFor, runReport, shouldPublish,
 } = require("../scripts/impact-report.js");
 
@@ -242,6 +242,19 @@ test("a truncated listing fails rather than undercounting", async () => {
   const { exitCode, lines } = await report({ workflowRunsPage: () => ({ workflow_runs: busy }) });
   assert.equal(exitCode, 1);
   assert.ok(lines.some((l) => l.includes("RangeError")));
+});
+
+test("a repo with more than 1,000 pull requests in the window is measured, not failed", async () => {
+  // Regression: a 10-page ceiling failed the whole report once one repo had
+  // over 1,000 PRs updated in the 8-week window.
+  assert.ok(MAX_PAGES >= 20);
+  const many = Array.from({ length: 1500 }, () => ({ created_at: "2026-10-27T00:00:00Z", updated_at: "2026-10-27T00:00:00Z", closed_at: null, merged_at: null }));
+  const repo = FLEET.repos[OWNERS[0]][0].repo;
+  const { exitCode, lines } = await report({
+    pullsPage: (owner, r, p) => page(r === repo ? many : FLEET.pulls[r], p),
+  });
+  assert.equal(exitCode, 0, lines.join("\n"));
+  assert.ok(!lines.some((l) => l.includes("RangeError")));
 });
 
 test("a missing owner token fails the run under --require-owner-tokens", async () => {
