@@ -146,7 +146,8 @@ so the PR stays blocked with nothing red to fix (the 2026-10-25 case:
 **The merge rule.** The routine may merge a PR only when every item holds,
 each read fresh:
 
-1. Its head branch is `agent/issue-<n>-<slug>` and its body starts with
+1. Its head branch is `agent/issue-<n>-<slug>` and the first line of its
+   body after the `## TLDR` section is
    `Closes <owner>/<repo>#<n>` or, for a fix that covers only some of the
    issue's findings, `Refs <owner>/<repo>#<n>`, where issue `<n>` in the
    same repo has a title matching `^Prompt-audit sweep \d{4}-\d{2}-\d{2}: `

@@ -109,10 +109,13 @@ blocked comments. The on-hold stop overrides step 7 below.
    message alone does not prove the commit exists.
 5. **Open the PR,** ready for review, not a draft, labeled
    `agent-authored`, with commits carrying `Agent: claude-code`. Its body
-   starts with `Closes <owner>/<repo>#<n>` (closing the issue is intended
-   here) or, when it fixes only some of the issue's findings and leaves the
-   rest open, `Refs <owner>/<repo>#<n>` followed by the findings it fixes,
-   then
+   starts with a `## TLDR` heading and one to three plain sentences on what
+   changes and why (the required `agent-checks` check fails a body that
+   starts with anything else, so write it before the PR is opened, not after
+   the first red run). The next line is `Closes <owner>/<repo>#<n>` (closing
+   the issue is intended here) or, when it fixes only some of the issue's
+   findings and leaves the rest open, `Refs <owner>/<repo>#<n>` followed by
+   the findings it fixes. The body then
    summarizes what changed and why, gives the test command and its result,
    says what the worker could not verify, and ends with
    `<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>`. For the three
