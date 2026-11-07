@@ -3,6 +3,7 @@
 # Docs: https://gh.io/actions-lockfile
 version: 'v0.0.3'
 workflows:
+    '.github/workflows/article-watch.yml': []
     '.github/workflows/agent-checks.yml':
         - 'actions/checkout@v7.0.1'
         - 'adam-s-daniel/verify-actions-lock@v1.1.0'

@@ -22269,6 +22269,36 @@ test_fleet_memory_check_value() {
 
 # Codex's generated records are audited after generation; all memory, sidecar,
 # and CLI configuration paths in this group are synthetic and isolated.
+# The Anthropic article watch (scripts/article_watch.py). Its unittest module
+# fires only into a recording stub, so it needs no network or fixtures. A
+# module that discovers nothing fails, so a renamed test file cannot pass.
+test_article_watch() {
+    echo ""
+    echo "TEST: article_watch.py (new agent articles fire the lift routine once)"
+    local counts="$TEST_DIR/article-watch-counts" ran failed
+    python3 - "$SCRIPT_DIR" "$counts" <<'PY' || true
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_article_watch.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+bad = len(result.failures) + len(result.errors) + len(result.unexpectedSuccesses)
+pathlib.Path(sys.argv[2]).write_text("%d %d\n" % (result.testsRun, bad), encoding="ascii")
+PY
+    if ! read -r ran failed < "$counts" 2>/dev/null; then
+        fail "article-watch: the unittest module did not report a count"
+        return
+    fi
+    if (( ran == 0 )); then
+        fail "article-watch: test_article_watch.py ran zero tests"
+        return
+    fi
+    PASS=$((PASS + ran - failed))
+    FAIL=$((FAIL + failed))
+    (( failed == 0 )) && echo "  PASS: article-watch: $ran unittest cases" || echo "  FAIL: article-watch: $failed of $ran unittest cases"
+}
+
 # The memory curation audit (docs/decisions/0026). Its unittest module owns
 # temporary memory directories of invented notes and needs no shell fixtures.
 # Each test counts as one PASS or FAIL here, and a module that discovers
@@ -25325,6 +25355,7 @@ TEST_GROUPS=(
     codex
     memory_home
     memory_audit
+    article_watch
     github_write_marker
     gitattr
     automerge
@@ -25567,6 +25598,11 @@ GROUP_codex_memory_audit=(
 # shellcheck disable=SC2034
 GROUP_memory_audit=(
     test_memory_audit
+)
+
+# shellcheck disable=SC2034
+GROUP_article_watch=(
+    test_article_watch
 )
 
 GROUP_runner=(
