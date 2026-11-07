@@ -21,8 +21,9 @@ This file is the spec. Each task's prompt is short and points here.
 Each run, per memory directory:
 
 1. audits it with [`scripts/memory_audit.py`](../../scripts/memory_audit.py);
-2. edits the memory itself: merges duplicates, drops or flags stale claims,
-   repairs the index;
+2. edits the memory itself: merges duplicates, checks recent and
+   always-loaded claims against their evidence and corrects the wrong ones,
+   drops or flags stale claims, repairs and slims the index;
 3. files each fact that belongs in a repo as an `agent-ready` issue in that
    repo, or, when a git hook can check it, as a proposed agent-check in
    `_agent-guidance`, for the [fleet worker](fleet-worker.md) to turn into a
@@ -106,6 +107,44 @@ other has, keep the newer of any conflicting claim, and archive the other.
 If they differ in a way that matters, leave both and list the pair in the
 summary.
 
+### 2b. Check claims against their evidence
+
+A wrong note does more harm than a missing one: every later session reads it
+and trusts it, and a wrong line in `MEMORY.md` reaches every session. Age
+alone cannot find one, so this step re-checks what notes claim against the
+source of the fact
+([Anthropic, "The components of agent memory", 2026-11-06](https://www.anthropic.com/research/components-of-agent-memory):
+an offline pass that checked a wrong note against the session record fixed it,
+and the corrected run beat both the uncorrected and the no-memory runs).
+
+Checking everything every week costs too much, so check, in this order, as far
+as the run allows:
+
+1. every claim stated in a `MEMORY.md` line (it is loaded into every session);
+2. every note whose `modified` date is after the previous run's date (seven
+   days back when unknown);
+3. any other note `MEMORY.md` points to.
+
+A **checkable claim** names something whose current state can be read: a file,
+flag, setting, branch or workflow ("`eval.yml` is disabled"), a PR or issue
+state, a scheduled task or trigger, or what a session observed. Read that
+source now: the repo file at `origin/<default branch>`, the API, the trigger
+list, or, for a claim about what a session saw, that session's transcript
+when this run can read it (on the durable machine, the `*.jsonl` session
+logs in the same `~/.claude/projects/<project>/` directory, near the note's
+`modified` time). Do not check opinions, decisions or the owner's rules:
+they are not wrong because the world moved.
+
+- **The source agrees:** leave the claim.
+- **The source contradicts it:** correct the claim in place and keep the old
+  value as history in the same line, `(corrected <YYYY-MM-DD>: was <old>)`,
+  so a reader sees what changed. When the whole note is wrong, archive it.
+  A `type: user` note is never edited: flag it instead.
+- **The source cannot be read here:** leave it, and count it as unchecked.
+
+The summary (step 5) gives, per directory, `Claims: checked <n>, corrected <m>,
+unchecked <k>`, naming corrected notes by filename only.
+
 ### 3. Drop or flag stale claims, and fix the index
 
 - A claim is **dropped** (the line removed, or the note archived when nothing
@@ -124,6 +163,14 @@ summary.
 - A note under `oversize` is split by subject into notes of its own, each
   with the original's `type` and `home`. A `MEMORY.md` over the limit gets
   its longest entries moved into notes, leaving one line each.
+- **Keep `MEMORY.md` a short index.** It is the one file loaded into every
+  session (Claude Code loads only its first 200 lines or 25 KB), and a long
+  always-loaded file is followed less reliably. Each entry under
+  `index.long_entries` carries detail that belongs one level down: move the
+  detail into the note the entry points to (or a new note of its own, with a
+  `type` and `home`), and leave one line that says what the note is for and
+  links it. Many sessions write `MEMORY.md` at once, so one fact per note
+  also keeps a parallel edit of the index from overwriting a fact.
 - A note under `unparseable` gets its frontmatter fixed, usually by quoting
   `description`. A note under `missing_home` gets a home when the right
   file is clear (a repo fact goes to that repo's `AGENTS.md`); otherwise it
@@ -251,7 +298,8 @@ a fact whose home file does not hold it yet. For each one:
 
 The run's final message lists, per memory directory: notes before and after,
 duplicates merged, claims dropped, items flagged for the owner (by filename,
-never text), index fixes, and promotion issues filed with their links. If
+never text), index fixes, the step 2b line `Claims: checked <n>, corrected
+<m>, unchecked <k>`, and promotion issues filed with their links. If
 nothing changed and nothing was filed: `Nothing to do.`
 
 **Always, as the last line, even when both numbers are zero:**

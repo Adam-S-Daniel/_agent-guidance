@@ -12,8 +12,12 @@ each with YAML frontmatter (`name`, `description`, `metadata.type`,
   stale_dates    lines whose newest ISO date is older than --stale-days
   stale_refs     PRs, issues and files the resolver says are closed, merged
                  or missing (a home whose file is missing is a dangling home)
-  index          notes MEMORY.md never names, and MEMORY.md links to notes
-                 that do not exist
+  index          notes MEMORY.md never names (by filename, `[[stem]]` or
+                 `[[name]]`; an unmatched `[[x]]` is a note not yet written,
+                 not dangling), and MEMORY.md links to notes
+                 that do not exist, and index lines longer than
+                 --index-line-chars (an entry should be a one-line pointer;
+                 its detail belongs in a note)
   oversize       files over --max-bytes
 
 It also emits `promotions`: for a note whose home is `<owner>/<repo>:<path>`
@@ -57,6 +61,7 @@ URL_REF_RE = re.compile(
     r"https://github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)")
 BLOB_RE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+)/blob/[^/\s]+/([^\s)#?>\]]+)")
 SLUG_REF_RE = re.compile(r"(?<![\w./-])([\w.-]+/)?([\w.-]+)#(\d+)\b")
+WIKI_RE = re.compile(r"\[\[([^\[\]|#]+)(?:[|#][^\[\]]*)?\]\]")
 LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
 
 
@@ -95,7 +100,8 @@ def split_home(value):
 
 def parse_note(path):
     """-> dict with file, text, meta, body, error."""
-    note = {"file": os.path.basename(path), "meta": {}, "body": "", "error": None}
+    note = {"file": os.path.basename(path), "meta": {}, "body": "", "error": None,
+            "meta_name": None}
     with open(path, encoding="utf-8", errors="replace") as fh:
         note["text"] = fh.read()
     lines = note["text"].split("\n")
@@ -121,6 +127,8 @@ def parse_note(path):
     if "type" not in meta and isinstance(front.get("type"), str):
         meta["type"] = front["type"]
     note["meta"] = meta
+    if isinstance(front.get("name"), str) and front["name"].strip():
+        note["meta_name"] = front["name"].strip()
     note["description"] = front.get("description") if isinstance(front.get("description"), str) else ""
     return note
 
@@ -233,8 +241,24 @@ def promotion(note, owner, repo, path, fetcher):
     }
 
 
+def long_entries(index_text, limit):
+    """Index lines over `limit` characters, as line numbers and lengths only.
+    Blank lines, headings and fenced code blocks are skipped."""
+    found, fenced = [], False
+    for n, line in enumerate(index_text.split("\n"), 1):
+        text = line.strip()
+        if text.startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced or not text or text.startswith("#"):
+            continue
+        if len(text) > limit:
+            found.append({"line": n, "chars": len(text)})
+    return found
+
+
 def audit(memory_dir, today, stale_days=30, dup_threshold=0.8, max_bytes=4096,
-          resolver=None, fetcher=None):
+          resolver=None, fetcher=None, index_line_chars=200):
     """The whole report as a dict. `resolver(ref)` -> state | None;
     `fetcher(owner, repo, path)` -> text, "" for a missing file, or None."""
     resolver = resolver or (lambda ref: None)
@@ -294,13 +318,18 @@ def audit(memory_dir, today, stale_days=30, dup_threshold=0.8, max_bytes=4096,
                                         "similarity": ratio})
 
     index_path = os.path.join(memory_dir, INDEX)
-    index = {"present": os.path.isfile(index_path), "unindexed": [], "dangling": []}
+    index = {"present": os.path.isfile(index_path), "unindexed": [], "dangling": [],
+             "long_entries": []}
     index_text = ""
     if index["present"]:
         with open(index_path, encoding="utf-8", errors="replace") as fh:
             index_text = fh.read()
+    wiki_links = set(m.strip() for m in WIKI_RE.findall(index_text))
     for note in notes:
-        if not re.search(r"(?<![\w.-])%s(?![\w-])" % re.escape(note["file"]), index_text):
+        name = note["meta_name"]
+        if not (re.search(r"(?<![\w.-])%s(?![\w-])" % re.escape(note["file"]), index_text)
+                or note["file"][:-3] in wiki_links
+                or (name and name in wiki_links)):
             index["unindexed"].append(note["file"])
     for target in LINK_RE.findall(index_text):
         target = target.split("#", 1)[0]
@@ -308,6 +337,7 @@ def audit(memory_dir, today, stale_days=30, dup_threshold=0.8, max_bytes=4096,
                 and target not in names):
             index["dangling"].append(target)
     index["dangling"] = sorted(set(index["dangling"]))
+    index["long_entries"] = long_entries(index_text, index_line_chars)
 
     for name in names + ([INDEX] if index["present"] else []):
         size = os.path.getsize(os.path.join(memory_dir, name))
@@ -315,12 +345,12 @@ def audit(memory_dir, today, stale_days=30, dup_threshold=0.8, max_bytes=4096,
             f["oversize"].append({"file": name, "bytes": size})
 
     count = (sum(len(v) for v in f.values()) + len(index["unindexed"])
-             + len(index["dangling"]) + (0 if index["present"] or not notes else 1))
+             + len(index["dangling"]) + len(index["long_entries"]) + (0 if index["present"] or not notes else 1))
     return {
         "version": 1,
         "today": today.isoformat(),
         "settings": {"stale_days": stale_days, "dup_threshold": dup_threshold,
-                     "max_bytes": max_bytes},
+                     "max_bytes": max_bytes, "index_line_chars": index_line_chars},
         "notes": len(notes),
         "finding_count": count,
         "findings": dict(f, index=index),
@@ -353,6 +383,8 @@ def summary(report):
         out.append("- **Index**: MEMORY.md is missing")
     section("Not in MEMORY.md", f["index"]["unindexed"])
     section("MEMORY.md links to missing notes", f["index"]["dangling"])
+    section("MEMORY.md entries over %d characters" % report["settings"]["index_line_chars"],
+            ["line %d (%d chars)" % (e["line"], e["chars"]) for e in f["index"]["long_entries"]])
     section("Over the size limit", ["%s (%d bytes)" % (o["file"], o["bytes"]) for o in f["oversize"]])
     section("Promotions", ["%s -> %s:%s%s" % (p["note"], p["repo"], p["path"],
                                               " (narrow)" if p["narrow"] else "")
@@ -370,6 +402,7 @@ def main(argv=None):
     ap.add_argument("--stale-days", type=int, default=30)
     ap.add_argument("--dup-threshold", type=float, default=0.8)
     ap.add_argument("--max-bytes", type=int, default=4096)
+    ap.add_argument("--index-line-chars", type=int, default=200)
     ap.add_argument("--refs", help="JSON object: reference -> state")
     ap.add_argument("--clone-root", action="append", default=[])
     ap.add_argument("--summary", help="also write the Markdown summary here")
@@ -403,7 +436,8 @@ def main(argv=None):
     report = audit(args.memory_dir, today, args.stale_days, args.dup_threshold,
                    args.max_bytes,
                    resolver=chain(table.get, clone_resolver(args.clone_root)),
-                   fetcher=clone_fetcher(args.clone_root))
+                   fetcher=clone_fetcher(args.clone_root),
+                   index_line_chars=args.index_line_chars)
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     if args.summary:

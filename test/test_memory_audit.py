@@ -119,6 +119,51 @@ class MemoryAuditTests(unittest.TestCase):
         self.assertFalse(r["findings"]["index"]["present"])
         self.assertEqual(r["finding_count"], 2)  # the missing index, and the unindexed note
 
+    def test_wiki_links_index_notes_by_stem_or_name(self):
+        self.write("by-stem.md", note("by-stem", "A.", home="example-org/widget:README.md"),
+                   index=False)
+        self.write("file-name.md", note("other-slug", "B.", home="example-org/widget:README.md"),
+                   index=False)
+        self.write("lonely.md", note("lonely", "C.", home="example-org/widget:README.md"),
+                   index=False)
+        with open(self.dir / "MEMORY.md", "a", encoding="utf-8") as fh:
+            fh.write("- [[by-stem]] one\n- [[other-slug]] two\n- [[nobody]] not written yet\n")
+        idx = self.run_audit()["findings"]["index"]
+        self.assertEqual(idx["unindexed"], ["lonely.md"])
+        self.assertEqual(idx["dangling"], [])
+        self.assertEqual(self.run_audit()["finding_count"], 1)
+
+    def long_index(self, limit=None):
+        self.write("short.md", note("short", "Short.", home="example-org/widget:README.md"))
+        long_text = "x" * 250
+        with open(self.dir / "MEMORY.md", "a", encoding="utf-8") as fh:
+            fh.write("- [short](short.md) %s SECRETWORD\n" % long_text)  # line 2
+            fh.write("# Heading %s\n" % long_text)
+            fh.write("```\n%s\n```\n" % long_text)
+            fh.write("\n")
+        return self.run_audit() if limit is None else self.run_audit(index_line_chars=limit)
+
+    def test_long_index_entries_are_reported_by_line_and_length(self):
+        r = self.long_index()
+        line = "- [short](short.md) %s SECRETWORD" % ("x" * 250)
+        self.assertEqual(r["findings"]["index"]["long_entries"],
+                         [{"line": 2, "chars": len(line)}])
+        self.assertEqual(r["settings"]["index_line_chars"], 200)
+
+    def test_index_line_chars_setting_moves_the_threshold(self):
+        self.assertEqual(self.long_index(limit=1000)["findings"]["index"]["long_entries"], [])
+        shorter = self.run_audit(index_line_chars=20)["findings"]["index"]["long_entries"]
+        self.assertEqual([e["line"] for e in shorter], [1, 2])
+
+    def test_summary_counts_long_entries_without_quoting_them(self):
+        text = memory_audit.summary(self.long_index())
+        self.assertIn("**MEMORY.md entries over 200 characters** (1): line 2 (", text)
+        self.assertNotIn("SECRETWORD", text)
+
+    def test_long_entries_count_as_findings(self):
+        quiet = self.long_index(limit=1000)["finding_count"]
+        self.assertEqual(self.run_audit()["finding_count"], quiet + 1)
+
     # (e) size
     def test_oversize_files(self):
         self.write("big.md", note("big", "word " * 1000, home="example-org/widget:README.md"))
