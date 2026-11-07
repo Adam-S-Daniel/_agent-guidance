@@ -150,6 +150,16 @@ class MemoryAuditTests(unittest.TestCase):
                          [{"line": 2, "chars": len(line)}])
         self.assertEqual(r["settings"]["index_line_chars"], 200)
 
+    def test_wiki_links_do_not_count_toward_an_entry_length(self):
+        self.write("a.md", note("a", "A.", home="example-org/widget:README.md"))
+        links = " ".join("[[note-%03d]]" % i for i in range(40))
+        with open(self.dir / "MEMORY.md", "a", encoding="utf-8") as fh:
+            fh.write("- Topic: %s\n" % links)
+            fh.write("- Prose %s [[a]]\n" % ("y" * 250))
+        r = self.run_audit()["findings"]["index"]["long_entries"]
+        self.assertEqual(len(r), 1)
+        self.assertGreater(r[0]["chars"], 200)
+
     def test_index_line_chars_setting_moves_the_threshold(self):
         self.assertEqual(self.long_index(limit=1000)["findings"]["index"]["long_entries"], [])
         shorter = self.run_audit(index_line_chars=20)["findings"]["index"]["long_entries"]

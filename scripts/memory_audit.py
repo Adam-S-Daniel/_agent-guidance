@@ -243,7 +243,9 @@ def promotion(note, owner, repo, path, fetcher):
 
 def long_entries(index_text, limit):
     """Index lines over `limit` characters, as line numbers and lengths only.
-    Blank lines, headings and fenced code blocks are skipped."""
+    Blank lines, headings and fenced code blocks are skipped, and `[[name]]`
+    links do not count toward the length: a line of links is already the
+    pointer form the index wants."""
     found, fenced = [], False
     for n, line in enumerate(index_text.split("\n"), 1):
         text = line.strip()
@@ -252,8 +254,9 @@ def long_entries(index_text, limit):
             continue
         if fenced or not text or text.startswith("#"):
             continue
-        if len(text) > limit:
-            found.append({"line": n, "chars": len(text)})
+        prose = WIKI_RE.sub("", text).strip()
+        if len(prose) > limit:
+            found.append({"line": n, "chars": len(prose)})
     return found
 
 
