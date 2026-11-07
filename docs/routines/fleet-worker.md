@@ -79,6 +79,11 @@ no merge.
   ([ADR 0027](../decisions/0027-lessons-become-agent-checks-through-the-fleet-worker.md)),
   never push to a default branch, never
   force-push, never rewrite a PR branch's history.
+- **Never merge, or arm auto-merge on, a PR that changes the fleet guidance
+  outside the weekly merge window.** `agents-md/base.md` or any file under
+  `agents-md/sections/` counts, and so does a lesson-check PR that touches
+  them. Run the window check in step 2b; the rule and why are
+  [ADR 0039](../decisions/0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md).
 - **Never approve anything.** Never submit an APPROVE review, and never
   approve a deployment waiting on an environment such as
   `plugin-runtime-review` or `regression-review`, even though the token
@@ -251,7 +256,14 @@ findings. At most 5 reviews per run. If the subagent cannot run or gives
 no verdict, post nothing: the PR has no stamp, so it is never merged, and it
 goes to the owner under step 3.
 
-**2b. The merge.** For a PR meeting all seven items, merge it with
+**2b. The merge.** First the window check
+([ADR 0039](../decisions/0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md)):
+save the PR's file list (the one from item 7 serves) and run
+`node scripts/base-md-merge-window.js --now <the current UTC instant, read from the clock now> --files-json <files.json>`.
+Exit 0 means go on. Exit 2 means the PR changes the fleet guidance and the
+window is closed: do not merge it, leave it as it is, and say in the summary
+that it waits for the window (the next start is on stdout). Exit 1 is no
+decision: do not merge, and retry next run. Then, for a PR meeting all seven items, merge it with
 `expected_head_sha` set to the reviewed head: a merge commit, except in the
 three cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
 `jodidaniel.com`), which squash. Then comment `Merged by the fleet worker:
