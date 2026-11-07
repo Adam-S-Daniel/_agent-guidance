@@ -1,0 +1,149 @@
+{
+  "items": {
+    "https://www.anthropic.com/research/AI-resistant-technical-evaluations": {
+      "link": "https://www.anthropic.com/research/AI-resistant-technical-evaluations",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Designing AI-resistant technical evaluations"
+    },
+    "https://www.anthropic.com/research/a-postmortem-of-three-recent-issues": {
+      "link": "https://www.anthropic.com/research/a-postmortem-of-three-recent-issues",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "A postmortem of three recent issues"
+    },
+    "https://www.anthropic.com/research/advanced-tool-use": {
+      "link": "https://www.anthropic.com/research/advanced-tool-use",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Introducing advanced tool use on the Claude Developer Platform"
+    },
+    "https://www.anthropic.com/research/april-23-postmortem": {
+      "link": "https://www.anthropic.com/research/april-23-postmortem",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "An update on recent Claude Code quality reports"
+    },
+    "https://www.anthropic.com/research/building-c-compiler": {
+      "link": "https://www.anthropic.com/research/building-c-compiler",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Building a C compiler with a team of parallel Claudes"
+    },
+    "https://www.anthropic.com/research/claude-code-auto-mode": {
+      "link": "https://www.anthropic.com/research/claude-code-auto-mode",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "How we built Claude Code auto mode: a safer way to skip permissions"
+    },
+    "https://www.anthropic.com/research/claude-code-best-practices": {
+      "link": "https://www.anthropic.com/research/claude-code-best-practices",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Claude Code: Best practices for agentic coding"
+    },
+    "https://www.anthropic.com/research/claude-code-sandboxing": {
+      "link": "https://www.anthropic.com/research/claude-code-sandboxing",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Beyond permission prompts: making Claude Code more secure and autonomous"
+    },
+    "https://www.anthropic.com/research/code-execution-with-mcp": {
+      "link": "https://www.anthropic.com/research/code-execution-with-mcp",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Code execution with MCP: Building more efficient agents"
+    },
+    "https://www.anthropic.com/research/components-of-agent-memory": {
+      "link": "https://www.anthropic.com/research/components-of-agent-memory",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "The components of agent memory"
+    },
+    "https://www.anthropic.com/research/confidential-inference-trusted-vms": {
+      "link": "https://www.anthropic.com/research/confidential-inference-trusted-vms",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Confidential Inference via Trusted Virtual Machines"
+    },
+    "https://www.anthropic.com/research/demystifying-evals-for-ai-agents": {
+      "link": "https://www.anthropic.com/research/demystifying-evals-for-ai-agents",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Demystifying evals for AI agents"
+    },
+    "https://www.anthropic.com/research/desktop-extensions": {
+      "link": "https://www.anthropic.com/research/desktop-extensions",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Desktop Extensions: One-click MCP server installation for Claude Desktop"
+    },
+    "https://www.anthropic.com/research/effective-context-engineering-for-ai-agents": {
+      "link": "https://www.anthropic.com/research/effective-context-engineering-for-ai-agents",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Effective context engineering for AI agents"
+    },
+    "https://www.anthropic.com/research/effective-harnesses-for-long-running-agents": {
+      "link": "https://www.anthropic.com/research/effective-harnesses-for-long-running-agents",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Effective harnesses for long-running agents"
+    },
+    "https://www.anthropic.com/research/equipping-agents-for-the-real-world-with-agent-skills": {
+      "link": "https://www.anthropic.com/research/equipping-agents-for-the-real-world-with-agent-skills",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Equipping agents for the real world with Agent Skills"
+    },
+    "https://www.anthropic.com/research/eval-awareness-browsecomp": {
+      "link": "https://www.anthropic.com/research/eval-awareness-browsecomp",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Eval awareness in Claude Opus 4.6\u2019s BrowseComp performance"
+    },
+    "https://www.anthropic.com/research/harness-design-long-running-apps": {
+      "link": "https://www.anthropic.com/research/harness-design-long-running-apps",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Harness design for long-running application development"
+    },
+    "https://www.anthropic.com/research/how-we-contain-claude": {
+      "link": "https://www.anthropic.com/research/how-we-contain-claude",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "How we contain Claude across products"
+    },
+    "https://www.anthropic.com/research/infrastructure-noise": {
+      "link": "https://www.anthropic.com/research/infrastructure-noise",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Quantifying infrastructure noise in agentic coding evals"
+    },
+    "https://www.anthropic.com/research/managed-agents": {
+      "link": "https://www.anthropic.com/research/managed-agents",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Scaling Managed Agents: Decoupling the brain from the hands"
+    },
+    "https://www.anthropic.com/research/multi-agent-research-system": {
+      "link": "https://www.anthropic.com/research/multi-agent-research-system",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "How we built our multi-agent research system"
+    },
+    "https://www.anthropic.com/research/redesigning-source-control": {
+      "link": "https://www.anthropic.com/research/redesigning-source-control",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Redesigning source control at Anthropic"
+    },
+    "https://www.anthropic.com/research/writing-tools-for-agents": {
+      "link": "https://www.anthropic.com/research/writing-tools-for-agents",
+      "seeded": true,
+      "seen_at": "2026-11-07T11:08:11+00:00",
+      "title": "Writing effective tools for agents \u2014 with agents"
+    }
+  },
+  "version": 1
+}
