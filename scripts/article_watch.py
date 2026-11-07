@@ -52,7 +52,7 @@ STATE_VERSION = 1
 
 FEED_VAR = "ARTICLE_WATCH_FEED_URL"
 FIRE_URL_VAR = "ARTICLE_WATCH_FIRE_URL"
-BEARER_SECRET = "ARTICLE_WATCH_FIRE_BEARER"
+BEARER_SETTING = "ARTICLE_WATCH_FIRE_BEARER"
 
 FireFn = Callable[[str, str, str], "tuple[str, str]"]
 
@@ -180,7 +180,7 @@ def _config_check(fire_url: str, bearer: str, log: list[str]) -> int:
         log.append(f"::error::repository variable {FIRE_URL_VAR} must start with {FIRE_URL_PREFIX}")
         rc = 1
     if not bearer:
-        log.append(f"::error::repository secret {BEARER_SECRET} is not set; set it to the routine's API trigger token")
+        log.append(f"::error::repository secret {BEARER_SETTING} is not set; set it to the routine's API trigger token")
         rc = 1
     return rc
 

@@ -111,7 +111,7 @@ class ArticleWatch(unittest.TestCase):
         self.assertIn("skipped", state["items"][bad[1]])
 
     def test_missing_config_fails_names_it_and_keeps_the_match_pending(self):
-        for url, bearer, needle in [("", "b", aw.FIRE_URL_VAR), (FIRE_URL, "", aw.BEARER_SECRET),
+        for url, bearer, needle in [("", "b", aw.FIRE_URL_VAR), (FIRE_URL, "", aw.BEARER_SETTING),
                                     ("https://example.com/fire", "b", aw.FIRE_URL_VAR)]:
             state, rc, log, stub = self.go(feed(NEW, OTHER), seeded(OLD), fire_url=url, bearer=bearer)
             self.assertEqual(rc, 1)
