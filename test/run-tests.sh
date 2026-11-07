@@ -19825,6 +19825,31 @@ test_health_reusable_parity() {
     fi
 }
 
+test_base_md_merge_window() {
+    echo ""
+    echo "=== Test: base-md-merge-window.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "base.md merge window: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/base-md-merge-window-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-base-md-merge-window.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 14 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 14 ]]; then
+        pass "base.md merge window: node:test suite is green ($pass_n passed)"
+    else
+        fail "base.md merge window: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=14): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_routine_merge_gate() {
     echo ""
     echo "=== Test: routine-merge-gate.js (node:test suite) ==="
@@ -25558,6 +25583,7 @@ GROUP_self_hosted=(
     test_discrepancy_alert
     test_health_reusable_parity
     test_routine_merge_gate
+    test_base_md_merge_window
     test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown

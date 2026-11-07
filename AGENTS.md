@@ -99,6 +99,14 @@ the session-start verdict and the floor rules. `base.md` is inlined only under
 file under `agents-md/sections/`) and regenerate. CI regenerates and diffs it, so
 a stub edit without a regenerated `AGENTS.md` fails the build.
 
+**Fleet guidance merges by automation are batched into one weekly window**
+(Monday 17:00 to 19:00 UTC, bounds only in `scripts/base-md-merge-window.yml`;
+[ADR 0039](docs/decisions/0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md)).
+Automation that could merge a PR changing `agents-md/base.md` or
+`agents-md/sections/**` runs `node scripts/base-md-merge-window.js` first. A
+person may merge any time, but a manual merge outside the window restarts every
+guidance section's eval evidence.
+
 **`agents-md/base.md` is the fleet-memory payload, with a mirror.** Every edit to
 it is copied byte for byte to `.claude/hooks/fleet-guidance.md`, which this
 repo's own sessions load. CI's "Fleet payload mirrors base.md" step

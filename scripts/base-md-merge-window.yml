@@ -1,0 +1,14 @@
+# The weekly window in which a pull request that changes the fleet guidance
+# (agents-md/base.md or agents-md/sections/**) may be merged by automation
+# (ADR 0039). Read by scripts/base-md-merge-window.js, and fetched by
+# skills-evals' scripts/guidance_merge_window.py. This is the one place the
+# bounds are written; change them here and nowhere else.
+#
+# Every key is required and nothing else is allowed. All times are UTC.
+#
+#   weekday  ISO weekday of the window: 1 is Monday, 7 is Sunday.
+#   start    first minute inside the window, "HH:MM".
+#   end      first minute after the window, "HH:MM", later than start.
+weekday: 1
+start: "17:00"
+end: "19:00"
