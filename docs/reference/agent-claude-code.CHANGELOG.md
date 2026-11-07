@@ -43,7 +43,7 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.319](https://github.com/anthropics/claude-code/releases/tag/v2.1.319), published 2026-11-06T17:04Z (bullet 2.1.319/113)
   > Changed nested skill loading: with the Bash sandbox on, skills in `.claude/skills` folders below the starting folder load only if you start Claude Code there or `/cd` there
 
-**Issues:** PENDING.
+**Issues:** [_agent-guidance#459](https://github.com/Adam-S-Daniel/_agent-guidance/issues/459) (no label). The fire workflow commented that the fire URL or bearer is not configured, so nothing fired; the owner starts the sweep by hand.
 
 No other group met the name-the-surface bar. A fleet grep for `permission-mode auto`, `autoMode`, `CLAUDE_CODE_AUTO_MODE`, `CLAUDE_CODE_LOOP`, `PostToolUse` and `CLAUDE_CODE_PROXY_RESOLVES` found no fleet-repo file that the auto-mode, `/loop`, hook-timing or proxy bullets change. The fleet's `skills-bootstrap` hook installs skills into `~/.claude/skills`, not into a nested `.claude/skills` folder, so the nested-loading bullet is a sweep trigger only. Codex: no stable release after 0.167.0 (page 1 holds 0.167.0 and alphas above it).
 
