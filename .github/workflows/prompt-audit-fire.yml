@@ -13,6 +13,7 @@ name: Fire prompt-audit sweep
 #   $GITHUB_EVENT_PATH with jq. The only `${{ }}` uses are the job `if:`, the
 #   concurrency group and the `env:` that hands the token, URL and bearer to
 #   the one step that needs them.
+# * An unconfigured URL or bearer fails the run, so a missed fire shows red.
 # * Only an issue titled `Prompt-audit sweep trigger: ` that the owner's own
 #   account opened fires; a dispatch re-checks the same facts by reading the
 #   issue. A comment holding the marker below makes a second attempt a no-op.
@@ -85,11 +86,13 @@ jobs:
             exit 0
           fi
 
+          # Unconfigured is a failure, not a skip: a green run here hid a
+          # sweep that never started (issue 459, 2026-11-07).
           if [[ -z "$FIRE_URL" || -z "$FIRE_BEARER" ]]; then
-            echo "::notice::fire URL or bearer not configured"
             gh issue comment "$number" --repo "$repo" --body \
-              "The prompt-audit sweep fire URL or bearer is not configured in this repository, so nothing fired. The owner should start the sweep by hand with Run now."
-            exit 0
+              "The prompt-audit sweep fire URL or bearer is not configured in this repository, so nothing fired. The owner should set the PROMPT_AUDIT_SWEEP_FIRE_URL variable and the PROMPT_AUDIT_SWEEP_FIRE_BEARER secret, then re-run this workflow with this issue's number, or start the sweep by hand with Run now."
+            echo "::error::fire URL or bearer not configured"
+            exit 1
           fi
 
           # The bearer reaches curl on stdin through --config -, never argv.

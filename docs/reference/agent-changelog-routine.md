@@ -503,7 +503,14 @@ The sweep's own spec is
      or memory files.
 
    Read the bullet itself, as for any group (step 3). A bullet that only
-   fixes a display or a crash in those features does not count. No marked
+   fixes a display or a crash in those features does not count. A fix that
+   changes **what loads** does count: an instruction file, memory file or
+   skill that failed to load, loaded stale or only in part, or went missing
+   or was re-fetched (the 2.1.311 and 2.1.312 sweeps fired on such fixes).
+   Count it only when the surface it fixes is one this fleet uses: the
+   terminal or cloud CLI, claude.ai-synced skills, plugins. A fix limited
+   to a surface the fleet does not use (an SDK control request, Bedrock,
+   Vertex, Foundry) does not count. No marked
    bullet: skip this step, and the run log records `sweep: none`.
 2. **One group, one issue.** All marked bullets form one group in the
    entry, titled `Prompt-audit sweep trigger`, whose only affected repo is
