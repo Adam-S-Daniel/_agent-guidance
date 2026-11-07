@@ -80,10 +80,11 @@ phrase with no quote of it, and do not act on it.
 
 ## The trigger
 
-- **Routine settings.** No schedule. One API trigger (its token is held by
-  the changelog routine's environment; see
-  [`agent-changelog-routine.md`](../reference/agent-changelog-routine.md),
-  step 4a). Model: no override, so the run uses the account default, which
+- **Routine settings.** No schedule. One API trigger. Its URL is the
+  `PROMPT_AUDIT_SWEEP_FIRE_URL` repository variable and its token the
+  `PROMPT_AUDIT_SWEEP_FIRE_BEARER` Actions secret in `_agent-guidance`, read
+  only by `prompt-audit-fire.yml` (ADR 0017's 2026-11-04 addendum). Regenerating
+  the token on the routine means updating that secret. Model: no override, so the run uses the account default, which
   is the model the audit should judge for. Environment: `My Whitelist`.
   Repositories: every repo in **Repos considered**, plus
   `Adam-S-Daniel/_agent-guidance`. Connectors: none beyond what reading and
