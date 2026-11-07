@@ -30,6 +30,23 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-07 — 2.1.319 through 2.1.319
+
+- **Checked:** 2026-11-07T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.319](https://github.com/anthropics/claude-code/releases/tag/v2.1.319), published 2026-11-06T17:04Z
+- **Window:** v2.1.319 (published 2026-11-06T17:04Z), the first stable release after v2.1.318: 1 release, 146 bullets (only the one in group 1 is indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (clone checked out at tag `v2.1.319`, listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.319](https://github.com/anthropics/claude-code/releases/tag/v2.1.319), published 2026-11-06T17:04Z (bullet 2.1.319/113)
+  > Changed nested skill loading: with the Bash sandbox on, skills in `.claude/skills` folders below the starting folder load only if you start Claude Code there or `/cd` there
+
+**Issues:** PENDING.
+
+No other group met the name-the-surface bar. A fleet grep for `permission-mode auto`, `autoMode`, `CLAUDE_CODE_AUTO_MODE`, `CLAUDE_CODE_LOOP`, `PostToolUse` and `CLAUDE_CODE_PROXY_RESOLVES` found no fleet-repo file that the auto-mode, `/loop`, hook-timing or proxy bullets change. The fleet's `skills-bootstrap` hook installs skills into `~/.claude/skills`, not into a nested `.claude/skills` folder, so the nested-loading bullet is a sweep trigger only. Codex: no stable release after 0.167.0 (page 1 holds 0.167.0 and alphas above it).
+
 ### 2026-11-04 — 2.1.318 through 2.1.318
 
 - **Checked:** 2026-11-04T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
