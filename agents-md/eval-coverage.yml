@@ -74,7 +74,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/security/
-  bytes: 431
+  bytes: 617
 
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos
