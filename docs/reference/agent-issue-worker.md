@@ -99,7 +99,11 @@ blocked comments. The on-hold stop overrides step 7 below.
    `docs/skill-impact.md` entry (add lines only) and a `PURPOSE.md` beside
    the `SKILL.md`, and the PR body states how the eval touch gate was met
    (eval command, exit code and counts; a fixture PR link; or the skill's
-   non-coverage row), so the PR qualifies for the merge rule. If
+   non-coverage row), so the PR qualifies for the merge rule. In
+   `skills-evals`, every new `fixture.yaml` a fixture PR adds carries the
+   top-level `origin:` mapping (`kind`, `source`, `request`) that
+   `scripts/fixture_pr_gate.py` requires, even when the issue's own text
+   predates that rule; without it the PR never auto-merges. If
    the items need no file change (a measurement, a confirmation), comment
    the evidence on the issue, close it as completed, and take the next one. Run the
    repo's own test suite unpiped and record the count and the exit code.
