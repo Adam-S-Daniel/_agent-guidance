@@ -371,14 +371,20 @@ A mocked pid became `kill(-1, SIGKILL)`; every user process died
 
 ## Subagent delegation (model routing)
 
-- Don't write code in the orchestrating session: delegate to a subagent or
-  child session on a cheaper model — the cheapest capable tier for
-  exactly-specified edits, a mid tier for a clear spec; escalate rather than
-  ship a wrong diff on anything subtle. The orchestrator keeps root cause,
-  architecture, the spec (files, exact changes, house style, test command) and
-  diff review. A child that skips this
-  file (Explore/Plan or `omitClaudeMd` agents, SDK harnesses with
-  `settingSources: []`) needs constraints in its prompt.
+- **Every delegation passes `model`** (code, review, plan, research); unset,
+  a child inherits yours. Pick by what a miss costs: `haiku` for search,
+  inventories, log extraction, test-checked mechanical edits, never security
+  review (missed an auth bypass 3/3); `sonnet` for clear-spec implementation
+  you review; `opus` for fresh-context correctness review, and security
+  review at `effort: "high"`. Else `medium`; `xhigh` only for proof; never
+  `max`.
+- **Keep the judgment and the small work**: plan, architecture, root cause,
+  the spec, a task of ~10 tool calls. Fork (your model and context) only
+  under ~100k tokens. A child that skips this file (Explore/Plan,
+  `omitClaudeMd`, SDK `settingSources: []`) needs constraints in its prompt.
+- **Each call re-reads all context**: past ~150k tokens, hand a state note to
+  a fresh session; keep tool output small; poll with a script that wakes a
+  session on change.
 - Delegated work is done when a verifier exits 0: name the exact
   command, run LAST (a trailing `echo $?` hides the tool's code), and
   require its code back. "Cannot run it" is BLOCKED; a count off-spec,

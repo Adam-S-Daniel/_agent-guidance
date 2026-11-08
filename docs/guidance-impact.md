@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-08 — subagent-delegation — edit
+- Motivation: review and planning agents passed no `model` on 91 of 95 and 11 of 12 calls (Nov 2-8), because the rule read "Don't write code in the orchestrating session", so they inherited Opus; nothing kept security review off cheaper models; a week's thread spend was 65% context re-reads
+- Change: every delegation (code, review, plan, research) passes `model`, routed by what a miss costs (`haiku` search and checked mechanical edits, never security review; `sonnet` clear-spec implementation; `opus` correctness review and security review at high effort); effort defaults; do ~10-call tasks yourself; fork only under ~100k tokens; context-cost bullet (hand off past ~150k, small tool output, scripted polling)
+- Eval: review-task reproduction in WSL, CLI headless runs: fleet text alone 0/9 delegations passed a model (n=2 trials); proposed wording 8/8 and 6/6 (n=2 each); Haiku security review missed a planted auth bypass 3/3 (n=3). Owner-side report, not committed; fixture evals/guidance/subagent-delegation/ re-runs on the new text
+- Outcome: merged 2026-11-08
+
 ## 2026-11-04 — turn-lessons-into-checks — create
 - Motivation: the owner asked (2026-11-04) that the fleet guidance tell every agent to make git hook checks, skills and guidance sections when a lesson could recur, and that the system can count what agents made and its impact. The routing rule lived only inside "Finding your unknowns", as where durable findings go, with no instruction to make them unasked and no marker to count them by.
 - Change: new section with the check, skill, guidance order, where each goes, and a `Captures: check|skill|section <id>` commit trailer that the evals dashboard counts; base.md's size cap goes from 25 KiB to 26 KiB to fit it, since every existing section is eval-protected and cannot be trimmed for room.
