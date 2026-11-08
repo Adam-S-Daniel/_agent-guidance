@@ -120,7 +120,10 @@
   status: skipped
   reason: >-
     Enforced mechanically by agent-checks' pr-tldr check, whose refusal message
-    teaches the rule when a PR breaks it.
+    teaches the rule when a PR breaks it. Rechecked 2026-11-08, holds: fails
+    criterion 2 (the pr-tldr check is still in
+    templates/agent-checks/agent-checks, and the section's body is unchanged
+    since this row was written).
   since: 2026-11-02
   bytes: 324
 
@@ -194,6 +197,9 @@
   reason: >-
     Account facts the model cannot know otherwise, so an eval's outcome is known
     in advance; the risk is the fact going stale, checked for freshness instead.
+    Rechecked 2026-11-08, holds: fails criteria 3 and 5 (the section's body is
+    unchanged since this row was written and is still account facts). No
+    freshness check reads base.md yet; that lighter check is still to build.
   since: 2026-11-03
   bytes: 1228
 
