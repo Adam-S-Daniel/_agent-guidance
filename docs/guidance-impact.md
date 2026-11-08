@@ -51,6 +51,12 @@ Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-11-08 — subagent-delegation — edit
+- Motivation: the 2026-11-08 rewrite (PR #472) dropped the old "Don't write code in the orchestrating session" mandate; a thread started right after it built three fixtures in its own Opus context with no subagent (session transcript, 19:50-20:33 UTC)
+- Change: "Do judgment and ~10-call tasks yourself (...); delegate bigger implementation" restores the mandate; the reported-subagent bullet drops its 999/0 example to stay inside the full-build byte cap
+- Eval: none on this wording; the observation is n=1 (one thread, 0 of 0 Agent calls over ~46 tool calls of fixture building); fixture evals/guidance/subagent-delegation/ re-runs on the new text
+- Outcome: merged 2026-11-08
+
+## 2026-11-08 — subagent-delegation — edit
 - Motivation: review and planning agents passed no `model` on 91 of 95 and 11 of 12 calls (Nov 2-8), because the rule read "Don't write code in the orchestrating session", so they inherited Opus; nothing kept security review off cheaper models; a week's thread spend was 65% context re-reads
 - Change: every delegation (code, review, plan, research) passes `model`, routed by what a miss costs (`haiku` search and checked mechanical edits, never security review; `sonnet` clear-spec implementation; `opus` correctness review and security review at high effort); effort defaults; do ~10-call tasks yourself; fork only under ~100k tokens; context-cost bullet (hand off past ~150k, small tool output, scripted polling); the other bullets reflowed and trimmed, wording only, to stay under the 26,624-byte cap (PR #472)
 - Eval: review-task reproduction in WSL, CLI headless runs: fleet text alone 0/9 delegations passed a model (n=2 trials); proposed wording 8/8 and 6/6 (n=2 each); Haiku security review missed a planted auth bypass 3/3 (n=3). Owner-side report, not committed; fixture evals/guidance/subagent-delegation/ re-runs on the new text
