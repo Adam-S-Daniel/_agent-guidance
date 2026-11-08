@@ -1,8 +1,12 @@
 # Routine: fleet worker
 
-**Fires:** hourly, from a claude.ai scheduled task in Adam's account named
+**Fires:** every 3 hours, at 20 minutes past, from
+[`fleet-worker-fire.yml`](../../.github/workflows/fleet-worker-fire.yml), which
+calls the API trigger of a claude.ai scheduled task in Adam's account named
 `Fleet worker` (`trig_015GknYddgCBUBv7By3n7HHN`), which the owner created on
-the Routines page on 2026-10-26. Each fire
+the Routines page on 2026-10-26. It ran hourly from the Routines page until
+2026-11-08; that cost about $150-215 a week, mostly in runs that found
+nothing to do, and the page offers nothing between hourly and daily. Each fire
 starts a fresh cloud session. Why it exists, and why it may merge one narrow
 kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
 widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md).
@@ -43,7 +47,7 @@ the [memory curation routine](memory-curation.md) and the daily
 scheduled-run health audit file. The audit is the fleet's one detector for
 failing workflow runs: scheduled runs, plus push, dispatch and other runs on
 the default branch. It labels its `ci` tracking issue `agent-ready`, so a
-failure the audit finds reaches a fix PR within the hour. A memory-promotion
+failure the audit finds reaches a fix PR within 3 hours. A memory-promotion
 issue (`Memory promotion <date>: ...`) proposes facts from agent memory for
 the repo's own files. When its target is the repo-specific half of an
 `AGENTS.md`, a `CLAUDE.md`, a `SKILL.md` body or the fleet guidance, its fix
@@ -97,8 +101,10 @@ no merge.
 
 ## The trigger
 
-- **Scheduled task settings.** Hourly (the Routines page offers no
-  2-hour option). Fresh session per fire. Environment: `My Whitelist`.
+- **Scheduled task settings.** No schedule on the Routines page: an API
+  trigger only, fired every 3 hours by `fleet-worker-fire.yml`, whose
+  `FLEET_WORKER_FIRE_URL` repository variable and `FLEET_WORKER_FIRE_BEARER`
+  Actions secret come from that API trigger. Fresh session per fire. Environment: `My Whitelist`.
   Model: no override. Push notifications on, email off. "Auto-fix pull
   requests" on. Connectors: none beyond GitHub.
 - **Prompt, exactly:**

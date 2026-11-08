@@ -13979,6 +13979,23 @@ test_prompt_audit_sweep() {
     fi
 }
 
+# The fleet worker fire workflow (fleet-worker-fire.yml): every 3 hours, the
+# bearer on stdin only, an unconfigured URL or bearer fails. Never piped.
+test_fleet_worker_fire() {
+    echo ""
+    echo "=== Test: fleet worker fire workflow ==="
+    local out="$TEST_DIR/fleet-worker-fire-tap.txt" rc=0
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-fleet-worker-fire.js" > "$out" 2>&1 || rc=$?
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    if [[ "$rc" -eq 0 && "$pass_n" == "5" && "$fail_n" == "0" ]]; then
+        pass "fleet worker fire workflow: 5 passed"
+    else
+        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=5, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 # ── The self-hosted fleet-memory payload matches agents-md/base.md ────────
 #
 # This repo is excluded from the sync (SYNC_SELF_REPO), so nothing overwrites
@@ -25677,6 +25694,7 @@ GROUP_hook_pin=(
 GROUP_self_hosted=(
     test_on_hold_label
     test_prompt_audit_sweep
+    test_fleet_worker_fire
     test_sync_workflow_trigger
     test_sync_workflow_serialized
     test_self_hosted_hook_pin
