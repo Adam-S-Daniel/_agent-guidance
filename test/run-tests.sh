@@ -20358,15 +20358,17 @@ test_agents_md_size_budget() {
         fail "size budget: full build with every section is $full_bytes bytes, over 29696 — trim agents-md/base.md; Codex cuts a repo's AGENTS.md at 32768 bytes with nothing on screen to say so"
     fi
 
-    # STUB mode, which is what all 19 repos are on. 8192 is deliberately
-    # generous: the claim being pinned is that the always-on floor stays small
-    # enough that a repo's own additions have effectively the whole budget.
+    # STUB mode, which is what all 19 repos are on. The stub is loaded once
+    # per attached repo on every model call, so a five-repo session pays for
+    # it five times (_agent-guidance#473). The floor lives in base.md, the
+    # installed user-memory block; the stub keeps only the verdict pointer and
+    # the irreversible rules. 2048 holds it near the ~1 KB that design chose.
     local stub_bytes
     stub_bytes=$("$REPO_ROOT/scripts/build-agents-md.sh" | wc -c | tr -d ' ')
-    if [[ "$stub_bytes" -le 8192 ]]; then
-        pass "size budget: stub build is $stub_bytes bytes (<= 8192)"
+    if [[ "$stub_bytes" -le 2048 ]]; then
+        pass "size budget: stub build is $stub_bytes bytes (<= 2048)"
     else
-        fail "size budget: stub build is $stub_bytes bytes, over 8192 — agents-md/stub.md is the always-on floor in every repo"
+        fail "size budget: stub build is $stub_bytes bytes, over 2048 — agents-md/stub.md is the always-on floor in every repo"
     fi
 }
 
