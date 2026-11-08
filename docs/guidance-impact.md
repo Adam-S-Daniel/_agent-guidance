@@ -53,7 +53,7 @@ no backfill is planned; the file adds the fields git does not capture.
 ## 2026-11-08 — subagent-delegation — edit
 - Motivation: the 2026-11-08 rewrite (PR #472) dropped the old "Don't write code in the orchestrating session" mandate; a thread started right after it built three fixtures in its own Opus context with no subagent (session transcript, 19:50-20:33 UTC)
 - Change: "Do judgment and ~10-call tasks yourself (...); delegate bigger implementation" restores the mandate; the reported-subagent bullet drops its 999/0 example to stay inside the full-build byte cap
-- Eval: none on this wording; the observation is n=1 (one thread, 0 of 0 Agent calls over ~46 tool calls of fixture building); fixture evals/guidance/subagent-delegation/ re-runs on the new text
+- Eval: observation n=1 (one project thread, 0 Agent calls over ~46 tool calls of fixture building, 2026-11-08 19:50-20:33 UTC); this wording is not yet measured; fixture evals/guidance/subagent-delegation/ re-runs on the new text
 - Outcome: merged 2026-11-08
 
 ## 2026-11-08 — subagent-delegation — edit
