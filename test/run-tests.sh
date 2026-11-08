@@ -24862,7 +24862,8 @@ STUB
     chmod +x "$stub"
     ac_gha_run() {   # <event...> — run the runner in $repo with the stub; prints the exit code
         local r=0
-        (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        # A local run: CI's own GITHUB_ACTIONS=true would make it fail closed.
+        (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
             ZIZMOR_STUB_LOG="$out.log" AGENT_CHECKS_ZIZMOR="${AC_GHA_ZIZMOR:-$stub}" \
             bash "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
             > "$out.out" 2> "$out.err" < /dev/null || r=$?
