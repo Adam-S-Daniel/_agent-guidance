@@ -444,7 +444,10 @@ redo the edit, up to 3 times. It records:
   the issue's `## To check` section. If any item other than the one about
   the sweep logging a result is still unchecked (`- [ ]`), leave the issue
   open and add the `agent-ready` label, so the issue worker does the
-  hands-on checks. Otherwise close it as completed. On a `BLOCKED` stop,
+  hands-on checks. Do the same when the issue body or this run's own
+  result names a question the audit did not answer (anything "not
+  measured", "unverified" or "stays unmeasured"): list each one as a
+  `- [ ]` item in the `Swept:` comment. Otherwise close it as completed. On a `BLOCKED` stop,
   comment the `BLOCKED` line and leave it open with no label, so the owner
   sees it and can re-run by hand. Under `DRY_RUN`, change nothing on it.
 - Send one push notification: the result, the issue count and links, any
