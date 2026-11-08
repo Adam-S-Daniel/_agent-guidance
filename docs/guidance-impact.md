@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-07 — security — edit
+- Motivation: the owner corrected an agent (2026-11-07) that answered unescaped web text in a Jekyll layout by rejecting any value containing `<` or `>`; the rule is universal: escape or encode untrusted data, with an established library, for each context, just before placing it there.
+- Change: the concatenation bullet becomes an escape-or-encode-per-context rule naming the library requirement, the common contexts, and that rejecting or stripping characters does not replace it (base.md 26,419 bytes, under the 26 KiB cap).
+- Eval: the evals/guidance/security/ fixture was NOT re-run (no eval harness in the authoring session); the only result is the base.md checks, `node --test test/test-on-hold-label.js test/test-fleet-guidance-mirror.js test/test-check-agent-markdown.js` exit 0.
+- Outcome: pending
+
 ## 2026-11-04 — turn-lessons-into-checks — create
 - Motivation: the owner asked (2026-11-04) that the fleet guidance tell every agent to make git hook checks, skills and guidance sections when a lesson could recur, and that the system can count what agents made and its impact. The routing rule lived only inside "Finding your unknowns", as where durable findings go, with no instruction to make them unasked and no marker to count them by.
 - Change: new section with the check, skill, guidance order, where each goes, and a `Captures: check|skill|section <id>` commit trailer that the evals dashboard counts; base.md's size cap goes from 25 KiB to 26 KiB to fit it, since every existing section is eval-protected and cannot be trimmed for room.
