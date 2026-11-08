@@ -375,17 +375,16 @@ A mocked pid became `kill(-1, SIGKILL)`; every user process died
 ## Subagent delegation (model routing)
 
 - **Every delegation passes `model`** (code, review, plan, research); unset,
-  a child inherits yours. `haiku` for search, log extraction, test-checked
+  it inherits yours. `haiku` for search, log extraction, test-checked
   mechanical edits, never security review; `sonnet` for clear-spec
   implementation you review; `opus` for fresh-context correctness review,
-  and security review at `effort: "high"`. Else `medium`, never `max`.
+  and security review at `effort: "high"`. Else effort `medium`, never `max`.
 - **Keep judgment and small work**: plan, architecture, root cause, the
-  spec, a task of ~10 tool calls. Fork (your model and context) only under
-  ~100k tokens. A child that skips this file (Explore/Plan, `omitClaudeMd`,
-  SDK `settingSources: []`) needs constraints in its prompt.
-- **Each call re-reads all context**: past ~150k tokens, hand a state note
-  to a fresh session; keep tool output small; poll with a script that wakes
-  a session on change.
+  spec, ~10-call tasks. Fork (your model and context) only under ~100k
+  tokens. A child that skips this file (Explore/Plan, `omitClaudeMd`) needs
+  constraints in its prompt.
+- **Each call re-reads all context**: past ~150k tokens, hand off to a fresh
+  session; keep tool output small; poll with scripts, not models.
 - Delegated work is done when a verifier exits 0: name the exact command,
   run LAST (a trailing `echo $?` hides the tool's code), and require its
   code back. "Cannot run it" is BLOCKED; a count off-spec, stop-and-report;
@@ -406,8 +405,7 @@ A mocked pid became `kill(-1, SIGKILL)`; every user process died
   inputs before and after (differ → not evidence); prefer a per-run output
   path; kill orphans, and say so.
 - **A subagent that goes quiet is not working — check activity, not the
-  clock.** Watch its transcript's mtime, with a threshold and fallback set
-  in advance.
+  clock.** Watch its transcript's mtime, with threshold and fallback preset.
 - **A live-test prompt states the credential boundary** — which
   `HOME`/profile, what it may read, and that it must not copy real
   credentials to pass: a throwaway one, or none; else it's the operator's
