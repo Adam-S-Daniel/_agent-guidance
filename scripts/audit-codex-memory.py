@@ -28,6 +28,7 @@ import tempfile
 
 
 NAMESPACES = ("memories", "memories_v2")
+V2_LOCK = "memories_v2.lock"
 EXPECTED_COLUMNS = {
     "stage1_outputs": {
         "thread_id": "TEXT", "source_updated_at": "INTEGER",
@@ -444,9 +445,17 @@ def scan(home):
         known_names = set(NAMESPACES)
         for namespace in NAMESPACES:
             known_names.update(namespace + "_1.sqlite" + suffix for suffix in ("", "-wal", "-shm"))
+        # Codex 0.166.0 creates an empty memories_v2.lock at the top of the
+        # profile once memory is on (_agent-guidance#363). It holds no memory,
+        # so it is accepted unread, but only as a regular file.
+        known_names.add(V2_LOCK)
         for path in home.iterdir():
             if path.name.startswith("memories") and path.name not in known_names:
                 raise AuditError("unknown memory store layout or database version")
+        lock = home / V2_LOCK
+        reject_symlinks(lock)
+        if lock.exists() and not lock.is_file():
+            raise AuditError("unknown memory store layout or database version")
     records = []
     for namespace in NAMESPACES:
         database = home / (namespace + "_1.sqlite")

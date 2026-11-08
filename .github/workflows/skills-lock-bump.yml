@@ -40,7 +40,28 @@ on:
     # records measured GitHub cron lag of 4-5h on daily crons, which swamps 41
     # minutes of nominal separation. Nothing breaks if two of these do overlap;
     # they are separate workflows on separate runners.
-    - cron: "41 7 * * *"
+    #
+    # EVERY SIX HOURS, not daily. A registry skill edit re-pins the registry's
+    # own skills.lock in the same pull request, but reaches a consumer only
+    # after one run proposes the bump and a later run sweeps it in (two cycles,
+    # three when the #227 deferral applies). Until then a session that attaches
+    # the registry beside a consumer sees two locks pin that skill at different
+    # digests, and the bootstrap hook installs neither (adam-agentskills ADR
+    # 0007). At a daily cadence that window was two to three days after every
+    # edit (skills-doctor, 2026-10-29 to 2026-10-31); at six hours it is about
+    # half a day. Six hours is still far more than any consumer's CI needs to
+    # report before the sweep reads it (ADR 0015's 2026-10-31 addendum).
+    - cron: "41 1,7,13,19 * * *"
+  # EVENT-DRIVEN, with the cron above as the backstop (#413): GitHub starts
+  # about one of those scheduled runs a day, so a registry change took days to
+  # reach consumers. skills-evals' skills-lock-bump-dispatch.yml sends this
+  # event when adam-agentskills' main has changed: twice per change (propose,
+  # then sweep), never while a run is active or within 30 minutes of the last
+  # one. It is sent with the eval-improve App, which already holds Contents:
+  # write here (repo-settings ADR 0014) and so needs no new grant. A dispatch
+  # carries no inputs, so it is never a dry run.
+  repository_dispatch:
+    types: [skills-lock-bump]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -55,8 +76,9 @@ on:
 # cancelled winner blocks the merge permanently. This job publishes no status
 # context at all — it has no `pull_request` trigger and no PR anywhere waits on
 # it — so there is no context for a cancelled run to poison. (Its triggers CAN
-# produce two runs at one sha: `schedule` and `workflow_dispatch` both run at
-# the default branch head, and a dispatch fired during the nightly run is two.
+# produce two runs at one sha: `schedule`, `repository_dispatch` and
+# `workflow_dispatch` all run at the default branch head, and a dispatch fired
+# during the nightly run is two.
 # That is exactly why the group is here, and why it does not matter.)
 #
 # `cancel-in-progress: false` buys one specific thing: the in-flight run is

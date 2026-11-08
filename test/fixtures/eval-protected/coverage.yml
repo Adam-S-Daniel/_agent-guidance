@@ -1,0 +1,18 @@
+- id: alpha
+  heading: Alpha section
+  file: agents-md/base.md
+- id: beta
+  heading: Beta section
+  file: agents-md/base.md
+- id: gamma
+  heading: Gamma section
+  file: agents-md/base.md
+- id: delta
+  heading: Delta section
+  file: agents-md/base.md
+- id: docker
+  heading: Docker
+  file: agents-md/sections/docker.md
+- id: go
+  heading: Go
+  file: agents-md/sections/go.md

@@ -4,11 +4,14 @@
 > Edit only below the `## Repo-specific additions` header.
 > Everything above it will be overwritten on the next sync.
 
+guidance-marker: fleet-full (transcript counts use this line; keep it)
+
 Only what is **specific to this account and learned the hard way**; depth
 lives in each repo's `docs/` and the skills registry. Delivered once per
 session to BOTH `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, so a rule for
 every agent goes here, not in `~/.claude/AGENTS.md` (one tool only). Keep it
-under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
+under 26 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB. The
+incident behind each rule: `docs/evidence/base-md-incidents.md`.
 
 ## Working in these repos
 
@@ -38,8 +41,8 @@ under 25 KiB; Codex silently cuts a full-mode AGENTS.md at 32 KiB.
 ## Anything you name gets its link
 
 Any noun the reader might open gets its URL in the same sentence:
-**what you hand over** (jodidaniel.com#176), **what YOU are waiting on**
-(every time you name it), **what you cite as DONE** (2026-08-29).
+**what you hand over**, **what YOU are waiting on** (every time you name
+it), **what you cite as DONE**.
 
 - **Link the surface that decides, not its parent.** A required environment
   review lives on its job page, `.../actions/runs/<run_id>/job/<job_id>`, not
@@ -68,6 +71,21 @@ one without it, and a `type: user` note about the person is exempt. The
 **`finding-unknowns`** skill is the full workflow: use it on unfamiliar code,
 a new domain or subjective criteria.
 
+## Turn lessons into checks, skills and guidance
+
+When a mistake, an owner correction or a procedure you had to work out
+could recur, capture it before you finish, unasked (the one addition "fix
+what was asked" allows), in its own commit:
+
+- **A check first**, when a commit can show the problem: fleet-wide in
+  `_agent-guidance`'s `templates/agent-checks/agent-checks`, one repo's in
+  `.agent-checks/local.sh`.
+- **Else a skill** for a multi-step procedure, in the skills registry.
+- **Else a guidance section** in `_agent-guidance`'s `agents-md/base.md`.
+
+Name each in a commit trailer, `Captures: check|skill|section <id>`; the
+evals dashboard counts these and their blocks, uses and eval verdicts.
+
 ## Workstation layout
 
 - Clones live under Windows
@@ -78,8 +96,11 @@ a new domain or subjective criteria.
 
 - Validate anything crossing a trust boundary — user input, API responses,
   file contents.
-- Never build SQL, shell commands or HTML by concatenating untrusted data:
-  parameterized queries, shell arrays, context-aware escaping.
+- **Escape or encode untrusted data for each context it reaches**, just
+  before it is placed there, with a well-established library or built-in
+  (else a thoroughly vetted algorithm): HTML text or attribute, URL, YAML,
+  SQL (parameterized queries), shell (arrays). Rejecting or stripping
+  characters does not replace it.
 - Never commit secrets, credentials or `.env` files, or disable TLS
   verification, authentication or CSRF protection.
 - **Automation authenticates as a scoped GitHub App, not a PAT.**
@@ -108,8 +129,11 @@ public repo.
 
 ## Read before you start
 
-- **Settings schema design** (config keys, flags, fields): https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/settings-schema-design.md
-- **Network allowlists** (editing either egress allowlist): https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/network-allowlists.md
+Under https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/:
+
+- `settings-schema-design.md`: config keys, flags, fields
+- `network-allowlists.md`: editing either egress allowlist
+- `code-scanning-alerts.md`: reading alerts when the token gets 403
 
 ## Automation vs branch protection
 
@@ -127,8 +151,10 @@ Fleet repos are PR-only on the default branch via ruleset, managed in
 - A bot that must write to a default branch needs a ruleset bypass actor
   declared in repo-settings' `fleet.yml`, never
   a hand-granted UI bypass.
-- PR + auto-merge is not a sanctioned bot-write path, bar skills-evals' roster
-  PR (repo-settings ADR 0003); cms-platform-managed repos use it by design.
+- PR + auto-merge is a sanctioned bot-write path only where a repo-settings
+  ADR declares the exception: the eval and guidance loops' PRs (ADRs 0003,
+  0012, 0014), lesson-check PRs (0013) and the changelog routine's (0015);
+  cms-platform-managed repos use it by design.
 - **A required status check gets no `concurrency` group** when its job can
   fire twice on one head sha (label events, `opened` + `synchronize`): a
   cancelled run can win the context and block the merge for good.
@@ -155,16 +181,16 @@ hold before writing.
   only one with Actions tools (`actions_*`), job logs (`get_job_logs`),
   auto-merge and review-thread resolution. Reach: the attached repos.
 - **`github-mcp` — the claude.ai org connector**, in `ListConnectors`, tool
-  prefix varying by surface: the same reads and PR/issue/merge/push/delete
-  writes, none of those four. Reach: a GitHub App allowlist INDEPENDENT of the
+  prefix varying by surface: the same reads and PR/merge/push/delete writes,
+  none of those four; issue writes can 403. Reach: a GitHub App allowlist INDEPENDENT of the
   attached repos. **Probe for it by connector NAME, never a remembered
   prefix**. It checks a PR with `pull_request_read` `method:
-  "get_check_runs"` and `"get_status"`; read BOTH (#83: `get_status`
-  `pending` while every check run was green). It cannot dispatch or read a
+  "get_check_runs"` and `"get_status"`; read BOTH (`get_status` can
+  read `pending` while every check run is green). It cannot dispatch or read a
   workflow RUN; its merge is synchronous.
 - **Fewer tools is not less dangerous.** Both merge, push and delete; the
-  subset's reach cannot be inferred from the session's repo list (2026-08-19:
-  `github-mcp` 404s on private `repo-settings`).
+  subset's reach cannot be inferred from the session's repo list
+  (`github-mcp` can 404 on a private repo the other server reads).
 
 Prefer `mcp__github__`; use `github-mcp` only when the other cannot see a
 repo, say so, and name the connector in each verification.
@@ -181,6 +207,13 @@ Explain a merge, close or label change in a marked comment.
 **Never submit an APPROVE review**: it cannot be marked. The
 `github-write-marker.sh` hook enforces it.
 
+## PR descriptions open with a TLDR
+
+Start every PR description with a `## TLDR` heading and one to three
+plain-English sentences on what changes and why. Only an attribution block
+(HTML comments, a `_Requested by …_` line) may precede it. `agent-checks`
+fails a PR without it; editing the description re-runs the check.
+
 ## A GitHub 404 means "not authorized", not "not there"
 
 GitHub answers 404, not 403, to a caller not allowed to know a private repo
@@ -189,8 +222,8 @@ exists, so every 404 is ambiguous: gone, or invisible to that credential.
 - **Probe the repo, not the object.** If `GET /repos/<owner>/<repo>/pulls`
   404s too, the repo is invisible (a scope gap); if only the object does, it
   is gone.
-- **Try the other connector first** (2026-08-19: a mid-session MCP reconnect
-  brought up a server blind to a private repo the other read;
+- **Try the other connector first** (a mid-session MCP reconnect can bring
+  up a server blind to a private repo the other reads;
   `add_repo` "already attached" is session scope).
 - **Git is a separate credential path:** `git ls-remote origin '<ref>'` asks
   "does this branch exist", `git merge-base --is-ancestor <sha> origin/main`
@@ -203,8 +236,8 @@ exists, so every 404 is ambiguous: gone, or invisible to that credential.
 `Adam-S-Daniel` and `jodidaniel`, both in `SYNC_OWNERS` (_agent-guidance's
 `sync.yml` and sibling workflows): enumerate it, never hardcode one. A
 query scoped to one owner returns a plausible, complete-shaped, wrong
-result (2026-08-25: a `user:Adam-S-Daniel` search "proved" jodidaniel.com
-had no `skills.lock`).
+result (a `user:Adam-S-Daniel` search "proves" jodidaniel.com has no
+`skills.lock`).
 
 - **Prefer the fleet's registries** (`repos.yml`, `fleet.yml`,
   `cron_coverage.fleet`) to a search index; a zero result is weak
@@ -213,7 +246,7 @@ had no `skills.lock`).
 - **Your session's reach is not the fleet's shape** — it is per-session and
   may miss an owner; "I cannot see it" and "it does not exist" differ.
 - **The DENOMINATOR is the part that lies.** Enumerating local checkouts
-  errs both ways (issue #37: three deleted repos counted, a live one missed).
+  errs both ways (three deleted repos counted, a live one missed).
   Take it from a registry or the remote, never the disk, and say which.
 
 ## "The watch finished" is not "CI passed"
@@ -236,7 +269,7 @@ hides FAILURE lines.
   and the other reads clean. "Watch done" means "now verify".
 - **A pipe into `grep -q` is a race.** `grep -q` exits at the first match, so
   past the 64 KiB pipe buffer the writer dies 141 and `pipefail` reads a
-  present marker as absent (issue #81; 20 trials per size: 48 kB 0/20,
+  present marker as absent (20 trials per size: 48 kB 0/20,
   95 kB 18/20). Feed data as an argument or here-string —
   `grep -qxF -- "$m" <<<"$s"`.
   A size-dependent bug needs trials, not a probe; say how many.
@@ -250,8 +283,7 @@ hides FAILURE lines.
 A pre-commit hook that refuses the commit does not stop the push: `git push`
 pushes the base commit and prints an ordinary success. The
 fleet's `secrets-scan` guard (cms-platform's `dev-hooks-sync.yml`) FAILS
-CLOSED without `gitleaks` on `PATH`, which a fresh container lacks
-(2026-08-25, adamdaniel.ai).
+CLOSED without `gitleaks` on `PATH`, which a fresh container lacks.
 
 - **Verify the commit, not the push:** `git log --oneline -1` shows your
   message and `git status --short` is clean, or `git rev-parse HEAD` differs
@@ -262,15 +294,15 @@ CLOSED without `gitleaks` on `PATH`, which a fresh container lacks
   emergencies; the binary is one `curl` away.
 - **A push can carry the WRONG ref while both checks pass.**
   `git push -u origin <name>` pushes the LOCAL branch of that name, maybe
-  not the one you are on (2026-08-29: the commit landed on `main` and
-  the push updated a stale local branch). The only check naming commit AND
+  not the one you are on (the commit lands on `main` and the push
+  updates a stale local branch). The only check naming commit AND
   remote branch: `git merge-base --is-ancestor <sha> origin/<branch>`, after
   every push.
 
 ## Dependency updates
 
-Dependabot `cooldown`: `default-days: 7` (cms-platform `exclude`d, #424);
-`semver-major-days: 30` where supported (not `github-actions`, #133). Version
+Dependabot `cooldown`: `default-days: 7` (cms-platform `exclude`d);
+`semver-major-days: 30` where supported (not `github-actions`). Version
 updates only (advisories bypass it); unset still waits 3 days; leave
 `semver-minor-days` / `-patch-days` undefined.
 **By hand**, nothing watches: take the newest release past 7 days
@@ -300,7 +332,7 @@ name outlives a rename).
 - **Do not lean on a scanner's internals.** `sha256:<hex>` dodges the rule
   only because `:` is outside its capture class.
 - **Suppress by value, never by path.** A `paths` entry skips the file before
-  any rule runs (cms-platform#260).
+  any rule runs.
 
 ## Pinning GitHub Actions
 
@@ -325,7 +357,7 @@ name outlives a rename).
 
 ## A test that can signal can kill every session
 
-2026-10-04: a mocked pid became `kill(-1, SIGKILL)`; every user process died
+A mocked pid became `kill(-1, SIGKILL)`; every user process died
 ([evidence](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/evidence/2026-10-04-killpg-on-a-mocked-pid.md)).
 
 - **Code that signals refuses any pid or group but an `int` > 1**, before the
@@ -336,50 +368,53 @@ name outlives a rename).
   kill. Find what sent the signal.
 - **A session that dies mid-verifier is evidence against it.** After a
   restart, find what killed it (journal, 137, `dmesg`) before re-running:
-  resumed agents re-running the suite made one kill fifteen (2026-10-04).
+  resumed agents re-running the suite made one kill fifteen.
 - **Run spawning or signaling suites in a PID namespace:**
   `unshare --user --map-current-user --pid --fork --mount-proc -- <cmd>`.
 
 ## Subagent delegation (model routing)
 
-- Don't write code in the orchestrating session: delegate to a subagent or
-  child session on a cheaper model — the cheapest capable tier for
-  exactly-specified edits, a mid tier for a clear spec; escalate rather than
-  ship a wrong diff on anything subtle. The orchestrator keeps root cause,
-  architecture, the spec (files, exact changes, house style, test command) and
-  diff review. A child that skips this
-  file (Explore/Plan or `omitClaudeMd` agents, SDK harnesses with
-  `settingSources: []`) needs constraints in its prompt.
-- Delegated work is done when a verifier exits 0: name the exact
-  command, run LAST (a trailing `echo $?` hides the tool's code), and
-  require its code back. "Cannot run it" is BLOCKED; a count off-spec,
-  stop-and-report; a self-contradicting report ("2 failed",
-  "exit 0"), re-run it. **Prove the verifier can fail first:**
-  `python3 test_foo.py` with no `__main__` block exits 0 having asserted
-  nothing (2026-08-22). Name the RUNNER (`python3 -m pytest <paths> -q`),
-  never the file, and require the test COUNT beside the exit code.
+- **Every delegation passes `model`** (code, review, plan, research); unset,
+  it inherits yours. `haiku` for search, log extraction, test-checked
+  mechanical edits, never security review; `sonnet` for clear-spec
+  implementation you review; `opus` for fresh-context correctness review,
+  and security review at `effort: "high"`. Else effort `medium`, never
+  `max`.
+- **Do judgment and ~10-call tasks yourself** (plan, architecture, root
+  cause, the spec); delegate bigger implementation. Fork (your model and
+  context) only under ~100k tokens. A child that skips this file
+  (Explore/Plan, `omitClaudeMd`) needs constraints in its prompt.
+- **Each call re-reads all context**: past ~150k tokens, hand off to a fresh
+  session; keep tool output small; poll with scripts, not models.
+- Delegated work is done when a verifier exits 0: name the exact command,
+  run LAST (a trailing `echo $?` hides the tool's code), and require its
+  code back. "Cannot run it" is BLOCKED; a count off-spec, stop-and-report;
+  a self-contradicting report ("2 failed", "exit 0"), re-run it. **Prove the
+  verifier can fail first:** `python3 test_foo.py` with no `__main__` block
+  exits 0 having asserted nothing. Name the RUNNER
+  (`python3 -m pytest <paths> -q`), never the file, and require the test
+  COUNT too.
 - **A working subagent OWNS the tree — do not commit or push under it.** A
   push mid-flight plus its `git commit --amend` diverges a published branch
-  (2026-08-22; recover by reset and a fresh commit, never force-push), and its
-  `git checkout -- <file>` discards your edits. Wait for a clean `git status`
-  plus a recorded result; decline a stop hook's "commit and push" nudge.
+  (recover by reset and a fresh commit, never force-push), and its
+  `git checkout -- <file>` discards your edits. Wait for a clean
+  `git status` plus a recorded result; decline a stop hook's "commit and
+  push" nudge.
 - **A subagent that has REPORTED can still be holding the tree**: its
-  BACKGROUND CHILDREN are not reaped (2026-08-29: a 999/0 tree read
-  985/14). Look for descendants before trusting a long run
+  BACKGROUND CHILDREN are not reaped Check for descendants
   (`ps -eo pid,etimes,cmd | grep '[y]our-command'`); `md5sum` inputs before
   and after (differ → not evidence); prefer a per-run output path; kill
   orphans, and say so.
 - **A subagent that goes quiet is not working — check activity, not the
-  clock.** Its transcript's mtime is the signal; fix the staleness threshold
-  and the fallback in advance.
+  clock.** Watch its transcript's mtime, with threshold and fallback preset.
 - **A live-test prompt states the credential boundary** — which
   `HOME`/profile, what it may read, and that it must not copy real
-  credentials to pass. Supply a throwaway one or run
-  unauthenticated; else it's the operator's call.
+  credentials to pass: a throwaway one, or none; else it's the operator's
+  call.
 - **A scratch tree can still reach production.** `cp -a` copies
   `.git/config`, so a copy inherits `origin`; but `git remote remove origin`
-  in a `git worktree` strips the PARENT's remote. Run `/adam-coding-anywhere:disarm-inherited-reach`
-  before disarming.
+  in a `git worktree` strips the PARENT's remote. Run
+  `/adam-coding-anywhere:disarm-inherited-reach` before disarming.
 
 ## Skills ecosystem
 
@@ -446,11 +481,10 @@ belongs in a repo's `AGENTS.md`.
   are off (`--squash` fails; do not offer it) except the three
   cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
   `jodidaniel.com`), kept for Decap publishing. Squash strands commits a
-  lockfile pins by sha (2026-08-15: `cannot resolve ref`).
+  lockfile pins by sha (`cannot resolve ref`).
 - **A closing keyword before `#N` or an issue/PR URL, any repo, closes it,
   PRs too**, from a PR body or any commit message; backticks don't help,
-  and linked issues won't show it (cms-platform#283 via `78617e1`,
-  _agent-guidance#136 by cms-platform#434). To close: `Closes #N`, not
+  and linked issues won't show it. To close: `Closes #N`, not
   `For #N`; else omit it. After merging, check what should stay open is.
 - **Before a PR, `git log origin/<base>..HEAD --oneline` lists only this
   task's commits.** A reusable worktree (`.claude/worktrees/<name>/`) carries

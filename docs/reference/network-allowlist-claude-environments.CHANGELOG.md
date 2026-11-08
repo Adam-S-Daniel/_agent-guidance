@@ -576,3 +576,31 @@ lives in an environment no other session uses.
   default list already covers it; it is listed explicitly so the fire keeps
   working if the checkbox is ever unchecked. Not yet probed from inside the
   environment.
+
+---
+
+## 2026-11-03 — the usage-sink S3 bucket added
+
+**Environment:** `My Whitelist`
+**Checkbox "Also include default list of common package managers":** checked (unchanged)
+**Change:** one domain ADDED. Adam applied it in the environment dialog on
+2026-11-03 and pasted the full live list back; apart from this line it matches
+the `.txt` exactly (same set of 36 entries).
+
+```
++ adam-usage-sink-2026-11.s3.us-east-1.amazonaws.com
+```
+
+### Per-domain justification
+
+- **`adam-usage-sink-2026-11.s3.us-east-1.amazonaws.com`** — the bucket the
+  `guidance-load-record.sh` Stop hook uploads cloud usage records to when
+  `adam-agentskills-private` is not attached to the session
+  ([ADR 0037](../decisions/0037-cloud-usage-records-go-to-a-private-s3-bucket.md)).
+  The hook sends virtual-hosted-style PUTs to exactly this host, built from
+  the environment's `USAGE_SINK_BUCKET` and `USAGE_SINK_REGION`. The bucket is
+  created by `adam-agentskills-private`'s `infrastructure/usage-sink/`
+  stack. **Deliberately not** `*.amazonaws.com` or `*.s3.amazonaws.com`:
+  only this one bucket is needed, and a wildcard would open every bucket in
+  S3 to every session in the environment. Not yet probed from inside the
+  environment.

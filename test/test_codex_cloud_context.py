@@ -35,7 +35,8 @@ class CodexCloudContextCheckTests(unittest.TestCase):
     def cloud_block(self, payload_text=None):
         payload = payload_text if payload_text is not None else self.payload_text
         raw = payload.encode()
-        version = hashlib.sha256(raw).hexdigest()[:8]
+        digest = hashlib.sha256(raw).hexdigest()
+        version, check = digest[:8], digest[56:]
         if not payload.endswith("\n"):
             payload += "\n"
         return (
@@ -43,6 +44,7 @@ class CodexCloudContextCheckTests(unittest.TestCase):
             f"<!-- fleet-guidance-version: {version} -->\n"
             f"fleet-guidance: installed (v{version}, {len(raw)} bytes) — Codex Cloud setup and maintenance\n"
             f"{payload}"
+            f"fleet-guidance check value: {check}\n"
             f"{END}\n"
         )
 
@@ -214,6 +216,20 @@ class CodexCloudContextCheckTests(unittest.TestCase):
     def test_rejects_wrong_persisted_verdict(self):
         body = self.cloud_block().replace("fleet-guidance: installed", "fleet-guidance: current") + self.repo_text
         self.assert_failed_without_content(self.run_check(self.response(self.envelope(body))))
+
+    def test_rejects_a_block_without_or_with_a_wrong_check_value_line(self):
+        block = self.cloud_block()
+        lines = block.splitlines(keepends=True)
+        self.assertEqual(1, sum(line.startswith("fleet-guidance check value: ") for line in lines))
+        absent = "".join(line for line in lines if not line.startswith("fleet-guidance check value: "))
+        digest = hashlib.sha256(self.payload_text.encode()).hexdigest()
+        # The first 8 hex are the version id, not the check value.
+        wrong = block.replace(f"check value: {digest[56:]}", f"check value: {digest[:8]}")
+        self.assertNotEqual(block, wrong)
+        for name, changed in {"absent": absent, "wrong": wrong}.items():
+            with self.subTest(name=name):
+                self.assert_failed_without_content(
+                    self.run_check(self.response(self.envelope(changed + "\n" + self.repo_text))))
 
     def test_rejects_missing_or_truncated_repo_additions(self):
         missing = self.envelope(self.cloud_block() + "# Repo stub only\n")

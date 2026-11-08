@@ -1,6 +1,6 @@
 # 0017 — Prompt-audit runs as an event-triggered sweep, never as a check or a schedule
 
-**Status:** Proposed (2026-10-05)
+**Status:** Accepted (proposed 2026-10-05; in effect since the sweep first ran, as the run log on `persistent/prompt-audit-runs` shows)
 
 ## Context
 
@@ -143,3 +143,7 @@ findings as warnings and exits 0.
   cannot run, a laptop session runs the same spec.
 - Revisit this if prompt-audit gains a machine-readable verdict and the
   fleet gains a Claude credential in CI outside skills-evals.
+
+## Addendum (2026-11-04): the fire bearer moves to GitHub Actions
+
+The fire bearer sat in the variables of the `Changelog Routine` cloud environment, readable by every session in that environment. Network secrets cannot hold it: the agent proxy never attaches secrets to `api.anthropic.com`. So the fire moves to a workflow, [`prompt-audit-fire.yml`](../../.github/workflows/prompt-audit-fire.yml), which reads the bearer from an Actions secret (`PROMPT_AUDIT_SWEEP_FIRE_BEARER`) and the URL from a repository variable (`PROMPT_AUDIT_SWEEP_FIRE_URL`). It runs when the trigger issue the changelog routine already files is opened. It acts only on an issue titled `Prompt-audit sweep trigger: ` that the owner's account opened, comments the session URL with a marker so one issue fires once, and has a dispatch path for a manual retry. The changelog routine no longer fires, and its environment holds no fire variables. The payload and the sweep's re-verification of it are unchanged.

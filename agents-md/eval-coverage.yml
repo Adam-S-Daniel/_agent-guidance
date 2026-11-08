@@ -43,7 +43,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/anything-you-name-gets-its-link/
-  bytes: 920
+  bytes: 886
 
 - id: finding-your-unknowns
   heading: Finding your unknowns
@@ -52,11 +52,21 @@
   fixture: evals/guidance/finding-your-unknowns/
   bytes: 1015
 
+- id: turn-lessons-into-checks
+  heading: Turn lessons into checks, skills and guidance
+  file: agents-md/base.md
+  status: covered
+  fixture: evals/guidance/turn-lessons-into-checks/
+  bytes: 705
+
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
-  status: covered
-  fixture: evals/guidance/workstation-layout/
+  status: skipped
+  reason: >-
+    Account facts the model cannot know otherwise, so an eval's outcome is known
+    in advance; the risk is the fact going stale, checked for freshness instead.
+  since: 2026-11-03
   bytes: 149
 
 - id: security
@@ -64,7 +74,7 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/security/
-  bytes: 431
+  bytes: 617
 
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos
@@ -76,23 +86,26 @@
 - id: read-before-you-start
   heading: Read before you start
   file: agents-md/base.md
-  status: covered
-  fixture: evals/guidance/read-before-you-start/
-  bytes: 342
+  status: skipped
+  reason: >-
+    Account facts the model cannot know otherwise, so an eval's outcome is known
+    in advance; the risk is the fact going stale, checked for freshness instead.
+  since: 2026-11-03
+  bytes: 295
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/automation-vs-branch-protection/
-  bytes: 2083
+  bytes: 2201
 
 - id: two-github-connectors
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/two-github-connectors/
-  bytes: 1259
+  bytes: 1283
 
 - id: agent-contribution-markers
   heading: Agent-made GitHub contributions carry a marker
@@ -101,47 +114,60 @@
   fixture: evals/guidance/agent-contribution-markers/
   bytes: 622
 
+- id: pr-tldr
+  heading: PR descriptions open with a TLDR
+  file: agents-md/base.md
+  status: skipped
+  reason: >-
+    Enforced mechanically by agent-checks' pr-tldr check, whose refusal message
+    teaches the rule when a PR breaks it. Rechecked 2026-11-08, holds: fails
+    criterion 2 (the pr-tldr check is still in
+    templates/agent-checks/agent-checks, and the section's body is unchanged
+    since this row was written).
+  since: 2026-11-02
+  bytes: 324
+
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/github-404-means-not-authorized/
-  bytes: 884
+  bytes: 875
 
 - id: fleet-spans-two-owners
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/fleet-spans-two-owners/
-  bytes: 986
+  bytes: 963
 
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/watch-finished-is-not-ci-passed/
-  bytes: 1375
+  bytes: 1364
 
 - id: git-push-does-not-mean-commit-exists
   heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/git-push-does-not-mean-commit-exists/
-  bytes: 1143
+  bytes: 1102
 
 - id: dependency-updates
   heading: Dependency updates
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/dependency-updates/
-  bytes: 546
+  bytes: 534
 
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/name-becomes-scanner-data/
-  bytes: 1022
+  bytes: 1003
 
 - id: pinning-github-actions
   heading: Pinning GitHub Actions
@@ -155,20 +181,26 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/test-that-can-signal-kills-every-session/
-  bytes: 943
+  bytes: 918
 
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/subagent-delegation/
-  bytes: 2554
+  bytes: 2644
 
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md
-  status: covered
-  fixture: evals/guidance/skills-ecosystem/
+  status: skipped
+  reason: >-
+    Account facts the model cannot know otherwise, so an eval's outcome is known
+    in advance; the risk is the fact going stale, checked for freshness instead.
+    Rechecked 2026-11-08, holds: fails criteria 3 and 5 (the section's body is
+    unchanged since this row was written and is still account facts). No
+    freshness check reads base.md yet; that lighter check is still to build.
+  since: 2026-11-03
   bytes: 1228
 
 - id: two-setup-gaps
@@ -183,53 +215,81 @@
   file: agents-md/base.md
   status: covered
   fixture: evals/guidance/git-practices/
-  bytes: 1484
+  bytes: 1396
 
 - id: section-docker
   heading: Docker
   file: agents-md/sections/docker.md
-  status: covered
-  fixture: evals/guidance/section-docker/
-  bytes: 604
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
+  bytes: 447
 
 - id: section-dotnet
   heading: .NET / C#
   file: agents-md/sections/dotnet.md
-  status: covered
-  fixture: evals/guidance/section-dotnet/
-  bytes: 662
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
+  bytes: 278
 
 - id: section-go
   heading: Go
   file: agents-md/sections/go.md
-  status: covered
-  fixture: evals/guidance/section-go/
-  bytes: 553
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
+  bytes: 313
 
 - id: section-javascript
   heading: JavaScript
   file: agents-md/sections/javascript.md
-  status: covered
-  fixture: evals/guidance/section-javascript/
-  bytes: 495
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
+  bytes: 249
 
 - id: section-python
   heading: Python
   file: agents-md/sections/python.md
-  status: covered
-  fixture: evals/guidance/section-python/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 786
 
 - id: section-rust
   heading: Rust
   file: agents-md/sections/rust.md
-  status: covered
-  fixture: evals/guidance/section-rust/
-  bytes: 555
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
+  bytes: 305
 
 - id: section-typescript
   heading: TypeScript
   file: agents-md/sections/typescript.md
-  status: covered
-  fixture: evals/guidance/section-typescript/
+  status: skipped
+  reason: >-
+    Appended only for a repo that opts in via its own .agents-sync.yml;
+    repos.yml default_sections is [] and no repo opts in, so it reaches no real
+    session. Re-cover it when a repo opts in.
+  since: 2026-11-03
   bytes: 526

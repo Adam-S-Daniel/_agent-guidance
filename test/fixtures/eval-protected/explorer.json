@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {"name": "example-keep", "registry": "adam-agentskills", "verdict": "keep", "current_text_runs": 0},
+    {"name": "example-runs", "registry": "adam-agentskills", "verdict": null, "current_text_runs": 2},
+    {"name": "example-plain", "registry": "adam-agentskills", "verdict": null, "current_text_runs": 0},
+    {"name": "example-legacy", "registry": "adam-agentskills", "verdict": "insufficient"},
+    {"name": "example-retire", "registry": "adam-agentskills", "verdict": "retire", "current_text_runs": 3},
+    {"name": "example-cut", "registry": "adam-agentskills", "verdict": "shorten-or-merge", "current_text_runs": 1},
+    {"name": "example-other", "registry": "example-private-registry", "verdict": "keep", "current_text_runs": 4}
+  ],
+  "guidance": {
+    "sections": [
+      {"id": "alpha", "heading": "Alpha section", "verdict": "keep", "current_text_runs": 1},
+      {"id": "beta", "heading": "Beta section", "verdict": null, "current_text_runs": 2},
+      {"id": "gamma", "heading": "Gamma section", "verdict": null, "current_text_runs": 0},
+      {"id": "delta", "heading": "Delta section", "verdict": "retire", "current_text_runs": 2},
+      {"id": "docker", "heading": "Docker", "verdict": null, "current_text_runs": "3"}
+    ]
+  }
+}

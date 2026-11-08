@@ -4,9 +4,12 @@ The issue pass of the cloud [fleet worker](../routines/fleet-worker.md). It
 takes the issues that the agent changelog routine
 ([`agent-changelog-routine.md`](agent-changelog-routine.md)) and the
 prompt-audit sweep ([`prompt-audit-sweep.md`](../routines/prompt-audit-sweep.md))
-file, and the memory-promotion issues the memory curation routine
-([`memory-curation.md`](../routines/memory-curation.md)) files, each labeled
-`agent-ready`, and turns each one into a ready-for-review
+file, the memory-promotion issues the memory curation routine
+([`memory-curation.md`](../routines/memory-curation.md)) files, and the
+`ci` tracking issues the daily scheduled-run health audit files in each
+fleet repo (cms-platform's `scripts/audit-scheduled-runs.js`, called through
+`scheduled-run-health-reusable.yml` here or cms-platform's reusable), each
+labeled `agent-ready`, and turns each one into a ready-for-review
 PR in that issue's repo. The worker never merges. The fleet worker's PR pass
 may later merge one narrow kind of fix PR
 ([ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md));
@@ -68,7 +71,8 @@ blocked comments. The on-hold stop overrides step 7 below.
    keep only issues in fleet repos (above), exclude `on-hold` issues and
    issues with a held linked PR before the 3-item limit, sort oldest first,
    and take at most 3 this run, one at a time. If there are none, say so
-   and end.
+   and end this pass (in the fleet worker, the lesson-check pass still
+   runs).
 2. **Claim it.** Re-read issue and linked PR labels before any mutation;
    skip if either carries `on-hold`. Skip an issue that already carries
    `agent-working` or `agent-blocked`. Otherwise remove `agent-ready`,
@@ -80,7 +84,26 @@ blocked comments. The on-hold stop overrides step 7 below.
 3. **Branch and work.** On a branch named `agent/issue-<n>-<short-slug>`
    from `origin/<default branch>`, read the repo's `AGENTS.md` and
    `CLAUDE.md` and follow them. Do the issue's "To check" items, plus any in
-   a later `Prompt-audit sweep <date>: <n> new findings` comment on it. If
+   a later `Prompt-audit sweep <date>: <n> new findings` comment on it, or
+   in a later comment the health audit posted on its tracking issue (its
+   comments carry their own `## To check` list). For a health-audit issue,
+   each item is a failing workflow: read the run logs it links, fix the root
+   cause, and say in the PR which items it fixes. A failure that is not the
+   repo's to fix (an outage, a revoked secret, a setting only the owner can
+   change) is a stop under step 7, with the evidence. If a
+   merged `Refs` PR already fixed some findings (the fleet worker comments
+   which), do only the findings no merged PR fixed; when none are left,
+   close the issue as completed with a comment naming the merged PRs. In
+   `adam-agentskills`, an edit to a `SKILL.md` also raises the bundle's
+   `version` in both `plugin.json` files (only that value changes), adds a
+   `docs/skill-impact.md` entry (add lines only) and a `PURPOSE.md` beside
+   the `SKILL.md`, and the PR body states how the eval touch gate was met
+   (eval command, exit code and counts; a fixture PR link; or the skill's
+   non-coverage row), so the PR qualifies for the merge rule. In
+   `skills-evals`, every new `fixture.yaml` a fixture PR adds carries the
+   top-level `origin:` mapping (`kind`, `source`, `request`) that
+   `scripts/fixture_pr_gate.py` requires, even when the issue's own text
+   predates that rule; without it the PR never auto-merges. If
    the items need no file change (a measurement, a confirmation), comment
    the evidence on the issue, close it as completed, and take the next one. Run the
    repo's own test suite unpiped and record the count and the exit code.
@@ -90,8 +113,13 @@ blocked comments. The on-hold stop overrides step 7 below.
    message alone does not prove the commit exists.
 5. **Open the PR,** ready for review, not a draft, labeled
    `agent-authored`, with commits carrying `Agent: claude-code`. Its body
-   starts with `Closes <owner>/<repo>#<n>` (closing the issue is intended
-   here), then
+   starts with a `## TLDR` heading and one to three plain sentences on what
+   changes and why (the required `agent-checks` check fails a body that
+   starts with anything else, so write it before the PR is opened, not after
+   the first red run). The next line is `Closes <owner>/<repo>#<n>` (closing
+   the issue is intended here) or, when it fixes only some of the issue's
+   findings and leaves the rest open, `Refs <owner>/<repo>#<n>` followed by
+   the findings it fixes. The body then
    summarizes what changed and why, gives the test command and its result,
    says what the worker could not verify, and ends with
    `<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>`. For the three

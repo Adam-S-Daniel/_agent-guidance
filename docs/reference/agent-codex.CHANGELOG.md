@@ -30,6 +30,47 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-06 — 0.167.0 through 0.167.0
+
+- **Checked:** 2026-11-06T02:10Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.167.0](https://github.com/openai/codex/releases/tag/rust-v0.167.0), published 2026-11-06T01:40Z
+- **Window:** 0.167.0 (published 2026-11-06T01:40Z), the first stable release after 0.166.0: 1 stable release, 136 bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list page 1 and the tag page; page 1 included `rust-v0.166.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+No group met the name-the-surface bar. The highlights (`codex agents --no-daemon`, backend switching in the session picker, image previews, a Vertex AI setup wizard, system proxy opt-in, network approval prompt fixes) and the hook, plugin and `permissions.network` changelog lines touch no command line, setting or documented behavior in the fleet. The new `--no-daemon` flag is on `codex agents` only; the `codex app-server ... --managed-daemon` liveness check in wsl-automation is unchanged by this release's notes.
+
+**Issues:** none.
+
+### 2026-10-30 — 0.166.0 through 0.166.0
+
+- **Checked:** 2026-10-30T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.166.0](https://github.com/openai/codex/releases/tag/rust-v0.166.0), published 2026-10-29T19:47Z
+- **Window:** 0.166.0 (published 2026-10-29T19:47Z), the first stable release after 0.165.0: 1 stable release, 19 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.165.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep (local checkouts present).
+
+No group met the name-the-surface bar. The highlights (transcript selection, `codex queue --resume`, `codex doctor --network-only`, GPT-6.1 Terra in the model catalogs, approval and permission settings kept across resume and fork, app-server startup and shutdown race fixes) touch no command line, setting or documented behavior in the fleet. One changelog line was read closely: "Replace the npm wrapper with the native binary using execve" (#57513). `wsl-automation`'s `Test-CodexRemoteControl` matches `pgrep -af codex` lines, and its pattern accepts a bare or path-prefixed `codex` command as well as a `node`-prefixed one, with the same `app-server ... --remote-control ... --managed-daemon` arguments, so an exec'd native binary still matches. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not touched by any bullet and stays open. Claude Code: no stable release after 2.1.312 (`git ls-remote --tags` ends at `v2.1.312`).
+
+### 2026-10-29 — 0.165.0 through 0.165.0
+
+- **Checked:** 2026-10-29T01:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.165.0](https://github.com/openai/codex/releases/tag/rust-v0.165.0), published 2026-10-27T20:09Z
+- **Window:** 0.165.0 (published 2026-10-27T20:09Z), the first stable release after 0.164.0: 1 stable release, 12 highlight bullets (only the one in group 1 is indexed). Pre-releases (`-alpha`) excluded. Publish time read from the tag page's `datetime` attribute, UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; the pages walked included `rust-v0.164.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on the 2026-10-22 reach list, so none is newly assessed beyond a fleet grep (local checkouts present).
+
+#### 1. Memory v2 default for fresh profiles
+
+- [0.165.0](https://github.com/openai/codex/releases/tag/rust-v0.165.0), published 2026-10-27T20:09Z (bullet 0.165.0/5)
+  ```text
+  Enabled memory v2 by default for fresh profiles and added support for importing external-agent memories into it. (#56211, #56414)
+  ```
+
+**Issues:** [_agent-guidance#363](https://github.com/Adam-S-Daniel/_agent-guidance/issues/363) (`agent-ready`).
+
+No other group met the name-the-surface bar. A fleet grep for `memory v2`, `memories_v2`, `model_provider` and `gpt-6` found Codex memory references only in `_agent-guidance` (`scripts/audit-codex-memory.py`, ADR 0015, `test/fixtures/build-codex-memory.py`, covered by group 1) and `wsl-automation`'s Codex cloud-environment sync, which names no changed setting. The other highlights (built-in Google Cloud Vertex AI provider, GPT-6.1 Terra in the model catalogs, session-picker repository filter, experimental attached thread forks, reasoning-effort changes mid-conversation, and fixes to TUI approval-reviewer defaults, MCP request cancellation, queued agent messages, model-not-found retries and marketplace URL validation) touch no command line, setting or documented behavior in the fleet. The open `/import` discrepancy in `agent-codex.DISCREPANCIES.md` is not contradicted or fixed by any bullet (the import bullet concerns memory v2, not session availability) and stays open. Claude Code: no stable release after 2.1.312.
+
 ### 2026-10-24 — 0.164.0 through 0.164.0
 
 - **Checked:** 2026-10-24T01:20Z, [release log](https://github.com/openai/codex/releases)

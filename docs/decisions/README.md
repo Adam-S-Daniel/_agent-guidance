@@ -43,7 +43,19 @@ a page.
 | [0025](0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md) | A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest |
 | [0026](0026-memory-is-curated-by-a-routine-and-promoted-through-the-fleet-worker.md) | Memory is curated by a routine, and its durable facts are promoted through the fleet worker |
 | [0027](0027-lessons-become-agent-checks-through-the-fleet-worker.md) | Lessons become agent-checks through the fleet worker, and their PRs auto-merge when green |
+| [0028](0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md) | The fleet worker also merges skill, fleet guidance and partial fixes |
 | [0029](0029-skills-never-run-shell-commands-on-load.md) | Skills never run shell commands on load: a runner check refuses them and the sync sets `disableSkillShellExecution` |
+| [0030](0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md) | A section's worth is measured by ablation and weighed against its bytes, and retirement is automatic (see also 0002) |
+| [0031](0031-guidance-eval-fixtures-are-unprompted.md) | Guidance eval fixtures are unprompted (see also 0002) |
+| [0032](0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md) | Guidance evals deliver through user memory and prove it per arm |
+| [0033](0033-audits-leave-eval-protected-subjects-alone-except-for-correctness.md) | Audits leave eval-protected subjects alone except for correctness fixes |
+| [0034](0034-the-eval-protection-gate-runs-in-required-ci.md) | The eval-protection gate runs in required CI |
+| [0035](0035-sessions-prove-the-guidance-loaded-with-a-check-value.md) | Sessions prove the guidance loaded with a check value |
+| [0036](0036-cloud-sessions-record-which-skill-copies-they-load.md) | Cloud sessions record which skill copies they load |
+| [0037](0037-cloud-usage-records-go-to-a-private-s3-bucket.md) | Cloud usage records go to a private S3 bucket |
+| [0038](0038-memory-curation-checks-claims-against-evidence.md) | Memory curation checks claims against their evidence and keeps the index short |
+| [0039](0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md) | Fleet guidance merges by automation are batched into one weekly window |
+| [0040](0040-the-repo-stub-keeps-only-the-pointer-and-the-irreversible-rules.md) | The repo stub keeps only the pointer and the irreversible rules |
 
 ## Format
 

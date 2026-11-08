@@ -9,88 +9,25 @@
 > Edit only below the `## Repo-specific additions` header.
 > Everything above it will be overwritten on the next sync.
 
+guidance-marker: fleet-stub (transcript counts use this line; keep it)
+
 ## Fleet guidance is delivered once per session — not by this file
 
-The account's full guidance — incidents, fleet policy, machine layout, the
-traps that cost real outages — is installed into **user memory**
-(`~/.claude/CLAUDE.md`) by the `fleet-memory` SessionStart hook, so it is
-loaded **once per session** no matter how many repos are attached
-([2026-08-29: inlined per repo, it took 332.3k tokens](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/evidence/2026-08-29-guidance-inlined-in-every-repo.md)).
+The full guidance, floor rules included, is installed into user memory by
+the `fleet-memory` SessionStart hook, whose verdict line says whether it
+loaded. `installed` or `current`: it is in context. `DEGRADED` or no verdict:
+it is not, so read [`agents-md/base.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/agents-md/base.md)
+before non-trivial work and say you ran degraded. `skipped`: read it too, but
+it is the owner's choice, so do not report or "fix" it. Always, and above all
+before you have read it: never push to a default branch, force-push a shared
+branch, commit a secret, or print personal data to a CI log. Keep this file
+under 32 KiB (Codex silently truncates it).
 
-**Check the session-start verdict before you rely on it.** The hook prints one
-line:
-
-- `fleet-guidance: installed (v<id>, <n> bytes)` or `fleet-guidance: current` —
-  the full guidance is in context. Use it.
-- `fleet-guidance: DEGRADED — <reason>` — it is **not** in context. You have
-  only what is below. Read `agents-md/base.md` in the `_agent-guidance`
-  checkout (or on GitHub) before non-trivial work, and say in your reply that
-  you were running degraded.
-- `fleet-guidance: skipped (FLEET_GUIDANCE_SKIP set)` — also not in context,
-  but by the machine owner's deliberate choice, not a fault. User memory is
-  GLOBAL on a durable machine, so the guidance would otherwise load in every
-  unrelated project on that box; `FLEET_GUIDANCE_SKIP` opts out and removes any
-  block an earlier session installed. Read `agents-md/base.md` the same way you
-  would when degraded — just don't report it as a problem or try to "fix" it.
-
-No verdict at all means the hook never ran — treat that as DEGRADED.
-
-## Codex reads the same block, from `~/.codex/AGENTS.md`
-
-The hook writes the same block to `~/.codex/AGENTS.md` whenever `~/.codex`
-exists — Codex's global **user** instructions, outside its 32 KiB
-`project_doc_max_bytes` project-doc budget. Register it once per machine with
-`scripts/register-codex-hook.sh` from an `_agent-guidance` checkout, then
-trust it in `/hooks`. `codex debug prompt-input` renders instructions loaded
-from disk by its own diagnostic process; it does not run SessionStart hooks
-or inspect an existing session or daemon. Verify delivery in the launched
-session's initial instructions and verdict; see the
-[2026-10-04 evidence](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/evidence/codex-trust-and-daemon-0160.md#prompt-debugging-source-read-2026-10-04-cli-01600-rust-v01600).
-
-For Codex Cloud, use **Manual** environment setup with persistent
-`CODEX_HOME=/opt/codex`. Preserve the repository's dependency setup and run
-`bash .claude/hooks/fleet-memory.sh --codex-cloud` in both setup and
-maintenance; reset the cache for the first verification. Fresh setup and
-cached maintenance were verified in the `_agent-guidance` environment. See
-[`docs/codex-cloud.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/codex-cloud.md).
-If the Cloud shell has no `codex debug prompt-input`, the saved task response's
-raw initial instruction envelope is the echo-free proof of model-visible
-delivery.
-
-## The floor: rules that hold even when the guidance did not load
-
-These are the ones with teeth. They are restated here, deliberately, because a
-session that lost the guidance must not also lose these.
-
-- **Branch protection is real.** Fleet repos are PR-only on their default
-  branch; a direct push is rejected (GH013), even from the repo's own
-  workflows. Never design a bot that pushes to a protected default branch.
-- **Every `uses:` is pinned through `.github/workflows/actions.lock`: an
-  exact tag, locked, checked by a required `gh actions-lock --verify`
-  failing on any pin finding.** A repo not yet migrated keeps the legacy
-  form, a full 40-character commit SHA with no trailing version comment,
-  until its migration PR; never mix the two in one repo. Cross-repo
-  reusable workflows take a full SHA either way. The one carve-out is a ref
-  into this account's own `cms-platform`, which stays on its release tag.
-- **Never commit secrets or `.env` files, and never print personal data to a
-  CI log** — logs, artifacts and git history on a public repo are public.
-- **A successful `git push` does not mean your commit exists.** A refused
-  pre-commit hook still lets the push report success. Verify with
-  `git merge-base --is-ancestor <sha> origin/<branch>` — it is the only check
-  that names both the commit and the ref.
-- **"The watch finished" is not "CI passed."** Read the parsed conclusions;
-  never infer pass/fail from a watch command's exit code.
-- **A GitHub 404 means "not authorized", not "not there."** Never report a
-  repo, PR or branch as gone on a 404 alone.
-- **The fleet spans TWO owners** — `Adam-S-Daniel` and `jodidaniel`. A query
-  scoped to one returns a plausible, complete-shaped, wrong answer.
-- **Anything you name gets its link** — what you hand over, what you are
-  waiting on, and what you cite as already done.
-- **Merge with a merge commit** (`gh pr merge --merge`); do not amend
-  published commits or force-push shared branches.
-- **Keep this file under 32 KiB.** Codex truncates project instructions at
-  that byte silently; the sync warns and the drift report flags
-  `codex-truncated`.
+**Your first reply to the user in a session begins**
+`fleet-guidance check: <value>`, copied from the installed guidance's
+`fleet-guidance check value:` line, or `fleet-guidance check: none` when no
+such line is in your context. Never guess one or copy it from a file you
+read; only in replies to the user.
 
 <!-- END MANAGED SECTION -->
 ## Repo-specific additions
@@ -98,10 +35,18 @@ session that lost the guidance must not also lose these.
 **`AGENTS.md` in this repo is a generated artifact.** Everything above the marker
 is `scripts/build-agents-md.sh` output. By default (`AGENTS_MD_MODE=stub`, which
 the header's `Mode: stub` line records) that is `agents-md/stub.md`: the pointer,
-the session-start verdict and the floor rules. `base.md` is inlined only under
+the session-start verdict and the irreversible rules (the floor lives in `base.md`). `base.md` is inlined only under
 `AGENTS_MD_MODE=full`. Never edit this file's managed half; edit `stub.md` (or a
 file under `agents-md/sections/`) and regenerate. CI regenerates and diffs it, so
 a stub edit without a regenerated `AGENTS.md` fails the build.
+
+**Fleet guidance merges by automation are batched into one weekly window**
+(Monday 17:00 to 19:00 UTC, bounds only in `scripts/base-md-merge-window.yml`;
+[ADR 0039](docs/decisions/0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md)).
+Automation that could merge a PR changing `agents-md/base.md` or
+`agents-md/sections/**` runs `node scripts/base-md-merge-window.js` first. A
+person may merge any time, but a manual merge outside the window restarts every
+guidance section's eval evidence.
 
 **`agents-md/base.md` is the fleet-memory payload, with a mirror.** Every edit to
 it is copied byte for byte to `.claude/hooks/fleet-guidance.md`, which this
@@ -167,6 +112,26 @@ as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
 (`scripts/check-ci-shards.js`) fails unless the shards' lists name every group
 from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
 per-group seconds in the suite's `Groups` table, not by count.
+
+**Each `suite` shard starts with a scope step** (`scripts/ci-scope.sh`), and
+every later step waits on its `run` output, so a shard a change does not need
+still reports success. `checks` always runs: its gates are cheap and tests
+pin them as unconditional. A doc that no file outside `docs/` names skips
+every shard; a doc a script reads as data runs only the groups listed for it in
+the script's `DATA_FILES` table (do not name such a doc here: this file
+would become one more reader and put it back to full scope); anything else, a dispatch, or a range it cannot read
+runs everything. When a script starts reading a doc, either let it fall to
+full scope or add a `DATA_FILES` row and update `test_ci_scope`.
+
+**Guidance sections are measured elsewhere, and two CI gates keep the record.**
+[`scripts/check-guidance-coverage.js`](scripts/check-guidance-coverage.js) (the
+manifest gate) holds [`agents-md/eval-coverage.yml`](agents-md/eval-coverage.yml)
+to one row per `##` heading, and [`scripts/check-guidance-touch.js`](scripts/check-guidance-touch.js)
+(the touch gate) requires an entry in [`docs/guidance-impact.md`](docs/guidance-impact.md)
+for every section whose body a pull request changes. Whether a section earns its
+bytes is decided by skills-evals' ablation fixtures, and a section that adds
+nothing is removed by an automatic pull request, not by a person
+([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md)).
 
 **Action pins.** This repo's own workflows name third-party actions by exact
 release tag, and [`.github/workflows/actions.lock`](.github/workflows/actions.lock)

@@ -12,6 +12,20 @@ untrusted (observed). See the
 [ADR 0012 addendum](decisions/0012-codex-gets-the-guidance-as-user-instructions.md#addendum--trust-and-daemon-evidence-boundaries-2026-10-04)
 for what was observed and what remains open.
 
+## Local Codex
+
+The `fleet-memory` hook writes the guidance block to `~/.codex/AGENTS.md`
+whenever `~/.codex` exists. That file is Codex's global user instructions,
+outside its 32 KiB `project_doc_max_bytes` project-doc budget. Register the
+hook once per machine with `scripts/register-codex-hook.sh` from an
+`_agent-guidance` checkout, then trust it in `/hooks`.
+
+`codex debug prompt-input` renders instructions loaded from disk by its own
+diagnostic process; it does not run SessionStart hooks or inspect an existing
+session or daemon. Verify delivery in the launched session's initial
+instructions and verdict; see the
+[prompt-debugging evidence](evidence/codex-trust-and-daemon-0160.md#prompt-debugging-source-read-2026-10-04-cli-01600-rust-v01600).
+
 ## Configure the environment
 
 1. Select **Manual** environment setup. Merely adding setup and maintenance
@@ -190,8 +204,9 @@ python3 scripts/check-codex-cloud-context.py \
 The checker fails closed unless that envelope contains the payload exactly
 as the hook delivers it (byte-exact after dropping the repo-only `# AGENTS.md`
 header that the hook's `PAYLOAD_REPO_HEADER` names) inside one complete
-managed block, its one persisted installed verdict, and
-the expected repo-specific additions through end of file. It prints only a
+managed block, its one persisted installed verdict, the check value line that
+ends the block ([ADR 0035](decisions/0035-sessions-prove-the-guidance-loaded-with-a-check-value.md)),
+and the expected repo-specific additions through end of file. It prints only a
 non-identifying result; it does not fetch authenticated task data. Raw task
 captures are authenticated and stay local—do not commit them or paste private
 environment IDs or task URLs into the repo. This response shape is an observed

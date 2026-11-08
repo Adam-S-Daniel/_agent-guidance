@@ -1,0 +1,102 @@
+name: Anthropic article watch
+
+# Polls a feed of Anthropic engineering articles and fires the article-lift
+# routine (docs/routines/article-lift.md) once for each NEW article whose title
+# contains "agent", any case. scripts/article_watch.py decides and fires; its
+# docstring has the rules. Seen items live in article-watch/state.json on the
+# branch persistent/article-watch, written through the contents API.
+#
+# * schedule and workflow_dispatch only: no pull_request or push, so no path
+#   filter and not a required check. scheduled-run-health.yml reports failed
+#   scheduled runs.
+# * Configuration lives in one place each, with no default: the feed URL and
+#   the routine's fire URL are repository variables, the fire bearer is an
+#   Actions secret. A missing one fails the run naming it.
+# * Nothing from the event or the inputs is interpolated into a `run:` block;
+#   the reseed input is read from $GITHUB_EVENT_PATH with jq.
+# * No `uses:` step, so actions.lock lists this file with no actions. The
+#   script is read at this run's own commit.
+
+on:
+  schedule:
+    # Hourly, 24 minutes after rss-inator rebuilds the feed at :17.
+    - cron: '41 * * * *'
+  workflow_dispatch:
+    inputs:
+      reseed:
+        description: Record every article now in the feed as seen and fire none
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: article-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Fire the routine for new agent articles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEED_URL: ${{ vars.ARTICLE_WATCH_FEED_URL }}
+          FIRE_URL: ${{ vars.ARTICLE_WATCH_FIRE_URL }}
+          FIRE_BEARER: ${{ secrets.ARTICLE_WATCH_FIRE_BEARER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FEED_URL" ]]; then
+            echo "::error::repository variable ARTICLE_WATCH_FEED_URL is not set; set it to the feed's URL"
+            exit 1
+          fi
+          if [[ "$FEED_URL" != https://* ]]; then
+            echo "::error::repository variable ARTICLE_WATCH_FEED_URL must be an https URL"
+            exit 1
+          fi
+          repo="$GITHUB_REPOSITORY"
+          branch=persistent/article-watch
+          path=article-watch/state.json
+          work=$(mktemp -d)
+
+          gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/$repo/contents/scripts/article_watch.py?ref=$GITHUB_SHA" > "$work/article_watch.py"
+          curl -sS --fail --max-time 60 --max-filesize 5000000 -o "$work/feed.xml" "$FEED_URL"
+
+          # The state branch is created from main on the first run.
+          if ! git ls-remote --exit-code "https://github.com/$repo" "refs/heads/$branch" >/dev/null; then
+            main_sha=$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')
+            gh api -X POST "repos/$repo/git/refs" -f ref="refs/heads/$branch" -f sha="$main_sha" >/dev/null
+          fi
+
+          # Absent state file means first run; the script then seeds and fires nothing.
+          old_sha=""
+          if meta=$(gh api "repos/$repo/contents/$path?ref=$branch" 2>/dev/null); then
+            old_sha=$(jq -r '.sha' <<<"$meta")
+            gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/$repo/contents/$path?ref=$branch" > "$work/state.json"
+            cp "$work/state.json" "$work/state.before"
+          fi
+
+          args=(--feed "$work/feed.xml" --state "$work/state.json")
+          if [[ "$(jq -r '.inputs.reseed // false' "$GITHUB_EVENT_PATH")" == true ]]; then
+            args+=(--reseed)
+          fi
+          rc=0
+          python3 -I "$work/article_watch.py" "${args[@]}" || rc=$?
+
+          if [[ -f "$work/state.json" ]] && ! cmp -s "$work/state.json" "$work/state.before" 2>/dev/null; then
+            put=(-X PUT "repos/$repo/contents/$path"
+              -f message="article-watch: record seen articles"
+              -f branch="$branch"
+              -f content="$(base64 -w0 "$work/state.json")")
+            [[ -n "$old_sha" ]] && put+=(-f sha="$old_sha")
+            if ! gh api "${put[@]}" >/dev/null; then
+              echo "::error::could not write $path on $branch; fired articles may fire again next run"
+              rc=1
+            fi
+          fi
+          exit "$rc"

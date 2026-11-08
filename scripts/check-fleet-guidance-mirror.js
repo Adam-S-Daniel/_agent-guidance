@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * check-fleet-guidance-mirror.js — two consistency checks over the guidance
+ * check-fleet-guidance-mirror.js — three consistency checks over the guidance
  * this repo ships to itself.
  *
  * 1. MIRROR. `.claude/hooks/fleet-guidance.md` is the payload the fleet-memory
@@ -25,8 +25,19 @@
  *    on a path token, not a reading of code shape, so a regex is the right
  *    tool.)
  *
+ * 3. MARKERS. Session transcripts record the text of every memory file Claude
+ *    Code loaded, with HTML comments stripped, so the version comment the
+ *    fleet-memory hook writes is not there to count. The guidance-load Stop
+ *    hook (.claude/hooks/guidance-load-record.sh) counts a session as having
+ *    the full guidance or only the repo stub by one visible line in each:
+ *    base.md carries exactly one `guidance-marker: fleet-full` line and no
+ *    `fleet-stub` marker, stub.md exactly one `guidance-marker: fleet-stub`
+ *    line and no `fleet-full` marker. A deleted, duplicated or swapped marker
+ *    would silently miscount every session in the fleet. (A whole-line prefix
+ *    match on a lexical token, so a regex-free line scan is enough.)
+ *
  * Usage: node scripts/check-fleet-guidance-mirror.js [--root <dir>]
- * Exit 0 when both hold; exit 1 with one line per violation; exit 2 on a
+ * Exit 0 when all three hold; exit 1 with one line per violation; exit 2 on a
  * missing input (a check that cannot find its inputs must not certify).
  */
 "use strict";
@@ -37,6 +48,11 @@ const path = require("node:path");
 const PAYLOAD = ".claude/hooks/fleet-guidance.md";
 const SOURCE = "agents-md/base.md";
 const POINTER_SOURCES = ["agents-md/base.md", "agents-md/stub.md"];
+const MARKERS = [
+  { file: "agents-md/base.md", want: "fleet-full", forbid: "fleet-stub" },
+  { file: "agents-md/stub.md", want: "fleet-stub", forbid: "fleet-full" },
+];
+const MARKER_LINE = (kind) => `guidance-marker: ${kind} (transcript counts use this line; keep it)`;
 const EVIDENCE_RE = /docs\/evidence\/([A-Za-z0-9._-]+\.md)/g;
 
 function firstDifferingLine(a, b) {
@@ -84,21 +100,39 @@ function checkEvidencePointers(root) {
   return problems;
 }
 
+function checkMarkers(root) {
+  const problems = [];
+  for (const { file, want, forbid } of MARKERS) {
+    const lines = fs.readFileSync(path.join(root, file), "utf8").split("\n");
+    const wanted = lines.filter((l) => l.startsWith(`guidance-marker: ${want}`)).length;
+    const forbidden = lines.filter((l) => l.startsWith(`guidance-marker: ${forbid}`)).length;
+    if (wanted === 0) {
+      problems.push(`${file} has no \`guidance-marker: ${want}\` line — transcript counts cannot see it. Fix: restore the line \`${MARKER_LINE(want)}\` after the managed header`);
+    } else if (wanted > 1) {
+      problems.push(`${file} has ${wanted} \`guidance-marker: ${want}\` lines — keep exactly one, right after the managed header`);
+    }
+    if (forbidden > 0) {
+      problems.push(`${file} carries a \`guidance-marker: ${forbid}\` line, which belongs to the other file — transcript counts would misclassify it. Fix: remove it and keep only \`${MARKER_LINE(want)}\``);
+    }
+  }
+  return problems;
+}
+
 function run(root) {
   for (const rel of POINTER_SOURCES) {
     if (!fs.existsSync(path.join(root, rel))) return { code: 2, lines: [`missing input ${rel} under ${root}`] };
   }
-  const lines = [...checkMirror(root), ...checkEvidencePointers(root)];
+  const lines = [...checkMirror(root), ...checkEvidencePointers(root), ...checkMarkers(root)];
   return { code: lines.length ? 1 : 0, lines };
 }
 
-module.exports = { run, checkMirror, checkEvidencePointers };
+module.exports = { run, checkMirror, checkEvidencePointers, checkMarkers };
 
 if (require.main === module) {
   const i = process.argv.indexOf("--root");
   const root = path.resolve(i > -1 ? process.argv[i + 1] : path.join(__dirname, ".."));
   const { code, lines } = run(root);
   for (const l of lines) console.error(`::error::${l}`);
-  if (code === 0) console.log("fleet-guidance mirror: payload is byte-identical to agents-md/base.md; every docs/evidence/ pointer resolves");
+  if (code === 0) console.log("fleet-guidance mirror: payload is byte-identical to agents-md/base.md; every docs/evidence/ pointer resolves; each guidance marker appears once, in its own file");
   process.exit(code);
 }

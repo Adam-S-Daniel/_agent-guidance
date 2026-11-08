@@ -35,6 +35,8 @@ on:
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
       # a fix to it would sit here firing no run to deliver itself.
       - ".claude/hooks/fleet-memory.sh"
+      # Delivered and refreshed with fleet-memory.sh, for the same reason.
+      - ".claude/hooks/guidance-load-record.sh"
       # templates/dependabot-auto-merge/ is COPIED into every synced repo that
       # runs Dependabot with no merge path (repos.yml's dependabot_auto_merge).
       # Only ever added, never refreshed, so an edit here reaches only repos
@@ -56,6 +58,17 @@ on:
 
 permissions:
   contents: read
+
+# One sync at a time. A push run and a dispatch six seconds apart both pushed
+# the same agents-md-sync/update branches; the loser got "cannot lock ref" and
+# "fetch first" and its fallback PRs failed, turning the run red with an
+# already-current fleet. Sync is not a required check, so a group is safe here.
+# cancel-in-progress stays false: a run that is writing PRs is never cut off
+# midway; a newer one waits for it (only the latest pending run is kept,
+# which still syncs the newest main).
+concurrency:
+  group: sync-agents-md
+  cancel-in-progress: false
 
 jobs:
   sync:

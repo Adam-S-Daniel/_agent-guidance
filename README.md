@@ -98,13 +98,23 @@ half is under budget by construction, so an overrun is always in the repo's own
 - `scripts/drift-report.sh` adds a `codex-truncated: <bytes> > 32768` clause to
   that repo's **Notes**, explained in the report's own legend.
 
+A fourth gate does block, but only the change that causes the overrun: the
+agent-checks runner (`templates/agent-checks/agent-checks`, delivered to every
+fleet repo) refuses, with check id `agents-md-size`, any commit, push or pull
+request that touches the root `AGENTS.md` and leaves it over 32768 bytes. A
+change that does not touch it passes, so a repo already over budget is not
+blocked until someone edits the file.
+
 The managed half is held clear of the budget by `test_agents_md_size_budget`
 in `test/run-tests.sh`, which caps the **builds**, not `base.md` on its own: a
 full-mode build with every section ≤ 29696 bytes (29 KiB), so even a full-mode
-repo keeps ≥ 3 KiB for its own additions, and the stub build ≤ 8192 bytes (a
-stub-mode repo — all 19 today — keeps nearly all of it). No test caps
-`agents-md/base.md` itself; its "under 25 KiB" is a rule written in that file,
-held only indirectly because `base.md` is most of the full build. Measured
+repo keeps ≥ 3 KiB for its own additions, and the stub build ≤ 2048 bytes (a
+stub-mode repo — all 19 today — loads it once per attached repo, so the floor
+lives in `base.md` and the stub keeps only the verdict pointer and the
+irreversible rules; _agent-guidance#473). `base.md` itself
+is held under 26 KiB (26,624 bytes) by an assertion in
+`test/test-on-hold-label.js`, raised from 25 KiB on 2026-11-04 to fit the
+"Turn lessons into checks, skills and guidance" section. Measured
 2026-10-04 with `wc -c`: `base.md` 24,930 bytes, full build 29,113, stub
 build 4,859.
 
@@ -347,6 +357,36 @@ PR's own commits, so a body edit under an unchanged heading is still caught.
 It never approximates: a row the exact match cannot resolve is exit 2 naming
 that row and the remedy — merge or rebase onto the base branch, after which
 the manifest exists at both shas and no fallback runs at all.
+
+### Guidance evals
+
+Whether a section is worth its bytes is measured in
+[skills-evals](https://github.com/Adam-S-Daniel/skills-evals), not here. The
+flow: a pull request edits `agents-md/base.md`; the
+[manifest gate](#section-manifest) requires a row for every heading and the
+[touch gate](#touch-gate) requires a [`docs/guidance-impact.md`](docs/guidance-impact.md)
+entry for every changed section. Fixtures under skills-evals'
+[`evals/guidance/<section id>/`](https://github.com/Adam-S-Daniel/skills-evals/tree/main/evals/guidance)
+are named by the manifest's `covered` rows and are unprompted
+([ADR 0031](docs/decisions/0031-guidance-eval-fixtures-are-unprompted.md)). The
+weekly routine fires each against the model roster, delivering the guidance
+through the real `fleet-memory.sh` and proving each arm got it
+([ADR 0032](docs/decisions/0032-guidance-evals-deliver-through-user-memory-and-prove-it-per-arm.md));
+results go to skills-evals' [`persistent/eval-results`](https://github.com/Adam-S-Daniel/skills-evals/tree/persistent/eval-results)
+branch. From there the regression detector and the gates read them. A section
+is retired when its `full` against `full-minus-section` pair, pooled across
+versions of the rest of the guidance, shows with 90% confidence that it does
+not improve results by 0.15 or more. Retirement is an auto-merging pull
+request in this repo, with no human approval. Each removal is followed by a
+skills-evals notice issue to Adam with the way to revert it, and a section
+that helps only alone gets a shorten-or-merge issue
+([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md),
+2026-11-02 addendum).
+The results are public in the
+[Evals Explorer](https://adamdaniel.ai/tools/evals/)'s
+guidance view.
+The harness is described in skills-evals'
+[DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
 
 ### Payload mirror
 
@@ -723,8 +763,14 @@ with Contents: write for the publish.
 A `schedule:`-triggered workflow fails silently — no PR goes red, nothing
 notifies. This repo's own `drift-report.yml` was red for 26 consecutive nights
 before anyone noticed. `scripts/check-cron-coverage.js` is the gate that says a
-repo running crons actually calls cms-platform's `scheduled-run-health`
-reusable, and that the caller it has can fire and can file.
+repo running crons actually calls a `scheduled-run-health` reusable, and that
+the caller it has can fire and can file. A repo without an `actions.lock` calls
+cms-platform's. A repo with one calls this repo's
+`scheduled-run-health-reusable.yml`, because a reusable is covered by the
+lockfile of the repo that defines it and cms-platform has none (ADR 0024's
+2026-10-31 addendum). The daily `health-reusable-parity.yml` keeps that copy in
+step with cms-platform's and moves its release pin,
+`.github/health-audit-platform-ref`, in a self-merging PR.
 
 Two forms, answering two different questions:
 

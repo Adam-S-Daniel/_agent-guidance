@@ -16,6 +16,12 @@
 #   agent-checks ci <base> <head>
 #   agent-checks tree [<rev>]                (every path in <rev>, default HEAD)
 #
+# `ci` also runs pr-tldr when GitHub Actions starts it for a pull request
+# (GITHUB_EVENT_NAME pull_request or pull_request_target, with
+# GITHUB_EVENT_PATH set): the pull request's description must begin with a
+# TLDR heading and text under it. It reads only the event payload, never the
+# API or the network; see "PR description: pr-tldr" below.
+#
 # `tree` is for measuring a check against a repo's whole current tree, so a new
 # check can be shown to refuse nothing already on a fleet repo's main.
 #
@@ -29,17 +35,30 @@
 # rule's documentation: an agent learns it when it breaks it, so the rule does
 # not need to sit in always-on guidance.
 #
+# After the refusing checks, every event but an unknown one runs one WARNING
+# pass, dated-phrasing (.githooks/dated-phrasing.js; see "Warning pass" below):
+# dated history and migration-relative phrasing in the Markdown agents load as
+# instructions. It prints `agent-checks (warning):` lines, or `::warning`
+# annotations in CI, and never changes the exit status. To keep a flagged line
+# that is right as written, add it to .agent-checks/dated-phrasing-allowlist.txt.
+#
 # Run log. Each pre-commit and pre-push run (never ci or tree) appends one JSON
 # line to $AGENT_CHECKS_LOG, by default
 # ${XDG_STATE_HOME:-$HOME/.local/state}/agent-checks/runs.jsonl, so a dashboard
 # can show how often each check runs and refuses, per repo, over time:
 #   {"v":1,"ts":"2026-10-26T12:00:00Z","event":"pre-commit","repo":"owner/name",
-#    "checks":["rules-dir","secret-file","skill-shell"],"failed":["secret-file"]}
+#    "checks":["rules-dir","secret-file","skill-shell"],"failed":["secret-file"],
+#    "runner":"0123456789ab"}
 # `repo` is origin's GitHub owner/name, or null for any other remote. `checks`
-# are the ids of the checks that ran, `failed` the ones that refused. The line
+# are the ids of the checks that ran (dated-phrasing only when it read a file),
+# `failed` the ones that refused; a warning is never in `failed`. `runner` is
+# the first 12 hex digits of this file's own sha256, so a count can tell which
+# version of the runner a repo had, or null when no hash tool is found. The line
 # holds no paths, messages, branch names or user names. AGENT_CHECKS_LOG=off
 # turns it off. Logging is best effort: a failure is silent and never changes
-# the exit code or the output.
+# the exit code or the output. In CI each refusal is also an `::error`
+# annotation titled `agent-checks <id>`, so a report can read the failed ids
+# from the check run's annotations.
 set -u
 
 failed=0
@@ -58,7 +77,16 @@ note_ran() {
 problem() {
   local id=$1
   shift
-  printf 'agent-checks: %s\n' "$*" >&2
+  case "$id" in
+    ''|*[!a-z0-9-]*) printf 'agent-checks: %s\n' "$*" >&2 ;;
+    *)
+      if [ "${GITHUB_ACTIONS:-}" = true ]; then
+        printf '::error title=agent-checks %s::agent-checks: %s\n' "$id" "$*" >&2
+      else
+        printf 'agent-checks: %s\n' "$*" >&2
+      fi
+      ;;
+  esac
   failed=1
   note_ran "$id"
   case "$id" in ''|*[!a-z0-9-]*) return 0 ;; esac
@@ -101,8 +129,13 @@ check_lessons() {
   :
 }
 
+# Codex's limit for project instructions, in bytes: it truncates AGENTS.md at
+# this byte without any error, so the agents-md-size check refuses a change
+# that leaves the root AGENTS.md longer.
+CODEX_PROJECT_DOC_MAX_BYTES=32768
+
 # Reads NUL-separated paths on stdin and refuses the ones that must never be
-# committed.
+# committed, or the root AGENTS.md when it is too long for Codex.
 check_paths() {
   local path
   while IFS= read -r -d '' path; do
@@ -127,6 +160,16 @@ check_paths() {
     if $is_skill_file \
         && grep -Eq '(^|[[:space:]])!`|^[[:space:]]*```!' <<<"$(file_content "$path")"; then
       problem skill-shell "$path: a line starts a shell command that Claude Code runs when the skill loads (an exclamation mark then a backtick, at line start or after a space, or a code fence opened with a backtick fence and an exclamation mark). It runs before the model reads the skill, so no review and no prompt-injection defense sees it. Have the skill tell the agent to run the command, or move the command into a script the skill calls."
+    fi
+    # The root AGENTS.md, measured in bytes in the content being checked. It
+    # is counted in the run log only when the change touched that file.
+    if [ "$path" = AGENTS.md ]; then
+      note_ran agents-md-size
+      agents_size=$(file_content "$path" | wc -c)
+      agents_size=$((agents_size))
+      if [ "$agents_size" -gt "$CODEX_PROJECT_DOC_MAX_BYTES" ]; then
+        problem agents-md-size "$path: it is $agents_size bytes, over the ${CODEX_PROJECT_DOC_MAX_BYTES}-byte limit. Codex silently truncates project instructions at byte $CODEX_PROJECT_DOC_MAX_BYTES, so everything past it never reaches a Codex session, with no error. Shorten it until wc -c AGENTS.md prints $CODEX_PROJECT_DOC_MAX_BYTES or less: move detail into docs/ and link to it."
+      fi
     fi
     check_lessons "$path" < /dev/null
   done
@@ -168,8 +211,424 @@ run_local_checks() {
   fi
 }
 
+# ── Workflow expressions: gha-template-injection ─────────────────────────────
+# Untrusted data is escaped for the context it lands in, just before it lands
+# there (agents-md/base.md, Security). In a GitHub Actions `run:` or
+# github-script `script:`, GitHub pastes each ${{ }} value into the script text
+# before the shell or node parses it, so no quoting inside the script can
+# escape it. The encoding that context needs is to pass the value through
+# `env:` and read it as a variable.
+#
+# The check runs zizmor's template-injection audit (https://docs.zizmor.sh),
+# which parses the YAML and knows which expressions an outsider can steer, on
+# every changed workflow (.github/workflows/*.yml|yaml) and local action
+# (action.yml|yaml at the root or under .github/actions/). It refuses findings
+# of Medium or High severity; zizmor's Informational ones (an earlier step's
+# output, mostly) are left to review. It runs --offline and reads the content
+# being checked (the index, or the commit), copied into a temporary directory.
+#
+# zizmor is the pinned version below: one already on PATH at that version, or
+# a copy pip installs once, hash-checked, into
+# ${XDG_CACHE_HOME:-$HOME/.cache}/agent-checks/zizmor/<version>. Bump it by
+# replacing the version and every hash (the wheels' sha256 values on PyPI),
+# after the release is 7 days old. When neither python nor pip can provide it,
+# a local run warns and skips; CI refuses, because CI is the enforcement and
+# skipping there would pass a change nothing checked. AGENT_CHECKS_ZIZMOR names
+# a zizmor to use instead, with no install (the tests set it). Design and the coverage
+# matrix: docs/reference/context-escaping-checks.md in _agent-guidance.
+ZIZMOR_VERSION=1.31.1
+ZIZMOR_SHA256S="9696d3c10919a3a2eb086c102f1bc10717f53ef3700a0d6c55a709c274995476
+4a70ee3c2721122aff04d5bbad5e448d15384f45de2ecb3c9493fe9dac2bc95f
+d9b36840c560a8abe39d9ef3d077239aabf6d572c5c2b629c970592a617dbf6f
+d8a5f86fbf93e65e9d42de9eb4c1855d195c5e9cdeef4f228093ad6711bd8ee4
+58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410
+c5ccb17fd820bb1ddc63cc9a715e97c063025487e585f640389a86d9dfc97cda
+385732e55ca152a013b0863213b67be32f94157775354b8ad23cc9c5d70cdc82
+e7fdf82d31cc67eb1d5030bf2372b25ee2a1c3ad05017e18da70ed138c4accd6
+d1d2cdc23e7b11f2d6cbda0df3bee62ee7993a60647650f51c316ccd33365469
+3b35b393e8d437e275c7e399047c9892ccc290f3fc5e6aeb9f65a5d3b2a470e0"
+
+# gha_unavailable <reason> — zizmor could not run: refuse in CI, warn locally.
+gha_unavailable() {
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    problem gha-template-injection "workflow expressions were not checked: $1 Re-run the job; if it keeps failing, fix the runner's python or network rather than the check."
+  else
+    printf 'agent-checks (warning): gha-template-injection skipped: %s CI still runs it.\n' "$1" >&2
+  fi
+}
+
+# gha_python — print a python that has pip, or nothing.
+gha_python() {
+  local py
+  for py in python3 python; do
+    if command -v "$py" > /dev/null 2>&1 && "$py" -m pip --version > /dev/null 2>&1; then
+      printf '%s\n' "$py"
+      return 0
+    fi
+  done
+}
+
+# zizmor_bin <python> — print the path of the pinned zizmor, installing it into
+# the cache first if needed; print nothing when it cannot.
+zizmor_bin() {
+  local py=$1 base dir tmp req h exe
+  if [ -n "${AGENT_CHECKS_ZIZMOR:-}" ]; then
+    [ -x "$AGENT_CHECKS_ZIZMOR" ] && printf '%s\n' "$AGENT_CHECKS_ZIZMOR"
+    return 0
+  fi
+  if command -v zizmor > /dev/null 2>&1 \
+      && [ "$(zizmor --version 2> /dev/null)" = "zizmor $ZIZMOR_VERSION" ]; then
+    command -v zizmor
+    return 0
+  fi
+  base=${XDG_CACHE_HOME:-}
+  [ -n "$base" ] || { [ -n "${HOME:-}" ] && base=$HOME/.cache; } || return 0
+  dir=$base/agent-checks/zizmor/$ZIZMOR_VERSION
+  for exe in bin/zizmor bin/zizmor.exe Scripts/zizmor.exe; do
+    [ -f "$dir/$exe" ] && { printf '%s\n' "$dir/$exe"; return 0; }
+  done
+  [ -n "$py" ] || return 0
+  mkdir -p "$base/agent-checks/zizmor" 2> /dev/null || return 0
+  tmp=$(mktemp -d "$base/agent-checks/zizmor/.install.XXXXXX") || return 0
+  req="zizmor==$ZIZMOR_VERSION"
+  for h in $ZIZMOR_SHA256S; do req="$req --hash=sha256:$h"; done
+  printf '%s\n' "$req" > "$tmp.req"
+  if "$py" -m pip install --quiet --disable-pip-version-check --no-deps \
+       --only-binary :all: --require-hashes --target "$tmp" -r "$tmp.req" > /dev/null 2>&1; then
+    [ -d "$dir" ] || mv "$tmp" "$dir" 2> /dev/null
+  fi
+  rm -rf "$tmp" "$tmp.req"
+  for exe in bin/zizmor bin/zizmor.exe Scripts/zizmor.exe; do
+    [ -f "$dir/$exe" ] && { printf '%s\n' "$dir/$exe"; return 0; }
+  done
+}
+
+# check_gha_injection <list> — run the audit on the workflow and action files
+# named in the NUL-separated path list.
+check_gha_injection() {
+  local list=$1 path work py zz out rc=0 n=0 findings line
+  work=$(mktemp -d) || { gha_unavailable "could not create a temp directory."; return; }
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      .github/workflows/*/*) continue ;;
+      .github/workflows/*.yml|.github/workflows/*.yaml) ;;
+      action.yml|action.yaml|.github/actions/*/action.yml|.github/actions/*/action.yaml) ;;
+      *) continue ;;
+    esac
+    case "$path" in *..*) continue ;; esac
+    mkdir -p "$work/$(dirname -- "$path")" && file_content "$path" > "$work/$path" || continue
+    [ -s "$work/$path" ] || { rm -f "$work/$path"; continue; }
+    n=$((n + 1))
+  done < "$list"
+  if [ "$n" -eq 0 ]; then rm -rf "$work"; return 0; fi
+  note_ran gha-template-injection
+  py=$(gha_python)
+  if [ -z "$py" ]; then
+    rm -rf "$work"
+    gha_unavailable "python with pip is not on PATH, so zizmor $ZIZMOR_VERSION could not be installed or its report read."
+    return
+  fi
+  zz=$(zizmor_bin "$py")
+  if [ -z "$zz" ]; then
+    rm -rf "$work"
+    gha_unavailable "zizmor $ZIZMOR_VERSION could not be installed with pip (offline, or no access to PyPI). It retries on the next run."
+    return
+  fi
+  out=$(cd "$work" && "$zz" --offline --no-progress --no-config --format json \
+          --collect=workflows,actions . 2> /dev/null) || rc=$?
+  rm -rf "$work"
+  # zizmor exits 0 with no findings and 10 to 14 with some; anything else is
+  # its own failure.
+  case "$rc" in
+    0|1[0-4]) ;;
+    *) gha_unavailable "zizmor $ZIZMOR_VERSION stopped with exit $rc."; return ;;
+  esac
+  findings=$("$py" -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    print("!"); sys.exit(0)
+for f in data:
+    if f.get("ident") != "template-injection":
+        continue
+    if f.get("determinations", {}).get("severity") not in ("Medium", "High"):
+        continue
+    locs = f.get("locations", [])
+    locs = [l for l in locs if l.get("symbolic", {}).get("kind") == "Primary"] or locs[:1]
+    for loc in locs[:1]:
+        local = loc.get("symbolic", {}).get("key", {}).get("Local", {})
+        p = local.get("given_path") or local.get("verbatim_path") or "?"
+        row = loc.get("concrete", {}).get("location", {}).get("start_point", {}).get("row", -1) + 1
+        p = p[2:] if p.startswith("./") else p
+        print("%s:%d" % (p.replace("\n", " "), row))
+' <<< "$out" 2> /dev/null) || findings="!"
+  if [ "$findings" = "!" ]; then
+    gha_unavailable "zizmor's report could not be read."
+    return
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    problem gha-template-injection "$line: a \${{ }} expression an outsider can steer (an event field, an input, a branch name) is pasted into a run: or script: before the shell or node parses it, so its value can run as code. Escape it for that context: pass it through the step's env: (NAME: \${{ ... }}) and read \"\$NAME\" in the shell, or process.env.NAME in github-script. Quoting inside the script does not help. Only if the value provably cannot carry code, add '# zizmor: ignore[template-injection]' with the reason on that line. Check with: zizmor --offline <file> (https://docs.zizmor.sh/audits/#template-injection)."
+  done <<< "$findings"
+}
+
+# ── Warning pass: dated phrasing ─────────────────────────────────────────────
+# .githooks/dated-phrasing.js warns about dated history and migration-relative
+# phrasing ("is now", "no longer", "moved to", an ISO date) in the Markdown
+# agents load as instructions: every AGENTS.md (its repo-specific half),
+# CLAUDE.md and SKILL.md, and agents-md/**. That text is read as the rule that
+# holds now, so a story about what changed, and when, goes stale there; it
+# belongs in docs/evidence/ or git (_agent-guidance#348). Its header lists the
+# phrases and the exemptions (code, quotes, HTML, URLs, link text).
+#
+# It only ever warns: it runs after the refusing checks, its output never
+# changes the exit status, and any failure of its own (no node or npm, an
+# offline install, an internal error) prints one warning line and moves on
+# (_agent-guidance ADR 0017: checks that grow out of the prompt audit warn).
+# Each warning line starts `agent-checks (warning):`, or is a `::warning`
+# annotation under GitHub Actions; it names the path, line and phrase only.
+#
+# It needs markdown-it (a real Markdown parse, never a line scan). The runner
+# installs the exact version .githooks/dated-phrasing/package-lock.json pins,
+# with `npm ci --ignore-scripts`, into a cache keyed by the lockfile's sha256,
+# ${XDG_CACHE_HOME:-$HOME/.cache}/agent-checks/dated-phrasing/<sha256> (under
+# $RUNNER_TEMP in CI), and reuses it after that. Nothing is installed when no
+# path in scope changed.
+#
+# To keep text that is right as written (a present-tense fact that uses a
+# listed phrase, a date that qualifies a measurement), add a line to this
+# repo's .agent-checks/dated-phrasing-allowlist.txt, which the sync never
+# touches:
+#   owner/repo path/to/AGENTS.md :: a few words from the flagged sentence
+# The entry silences the flagged paragraph, list item or heading whose source
+# holds those words. The format is in .githooks/dated-phrasing-allowlist.txt,
+# the fleet's own list, managed by _agent-guidance.
+dated_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || dated_dir=""
+
+# dated_warn <message> — one warning line, never a refusal. On stderr in both
+# forms (GitHub reads annotations from either stream), so a caller's command
+# substitution never captures it.
+dated_warn() {
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    printf '::warning title=dated-phrasing::%s\n' "$1" >&2
+  else
+    printf 'agent-checks (warning): %s\n' "$1" >&2
+  fi
+}
+
+# dated_modules — print the node_modules directory that holds markdown-it,
+# installing it on first use; on failure warn once and return 1.
+# AGENT_CHECKS_DATED_PHRASING_MODULES names a directory to use instead, for
+# the tests, which must not reach the network.
+dated_modules() {
+  local pkg=$dated_dir/dated-phrasing base key dir tmp
+  if [ -n "${AGENT_CHECKS_DATED_PHRASING_MODULES:-}" ]; then
+    printf '%s\n' "$AGENT_CHECKS_DATED_PHRASING_MODULES"
+    return 0
+  fi
+  if ! command -v npm > /dev/null 2>&1; then
+    dated_warn "dated-phrasing skipped: npm is not on PATH, so markdown-it cannot be installed. Install Node.js to get these warnings locally; CI still runs them."
+    return 1
+  fi
+  if [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${RUNNER_TEMP:-}" ]; then
+    base=$RUNNER_TEMP
+  elif [ -n "${XDG_CACHE_HOME:-}" ]; then
+    base=$XDG_CACHE_HOME
+  elif [ -n "${HOME:-}" ]; then
+    base=$HOME/.cache
+  else
+    dated_warn "dated-phrasing skipped: neither XDG_CACHE_HOME nor HOME is set, so there is nowhere to install markdown-it."
+    return 1
+  fi
+  key=$(node -e 'process.stdout.write(require("crypto").createHash("sha256").update(require("fs").readFileSync(process.argv[1])).digest("hex"))' \
+        "$pkg/package-lock.json" 2> /dev/null) || key=""
+  case "$key" in
+    ''|*[!0-9a-f]*)
+      dated_warn "dated-phrasing skipped: $pkg/package-lock.json is missing or unreadable."
+      return 1 ;;
+  esac
+  dir=$base/agent-checks/dated-phrasing/$key
+  if [ ! -f "$dir/node_modules/markdown-it/package.json" ]; then
+    # Install beside the final directory and rename into place, so a run that
+    # is interrupted, or races another, never leaves a half-installed cache.
+    if ! { mkdir -p "$base/agent-checks/dated-phrasing" \
+           && tmp=$(mktemp -d "$base/agent-checks/dated-phrasing/.install.XXXXXX") \
+           && cp "$pkg/package.json" "$pkg/package-lock.json" "$tmp/" \
+           && (cd "$tmp" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error) > /dev/null 2>&1; }; then
+      [ -n "${tmp:-}" ] && rm -rf "$tmp"
+      dated_warn "dated-phrasing skipped: installing markdown-it with npm ci failed (offline, or no access to the npm registry). It retries on the next run."
+      return 1
+    fi
+    [ -f "$dir/node_modules/markdown-it/package.json" ] || { rm -rf "$dir"; mv "$tmp" "$dir" 2> /dev/null; }
+    rm -rf "$tmp"
+    if [ ! -f "$dir/node_modules/markdown-it/package.json" ]; then
+      dated_warn "dated-phrasing skipped: markdown-it was installed but could not be moved into $dir."
+      return 1
+    fi
+  fi
+  printf '%s\n' "$dir/node_modules"
+}
+
+# run_dated_phrasing <list> — the warning pass over a NUL-separated path list.
+# It is counted in the run log (note_ran) only when it read a file.
+run_dated_phrasing() {
+  local list=$1 top rev count mods rc=0
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  [ -n "$dated_dir" ] && [ -f "$dated_dir/dated-phrasing.js" ] || return 0
+  if ! command -v node > /dev/null 2>&1; then
+    # Silent unless a path in scope changed, which needs no node to tell.
+    count=$(tr '\0' '\n' < "$list" | grep -vE '^evals/.*/seed/' \
+            | grep -cE '(^|/)(AGENTS|CLAUDE|SKILL)\.md$|^agents-md/.*\.md$') || count=0
+    [ "$count" -gt 0 ] && dated_warn "dated-phrasing skipped: node is not on PATH. Install Node.js to get these warnings locally; CI still runs them."
+    return 0
+  fi
+  count=$(cd "$top" && node "$dated_dir/dated-phrasing.js" --count-scope < "$list" 2> /dev/null) || count=""
+  case "$count" in
+    ''|*[!0-9]*) dated_warn "dated-phrasing skipped: it could not read the path list."; return 0 ;;
+    0) return 0 ;;
+  esac
+  mods=$(dated_modules) || return 0
+  note_ran dated-phrasing
+  rev=$content_rev
+  (cd "$top" && node "$dated_dir/dated-phrasing.js" --rev "$rev" --modules "$mods" < "$list") || rc=$?
+  [ "$rc" -eq 0 ] || dated_warn "dated-phrasing stopped with exit $rc; its warnings may be incomplete."
+  return 0
+}
+
+# ── PR description: pr-tldr ──────────────────────────────────────────────────
+# Every pull request description begins with a plain-English TLDR, so a reader
+# learns what changes and why before the detail. In the ci event of a
+# pull_request or pull_request_target run, with GITHUB_EVENT_PATH set, the
+# check reads the event payload GitHub wrote there (the pull request's body,
+# its author's type and its creation time) with node, and nothing else: no
+# API call, no network. A missing node or a payload it cannot read or parse
+# refuses (fail closed). Any other event, or no GITHUB_EVENT_PATH, skips it.
+#
+# The rule is lexical, so it gives the same answer every time:
+#   1. CRLF becomes LF; every HTML comment (<!-- ... -->, across lines too) is
+#      removed, and an unclosed <!-- hides everything after it, as GitHub
+#      renders it.
+#   2. Leading lines that are blank, or a "_Requested by ..._" attribution
+#      line, are skipped.
+#   3. The first line left must be an ATX heading whose text is TLDR or TL;DR
+#      (any case, an optional colon): "## TLDR", "# tl;dr:".
+#   4. Some line between it and the next heading (or the end) has text.
+#
+# Closing keywords. The same read also warns, never refuses, about every issue
+# or pull request the description would close: GitHub closes the target of
+# close, closes, closed, fix, fixes, fixed, resolve, resolves or resolved
+# (any case, an optional colon) followed by #N, owner/repo#N or an issue or
+# pull request URL, from any repo, and "For #N" does not. The match is
+# lexical, on the description after the comment removal above, and it prints
+# only the references, never the description. It applies to a pull request
+# opened before pr_tldr_cutoff too, and to a bot's.
+#
+# The payload is the description as it was when the run started: re-running
+# an old run reads the old text. The workflow's `edited` pull_request trigger
+# is what re-runs the check after the description changes.
+#
+# Pull requests opened before the rule shipped are exempt, so an open one is
+# not retro-failed: pr_tldr_cutoff is that moment.
+pr_tldr_cutoff=2026-11-03T00:00:00Z
+
+# pr_tldr_warn <message> — a warning line on stderr, never a refusal.
+pr_tldr_warn() {
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    printf '::warning::agent-checks (warning): %s\n' "$1" >&2
+  else
+    printf 'agent-checks (warning): %s\n' "$1" >&2
+  fi
+}
+
+run_pr_tldr() {
+  local verdict why msg js closes
+  case "${GITHUB_EVENT_NAME:-}" in
+    pull_request|pull_request_target) ;;
+    *) return 0 ;;
+  esac
+  [ -n "${GITHUB_EVENT_PATH:-}" ] || return 0
+  note_ran pr-tldr
+  if ! command -v node > /dev/null 2>&1; then
+    problem pr-tldr "pull request description: node is not on PATH, so the TLDR rule could not read the event payload and nothing was checked. Run this check where Node.js is installed (every GitHub-hosted runner has it)."
+    return 0
+  fi
+  # The script prints "<verdict> <author>": verdict ok, exempt, missing or
+  # empty; author bot or user. It exits nonzero when the payload cannot be
+  # read. It is held in a variable and fed on stdin, not written as a here-doc
+  # inside $( ), which older bash (macOS's 3.2) can misparse.
+  IFS= read -r -d '' js <<'JS' || true
+const fs = require("fs");
+const [file, cutoff] = process.argv.slice(2);
+let pr;
+try {
+  pr = JSON.parse(fs.readFileSync(file, "utf8")).pull_request;
+} catch (err) {
+  process.exit(3);
+}
+if (!pr || typeof pr !== "object") process.exit(3);
+const author = pr.user && pr.user.type === "Bot" ? "bot" : "user";
+const created = typeof pr.created_at === "string" ? Date.parse(pr.created_at) : NaN;
+let body = typeof pr.body === "string" ? pr.body : "";
+body = body.replace(/\r\n?/g, "\n").replace(/<!--[\s\S]*?-->/g, "");
+const open = body.indexOf("<!--");
+if (open >= 0) body = body.slice(0, open);
+// Closing keywords (see "Closing keywords" below): a second output line, the
+// issues and pull requests the description would close, each once.
+const closing = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?[ \t]+((?:[\w.-]+\/[\w.-]+)?#\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+)/gi;
+const closes = [...new Set([...body.matchAll(closing)].map((m) => m[1]))];
+const closesLine = closes.length ? "\ncloses " + closes.join(" ") : "";
+if (!Number.isNaN(created) && created < Date.parse(cutoff)) {
+  console.log("exempt " + author + closesLine);
+  process.exit(0);
+}
+const lines = body.split("\n");
+let i = 0;
+while (i < lines.length && (/^\s*$/.test(lines[i]) || /^_Requested by .+_\s*$/.test(lines[i]))) i++;
+const tldr = /^ {0,3}#{1,6}[ \t]+TL;?DR[ \t]*:?[ \t]*#*[ \t]*$/i;
+const heading = /^ {0,3}#{1,6}([ \t]|$)/;
+let verdict = "missing";
+if (i < lines.length && tldr.test(lines[i])) {
+  verdict = "empty";
+  for (let j = i + 1; j < lines.length && !heading.test(lines[j]); j++) {
+    if (/\S/.test(lines[j])) {
+      verdict = "ok";
+      break;
+    }
+  }
+}
+console.log(verdict + " " + author + closesLine);
+JS
+  verdict=$(node - "$GITHUB_EVENT_PATH" "$pr_tldr_cutoff" <<< "$js" 2> /dev/null) || verdict=""
+  # An optional second line, "closes <ref> <ref> ...", names what the
+  # description would close; split it off so the verdict is the first line.
+  closes=""
+  case "$verdict" in
+    *$'\n'closes\ *) closes=${verdict#*$'\n'closes }; verdict=${verdict%%$'\n'*} ;;
+  esac
+  if [ -n "$closes" ]; then
+    pr_tldr_warn "pull request description: it uses a closing keyword, so merging this pull request closes these: $closes. If you meant only to reference one, drop the keyword (write \"For #N\", not \"Closes #N\")."
+  fi
+  case "$verdict" in
+    "ok "*|"exempt "*) return 0 ;;
+    "missing "*) why="it does not begin with a TLDR heading" ;;
+    "empty "*) why="its TLDR heading has no text under it" ;;
+    *)
+      problem pr-tldr "pull request description: the event payload at GITHUB_EVENT_PATH could not be read as a pull request event (unreadable, not JSON, or no pull_request object), so the TLDR rule was not checked. Re-run the check; if it fails again, the runner's event file is broken."
+      return 0 ;;
+  esac
+  msg="pull request description: $why. The pull request description must begin with a \"## TLDR\" heading followed by one to three plain-English sentences on what changes and why. Only HTML comments and a \"_Requested by ..._\" attribution line may come before it. Edit the description: editing it re-runs this check (re-running an old run does not, because it reads the description as it was when that run started)."
+  # A bot's pull request (Dependabot, a GitHub App, github-actions) is warned,
+  # not refused: this is the one place that decides it.
+  if [ "${verdict#* }" = bot ]; then
+    pr_tldr_warn "$msg The author is a bot, so this is a warning, not a refusal."
+    return 0
+  fi
+  problem pr-tldr "$msg"
+}
+
 # run_checks — the fleet checks, then the repo's own, over the same
-# NUL-separated path list on stdin.
+# NUL-separated path list on stdin, then the warning pass.
 run_checks() {
   local list id
   note_ran rules-dir
@@ -179,7 +638,9 @@ run_checks() {
   list=$(mktemp) || { problem runner-error "could not create a temp file, so nothing was checked."; return; }
   cat > "$list"
   check_paths < "$list"
+  check_gha_injection "$list"
   run_local_checks < "$list"
+  run_dated_phrasing "$list"
   rm -f "$list"
 }
 
@@ -260,6 +721,7 @@ case "$event" in
     else
       run_checks < <(paths_in_range -1 "$head")
     fi
+    run_pr_tldr
     ;;
 
   tree)
@@ -303,6 +765,19 @@ origin_repo() {
   printf '"%s/%s"' "$owner" "$name"
 }
 
+# runner_digest — this file's sha256, first 12 hex digits, as a JSON string,
+# or null when no hash tool answers.
+runner_digest() {
+  local self=${BASH_SOURCE[0]} sum
+  sum=$( { sha256sum -- "$self" || shasum -a 256 -- "$self"; } 2>/dev/null) || sum=""
+  sum=${sum%% *}
+  sum=${sum:0:12}
+  case "$sum" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) printf '"%s"' "$sum" ;;
+    *) printf null ;;
+  esac
+}
+
 log_run() {
   local log=${AGENT_CHECKS_LOG:-} base ts line
   [ "$log" = off ] && return 0
@@ -312,8 +787,8 @@ log_run() {
     log=$base/agent-checks/runs.jsonl
   fi
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || return 0
-  line=$(printf '{"v":1,"ts":"%s","event":"%s","repo":%s,"checks":%s,"failed":%s}' \
-    "$ts" "$event" "$(origin_repo)" "$(json_ids "$ran_ids")" "$(json_ids "$failed_ids")")
+  line=$(printf '{"v":1,"ts":"%s","event":"%s","repo":%s,"checks":%s,"failed":%s,"runner":%s}' \
+    "$ts" "$event" "$(origin_repo)" "$(json_ids "$ran_ids")" "$(json_ids "$failed_ids")" "$(runner_digest)")
   (
     mkdir -p -- "$(dirname -- "$log")" || exit 0
     { [ ! -e "$log" ] || [ -f "$log" ]; } || exit 0

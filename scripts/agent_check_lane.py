@@ -23,9 +23,20 @@ order, then removes the paths in an optional `delete` list in a last commit,
 and runs `ci <base> HEAD`, so a case can show a file caught although the head
 no longer has it.
 
+A ci case may also carry `pr`, the pull request its run belongs to, for the
+runner's pr-tldr check: {"body": str or null, "user_type": "User" or "Bot",
+"created_at": ISO time, "event_name": GitHub event name}, defaulting to a User
+author, 2026-12-01T00:00:00Z and pull_request. The lane writes it as the event
+payload {"pull_request": {"body", "user": {"type"}, "created_at"}} in the case's
+scratch directory and points GITHUB_EVENT_NAME and GITHUB_EVENT_PATH at it. A
+pass case may name a `warning`: a substring stdout or stderr must hold.
+
 Every runner run gets a clean environment: a temp HOME, no global or system
 git config and no inherited GIT_* variable, so no machine hook fires, and
-AGENT_CHECKS_LOG=off, so no case lands in the owner's run log.
+AGENT_CHECKS_LOG=off, so no case lands in the owner's run log. It also drops
+GITHUB_EVENT_NAME, GITHUB_EVENT_PATH and GITHUB_ACTIONS: under GitHub Actions
+they describe the real pull request, which would make every ci case check that
+pull request's description instead of its own.
 
 Usage:
   python3 scripts/agent_check_lane.py cases --runner R [--cases F]
@@ -48,6 +59,11 @@ DEFAULT_CASES = REPO_ROOT / "test" / "fixtures" / "agent-checks-cases.jsonl"
 DEFAULT_REPOS_YML = REPO_ROOT / "repos.yml"
 EVENTS = ("pre-commit", "ci", "tree")
 EXPECTS = ("refuse", "pass")
+PR_DEFAULTS = {"user_type": "User", "created_at": "2026-12-01T00:00:00Z",
+               "event_name": "pull_request"}
+PR_KEYS = {"body", *PR_DEFAULTS}
+# Variables a GitHub Actions run sets for its own event, which no case may see.
+GITHUB_RUN_VARS = ("GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_ACTIONS")
 REFUSAL_PREFIX = "agent-checks: "
 # The closing line the runner prints after any refusal. It is not a refusal of
 # its own, so fleet-scan does not count it.
@@ -62,7 +78,8 @@ RUNNER_COPIES = SCOPE_PATHS[:2]
 
 
 def clean_env(home):
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("GIT_") and k not in GITHUB_RUN_VARS}
     env.update(HOME=str(home), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
                AGENT_CHECKS_LOG="off")
     return env
@@ -102,6 +119,18 @@ def load_cases(path):
                 problems.append("delete is for ci cases only and lists paths from files")
             if case.get("expect") == "refuse" and not case.get("message"):
                 problems.append("a refuse case needs a message")
+            if "pr" in case:
+                pr = case["pr"]
+                if case.get("event") != "ci" or not isinstance(pr, dict):
+                    problems.append("pr is for ci cases only and must be an object")
+                elif set(pr) - PR_KEYS or "body" not in pr:
+                    problems.append(f"pr takes body (required) and {', '.join(sorted(PR_DEFAULTS))} only")
+                elif not (pr["body"] is None or isinstance(pr["body"], str)) or not all(
+                        isinstance(pr.get(k, ""), str) and pr.get(k, "x") for k in PR_DEFAULTS):
+                    problems.append("pr body must be a string or null, and its other fields non-empty strings")
+            if "warning" in case and (case.get("expect") != "pass"
+                                      or not isinstance(case["warning"], str) or not case["warning"]):
+                problems.append("warning is for pass cases only and must be a non-empty string")
             if problems:
                 raise ValueError(f"{path}:{lineno}: {'; '.join(problems)}")
             cases.append(case)
@@ -147,6 +176,13 @@ def run_case(case, runner, scratch):
         if case.get("delete"):
             git(repo, env, "rm", "-q", "--", *case["delete"])
             git(repo, env, "commit", "-q", "-m", "remove")
+        if "pr" in case:
+            pr = {**PR_DEFAULTS, **case["pr"]}
+            event_path = scratch / "event.json"
+            event_path.write_text(json.dumps({"pull_request": {
+                "body": pr["body"], "user": {"type": pr["user_type"]},
+                "created_at": pr["created_at"]}}), encoding="utf-8")
+            env = dict(env, GITHUB_EVENT_NAME=pr["event_name"], GITHUB_EVENT_PATH=str(event_path))
         result = run_runner(runner, repo, env, "ci", base, "HEAD")
     else:
         for rel, content in case["files"].items():
@@ -156,9 +192,11 @@ def run_case(case, runner, scratch):
         result = run_runner(runner, repo, env, "tree", "HEAD")
 
     if case["expect"] == "pass":
-        if result.returncode == 0:
-            return True, ""
-        return False, f"expected pass, got exit {result.returncode}"
+        if result.returncode != 0:
+            return False, f"expected pass, got exit {result.returncode}"
+        if case.get("warning") and case["warning"] not in result.stdout + result.stderr:
+            return False, "passed, but the output lacks the expected warning"
+        return True, ""
     if result.returncode != 1:
         return False, f"expected refuse (exit 1), got exit {result.returncode}"
     if case["message"] not in result.stderr:

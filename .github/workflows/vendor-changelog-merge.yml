@@ -57,7 +57,7 @@ jobs:
 
       # The gate parses the PR body with markdown-it, installed by `npm ci`
       # exactly as ci.yml does.
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: "20"
 

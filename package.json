@@ -10,7 +10,7 @@
     "check-guidance-touch": "node scripts/check-guidance-touch.js"
   },
   "devDependencies": {
-    "markdown-it": "15.0.1",
+    "markdown-it": "15.0.3",
     "yaml": "2.9.0"
   }
 }

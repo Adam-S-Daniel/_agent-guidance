@@ -87,3 +87,80 @@ The guard also refuses deleting a remote `persistent/*` branch
 `gh api -X DELETE .../git/refs/heads/persistent/...`). Those branches outlive
 their pull requests and hold data, and a private repo has no ruleset to stop
 the delete.
+
+## Addendum (2026-10-29): a warn-only pass, dated-phrasing
+
+The runner gains its first check that never refuses, closing the last item
+of [#348](https://github.com/Adam-S-Daniel/_agent-guidance/issues/348). After
+the refusing checks, every event runs `.githooks/dated-phrasing.js` over the
+same paths: it warns on dated history (an ISO date) and migration-relative
+phrasing ("is now", "no longer", "moved to", ...) in the prose of every
+`AGENTS.md` (its repo-specific half), `CLAUDE.md`, `SKILL.md` and
+`agents-md/**`. That text loads into every session and is read as the rule
+that holds now, so a story about what changed goes stale there; it belongs in
+`docs/evidence/` or git ([ADR 0018](0018-incident-narratives-live-in-docs-evidence.md)).
+It warns and never blocks, as [ADR 0017](0017-prompt-audit-runs-as-an-event-triggered-sweep.md)
+requires of checks that grow out of the prompt audit: it never changes the
+exit status, appears in the run log's `checks` only when it read a file, and
+any failure of its own (no node or npm, an offline install) is one warning
+line.
+
+- **It parses Markdown with markdown-it**, because the fleet rule forbids a
+  line scan for structure. The dependency is not vendored: a minified bundle
+  in every repo's history is a gitleaks false-positive risk on repos whose
+  scan reads full history. The sync delivers
+  `.githooks/dated-phrasing/package.json` and `package-lock.json`, pinning
+  markdown-it exactly with integrity hashes, and the runner installs them
+  with `npm ci --ignore-scripts` into a cache keyed by the lockfile's sha256
+  (`${XDG_CACHE_HOME:-$HOME/.cache}/agent-checks/dated-phrasing/`, under
+  `$RUNNER_TEMP` in CI), only when a path in scope changed.
+- **The script, the fleet allowlist and the two package files are managed**
+  like the runner (`AC_DATED_FILES` in `scripts/sync.sh`), and this repo keeps
+  byte-identical self-copies under `.githooks/`, which the suite compares.
+- **Text that is right as written is allowlisted, not reworded.** The fleet
+  list is `templates/agent-checks/dated-phrasing-allowlist.txt`, reviewed
+  against every fleet repo's default branch; a repo adds its own lines in
+  `.agent-checks/dated-phrasing-allowlist.txt`, which the sync never touches.
+  An entry, `<owner/repo> <path> :: <text>`, silences the Markdown block
+  whose source holds `<text>`.
+
+## Addendum (2026-11-02): pr-tldr, and one edit to the added-once workflow
+
+The owner asked that every pull request description begin with a
+plain-English TLDR. The runner's `ci` event gains a `pr-tldr` check for it,
+because this workflow is already a required check in every fleet repo, so
+the rule reaches the fleet with no ruleset change.
+
+- **The test is lexical, never a model.** In a `pull_request` or
+  `pull_request_target` run the runner reads the description from the event
+  payload (`$GITHUB_EVENT_PATH`) with node: after HTML comments, blank lines
+  and a `_Requested by ..._` attribution line, the first line must be an ATX
+  heading reading TLDR or TL;DR, with text under it before the next heading.
+  The same description always gets the same answer, and the refusal says
+  what is wrong and how to fix it. It never prints the description.
+- **Bots are warned, not refused.** A pull request whose author's type is
+  `Bot` (Dependabot, a GitHub App, github-actions) gets a warning line, so
+  automation that cannot write a TLDR is not blocked. The runner decides this
+  in one place, so it can be tightened later.
+- **Pull requests opened before the cutoff are exempt**
+  (`pr_tldr_cutoff`, 2026-11-03T00:00:00Z), so a pull request already open
+  when the rule ships is not failed retroactively.
+- **The sync makes one narrow edit to the workflow.** Item 2 above adds the
+  workflow once and never overwrites it. A re-run reads the payload of the
+  event that started the run, so only a new `edited` event sees a corrected
+  description, and a repo whose workflow has a bare `pull_request:` trigger
+  would stay red after the fix. The template lists
+  `types: [opened, edited, reopened, synchronize]`, and for an existing
+  `.github/workflows/agent-checks.yml` that runs the runner the sync adds
+  `edited` to that trigger: a `types` line under a bare `pull_request:`, or
+  the word added to a one-line `types: [...]` list. It reads the shape with
+  yq, edits one line, and keeps the edit only when yq reads the same
+  document with `edited` added; any other shape (an `on:` list, a block
+  list) is left alone with a WARN naming the repo. A repo that runs the
+  runner from another workflow (adam-agentskills' `ci.yml`) is not edited.
+- **This does not conflict with Dependabot keeping the pin current.** The
+  reason for item 2 is that Dependabot rewrites the workflow's `uses:` line,
+  and an overwrite from the template would undo its bump. This edit never
+  touches `uses:` or anything outside the `pull_request` trigger's `types`,
+  so Dependabot's pin and the sync's trigger edit change different lines, and
+  once `edited` is listed the sync leaves the file alone again.

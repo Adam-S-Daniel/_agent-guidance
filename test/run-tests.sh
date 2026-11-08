@@ -40,15 +40,36 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # bit local runs; unsetting both here makes the run deterministic everywhere.
 unset GH_TOKEN GITHUB_TOKEN
 
+# sync.sh retries a failed per-repo read after 2, 4 and 8 seconds; a test never
+# sleeps, so the delays are zero here.
+export SYNC_READ_RETRY_DELAYS="0 0 0"
+
 # A runner started by a test must not append to the owner's agent-checks run
 # log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
 export AGENT_CHECKS_LOG=off
+
+# Nor may it install markdown-it from npm for its dated-phrasing warning pass:
+# point the pass at a directory with no markdown-it, so it prints its one
+# "could not be loaded" warning. The dated-phrasing tests point it at the
+# copy CI's `npm ci` puts in this repo's node_modules themselves.
+export AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/no-markdown-it"
+
+# Nor may it install zizmor from PyPI for gha-template-injection: point it at
+# a path with no zizmor, so a run over a workflow file warns (or, under
+# GITHUB_ACTIONS, refuses) without the network. test_agent_checks_gha_injection
+# points it at a stub of its own.
+export AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor"
+
+# A stamp exported in the developer's shell would otherwise skew the older
+# fleet-memory tests that never set it.
+unset FLEET_GUIDANCE_PAYLOAD_STAMP
 
 # Mirrors of sync.sh's delivery paths, so an assertion names the artifact it
 # means rather than the directory several artifacts share.
 HOOK_REL_PATH_T=".claude/hooks/skills-bootstrap.sh"
 FLEET_HOOK_REL_PATH_T=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH_T=".claude/hooks/fleet-guidance.md"
+GREC_REL_PATH_T=".claude/hooks/guidance-load-record.sh"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -2568,6 +2589,21 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
+            # MOCK_REF_LAGS_AFTER_DELETE names "<owner_repo>:<n>" pairs: GitHub's
+            # read-after-delete lag. The ref was reaped by the merge, so the
+            # DELETE answers the real 422, yet the next <n> matching-refs
+            # answers still list it before the repo catches up.
+            if [[ -d "$bare_path" && " ${MOCK_REF_LAGS_AFTER_DELETE:-} " == *" $repo_slug:"* ]] \
+               && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
+                lag_spec=" ${MOCK_REF_LAGS_AFTER_DELETE} "
+                lag_spec="${lag_spec##* $repo_slug:}"
+                echo "${lag_spec%% *}" > "$bare_path/mock-ref-lag-left"
+                # The body GitHub returned in run 41683254215, with gh's own
+                # error line run onto it as `2>&1` captures it there.
+                printf '%s' '{"message":"Reference does not exist","documentation_url":"https://docs.github.com/rest/git/refs#delete-a-reference","status":"404"}'
+                echo 'gh: Reference does not exist (HTTP 404)' >&2
+                exit 1
+            fi
             if [[ -d "$bare_path" ]] \
                && git -C "$bare_path" rev-parse --verify -q "refs/heads/$del_branch" >/dev/null; then
                 git -C "$bare_path" update-ref -d "refs/heads/$del_branch"
@@ -2623,6 +2659,18 @@ case "$1" in
             if [[ ! -d "$bare_path" ]]; then
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
+            fi
+            # Read-after-delete lag (see MOCK_REF_LAGS_AFTER_DELETE): answer
+            # with the ref listed while the counter is above zero, then let the
+            # repo catch up by removing the ref for real.
+            if [[ -e "$bare_path/mock-ref-lag-left" ]]; then
+                lag_left=$(<"$bare_path/mock-ref-lag-left")
+                if [[ "$lag_left" -le 0 ]]; then
+                    git -C "$bare_path" update-ref -d refs/heads/skills-lock-bump/update
+                    rm -f "$bare_path/mock-ref-lag-left"
+                else
+                    echo $((lag_left - 1)) > "$bare_path/mock-ref-lag-left"
+                fi
             fi
             # Each entry carries `object.sha` as GitHub's does: the sweep reads
             # a bump branch's tip from it.
@@ -2746,6 +2794,20 @@ case "$1" in
                 echo "gh: your authentication token expires in 3 days" >&2
             fi
 
+            # MOCK_CONTENTS_FAIL_FIRST="<owner_repo> <n>" answers the first n
+            # reads of that repo's contents with a 502 and then serves it
+            # normally: the transient failure sync.sh's retry exists for.
+            if [[ -n "${MOCK_CONTENTS_FAIL_FIRST:-}" \
+                  && "${MOCK_CONTENTS_FAIL_FIRST%% *}" == "$repo_slug" ]]; then
+                fail_ctr="$MOCK_BARE_DIR/.contents-fail-count-$repo_slug"
+                fail_seen=$(cat "$fail_ctr" 2>/dev/null || echo 0)
+                if (( fail_seen < ${MOCK_CONTENTS_FAIL_FIRST##* } )); then
+                    echo $((fail_seen + 1)) > "$fail_ctr"
+                    echo "gh: Bad Gateway (HTTP 502)" >&2
+                    echo '{"message":"Bad Gateway","status":"502"}'
+                    exit 1
+                fi
+            fi
             if [[ " ${MOCK_CONTENTS_HTTP_FAIL:-} " == *" $repo_slug "* ]]; then
                 echo "gh: Resource not accessible by integration (HTTP 403)" >&2
                 echo '{"message":"Resource not accessible by integration","status":"403"}'
@@ -4297,6 +4359,93 @@ push_fleet_payload_fixture() {
     git -C "$TEST_DIR/work/fleet-payload" push origin HEAD:main >/dev/null 2>&1
 }
 
+# ── The plugin's bundled copies of the fleet guidance (adam-agentskills#113) ──
+#
+# adam-agentskills' fleet-guidance hook ships verbatim copies of base.md and
+# fleet-memory.sh. The mirror check here is offline and covers only this repo's
+# own copy, so a stale plugin fallback went unreported. The drift report reads
+# the copies and says, per file, whether each still matches its source.
+run_plugin_copy_report() {
+    FLEET_PLUGIN_REPO="$1" \
+    GITHUB_REPOSITORY_OWNER=fleetorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-plugin-copy.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-plugin-copy-output.txt" 2>&1
+}
+
+test_drift_report_plugin_copies() {
+    echo ""
+    echo "=== Test: drift-report.sh (plugin copies of the fleet guidance) ==="
+
+    local bare="$TEST_DIR/bare/fleetorg_plugin-registry"
+    local work="$TEST_DIR/work/plugin-registry"
+    local dir="plugins/adam-anything-anywhere/hooks/fleet-guidance"
+    local rpt="$TEST_DIR/drift-plugin-copy.md"
+    local rc expected_sha found_sha
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work/$dir"
+    git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+    git init --initial-branch=main "$work" >/dev/null 2>&1
+    git -C "$work" config commit.gpgsign false
+    git -C "$work" remote add origin "$bare"
+    push_plugin_fixture() {
+        git -C "$work" add -A
+        git -C "$work" commit -m "fixture state" >/dev/null 2>&1
+        git -C "$work" push origin HEAD:main >/dev/null 2>&1
+    }
+    cp "$REPO_ROOT/agents-md/base.md" "$work/$dir/fleet-guidance.md"
+    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/$dir/fleet-memory.sh"
+    push_plugin_fixture
+
+    rc=0; run_plugin_copy_report fleetorg/plugin-registry || rc=$?
+    assert_contains "$rpt" "## Plugin copies of the fleet guidance" \
+        "plugin copies: the report has the section when the copy's owner is scanned"
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "ok" \
+        "plugin copies: a current fleet-guidance.md reads ok"
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "ok" \
+        "plugin copies: a current fleet-memory.sh reads ok"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "0 plugin fleet-guidance copy(ies) not matching" \
+        "plugin copies: the run log counts zero when both match"
+    if [[ "$rc" -eq 0 ]]; then
+        pass "plugin copies: the report exits 0"
+    else
+        fail "plugin copies: the report exits 0 — got $rc"
+    fi
+
+    # A stale fallback, the state adam-agentskills#113 found: one line short.
+    head -n -1 "$REPO_ROOT/agents-md/base.md" >"$work/$dir/fleet-guidance.md"
+    push_plugin_fixture
+    run_plugin_copy_report fleetorg/plugin-registry || true
+    expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
+    found_sha=$(sha256sum "$work/$dir/fleet-guidance.md")
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "**drifted**" \
+        "plugin copies: a stale fleet-guidance.md is reported drifted"
+    assert_row_contains "$rpt" "$dir/fleet-guidance.md" "\`${expected_sha:0:8}\` / \`${found_sha:0:8}\`" \
+        "plugin copies: the drifted row shows the expected and found hashes"
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "ok" \
+        "plugin copies (control): the untouched copy still reads ok"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "1 plugin fleet-guidance copy(ies) not matching" \
+        "plugin copies: the run log counts the drifted copy"
+
+    # A copy that is gone is as stale as one that changed.
+    git -C "$work" rm -q "$dir/fleet-memory.sh"
+    push_plugin_fixture
+    run_plugin_copy_report fleetorg/plugin-registry || true
+    assert_row_contains "$rpt" "$dir/fleet-memory.sh" "**missing**" \
+        "plugin copies: an absent fleet-memory.sh is reported missing"
+
+    # An owner this run does not scan is not asked at all: no section, and the
+    # log says why. This is what keeps fixture runs off the real repo.
+    run_plugin_copy_report otherorg/plugin-registry || true
+    assert_not_contains "$rpt" "## Plugin copies of the fleet guidance" \
+        "plugin copies: no section when the copy's owner is not scanned"
+    assert_contains "$TEST_DIR/drift-plugin-copy-output.txt" "not checked: otherorg is not an owner this run scans" \
+        "plugin copies: the log says the copies were not checked, and why"
+    unset -f push_plugin_fixture
+}
+
 test_drift_report_fleet_payload() {
     echo ""
     echo "=== Test: drift-report.sh (fleet-memory hook and payload) ==="
@@ -4921,6 +5070,18 @@ test_drift_report_registry_orphan_owner_failure() {
     fi
     assert_contains "$out" "registry-orphan check skipped" \
         "drift orphan: the run log says why the check did not run"
+    # The cron-coverage sidecar has the same exposure: the unread owner's
+    # repos were never classified, so an empty file would close its nudge.
+    if [[ -f "$TEST_DIR/drift-orphan-fail-cron-unclassified.txt" ]]; then
+        fail "drift orphan: the cron sidecar was written on a partial enumeration"
+    else
+        pass "drift orphan: the cron sidecar is withheld on a partial enumeration too"
+    fi
+    if [[ -f "$TEST_DIR/drift-orphan-fail-control-cron-unclassified.txt" ]]; then
+        pass "drift orphan (control): the cron sidecar IS written when every owner was read"
+    else
+        fail "drift orphan (control): the cron sidecar IS written when every owner was read — so the withholding assertion proves nothing"
+    fi
 
     # Unchanged from the owner-failure test this borrows its fixture shape
     # from: the report still publishes, so failing here would suppress it.
@@ -4974,6 +5135,51 @@ test_drift_report_cron_classification() {
         fail "drift report: a classified repo was reported unclassified"
     else
         pass "drift report: classified repos are not flagged"
+    fi
+
+    # THE SIDECAR drift-report.yml turns into the "Unclassified for cron
+    # coverage" issue (#423), exactly one name, so a classified repo leaking
+    # into it is visible too.
+    local side="$TEST_DIR/drift-cron-cron-unclassified.txt"
+    if [[ -f "$side" && "$(cat "$side")" == "bootorg/repo-not-allowed" ]]; then
+        pass "drift report: the cron sidecar names exactly the unclassified repo"
+    else
+        fail "drift report: the cron sidecar names exactly the unclassified repo — got: $(tr '\n' ' ' <"$side" 2>/dev/null)"
+    fi
+
+    # CONTROL: the unmodified registry writes the sidecar EMPTY, so absent can
+    # keep meaning "did not run" and empty "looked, found nothing".
+    local cside="$TEST_DIR/drift-cron-control-cron-unclassified.txt"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-cron-control.md" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >/dev/null 2>&1 || true
+    if [[ -f "$cside" && ! -s "$cside" ]]; then
+        pass "drift report (control): the cron sidecar is written and empty when every repo is classified"
+    else
+        fail "drift report (control): the cron sidecar is written and empty when every repo is classified — present: $([[ -f "$cside" ]] && echo yes || echo no), got: $(tr '\n' ' ' <"$cside" 2>/dev/null)"
+    fi
+
+    # And the workflow actually reads it. PARSED, never grepped: a needle in a
+    # comment would satisfy a line scan.
+    local wired
+    wired=$(node -e '
+      const YAML = require("yaml"), fs = require("fs");
+      const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const steps = Object.values(d.jobs || {}).flatMap(j => j.steps || []);
+      const nudge = steps.find(s => (s.env || {}).SIDECAR === "drift-report-cron-unclassified.txt");
+      const publish = steps.find(s => /git add -f drift-report-cron-unclassified\.txt/.test(s.run || ""));
+      const ok = nudge && nudge.env.ISSUE_TITLE === "Unclassified for cron coverage"
+        && /gh issue close/.test(nudge.run) && /gh issue create/.test(nudge.run)
+        && publish && steps.indexOf(publish) < steps.indexOf(nudge);
+      process.stdout.write(ok ? "yes" : "no");
+    ' "$REPO_ROOT/.github/workflows/drift-report.yml" 2>/dev/null)
+    if [[ "$wired" == "yes" ]]; then
+        pass "drift report: drift-report.yml publishes the cron sidecar, then opens and closes its own issue from it"
+    else
+        fail "drift report: drift-report.yml publishes the cron sidecar, then opens and closes its own issue from it"
     fi
 }
 
@@ -6414,6 +6620,40 @@ test_sync_agents_sync_yml_unreadable() {
         fail "sync yml parse: the repo was written to"
     fi
 
+    # ── a transient read failure is retried, not counted ─────────────────
+    # The first two reads answer 502 and the third succeeds; the repo must sync.
+    # A fourth failure would still count (the 403 leg above fails every read).
+    sync_yaml_fixture_write 'sections: [python]
+'
+    rm -f "$TEST_DIR"/bare/.contents-fail-count-*
+    out="$TEST_DIR/sync-syncyml-transient.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_CONTENTS_FAIL_FIRST="sfailorg_repo-sync-yml 2" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+    assert_contains "$out" "Sections: python" \
+        "sync yml transient: two 502s then success reads the section list"
+    assert_contains "$out" "0 failed" \
+        "sync yml transient: a retried read is not a repo failure"
+    if [[ $exit_code -eq 0 ]]; then
+        pass "sync yml transient: the run exits 0"
+    else
+        fail "sync yml transient: the run exits 0 - got $exit_code"
+    fi
+    rm -f "$TEST_DIR"/bare/.contents-fail-count-*
+    out="$TEST_DIR/sync-syncyml-transient4.txt"; exit_code=0
+    GITHUB_REPOSITORY_OWNER=sfailorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    MOCK_CONTENTS_FAIL_FIRST="sfailorg_repo-sync-yml 9" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || exit_code=$?
+    assert_contains "$out" "1 failed" \
+        "sync yml transient: a read that keeps failing past the retries still counts"
+    rm -f "$TEST_DIR"/bare/.contents-fail-count-*
+
     # ── the CONTROL, and it is what stops the two legs above passing over a
     # sync that simply refuses this repo whatever it reads.
     sync_yaml_fixture_write 'sections:
@@ -7026,6 +7266,27 @@ test_sync_bootstrap() {
     else
         fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
     fi
+    # The guidance-load record rides with fleet-memory: same repos, a managed
+    # byte-identical copy, executable, and one Stop group with its timeout.
+    if cmp -s "$nolock/$GREC_REL_PATH_T" "$REPO_ROOT/$GREC_REL_PATH_T" && [[ -x "$nolock/$GREC_REL_PATH_T" ]]; then
+        pass "repo-no-lock: guidance-load-record delivered byte for byte and executable"
+    else
+        fail "repo-no-lock: guidance-load-record delivered byte for byte and executable"
+    fi
+    local grec_reg
+    grec_reg=$(python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1]))
+for g in doc["hooks"]["Stop"]:
+    for h in g["hooks"]:
+        if "guidance-load-record.sh" in h["command"]:
+            print(g["matcher"], h["timeout"], h["command"])
+' "$nolock/.claude/settings.json" 2>/dev/null) || grec_reg=""
+    if [[ "$grec_reg" == '* 20 bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh"' ]]; then
+        pass "repo-no-lock: guidance-load-record registered on Stop with its timeout"
+    else
+        fail "repo-no-lock: guidance-load-record registered on Stop with its timeout — got: $grec_reg"
+    fi
     if [[ -e "$nolock/skills.lock" ]]; then
         fail "repo-no-lock: the sync did NOT create a skills.lock"
     else
@@ -7078,6 +7339,11 @@ test_sync_bootstrap() {
             fail "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
         else
             pass "repo-ignored: fleet-memory also withheld from a repo that gitignores .claude/"
+        fi
+        if [[ -e "$ignored/$GREC_REL_PATH_T" ]]; then
+            fail "repo-ignored: guidance-load-record withheld with fleet-memory"
+        else
+            pass "repo-ignored: guidance-load-record withheld with fleet-memory"
         fi
         assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
         assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
@@ -7140,6 +7406,12 @@ test_sync_bootstrap_idempotent() {
         pass "re-run: still exactly 3 SessionStart groups (registration not duplicated)"
     else
         fail "re-run: still exactly 3 SessionStart groups — got $groups"
+    fi
+    groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks']['Stop']))")
+    if [[ "$groups" -eq 1 ]]; then
+        pass "re-run: exactly 1 Stop group (guidance-load-record not duplicated)"
+    else
+        fail "re-run: exactly 1 Stop group — got $groups"
     fi
     if cmp -s "$adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
         pass "re-run: skills.lock STILL byte-identical"
@@ -7396,6 +7668,8 @@ test_sync_bootstrap_dry_run() {
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "existing entries preserved" "dry-run: states that existing entries are preserved"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would NOT touch skills.lock" "dry-run: states that skills.lock is never touched"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "no skills.lock in the repo yet" "dry-run: explains the withheld repo"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would write $GREC_REL_PATH_T (guidance-load record hook missing)" "dry-run: names the guidance-load-record hook it would add"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would register guidance-load-record.sh on Stop in .claude/settings.json" "dry-run: names the Stop registration"
 
     # A dry run must change nothing at all.
     local v="$TEST_DIR/verify-dry"
@@ -7442,6 +7716,8 @@ test_sync_bootstrap_pr_body() {
     assert_contains "$body" "always-on context" "PR body: discloses the standing context cost"
     assert_contains "$body" "existing entries are preserved" "PR body: states that existing SessionStart entries survive"
     assert_contains "$body" "sha256 verified before writing" "PR body: states the delivered bytes were digest-verified"
+    assert_contains "$body" "This PR also delivers \`.claude/hooks/guidance-load-record.sh\`" "PR body: the guidance-load-record hook is called out"
+    assert_prose_contains "$body" "the line holds no paths, names or content" "PR body: states what the guidance-load record never holds"
 
     rm -f "$TEST_DIR/bare/bootorg_repo-adopted/hooks/pre-receive"
 }
@@ -8126,7 +8402,7 @@ EOF
     # 3. Caller file present, job-level `uses:` deleted. The detector must key
     #    on the `uses:` VALUE, never on a filename it could be fooled by.
     cron_workload nouses
-    sed '/uses: Adam-S-Daniel/d' "$caller" \
+    sed '/^    uses: /d' "$caller" \
         > "$root/nouses/.github/workflows/scheduled-run-health.yml"
     assert_cron nouses 1 "no scheduled-run-health caller" \
         "cron coverage: a caller file with no uses: fails"
@@ -8558,6 +8834,8 @@ run_bump() {   # <output file> [script args...]
     MOCK_MERGE_DELETES_BRANCH="${BUMP_MERGE_REAPS_BRANCH_FOR_RUN:-}" \
     MOCK_DELETE_REF_HTTP_FAIL="${BUMP_DELETE_REF_FAIL_FOR_RUN:-}" \
     MOCK_MATCHING_REFS_HTTP_FAIL="${BUMP_MATCHING_REFS_FAIL_FOR_RUN:-}" \
+    MOCK_REF_LAGS_AFTER_DELETE="${BUMP_REF_LAGS_FOR_RUN:-}" \
+    BUMP_REF_SETTLE_SECONDS="${BUMP_REF_SETTLE_SECONDS_FOR_RUN:-0}" \
     MOCK_REF_PUSH_ON="${BUMP_REF_PUSH_ON_FOR_RUN:-}" \
     MOCK_REF_GARBLE_ON="${BUMP_REF_GARBLE_ON_FOR_RUN:-}" \
     MOCK_PR_HEAD_MOVES="${BUMP_HEAD_MOVES_FOR_RUN:-}" \
@@ -12667,6 +12945,12 @@ test_bump_sweep_branch_cleanup() {
     # naming the repo would let the misread through under a reworded prefix.
     assert_not_contains "$log" "was already gone" \
         "branch cleanup: a 404 that could be a scope gap is not read as an already-deleted branch"
+    # The control for the long-lag case below: a ref still listed whose DELETE
+    # said `Not Found`, not `Reference does not exist`, stays a survivor.
+    assert_contains "$log" "bumporg/repo-nochecks: WARN could not delete skills-lock-bump/update — it is still on the repo" \
+        "branch cleanup: a listed ref whose DELETE said Not Found is still reported as on the repo"
+    assert_not_contains "$log" "was already deleted" \
+        "branch cleanup: and its 404 body is not read as already deleted"
     if [[ "$(sweep_bump_branch_sha repo-nochecks)" == "$nochecks_tip" ]]; then
         pass "branch cleanup: the branch the delete failed on is still on the repo"
     else
@@ -12764,6 +13048,46 @@ test_bump_sweep_branch_cleanup() {
     # clean delete, so the failure is scoped to the repo the mock blinded.
     assert_contains "$log" "bumporg/repo-zz-ready: deleted skills-lock-bump/update" \
         "branch cleanup (control): a repo the credential can still see is deleted in that same run"
+
+    # ── READ-AFTER-DELETE LAG. The merge's delete-on-merge reaped the branch,
+    # so our DELETE 404s, but matching-refs still lists the ref for a moment
+    # (run 41683254215 went red on exactly this). Listed on the first
+    # follow-up query and gone on the next must settle to already-gone, not a
+    # WARN. The control keeps a ref that STAYS listed a WARN, so the retry
+    # cannot have turned into believing anything.
+    setup_sweep_repos
+    BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:1" \
+        run_sweep "$TEST_DIR/sweep-delete-lag.txt"
+    unset BUMP_REF_LAGS_FOR_RUN
+    log="$TEST_DIR/sweep-delete-lag.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already gone." \
+        "branch cleanup (lag): a ref listed once after a failed DELETE, then gone, is success"
+    assert_not_contains "$log" "WARN could not delete" \
+        "branch cleanup (lag): and nothing warns about it"
+    assert_not_contains "$log" "was not deleted" \
+        "branch cleanup (lag): and it is not a counted failure"
+    if [[ -z "$(sweep_bump_branch_sha repo-nochecks)" ]]; then
+        pass "branch cleanup (lag): the lagging branch really is absent"
+    else
+        fail "branch cleanup (lag): the lagging branch really is absent"
+    fi
+    # Lag that outlasts every re-query: the listing still names the ref, but
+    # the DELETE said `Reference does not exist` while the listing query was
+    # answering, so the branch is already deleted. Not a failure, and not the
+    # "it is still on the repo" line, which would be false.
+    setup_sweep_repos
+    BUMP_REF_LAGS_FOR_RUN="bumporg_repo-nochecks:99" \
+        run_sweep "$TEST_DIR/sweep-delete-lag-stays.txt"
+    unset BUMP_REF_LAGS_FOR_RUN
+    log="$TEST_DIR/sweep-delete-lag-stays.txt"
+    assert_contains "$log" "bumporg/repo-nochecks: skills-lock-bump/update was already deleted — the delete answered \"Reference does not exist\"" \
+        "branch cleanup (long lag): a DELETE that says the ref does not exist is success while the listing lags"
+    assert_not_contains "$log" "it is still on the repo" \
+        "branch cleanup (long lag): and does not claim the ref is still on the repo"
+    assert_not_contains "$log" "WARN could not delete" \
+        "branch cleanup (long lag): and nothing warns about it"
+    assert_not_contains "$log" "was not deleted" \
+        "branch cleanup (long lag): and it is not a counted failure"
 
     # ── THE PREFIX. matching-refs matches a STRING PREFIX over the whole ref
     # name, as GitHub's does, so asking for `heads/skills-lock-bump/update`
@@ -13497,6 +13821,29 @@ for (const v of (Array.isArray(cursor) ? cursor : [cursor])) console.log(String(
 ' "$REPO_ROOT" "$1" "$2" "${3:-}"
 }
 
+# ── Test 7a2: sync.yml runs one at a time ────────────────────────────────
+#
+# Two overlapping runs pushed the same agents-md-sync/update branches and the
+# loser went red ("cannot lock ref", "fetch first"). A workflow-level group
+# without cancel-in-progress serializes them and never cuts a writing run off.
+test_sync_workflow_serialized() {
+    echo ""
+    echo "=== Test: sync.yml serializes its runs ==="
+    local wf="$REPO_ROOT/.github/workflows/sync.yml" group cancel
+    group=$(yaml_field "$wf" "concurrency.group" 2>/dev/null) || group=""
+    cancel=$(yaml_field "$wf" "concurrency.cancel-in-progress" 2>/dev/null) || cancel=""
+    if [[ "$group" == "sync-agents-md" ]]; then
+        pass "sync serialized: workflow concurrency group is sync-agents-md"
+    else
+        fail "sync serialized: workflow concurrency group is '${group}', want sync-agents-md"
+    fi
+    if [[ "$cancel" == "false" ]]; then
+        pass "sync serialized: cancel-in-progress is false"
+    else
+        fail "sync serialized: cancel-in-progress is '${cancel}', want false (never cut off a run mid-push)"
+    fi
+}
+
 # ── Test 7a: sync.yml fires on every file that decides what a run does ────
 #
 # THE BUG THIS PINS. sync.sh reads its policy out of this checkout while it
@@ -13615,8 +13962,8 @@ test_on_hold_label() {
 }
 
 # Prompt-audit sweep policy (ADR 0017): the sweep spec, the changelog
-# routine's step 4a that fires it, and the ADR index. Never piped: the count
-# and exit code are read from a file.
+# routine's step 4a that files the trigger, the fire workflow, and the ADR
+# index. Never piped: the count and exit code are read from a file.
 test_prompt_audit_sweep() {
     echo ""
     echo "=== Test: prompt-audit sweep policy and fire call ==="
@@ -13625,10 +13972,10 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "13" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 13 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "19" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 19 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=13, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=19, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -14272,7 +14619,8 @@ test_bump_workflow() {
     fi
 
     local field
-    for field in "on.schedule.0.cron:41 7 * * *" \
+    for field in "on.schedule.0.cron:41 1,7,13,19 * * *" \
+                 "on.repository_dispatch.types.0:skills-lock-bump" \
                  "on.workflow_dispatch.inputs.dry_run.type:boolean" \
                  "permissions.contents:read" \
                  "concurrency.group:skills-lock-bump" \
@@ -18990,7 +19338,11 @@ test_dependabot_sweep_merge_gating() {
 #!/usr/bin/env bash
 case "${1:-}" in
     fetch) exit 0 ;;
-    diff) echo ".github/workflows/ci.yml"; exit 0 ;;
+    diff)
+        # The PR's changed files: FIXTURES/diff-files, else one workflow file.
+        if [[ -f "$FIXTURES/diff-files" ]]; then cat "$FIXTURES/diff-files"; else echo ".github/workflows/ci.yml"; fi
+        exit 0
+        ;;
     rev-list)
         # How far the PR head is behind its base: FIXTURES/behind-by, else 0.
         if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
@@ -19069,6 +19421,10 @@ case "${1:-}" in
 esac
 GHSTUB
     chmod +x "$binhome/gh"
+
+    # `sleep` stub: read_pr's UNKNOWN re-reads wait 10s each for real.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$binhome/sleep"
+    chmod +x "$binhome/sleep"
 
     # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json>
     write_pr() {
@@ -19282,6 +19638,73 @@ GHSTUB
     assert_contains "$out_j" "is not behind main" \
         "sweep gating (j): reports the merge refusal as not behind"
 
+    # (k) #296 on 2026-10-29: the first read after main moved answers
+    #     mergeable=UNKNOWN. The sweep re-reads instead of skipping, and
+    #     merges once GitHub has computed MERGEABLE.
+    local fx_k="$TEST_DIR/auto-merge-gating-case-k"
+    mkdir -p "$fx_k"
+    printf '900\n' > "$fx_k/pr-numbers.txt"
+    write_pr "$fx_k/pr-900.json" 900 "$HEAD_X" "UNKNOWN" "UNKNOWN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    write_pr "$fx_k/pr-900.after.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_k="$TEST_DIR/auto-merge-gating-out-k.txt"
+    run_case "$fx_k" "" "$SELF" "$out_k" >/dev/null
+    assert_contains "$out_k" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (k): a first-read UNKNOWN is re-read and then merged"
+
+    # (l) control: UNKNOWN on every read stops after the bound and skips,
+    #     saying how many re-reads it made.
+    local fx_l="$TEST_DIR/auto-merge-gating-case-l"
+    mkdir -p "$fx_l"
+    printf '900\n' > "$fx_l/pr-numbers.txt"
+    write_pr "$fx_l/pr-900.json" 900 "$HEAD_X" "UNKNOWN" "UNKNOWN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
+    local out_l="$TEST_DIR/auto-merge-gating-out-l.txt"
+    run_case "$fx_l" "" "$SELF" "$out_l" >/dev/null
+    assert_contains "$out_l" "still UNKNOWN after 6 re-reads" \
+        "sweep gating (l): an UNKNOWN that never resolves is skipped after 6 re-reads"
+    assert_not_contains "$fx_l/calls.log" "pr merge" \
+        "sweep gating (l): no pr merge call while mergeable stays UNKNOWN"
+
+    # (m) #296 on 2026-10-27: Dependabot rewrites actions.lock with every
+    #     action bump (ADR 0024). The re-check accepts it beside workflow YAML.
+    local fx_m="$TEST_DIR/auto-merge-gating-case-m"
+    mkdir -p "$fx_m"
+    printf '900\n' > "$fx_m/pr-numbers.txt"
+    printf '.github/workflows/actions.lock\n.github/workflows/ci.yml\n' > "$fx_m/diff-files"
+    write_pr "$fx_m/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_m="$TEST_DIR/auto-merge-gating-out-m.txt"
+    run_case "$fx_m" "" "$SELF" "$out_m" >/dev/null
+    assert_contains "$out_m" "merged=1" \
+        "sweep gating (m): a diff of workflow YAML plus actions.lock merges"
+
+    # (n) control: any other non-manifest path is still left for a human.
+    local fx_n="$TEST_DIR/auto-merge-gating-case-n"
+    mkdir -p "$fx_n"
+    printf '900\n' > "$fx_n/pr-numbers.txt"
+    printf '.github/workflows/actions.lock\nscripts/sync.sh\n' > "$fx_n/diff-files"
+    write_pr "$fx_n/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+    local out_n="$TEST_DIR/auto-merge-gating-out-n.txt"
+    run_case "$fx_n" "" "$SELF" "$out_n" >/dev/null
+    assert_not_contains "$fx_n/calls.log" "pr merge" \
+        "sweep gating (n): no pr merge call when the diff touches a non-manifest path"
+
+    # Job `auto-merge` runs the same allowlist on each push; it interpolates
+    # \${{ }} so it is not extracted and run here. Both copies must accept the
+    # lockfile, or the job fails the PR the sweep would merge.
+    local lock_arms
+    # `|| true`: grep -c exits 1 on zero matches, which `set -e` would turn
+    # into an aborted group rather than this test's FAIL.
+    lock_arms=$(grep -cE '^ +\.github/workflows/actions\.lock\) ;;$' "$wf" || true)
+    if [[ "$lock_arms" -eq 2 ]]; then
+        pass "auto-merge: both manifest allowlists accept .github/workflows/actions.lock"
+    else
+        fail "auto-merge: both manifest allowlists should accept .github/workflows/actions.lock — found $lock_arms arm(s)"
+    fi
+
     unset -f write_pr
     unset -f run_case
 }
@@ -19380,6 +19803,59 @@ test_discrepancy_alert() {
     fi
 }
 
+test_health_reusable_parity() {
+    echo ""
+    echo "=== Test: check-health-reusable-parity.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the discrepancy alert gate: the script
+    # parses both workflows with `yaml`, so a missing node_modules must fail
+    # loudly, never skip. CI installs it with `npm ci`.
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "health reusable parity: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/health-reusable-parity-tap.txt" rc=0
+    # Never piped: under pipefail the status would be the last command's.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-health-reusable-parity.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # A minimum count proves the suite ran: zero defined tests exits 0 too.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 9 ]]; then
+        pass "health reusable parity: node:test suite is green ($pass_n passed)"
+    else
+        fail "health reusable parity: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=9): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+test_base_md_merge_window() {
+    echo ""
+    echo "=== Test: base-md-merge-window.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "base.md merge window: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/base-md-merge-window-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-base-md-merge-window.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 14 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 14 ]]; then
+        pass "base.md merge window: node:test suite is green ($pass_n passed)"
+    else
+        fail "base.md merge window: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=14): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_routine_merge_gate() {
     echo ""
     echo "=== Test: routine-merge-gate.js (node:test suite) ==="
@@ -19414,6 +19890,38 @@ test_routine_merge_gate() {
 }
 
 
+test_eval_protected() {
+    echo ""
+    echo "=== Test: eval-protected.js (node:test suite) ==="
+
+    # Same non-silent-skip rule as the merge gate: the script parses base.md
+    # with markdown-it and the coverage file with yaml, so a missing
+    # node_modules must fail loudly. CI installs it with `npm ci`.
+    local dep
+    for dep in markdown-it yaml; do
+        if [[ ! -d "$REPO_ROOT/node_modules/$dep" ]]; then
+            fail "eval protected: node_modules/$dep is missing — run \`npm ci\` first"
+            return
+        fi
+    done
+
+    local out="$TEST_DIR/eval-protected-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-eval-protected.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 73 is the suite's actual count, so a test deleted without updating this
+    # number fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 73 ]]; then
+        pass "eval protected: node:test suite is green ($pass_n passed)"
+    else
+        fail "eval protected: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=73): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_fleet_guidance_mirror() {
     echo ""
     echo "=== Test: check-fleet-guidance-mirror.js (payload mirror + evidence pointers) ==="
@@ -19433,11 +19941,11 @@ test_fleet_guidance_mirror() {
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
-    # 12 is the suite's actual count; a deleted test fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 12 ]]; then
+    # 19 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 19 ]]; then
         pass "fleet guidance mirror: node:test suite is green ($pass_n passed)"
     else
-        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=12): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=19): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 
     # The checker only protects anything if CI runs it. Unconditional (no
@@ -19850,15 +20358,17 @@ test_agents_md_size_budget() {
         fail "size budget: full build with every section is $full_bytes bytes, over 29696 — trim agents-md/base.md; Codex cuts a repo's AGENTS.md at 32768 bytes with nothing on screen to say so"
     fi
 
-    # STUB mode, which is what all 19 repos are on. 8192 is deliberately
-    # generous: the claim being pinned is that the always-on floor stays small
-    # enough that a repo's own additions have effectively the whole budget.
+    # STUB mode, which is what all 19 repos are on. The stub is loaded once
+    # per attached repo on every model call, so a five-repo session pays for
+    # it five times (_agent-guidance#473). The floor lives in base.md, the
+    # installed user-memory block; the stub keeps only the verdict pointer and
+    # the irreversible rules. 2048 holds it near the ~1 KB that design chose.
     local stub_bytes
     stub_bytes=$("$REPO_ROOT/scripts/build-agents-md.sh" | wc -c | tr -d ' ')
-    if [[ "$stub_bytes" -le 8192 ]]; then
-        pass "size budget: stub build is $stub_bytes bytes (<= 8192)"
+    if [[ "$stub_bytes" -le 2048 ]]; then
+        pass "size budget: stub build is $stub_bytes bytes (<= 2048)"
     else
-        fail "size budget: stub build is $stub_bytes bytes, over 8192 — agents-md/stub.md is the always-on floor in every repo"
+        fail "size budget: stub build is $stub_bytes bytes, over 2048 — agents-md/stub.md is the always-on floor in every repo"
     fi
 }
 
@@ -20670,6 +21180,14 @@ test_fleet_memory_repo_header() {
     CLAUDE_CONFIG_DIR="$d/cfg" bash "$hook" >/dev/null 2>&1
     assert_contains "$dest" "Only what is **specific to this account" "repo header: real payload body delivered"
     assert_not_contains "$dest" "Edit only below" "repo header: real payload's repo-only notice not delivered"
+    # The transcript-count marker sits right after the header, so stripping
+    # the header must leave it as the block body's first line: Claude Code's
+    # transcript drops HTML comments, so this visible line is what the
+    # guidance-load Stop hook counts.
+    line="$(grep -A1 '^<!-- fleet-guidance-delivered: ' "$dest" | tail -1)"
+    [[ "$line" == "guidance-marker: fleet-full (transcript counts use this line; keep it)" ]] \
+        && pass "repo header: real payload's fleet-full marker survives as the first body line" \
+        || fail "repo header: real payload's body starts with '$line', not the fleet-full marker"
 
     # Codex Cloud writes the same block through its own path.
     CODEX_HOME="$d/codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --codex-cloud > "$d/out-cloud" 2>&1
@@ -21369,8 +21887,451 @@ test_fleet_memory_freshness() {
     fi
 }
 
+# A caller that holds the payload outside any checkout (a plugin hook that
+# fetched base.md from GitHub) passes the file's commit time as
+# FLEET_GUIDANCE_PAYLOAD_STAMP. Without it that copy stamps zero and can never
+# replace an older checkout's block (docs/decisions/0016).
+test_fleet_memory_payload_stamp() {
+    echo ""
+    echo "TEST: fleet-memory.sh (caller-supplied payload stamp)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-payload-stamp" cfg="$TEST_DIR/fleetmem-payload-stamp/cfg"
+    local out rc repo bad n
+    mkdir -p "$d" "$cfg"
+    # Normal mode, Claude destination only (CODEX_HOME does not exist). Extra
+    # arguments are NAME=VALUE assignments for the run, so a case can set the
+    # stamp to nothing, to junk, or leave it unset.
+    run_payload_stamp() {
+        local run_cfg="$1" run_payload="$2"
+        shift 2
+        env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+            CLAUDE_CONFIG_DIR="$run_cfg" CODEX_HOME="$d/no-codex" \
+            FLEET_GUIDANCE_PAYLOAD="$run_payload" "$@" bash "$hook"
+    }
+
+    # (a) A payload outside any work tree takes the caller's stamp.
+    printf 'STAMP PAYLOAD ONE\n' > "$d/one.md"
+    out="$(run_payload_stamp "$cfg" "$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000300)"; rc=$?
+    [[ $rc -eq 0 ]] && pass 'fleet payload stamp: outside-git payload with a stamp exits 0' \
+        || fail "fleet payload stamp: outside-git payload with a stamp exited $rc"
+    [[ "$out" == "fleet-guidance: installed"* ]] \
+        && pass 'fleet payload stamp: outside-git payload with a stamp reports installed' \
+        || fail "fleet payload stamp: outside-git payload with a stamp did not report installed — got '$out'"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000300' \
+        'fleet payload stamp: caller stamp is recorded for an outside-git payload'
+    assert_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD ONE' \
+        'fleet payload stamp: outside-git payload text is delivered'
+
+    # (b) A different payload with a lower caller stamp cannot replace it.
+    printf 'STAMP PAYLOAD TWO\n' > "$d/two.md"
+    cp "$cfg/CLAUDE.md" "$d/b.before"
+    out="$(run_payload_stamp "$cfg" "$d/two.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000200)"
+    cmp -s "$d/b.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet payload stamp: lower caller stamp leaves bytes unchanged' \
+        || fail 'fleet payload stamp: lower caller stamp changed the destination'
+    [[ "$out" == *"kept newer"* ]] \
+        && pass 'fleet payload stamp: lower caller stamp reports kept newer' \
+        || fail "fleet payload stamp: lower caller stamp did not report kept newer — got '$out'"
+
+    # (c) A different payload with a higher caller stamp replaces it.
+    printf 'STAMP PAYLOAD THREE\n' > "$d/three.md"
+    out="$(run_payload_stamp "$cfg" "$d/three.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000400)"
+    assert_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD THREE' \
+        'fleet payload stamp: higher caller stamp installs the new payload'
+    assert_not_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD ONE' \
+        'fleet payload stamp: higher caller stamp removes the old payload'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000400' \
+        'fleet payload stamp: higher caller stamp is recorded'
+
+    # (d) The same payload with a later stamp only advances the ordering key.
+    out="$(run_payload_stamp "$cfg" "$d/three.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000450)"
+    [[ "$out" == "fleet-guidance: current"* ]] \
+        && pass 'fleet payload stamp: same payload with a later stamp reports current' \
+        || fail "fleet payload stamp: same payload with a later stamp did not report current — got '$out'"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000450' \
+        'fleet payload stamp: same payload with a later stamp advances the key'
+    assert_not_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000400' \
+        'fleet payload stamp: the superseded stamp line is gone'
+    assert_contains "$cfg/CLAUDE.md" 'STAMP PAYLOAD THREE' \
+        'fleet payload stamp: same payload with a later stamp keeps the payload text'
+
+    # (e) A stamp that is not all ASCII digits is ignored: the payload's own
+    # commit time is recorded instead.
+    repo="$d/e-repo"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    git -C "$repo" config commit.gpgsign false
+    printf 'STAMP PAYLOAD COMMITTED\n' > "$repo/payload.md"
+    git -C "$repo" add payload.md
+    GIT_AUTHOR_DATE='@1700000500 +0000' GIT_COMMITTER_DATE='@1700000500 +0000' \
+        git -C "$repo" commit -qm 'committed fixture'
+    n=0
+    for bad in abc -5 ''; do
+        n=$((n + 1))
+        mkdir -p "$d/e-cfg-$n"
+        out="$(run_payload_stamp "$d/e-cfg-$n" "$repo/payload.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$bad")"
+        assert_contains "$d/e-cfg-$n/CLAUDE.md" 'fleet-guidance-delivered: 1700000500' \
+            "fleet payload stamp: stamp '$bad' is ignored and the commit time is recorded"
+    done
+
+    # (f) A stamp without FLEET_GUIDANCE_PAYLOAD is ignored. The hook copy and
+    # its payload sit beside each other in a work tree, as in a checkout.
+    repo="$d/f-repo"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    git -C "$repo" config commit.gpgsign false
+    cp "$hook" "$repo/fleet-memory.sh"
+    printf 'STAMP PAYLOAD BESIDE HOOK\n' > "$repo/fleet-guidance.md"
+    git -C "$repo" add fleet-memory.sh fleet-guidance.md
+    GIT_AUTHOR_DATE='@1700000600 +0000' GIT_COMMITTER_DATE='@1700000600 +0000' \
+        git -C "$repo" commit -qm 'beside-hook fixture'
+    mkdir -p "$d/f-cfg"
+    out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD \
+        CLAUDE_CONFIG_DIR="$d/f-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD_STAMP=1700000999 bash "$repo/fleet-memory.sh")"
+    assert_contains "$d/f-cfg/CLAUDE.md" 'STAMP PAYLOAD BESIDE HOOK' \
+        'fleet payload stamp: the payload beside the hook is delivered without FLEET_GUIDANCE_PAYLOAD'
+    assert_contains "$d/f-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000600' \
+        'fleet payload stamp: stamp without FLEET_GUIDANCE_PAYLOAD is ignored'
+    assert_not_contains "$d/f-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000999' \
+        'fleet payload stamp: stamp without FLEET_GUIDANCE_PAYLOAD is not recorded'
+
+    # (g) When --workspace replaces the payload, the stamp described the
+    # caller's file, not the child's, and is ignored.
+    mkdir -p "$d/g-ws/child/.claude/hooks" "$d/g-cfg"
+    repo="$d/g-ws/child"
+    git init -q "$repo"
+    git -C "$repo" config user.name 'Fleet test'
+    git -C "$repo" config user.email 'fleet@example.com'
+    git -C "$repo" config commit.gpgsign false
+    printf 'STAMP PAYLOAD WORKSPACE CHILD\n' > "$repo/.claude/hooks/fleet-guidance.md"
+    git -C "$repo" add .claude/hooks/fleet-guidance.md
+    GIT_AUTHOR_DATE='@1700000700 +0000' GIT_COMMITTER_DATE='@1700000700 +0000' \
+        git -C "$repo" commit -qm 'workspace child fixture'
+    printf 'STAMP PAYLOAD CALLER FILE\n' > "$d/g-other.md"
+    out="$(env -u FLEET_GUIDANCE_SKIP \
+        CLAUDE_CONFIG_DIR="$d/g-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/g-other.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000999 \
+        bash "$hook" --workspace "$d/g-ws")"
+    assert_contains "$d/g-cfg/CLAUDE.md" 'STAMP PAYLOAD WORKSPACE CHILD' \
+        'fleet payload stamp: --workspace delivers the child payload'
+    assert_not_contains "$d/g-cfg/CLAUDE.md" 'STAMP PAYLOAD CALLER FILE' \
+        'fleet payload stamp: --workspace does not deliver the caller payload'
+    assert_contains "$d/g-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000700' \
+        'fleet payload stamp: --workspace ignores the caller stamp'
+
+    # (h) Leading zeros normalize, so the key never reads as octal or as a
+    # longer number than it is.
+    mkdir -p "$d/h-cfg"
+    out="$(run_payload_stamp "$d/h-cfg" "$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=0001700000800)"
+    assert_contains "$d/h-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000800' \
+        'fleet payload stamp: leading zeros are stripped from the caller stamp'
+
+    # (i) A stamp that is not plausible epoch seconds is ignored, so the
+    # payload's own commit time (case (e)'s fixture) is recorded. The installed
+    # stamp never decreases: a millisecond epoch (13 digits), a YYYYMMDDhhmmss
+    # date (14 digits) or a time far ahead of the clock would otherwise pin the
+    # global block and keep every later delivery out. A trailing carriage
+    # return and a leading space are not digits and are ignored too.
+    n=0
+    for bad in 1700000000000 20231114221320 9999999999 $'1700000300\r' ' 1700000300'; do
+        n=$((n + 1))
+        mkdir -p "$d/i-cfg-$n"
+        out="$(run_payload_stamp "$d/i-cfg-$n" "$d/e-repo/payload.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$bad")"
+        assert_contains "$d/i-cfg-$n/CLAUDE.md" 'fleet-guidance-delivered: 1700000500' \
+            "fleet payload stamp: implausible stamp $(printf '%q' "$bad") is ignored and the commit time is recorded"
+    done
+
+    # (j) --workspace over a directory with no child payload leaves the
+    # caller's payload in use, so the caller's stamp still applies.
+    mkdir -p "$d/j-ws" "$d/j-cfg"
+    out="$(env -u FLEET_GUIDANCE_SKIP \
+        CLAUDE_CONFIG_DIR="$d/j-cfg" CODEX_HOME="$d/no-codex" \
+        FLEET_GUIDANCE_PAYLOAD="$d/one.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000300 \
+        bash "$hook" --workspace "$d/j-ws")"
+    assert_contains "$d/j-cfg/CLAUDE.md" 'STAMP PAYLOAD ONE' \
+        'fleet payload stamp: --workspace with no child payload delivers the caller payload'
+    assert_contains "$d/j-cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000300' \
+        'fleet payload stamp: --workspace with no child payload keeps the caller stamp'
+}
+
+# The check value (see CHECK VALUE in fleet-memory.sh, docs/decisions/0035): a
+# plain-text line that ends every block the hook writes, so a session's report
+# of what loaded can be compared with what it loaded. It is the LAST 8 hex of
+# the payload's sha256 (the version id the verdict prints is the first 8), it
+# exists only in the written block, and it never reaches stdout.
+test_fleet_memory_check_value() {
+    echo ""
+    echo "TEST: fleet-memory.sh (check value line)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-check-value"
+    local end_mark='<!-- END FLEET GUIDANCE -->'
+    local out rc digest check version line cfg n bytes
+    mkdir -p "$d"
+    # Normal mode with the Claude destination alone unless a case gives Codex a
+    # home. Receipts are off: the detached writer would race the fixtures.
+    run_check_value() {
+        local run_cfg="$1" run_payload="$2"
+        shift 2
+        env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+            CLAUDE_CONFIG_DIR="$run_cfg" CODEX_HOME="$d/no-codex" \
+            FLEET_GUIDANCE_PAYLOAD="$run_payload" FLEET_GUIDANCE_RECEIPT=0 "$@" bash "$hook"
+    }
+    # The line immediately before the END marker, and the marker's own line.
+    line_before_end() { grep -B1 -x -F -- "$end_mark" "$1" | head -1; }
+
+    # (a) A fresh block ends with the line, computed here from the payload.
+    cfg="$d/a-cfg"; mkdir -p "$cfg"
+    printf '# Fleet guidance\n\nThe canary is JADE-OTTER-35.\n' > "$d/a.md"
+    digest="$(sha256sum "$d/a.md" | cut -d' ' -f1)"
+    version="$(printf '%s' "$digest" | cut -c1-8)"
+    bytes="$(wc -c < "$d/a.md" | tr -d ' ')"
+    check="$(printf '%s' "$digest" | cut -c57-64)"
+    line="fleet-guidance check value: $check"
+    out="$(run_check_value "$cfg" "$d/a.md")"; rc=$?
+    [[ $rc -eq 0 ]] && pass 'fleet check value: fresh install exits 0' \
+        || fail "fleet check value: fresh install exited $rc"
+    [[ "$out" == "fleet-guidance: installed (v$version, $bytes bytes) -> ~/.claude/CLAUDE.md" ]] \
+        && pass 'fleet check value: the verdict is unchanged and names the first 8 hex' \
+        || fail "fleet check value: fresh verdict differs: '$out'"
+    [[ "$check" != "$version" && ${#check} -eq 8 ]] \
+        && pass 'fleet check value: the value is 8 hex and differs from the version id' \
+        || fail "fleet check value: check '$check' vs version '$version'"
+    [[ "$(grep -c -x -F -- "$line" "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: the line is present exactly once' \
+        || fail 'fleet check value: the line is not present exactly once'
+    [[ "$(grep -c -F -- 'fleet-guidance check value:' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: no other line carries the label' \
+        || fail 'fleet check value: the label appears on more than one line'
+    [[ "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the line sits immediately before the END marker' \
+        || fail "fleet check value: line before END is '$(line_before_end "$cfg/CLAUDE.md")'"
+    [[ "$(tail -n 1 "$cfg/CLAUDE.md")" == "$end_mark" ]] \
+        && pass 'fleet check value: the END marker closes the file' \
+        || fail 'fleet check value: the END marker does not close the file'
+    [[ "$(sed -n '/^The canary is /{n;p}' "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the line follows the payload with nothing between' \
+        || fail 'fleet check value: something sits between the payload and the line'
+    [[ "$out" != *"$check"* && "$out" != *"check value"* ]] \
+        && pass 'fleet check value: stdout never carries the value' \
+        || fail "fleet check value: stdout carries the value: '$out'"
+
+    # (b) A second run is current and leaves the bytes alone.
+    cp "$cfg/CLAUDE.md" "$d/a.before"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: current ("* && "$out" != *"$check"* ]] \
+        && pass 'fleet check value: a second run reports current without the value' \
+        || fail "fleet check value: second run printed '$out'"
+    cmp -s "$d/a.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: a second run is byte-identical' \
+        || fail 'fleet check value: a second run changed the file'
+
+    # (c) A block of the same version WITHOUT the line (the shape a hook
+    # without the line writes) is rewritten, reports installed, and keeps the higher stamp. The
+    # payload is outside any work tree, so its own stamp is 0.
+    cfg="$d/c-cfg"; mkdir -p "$cfg"
+    printf 'MY NOTE ABOVE\n' > "$cfg/CLAUDE.md"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    sed -i -e '/^fleet-guidance check value: /d' \
+        -e 's/^<!-- fleet-guidance-delivered: .* -->$/<!-- fleet-guidance-delivered: 1700000900 -->/' \
+        "$cfg/CLAUDE.md"
+    assert_not_contains "$cfg/CLAUDE.md" 'check value' 'fleet check value: fixture block lacks the line'
+    assert_contains "$cfg/CLAUDE.md" "fleet-guidance-version: $version" 'fleet check value: fixture block has the same version'
+    out="$(run_check_value "$cfg" "$d/a.md")"; rc=$?
+    [[ $rc -eq 0 && "$out" == "fleet-guidance: installed (v$version, $bytes bytes) -> ~/.claude/CLAUDE.md" ]] \
+        && pass 'fleet check value: a same-version block without the line is rewritten and reports installed' \
+        || fail "fleet check value: line-less block run exited $rc with '$out'"
+    [[ "$(grep -c -x -F -- "$line" "$cfg/CLAUDE.md")" -eq 1 && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the rewrite adds the line before the END marker' \
+        || fail 'fleet check value: the rewrite did not add the line'
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000900 -->' \
+        'fleet check value: the rewrite keeps the higher existing stamp'
+    [[ "$(grep -c 'fleet-guidance-delivered:' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: exactly one stamp line after the rewrite' \
+        || fail 'fleet check value: the rewrite left more than one stamp line'
+    assert_contains "$cfg/CLAUDE.md" 'MY NOTE ABOVE' 'fleet check value: personal content survives the rewrite'
+    [[ "$(grep -c -F 'MY NOTE ABOVE' "$cfg/CLAUDE.md")" -eq 1 && "$(grep -c 'BEGIN FLEET GUIDANCE' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: the rewrite leaves one note and one block' \
+        || fail 'fleet check value: the rewrite duplicated the note or the block'
+    cp "$cfg/CLAUDE.md" "$d/c.before"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: current ("* ]] && cmp -s "$d/c.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: after the rewrite the next run is current and byte-identical' \
+        || fail "fleet check value: the run after the rewrite printed '$out' or changed the file"
+
+    # (c2) A higher stamp from the caller wins over a lower existing one.
+    sed -i -e '/^fleet-guidance check value: /d' \
+        -e 's/^<!-- fleet-guidance-delivered: .* -->$/<!-- fleet-guidance-delivered: 1700000500 -->/' \
+        "$cfg/CLAUDE.md"
+    out="$(run_check_value "$cfg" "$d/a.md" FLEET_GUIDANCE_PAYLOAD_STAMP=1700001000)"
+    [[ "$out" == "fleet-guidance: installed ("* ]] \
+        && pass 'fleet check value: a line-less block is rewritten under a higher caller stamp' \
+        || fail "fleet check value: higher-stamp rewrite printed '$out'"
+    assert_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700001000 -->' \
+        'fleet check value: the rewrite records the higher caller stamp'
+    assert_not_contains "$cfg/CLAUDE.md" 'fleet-guidance-delivered: 1700000500' \
+        'fleet check value: the lower stamp is gone'
+
+    # (d) A line with another value, or one outside the block, is not the line.
+    cfg="$d/d-cfg"; mkdir -p "$cfg"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    sed -i "s/^fleet-guidance check value: .*/fleet-guidance check value: 0badc0de/" "$cfg/CLAUDE.md"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: installed ("* && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: a stale value is replaced by the right one' \
+        || fail "fleet check value: stale value run printed '$out'"
+    assert_not_contains "$cfg/CLAUDE.md" '0badc0de' 'fleet check value: the stale value is gone'
+    cfg="$d/d2-cfg"; mkdir -p "$cfg"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    sed -i '/^fleet-guidance check value: /d' "$cfg/CLAUDE.md"
+    { printf '%s\n' "$line"; cat "$cfg/CLAUDE.md"; } > "$d/d2.tmp" && mv "$d/d2.tmp" "$cfg/CLAUDE.md"
+    out="$(run_check_value "$cfg" "$d/a.md")"
+    [[ "$out" == "fleet-guidance: installed ("* && "$(grep -c -x -F -- "$line" "$cfg/CLAUDE.md")" -eq 2 \
+        && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: the same line outside the block does not stand in for it' \
+        || fail "fleet check value: outside-block run printed '$out'"
+
+    # (e) A payload with no final newline gets the line on its own line.
+    cfg="$d/e-cfg"; mkdir -p "$cfg"
+    printf 'NO FINAL NEWLINE' > "$d/e.md"
+    check="$(sha256sum "$d/e.md" | cut -c57-64)"
+    run_check_value "$cfg" "$d/e.md" >/dev/null
+    [[ "$(tail -n 3 "$cfg/CLAUDE.md" | head -1)" == 'NO FINAL NEWLINE' \
+        && "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
+        && pass 'fleet check value: a payload with no final newline gets the line on its own line' \
+        || fail "fleet check value: no-newline layout is '$(tail -n 3 "$cfg/CLAUDE.md" | tr '\n' '|')'"
+    assert_not_contains "$cfg/CLAUDE.md" 'NO FINAL NEWLINEfleet-guidance' \
+        'fleet check value: the line is not glued to the last payload line'
+    cp "$cfg/CLAUDE.md" "$d/e.before"
+    run_check_value "$cfg" "$d/e.md" >/dev/null
+    cmp -s "$d/e.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: the no-newline block is stable on a second run' \
+        || fail 'fleet check value: the no-newline block changed on a second run'
+
+    # (f) The value comes from the payload FILE, repo-only header included,
+    # though the header is not delivered.
+    cfg="$d/f-cfg"; mkdir -p "$cfg"
+    printf '# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**\n> Edit only below the `## Repo-specific additions` header.\n> Everything above it will be overwritten on the next sync.\n\nHEADED BODY\n' > "$d/f.md"
+    check="$(sha256sum "$d/f.md" | cut -c57-64)"
+    run_check_value "$cfg" "$d/f.md" >/dev/null
+    assert_not_contains "$cfg/CLAUDE.md" 'Edit only below' 'fleet check value: the repo-only header is dropped'
+    [[ "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
+        && pass 'fleet check value: the value is taken from the whole payload file' \
+        || fail 'fleet check value: the headed payload got another value'
+
+    # (g) Codex: both destinations carry it, and each is judged on its own.
+    cfg="$d/g-cfg"; mkdir -p "$cfg" "$d/g-codex"
+    run_check_value "$cfg" "$d/a.md" CODEX_HOME="$d/g-codex" >/dev/null
+    line="fleet-guidance check value: $(sha256sum "$d/a.md" | cut -c57-64)"
+    [[ "$(line_before_end "$d/g-codex/AGENTS.md")" == "$line" && "$(line_before_end "$cfg/CLAUDE.md")" == "$line" ]] \
+        && pass 'fleet check value: Claude and Codex blocks both end with the line' \
+        || fail 'fleet check value: a destination lacks the line'
+    sed -i '/^fleet-guidance check value: /d' "$d/g-codex/AGENTS.md"
+    cp "$cfg/CLAUDE.md" "$d/g.claude.before"
+    out="$(run_check_value "$cfg" "$d/a.md" CODEX_HOME="$d/g-codex")"
+    [[ "$out" == "fleet-guidance: installed (v$version, $bytes bytes) -> ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md" ]] \
+        && pass 'fleet check value: a run that rewrote one destination reports installed for both' \
+        || fail "fleet check value: mixed run printed '$out'"
+    cmp -s "$d/g.claude.before" "$cfg/CLAUDE.md" \
+        && pass 'fleet check value: the destination that had the line is untouched' \
+        || fail 'fleet check value: the destination that had the line changed'
+    [[ "$(line_before_end "$d/g-codex/AGENTS.md")" == "$line" ]] \
+        && pass 'fleet check value: the Codex block is rewritten with the line' \
+        || fail 'fleet check value: the Codex block lacks the line'
+
+    # (h) Workspace mode: the child's payload is the source, stdout stays clean.
+    mkdir -p "$d/h-ws/child/.git" "$d/h-ws/child/.claude/hooks" "$d/h-cfg"
+    printf '# child\n' > "$d/h-ws/child/AGENTS.md"
+    printf 'WORKSPACE CHILD PAYLOAD\n' > "$d/h-ws/child/.claude/hooks/fleet-guidance.md"
+    check="$(sha256sum "$d/h-ws/child/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
+    out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD CLAUDE_CONFIG_DIR="$d/h-cfg" \
+        CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --workspace "$d/h-ws")"
+    [[ "$(line_before_end "$d/h-cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
+        && pass 'fleet check value: workspace mode writes the value of the child payload' \
+        || fail 'fleet check value: workspace mode wrote another value'
+    [[ "$out" == *"fleet-workspace:"* && "$out" != *"$check"* && "$out" != *"check value"* ]] \
+        && pass 'fleet check value: workspace stdout never carries the value' \
+        || fail "fleet check value: workspace stdout is '$out'"
+
+    # (i) Skip removes the whole block, line included, and leaves the rest.
+    cfg="$d/i-cfg"; mkdir -p "$cfg"
+    printf 'KEEP ME\n' > "$cfg/CLAUDE.md"
+    run_check_value "$cfg" "$d/a.md" >/dev/null
+    assert_contains "$cfg/CLAUDE.md" 'check value' 'fleet check value: fixture has the line before skip'
+    out="$(run_check_value "$cfg" "$d/a.md" FLEET_GUIDANCE_SKIP=1)"
+    [[ "$out" == "fleet-guidance: skipped"* ]] \
+        && pass 'fleet check value: skip reports skipped' \
+        || fail "fleet check value: skip printed '$out'"
+    assert_not_contains "$cfg/CLAUDE.md" 'check value' 'fleet check value: skip removes the line with the block'
+    assert_not_contains "$cfg/CLAUDE.md" 'FLEET GUIDANCE' 'fleet check value: skip removes both markers'
+    [[ "$(cat "$cfg/CLAUDE.md")" == 'KEEP ME' ]] \
+        && pass 'fleet check value: skip leaves only the personal content' \
+        || fail 'fleet check value: skip left something besides the personal content'
+
+    # (j) No digest tool: the version is unknown and no line is written.
+    mkdir -p "$d/j-bin" "$d/j-cfg"
+    for n in cat basename dirname mktemp awk cmp mv rm mkdir readlink tr grep head tail wc stat chmod git; do
+        if command -v "$n" >/dev/null 2>&1; then ln -sf "$(command -v "$n")" "$d/j-bin/$n"; fi
+    done
+    out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD_STAMP PATH="$d/j-bin" \
+        CLAUDE_CONFIG_DIR="$d/j-cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 \
+        FLEET_GUIDANCE_PAYLOAD="$d/a.md" "$(command -v bash)" "$hook" 2>&1)"
+    [[ "$out" == "fleet-guidance: installed (vunknown, $bytes bytes)"* ]] \
+        && pass 'fleet check value: with no digest tool the version reads unknown' \
+        || fail "fleet check value: no-digest run printed '$out'"
+    assert_contains "$d/j-cfg/CLAUDE.md" 'The canary is JADE-OTTER-35.' 'fleet check value: no-digest run delivers the payload'
+    assert_not_contains "$d/j-cfg/CLAUDE.md" 'check value' 'fleet check value: no digest, no check line'
+
+    # (k) The shipped payload, and base.md it mirrors, never carry the line:
+    # only a block this hook writes does.
+    assert_not_contains "$REPO_ROOT/agents-md/base.md" 'fleet-guidance check value:' \
+        'fleet check value: base.md carries no check value line'
+    assert_not_contains "$REPO_ROOT/.claude/hooks/fleet-guidance.md" 'fleet-guidance check value:' \
+        'fleet check value: the delivered payload copy carries no check value line'
+    cfg="$d/k-cfg"; mkdir -p "$cfg"
+    env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+        CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" >/dev/null
+    check="$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
+    [[ "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" \
+        && "$(grep -c -F 'fleet-guidance check value:' "$cfg/CLAUDE.md")" -eq 1 ]] \
+        && pass 'fleet check value: the shipped payload is delivered with exactly one line' \
+        || fail 'fleet check value: the shipped payload block lacks its one line'
+}
+
 # Codex's generated records are audited after generation; all memory, sidecar,
 # and CLI configuration paths in this group are synthetic and isolated.
+# The Anthropic article watch (scripts/article_watch.py). Its unittest module
+# fires only into a recording stub, so it needs no network or fixtures. A
+# module that discovers nothing fails, so a renamed test file cannot pass.
+test_article_watch() {
+    echo ""
+    echo "TEST: article_watch.py (new agent articles fire the lift routine once)"
+    local counts="$TEST_DIR/article-watch-counts" ran failed
+    python3 - "$SCRIPT_DIR" "$counts" <<'PY' || true
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_article_watch.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+bad = len(result.failures) + len(result.errors) + len(result.unexpectedSuccesses)
+pathlib.Path(sys.argv[2]).write_text("%d %d\n" % (result.testsRun, bad), encoding="ascii")
+PY
+    if ! read -r ran failed < "$counts" 2>/dev/null; then
+        fail "article-watch: the unittest module did not report a count"
+        return
+    fi
+    if (( ran == 0 )); then
+        fail "article-watch: test_article_watch.py ran zero tests"
+        return
+    fi
+    PASS=$((PASS + ran - failed))
+    FAIL=$((FAIL + failed))
+    (( failed == 0 )) && echo "  PASS: article-watch: $ran unittest cases" || echo "  FAIL: article-watch: $failed of $ran unittest cases"
+}
+
 # The memory curation audit (docs/decisions/0026). Its unittest module owns
 # temporary memory directories of invented notes and needs no shell fixtures.
 # Each test counts as one PASS or FAIL here, and a module that discovers
@@ -21640,6 +22601,14 @@ PY_SCOPE
     mkdir "$CMA_HOME/memories_v3"
     cma_run
     cma_status 2 "unknown memories_v3 namespace cannot be reported clean"
+    cma_fixture v2-lock empty memories_v2
+    : > "$CMA_HOME/memories_v2.lock"
+    cma_run
+    cma_status 0 "Codex 0.166.0's empty memories_v2.lock is accepted (#363)"
+    cma_fixture v2-lock-dir empty memories_v2
+    mkdir "$CMA_HOME/memories_v2.lock"
+    cma_run
+    cma_status 2 "a memories_v2.lock that is not a regular file is unsupported"
     cma_fixture missing-table
     cma_sql "DROP TABLE stage1_outputs"
     cma_run
@@ -23387,11 +24356,20 @@ test_sync_dependabot_auto_merge() {
 # ── agent-checks delivery (repos.yml agent_checks, ADR 0021) ─────────────────
 # acorg in a MOCK_BARE_DIR of its own. Steps run in order: switch off → dry
 # run → real run → re-run (no-op).
+
+# ac_trig_wf [<types line>] — an agent-checks.yml as an older sync delivered
+# it: a pull_request trigger with a trailing comment, then <types line> (a
+# whole line with its newline, or nothing for the bare trigger).
+ac_trig_wf() {
+    printf 'name: agent-checks\non:\n  pull_request:  # pull request runs\n%s  push:\n    branches: [main, master]\n\njobs:\n  agent-checks:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"\n' "${1:-}"
+}
+
 setup_ac_repos() {
     local bare_dir="$1" work="$TEST_DIR/ac-work" name
     rm -rf "$bare_dir" "$work"
     mkdir -p "$bare_dir" "$work"
-    for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored; do
+    for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored \
+                ac-trig-bare ac-trig-types ac-trig-current ac-trig-list; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/acorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
@@ -23405,10 +24383,21 @@ setup_ac_repos() {
             ac-drift)
                 mkdir -p "$work/$name/.githooks"
                 echo "# an older runner" > "$work/$name/.githooks/agent-checks"
+                echo "// an older dated-phrasing pass" > "$work/$name/.githooks/dated-phrasing.js"
                 ;;
             ac-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
             ac-platform) echo "platform_ref: v0.0.1" > "$work/$name/platform.lock" ;;
             ac-ignored) echo ".claude/" > "$work/$name/.gitignore" ;;
+            ac-trig-bare) ac_trig_wf > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-trig-types)
+                ac_trig_wf '    types: [opened, synchronize]
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-trig-current)
+                ac_trig_wf '    types: [opened, edited]
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-trig-list)
+                printf 'name: agent-checks\non: [pull_request, push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n' \
+                    > "$work/$name/.github/workflows/agent-checks.yml" ;;
         esac
         gattr_git -C "$work/$name" add -A
         gattr_git -C "$work/$name" commit -q -m init
@@ -23476,8 +24465,18 @@ test_sync_agent_checks() {
         "agent-checks (dry run): the runner is reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
         "agent-checks (dry run): the workflow is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing missing)" \
+        "agent-checks (dry run): the dated-phrasing files are reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would register the agent-checks guard on PreToolUse" \
         "agent-checks (dry run): the guard registration is reported"
+    ac_section "$out-dry.log" ac-trig-bare > "$out-dry-trig"
+    assert_contains "$out-dry-trig" "[DRY RUN] Would add edited to the pull_request types in $wf" \
+        "agent-checks (dry run): a workflow whose pull_request trigger lacks edited is reported"
+    if cmp -s <(ac_show ac-trig-bare "$wf") <(ac_trig_wf); then
+        pass "agent-checks (dry run): the workflow lacking edited is left as it was"
+    else
+        fail "agent-checks (dry run): the workflow lacking edited is left as it was"
+    fi
 
     # ── The real run ──
     rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-1.log" || rc=$?
@@ -23493,6 +24492,15 @@ test_sync_agent_checks() {
         pass "agent-checks (sync): runner, workflow and guard arrive byte for byte"
     else
         fail "agent-checks (sync): runner, workflow and guard arrive byte for byte"
+    fi
+    local dated_file dated_ok=true
+    for dated_file in dated-phrasing.js dated-phrasing-allowlist.txt dated-phrasing/package.json dated-phrasing/package-lock.json; do
+        cmp -s <(ac_show ac-none ".githooks/$dated_file") "$tmpl/$dated_file" || dated_ok=false
+    done
+    if $dated_ok; then
+        pass "agent-checks (sync): the dated-phrasing script, allowlist and package files arrive byte for byte under .githooks/"
+    else
+        fail "agent-checks (sync): the dated-phrasing script, allowlist and package files arrive byte for byte under .githooks/"
     fi
     got=$(gattr_git -C "$bare/acorg_ac-none" ls-tree main -- "$runner" "$guard" | awk '{print $1}' | sort -u | tr '\n' ' ')
     if [[ "$got" == "100755 " ]]; then
@@ -23534,7 +24542,9 @@ for g in doc["hooks"]["PreToolUse"]:
     echo "TOKEN=x" > "$clone/.env"
     gattr_git -C "$clone" add .env
     gattr_git -C "$clone" commit -q -m "add env"
-    rc=0; (cd "$clone" && bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
+    # No GITHUB_EVENT_*: under CI they name this suite's own pull request, and
+    # the runner's pr-tldr check would read its description.
+    rc=0; (cd "$clone" && env -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH bash "$runner" ci HEAD~1 HEAD) > "$out-ci.log" 2>&1 || rc=$?
     if [[ $rc -ne 0 ]] && grep -q '\.env' "$out-ci.log"; then
         pass "agent-checks (sync): the delivered runner's ci mode refuses a committed .env"
     else
@@ -23550,6 +24560,12 @@ for g in doc["hooks"]["PreToolUse"]:
         pass "agent-checks (sync): a drifted runner is overwritten with the managed copy"
     else
         fail "agent-checks (sync): a drifted runner is overwritten with the managed copy"
+    fi
+    if cmp -s <(ac_show ac-drift .githooks/dated-phrasing.js) "$tmpl/dated-phrasing.js" \
+       && cmp -s <(ac_show ac-drift .githooks/dated-phrasing/package-lock.json) "$tmpl/dated-phrasing/package-lock.json"; then
+        pass "agent-checks (sync): a drifted dated-phrasing script is overwritten, and its missing siblings added"
+    else
+        fail "agent-checks (sync): a drifted dated-phrasing script is overwritten, and its missing siblings added"
     fi
     if [[ -z "$(ac_show ac-lock "$wf")" ]] && cmp -s <(ac_show ac-lock "$runner") "$tmpl/agent-checks"; then
         pass "agent-checks (sync): a repo with actions.lock gets the runner but not the SHA-pinned workflow"
@@ -23571,6 +24587,47 @@ for g in doc["hooks"]["PreToolUse"]:
         pass "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
     else
         fail "agent-checks (sync): a repo with .claude/ gitignored gets the CI check but no guard"
+    fi
+
+    # The one edit the sync makes to an existing workflow (ADR 0021's
+    # 2026-11-02 addendum): edited added to the pull_request types.
+    if cmp -s <(ac_show ac-trig-bare "$wf") <(ac_trig_wf '    types: [opened, edited, reopened, synchronize]
+'); then
+        pass "agent-checks (trigger): a bare pull_request: gets a types line with edited, and nothing else changes"
+    else
+        fail "agent-checks (trigger): a bare pull_request: gets a types line with edited, and nothing else changes — got: $(ac_show ac-trig-bare "$wf" | head -6 | tr '\n' '|')"
+    fi
+    if cmp -s <(ac_show ac-trig-types "$wf") <(ac_trig_wf '    types: [opened, edited, synchronize]
+'); then
+        pass "agent-checks (trigger): a types list without edited gets edited added after opened"
+    else
+        fail "agent-checks (trigger): a types list without edited gets edited added after opened — got: $(ac_show ac-trig-types "$wf" | head -6 | tr '\n' '|')"
+    fi
+    if cmp -s <(ac_show ac-trig-current "$wf") <(ac_trig_wf '    types: [opened, edited]
+'); then
+        pass "agent-checks (trigger): a types list that has edited is left alone"
+    else
+        fail "agent-checks (trigger): a types list that has edited is left alone"
+    fi
+    if cmp -s <(ac_show ac-trig-list "$wf") <(printf 'name: agent-checks\non: [pull_request, push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n'); then
+        pass "agent-checks (trigger): an on: list is left alone"
+    else
+        fail "agent-checks (trigger): an on: list is left alone"
+    fi
+    ac_section "$out-1.log" ac-trig-list > "$out-trig-list"
+    assert_contains "$out-trig-list" "WARN: acorg/ac-trig-list's $wf is not patched to re-run on a description edit (its on: is not a map of triggers)" \
+        "agent-checks (trigger): the on: list is named in a WARN"
+    ac_section "$out-1.log" ac-trig-bare > "$out-trig-bare"
+    assert_contains "$out-trig-bare" "trigger=missing-edited" \
+        "agent-checks (trigger): the classify line reports the missing edited"
+    ac_section "$out-1.log" ac-trig-current > "$out-trig-current"
+    assert_contains "$out-trig-current" "trigger=current" \
+        "agent-checks (trigger): the classify line reports a current trigger"
+    got=$(gattr_git -C "$bare/acorg_ac-trig-bare" log -1 --format=%B main)
+    if [[ "$got" == *"Adds edited to the pull_request types of $wf"* ]]; then
+        pass "agent-checks (trigger): the commit says why the workflow was edited"
+    else
+        fail "agent-checks (trigger): the commit says why the workflow was edited — got: $(head -1 <<< "$got")"
     fi
 
     # ── Re-run: nothing left to do ──
@@ -23664,9 +24721,529 @@ test_agent_checks_persistent_delete() {
     fi
 }
 
+# agents-md-size: a change that leaves the root AGENTS.md over 32,768 bytes
+# (Codex's project_doc_max_bytes, where it silently truncates) is refused in
+# every event, measured in bytes; a change that does not touch it passes even
+# when it is already oversized, and a nested AGENTS.md is not measured.
+ac_size_run() {   # <repo> <out prefix> <runner args...> — runs the runner, prints its exit code
+    local repo=$1 out=$2 rc=0
+    shift 2
+    (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
+        > "$out.out" 2> "$out.err" < /dev/null || rc=$?
+    echo "$rc"
+}
+
+ac_size_file() {   # <path> <bytes> — a file of exactly that many ASCII bytes
+    head -c "$2" /dev/zero | tr '\0' 'a' > "$1"
+}
+
+test_agent_checks_agents_md_size() {
+    echo ""
+    echo "=== Test: agent-checks refuses a root AGENTS.md over 32768 bytes ==="
+    local repo="$TEST_DIR/ac-size" out="$TEST_DIR/ac-size-run" base rc sha
+    local -a g=(git -C "$repo" -c user.name=Example -c user.email=agent@example.com -c commit.gpgsign=false)
+    git init -q -b main "$repo"
+    "${g[@]}" commit -q --allow-empty -m base
+    base=$("${g[@]}" rev-parse HEAD)
+
+    # pre-commit reads the index: 32768 passes, 32769 refuses with the fix.
+    ac_size_file "$repo/AGENTS.md" 32768
+    "${g[@]}" add AGENTS.md
+    rc=$(ac_size_run "$repo" "$out" pre-commit)
+    [[ $rc -eq 0 ]] && pass "agents-md-size: pre-commit passes AGENTS.md of exactly 32768 bytes" \
+        || fail "agents-md-size: pre-commit passes AGENTS.md of exactly 32768 bytes — exit $rc: $(cat "$out.err")"
+    ac_size_file "$repo/AGENTS.md" 32769
+    "${g[@]}" add AGENTS.md
+    rc=$(ac_size_run "$repo" "$out" pre-commit)
+    if [[ $rc -eq 1 ]] \
+       && grep -qF 'agent-checks: AGENTS.md: it is 32769 bytes, over the 32768-byte limit. Codex silently truncates' "$out.err" \
+       && grep -qF 'wc -c AGENTS.md' "$out.err"; then
+        pass "agents-md-size: pre-commit refuses 32769 bytes, naming the size, the limit, Codex and the fix"
+    else
+        fail "agents-md-size: pre-commit refuses 32769 bytes, naming the size, the limit, Codex and the fix — exit $rc: $(cat "$out.err")"
+    fi
+    # The worktree copy does not matter; the staged blob does.
+    ac_size_file "$repo/AGENTS.md" 100
+    rc=$(ac_size_run "$repo" "$out" pre-commit)
+    [[ $rc -eq 1 ]] && pass "agents-md-size: pre-commit measures the staged content, not the worktree" \
+        || fail "agents-md-size: pre-commit measures the staged content, not the worktree — exit $rc"
+
+    # Bytes, not characters: 16385 two-byte characters are 32770 bytes.
+    head -c 16385 /dev/zero | tr '\0' 'a' | sed 's/a/é/g' > "$repo/AGENTS.md"
+    "${g[@]}" add AGENTS.md
+    rc=$(ac_size_run "$repo" "$out" pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'it is 32770 bytes' "$out.err"; then
+        pass "agents-md-size: multibyte text is measured in bytes (16385 characters, 32770 bytes)"
+    else
+        fail "agents-md-size: multibyte text is measured in bytes — exit $rc: $(cat "$out.err")"
+    fi
+
+    # ci over a range: 32769 bytes committed refuses; 32768 passes.
+    ac_size_file "$repo/AGENTS.md" 32769
+    "${g[@]}" add AGENTS.md
+    "${g[@]}" commit -q -m "oversized AGENTS.md"
+    rc=$(ac_size_run "$repo" "$out" ci "$base" HEAD)
+    [[ $rc -eq 1 ]] && grep -qF 'AGENTS.md: it is 32769 bytes' "$out.err" \
+        && pass "agents-md-size: ci refuses a range that leaves AGENTS.md at 32769 bytes" \
+        || fail "agents-md-size: ci refuses a range that leaves AGENTS.md at 32769 bytes — exit $rc: $(cat "$out.err")"
+    # pre-push over the same commit refuses too.
+    sha=$("${g[@]}" rev-parse HEAD)
+    rc=$(cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/feature/x $sha refs/heads/feature/x $base" > "$out.out" 2> "$out.err"; echo $?)
+    [[ $rc -eq 1 ]] && grep -qF 'AGENTS.md: it is 32769 bytes' "$out.err" \
+        && pass "agents-md-size: pre-push refuses a push that leaves AGENTS.md at 32769 bytes" \
+        || fail "agents-md-size: pre-push refuses a push that leaves AGENTS.md at 32769 bytes — exit $rc: $(cat "$out.err")"
+    # tree measures the whole tree, so it reports the oversized file.
+    rc=$(ac_size_run "$repo" "$out" tree HEAD)
+    [[ $rc -eq 1 ]] && pass "agents-md-size: tree reports an oversized AGENTS.md" \
+        || fail "agents-md-size: tree reports an oversized AGENTS.md — exit $rc"
+
+    # A change that does not touch AGENTS.md passes although it is oversized.
+    local over=$sha
+    echo '# Example' > "$repo/README.md"
+    mkdir -p "$repo/docs"
+    ac_size_file "$repo/docs/AGENTS.md" 40000
+    "${g[@]}" add README.md docs/AGENTS.md
+    "${g[@]}" commit -q -m "unrelated change"
+    rc=$(ac_size_run "$repo" "$out" ci "$over" HEAD)
+    [[ $rc -eq 0 ]] && pass "agents-md-size: a change not touching the root AGENTS.md passes while it is oversized (a nested AGENTS.md is not measured)" \
+        || fail "agents-md-size: a change not touching the root AGENTS.md passes while it is oversized — exit $rc: $(cat "$out.err")"
+
+    # Shrinking it back to the limit passes, even though the range's earlier
+    # commit was oversized: the check reads the head's content.
+    ac_size_file "$repo/AGENTS.md" 32768
+    "${g[@]}" add AGENTS.md
+    "${g[@]}" commit -q -m "trim AGENTS.md"
+    rc=$(ac_size_run "$repo" "$out" ci "$base" HEAD)
+    [[ $rc -eq 0 ]] && pass "agents-md-size: ci passes a range whose head leaves AGENTS.md at exactly 32768 bytes" \
+        || fail "agents-md-size: ci passes a range whose head leaves AGENTS.md at exactly 32768 bytes — exit $rc: $(cat "$out.err")"
+
+    # This repo's own AGENTS.md (generated; the stub build) is under the limit.
+    local own
+    own=$(wc -c < "$REPO_ROOT/AGENTS.md")
+    (( own <= 32768 )) && pass "agents-md-size: this repo's generated AGENTS.md is $own bytes, within the limit" \
+        || fail "agents-md-size: this repo's generated AGENTS.md is $own bytes, over 32768"
+}
+
+# gha-template-injection: the runner hands changed workflow and action files to
+# zizmor and refuses its Medium and High template-injection findings. A stub
+# zizmor stands in for the real one (no PyPI, no network): it prints a fixed
+# report naming the first .yml it was given, so these tests pin the plumbing
+# (which paths go in, which findings refuse, what an unavailable zizmor does).
+test_agent_checks_gha_injection() {
+    echo ""
+    echo "=== Test: agent-checks gha-template-injection (zizmor findings refuse; others pass) ==="
+    local repo="$TEST_DIR/ac-gha" out="$TEST_DIR/ac-gha-run" stub="$TEST_DIR/ac-gha-zizmor" rc
+    local -a g=(git -C "$repo" -c user.name=Example -c user.email=agent@example.com -c commit.gpgsign=false)
+    git init -q -b main "$repo"
+    "${g[@]}" commit -q --allow-empty -m base
+    # The stub reports, for every file it finds, findings chosen by a marker
+    # line in that file: HIGH (refuse), INFO (Informational, pass) or OTHER (a
+    # different audit, pass). It also records that it ran.
+    cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+echo ran >> "$ZIZMOR_STUB_LOG"
+first=true
+printf '['
+while IFS= read -r f; do
+  for kind in HIGH INFO OTHER; do
+    grep -q "# $kind" "$f" || continue
+    case $kind in HIGH) id=template-injection sev=High ;; INFO) id=template-injection sev=Informational ;; OTHER) id=unpinned-uses sev=High ;; esac
+    $first || printf ','
+    first=false
+    printf '{"ident":"%s","determinations":{"severity":"%s"},"locations":[{"symbolic":{"kind":"Related","key":{"Local":{"given_path":"%s"}}},"concrete":{"location":{"start_point":{"row":0}}}},{"symbolic":{"kind":"Primary","key":{"Local":{"given_path":"%s"}}},"concrete":{"location":{"start_point":{"row":6}}}}]}' "$id" "$sev" "$f" "$f"
+  done
+done < <(find . -name '*.y*ml' | sort)
+printf ']\n'
+$first && exit 0 || exit 14
+STUB
+    chmod +x "$stub"
+    ac_gha_run() {   # <event...> — run the runner in $repo with the stub; prints the exit code
+        local r=0
+        # A local run: CI's own GITHUB_ACTIONS=true would make it fail closed.
+        (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+            ZIZMOR_STUB_LOG="$out.log" AGENT_CHECKS_ZIZMOR="${AC_GHA_ZIZMOR:-$stub}" \
+            bash "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
+            > "$out.out" 2> "$out.err" < /dev/null || r=$?
+        echo "$r"
+    }
+    mkdir -p "$repo/.github/workflows" "$repo/.github/actions/a" "$repo/docs/.github/workflows"
+    rm -f "$out.log"
+
+    # A non-workflow YAML file never reaches zizmor.
+    printf 'x: 1 # HIGH\n' > "$repo/docs/notes.yml"
+    printf 'x: 1 # HIGH\n' > "$repo/docs/.github/workflows/seed.yml"
+    "${g[@]}" add docs
+    rc=$(ac_gha_run pre-commit)
+    if [[ $rc -eq 0 && ! -e "$out.log" ]]; then
+        pass "gha-template-injection: YAML outside .github/workflows/ and action.yml (a fixture's nested .github too) is not audited"
+    else
+        fail "gha-template-injection: YAML outside the workflow paths is not audited — exit $rc, stub ran: $([[ -e $out.log ]] && echo yes || echo no): $(cat "$out.err")"
+    fi
+
+    # A High template-injection refuses with the path, the Primary line and the fix.
+    printf 'on: push # HIGH\n' > "$repo/.github/workflows/w.yml"
+    "${g[@]}" add .github/workflows/w.yml
+    rc=$(ac_gha_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: .github/workflows/w.yml:7: a ${{ }} expression an outsider can steer' "$out.err" \
+       && grep -qF "pass it through the step's env:" "$out.err" && [[ -e "$out.log" ]]; then
+        pass "gha-template-injection: a High finding refuses, naming path:line (the Primary location) and the env: fix"
+    else
+        fail "gha-template-injection: a High finding refuses, naming path:line and the env: fix — exit $rc: $(cat "$out.err")"
+    fi
+    # It reads the staged blob, not the worktree.
+    printf 'on: push\n' > "$repo/.github/workflows/w.yml"
+    rc=$(ac_gha_run pre-commit)
+    [[ $rc -eq 1 ]] && pass "gha-template-injection: pre-commit audits the staged content, not the worktree" \
+        || fail "gha-template-injection: pre-commit audits the staged content, not the worktree — exit $rc"
+
+    # Informational template-injection and other audits pass.
+    printf 'on: push # INFO\n# OTHER\n' > "$repo/.github/workflows/w.yml"
+    "${g[@]}" add .github/workflows/w.yml
+    rc=$(ac_gha_run pre-commit)
+    [[ $rc -eq 0 ]] && ! grep -q 'gha-template-injection\|outsider can steer' "$out.err" \
+        && pass "gha-template-injection: Informational findings and other zizmor audits do not refuse" \
+        || fail "gha-template-injection: Informational findings and other zizmor audits do not refuse — exit $rc: $(cat "$out.err")"
+
+    # A local action's action.yml is audited; ci reads the head commit.
+    printf 'runs: {} # HIGH\n' > "$repo/.github/actions/a/action.yml"
+    "${g[@]}" add -A .github
+    "${g[@]}" commit -q -m "action"
+    rc=$(ac_gha_run ci "$("${g[@]}" rev-parse HEAD~1)" HEAD)
+    if [[ $rc -eq 1 ]] && grep -qF '.github/actions/a/action.yml:7:' "$out.err" && ! grep -qF 'w.yml:7' "$out.err"; then
+        pass "gha-template-injection: ci audits a changed .github/actions/*/action.yml at the head commit"
+    else
+        fail "gha-template-injection: ci audits a changed local action — exit $rc: $(cat "$out.err")"
+    fi
+
+    # zizmor unavailable: a local run warns and passes; CI refuses.
+    rc=$(AC_GHA_ZIZMOR="$TEST_DIR/ac-gha-none" ac_gha_run tree HEAD)
+    if [[ $rc -eq 0 ]] && grep -qF 'agent-checks (warning): gha-template-injection skipped: zizmor 1.31.1 could not be installed' "$out.err"; then
+        pass "gha-template-injection: locally, an unavailable zizmor warns and does not refuse"
+    else
+        fail "gha-template-injection: locally, an unavailable zizmor warns and does not refuse — exit $rc: $(cat "$out.err")"
+    fi
+    rc=0
+    (cd "$repo" && GITHUB_ACTIONS=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_ZIZMOR="$TEST_DIR/ac-gha-none" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" tree HEAD) > "$out.out" 2> "$out.err" < /dev/null || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks gha-template-injection::agent-checks: workflow expressions were not checked' "$out.err"; then
+        pass "gha-template-injection: in CI, an unavailable zizmor refuses (CI is the enforcement)"
+    else
+        fail "gha-template-injection: in CI, an unavailable zizmor refuses — exit $rc: $(cat "$out.err")"
+    fi
+}
+
+# The dated-phrasing warning pass (templates/agent-checks/dated-phrasing.js):
+# it warns on dated history and migration-relative phrasing in the prose of
+# the Markdown agents load, never in code, quotes, HTML, URLs, link text or an
+# AGENTS.md's managed half, and it never changes the runner's exit status.
+# markdown-it comes from this repo's node_modules (CI's `npm ci`), never npm.
+dated_lines() {   # <stderr file> — the "path:line" of each warning, sorted
+    sed -n 's/^agent-checks (warning): \([^:]*:[0-9]*\): dated phrasing: .*/\1/p' "$1" | sort | tr '\n' ' '
+}
+
+test_agent_checks_ci_annotation() {
+    echo ""
+    echo "=== Test: in CI a refusal is an ::error annotation titled with the check id ==="
+    local repo="$TEST_DIR/ac-annot" out="$TEST_DIR/ac-annot-run" rc
+    git init -q -b main "$repo"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com -c commit.gpgsign=false commit -q --allow-empty -m base
+    printf 'EXAMPLE=1\n' > "$repo/.env"
+    git -C "$repo" add -f .env
+    rc=0
+    (cd "$repo" && GITHUB_ACTIONS=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" pre-commit) \
+        > "$out.out" 2> "$out.err" < /dev/null || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks secret-file::agent-checks: .env: looks like a secret' "$out.err"; then
+        pass "agent-checks (CI): a refusal prints ::error title=agent-checks <id>::"
+    else
+        fail "agent-checks (CI): a refusal prints ::error title=agent-checks <id>:: — exit $rc: $(cat "$out.err")"
+    fi
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
+        bash "$REPO_ROOT/templates/agent-checks/agent-checks" pre-commit) \
+        > "$out.out" 2> "$out.err" < /dev/null || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: .env: looks like a secret' "$out.err" && ! grep -qF '::error' "$out.err"; then
+        pass "agent-checks (CI): outside GitHub Actions the refusal has no ::error line"
+    else
+        fail "agent-checks (CI): outside GitHub Actions the refusal has no ::error line — exit $rc: $(cat "$out.err")"
+    fi
+}
+
+test_agent_checks_dated_phrasing() {
+    echo ""
+    echo "=== Test: agent-checks warns on dated phrasing and never blocks ==="
+    local tmpl="$REPO_ROOT/templates/agent-checks" mods="$REPO_ROOT/node_modules"
+    local repo="$TEST_DIR/ac-dated" out="$TEST_DIR/ac-dated" rc got line label n
+    if [[ ! -f "$mods/markdown-it/package.json" ]]; then
+        fail "dated-phrasing: markdown-it is installed in $mods (run npm ci at the repo root)"
+        return
+    fi
+    rm -rf "$repo"
+    mkdir -p "$repo/skills/x" "$repo/agents-md" "$repo/.claude/hooks" "$repo/notes"
+    git init -q "$repo"
+    git -C "$repo" remote add origin https://github.com/example-owner/widgets.git
+    printf '%s\n' \
+        '# AGENTS.md' \
+        '' \
+        'Managed text: the runner is now current, since 2026-01-02.' \
+        '' \
+        '## Repo-specific additions' \
+        '' \
+        'The build is now green.' \
+        '' \
+        'Fixed on 2026-08-29 by hand.' \
+        '' \
+        '```' \
+        'code: the build is now green, 2026-08-29' \
+        '```' \
+        '' \
+        'Run `is now 2026-08-29` here.' \
+        '' \
+        'See [the 2026-08-29 evidence, no longer current](https://example.com/e).' \
+        '' \
+        '> Quoted: the build is now green on 2026-08-29.' \
+        '' \
+        '<div>html: is now 2026-08-29</div>' \
+        '' \
+        'A second paragraph that is now flagged.' \
+        '' \
+        'Not a date: 2026-02-30. A link: https://example.com/2026-08-29/x.' \
+        '' \
+        '    indented code is now 2026-08-29' > "$repo/AGENTS.md"
+    echo 'This repo was formerly a fork.' > "$repo/CLAUDE.md"
+    printf '# Skill\n\nUse it as of today.\n' > "$repo/skills/x/SKILL.md"
+    echo 'The rule recently changed.' > "$repo/agents-md/base.md"
+    echo 'The payload is now copied here.' > "$repo/.claude/hooks/fleet-guidance.md"
+    echo 'This readme is now out of scope.' > "$repo/README.md"
+    echo 'Notes are now out of scope.' > "$repo/notes/guide.md"
+    mkdir -p "$repo/evals/real-work/x/seed"
+    echo 'A frozen fixture that is now out of scope.' > "$repo/evals/real-work/x/seed/AGENTS.md"
+    git -C "$repo" add -A
+    GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m base
+
+    # The suite itself runs under GitHub Actions in CI, so each run drops
+    # GITHUB_ACTIONS and RUNNER_TEMP unless DATED_GHA asks for the CI form.
+    run_dated() {   # <runner> <log stem> <event...> — env passes through
+        local runner=$1 stem=$2; shift 2
+        local -a ci=(env -u GITHUB_ACTIONS -u RUNNER_TEMP)
+        [ -n "${DATED_GHA:-}" ] && ci=(env GITHUB_ACTIONS=true)
+        (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null "${ci[@]}" bash "$runner" "$@") > "$stem.out" 2> "$stem.err"
+    }
+
+    # ── Tree mode over every path in scope ──
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-tree" tree || rc=$?
+    if [[ $rc -eq 0 ]] && grep -q '^agent-checks (warning): ' "$out-tree.err"; then
+        pass "dated-phrasing: the runner exits 0 when it warns"
+    else
+        fail "dated-phrasing: the runner exits 0 when it warns — exit $rc: $(head -3 "$out-tree.err")"
+    fi
+    got=$(dated_lines "$out-tree.err")
+    if [[ "$got" == "AGENTS.md:23 AGENTS.md:7 AGENTS.md:9 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
+        pass "dated-phrasing: a date and a phrase in prose warn, in every file in scope, at their own line"
+    else
+        fail "dated-phrasing: a date and a phrase in prose warn, in every file in scope, at their own line — got: $got"
+    fi
+    for line in "3:the managed half of AGENTS.md" "12:a fenced code block" "15:inline code" \
+                "17:link text" "19:a block quote" "21:an HTML block" "25:a URL and a date that is no calendar day" \
+                "27:an indented code block"; do
+        label=${line#*:}
+        if [[ " $got " != *" AGENTS.md:${line%%:*} "* ]]; then
+            pass "dated-phrasing: no warning in $label"
+        else
+            fail "dated-phrasing: no warning in $label (AGENTS.md:${line%%:*})"
+        fi
+    done
+    if ! grep -qE '^agent-checks \(warning\): (README\.md|notes/|evals/|\.claude/hooks/fleet-guidance\.md)' "$out-tree.err"; then
+        pass "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
+    else
+        fail "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
+    fi
+    if grep -qF 'AGENTS.md:7: dated phrasing: the phrase "is now".' "$out-tree.err" \
+       && grep -qF 'AGENTS.md:9: dated phrasing: a date in prose, "2026-08-29".' "$out-tree.err" \
+       && grep -qF '.agent-checks/dated-phrasing-allowlist.txt' "$out-tree.err" \
+       && ! grep -qF 'green' "$out-tree.err"; then
+        pass "dated-phrasing: a warning names the phrase and the allowlist, and prints nothing more of the file"
+    else
+        fail "dated-phrasing: a warning names the phrase and the allowlist, and prints nothing more of the file — $(head -2 "$out-tree.err")"
+    fi
+
+    # ── GitHub Actions: annotations ──
+    rc=0; DATED_GHA=1 AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-gha" tree || rc=$?
+    n=$(grep -c '^::warning file=[^,]*,line=[0-9]*,title=dated-phrasing::dated phrasing: ' "$out-gha.out" || true)
+    if [[ $rc -eq 0 && "$n" == 6 ]] \
+       && grep -qxF '::warning file=AGENTS.md,line=7,title=dated-phrasing::dated phrasing: the phrase "is now". Instruction files load into every session and are read as the rule that holds now, so history (what changed, and when) goes stale here and belongs in docs/evidence/ or git. Reword it as the present-tense rule; if it is right as written, add a line to .agent-checks/dated-phrasing-allowlist.txt (format: the header of .githooks/dated-phrasing-allowlist.txt). Warning only.' "$out-gha.out"; then
+        pass "dated-phrasing: under GitHub Actions each hit is one ::warning annotation with file, line and title"
+    else
+        fail "dated-phrasing: under GitHub Actions each hit is one ::warning annotation with file, line and title — exit $rc, $n annotations: $(head -1 "$out-gha.out")"
+    fi
+
+    # ── Allowlists: a fleet entry and a repo entry each silence their block only ──
+    local fleet="$TEST_DIR/ac-dated-fleet"
+    rm -rf "$fleet"
+    mkdir -p "$fleet"
+    cp "$tmpl/agent-checks" "$tmpl/dated-phrasing.js" "$fleet/"
+    printf '%s\n' '# test list' '' \
+        'example-owner/widgets AGENTS.md :: The build is now green.' \
+        'other-owner/widgets CLAUDE.md :: was formerly a fork' \
+        '* agents-md/base.md :: rule   recently' > "$fleet/dated-phrasing-allowlist.txt"
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$fleet/agent-checks" "$out-allow" tree || rc=$?
+    got=$(dated_lines "$out-allow.err")
+    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:9 CLAUDE.md:1 skills/x/SKILL.md:3 " ]]; then
+        pass "dated-phrasing: a fleet allowlist entry silences exactly its block; another repo's entry does not apply; * matches any repo"
+    else
+        fail "dated-phrasing: a fleet allowlist entry silences exactly its block; another repo's entry does not apply; * matches any repo — exit $rc, got: $got"
+    fi
+    mkdir -p "$repo/.agent-checks"
+    printf '%s\n' 'Example-Owner/Widgets AGENTS.md :: Fixed on 2026-08-29' 'not an entry' > "$repo/.agent-checks/dated-phrasing-allowlist.txt"
+    git -C "$repo" add -A
+    GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m allow
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-own" tree || rc=$?
+    got=$(dated_lines "$out-own.err")
+    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:7 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
+        pass "dated-phrasing: the repo's own .agent-checks/dated-phrasing-allowlist.txt silences its entry's block"
+    else
+        fail "dated-phrasing: the repo's own .agent-checks/dated-phrasing-allowlist.txt silences its entry's block — exit $rc, got: $got"
+    fi
+    if grep -qF 'agent-checks (warning): .agent-checks/dated-phrasing-allowlist.txt:2: not an allowlist entry' "$out-own.err"; then
+        pass "dated-phrasing: a malformed allowlist line is named and ignored"
+    else
+        fail "dated-phrasing: a malformed allowlist line is named and ignored"
+    fi
+
+    # ── pre-commit reads the index, and the run log counts the pass ──
+    echo 'Staged: this is now staged.' > "$repo/agents-md/staged.md"
+    git -C "$repo" add agents-md/staged.md
+    echo 'Clean worktree text.' > "$repo/agents-md/staged.md"
+    rc=0; AGENT_CHECKS_LOG="$TEST_DIR/ac-dated-runs.jsonl" AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" \
+        run_dated "$tmpl/agent-checks" "$out-pc" pre-commit || rc=$?
+    got=$(dated_lines "$out-pc.err")
+    if [[ $rc -eq 0 && "$got" == "agents-md/staged.md:1 " ]]; then
+        pass "dated-phrasing: pre-commit reads the staged content, and only the staged paths"
+    else
+        fail "dated-phrasing: pre-commit reads the staged content, and only the staged paths — exit $rc, got: $got"
+    fi
+    if grep -qF '"checks":["rules-dir","secret-file","skill-shell","dated-phrasing"],"failed":[]' "$TEST_DIR/ac-dated-runs.jsonl"; then
+        pass "dated-phrasing: the run log lists the pass as run and never as failed"
+    else
+        fail "dated-phrasing: the run log lists the pass as run and never as failed — $(cat "$TEST_DIR/ac-dated-runs.jsonl")"
+    fi
+    git -C "$repo" reset -q -- agents-md/staged.md
+    rm -f "$repo/agents-md/staged.md"
+
+    # ── It never blocks: a refusal still refuses, a warning adds nothing ──
+    echo 'TOKEN=x' > "$repo/.env"
+    echo 'This is now staged beside it.' > "$repo/agents-md/staged.md"
+    git -C "$repo" add .env agents-md/staged.md
+    rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-env" pre-commit || rc=$?
+    if [[ $rc -eq 1 && "$(dated_lines "$out-env.err")" == "agents-md/staged.md:1 " ]] \
+       && grep -q '^agent-checks: .env: looks like a secret' "$out-env.err"; then
+        pass "dated-phrasing: a refusal in the same run still refuses beside the warnings"
+    else
+        fail "dated-phrasing: a refusal in the same run still refuses beside the warnings — exit $rc"
+    fi
+    git -C "$repo" reset -q -- .env agents-md/staged.md
+    rm -f "$repo/.env" "$repo/agents-md/staged.md"
+
+    # ── Failures of its own: one warning line, exit 0 ──
+    local nonode="$TEST_DIR/ac-dated-nonode" dir f
+    rm -rf "$nonode"
+    mkdir -p "$nonode"
+    local IFS_SAVE=$IFS
+    IFS=:
+    for dir in $PATH; do
+        for f in "$dir"/*; do
+            [[ -x "$f" && ! -d "$f" ]] || continue
+            case "${f##*/}" in node|npm|npx|corepack) continue ;; esac
+            [[ -e "$nonode/${f##*/}" ]] || ln -s "$f" "$nonode/${f##*/}"
+        done
+    done
+    IFS=$IFS_SAVE
+    rc=0; PATH="$nonode" run_dated "$tmpl/agent-checks" "$out-nonode" tree || rc=$?
+    n=$(grep -c '' "$out-nonode.err" || true)
+    if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'agent-checks (warning): dated-phrasing skipped: node is not on PATH' "$out-nonode.err"; then
+        pass "dated-phrasing: with no node on PATH it prints one warning line and exits 0"
+    else
+        fail "dated-phrasing: with no node on PATH it prints one warning line and exits 0 — exit $rc, $n lines: $(cat "$out-nonode.err")"
+    fi
+    rc=0; run_dated "$tmpl/agent-checks" "$out-nomods" tree || rc=$?
+    n=$(grep -c '' "$out-nomods.err" || true)
+    if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'agent-checks (warning): dated-phrasing skipped: markdown-it could not be loaded' "$out-nomods.err"; then
+        pass "dated-phrasing: with no markdown-it it prints one warning line and exits 0"
+    else
+        fail "dated-phrasing: with no markdown-it it prints one warning line and exits 0 — exit $rc, $n lines: $(cat "$out-nomods.err")"
+    fi
+
+    # ── The install: npm ci once into a cache keyed by the lockfile, then reused ──
+    local stub="$TEST_DIR/ac-dated-npm" cache="$TEST_DIR/ac-dated-cache"
+    rm -rf "$stub" "$cache"
+    mkdir -p "$stub"
+    printf '#!/bin/sh\necho "$*" >> "%s/calls"\nexit 1\n' "$stub" > "$stub/npm"
+    chmod +x "$stub/npm"
+    rc=0; env -u AGENT_CHECKS_DATED_PHRASING_MODULES PATH="$stub:$PATH" XDG_CACHE_HOME="$cache" \
+        env -u GITHUB_ACTIONS -u RUNNER_TEMP bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
+        > "$out-npmfail.out" 2> "$out-npmfail.err" || rc=$?
+    n=$(grep -c '' "$out-npmfail.err" || true)
+    if [[ $rc -eq 0 && "$n" == 1 ]] && grep -qF 'dated-phrasing skipped: installing markdown-it with npm ci failed' "$out-npmfail.err" \
+       && grep -qxF 'ci --ignore-scripts --no-audit --no-fund --loglevel=error' "$stub/calls"; then
+        pass "dated-phrasing: a failed npm ci --ignore-scripts prints one warning line and exits 0"
+    else
+        fail "dated-phrasing: a failed npm ci --ignore-scripts prints one warning line and exits 0 — exit $rc: $(cat "$out-npmfail.err")"
+    fi
+    rm -f "$stub/calls"
+    printf '#!/bin/sh\necho "$*" >> "%s/calls"\ncmp -s package-lock.json "%s/dated-phrasing/package-lock.json" || exit 1\nmkdir -p node_modules && cp -RL "%s"/. node_modules/\n' \
+        "$stub" "$tmpl" "$mods" > "$stub/npm"
+    for n in 1 2; do
+        env -u AGENT_CHECKS_DATED_PHRASING_MODULES PATH="$stub:$PATH" XDG_CACHE_HOME="$cache" \
+            env -u GITHUB_ACTIONS -u RUNNER_TEMP bash -c 'cd "$1" && GIT_CONFIG_GLOBAL=/dev/null bash "$2" tree' _ "$repo" "$tmpl/agent-checks" \
+            > "$out-npm$n.out" 2> "$out-npm$n.err" || true
+    done
+    got=$(sha256sum "$tmpl/dated-phrasing/package-lock.json" | cut -d' ' -f1)
+    if [[ "$(grep -c '' "$stub/calls")" == 1 && -f "$cache/agent-checks/dated-phrasing/$got/node_modules/markdown-it/package.json" ]] \
+       && [[ "$(dated_lines "$out-npm1.err")" == "$(dated_lines "$out-own.err")" && "$(dated_lines "$out-npm2.err")" == "$(dated_lines "$out-own.err")" ]]; then
+        pass "dated-phrasing: markdown-it is installed once, into a cache keyed by the lockfile's sha256, and reused"
+    else
+        fail "dated-phrasing: markdown-it is installed once, into a cache keyed by the lockfile's sha256, and reused — calls: $(cat "$stub/calls" 2>/dev/null | wc -l), $(head -2 "$out-npm1.err")"
+    fi
+    if [[ -z "$(ls -A "$cache/agent-checks/dated-phrasing" | grep -v "^$got\$")" ]]; then
+        pass "dated-phrasing: the install leaves no temp directory behind"
+    else
+        fail "dated-phrasing: the install leaves no temp directory behind — $(ls -A "$cache/agent-checks/dated-phrasing")"
+    fi
+}
+
+# The pinned dependency: markdown-it exactly, with integrity hashes for every
+# package, and the package files and the lockfile agree.
+test_agent_checks_dated_phrasing_lock() {
+    echo ""
+    echo "=== Test: the dated-phrasing pass pins markdown-it exactly ==="
+    local dir="$REPO_ROOT/templates/agent-checks/dated-phrasing" got
+    got=$(node -e '
+const pkg = require(process.argv[1] + "/package.json");
+const lock = require(process.argv[1] + "/package-lock.json");
+const deps = Object.entries(lock.packages).filter(([k]) => k);
+const bad = deps.filter(([, v]) => !/^sha512-/.test(v.integrity || "") || !/^https:\/\/registry\.npmjs\.org\//.test(v.resolved || ""));
+console.log([JSON.stringify(pkg.dependencies), lock.packages[""].dependencies["markdown-it"],
+             lock.packages["node_modules/markdown-it"].version, deps.length, bad.length].join(" "));
+' "$dir" 2>&1)
+    if [[ "$got" == '{"markdown-it":"15.0.3"} 15.0.3 15.0.3 7 0' ]]; then
+        pass "dated-phrasing lock: markdown-it is pinned at 15.0.3, every package has an npm registry URL and a sha512 integrity"
+    else
+        fail "dated-phrasing lock: markdown-it is pinned at 15.0.3, every package has an npm registry URL and a sha512 integrity — got: $got"
+    fi
+}
+
 # The sync never reaches this repo (SYNC_SELF_REPO), so it carries its own
-# copies, by hand: the runner must stay byte-identical to the template the
-# fleet receives, and the guard is registered straight from the template.
+# copies, by hand: the runner and its dated-phrasing files must stay
+# byte-identical to the templates the fleet receives, and the guard is
+# registered straight from the template.
 test_self_agent_checks() {
     echo ""
     echo "=== Test: this repo runs the same agent-checks it delivers ==="
@@ -23675,6 +25252,14 @@ test_self_agent_checks() {
     else
         fail "self agent-checks: .githooks/agent-checks matches templates/agent-checks/agent-checks — copy the template over it"
     fi
+    local f
+    for f in dated-phrasing.js dated-phrasing-allowlist.txt dated-phrasing/package.json dated-phrasing/package-lock.json; do
+        if cmp -s "$REPO_ROOT/.githooks/$f" "$REPO_ROOT/templates/agent-checks/$f"; then
+            pass "self agent-checks: .githooks/$f matches templates/agent-checks/$f"
+        else
+            fail "self agent-checks: .githooks/$f matches templates/agent-checks/$f — copy the template over it"
+        fi
+    done
     if grep -qF 'bash .githooks/agent-checks ci' "$REPO_ROOT/.github/workflows/agent-checks.yml" 2>/dev/null; then
         pass "self agent-checks: a workflow runs the runner in CI"
     else
@@ -23689,6 +25274,113 @@ test_self_agent_checks() {
 
 # The lesson-check lane (ADR 0027): the case table holds against the template
 # runner the fleet receives, as the lane's `cases` gate runs it.
+# ── ci-scope.sh: how much of CI a change needs ────────────────────────────
+# ci.yml's suite shards and gates skip their steps when this says the change
+# does not need them, so every answer that lets a step skip is pinned here:
+# an unread doc skips everything, a doc a script reads runs only the groups
+# that test it, and anything else (code, an extra reader, the adoption kit, an
+# unreadable range, a dispatch) runs everything.
+test_ci_scope() {
+    echo ""
+    echo "=== Test: ci-scope.sh decides which CI steps a change needs ==="
+    local dir="$TEST_DIR/ci-scope" ev="$TEST_DIR/ci-scope-event.json" base out
+    rm -rf "$dir"; mkdir -p "$dir/docs/reference/adopt-the-whole-system" "$dir/scripts" "$dir/test"
+    git -C "$dir" init -q
+    git -C "$dir" config user.email ci@example.com
+    git -C "$dir" config user.name ci
+    printf '# unread\n' > "$dir/docs/unread.md"
+    printf '# read\n' > "$dir/docs/read-by-code.md"
+    printf '# ledger\n' > "$dir/docs/agent-checks-lessons.md"
+    printf '# kit\n' > "$dir/docs/reference/adopt-the-whole-system/kit.md"
+    printf 'see read-by-code.md\n' > "$dir/scripts/reader.sh"
+    printf 'p = "docs/agent-checks-lessons.md"\n' > "$dir/scripts/agent_check_lane.py"
+    printf 'x = 1\n' > "$dir/scripts/code.py"
+    git -C "$dir" add -A; git -C "$dir" commit -qm base
+    base=$(git -C "$dir" rev-parse HEAD)
+
+    # $1 label, $2 expected output (two lines joined by a space), $3 MATRIX_GROUPS,
+    # then the files to append to before committing (relative to $dir).
+    scope_case() {
+        local label="$1" want="$2" groups="$3" f head got
+        shift 3
+        git -C "$dir" checkout -q "$base"
+        for f in "$@"; do printf 'more\n' >> "$dir/$f"; done
+        git -C "$dir" add -A; git -C "$dir" commit -qm "$label" --allow-empty
+        head=$(git -C "$dir" rev-parse HEAD)
+        jq -n --arg b "$base" --arg h "$head" '{pull_request:{base:{sha:$b},head:{sha:$h}}}' > "$ev"
+        got=$(GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" MATRIX_GROUPS="$groups" \
+            bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ' | sed 's/ $//')
+        if [[ "$got" == "$want" ]]; then
+            pass "ci-scope: $label -> $want"
+        else
+            fail "ci-scope: $label -> got '$got', want '$want'"
+        fi
+    }
+
+    scope_case "an unread doc skips a shard" "scope=none run=false" "agent_checks sync" docs/unread.md
+    scope_case "an unread doc with no shard groups reads run=false" "scope=none run=false" "" docs/unread.md
+    scope_case "the lessons ledger runs the shard that tests its reader" \
+        "scope=agent_checks run=true" "sync agent_checks" docs/agent-checks-lessons.md
+    scope_case "the lessons ledger skips other shards" \
+        "scope=agent_checks run=false" "bump drift" docs/agent-checks-lessons.md
+    scope_case "the lessons ledger with no shard groups reads run=false" "scope=agent_checks run=false" "" docs/agent-checks-lessons.md
+    scope_case "a doc a script names runs everything" "scope=full run=true" "bump" docs/read-by-code.md
+    scope_case "code runs everything" "scope=full run=true" "bump" scripts/code.py
+    scope_case "docs plus code runs everything" "scope=full run=true" "bump" docs/unread.md scripts/code.py
+    scope_case "the adoption kit runs everything" "scope=full run=true" "bump" \
+        docs/reference/adopt-the-whole-system/kit.md
+    scope_case "an empty diff runs everything" "scope=full run=true" "bump"
+
+    # A reader the table does not list puts the ledger back to full scope.
+    git -C "$dir" checkout -q "$base"
+    printf 'open("agent-checks-lessons.md")\n' > "$dir/scripts/new_reader.py"
+    git -C "$dir" add -A; git -C "$dir" commit -qm reader
+    base=$(git -C "$dir" rev-parse HEAD)
+    scope_case "the ledger with an unlisted reader runs everything" "scope=full run=true" "bump" \
+        docs/agent-checks-lessons.md
+
+    out=$(GITHUB_EVENT_NAME=workflow_dispatch bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a dispatch runs everything" \
+        || fail "ci-scope: a dispatch runs everything — got '$out'"
+    jq -n '{pull_request:{base:{sha:"0000000000000000000000000000000000000000"},head:{sha:"not-a-sha"}}}' > "$ev"
+    out=$(GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: an unreadable range runs everything" \
+        || fail "ci-scope: an unreadable range runs everything — got '$out'"
+
+    # The real table's readers are still the only files outside docs/ that
+    # name the ledger, so the lessons shortcut is live and not stale.
+    local readers
+    readers=$(git -C "$REPO_ROOT" grep -lF -e agent-checks-lessons.md -- . ':(exclude)docs/' \
+        | sort | tr '\n' ' ')
+    [[ "$readers" == "scripts/agent_check_lane.py scripts/ci-scope.sh test/run-tests.sh test/test_agent_check_lane.py " ]] \
+        && pass "ci-scope: the ledger's readers match DATA_FILES" \
+        || fail "ci-scope: the ledger's readers match DATA_FILES — found '$readers'"
+
+    # And ci.yml gates every suite step after the scope step on it. `checks`
+    # stays unconditional: its gates are cheap and other tests pin them as always-on.
+    # Parsed, never grepped.
+    local wired
+    wired=$(node -e '
+      const YAML = require("yaml"), fs = require("fs");
+      const d = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const bad = [];
+      for (const id of ["suite"]) {
+        const steps = d.jobs[id].steps;
+        const i = steps.findIndex(s => s.id === "scope");
+        if (i !== 1) { bad.push(`${id}: scope is not the step after checkout`); continue; }
+        if (!/scripts\/ci-scope\.sh/.test(steps[i].run || "")) bad.push(`${id}: scope step does not run ci-scope.sh`);
+        if (id === "suite" && !/matrix\.groups/.test((steps[i].env || {}).MATRIX_GROUPS || ""))
+          bad.push("suite: scope step does not pass MATRIX_GROUPS");
+        for (const s of steps.slice(i + 1)) {
+          if (!/steps\.scope\.outputs\.run == .true./.test(s.if || "")) bad.push(`${id}: ${s.name} is not gated`);
+        }
+      }
+      process.stdout.write(bad.join("; ") || "ok");
+    ' "$REPO_ROOT/.github/workflows/ci.yml" 2>&1)
+    [[ "$wired" == "ok" ]] && pass "ci-scope: ci.yml gates its suite steps on the scope step" \
+        || fail "ci-scope: ci.yml gates its steps on the scope step — $wired"
+}
+
 test_agent_check_lane_cases() {
     echo ""
     echo "=== Test: the agent-checks case table holds against the template runner ==="
@@ -23735,6 +25427,59 @@ PY
 }
 
 
+# The guidance-load-record Stop hook's own unit tests, counted as the lane
+# module above is: unittest's real count goes into PASS, so a module that
+# discovers nothing cannot pass, and under CI a skipped case is a failure
+# rather than a quiet gap.
+test_guidance_load_record() {
+    echo ""
+    echo "=== Test: guidance-load-record.sh unit tests ==="
+    local count_file="$TEST_DIR/guidance-load-record-count" rc=0 passed=0 skipped=0
+    python3 - "$SCRIPT_DIR" "$count_file" <<'PY' || rc=$?
+import pathlib
+import sys
+import unittest
+
+suite = unittest.TestLoader().discover(sys.argv[1], pattern="test_guidance_load_record.py")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+passed = result.testsRun - len(result.skipped) - len(result.expectedFailures)
+pathlib.Path(sys.argv[2]).write_text(f"{passed} {len(result.skipped)}\n", encoding="ascii")
+sys.exit(0 if result.wasSuccessful() else 1)
+PY
+    if [[ -s "$count_file" ]]; then read -r passed skipped < "$count_file"; fi
+    if [[ $rc -ne 0 ]]; then
+        fail "guidance-load-record: unit tests failed (exit $rc)"
+    elif (( passed == 0 )); then
+        fail "guidance-load-record: test/test_guidance_load_record.py ran zero tests"
+    elif [[ "${CI:-}" == true ]] && (( skipped > 0 )); then
+        fail "guidance-load-record: $skipped unit test(s) skipped under CI"
+    else
+        PASS=$((PASS + passed))
+        echo "  guidance-load-record: $passed unit test(s) passed, $skipped skipped"
+    fi
+}
+
+# This repo is excluded from its own sync, so it registers the hook by hand:
+# the same classifier sync.sh uses must read it as registered on Stop.
+test_self_hosted_guidance_record() {
+    echo ""
+    echo "=== Test: this repo runs the guidance-load-record hook it delivers ==="
+    local reg
+    reg=$(BOOTSTRAP_HOOK_EVENT="Stop" BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
+          BOOTSTRAP_HOOK_MATCHER="*" \
+          "$REPO_ROOT/scripts/bootstrap-status.sh" "$REPO_ROOT/.claude/settings.json")
+    if [[ "$reg" == "registered" ]]; then
+        pass "self guidance-load-record: registered on Stop in this repo's settings.json"
+    else
+        fail "self guidance-load-record: registered on Stop in this repo's settings.json — got $reg"
+    fi
+    if [[ -x "$REPO_ROOT/$GREC_REL_PATH_T" ]] && ! grep -q $'\r' "$REPO_ROOT/$GREC_REL_PATH_T"; then
+        pass "self guidance-load-record: the hook is executable and LF"
+    else
+        fail "self guidance-load-record: the hook is executable and LF"
+    fi
+}
+
 TEST_GROUPS=(
     runner
     codex_memory_audit
@@ -23752,10 +25497,12 @@ TEST_GROUPS=(
     codex
     memory_home
     memory_audit
+    article_watch
     github_write_marker
     gitattr
     automerge
     agent_checks
+    guidance_record
 )
 
 GROUP_sync=(
@@ -23797,6 +25544,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
+    test_drift_report_plugin_copies
     # Immediately after the test that establishes bootorg/repo-adopted's
     # confident verdicts, because those are exactly what its control run
     # re-asserts before truncating one file at a time.
@@ -23930,6 +25678,7 @@ GROUP_self_hosted=(
     test_on_hold_label
     test_prompt_audit_sweep
     test_sync_workflow_trigger
+    test_sync_workflow_serialized
     test_self_hosted_hook_pin
     test_self_hosted_fleet_payload
     test_bootstrap_allowlist_disjoint
@@ -23949,7 +25698,10 @@ GROUP_self_hosted=(
     test_dependabot_config_health
     test_impact_report
     test_discrepancy_alert
+    test_health_reusable_parity
     test_routine_merge_gate
+    test_base_md_merge_window
+    test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown
     test_check_ci_shards
@@ -23973,6 +25725,8 @@ GROUP_codex=(
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness
+    test_fleet_memory_payload_stamp
+    test_fleet_memory_check_value
     test_fleet_memory_repo_header
     test_fleet_memory_workspace
 )
@@ -23989,9 +25743,15 @@ GROUP_memory_audit=(
     test_memory_audit
 )
 
+# shellcheck disable=SC2034
+GROUP_article_watch=(
+    test_article_watch
+)
+
 GROUP_runner=(
     test_runner_zero_counts
     test_runner_group_selection
+    test_ci_scope
 )
 
 runner_probe_no_assert() { :; }
@@ -24281,10 +26041,22 @@ GROUP_automerge=(
 GROUP_agent_checks=(
     test_agent_checks_guard
     test_agent_checks_persistent_delete
+    test_agent_checks_agents_md_size
+    test_agent_checks_ci_annotation
+    test_agent_checks_gha_injection
+    test_agent_checks_dated_phrasing
+    test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
     test_sync_agent_checks
     test_agent_check_lane_cases
     test_agent_check_lane_module
+)
+
+# The guidance-load-record lane: the hook's unit tests use temp HOMEs and a
+# fake curl of their own, and the self-hosted check reads only this repo.
+GROUP_guidance_record=(
+    test_guidance_load_record
+    test_self_hosted_guidance_record
 )
 
 # The memory-home lane. Both read only their own temp CLAUDE_CONFIG_DIR /
@@ -24380,7 +26152,7 @@ run_one_group() {
     else
         # This group owns its SQLite/filesystem fixtures and does not need mock
         # repos. It also runs unchanged in a Git-free negative-control scratch.
-        if [[ "$g" != codex_memory_audit && "$g" != memory_audit && "$g" != runner ]]; then setup_fixtures; fi
+        if [[ "$g" != codex_memory_audit && "$g" != memory_audit && "$g" != runner && "$g" != guidance_record ]]; then setup_fixtures; fi
         local ref="GROUP_${g}[@]"
         for t in "${!ref}"; do
             "$t"

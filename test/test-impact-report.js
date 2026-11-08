@@ -12,8 +12,8 @@ const path = require("node:path");
 const YAML = require("yaml");
 
 const {
-  ApiError, HOOK_NAME, HOOK_WORKFLOW_PATH,
-  weekOf, windowFor, runReport, shouldPublish,
+  ApiError, HOOK_NAME, HOOK_WORKFLOW_PATH, MAX_PAGES, CONCURRENCY, RETRY_DELAYS_MS,
+  limiter, isTransient, withRetry, weekOf, windowFor, runReport, shouldPublish,
 } = require("../scripts/impact-report.js");
 
 const ROOT = path.join(__dirname, "..");
@@ -32,13 +32,15 @@ function fixtureApi(overrides = {}) {
     checkRunsPage: (owner, repo, sha, p) => ({ check_runs: page(FLEET.check_runs[sha], p) }),
     workflowsPage: (owner, repo, p) => ({ workflows: page(FLEET.workflows[repo], p) }),
     workflowRunsPage: (owner, repo, id, since, p) => ({ workflow_runs: page(FLEET.workflow_runs[String(id)], p) }),
+    jobsPage: () => ({ jobs: [] }),
+    annotationsPage: () => [],
     ...overrides,
   };
 }
 
-function report(overrides, extra = {}) {
+async function report(overrides, extra = {}) {
   const lines = [];
-  const result = runReport({
+  const result = await runReport({
     owners: OWNERS, api: fixtureApi(overrides), nowMs: NOW, env: {},
     out: (l) => lines.push(l), ...extra,
   });
@@ -63,8 +65,8 @@ test("windowFor covers the 8 weeks ending with the current one", () => {
   assert.equal(new Date(fromMs).toISOString(), "2026-09-07T00:00:00.000Z");
 });
 
-test("the document has the agreed envelope", () => {
-  const { exitCode, doc } = report();
+test("the document has the agreed envelope", async () => {
+  const { exitCode, doc } = await report();
   assert.equal(exitCode, 0);
   assert.equal(doc.schema, 1);
   assert.equal(doc.generated_at, "2026-10-28T12:00:00Z");
@@ -76,8 +78,8 @@ test("the document has the agreed envelope", () => {
   ]);
 });
 
-test("every repo counter, bucketed by the week of its own event", () => {
-  const { doc } = report();
+test("every repo counter, bucketed by the week of its own event", async () => {
+  const { doc } = await report();
   const w = "example-owner/widgets";
   assert.deepEqual(row(doc, "2026-10-26", "repo", w).outcome,
     { ...zero, prs_opened: 1, prs_merged: 2, prs_reverted: 1, agent_prs_merged: 1, ci_red_after: 1 });
@@ -94,14 +96,14 @@ test("every repo counter, bucketed by the week of its own event", () => {
   assert.equal(row(doc, "2026-10-26", "repo", w).invocations, null);
 });
 
-test("a PR last updated before the window is never counted", () => {
-  const { doc } = report();
+test("a PR last updated before the window is never counted", async () => {
+  const { doc } = await report();
   const total = doc.rows.filter((r) => r.kind === "repo").reduce((n, r) => n + r.outcome.agent_prs_merged, 0);
   assert.equal(total, 2); // widgets 4711 and the private 4732, never 4716
 });
 
-test("private repos fold into one row per week and kind", () => {
-  const { doc } = report();
+test("private repos fold into one row per week and kind", async () => {
+  const { doc } = await report();
   const p = row(doc, "2026-10-19", "repo", "private");
   assert.equal(p.name, "private");
   assert.deepEqual(p.outcome,
@@ -111,8 +113,8 @@ test("private repos fold into one row per week and kind", () => {
   assert.equal(doc.rows.filter((r) => r.repo === "private" && r.kind === "repo").length, 8);
 });
 
-test("agent-checks hook rows count completed PR runs and their failures", () => {
-  const { doc } = report();
+test("agent-checks hook rows count completed PR runs and their failures", async () => {
+  const { doc } = await report();
   const w = "example-owner/widgets";
   assert.deepEqual(
     (({ name, invocations, sessions, blocked, overridden, outcome }) => ({ name, invocations, sessions, blocked, overridden, outcome }))(row(doc, "2026-10-19", "hook", w)),
@@ -125,8 +127,85 @@ test("agent-checks hook rows count completed PR runs and their failures", () => 
   assert.equal(doc.rows.some((r) => r.kind === "hook" && r.repo === "example-owner/gadgets"), false);
 });
 
-test("rows are sorted by week, kind, name", () => {
-  const { doc } = report();
+test("red_runs lists each red agent-checks run, newest first; a private one keeps only its week", async () => {
+  const { doc } = await report();
+  assert.deepEqual(doc.red_runs, [
+    { week: "2026-10-19", repo: "example-owner/widgets", created_at: "2026-10-25T23:59:59Z", conclusion: "failure",
+      url: "https://github.com/example-owner/widgets/actions/runs/9100002" },
+    { week: "2026-10-19", repo: "example-owner/widgets", created_at: "2026-10-21T08:00:00Z", conclusion: "timed_out",
+      url: "https://github.com/example-owner/widgets/actions/runs/9100006" },
+    { week: "2026-10-19", repo: "private", created_at: null, conclusion: null, url: null },
+  ]);
+  // One entry per counted failure: the list and the hook rows agree.
+  const counted = doc.rows.filter((r) => r.kind === "hook").reduce((n, r) => n + r.overridden, 0);
+  assert.equal(doc.red_runs.length, counted);
+  assert.equal(JSON.stringify(doc.red_runs).includes("9100007"), false, "a private run id is published");
+});
+
+test("a red run with no usable id is listed without a URL", async () => {
+  const runs = FLEET.workflow_runs["12"].map((r) => (r.id === 9100002 ? { ...r, id: "x" } : r));
+  const { doc } = await report({ workflowRunsPage: (owner, repo, id, since, p) =>
+    ({ workflow_runs: page(String(id) === "12" ? runs : FLEET.workflow_runs[String(id)], p) }) });
+  assert.equal(doc.red_runs[0].url, null);
+  assert.equal(doc.red_runs[0].created_at, "2026-10-25T23:59:59Z");
+});
+
+// Red runs 9100002 and 9100006 (widgets) and 9100007 (private) get one
+// agent-checks job each; ANNOTATIONS maps a job id to its annotation titles.
+const JOB_OF_RUN = { 9100002: 501, 9100006: 502, 9100007: 503 };
+function annotatedApi(annotations, extra = {}) {
+  return {
+    jobsPage: (owner, repo, runId) => ({ jobs: [
+      { id: 1, name: "other" },
+      ...(JOB_OF_RUN[runId] ? [{ id: JOB_OF_RUN[runId], name: HOOK_NAME }] : []),
+    ] }),
+    annotationsPage: (owner, repo, jobId) => (annotations[jobId] || []).map((title) => ({ title })),
+    ...extra,
+  };
+}
+const checkRows = (doc) => doc.rows.filter((r) => r.kind === "hook" && r.name !== HOOK_NAME);
+
+test("per-check hook rows count the red runs naming each check id, by week and repo", async () => {
+  const { doc } = await report(annotatedApi({
+    501: ["agent-checks secret-file", "agent-checks secret-file", "unrelated"],
+    502: ["agent-checks pr-tldr", "agent-checks secret-file"],
+  }));
+  const rows = checkRows(doc).filter((r) => r.repo === "example-owner/widgets");
+  const shape = (r) => [r.week, r.name, r.invocations, r.sessions, r.blocked, r.overridden, r.outcome, r.surface];
+  assert.deepEqual(rows.map(shape), [
+    ["2026-10-19", "pr-tldr", 0, null, 1, 1, null, "ci"],
+    ["2026-10-19", "secret-file", 0, null, 2, 2, null, "ci"],
+  ]);
+  // The agent-checks job rows are untouched.
+  assert.equal(row(doc, "2026-10-19", "hook", "example-owner/widgets").blocked, 2);
+});
+
+test("a private repo's per-check row is folded into repo private", async () => {
+  const { doc } = await report(annotatedApi({ 503: ["agent-checks secret-file"] }));
+  const rows = checkRows(doc);
+  assert.deepEqual(rows.map((r) => [r.week, r.repo, r.name, r.blocked]), [["2026-10-19", "private", "secret-file", 1]]);
+  assert.equal(JSON.stringify(doc).includes("secret-plans"), false);
+});
+
+test("a red run with no agent-checks annotation title adds no per-check row", async () => {
+  const { doc, exitCode } = await report(annotatedApi({
+    501: ["agent-checks", "agent-checks Secret-File", "agent-checks a b", "other agent-checks x"],
+  }));
+  assert.equal(exitCode, 0);
+  assert.deepEqual(checkRows(doc), []);
+});
+
+test("a failing annotations lookup fails the run and writes nothing", async () => {
+  const { exitCode, doc, lines } = await report(annotatedApi({}, {
+    annotationsPage: () => { throw new ApiError(403); },
+  }));
+  assert.equal(exitCode, 1);
+  assert.equal(doc, null);
+  assert.ok(lines.some((l) => l === "::error::impact-report: repo: ApiError HTTP 403"));
+});
+
+test("rows are sorted by week, kind, name", async () => {
+  const { doc } = await report();
   assert.equal(doc.rows.length, 40);
   const key = (r) => [r.week, r.kind, r.name, r.repo].join("\u0000");
   const keys = doc.rows.map(key);
@@ -137,8 +216,8 @@ test("rows are sorted by week, kind, name", () => {
   ]);
 });
 
-test("no title, author, branch, PR number or private name reaches the output or the log", () => {
-  const { doc, lines } = report();
+test("no title, author, branch, PR number or private name reaches the output or the log", async () => {
+  const { doc, lines } = await report();
   const text = JSON.stringify(doc) + "\n" + lines.join("\n");
   const forbidden = ["secret-plans", "hidden-thing", "example-org"];
   for (const list of Object.values(FLEET.pulls)) {
@@ -148,8 +227,8 @@ test("no title, author, branch, PR number or private name reaches the output or 
   for (const l of lines) assert.equal(/example-owner/.test(l), false, "a log line names a repo");
 });
 
-test("an API failure fails the run, writes nothing, and logs only status and type", () => {
-  const { exitCode, doc, lines } = report({
+test("an API failure fails the run, writes nothing, and logs only status and type", async () => {
+  const { exitCode, doc, lines } = await report({
     pullsPage: (owner, repo) => { if (repo === "example-owner/secret-plans") throw new ApiError(404); return []; },
   });
   assert.equal(exitCode, 1);
@@ -158,26 +237,117 @@ test("an API failure fails the run, writes nothing, and logs only status and typ
   assert.equal(lines.join("\n").includes("secret"), false);
 });
 
-test("a truncated listing fails rather than undercounting", () => {
+test("a truncated listing fails rather than undercounting", async () => {
   const busy = Array.from({ length: 100 }, () => ({ status: "completed", conclusion: "success", event: "pull_request", created_at: "2026-10-27T00:00:00Z" }));
-  const { exitCode, lines } = report({ workflowRunsPage: () => ({ workflow_runs: busy }) });
+  const { exitCode, lines } = await report({ workflowRunsPage: () => ({ workflow_runs: busy }) });
   assert.equal(exitCode, 1);
   assert.ok(lines.some((l) => l.includes("RangeError")));
 });
 
-test("a missing owner token fails the run under --require-owner-tokens", () => {
-  const { exitCode } = report({}, { requireOwnerTokens: true, env: { GH_TOKEN_EXAMPLE_OWNER: "x" } });
+test("a repo with more than 1,000 pull requests in the window is measured, not failed", async () => {
+  // Regression: a 10-page ceiling failed the whole report once one repo had
+  // over 1,000 PRs updated in the 8-week window.
+  assert.ok(MAX_PAGES >= 20);
+  const many = Array.from({ length: 1500 }, () => ({ created_at: "2026-10-27T00:00:00Z", updated_at: "2026-10-27T00:00:00Z", closed_at: null, merged_at: null }));
+  const repo = FLEET.repos[OWNERS[0]][0].repo;
+  const { exitCode, lines } = await report({
+    pullsPage: (owner, r, p) => page(r === repo ? many : FLEET.pulls[r], p),
+  });
+  assert.equal(exitCode, 0, lines.join("\n"));
+  assert.ok(!lines.some((l) => l.includes("RangeError")));
+});
+
+test("a missing owner token fails the run under --require-owner-tokens", async () => {
+  const { exitCode } = await report({}, { requireOwnerTokens: true, env: { GH_TOKEN_EXAMPLE_OWNER: "x" } });
   assert.equal(exitCode, 1);
 });
 
-test("shouldPublish skips unchanged rows younger than 6 days only", () => {
-  const { doc } = report();
+test("shouldPublish skips unchanged rows younger than 6 days only", async () => {
+  const { doc } = await report();
   const old = (days) => ({ ...doc, generated_at: new Date(NOW - days * 86400000).toISOString() });
   assert.equal(shouldPublish(null, doc, NOW), true);
   assert.equal(shouldPublish(old(1), doc, NOW), false);
   assert.equal(shouldPublish(old(6), doc, NOW), true);
   const changed = { ...old(1), rows: doc.rows.slice(1) };
   assert.equal(shouldPublish(changed, doc, NOW), true);
+  const redChanged = { ...old(1), red_runs: doc.red_runs.slice(1) };
+  assert.equal(shouldPublish(redChanged, doc, NOW), true);
+});
+
+// Resolves on a later macrotask, so concurrent calls genuinely overlap.
+const later = (v) => new Promise((resolve) => setImmediate(() => resolve(v)));
+
+test("limiter runs at most n tasks at once and returns each task's own result", async () => {
+  const slot = limiter(3);
+  let active = 0;
+  let peak = 0;
+  const task = (i) => slot(async () => {
+    active++;
+    peak = Math.max(peak, active);
+    await later();
+    active--;
+    if (i === 7) throw new RangeError("task 7");
+    return i * 2;
+  });
+  const settled = await Promise.allSettled(Array.from({ length: 12 }, (_, i) => task(i)));
+  assert.equal(peak, 3);
+  assert.equal(active, 0);
+  assert.deepEqual(settled.map((s) => (s.status === "fulfilled" ? s.value : s.reason.message)),
+    [0, 2, 4, 6, 8, 10, 12, "task 7", 16, 18, 20, 22]);
+  assert.throws(() => limiter(0), RangeError);
+  assert.ok(Number.isInteger(CONCURRENCY) && CONCURRENCY >= 1 && CONCURRENCY <= 10);
+});
+
+test("an api that answers asynchronously yields the same document", async () => {
+  const sync = await report();
+  const base = fixtureApi();
+  const asyncApi = Object.fromEntries(Object.entries(base).map(([k, f]) => [k, (...a) => later(f(...a))]));
+  const asyncResult = await report(asyncApi);
+  assert.equal(asyncResult.exitCode, 0);
+  assert.deepEqual(asyncResult.doc, sync.doc);
+});
+
+test("a failed check-run lookup fails its repo and logs only status and type", async () => {
+  const { exitCode, doc, lines } = await report({
+    checkRunsPage: () => later().then(() => { throw new ApiError(502); }),
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(doc, null);
+  assert.ok(lines.some((l) => l === "::error::impact-report: repo: ApiError HTTP 502"));
+});
+
+test("only 5xx, 429 and status-less errors are transient", () => {
+  for (const s of [null, 429, 500, 502, 503]) assert.equal(isTransient(new ApiError(s)), true, String(s));
+  for (const s of [400, 401, 403, 404, 422]) assert.equal(isTransient(new ApiError(s)), false, String(s));
+  assert.equal(isTransient(new RangeError("pagination ceiling reached")), false);
+});
+
+test("withRetry retries a transient failure with the given waits, then succeeds", async () => {
+  const waits = [];
+  let calls = 0;
+  const value = await withRetry(async () => {
+    calls++;
+    if (calls === 1) throw new ApiError(null);
+    if (calls === 2) throw new ApiError(502);
+    return "ok";
+  }, [5, 10, 20], async (ms) => { waits.push(ms); });
+  assert.equal(value, "ok");
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [5, 10]);
+});
+
+test("withRetry gives up after the last wait, and never retries a 404", async () => {
+  const waits = [];
+  let calls = 0;
+  await assert.rejects(withRetry(async () => { calls++; throw new ApiError(503); }, [1, 2], async (ms) => { waits.push(ms); }),
+    (e) => e instanceof ApiError && e.status === 503);
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [1, 2]);
+  calls = 0;
+  await assert.rejects(withRetry(async () => { calls++; throw new ApiError(404); }, [1, 2], async () => {}),
+    (e) => e.status === 404);
+  assert.equal(calls, 1);
+  assert.equal(RETRY_DELAYS_MS.length >= 2, true);
 });
 
 // ── The workflow and the template it measures (parsed, never regexed) ──────

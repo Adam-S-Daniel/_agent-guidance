@@ -50,6 +50,150 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-08 — subagent-delegation — edit
+- Motivation: the 2026-11-08 rewrite (PR #472) dropped the old "Don't write code in the orchestrating session" mandate; a thread started right after it built three fixtures in its own Opus context with no subagent (session transcript, 19:50-20:33 UTC)
+- Change: "Do judgment and ~10-call tasks yourself (...); delegate bigger implementation" restores the mandate; the reported-subagent bullet drops its 999/0 example to stay inside the full-build byte cap
+- Eval: observation n=1 (one project thread, 0 Agent calls over ~46 tool calls of fixture building, 2026-11-08 19:50-20:33 UTC); this wording is not yet measured; fixture evals/guidance/subagent-delegation/ re-runs on the new text
+- Outcome: merged 2026-11-08
+
+## 2026-11-08 — subagent-delegation — edit
+- Motivation: review and planning agents passed no `model` on 91 of 95 and 11 of 12 calls (Nov 2-8), because the rule read "Don't write code in the orchestrating session", so they inherited Opus; nothing kept security review off cheaper models; a week's thread spend was 65% context re-reads
+- Change: every delegation (code, review, plan, research) passes `model`, routed by what a miss costs (`haiku` search and checked mechanical edits, never security review; `sonnet` clear-spec implementation; `opus` correctness review and security review at high effort); effort defaults; do ~10-call tasks yourself; fork only under ~100k tokens; context-cost bullet (hand off past ~150k, small tool output, scripted polling); the other bullets reflowed and trimmed, wording only, to stay under the 26,624-byte cap (PR #472)
+- Eval: review-task reproduction in WSL, CLI headless runs: fleet text alone 0/9 delegations passed a model (n=2 trials); proposed wording 8/8 and 6/6 (n=2 each); Haiku security review missed a planted auth bypass 3/3 (n=3). Owner-side report, not committed; fixture evals/guidance/subagent-delegation/ re-runs on the new text
+- Outcome: merged 2026-11-08
+
+## 2026-11-07 — security — edit
+- Motivation: the owner corrected an agent (2026-11-07) that answered unescaped web text in a Jekyll layout by rejecting any value containing `<` or `>`; the rule is universal: escape or encode untrusted data, with an established library, for each context, just before placing it there.
+- Change: the concatenation bullet becomes an escape-or-encode-per-context rule naming the library requirement, the common contexts, and that rejecting or stripping characters does not replace it (base.md 26,419 bytes, under the 26 KiB cap).
+- Eval: the evals/guidance/security/ fixture was NOT re-run (no eval harness in the authoring session); the only result is the base.md checks, `node --test test/test-on-hold-label.js test/test-fleet-guidance-mirror.js test/test-check-agent-markdown.js` exit 0.
+- Outcome: pending
+
+## 2026-11-04 — turn-lessons-into-checks — create
+- Motivation: the owner asked (2026-11-04) that the fleet guidance tell every agent to make git hook checks, skills and guidance sections when a lesson could recur, and that the system can count what agents made and its impact. The routing rule lived only inside "Finding your unknowns", as where durable findings go, with no instruction to make them unasked and no marker to count them by.
+- Change: new section with the check, skill, guidance order, where each goes, and a `Captures: check|skill|section <id>` commit trailer that the evals dashboard counts; base.md's size cap goes from 25 KiB to 26 KiB to fit it, since every existing section is eval-protected and cannot be trimmed for room.
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-11-02 — two-github-connectors — edit
+- Motivation: _agent-guidance#291: the org connector (`github-mcp`) returned `403 Resource not accessible by integration` on issue writes (`issue_write` 2026-10-10, `add_issue_comment` 2026-10-31) in cloud sessions, while the section said it has the same issue writes.
+- Change: the bullet drops "issue" from the connector's write list and says issue writes can 403; no bytes added elsewhere (base.md stays under its 25 KiB cap).
+- Eval: evals/guidance/two-github-connectors/org-connector-ci, local run on the edited text, claude-sonnet-5-5, n=1 per arm, exit 0; objective 2/2 section, 1/2 none, 2/2 full, 1/2 full-minus-section. The fixture tests the CI-read and Actions-gap lines, not the changed sentence.
+- Outcome: pending
+
+## 2026-11-02 — pr-tldr — create
+- Motivation: owner asked on 2026-11-02 that every pull request description begin with a plain-English TLDR.
+- Change: new section after the contribution-marker section: open each PR description with a `## TLDR` heading and one to three sentences; agent-checks' new pr-tldr check fails a PR without one, and editing the description re-runs it.
+- Eval: exempt (skipped row)
+- Outcome: pending
+
+## 2026-10-29 — automation-vs-branch-protection — edit
+- Motivation: the bullet said PR + auto-merge is sanctioned only for skills-evals' roster PR, but repo-settings ADRs 0012-0015 have since sanctioned it for the eval and guidance loops, lesson-check PRs and the changelog routine; owner asked for the fix 2026-10-29.
+- Change: the bullet now names where a repo-settings ADR declares the exception, the loops' PRs (0003, 0012, 0014), lesson-check PRs (0013) and the changelog routine's (0015).
+- Eval: evals/guidance/automation-vs-branch-protection/required-check-concurrency, n=1 per arm, objective 3/4 in all four arms (judge 8.7 section, 9.0 none, 6.5 full, 8.7 full-minus-section); run 20261029T181020Z-014a70 on persistent/eval-results. Measured against main's text before this edit; the fixture tests the required-check concurrency bullet, which this edit does not touch.
+- Outcome: pending
+
+## 2026-10-29 — section-javascript — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed const/let over var, strict equality, async/await, no globals or prototype changes; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-go — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed check every error, return errors rather than panic, defer for cleanup; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-rust — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed Result over panic with ?, derive traits only when meaningful, borrow over clone; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-dotnet — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed async I/O without .Result/.Wait(), built-in DI, framework naming, using for disposal; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — section-docker — edit
+- Motivation: _agent-guidance#348 (prompt audit): the section restated defaults the model already follows; owner chose "Trim as the audit says" on 2026-10-29.
+- Change: removed multi-stage builds, combined RUN layers; the project-specific rules and verification gates stay.
+- Eval: no eval run; the fleet opt-in census measured 0/22 repos loading this section (no session loads it today). The fixture's checks for the removed lines are dropped in a skills-evals PR.
+- Outcome: pending
+
+## 2026-10-29 — anything-you-name-gets-its-link — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — two-github-connectors — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — github-404-means-not-authorized — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — fleet-spans-two-owners — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — watch-finished-is-not-ci-passed — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — git-push-does-not-mean-commit-exists — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — dependency-updates — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — name-becomes-scanner-data — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — test-that-can-signal-kills-every-session — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — subagent-delegation — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs and dates inside always-loaded rules cost context and go stale.
+- Change: dates and incident numbers dropped from the rule text, the mechanism kept; the originals moved to docs/evidence/base-md-incidents.md, which base.md's opening now points to. No rule changed.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — git-practices — edit
+- Motivation: _agent-guidance#348 (prompt audit): dated incident IDs inside always-loaded rules; same issue's 2026-10-28 finding, that the stub's merge floor lacked the squash exception this section states, was fixed in stub.md in the same PR.
+- Change: the squash-stranding date and the closing-keyword incident IDs moved to docs/evidence/base-md-incidents.md; mechanism and rules unchanged.
+- Eval: section fixture not re-run, as the rule wording is unchanged; the dated-phrasing prototype run on base.md went from 12 dates to 0 (exit 0).
+- Outcome: pending
+
+## 2026-10-29 — read-before-you-start — edit
+- Motivation: 2026-10-28/29, a cms-platform session got 403 from the code scanning alerts API and neither GitHub MCP server has a code scanning tool; the owner asked for the workaround to be recorded here.
+- Change: a third pointer, to docs/reference/code-scanning-alerts.md (first a read-only `gh api` call through a Remote Control session on the owner's device, then a pinned local CodeQL run as the fallback). The full build sat 2 bytes under the 29696-byte Codex budget, so the three pointers now share one base URL and name their files, instead of three full URLs; section 342 -> 295 bytes.
+- Eval: skills-evals fixture not re-run for this bullet; the technique itself was checked on cms-platform, device route 37/37 alerts read and the local CodeQL fallback matching 37/37 by rule and file.
+- Outcome: pending
+
 ## 2026-10-26 — working-in-these-repos — edit
 - Motivation: owner, 2026-10-26: handed edits to apply to the eval routine's saved prompt, he asked for the whole text to paste instead, and for a rule to always do that.
 - Change: a bullet saying text the owner must paste (a routine prompt, a settings field) is given whole, never as edits; worded tight for the 29696-byte Codex budget (PR #342).
