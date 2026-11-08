@@ -119,50 +119,61 @@ relying on CodeQL for it.
    headers. None showed a sink pattern in this pass; revisit when a repo
    starts emitting one.
 
-## Recommended checks, in order
+## What is built: `gha-template-injection`
 
-1. **`gha-run-interpolation` in `agent-checks`.** Refuse a workflow or action
-   file where a `${{ }}` whose root is `github.event.*`, `inputs.*`,
-   `github.head_ref`, `github.ref_name` or another step's or job's output sits
-   inside a `run:` or `script:` value, except the roots that are fixed-shape
-   (`github.event.pull_request.number`, `github.sha`, `github.run_id`,
-   `github.repository`, `runner.*`). The message says: pass it through
-   `env:` and read `"$NAME"` in the shell (or `process.env.NAME` in a
-   `script:`), because GitHub substitutes the expression into the script text
-   before the shell parses it. **It must parse the YAML** (the fleet's
-   AST-not-regex rule): a regex cannot tell a `run:` value from a `with:`
-   value or a comment. The runner is dependency-free bash today, so this needs
-   a decision before it is built (below). Measured on fleet mains it would
-   refuse **26 interpolations in 6 repos** (list above), so it needs
-   either the 26 fixed first (one small PR per repo, mostly the shared
-   `dependabot-auto-merge.yml` template) or a mode that judges only changed lines.
-2. **zizmor in CI, advisory first**, on the repos with workflows. It is the
-   maintained answer to check 1 and to the other Actions pitfalls, and it
-   answers the "which expressions are safe" question better than a
-   hand-written list. Run it as a non-required job, then promote it.
-3. **A cms-platform-only `.agent-checks/local.sh` rule** that refuses a new
+The first check is in `templates/agent-checks/agent-checks`, so the sync
+delivers it to every fleet repo's `.githooks/agent-checks`, where it runs from
+the pre-commit and pre-push hooks and from the required `agent-checks` CI job.
+
+- **It runs zizmor, not a hand-written list.** The rule asks for a
+  well-established tool, and zizmor's `template-injection` audit parses the
+  YAML and knows which expressions an outsider can steer, which a fleet-written
+  list would get wrong. The check copies each changed
+  `.github/workflows/*.yml|yaml` and local `action.yml|yaml` (root or
+  `.github/actions/`) out of the content being checked into a temporary
+  directory and runs `zizmor --offline --no-config` on it. Fixture copies of
+  workflows under other paths (skills-evals' `evals/**/seed/`) are not
+  audited, because GitHub never runs them.
+- **It refuses Medium and High findings only.** zizmor rates an earlier
+  step's output Informational; those go to review, not refusal.
+- **zizmor is pinned**: version 1.31.1 (released 2026-10-15; 1.32.0 was under
+  7 days old), installed once per machine by pip with `--require-hashes`
+  against every wheel's sha256, into
+  `${XDG_CACHE_HOME:-$HOME/.cache}/agent-checks/zizmor/1.31.1`. The first run
+  takes about 30 seconds; later runs take under a second per repo. A zizmor
+  on `PATH` at that version is used as is.
+- **It fails closed only in CI.** Without python and pip, or offline, a local
+  run warns and skips; the CI job refuses, because CI is the enforcement.
+- **The escape hatch is zizmor's own**: `# zizmor: ignore[template-injection]`
+  on the line, with the reason, for a value that provably cannot carry code.
+
+Measured with `agent-checks tree` on the fleet mains on 2026-11-08: 13 of
+the 14 repos (`security-alerts` is private and was not readable from the
+session that measured it):
+
+| Repo | Refusals | Where |
+|---|---|---|
+| `_agent-guidance`, `adam-agentskills`, `claude-memory-map`, `fastmail-actions`, `repo-settings` | 2 each | the shared `dependabot-auto-merge.yml` (`base.ref`, `head.sha`); fixed at its template in the same PR as the check, and the sync carries the fix to the other four |
+| `cms-platform` | 2 | `editorial-label-audit.yml` lines 57 and 58 (`inputs.*` of a reusable workflow); filed as an issue there |
+| `adam-agentskills-private`, `adamdaniel.ai`, `ai-usage-dashboard`, `jodidaniel.com`, `rss-inator`, `skills-evals`, `wsl-automation` | 0 | |
+
+A repo whose workflow still has a finding is not blocked until a change
+touches that file; then the refusal names the line and the fix.
+
+## Recommended next checks, in order
+
+1. **zizmor's other audits** stay out of the hook: on today's mains they report
+   hundreds of `unpinned-uses` and `artipacked` findings that the fleet's
+   lockfile pins already answer or that need a separate decision.
+2. **A cms-platform-only `.agent-checks/local.sh` rule** that refuses a new
    `innerHTML`/`outerHTML`/`insertAdjacentHTML`/`document.write` outside a
-   file on an allowlist, parsed with `acorn`/`acorn-walk` (already a
-   dependency there). Not for the fleet: five other repos have one or two
-   such files each, and `esc()` use there looks right.
-4. **Leave to CodeQL**: SQL, XML and command-injection in code. The counts
-   are small and CodeQL's queries are better than a hook can be.
-
-## Decision for the owner
-
-Check 1 needs a YAML parser in a runner that has none. Options:
-
-- **A.** A small Node helper beside `dated-phrasing.js`, using `yaml` from a
-  vendored copy delivered with the runner (the sync copies files, so this is
-  possible; it adds one dependency the fleet must review and pin).
-- **B.** Call `python3` with PyYAML (preinstalled on GitHub-hosted runners;
-  not guaranteed on a developer machine, where the check would skip with a
-  warning, as `dated-phrasing` does without node).
-- **C.** Skip the hook and adopt zizmor (check 2) as the enforcer.
-
-Recommendation: **C first** (smallest, maintained, and it knows which
-expressions are safe), then **B** only if a commit-time refusal is still
-wanted, because the file already degrades gracefully when node is missing and
-the same pattern works for Python. This design deliberately adds no check to
-`templates/agent-checks/agent-checks` yet: check 1 cannot honor the parser
-rule with what the runner has, and shipping a regex version would break it.
+   file on an allowlist, parsed with `acorn`/`acorn-walk`, or
+   `eslint-plugin-no-unsanitized` in its existing `lint-staged.sh`. Not for
+   the fleet: five other repos have one or two such files each, and `esc()`
+   use there looks right. Filed as an issue in cms-platform.
+3. **Leave to CodeQL**: SQL, XML and command injection in code, and dynamic
+   `eval`/`Function`. The counts are small and CodeQL's queries are better
+   than a hook can be. CodeQL is asynchronous and does not block a merge, so
+   it is a backstop, not a substitute for check 1 where a hook can do it.
+4. **Log lines and workflow commands** (`echo "::error::$var"`): no
+   established tool checks this; revisit if a finding shows real exposure.
