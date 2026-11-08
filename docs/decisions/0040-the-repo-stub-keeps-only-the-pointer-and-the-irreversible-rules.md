@@ -21,7 +21,8 @@ when the verdict is not `installed`/`current`), the check-value request
 ([ADR 0035](0035-sessions-prove-the-guidance-loaded-with-a-check-value.md)), and
 one sentence with the irreversible rules: no push to a default branch, no
 force-push of a shared branch, no committed secret, no personal data in a CI
-log. The rest of the floor lives only in `base.md`. `test_agents_md_size_budget`
+log, plus the 32 KiB Codex limit on the file itself, which `base.md` does not
+cover for stub-mode repos. The rest of the floor lives only in `base.md`. `test_agents_md_size_budget`
 caps the stub build at 2048 bytes.
 
 ## Consequences
@@ -30,5 +31,7 @@ caps the stub build at 2048 bytes.
   rules (404 handling, watch exit codes, the two owners, links, merge style).
   It keeps the irreversible ones and is told to read `base.md` first.
 - A session with one repo attached saves ~3.5 KB per call; with five, ~17 KB.
+- This amends the floor role ADR 0012 gave the stub; it does not reverse the
+  once-per-session delivery.
 - The `fleet-memory.sh` comment that every repo carries "the load-bearing rules
   inline" now means the one irreversible-rules sentence.
