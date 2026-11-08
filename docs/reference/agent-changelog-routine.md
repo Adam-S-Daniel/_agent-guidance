@@ -534,7 +534,12 @@ The sweep's own spec is
    - **`## To check`** has one box: the sweep fired for this issue logged a
      result in
      [`prompt-audit-runs.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/persistent/prompt-audit-runs/docs/reference/prompt-audit-runs.md)
-     on the `persistent/prompt-audit-runs` branch.
+     on the `persistent/prompt-audit-runs` branch. Add one more box for each
+     open question the issue's **Why it may matter here** raises (a file
+     that may stop loading, a setting whose state is not measured), naming
+     the hands-on check that answers it. The audit reads files; it cannot
+     answer how a live session behaves, so such a question needs its own
+     box or nothing tracks it once the sweep closes the issue.
 4. **No fire from here.** This routine holds no fire URL or bearer and
    sends no request to `api.anthropic.com`. Filing the trigger issue (item
    3) is the whole request: the

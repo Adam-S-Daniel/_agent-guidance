@@ -151,6 +151,7 @@ test('a trigger issue with hands-on checks stays open and gets agent-ready', () 
   const finish = prose(section(spec, '7. Finish'));
   includes(finish, ['comment `Swept: <run-log line link and issue links>`', 'any item other than the one about the sweep logging a result is still unchecked (`- [ ]`)', 'leave the issue open and add the `agent-ready` label', 'Otherwise close it as completed', 'On a `BLOCKED` stop, comment the `BLOCKED` line and leave it open with no label', 'Under `DRY_RUN`, change nothing on it']);
   includes(prose(section(spec, 'Constraints')), ['then either its closing or the `agent-ready` label']);
+  includes(finish, ['names a question the audit did not answer', 'as a `- [ ]` item in the `Swept:` comment']);
   includes(prose(section(spec, 'Switches')), ['change nothing on the trigger issue']);
 });
 
