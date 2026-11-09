@@ -1,3 +1,23 @@
+> **Retired 2026-11-09.** This was the spec of the daily "Guidance
+> centralization audit" Routine. The owner disabled the Routine on
+> 2026-11-03 because it could not do its job (issue 424 in this repo: a
+> stale stored prompt naming retired registries, and no tool to list repos
+> or tasks, so every run reported it could not check anything). Its work
+> now lives in two places:
+>
+> - **Mechanical:** the nightly drift report's "Repo-specific guidance
+>   overlap" section ([`scripts/guidance-overlap.js`](../../scripts/guidance-overlap.js),
+>   run by [`drift-report.yml`](../../.github/workflows/drift-report.yml))
+>   lists text repeated across repos, local copies of `base.md` or a section
+>   file, and sections requested for a language a repo does not use.
+>   Unclassified repos were already the drift report's (ADR 0011).
+> - **Judgment:** item 8 of the weekly
+>   [Fleet health audit](../routines/fleet-health-audit.md) decides what each
+>   overlap entry should become.
+>
+> The text below is kept unchanged as evidence: the measured traps and the
+> dated run log from 2026-08-28 to 2026-09-28. Nothing runs it.
+
 # Routine: guidance centralization audit
 
 **Fires:** daily, 08:00 UTC, in a fresh session.

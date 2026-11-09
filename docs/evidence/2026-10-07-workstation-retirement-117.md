@@ -22,7 +22,7 @@ The remaining ZENDA mentions in this repository occur in the dated
 [guidance-impact entry](../guidance-impact.md),
 [memory-home ADR](../decisions/0013-a-memory-note-outside-a-repo-names-its-home.md),
 [August handoff](../handoffs/2026-08-20-gitleaks-and-silent-failures/C-history-rewrite.md),
-and [routine run history](../routines/guidance-centralization.md).
+and [routine run history](2026-11-09-guidance-centralization-audit-retired.md).
 They were preserved as history. The guidance-impact entry's statement that
 the host is retired is a historical motivation, not a current task-removal
 receipt. This checkpoint does not claim a new fleet-wide audit.

@@ -797,49 +797,30 @@ can go stale, but not quietly. See
 [ADR 0003](docs/decisions/0003-cron-coverage-is-fleet-listed.md) for why the
 fleet is declared rather than inferred from whatever happens to be cloned.
 
-## The weekly centralization audit
+## Repeated guidance across repos
 
-Every workflow in this repo answers a mechanical question — does the managed
-block match a fresh build, is the hook pin current, is each `skills.lock`
-re-pinned. None of them answers the one that decides whether centralization is
-actually working: **is this paragraph, sitting under one repo's
-`## Repo-specific additions`, fleet-general?** That is a judgement about
-meaning, and it is made against ~1,500 lines of repo-specific prose spread over
-eighteen repos.
+No workflow here can judge whether a paragraph under one repo's
+`## Repo-specific additions` is fleet-general. Finding text that repeats is
+mechanical, though, so the nightly drift report does it: its
+"Repo-specific guidance overlap" section
+([`scripts/guidance-overlap.js`](scripts/guidance-overlap.js)) lists blocks
+repeated across repos, local copies of `base.md` or a section file, and
+sections requested for a language a repo does not use. It names repos and
+line ranges only, because the report is public and some repos are private.
+Nothing in it fails the run. The weekly
+[Fleet health audit](docs/routines/fleet-health-audit.md) (item 8) makes the
+judgment on each entry.
 
-So it runs weekly as a **Claude Routine** in Adam's account rather than as a
-workflow here. The Routine's prompt is deliberately thin and points at the
-spec, which lives in this repo so it can be reviewed and corrected by pull
-request:
-
-- [`docs/routines/guidance-centralization.md`](docs/routines/guidance-centralization.md)
-  — the spec: the procedure, the measured traps, the dated baseline.
-- [`docs/routines/guidance-centralization.routine.md`](docs/routines/guidance-centralization.routine.md)
-  — the Routine's own configuration, captured from the claude.ai Routines
-  API by [`scripts/capture-routine.py`](scripts/capture-routine.py) so that an
-  edit made on claude.ai arrives here as a diff rather than as a difference
-  against nothing. Configuration only: runtime state is deliberately excluded
-  and identifiers are redacted, both for reasons the script's header gives.
-
-It audits three things — that nothing multi-repo-applicable is stranded in one
-repo (and that centralized content is not still duplicated locally), that every
-repo receives `base.md` or has a written exclusion, and that section opt-ins
-fit the repo. If it changes anything, it drives propagation and verifies the
-change reached each consumer.
-
-Two things it is explicitly told **not** to do, because both are tempting and
-both are wrong: trust the nightly drift report without re-checking against the
-repos (its `Has marker` column is wrong for `AGENTS.md` files over ~48 KB, and
-that error cascades into a false `drift-detected`), and mass-apply the
-`agents-md/sections/` files to every repo that happens to contain a matching
-file extension.
+This replaced the daily "Guidance centralization audit" Routine, retired on
+2026-11-09; its spec and run log are kept as
+[evidence](docs/evidence/2026-11-09-guidance-centralization-audit-retired.md).
 
 ## Layout
 
 ```
 agents-md/              # managed AGENTS.md content (base + opt-in sections)
-scripts/                # build, sync, drift-report, lock bump, cron
-                        #   coverage, status, routine capture, Codex hook
+scripts/                # build, sync, drift-report, guidance overlap,
+                        #   lock bump, cron coverage, status, Codex hook
                         #   registration
 docs/decisions/         # ADRs (start at the README there)
 docs/routines/          # specs for the scheduled Claude Routines that audit

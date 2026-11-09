@@ -104,7 +104,9 @@ findings as warnings and exits 0.
 - Model-specific prompt drift is caught when it can first appear, without a
   recurring bill or recurring noise. Between sweeps nothing LLM-backed
   watches instruction files; the warn-only checks and the guidance
-  centralization Routine cover that gap.
+  centralization Routine cover that gap. (2026-11-09: that Routine is
+  retired. The drift report's guidance overlap section and the weekly Fleet
+  health audit's item 8 cover the repeated-guidance part of the gap.)
 - The sweep's fire token is an environment variable, readable by any
   session in its environment. The agent proxy's API credentials cannot hold
   it, because they are never attached to `api.anthropic.com`. So the owner

@@ -84,9 +84,35 @@ jobs:
           GH_TOKEN_ADAM_S_DANIEL: ${{ steps.token_adam_s_daniel.outputs.token }}
           GH_TOKEN_JODIDANIEL: ${{ steps.token_jodidaniel.outputs.token }}
           SYNC_OWNERS: "Adam-S-Daniel jodidaniel"
+          # Where drift-report.sh saves each repo's AGENTS.md, sections and
+          # languages for the overlap step below. Outside the checkout, so
+          # nothing in it can be committed to the public results branch.
+          DRIFT_GUIDANCE_DIR: ${{ runner.temp }}/guidance
         run: |
+          mkdir -p "$DRIFT_GUIDANCE_DIR"
           chmod +x scripts/drift-report.sh scripts/build-agents-md.sh
           ./scripts/drift-report.sh
+
+      # The mechanical half of the retired guidance centralization audit
+      # (_agent-guidance#424): repo-specific text that repeats across repos or
+      # copies shared guidance. Warn-only: a failure here must never stop the
+      # report from publishing, so it says so in the report and moves on. The
+      # weekly Fleet health audit reads this section and makes the judgment.
+      - name: Setup Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Add the repo-specific guidance overlap section
+        env:
+          DRIFT_GUIDANCE_DIR: ${{ runner.temp }}/guidance
+        run: |
+          if npm ci --silent && node scripts/guidance-overlap.js "$DRIFT_GUIDANCE_DIR" > "$RUNNER_TEMP/overlap.md"; then
+            { echo; cat "$RUNNER_TEMP/overlap.md"; } >> drift-report.md
+          else
+            echo "::warning::guidance-overlap.js did not run; the report has no overlap section tonight"
+            printf '\n## Repo-specific guidance overlap (warn-only)\n\nNot computed tonight: the overlap step failed. See the workflow run log.\n' >> drift-report.md
+          fi
 
       # Under the branch ruleset that requires a PR before merging, a plain
       # "git push to main" as github-actions[bot] is rejected, so this can't

@@ -2567,6 +2567,19 @@ case "$1" in
         shift
         jq_filter=$(parse_jq_filter "$@")
 
+        # GET repos/{owner}/{repo}/languages — drift-report.sh asks only when
+        # DRIFT_GUIDANCE_DIR is set. A fixture opts in with
+        # <bare>/<owner>_<repo>.languages.json; without one it fails like a 404.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/languages$ ]]; then
+            lang_file="${MOCK_BARE_DIR}/${BASH_REMATCH[1]}_${BASH_REMATCH[2]}.languages.json"
+            if [[ -f "$lang_file" ]]; then
+                cat "$lang_file"
+                exit 0
+            fi
+            echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+        fi
+
         # DELETE repos/{owner}/{repo}/git/refs/heads/{branch}
         # What delete_bump_branch calls to clean up after a merged bump PR.
         if [[ "$api_method" == "DELETE" \
@@ -7965,363 +7978,6 @@ YML
     fi
 
     unset -f assert_reg
-}
-
-# ── Test 6c: capture-routine.py ───────────────────────────────
-#
-# The snapshot in docs/routines/ is the only prior copy of a Routine that is
-# edited on claude.ai, so the ways this script can be wrong are the ways that
-# copy silently stops meaning anything: a field the policy has never seen and
-# quietly drops, an identifier reaching a public repo, runtime state making the
-# file permanently stale, or a render that is not reproducible so --check can
-# never be trusted. Each has a test below, and each refusal is checked against
-# the positive above it.
-
-test_capture_routine() {
-    echo ""
-    echo "=== Test: capture-routine.py (the Routine snapshot must refuse, not guess) ==="
-
-    local script="$REPO_ROOT/scripts/capture-routine.py"
-    local dir="$TEST_DIR/routine"
-    mkdir -p "$dir"
-
-    if ! command -v python3 >/dev/null 2>&1; then
-        fail "routine: python3 is missing — the capture script cannot be exercised"
-        return
-    fi
-
-    # One synthetic routine record, matching the shape `list_triggers` returns.
-    # Deliberately fake throughout: the values below are what the redaction
-    # assertions grep for, so a real id here would be both a leak and a test
-    # that proves nothing.
-    write_fixture() {   # <name> [python mutation over `r`]
-        local name="$1" mutation="${2:-pass}"
-        python3 - "$dir/$name.json" "$mutation" <<'PY'
-import json, sys
-out, mutation = sys.argv[1], sys.argv[2]
-prompt = "Read the spec.\n\n```bash\necho hi\n```\n"
-r = {
-    "id": "trig_FIXTUREfixtureFIXTUREfixture",
-    "name": "Fixture routine",
-    "enabled": True,
-    "cron_expression": "0 7 * * 0",
-    "created_at": "2026-01-01T00:00:00Z",
-    "created_kind": "ROUTINE_CREATED_KIND_ROUTINE",
-    "created_via": "meta_mcp",
-    "creator": {"account_uuid": "ACCOUNTUUIDfixture0000"},
-    "derived_state": {"folders_state": "FOLDERS_STATE_NONE", "model": "", "prompt": prompt},
-    "next_run_at": "NEXTRUNfixture0000",
-    "last_fired_at": "2026-01-02T00:00:00Z",
-    "last_run": {"status": "ROUTINE_RUN_STATUS_SUCCEEDED", "fired_at": "2026-01-02T00:00:00Z",
-                 "finished_at": "2026-01-02T00:01:00Z", "session_id": "SESSIONfixture0000"},
-    "updated_at": "2026-01-03T00:00:00Z",
-    "notifications": {"channel": {"push": True, "email": False, "slack": False}},
-    "mcp_connections": [{"name": "fixture-mcp", "url": "https://mcp.example.com/",
-                         "connector_uuid": "CONNECTORUUIDfixture0000"}],
-    "job_config": {"ccr": {
-        "environment_id": "ENVIRONMENTfixture0000",
-        "events": [{"data": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
-                             "session_id": "", "parent_tool_use_id": None,
-                             "message": {"role": "user", "content": prompt}}}],
-        "session_context": {
-            "allowed_tools": ["preset:default", "Bash"],
-            "autofix_on_pr_create": True,
-            "sources": [{"git_repository": {"url": "https://github.com/testorg/repo-one"}},
-                        {"git_repository": {"url": "https://github.com/testorg/repo-two"}}],
-            "outcomes": [{"git_repository": {"git_info": {"repo": "testorg/repo-one",
-                                                          "branches": ["claude/fixture"]}}}],
-        }}},
-}
-exec(mutation)
-json.dump({"data": [r]}, open(out, "w"))
-PY
-    }
-
-    # <fixture> <expected-exit> <needle> <label>
-    assert_cap() {
-        local fixture="$1" want="$2" needle="$3" label="$4" out rc=0
-        out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-                  --input "$dir/$fixture.json" --out "$dir/$fixture.md" 2>&1) || rc=$?
-        if [[ "$rc" == "$want" ]] && grep -qF -- "$needle" <<<"$out"; then
-            pass "$label"
-        else
-            fail "$label — expected exit $want containing '$needle'; got exit $rc: $(head -2 <<<"$out" | tr '\n' ' ')"
-        fi
-    }
-
-    # ── The positive. Every refusal below is only meaningful against this.
-    write_fixture good
-    assert_cap good 0 "wrote" "routine: a well-formed record renders a snapshot"
-
-    # ── REFUSALS (exit 2): the question could not be answered honestly.
-    write_fixture unknown 'r["brand_new_field"] = "surprise"'
-    assert_cap unknown 2 "brand_new_field" \
-        "routine: a field the policy has never classified REFUSES and names it"
-
-    write_fixture skew 'r["derived_state"]["prompt"] += "drifted"'
-    assert_cap skew 2 "disagree" \
-        "routine: derived_state.prompt disagreeing with the seed event is a refusal"
-
-    write_fixture twoev 'r["job_config"]["ccr"]["events"].append(r["job_config"]["ccr"]["events"][0])'
-    assert_cap twoev 2 "exactly one seed event" \
-        "routine: two seed events make the prompt ambiguous, so it refuses"
-
-    write_fixture noprompt 'r["job_config"]["ccr"]["events"][0]["data"]["message"]["content"] = ""'
-    assert_cap noprompt 2 "no prompt text" \
-        "routine: an empty prompt is a refusal, not an empty snapshot"
-
-    # The REST shape (`GET /v1/code/triggers/<id>`) carries a `session_request`
-    # mirror plus personal and token-hint fields the list tool never had. It must
-    # render, withhold the personal values, and still refuse on a disagreeing
-    # mirror or a populated environment-variable map. The config mirror below
-    # matches `session_context` exactly (sources and tools reordered, which is
-    # not a disagreement), so each skew fixture differs from it in one field.
-    local rest_mut='
-r["api_token_hint"] = "TOKENHINTfixture0000"
-r["creator"]["display_name"] = "DISPLAYNAMEfixture0000"
-r["session_request"] = {"environment_id": "ENVIRONMENTfixture0000",
-    "environment_variables": {}, "metadata": {}, "tags": [],
-    "config": {"allowed_tools": ["Bash", "preset:default"], "autofix_on_pr_create": True,
-        "sources": [{"type": "git_repository", "url": "https://github.com/testorg/repo-two"},
-                    {"type": "git_repository", "url": "https://github.com/testorg/repo-one"}],
-        "outcomes": [{"type": "git_repository", "git_info": {"type": "github",
-            "repo": "testorg/repo-one", "branches": ["claude/fixture"]}}],
-        "worktree": False},
-    "events": [{"ephemeral": False, "payload": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
-        "session_id": "", "message": {"role": "user", "content": prompt}}}]}'
-    write_fixture rest "$rest_mut"
-    assert_cap rest 0 "wrote" "routine: the REST shape (session_request mirror) renders a snapshot"
-    local lit2 rest_leaked=0
-    for lit2 in TOKENHINTfixture0000 DISPLAYNAMEfixture0000 ENVIRONMENTfixture0000 MESSAGEUUIDfixture0000; do
-        if grep -qF -- "$lit2" "$dir/rest.md"; then
-            fail "routine: $lit2 leaked from the REST shape into the snapshot"
-            rest_leaked=1
-        fi
-    done
-    [[ $rest_leaked -eq 0 ]] && pass "routine: REST-only personal and token-hint values are withheld"
-
-    write_fixture restskew "$rest_mut"'
-r["session_request"]["events"][0]["payload"]["message"]["content"] += "drifted"'
-    assert_cap restskew 2 "session_request" \
-        "routine: a session_request prompt disagreeing with the seed event is a refusal"
-
-    # The four `session_request.config` mirrors of `session_context`: the
-    # snapshot renders the ccr copy, so a mirror that disagrees must refuse
-    # rather than lose silently. Measured: with the check in collect() removed,
-    # all four of these exit 0.
-    write_fixture restsrc "$rest_mut"'
-r["session_request"]["config"]["sources"][0]["url"] = "https://github.com/testorg/repo-drifted"'
-    assert_cap restsrc 2 "session_request.config.sources" \
-        "routine: session_request sources disagreeing with session_context is a refusal"
-
-    write_fixture restout "$rest_mut"'
-r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude/drifted"]'
-    assert_cap restout 2 "session_request.config.outcomes" \
-        "routine: session_request outcomes disagreeing with session_context is a refusal"
-
-    write_fixture restoutrepo "$rest_mut"'
-r["session_request"]["config"]["outcomes"][0]["git_info"]["repo"] = "testorg/repo-drifted"'
-    assert_cap restoutrepo 2 "session_request.config.outcomes" \
-        "routine: session_request outcome repo disagreeing with session_context is a refusal"
-
-    write_fixture restoutorder "$rest_mut"'
-r["job_config"]["ccr"]["session_context"]["outcomes"][0]["git_repository"]["git_info"]["branches"] = ["claude/a", "claude/b"]
-r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude/b", "claude/a"]'
-    assert_cap restoutorder 0 "wrote" \
-        "routine: reordered outcome branches are not a disagreement"
-
-    write_fixture restmixed "$rest_mut"'
-r["session_request"]["config"]["allowed_tools"] = ["Bash", 7]'
-    assert_cap restmixed 2 "1 non-string entry out of 2" \
-        "routine: a non-string in a mirrored list is a clean refusal, not a traceback"
-
-    # `classify()` refuses a non-list at a list path before `collect()` runs,
-    # so the "is not a list" arm is unreachable through the CLI; it is a guard
-    # for a mirror that classifies but is not a list, so call `collect()` directly.
-    local notlist_out notlist_ok=1 notlist_field
-    for notlist_field in allowed_tools sources; do
-        notlist_out=$(python3 - "$script" "$dir/rest.json" "$notlist_field" <<'PY' 2>&1
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("capture_routine", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-record = json.load(open(sys.argv[2]))["data"][0]
-record.setdefault("session_request", {}).setdefault("config", {})[sys.argv[3]] = "not-a-list"
-try:
-    mod.collect(record)
-except mod.Refusal as e:
-    print(e)
-PY
-) || notlist_ok=0
-        grep -qF -- "session_request.config.$notlist_field" <<<"$notlist_out" \
-            && grep -qF -- "is not a list" <<<"$notlist_out" || notlist_ok=0
-    done
-    if [[ $notlist_ok -eq 1 ]]; then
-        pass "routine: a mirrored list that is not a list is a clean refusal"
-    else
-        fail "routine: a mirrored list that is not a list is a clean refusal — last output: $notlist_out"
-    fi
-
-    write_fixture restsrcmixed "$rest_mut"'
-r["session_request"]["config"]["sources"][0]["url"] = 5'
-    assert_cap restsrcmixed 2 "1 non-string entry out of 2" \
-        "routine: a non-string source url is a refusal, not coerced by str()"
-
-    write_fixture restone "$rest_mut"'
-r["session_request"]["config"]["allowed_tools"] = ["Bash"]'
-    assert_cap restone 2 "(1 entry vs" \
-        "routine: a one-entry disagreement says 1 entry, not 1 entries"
-
-    write_fixture resttools "$rest_mut"'
-r["session_request"]["config"]["allowed_tools"].append("Edit")'
-    assert_cap resttools 2 "session_request.config.allowed_tools" \
-        "routine: session_request allowed_tools disagreeing with session_context is a refusal"
-
-    write_fixture restfix "$rest_mut"'
-r["session_request"]["config"]["autofix_on_pr_create"] = False'
-    assert_cap restfix 2 "session_request.config.autofix_on_pr_create" \
-        "routine: session_request autofix disagreeing with session_context is a refusal"
-
-    write_fixture restenv "$rest_mut"'
-r["session_request"]["environment_variables"] = {"FIXTURE_VAR": "x"}'
-    assert_cap restenv 2 "environment_variables.FIXTURE_VAR" \
-        "routine: a populated environment_variables map refuses by its keys"
-
-    printf '{"data":[]}' > "$dir/empty.json"
-    assert_cap empty 2 "zero routines" \
-        "routine: zero routines refuses — an empty list and an unauthorised one look alike"
-
-    printf 'not json' > "$dir/notjson.json"
-    assert_cap notjson 2 "not JSON" \
-        "routine: a non-JSON payload is a refusal"
-
-    local out rc=0
-    out=$(python3 "$script" --id trig_ABSENT --input "$dir/good.json" \
-              --out "$dir/absent.md" 2>&1) || rc=$?
-    if [[ $rc -eq 2 ]] && grep -qF "will not guess" <<<"$out"; then
-        pass "routine: an id that is not in the response refuses rather than picking one"
-    else
-        fail "routine: absent id should exit 2; got $rc"
-    fi
-
-    # ── Redaction. This repo is public, so identifiers must not reach the file.
-    local snap="$dir/good.md" leaked=0 lit
-    for lit in ACCOUNTUUIDfixture0000 ENVIRONMENTfixture0000 CONNECTORUUIDfixture0000 \
-               SESSIONfixture0000 MESSAGEUUIDfixture0000; do
-        if grep -qF -- "$lit" "$snap"; then
-            fail "routine: $lit leaked into the snapshot"
-            leaked=1
-        fi
-    done
-    [[ $leaked -eq 0 ]] && pass "routine: every redacted identifier is absent from the snapshot"
-
-    # The control that keeps the five greps above from being wired to nothing:
-    # a literal that IS expected must be found by the same method.
-    if grep -qF -- "trig_FIXTUREfixtureFIXTUREfixture" "$snap"; then
-        pass "routine: control — the leak check finds a literal that is present"
-    else
-        fail "routine: control failed — the leak greps cannot see the file at all"
-    fi
-
-    # ── Volatility. Committing runtime state guarantees a permanently stale file.
-    if grep -qF -- "NEXTRUNfixture0000" "$snap"; then
-        fail "routine: next_run_at was captured — the snapshot goes stale on every fire"
-    else
-        pass "routine: runtime state is named in the exclusions but its value is not captured"
-    fi
-    assert_contains "$snap" 'next_run_at' "routine: the excluded field is still listed by name"
-
-    # ── Determinism. --check is worthless if two renders of one input differ.
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
-        --out "$dir/again.md" >/dev/null 2>&1
-    if cmp -s "$snap" "$dir/again.md"; then
-        pass "routine: two renders of one payload are byte-identical"
-    else
-        fail "routine: rendering is not deterministic"
-    fi
-
-    rc=0
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
-        --out "$snap" --check >/dev/null 2>&1 || rc=$?
-    [[ $rc -eq 0 ]] && pass "routine: --check passes against a current snapshot" \
-        || fail "routine: --check should pass against its own output; got $rc"
-
-    printf 'drift\n' >> "$snap"
-    rc=0
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
-        --out "$snap" --check >/dev/null 2>&1 || rc=$?
-    [[ $rc -eq 1 ]] && pass "routine: --check reports exit 1 on a stale snapshot" \
-        || fail "routine: --check should exit 1 on drift; got $rc"
-
-    # ── The wrapping fence must outgrow anything the prompt puts inside it.
-    write_fixture fence 'p = r["derived_state"]["prompt"] + "\n~~~~\ninner\n~~~~\n"; r["derived_state"]["prompt"] = p; r["job_config"]["ccr"]["events"][0]["data"]["message"]["content"] = p'
-    assert_cap fence 0 "wrote" "routine: a prompt containing ~~~~ still renders"
-    if grep -q '^~~~~~text$' "$dir/fence.md"; then
-        pass "routine: the fence lengthens past the longest run inside the prompt"
-    else
-        fail "routine: the fence did not grow — the prompt would close it early"
-    fi
-    if grep -q '^~~~text$' "$dir/good.md"; then
-        pass "routine: control — a prompt with no tildes still uses the short fence"
-    else
-        fail "routine: control failed — the short fence is not what a plain prompt gets"
-    fi
-
-    # ── --runtime: the half the snapshot excludes, answered rather than hidden.
-    # Every assertion below is clock-independent by construction: 2000 is stale
-    # under any clock this runs on, 2099 is not, and neither depends on today.
-    rc=0
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/good.json" --runtime 2>&1) || rc=$?
-    if [[ $rc -eq 0 ]] && grep -q 'next run:' <<<"$out" && grep -q 'last fired:' <<<"$out"; then
-        pass "routine: --runtime prints the volatile fields the snapshot omits"
-    else
-        fail "routine: --runtime should print next run and last fired; got exit $rc"
-    fi
-    if grep -q 'NEXTRUNfixture0000' <<<"$out"; then
-        pass "routine: control — --runtime really does surface the excluded value"
-    else
-        fail "routine: control failed — --runtime printed no next_run_at at all"
-    fi
-    # --out is passed HERE deliberately. Without it this assertion is vacuous:
-    # a path the script was never given cannot appear whatever the code does.
-    # Naming it makes the check real — if --runtime ever fell through to the
-    # renderer, this file would exist.
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-        --input "$dir/good.json" --out "$dir/runtime-must-not-write.md" \
-        --runtime >/dev/null 2>&1
-    if [[ -e "$dir/runtime-must-not-write.md" ]]; then
-        fail "routine: --runtime wrote a snapshot even though it was told not to"
-    else
-        pass "routine: --runtime writes nothing, even when handed an --out path"
-    fi
-
-    write_fixture stale 'r["last_fired_at"] = "2000-01-01T00:00:00Z"'
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/stale.json" --runtime 2>&1)
-    grep -q 'VERDICT: STOPPED' <<<"$out" \
-        && pass "routine: a last fire past the two-week threshold reads STOPPED" \
-        || fail "routine: an ancient last_fired_at should read STOPPED; got: $(tail -1 <<<"$out")"
-
-    write_fixture future 'r["last_fired_at"] = "2099-01-01T00:00:00Z"'
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/future.json" --runtime 2>&1)
-    grep -q 'VERDICT: last fired in the future' <<<"$out" \
-        && pass "routine: a last fire in the future is called out, not read as healthy" \
-        || fail "routine: a future last_fired_at should be flagged; got: $(tail -1 <<<"$out")"
-
-    write_fixture neverfired 'del r["last_fired_at"]; del r["last_run"]'
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/neverfired.json" --runtime 2>&1)
-    grep -q 'VERDICT: never fired' <<<"$out" \
-        && pass "routine: a Routine that has never fired says so rather than looking healthy" \
-        || fail "routine: a never-fired routine should say so; got: $(tail -1 <<<"$out")"
-
-    rc=0
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-        --input "$dir/good.json" >/dev/null 2>&1 || rc=$?
-    [[ $rc -eq 2 ]] && pass "routine: neither --out nor --runtime is an error, not a silent no-op" \
-        || fail "routine: omitting both --out and --runtime should fail; got $rc"
 }
 
 # ── Test 6: check-cron-coverage.js ────────────────────────────────────────
@@ -20182,6 +19838,107 @@ test_base_md_merge_window() {
     fi
 }
 
+# ── drift-report.sh saves the overlap inputs only when asked ───────────────
+#
+# drift-report.yml sets DRIFT_GUIDANCE_DIR and then runs
+# scripts/guidance-overlap.js over what the report saved there: each repo's
+# AGENTS.md, its requested sections, and GitHub's languages map. Unset, the
+# report must write nothing and ask for no languages.
+test_drift_report_guidance_dir() {
+    echo ""
+    echo "=== Test: drift-report.sh (DRIFT_GUIDANCE_DIR overlap inputs) ==="
+
+    # Borrows the fleet-payload fixture (the mock lists only that repo for
+    # fleetorg) and puts it back exactly as it was before returning.
+    local work="$TEST_DIR/work/fleet-payload"
+    local gdir="$TEST_DIR/guidance-dir"
+    local rpt="$TEST_DIR/drift-guidance-dir.md"
+    local saved="$TEST_DIR/guidance-dir-saved"
+    local rc=0
+    mkdir -p "$saved"
+    cp "$work/.agents-sync.yml" "$work/AGENTS.md" "$saved/"
+    printf 'sections:\n  - python\n' >"$work/.agents-sync.yml"
+    { "$REPO_ROOT/scripts/build-agents-md.sh" python; printf '\nOverlap fixture line.\n'; } >"$work/AGENTS.md"
+    push_fleet_payload_fixture
+    printf '{"JavaScript": 100}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+
+    # Unset: nothing is written.
+    rm -rf "$gdir"; mkdir -p "$gdir"
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 && -z "$(ls -A "$gdir")" ]]; then
+        pass "guidance dir: unset DRIFT_GUIDANCE_DIR writes nothing"
+    else
+        fail "guidance dir: unset run exited $rc or wrote: $(ls -A "$gdir" | tr '\n' ' ')"
+    fi
+
+    # Set: AGENTS.md, sections and languages land under <owner>__<repo>.
+    rc=0
+    DRIFT_GUIDANCE_DIR="$gdir" \
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    local stem="$gdir/fleetorg__repo-payload"
+    if [[ "$rc" -eq 0 ]] && grep -qxF 'Overlap fixture line.' "$stem.agents.md" 2>/dev/null; then
+        pass "guidance dir: the repo's AGENTS.md is saved"
+    else
+        fail "guidance dir: run exited $rc; $stem.agents.md missing or wrong"
+    fi
+    if [[ "$(cat "$stem.sections" 2>/dev/null)" == "python" ]]; then
+        pass "guidance dir: the requested sections are saved"
+    else
+        fail "guidance dir: sections file holds '$(cat "$stem.sections" 2>/dev/null)'"
+    fi
+    if grep -qF '"JavaScript"' "$stem.languages.json" 2>/dev/null; then
+        pass "guidance dir: the languages map is saved for a repo with sections"
+    else
+        fail "guidance dir: languages file missing for a repo that requests sections"
+    fi
+
+    # End to end: the overlap script reads the saved files and flags the
+    # python section on a repo GitHub reports no Python for.
+    local out="$TEST_DIR/guidance-overlap-e2e.md"
+    rc=0
+    node "$REPO_ROOT/scripts/guidance-overlap.js" "$gdir" > "$out" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload` requests `python`' "$out"; then
+        pass "guidance dir: guidance-overlap.js flags the section misfit from the saved files"
+    else
+        fail "guidance dir: guidance-overlap.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
+    fi
+
+    cp "$saved/.agents-sync.yml" "$saved/AGENTS.md" "$work/"
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    push_fleet_payload_fixture
+}
+
+test_guidance_overlap() {
+    echo ""
+    echo "=== Test: guidance-overlap.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "guidance overlap: node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/guidance-overlap-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-guidance-overlap.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 11 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 11 ]]; then
+        pass "guidance overlap: node:test suite is green ($pass_n passed)"
+    else
+        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=11): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_routine_merge_gate() {
     echo ""
     echo "=== Test: routine-merge-gate.js (node:test suite) ==="
@@ -25870,6 +25627,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
+    test_drift_report_guidance_dir
     test_drift_report_plugin_copies
     # Immediately after the test that establishes bootorg/repo-adopted's
     # confident verdicts, because those are exactly what its control run
@@ -25915,7 +25673,6 @@ GROUP_drift=(
     test_drift_report_marker_not_through_a_pipe
     test_check_cron_coverage
     test_check_registry
-    test_capture_routine
 )
 
 # The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
@@ -26030,6 +25787,7 @@ GROUP_self_hosted=(
     test_health_reusable_parity
     test_routine_merge_gate
     test_base_md_merge_window
+    test_guidance_overlap
     test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown
