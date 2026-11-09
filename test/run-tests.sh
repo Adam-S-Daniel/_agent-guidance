@@ -2567,6 +2567,19 @@ case "$1" in
         shift
         jq_filter=$(parse_jq_filter "$@")
 
+        # GET repos/{owner}/{repo}/languages — drift-report.sh asks only when
+        # DRIFT_GUIDANCE_DIR is set. A fixture opts in with
+        # <bare>/<owner>_<repo>.languages.json; without one it fails like a 404.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/languages$ ]]; then
+            lang_file="${MOCK_BARE_DIR}/${BASH_REMATCH[1]}_${BASH_REMATCH[2]}.languages.json"
+            if [[ -f "$lang_file" ]]; then
+                cat "$lang_file"
+                exit 0
+            fi
+            echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+        fi
+
         # DELETE repos/{owner}/{repo}/git/refs/heads/{branch}
         # What delete_bump_branch calls to clean up after a merged bump PR.
         if [[ "$api_method" == "DELETE" \
@@ -20182,6 +20195,107 @@ test_base_md_merge_window() {
     fi
 }
 
+# ── drift-report.sh saves the overlap inputs only when asked ───────────────
+#
+# drift-report.yml sets DRIFT_GUIDANCE_DIR and then runs
+# scripts/guidance-overlap.js over what the report saved there: each repo's
+# AGENTS.md, its requested sections, and GitHub's languages map. Unset, the
+# report must write nothing and ask for no languages.
+test_drift_report_guidance_dir() {
+    echo ""
+    echo "=== Test: drift-report.sh (DRIFT_GUIDANCE_DIR overlap inputs) ==="
+
+    # Borrows the fleet-payload fixture (the mock lists only that repo for
+    # fleetorg) and puts it back exactly as it was before returning.
+    local work="$TEST_DIR/work/fleet-payload"
+    local gdir="$TEST_DIR/guidance-dir"
+    local rpt="$TEST_DIR/drift-guidance-dir.md"
+    local saved="$TEST_DIR/guidance-dir-saved"
+    local rc=0
+    mkdir -p "$saved"
+    cp "$work/.agents-sync.yml" "$work/AGENTS.md" "$saved/"
+    printf 'sections:\n  - python\n' >"$work/.agents-sync.yml"
+    { "$REPO_ROOT/scripts/build-agents-md.sh" python; printf '\nOverlap fixture line.\n'; } >"$work/AGENTS.md"
+    push_fleet_payload_fixture
+    printf '{"JavaScript": 100}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+
+    # Unset: nothing is written.
+    rm -rf "$gdir"; mkdir -p "$gdir"
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 && -z "$(ls -A "$gdir")" ]]; then
+        pass "guidance dir: unset DRIFT_GUIDANCE_DIR writes nothing"
+    else
+        fail "guidance dir: unset run exited $rc or wrote: $(ls -A "$gdir" | tr '\n' ' ')"
+    fi
+
+    # Set: AGENTS.md, sections and languages land under <owner>__<repo>.
+    rc=0
+    DRIFT_GUIDANCE_DIR="$gdir" \
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    local stem="$gdir/fleetorg__repo-payload"
+    if [[ "$rc" -eq 0 ]] && grep -qxF 'Overlap fixture line.' "$stem.agents.md" 2>/dev/null; then
+        pass "guidance dir: the repo's AGENTS.md is saved"
+    else
+        fail "guidance dir: run exited $rc; $stem.agents.md missing or wrong"
+    fi
+    if [[ "$(cat "$stem.sections" 2>/dev/null)" == "python" ]]; then
+        pass "guidance dir: the requested sections are saved"
+    else
+        fail "guidance dir: sections file holds '$(cat "$stem.sections" 2>/dev/null)'"
+    fi
+    if grep -qF '"JavaScript"' "$stem.languages.json" 2>/dev/null; then
+        pass "guidance dir: the languages map is saved for a repo with sections"
+    else
+        fail "guidance dir: languages file missing for a repo that requests sections"
+    fi
+
+    # End to end: the overlap script reads the saved files and flags the
+    # python section on a repo GitHub reports no Python for.
+    local out="$TEST_DIR/guidance-overlap-e2e.md"
+    rc=0
+    node "$REPO_ROOT/scripts/guidance-overlap.js" "$gdir" > "$out" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload` requests `python`' "$out"; then
+        pass "guidance dir: guidance-overlap.js flags the section misfit from the saved files"
+    else
+        fail "guidance dir: guidance-overlap.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
+    fi
+
+    cp "$saved/.agents-sync.yml" "$saved/AGENTS.md" "$work/"
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    push_fleet_payload_fixture
+}
+
+test_guidance_overlap() {
+    echo ""
+    echo "=== Test: guidance-overlap.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "guidance overlap: node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/guidance-overlap-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-guidance-overlap.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 11 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 11 ]]; then
+        pass "guidance overlap: node:test suite is green ($pass_n passed)"
+    else
+        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=11): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_routine_merge_gate() {
     echo ""
     echo "=== Test: routine-merge-gate.js (node:test suite) ==="
@@ -25870,6 +25984,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
+    test_drift_report_guidance_dir
     test_drift_report_plugin_copies
     # Immediately after the test that establishes bootorg/repo-adopted's
     # confident verdicts, because those are exactly what its control run
@@ -26030,6 +26145,7 @@ GROUP_self_hosted=(
     test_health_reusable_parity
     test_routine_merge_gate
     test_base_md_merge_window
+    test_guidance_overlap
     test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown
