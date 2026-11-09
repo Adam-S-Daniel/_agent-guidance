@@ -844,9 +844,9 @@ scripts/                # build, sync, drift-report, lock bump, cron
 docs/decisions/         # ADRs (start at the README there)
 docs/routines/          # specs for the scheduled Claude Routines that audit
                         #   what no workflow here can check
-.github/workflows/      # CI, sync-on-push, nightly drift report, daily
-                        #   consumer-lock bump, cron health, daily
-                        #   impact report
+.github/workflows/      # CI, sync-on-push, nightly drift report,
+                        #   consumer-lock bump every six hours, cron
+                        #   health, daily impact report, routine fires
 .agents-sync.example.yml
 repos.yml               # exclusions, default sections, skills-bootstrap pin,
                         #   cron-coverage fleet + out-of-scope

@@ -58,7 +58,9 @@ and files them through the same step 4. Nothing else reads those two kinds
 
 ## The trigger
 
-- **Project task:** weekly, Monday 14:00 UTC, fresh session per fire, push
+- **Project task:** weekly, Monday 9:00 AM US Eastern
+  (`CRON_TZ=America/New_York 0 9 * * 1`: 14:00 UTC in winter, 13:00 UTC in
+  summer), fresh session per fire, push
   notifications on. Prompt, exactly:
 
   > Read and follow `docs/routines/memory-curation.md` in

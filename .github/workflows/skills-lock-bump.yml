@@ -1,6 +1,6 @@
 name: Bump the fleet's skills pins
 
-# Daily re-pin of the TWO pins that together decide what an ephemeral session
+# Re-pin, every six hours, of the TWO pins that together decide what an ephemeral session
 # gets: every consumer's `skills.lock` (which bundles, at which registry commit)
 # and this repo's `skills_bootstrap` pin (the hook that reads that lock). The
 # lock half is passes 1-2 and came first; the hook half is pass 3, and ADR 0010
@@ -13,11 +13,11 @@ name: Bump the fleet's skills pins
 # naming the ordering as the risk it took. See docs/decisions/0005.
 #
 # The lock half has two passes, and the order is load-bearing: it SWEEPS first —
-# merging the bump PRs the PREVIOUS night opened, where the checks are green
+# merging the bump PRs the PREVIOUS run opened, where the checks are green
 # and the diff is still the lock alone — and only then proposes new ones. A PR
 # merged seconds after it was opened is merged before any check has started;
-# the gap between two nightly runs is what gives a consumer's CI a full day to
-# report. Native auto-merge is deliberately not used: where nothing is
+# the gap between two runs (six hours, see the cron below) is what gives a
+# consumer's CI time to report. Native auto-merge is deliberately not used: where nothing is
 # required gh merges an already-mergeable PR on the spot rather than arming
 # it, and where something is required it waits only for the required
 # contexts. See docs/decisions/0015-bump-prs-never-ask-for-native-auto-merge.md.
@@ -25,7 +25,7 @@ name: Bump the fleet's skills pins
 # The re-pin itself is `generate_skills_lock.py --repin`, which lives in the
 # registry and is called, never reimplemented. The script probes the generator
 # for that flag once, up front, so a checkout that predates it is one stated
-# error rather than a per-consumer failure every night. What lives HERE is the
+# error rather than a per-consumer failure on every run. What lives HERE is the
 # fleet half: discovery across both owners, and the App credentials that can
 # push a branch to a consumer and open a PR on it. The registry's own
 # workflows hold only `secrets.GITHUB_TOKEN`, scoped to the registry, so they
@@ -34,8 +34,8 @@ name: Bump the fleet's skills pins
 on:
   schedule:
     # Off-peak, offset minute (house precedent — see scheduled-run-health.yml).
-    # Placed away from this repo's other three crons — drift-report `0 6`, the
-    # Dependabot sweep `17 6`, the scheduled-run health audit `47 8` — by
+    # Placed away from this repo's other crons (the drift report, the
+    # Dependabot sweep, the scheduled-run health audit and the rest) by
     # preference, not as a non-overlap guarantee: scheduled-run-health.yml
     # records measured GitHub cron lag of 4-5h on daily crons, which swamps 41
     # minutes of nominal separation. Nothing breaks if two of these do overlap;

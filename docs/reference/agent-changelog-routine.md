@@ -16,7 +16,8 @@ review for each new batch of Claude Code and Codex releases. Each run:
   changed.
 
 **Status:** enabled on 2026-09-29. The claude.ai Routine "agent changelog
-watcher" fires daily at 01:03 UTC (weekly on Mondays until 2026-09-30),
+watcher" fires daily at 9:03 PM US Eastern (`CRON_TZ=America/New_York 3 21 * * *`:
+02:03 UTC in winter, 01:03 UTC in summer; weekly on Mondays until 2026-09-30),
 and the owner can also start it by hand. Since 2026-10-02 every run
 accumulates on one dedicated branch, `persistent/vendor-changelog`, and a PR
 to `main` opens only when a run makes a substantive change (step 7). The
