@@ -17,6 +17,11 @@ name: Fire fleet worker
 # * The bearer reaches curl on stdin through --config -, never argv, and the
 #   response body is never printed.
 # * No `uses:` step, so actions.lock lists this file with no actions.
+# * An optional repository variable, FLEET_WORKER_EVERY_HOURS (3, 6, 12 or
+#   24), thins the schedule for a smaller Claude plan: a scheduled run fires
+#   only when the UTC hour is a multiple of it. Unset, every scheduled run
+#   fires (every 3 hours). A dispatch always fires. Any other value fails the
+#   run naming the variable (acsi-kit#29).
 
 on:
   schedule:
@@ -38,8 +43,20 @@ jobs:
         env:
           FIRE_URL: ${{ vars.FLEET_WORKER_FIRE_URL }}
           FIRE_BEARER: ${{ secrets.FLEET_WORKER_FIRE_BEARER }}
+          EVERY_HOURS: ${{ vars.FLEET_WORKER_EVERY_HOURS }}
         run: |
           set -euo pipefail
+          case "${EVERY_HOURS:-}" in
+            ""|3|6|12|24) ;;
+            *) echo "::error::variable FLEET_WORKER_EVERY_HOURS must be 3, 6, 12 or 24, or unset"; exit 1 ;;
+          esac
+          if [[ -n "${EVERY_HOURS:-}" && "${GITHUB_EVENT_NAME:-}" == schedule ]]; then
+            hour=$(date -u +%-H)
+            if (( hour % EVERY_HOURS != 0 )); then
+              echo "::notice::skipped: FLEET_WORKER_EVERY_HOURS is $EVERY_HOURS and the UTC hour is $hour"
+              exit 0
+            fi
+          fi
           missing=()
           [[ -n "$FIRE_URL" ]] || missing+=("variable FLEET_WORKER_FIRE_URL")
           [[ -n "$FIRE_BEARER" ]] || missing+=("secret FLEET_WORKER_FIRE_BEARER")
