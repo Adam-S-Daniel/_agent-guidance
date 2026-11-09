@@ -2742,15 +2742,39 @@ case "$1" in
             exit 0
         fi
 
+        # repos/{owner}/{repo}/commits/{sha}/pulls — what the lock bumper
+        # asks to find the registry pull request that removed a skill (#488).
+        # Answered from MOCK_COMMIT_PULLS_DIR/<sha>.json; a commit with no file
+        # there has no pull request, which is GitHub's `[]`.
+        # MOCK_COMMIT_PULLS_FAIL makes every such read a 403.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/commits/([0-9a-f]{40})/pulls$ ]]; then
+            if [[ -n "${MOCK_COMMIT_PULLS_FAIL:-}" ]]; then
+                echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+                echo '{"message":"Resource not accessible by integration","status":"403"}'
+                exit 1
+            fi
+            pulls_file="${MOCK_COMMIT_PULLS_DIR:-/nonexistent}/${BASH_REMATCH[3]}.json"
+            if [[ -f "$pulls_file" ]]; then cat "$pulls_file"; else echo '[]'; fi
+            exit 0
+        fi
+
         # repos/{owner}/{repo}/contents/{path}
         if [[ "$api_path" =~ repos/([^/]+)/([^/]+)/contents/(.+) ]]; then
             owner="${BASH_REMATCH[1]}"
             repo="${BASH_REMATCH[2]}"
             file_path="${BASH_REMATCH[3]}"
-            # Strip a ?ref=<sha> query. The mock always serves `main`: pinning
+            # Strip a ?ref=<sha> query. The mock serves `main`: pinning
             # is exercised by the digest check in sync.sh, not by the mock
             # resolving refs, and a mock that pretended to would be testing
-            # itself.
+            # itself. The one exception is MOCK_CONTENTS_HONOR_REF: the lock
+            # bumper's removal gate (#488) compares the lock a bump PR's HEAD
+            # carries with the default branch's, and a mock that answered
+            # `main` for both would make every removal look like no removal.
+            serve_ref=main
+            if [[ -n "${MOCK_CONTENTS_HONOR_REF:-}" && "$file_path" == *\?ref=* ]]; then
+                serve_ref="${file_path#*\?ref=}"
+                serve_ref="${serve_ref%%&*}"
+            fi
             file_path="${file_path%%\?*}"
             repo_slug="${owner}_${repo}"
             bare_path="${MOCK_BARE_DIR}/${repo_slug}"
@@ -2841,15 +2865,15 @@ case "$1" in
             # unchanged, which is what keeps the stdout half independently
             # detectable.
             if [[ " ${MOCK_CONTENTS_404_STDERR_ONLY:-} " == *" $repo_slug "* ]] \
-               && ! git -C "$bare_path" cat-file -e "main:$file_path" 2>/dev/null; then
+               && ! git -C "$bare_path" cat-file -e "$serve_ref:$file_path" 2>/dev/null; then
                 echo "gh: Not Found (HTTP 404)" >&2
                 echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content"}'
                 exit 1
             fi
 
             if [[ -d "$bare_path" ]]; then
-                if git -C "$bare_path" cat-file -e "main:$file_path" 2>/dev/null \
-                   && [[ "$(git -C "$bare_path" cat-file -t "main:$file_path")" == "blob" ]]; then
+                if git -C "$bare_path" cat-file -e "$serve_ref:$file_path" 2>/dev/null \
+                   && [[ "$(git -C "$bare_path" cat-file -t "$serve_ref:$file_path")" == "blob" ]]; then
                     # `size` is not decoration: the real contents API always
                     # sends it, and fetch_file_content verifies its decode
                     # against it. A mock that omits it cannot exercise the
@@ -2857,8 +2881,8 @@ case "$1" in
                     # Read the blob directly. A command substitution strips
                     # trailing newlines and then echo invents one, hiding byte
                     # drift in the fleet-guidance payload.
-                    size=$(git -C "$bare_path" cat-file -s "main:$file_path")
-                    encoded=$(git -C "$bare_path" show "main:$file_path" | base64 -w 0)
+                    size=$(git -C "$bare_path" cat-file -s "$serve_ref:$file_path")
+                    encoded=$(git -C "$bare_path" show "$serve_ref:$file_path" | base64 -w 0)
                     # MOCK_TRUNCATE_CONTENTS=<n> serves the first n base64 chars
                     # while still declaring the honest size -- i.e. the exact
                     # shape of #81: a short body that looks like a whole file.
@@ -3140,6 +3164,12 @@ case "$1" in
                 echo "pr-created" >> "${MOCK_PR_LOG:-/dev/null}"
                 if [[ -n "${MOCK_PR_BODY_DIR:-}" ]]; then
                     mkdir -p "$MOCK_PR_BODY_DIR"
+                    # A held removal (#488) is opened with --draft; recorded
+                    # beside the body so a test can tell the two apart.
+                    rm -f "$MOCK_PR_BODY_DIR/$(basename "$PWD").draft"
+                    for a in "$@"; do
+                        [[ "$a" == "--draft" ]] && : > "$MOCK_PR_BODY_DIR/$(basename "$PWD").draft"
+                    done
                     pr_body=$(parse_flag_value --body "$@")
                     printf '%s\n' "$pr_body" > "$MOCK_PR_BODY_DIR/$(basename "$PWD").body"
                     # The title too: a PR list shows it and nothing else, so a
@@ -3154,6 +3184,11 @@ case "$1" in
             close)
                 # gh pr close <number> --comment ... — log the closed number.
                 echo "pr-closed $3" >> "${MOCK_PR_LOG:-/dev/null}"
+                ;;
+            ready)
+                # gh pr ready <number> --repo <owner/repo> — the sweep marking
+                # a held removal ready once its review is recorded (#488).
+                echo "pr-ready $3 $(parse_flag_value --repo "$@")" >> "${MOCK_PR_LOG:-/dev/null}"
                 ;;
             reopen)
                 # gh pr reopen <number> --repo <owner/repo>
@@ -8852,6 +8887,9 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_UNKNOWN_ALWAYS="${BUMP_UNKNOWN_ALWAYS_FOR_RUN:-}" \
     MOCK_PR_VIEW_COUNT_DIR="${BUMP_VIEW_COUNT_DIR_FOR_RUN:-}" \
     MOCK_PR_CLOSED_ON_CREATE="${BUMP_CLOSED_ON_CREATE_FOR_RUN:-}" \
+    MOCK_CONTENTS_HONOR_REF="${BUMP_HONOR_REF_FOR_RUN:-}" \
+    MOCK_COMMIT_PULLS_DIR="${BUMP_COMMIT_PULLS_DIR_FOR_RUN:-}" \
+    MOCK_COMMIT_PULLS_FAIL="${BUMP_COMMIT_PULLS_FAIL_FOR_RUN:-}" \
     BUMP_UNKNOWN_RETRIES="${BUMP_UNKNOWN_RETRIES_FOR_RUN:-}" \
     BUMP_UNKNOWN_RETRY_DELAY="${BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
@@ -9863,6 +9901,261 @@ test_bump_bundle_vanished() {
     fi
 
     rm -rf "$TEST_DIR/bare-vanish" "$work" "$TEST_DIR/registry-vanished"
+}
+
+# ── Test 8r: a re-pin that drops a skill key needs a recorded review ──────
+#
+# _agent-guidance#488. skills_shrink_reason refuses only a WHOLE bundle
+# vanishing, so before this one skill removed upstream dropped its key from
+# every consumer within two nights with nobody reading it. The owner's rule
+# (2026-11-09) keeps removals autonomous but requires a recorded,
+# agent-generated adversarial review: the registry pull request that removed
+# the skill carries `Adversarial-review: pass <url>` (skills-evals#917).
+#
+# The registry here removes adam/writing-adrs in a real --no-ff merge, so the
+# bumper has to find that merge on the first-parent history and ask the mock
+# for its pull request, exactly as it asks GitHub.
+
+# setup_lost_key_registry — $TEST_DIR/registry-lost, the shared registry plus
+# one merged pull request that deletes writing-adrs. Sets LOST_MERGE_SHA.
+setup_lost_key_registry() {
+    rm -rf "$TEST_DIR/registry-lost"
+    git clone -q "file://$TEST_DIR/registry" "$TEST_DIR/registry-lost" >/dev/null 2>&1
+    cd "$TEST_DIR/registry-lost"
+    git config commit.gpgsign false
+    git checkout -q -b retire-skill/writing-adrs
+    git rm -rq plugins/adam/skills/writing-adrs
+    git commit -q -m "retire writing-adrs" >/dev/null 2>&1
+    git checkout -q main
+    git merge -q --no-ff -m "Merge pull request #7 from retire-skill/writing-adrs" \
+        retire-skill/writing-adrs >/dev/null 2>&1
+    LOST_MERGE_SHA=$(git rev-parse HEAD)
+    cd "$REPO_ROOT"
+}
+
+# write_lost_key_pulls <dir> <body> — the commits/<sha>/pulls answer for the
+# removal's merge commit, carrying <body> as the pull request body.
+write_lost_key_pulls() {
+    rm -rf "$1"; mkdir -p "$1"
+    jq -n --arg sha "$LOST_MERGE_SHA" --arg body "$2" \
+        '[{number: 7, html_url: "https://example.com/registry/pull/7",
+           merge_commit_sha: $sha, merged_at: "2026-11-09T00:00:00Z", body: $body}]' \
+        > "$1/$LOST_MERGE_SHA.json"
+}
+
+# make_lost_key_consumer <bare dir> <name> — a consumer pinned at
+# BUMP_REF_OLD, so it carries both skills and the re-pin drops one.
+make_lost_key_consumer() {
+    local bare="$1/bumporg_$2" work="$TEST_DIR/work/lost-$2"
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work"
+    git init -q --bare --initial-branch=main "$bare"
+    git init -q --initial-branch=main "$work"
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# $2" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+    git add -A
+    git commit -q -m "init" >/dev/null 2>&1
+    git push -q origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+}
+
+run_lost_key_bump() {   # <output file> <pulls dir> [extra env assignments are set by the caller]
+    BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-lost" \
+    BUMP_CHECKOUTS_FOR_RUN="bumporg/agentskills=$TEST_DIR/registry-lost bumporg/cms-platform=$TEST_DIR/cms-platform" \
+    BUMP_COMMIT_PULLS_DIR_FOR_RUN="$2" \
+        run_bump "$1"
+}
+
+test_bump_lost_skill_key() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a re-pin that drops a skill key) ==="
+
+    setup_lost_key_registry
+    local bodies="$BUMP_PR_BODY_DIR" pulls="$TEST_DIR/lost-pulls" log body
+
+    # ── Reviewed: proposed like any other re-pin ─────────────────────
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'## Adversarial review\n\nAdversarial-review: pass https://example.com/runs/1\n'
+    rm -f "$bodies/bumporg_repo-lost.body" "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-reviewed.txt"
+    run_lost_key_bump "$log" "$pulls"
+    body="$bodies/bumporg_repo-lost.body"
+    assert_contains "$log" "drops skill key adam/writing-adrs — REVIEWED https://example.com/registry/pull/7 https://example.com/runs/1" \
+        "lost key, reviewed: the key and its review are named in the log"
+    assert_contains "$log" "PR created: " "lost key, reviewed: proposed as an ordinary pull request"
+    assert_not_contains "$log" "HELD" "lost key, reviewed: nothing is held"
+    if [[ ! -e "$bodies/bumporg_repo-lost.draft" && -f "$body" ]]; then
+        pass "lost key, reviewed: not opened as a draft"
+    else
+        fail "lost key, reviewed: not opened as a draft"
+    fi
+    assert_contains "$body" "each removed by a registry pull" "lost key, reviewed: the body says the removal was reviewed"
+    assert_contains "$body" "removed in https://example.com/registry/pull/7, review https://example.com/runs/1" \
+        "lost key, reviewed: the body links the pull request and its review"
+    assert_contains "$body" "This pull request merges itself." "lost key, reviewed: it still merges itself"
+    [[ $BUMP_EXIT -eq 0 ]] && pass "lost key, reviewed: the run exits 0" \
+        || fail "lost key, reviewed: the run exits 0 (got $BUMP_EXIT)"
+
+    # ── No review line: held as a draft ──────────────────────────────
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n\nAdversarial-review: pending\n'
+    rm -f "$bodies/bumporg_repo-lost.body" "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-held.txt"
+    run_lost_key_bump "$log" "$pulls"
+    assert_contains "$log" "PR created as a HELD draft" "lost key, no review: opened as a held draft"
+    assert_contains "$log" "carries no Adversarial-review: pass line" "lost key, no review: says why it is held"
+    assert_contains "$log" "=== Held: 1 bump pull request(s)" "lost key, no review: the run summary counts the hold"
+    if [[ -e "$bodies/bumporg_repo-lost.draft" ]]; then
+        pass "lost key, no review: gh pr create was asked for --draft"
+    else
+        fail "lost key, no review: gh pr create was asked for --draft"
+    fi
+    body="$bodies/bumporg_repo-lost.body"
+    assert_contains "$body" "Held as a draft" "lost key, no review: the body says it is held"
+    assert_contains "$body" "adam/writing-adrs" "lost key, no review: the body names the lost key"
+    assert_not_contains "$body" "This pull request merges itself." "lost key, no review: the body does not promise a self-merge"
+    assert_contains "$bodies/bumporg_repo-lost.title" "HELD (drops a skill, no recorded review): " \
+        "lost key, no review: the title says it is held"
+
+    # ── A `block` verdict holds it too, whatever else the body says ──
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\nAdversarial-review: block https://example.com/runs/2\n'
+    rm -f "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-block.txt"
+    run_lost_key_bump "$log" "$pulls"
+    assert_contains "$log" "records Adversarial-review: block" "lost key, blocked: a block line wins over a pass line"
+    [[ -e "$bodies/bumporg_repo-lost.draft" ]] && pass "lost key, blocked: opened as a draft" \
+        || fail "lost key, blocked: opened as a draft"
+
+    # ── The pull request cannot be read: held, never assumed reviewed ─
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\n'
+    rm -f "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-unreadable.txt"
+    BUMP_COMMIT_PULLS_FAIL_FOR_RUN=1 run_lost_key_bump "$log" "$pulls"
+    unset BUMP_COMMIT_PULLS_FAIL_FOR_RUN
+    assert_contains "$log" "could not read the pull request behind bumporg/agentskills@" \
+        "lost key, unreadable: says the review could not be read"
+    assert_contains "$log" "HTTP 403" "lost key, unreadable: quotes gh's status line"
+    assert_not_contains "$log" "Resource not accessible by integration\",\"status\"" \
+        "lost key, unreadable: never quotes the API's error body"
+    [[ -e "$bodies/bumporg_repo-lost.draft" ]] && pass "lost key, unreadable: opened as a draft" \
+        || fail "lost key, unreadable: opened as a draft"
+
+    # ── No key lost: exactly as before (the control) ─────────────────
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    rm -f "$bodies/bumporg_repo-lost.draft" "$bodies/bumporg_repo-lost.body"
+    log="$TEST_DIR/bump-lost-control.txt"
+    BUMP_CHECKOUTS_FOR_RUN="$BUMP_CHECKOUTS_ARG" BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-lost" \
+        run_bump "$log"
+    unset BUMP_CHECKOUTS_FOR_RUN BUMP_BARE_DIR_FOR_RUN
+    assert_contains "$log" "PR created: " "no key lost (control): proposed as before"
+    assert_not_contains "$log" "drops skill key" "no key lost (control): no removal is reported"
+    if [[ ! -e "$bodies/bumporg_repo-lost.draft" ]] \
+       && ! grep -q "skill key" "$bodies/bumporg_repo-lost.body"; then
+        pass "no key lost (control): not a draft, and the body says nothing about removals"
+    else
+        fail "no key lost (control): not a draft, and the body says nothing about removals"
+    fi
+
+    rm -rf "$TEST_DIR/bare-lost" "$pulls"
+}
+
+# ── Test 8r2: the sweep asks again before it merges a removal ─────────────
+#
+# The propose pass's draft is not the only guard: a PR body is editable and a
+# draft can be marked ready by hand, so the sweep re-reads both locks and the
+# registry pull request itself. That is also what stops "no checks ran" from
+# being enough to merge a removal (#488 item 3): every PR here has an empty
+# rollup, which pr_merge_verdict alone reads as ready.
+make_lost_key_sweep_repo() {   # <name> <number> <isDraft>
+    local name="$1" bare="$TEST_DIR/bare-lost/bumporg_$1" work="$TEST_DIR/work/lost-sweep-$1"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" "$name"
+    rm -rf "$work"
+    git clone -q "$bare" "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git checkout -q -b skills-lock-bump/update
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/registry-lost" -o skills.lock >/dev/null
+    git add -A
+    git commit -q -m "chore: re-pin skills.lock" >/dev/null 2>&1
+    git push -q origin HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
+    cd "$REPO_ROOT"
+    mkdir -p "$TEST_DIR/lost-pr-dir"
+    printf '[{"number":%s,"headRefName":"skills-lock-bump/update","baseRefName":"main","author":{"login":"agents-md-sync[bot]"},"isDraft":%s,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"","statusCheckRollup":[]}]\n' \
+        "$2" "$3" > "$TEST_DIR/lost-pr-dir/bumporg_$name.json"
+}
+
+run_lost_key_sweep() {   # <output file> <pulls dir>
+    BUMP_PR_DIR_FOR_RUN="$TEST_DIR/lost-pr-dir" \
+    BUMP_HONOR_REF_FOR_RUN=1 \
+        run_lost_key_bump "$1" "$2"
+    unset BUMP_PR_DIR_FOR_RUN BUMP_HONOR_REF_FOR_RUN
+}
+
+test_bump_sweep_lost_skill_key() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the sweep re-checks a removal's review) ==="
+
+    setup_lost_key_registry
+    local pulls="$TEST_DIR/lost-sweep-pulls" log main_before
+
+    # ── Unreviewed, not a draft, no checks: never merged ─────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-a 301 false
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    main_before=$(git -C "$TEST_DIR/bare-lost/bumporg_repo-lost-a" rev-parse main)
+    log="$TEST_DIR/sweep-lost-held.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-a#301: not merged, HELD — it drops 1 skill key(s) without a recorded review" \
+        "sweep, lost key without review: held even though no checks ran"
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged 301 " "sweep, lost key without review: gh pr merge was never called"
+    if [[ "$(git -C "$TEST_DIR/bare-lost/bumporg_repo-lost-a" rev-parse main)" == "$main_before" ]]; then
+        pass "sweep, lost key without review: the default branch did not move"
+    else
+        fail "sweep, lost key without review: the default branch did not move"
+    fi
+
+    # ── Reviewed, no checks: merged, and says why ────────────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-b 302 false
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\n'
+    log="$TEST_DIR/sweep-lost-reviewed.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-b#302: MERGED with a merge commit — no checks ran on it — this repo reports none; it drops 1 skill key(s), each with a recorded review" \
+        "sweep, lost key with review: merged, naming the review"
+    assert_contains "$BUMP_PR_LOG" "pr-merged 302 --repo bumporg/repo-lost-b --merge" \
+        "sweep, lost key with review: gh pr merge was called"
+
+    # ── A held draft whose review has since landed: marked ready ─────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-c 303 true
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\n'
+    log="$TEST_DIR/sweep-lost-ready.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-c#303: marked ready" "sweep, held draft now reviewed: marked ready"
+    assert_contains "$BUMP_PR_LOG" "pr-ready 303 bumporg/repo-lost-c" "sweep, held draft now reviewed: gh pr ready was called"
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged 303 " "sweep, held draft now reviewed: not merged in the same run"
+
+    # ── A held draft still unreviewed: left alone ────────────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-d 304 true
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-draft.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-d#304: not merged — it is a draft" "sweep, held draft unreviewed: still a draft"
+    assert_not_contains "$BUMP_PR_LOG" "pr-ready 304 " "sweep, held draft unreviewed: not marked ready"
+
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir" "$pulls"
 }
 
 # ── Test 8h1: a lock with NO digests is not a lock with BAD digests ───────
@@ -11275,8 +11568,15 @@ LOCK
 #!/usr/bin/env bash
 set -uo pipefail
 source "$1"
-fx="$2"; out="$3"; reason="$4"; fed="$5"; scoped="$6"
+fx="$2"; out="$3"; reason="$4"; fed="$5"; scoped="$6"; removal="${7:-none}"
 mkdir -p "$out"
+# The #488 axis: what this re-pin drops, and what the registry recorded.
+case "$removal" in
+    reviewed) lost_keys=("b/gone"); lost_key_notes=("REVIEWED https://example.com/pull/7 https://example.com/runs/1"); removal_reviewed=true ;;
+    held)     lost_keys=("b/gone"); lost_key_notes=("HELD https://example.com/pull/7 carries no Adversarial-review: pass line"); removal_reviewed=false ;;
+    mixed)    lost_keys=("b/gone" "c/moved"); lost_key_notes=("REVIEWED https://example.com/pull/7 https://example.com/runs/1" "HELD no merge removes it"); removal_reviewed=false ;;
+    *)        ;;
+esac
 cd "$fx" || exit 9
 LOCK_REL_PATH="skills.lock"
 LOCK_DIGEST_SHAPE='sha256:<64 hex>'
@@ -11336,9 +11636,10 @@ RENDER
     for reason in content format federated unanswerable; do
         for fed in advanced unchanged not_asked self_named self_named_plus self_named_quiet none; do
             for scoped in true false; do
-                cell="$reason-$fed-$scoped"
+              for removal in none reviewed held mixed; do
+                cell="$reason-$fed-$scoped-$removal"
                 out="$dir/out/$cell"
-                bash "$dir/render.sh" "$claims" "$dir/fx" "$out" "$reason" "$fed" "$scoped"
+                bash "$dir/render.sh" "$claims" "$dir/fx" "$out" "$reason" "$fed" "$scoped" "$removal"
 
                 # WHAT THIS CELL IS ALLOWED TO PRODUCE, declared before it is
                 # read. `expect=refuse` is a positive claim about the script —
@@ -11613,14 +11914,17 @@ if whole.strip():
 ' "$out/all" "$out/parts.bin" 2>"$out/closure.err"; then
                     r_closure="$r_closure $cell($(head -1 "$out/closure.err"))"
                 fi
+              done
             done
         done
     done
 
-    if [[ $rendered -eq 26 && $refused -eq 30 ]]; then
-        pass "claims: the cross product is 56 cells — 26 that produce an artifact, 30 that cannot"
+    # 56 run states, each under four removal states (#488): nothing dropped,
+    # a reviewed drop, an unreviewed drop, and one of each.
+    if [[ $rendered -eq 104 && $refused -eq 120 ]]; then
+        pass "claims: the cross product is 224 cells — 104 that produce an artifact, 120 that cannot"
     else
-        fail "claims: the cross product is 56 cells — 26 that produce an artifact, 30 that cannot (got $rendered / $refused)"
+        fail "claims: the cross product is 224 cells — 104 that produce an artifact, 120 that cannot (got $rendered / $refused)"
     fi
     [[ -z "$r_reach" ]] && pass "claims: every cell produces exactly what its run state allows" \
         || fail "claims: every cell produces exactly what its run state allows —$r_reach"
@@ -12712,7 +13016,9 @@ test_bump_sweep_head_match() {
         run_sweep "$TEST_DIR/sweep-garbled.txt"
     unset BUMP_HEAD_GARBLED_FOR_RUN
     log="$TEST_DIR/sweep-garbled.txt"
-    assert_contains "$log" "bumporg/repo-zz-ready#111: its head commit did not read back as a sha" "head match: an unreadable head commit is refused, with the reason"
+    # Refused by the removal gate (#488) now, one step before the merge's own
+    # pin would refuse it: with no readable head there is no lock to compare.
+    assert_contains "$log" "bumporg/repo-zz-ready#111: could not tell which skill keys it drops — its head commit did not read back as a sha" "head match: an unreadable head commit is refused, with the reason"
     assert_not_contains "$log" "bumporg/repo-zz-ready#111: MERGED" "head match: an unreadable head commit is not merged unpinned"
     if [[ "$(sweep_main_sha repo-zz-ready)" == "$before_sha" ]]; then
         pass "head match: the default branch did not move on an unreadable head"
@@ -12733,9 +13039,10 @@ test_bump_sweep_head_match() {
     assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "head match: an older gh still merges — the guard is hardening, not a dependency"
     assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
 
-    # ── An older gh AND a head oid that does not parse: the merge still
-    # lands unpinned, but the cleanup has no judged commit to pin its delete
-    # to, so it deletes nothing and counts the failure — never by name.
+    # ── An older gh AND a head oid that does not parse. This used to merge
+    # unpinned and then refuse the cleanup; since #488 the removal gate must
+    # read the lock AT the head before any merge, so it refuses first: no
+    # merge, a counted failure, and the branch left alone.
     setup_sweep_repos
     local zz_tip
     zz_tip=$(sweep_bump_branch_sha repo-zz-ready)
@@ -12743,8 +13050,10 @@ test_bump_sweep_head_match() {
         run_sweep "$TEST_DIR/sweep-noflag-garbled.txt"
     unset BUMP_NO_MATCH_FLAG_FOR_RUN BUMP_HEAD_GARBLED_FOR_RUN
     log="$TEST_DIR/sweep-noflag-garbled.txt"
-    assert_contains "$log" "ERROR: bumporg/repo-zz-ready#111: merged, but its head commit did not read back as a sha" \
-        "head match: with no pin and no readable head, the cleanup refuses and counts"
+    assert_contains "$log" "ERROR: bumporg/repo-zz-ready#111: could not tell which skill keys it drops — its head commit did not read back as a sha" \
+        "head match: with no pin and no readable head, the sweep refuses and counts"
+    assert_not_contains "$log" "bumporg/repo-zz-ready#111: MERGED" \
+        "head match: with no pin and no readable head, nothing is merged"
     if [[ -n "$zz_tip" && "$(sweep_bump_branch_sha repo-zz-ready)" == "$zz_tip" ]]; then
         pass "head match: and the branch is not deleted by name"
     else
@@ -25629,6 +25938,8 @@ GROUP_bump=(
     test_bump_push_rejected
     test_bump_shrink_check_noisy_python
     test_bump_bundle_vanished
+    test_bump_lost_skill_key
+    test_bump_sweep_lost_skill_key
     test_bump_format_gate_empty_skills
     test_bump_digest_format_gate
     test_bump_generator_without_check_format
