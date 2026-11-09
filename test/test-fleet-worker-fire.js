@@ -32,6 +32,7 @@ test('fires every 3 hours or by hand, with no permissions, no uses and no interp
   assert.deepEqual(step().env, {
     FIRE_URL: '${{ vars.FLEET_WORKER_FIRE_URL }}',
     FIRE_BEARER: '${{ secrets.FLEET_WORKER_FIRE_BEARER }}',
+    EVERY_HOURS: '${{ vars.FLEET_WORKER_EVERY_HOURS }}',
   });
 });
 
@@ -40,7 +41,8 @@ test('actions.lock lists the workflow with no actions', () => {
   assert.deepEqual(lock.workflows[workflow], []);
 });
 
-function runFire({ url = 'https://api.example.com/fire', bearer = 'placeholder-value', status = 200 } = {}) {
+function runFire({ url = 'https://api.example.com/fire', bearer = 'placeholder-value', status = 200,
+  every = '', event = 'schedule', hour = '9' } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-fire-test-'));
   try {
     const log = path.join(temp, 'calls.jsonl');
@@ -52,9 +54,14 @@ fs.appendFileSync(process.env.TEST_LOG, JSON.stringify({ args, config }) + '\\n'
 fs.writeFileSync(args[args.indexOf('-o') + 1], '{"secret_field":"response-canary"}');
 process.stdout.write(process.env.TEST_STATUS);
 `, { mode: 0o755 });
+    // A fake date: the step reads only the UTC hour from it.
+    fs.writeFileSync(path.join(temp, 'date'), `#!/usr/bin/env bash
+echo "$TEST_HOUR"
+`, { mode: 0o755 });
     const result = spawnSync('bash', ['-c', step().run], { encoding: 'utf8', env: {
       PATH: [temp, process.env.PATH].join(path.delimiter), TEST_LOG: log, TEST_STATUS: String(status),
-      FIRE_URL: url, FIRE_BEARER: bearer } });
+      FIRE_URL: url, FIRE_BEARER: bearer, EVERY_HOURS: every, GITHUB_EVENT_NAME: event,
+      TEST_HOUR: hour } });
     const curl = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
     return { result, curl };
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
@@ -88,4 +95,29 @@ test('a failed fire fails the run with the status code only', () => {
   assert.equal(result.status, 1);
   assert.ok(result.stdout.includes('fire failed (HTTP 401)'));
   assert.ok(!result.stdout.includes('response-canary'));
+});
+
+test('FLEET_WORKER_EVERY_HOURS thins scheduled fires and never blocks a dispatch', () => {
+  const cases = [
+    [{ every: '', hour: '9' }, 1],
+    [{ every: '6', hour: '9' }, 0],
+    [{ every: '6', hour: '12' }, 1],
+    [{ every: '24', hour: '21' }, 0],
+    [{ every: '24', hour: '0' }, 1],
+    [{ every: '24', hour: '21', event: 'workflow_dispatch' }, 1],
+  ];
+  for (const [over, fires] of cases) {
+    const { result, curl } = runFire(over);
+    assert.equal(result.status, 0, `${JSON.stringify(over)}: ${result.stdout}${result.stderr}`);
+    assert.equal(curl.length, fires, JSON.stringify(over));
+  }
+});
+
+test('a FLEET_WORKER_EVERY_HOURS outside 3, 6, 12 and 24 fails naming it, and fires nothing', () => {
+  for (const every of ['5', '0', 'daily', '48']) {
+    const { result, curl } = runFire({ every });
+    assert.equal(result.status, 1, every);
+    assert.equal(curl.length, 0, every);
+    assert.ok(result.stdout.includes('FLEET_WORKER_EVERY_HOURS'), every);
+  }
 });

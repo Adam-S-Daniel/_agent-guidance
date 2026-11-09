@@ -7,7 +7,9 @@ calls the API trigger of a claude.ai scheduled task in Adam's account named
 the Routines page on 2026-10-26. It ran hourly from the Routines page until
 2026-11-08; that cost about $150-215 a week, mostly in runs that found
 nothing to do, and the page offers nothing between hourly and daily. Each fire
-starts a fresh cloud session. Why it exists, and why it may merge one narrow
+starts a fresh cloud session. The optional repository variable
+`FLEET_WORKER_EVERY_HOURS` (3, 6, 12 or 24) thins the schedule for a smaller
+plan; this repository leaves it unset. Why it exists, and why it may merge one narrow
 kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
 widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md).
 
