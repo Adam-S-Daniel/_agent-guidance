@@ -88,9 +88,12 @@ evals dashboard counts these and their blocks, uses and eval verdicts.
 
 ## Workstation layout
 
-- Clones live under Windows
-  `D:\repos\<github-owner-or-org>\<repo>` (never `C:\Users\<user>\...`),
-  WSL `~/repos/<repo>`.
+- Clones live under Windows `D:\repos\<owner>\<repo>` (never
+  `C:\Users\<user>\...`), WSL `~/repos/<repo>`.
+- **Lean toward BOXY (owner's machine) over cloud** (owner's rule):
+  a thread bound to BOXY still runs its model in the cloud; Remote Control
+  runs it there, ~15% cheaper in long threads. Use it for long or
+  repo-heavy work; merges stay in cloud.
 
 ## Security
 
@@ -422,21 +425,19 @@ A mocked pid became `kill(-1, SIGKILL)`; every user process died
   `adam-anything-anywhere`, `adam-coding-anywhere`,
   `adam-coding-local`, `adam-non-coding-local`; invoke
   `/<plugin>:<skill>`; `setup.sh` sets up a machine.
-- **A `git push` failing in EVERY repo**: retired sync-skills hook targets a
-  deleted script; `setup.sh --owner-machine` removes it.
-- Cloud/ephemeral sessions get no plugins from repo-declared settings
-  (registry ADR 0001): the repo's `skills.lock` and `skills-bootstrap`
-  SessionStart hook install the bundles, digest-verified; read the
-  `skills:` verdict at start.
-- **Adoption is opt-in and double-keyed:** an entry in `_agent-guidance`'s
-  `repos.yml` AND a `skills.lock` the repo committed itself (the sync never
-  writes one). Bundles cost always-on context, so a repo may be deliberately
-  out — check for `skills.lock`, don't guess.
+- **`git push` failing in EVERY repo**: `setup.sh --owner-machine` removes
+  the retired sync-skills hook.
+- Cloud sessions get no plugins from repo settings (registry ADR 0001):
+  `skills.lock` and the `skills-bootstrap` SessionStart hook install the
+  bundles, digest-verified; read the `skills:` verdict.
+- **Adoption is opt-in and double-keyed:** a `repos.yml` entry in
+  `_agent-guidance` AND a `skills.lock` the repo committed (the sync never
+  writes one); a repo may opt out; check.
 - **Terminals load the claude.ai account's skills** as `/<name>` (or
   `/anthropic-skills:<name>` if taken); `setup.sh` opts a machine out
   (`syncClaudeAiSkills: false`), cloud can't (registry ADR 0010).
-- New reusable skills graduate into the registry (sensitive ones in
-  `adam-agentskills-private`); a long skill splits across files.
+- New reusable skills graduate into the registry (sensitive ones:
+  `adam-agentskills-private`); split a long skill across files.
 
 ## Two setup gaps you may close, and must not nag about
 

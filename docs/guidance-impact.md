@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-09 — workstation-layout — edit
+- Motivation: the owner's rule "lean toward BOXY over cloud" (2026-11-02) lived only in one project's memory, so no session saw it; on 2026-11-09 no Remote Control session ran on BOXY while cloud threads spent about $233
+- Change: adds the rule, that a BOXY-bound cloud thread still runs its model in the cloud, and when Remote Control is worth it (~15% cheaper in long threads, n=3x3 trials 2026-11-08); clone-path bullet reflowed
+- Eval: exempt (skipped row)
+- Outcome: open as of 2026-11-09, waiting on the owner or the weekly merge window
+
+## 2026-11-09 — skills-ecosystem — edit
+- Motivation: room for the workstation-layout bullet under the 26,624-byte cap
+- Change: wording only, the same facts in fewer bytes; drops the "bundles cost always-on context" aside
+- Eval: exempt (skipped row)
+- Outcome: open as of 2026-11-09, waiting on the owner or the weekly merge window
+
 ## 2026-11-08 — subagent-delegation — edit
 - Motivation: the 2026-11-08 rewrite (PR #472) dropped the old "Don't write code in the orchestrating session" mandate; a thread started right after it built three fixtures in its own Opus context with no subagent (session transcript, 19:50-20:33 UTC)
 - Change: "Do judgment and ~10-call tasks yourself (...); delegate bigger implementation" restores the mandate; the reported-subagent bullet drops its 999/0 example to stay inside the full-build byte cap

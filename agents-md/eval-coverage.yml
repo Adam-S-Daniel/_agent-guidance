@@ -67,7 +67,7 @@
     Account facts the model cannot know otherwise, so an eval's outcome is known
     in advance; the risk is the fact going stale, checked for freshness instead.
   since: 2026-11-03
-  bytes: 149
+  bytes: 383
 
 - id: security
   heading: Security
@@ -201,7 +201,7 @@
     unchanged since this row was written and is still account facts). No
     freshness check reads base.md yet; that lighter check is still to build.
   since: 2026-11-03
-  bytes: 1228
+  bytes: 1068
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
