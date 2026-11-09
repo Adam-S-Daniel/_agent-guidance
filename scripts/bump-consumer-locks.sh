@@ -40,6 +40,12 @@ set -euo pipefail
 #   4. Otherwise re-pins with `--repin` inside a clone of the consumer, and
 #      opens (or leaves alone) one PR carrying that single file, whose body
 #      names WHICH of the two questions forced it
+#   5. If the re-pin drops any `<bundle>/<skill>` key, traces each one to the
+#      registry pull request that removed it and requires
+#      `Adversarial-review: pass <url>` in that PR's body. Missing for any key,
+#      the PR is opened as a DRAFT, which the sweep never merges; the sweep
+#      re-checks the review itself before merging a removal, and marks a held
+#      draft ready once the review appears (_agent-guidance#488)
 #
 # WHY THIS LIVES HERE AND NOT IN THE REGISTRY. ADR 0001 said re-pinning
 # "belongs in agentskills (it owns the generator and the digests)". Half of it
@@ -425,6 +431,11 @@ SKIP_COUNT=0
 # not", one line per repo, and the same repo can be swept AND proposed in one
 # run. Folding would make the summary's numbers stop adding up to the fleet.
 MERGE_COUNT=0
+# Bump pull requests held because they drop a skill key with no recorded
+# review (#488): opened as a draft by the propose pass, or refused a merge by
+# the sweep. Reported on its own line so a held removal is never folded into
+# "proposed" or "skipped" and read as routine.
+HOLD_COUNT=0
 # Repos whose bump branch this run deleted (or, in a dry run, would have).
 # The propose pass will not recreate that branch name for them in the same run:
 # GitHub closes the open pull requests whose head a deleted ref named, and it
@@ -547,6 +558,204 @@ gone = sorted(b for b, n in per_bundle(before).items() if n and not counts_after
 if gone:
     print("bundle(s) %s lost every skill they had" % ", ".join(gone))
 ' "$1" "$2"
+}
+
+# ── A re-pin that drops a skill key (_agent-guidance#488) ───────────────
+#
+# skills_shrink_reason above refuses only a WHOLE bundle vanishing. One skill
+# removed or renamed upstream drops a single `<bundle>/<skill>` key, which
+# uninstalls that skill from every session in every consumer the night the
+# bump merges. The owner's rule (2026-11-09) is that such removals stay
+# autonomous, but only with a recorded, agent-generated adversarial review:
+# the registry pull request that removed or moved the skill carries the line
+#
+#     Adversarial-review: pass <url>
+#
+# in its body (written by skills-evals' removal reviewer, skills-evals#917, or
+# demanded by adam-agentskills' name-loss check, adam-agentskills#133). So the
+# bumper traces every lost key back to that pull request and reads it. All
+# reviewed: proposed as usual. Anything else: opened as a DRAFT, which the
+# sweep never merges, and named in the run's log and the PR body.
+
+# lost_skill_keys <lock before> <lock after> — one line per skill key the
+# re-pinned lock no longer has, tab-separated:
+#
+#   <key> <registry> <old ref> <new ref> <path of the skill dir in that registry>
+#
+# A key is attributed to the lock entry (the primary, or one `sources` entry)
+# whose `bundles` names its bundle in the BEFORE lock, and its path is that
+# entry's layout with the bundle filled in, exactly as generate_skills_lock.py
+# builds it (the primary has no `layout` field and always uses the default).
+# A key that cannot be attributed is printed with empty fields after the key,
+# which the caller reads as "cannot be traced", i.e. held.
+lost_skill_keys() {
+    python3 -c '
+import json, sys
+
+DEFAULT_LAYOUT = "plugins/{bundle}/skills"
+
+
+def load(path):
+    with open(path, encoding="utf-8") as handle:
+        doc = json.load(handle)
+    return doc if isinstance(doc, dict) else {}
+
+
+def entries(doc):
+    found = [(doc.get("registry"), doc.get("ref"), doc.get("bundles"), DEFAULT_LAYOUT)]
+    for source in doc.get("sources") or []:
+        if isinstance(source, dict):
+            found.append((source.get("registry"), source.get("ref"), source.get("bundles"),
+                          source.get("layout") or DEFAULT_LAYOUT))
+    return [e for e in found if isinstance(e[0], str)]
+
+
+before, after = load(sys.argv[1]), load(sys.argv[2])
+skills_before = before.get("skills") if isinstance(before.get("skills"), dict) else {}
+skills_after = after.get("skills") if isinstance(after.get("skills"), dict) else {}
+new_refs = {reg: ref for reg, ref, _, _ in entries(after)}
+for key in sorted(set(skills_before) - set(skills_after)):
+    bundle, _, skill = key.partition("/")
+    owner = None
+    for reg, ref, bundles, layout in entries(before):
+        if isinstance(bundles, list) and bundle in bundles:
+            owner = (reg, ref, layout)
+            break
+    if owner is None or not skill or not isinstance(owner[1], str) \
+            or not isinstance(new_refs.get(owner[0]), str):
+        print("%s\t\t\t\t" % key)
+        continue
+    reg, ref, layout = owner
+    print("\t".join([key, reg, ref, new_refs[reg], "%s/%s" % (layout.replace("{bundle}", bundle), skill)]))
+' "$1" "$2"
+}
+
+# review_line_of <pull request json file> <merge commit sha> — reads the
+# answer of `GET repos/<registry>/commits/<sha>/pulls` and prints one line:
+#
+#   PASS <pr url> <review url>
+#   NONE <why there is no usable review>
+#
+# Only a MERGED pull request whose merge commit IS that commit counts: the
+# endpoint also lists pull requests that merely contain the commit. The body
+# is untrusted text and is only matched, never echoed beyond the one URL, and
+# that URL must look like one (no spaces, brackets or backticks) because it is
+# written into a consumer's PR body.
+review_line_of() {
+    python3 -c '
+import json, re, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        pulls = json.load(handle)
+except Exception as exc:
+    sys.exit("not readable JSON (%s)" % exc.__class__.__name__)
+if not isinstance(pulls, list):
+    sys.exit("the answer is not a list of pull requests")
+sha = sys.argv[2]
+merged = [p for p in pulls if isinstance(p, dict)
+          and p.get("merge_commit_sha") == sha and p.get("merged_at")]
+if not merged:
+    print("NONE commit %s is not the merge commit of a merged pull request" % sha[:7])
+    raise SystemExit(0)
+pr = merged[0]
+url = pr.get("html_url") or "#%s" % pr.get("number")
+LINE = re.compile(r"^[ \t]*Adversarial-review:[ \t]*(pass|block)[ \t]+(https://[A-Za-z0-9._~:/?#@!$&+,;=%-]+)[ \t]*$")
+verdicts = [m.groups() for m in (LINE.match(l) for l in str(pr.get("body") or "").splitlines()) if m]
+if any(word == "block" for word, _ in verdicts):
+    print("NONE %s records Adversarial-review: block" % url)
+elif verdicts:
+    print("PASS %s %s" % (url, verdicts[-1][1]))
+else:
+    print("NONE %s carries no Adversarial-review: pass line" % url)
+' "$1" "$2"
+}
+
+# removal_review_for <registry> <old ref> <new ref> <path> — one line:
+#
+#   PASS <pr url> <review url>
+#   NONE <why>
+#
+# Finds every commit on the registry checkout's FIRST-PARENT history between
+# the two pins whose first parent has <path> and which does not: on a
+# merge-commit registry that is the merge of the pull request that removed or
+# moved the skill. Each one must be a merged pull request recording a pass. Any
+# failure to ask is a NONE, never a pass: a removal nobody could trace is held.
+removal_review_for() {
+    local registry="$1" old="$2" new="$3" path="$4" checkout commits c pulls_file pulls_err
+    local line found="" rc
+    if [[ -z "$registry" || -z "$path" ]]; then
+        echo "NONE no lock entry declares its bundle, so it cannot be traced to a registry"
+        return 0
+    fi
+    checkout="${CHECKOUT_DIR[$registry]:-}"
+    if [[ -z "$checkout" ]]; then
+        echo "NONE no checkout of $registry is configured in BUMP_CHECKOUTS"
+        return 0
+    fi
+    if ! commits=$(git -C "$checkout" rev-list --first-parent --reverse "$old..$new" 2>/dev/null); then
+        echo "NONE ${old:0:7}..${new:0:7} could not be listed in the $registry checkout"
+        return 0
+    fi
+    for c in $commits; do
+        git -C "$checkout" cat-file -e "$c^1:$path" 2>/dev/null || continue
+        git -C "$checkout" cat-file -e "$c:$path" 2>/dev/null && continue
+        found=1
+        pulls_file="$WORK_DIR/pulls-${registry//\//_}-$c.json"
+        if [[ ! -s "$pulls_file" ]]; then
+            rc=0
+            gh api "repos/$registry/commits/$c/pulls" >"$pulls_file" 2>"$pulls_file.gh-err" || rc=$?
+            if [[ $rc -ne 0 ]]; then
+                # The body gh left on stdout is the API's error JSON: never
+                # quoted (AGENTS.md, "Sanitize error output").
+                rm -f "$pulls_file"
+                pulls_err=$(pick_diagnostic gh "$pulls_file.gh-err")
+                echo "NONE could not read the pull request behind $registry@${c:0:7} — ${pulls_err:-no diagnostic output from gh}"
+                return 0
+            fi
+        fi
+        # Streams kept apart, as everywhere else here: this line IS the
+        # verdict, and a stderr notice at exit 0 would turn a pass into noise.
+        if ! line=$(review_line_of "$pulls_file" "$c" 2>"$pulls_file.err"); then
+            echo "NONE could not read the pull request behind $registry@${c:0:7} — $(pick_diagnostic tool "$pulls_file.err")"
+            return 0
+        fi
+        if [[ "$line" != PASS\ * ]]; then
+            echo "$line"
+            return 0
+        fi
+    done
+    if [[ -z "$found" ]]; then
+        echo "NONE no merge into $registry between ${old:0:7} and ${new:0:7} removes $path"
+        return 0
+    fi
+    echo "$line"
+}
+
+# assess_lost_keys <lock before> <lock after> — fills lost_keys[],
+# lost_key_notes[] ("REVIEWED <pr url> <review url>" or "HELD <why>") and
+# removal_reviewed (true only when something was lost and every key passed).
+# Returns non-zero, with the reason on stderr, only when the two locks could
+# not be compared at all.
+assess_lost_keys() {
+    local listing key registry old new path verdict
+    lost_keys=()
+    lost_key_notes=()
+    removal_reviewed=false
+    listing=$(lost_skill_keys "$1" "$2") || return 1
+    [[ -n "$listing" ]] || return 0
+    removal_reviewed=true
+    while IFS=$'\t' read -r key registry old new path; do
+        [[ -n "$key" ]] || continue
+        verdict=$(removal_review_for "$registry" "$old" "$new" "$path")
+        lost_keys+=("$key")
+        if [[ "$verdict" == PASS\ * ]]; then
+            lost_key_notes+=("REVIEWED ${verdict#PASS }")
+        else
+            lost_key_notes+=("HELD ${verdict#NONE }")
+            removal_reviewed=false
+        fi
+    done <<< "$listing"
 }
 
 # pr_merge_verdict <pr json> <branch> <author> <lock path> — one line, either
@@ -687,6 +896,79 @@ if not rollup:
     verdict("READY", "no checks ran on it — this repo reports none")
 verdict("READY", "all %d check(s) concluded green" % len(rollup))
 ' "$1" "$2" "$3" "$4"
+}
+
+# lock_at <repo> <ref or ""> <destination> — that repo's skills.lock at <ref>
+# (the default branch when empty), decoded into <destination>. Non-zero, with
+# gh's own diagnostic on stderr, when it could not be read.
+lock_at() {
+    local repo_name="$1" ref="$2" dest="$3" query="" encoded rc=0
+    [[ -n "$ref" ]] && query="?ref=$ref"
+    encoded=$(gh api "repos/$repo_name/contents/$LOCK_REL_PATH$query" \
+        --jq '.content' 2>"$dest.err") || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "could not read $LOCK_REL_PATH${ref:+ at $ref} — $(pick_diagnostic gh "$dest.err")" >&2
+        return 1
+    fi
+    if ! printf '%s' "$encoded" | tr -d '\n' | base64 -d > "$dest" 2>/dev/null; then
+        echo "$LOCK_REL_PATH${ref:+ at $ref} did not decode" >&2
+        return 1
+    fi
+}
+
+# sweep_removal_gate <repo> <pr json> — the sweep's half of #488. One line:
+#
+#   CLEAR               the bump drops no skill key
+#   REVIEWED <detail>   it drops keys, and every one traces to a registry pull
+#                       request recording `Adversarial-review: pass <url>`
+#   HELD <detail>       it drops keys, and at least one does not
+#
+# and a non-zero exit, reason on stderr, when that cannot be judged. Asked
+# again at sweep time rather than trusted from the propose pass: the PR body
+# is editable and a draft can be marked ready by hand, so neither is evidence.
+# It is also what keeps "no checks ran" from merging a removal on its own
+# (#488 item 3): a lock-only bump with an empty rollup passes
+# pr_merge_verdict, and this gate is what it must pass next.
+sweep_removal_gate() {
+    local repo_name="$1" pr_json="$2" head_oid base_ref slug before after
+    head_oid=$(python3 -c '
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    oid = json.load(handle).get("headRefOid")
+sys.stdout.write(oid if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", oid) else "")
+' "$pr_json" 2>/dev/null) || head_oid=""
+    if [[ -z "$head_oid" ]]; then
+        echo "its head commit did not read back as a sha, so the lock it carries could not be read" >&2
+        return 1
+    fi
+    base_ref=$(python3 -c '
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    ref = json.load(handle).get("baseRefName")
+sys.stdout.write(ref if isinstance(ref, str) and re.fullmatch(r"[A-Za-z0-9._/-]+", ref) else "")
+' "$pr_json" 2>/dev/null) || base_ref=""
+    slug="$WORK_DIR/gate-$(echo "$repo_name" | tr '/' '_')"
+    before="$slug-base.lock"
+    after="$slug-head.lock"
+    lock_at "$repo_name" "$base_ref" "$before" || return 1
+    lock_at "$repo_name" "$head_oid" "$after" || return 1
+    assess_lost_keys "$before" "$after" || {
+        echo "could not compare the two locks" >&2
+        return 1
+    }
+    if [[ ${#lost_keys[@]} -eq 0 ]]; then
+        echo "CLEAR"
+        return 0
+    fi
+    local i detail=""
+    for ((i = 0; i < ${#lost_keys[@]}; i++)); do
+        detail="${detail}${detail:+; }${lost_keys[$i]}: ${lost_key_notes[$i]#* }"
+    done
+    if [[ "$removal_reviewed" == true ]]; then
+        echo "REVIEWED it drops ${#lost_keys[@]} skill key(s), each with a recorded review ($detail)"
+    else
+        echo "HELD it drops ${#lost_keys[@]} skill key(s) without a recorded review for each ($detail)"
+    fi
 }
 
 # sweep_bump_prs — merge the bump pull requests a PREVIOUS run left open.
@@ -1168,7 +1450,7 @@ sweep_branch_without_pr() {
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
-    local head_oid
+    local head_oid gate_line gate_err_file gate_rc gate_err
     local unknown_reads unknown_delay attempt outcome
     local -a match_args
     local -a numbers
@@ -1282,7 +1564,7 @@ sweep_bump_prs() {
                 # file: $view_err is always empty and the reason is discarded
                 # again, which is the bug this line is fixing.
                 if ! view_err=$(gh pr view "$number" --repo "$repo_name" --json \
-                    number,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
+                    number,headRefName,headRefOid,baseRefName,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
                     2>&1 >"$pr_json"); then
                     outcome="view_error"
                     break
@@ -1367,11 +1649,56 @@ sweep_bump_prs() {
                     continue
                     ;;
                 skip)
+                    # A draft this bumper opened (the verdict checks branch
+                    # and author before it ever says "draft") may be a HELD
+                    # removal whose review has since been recorded upstream.
+                    # Marked ready, it merges on a later run once its checks
+                    # have had their day, like any other bump.
+                    if [[ "$detail" == "it is a draft" ]] \
+                       && gate_line=$(sweep_removal_gate "$repo_name" "$pr_json" 2>/dev/null) \
+                       && [[ "$gate_line" == REVIEWED\ * ]]; then
+                        if $DRY_RUN; then
+                            log "[DRY RUN] Would mark $repo_name#$number ready — ${gate_line#REVIEWED }"
+                        elif gh pr ready "$number" --repo "$repo_name" >/dev/null 2>&1; then
+                            log "$repo_name#$number: marked ready — ${gate_line#REVIEWED }; a later run merges it once its checks conclude"
+                        else
+                            fail "$repo_name#$number: its removal review is now recorded, but marking it ready was refused"
+                            ((FAIL_COUNT++)) || true
+                        fi
+                        continue
+                    fi
                     log "$repo_name#$number: not merged — $detail"
                     continue
                     ;;
                 ready)
-                    ;;  # falls through to the merge below, using the LAST read
+                    ;;  # falls through to the removal gate, then the merge
+            esac
+
+            # ── A dropped skill key needs a recorded review (#488) ─────
+            if ! gate_err_file=$(mktemp -p "$WORK_DIR"); then
+                fail "$repo_name#$number: could not create a temp file to capture the removal gate's diagnostics"
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+            gate_rc=0
+            gate_line=$(sweep_removal_gate "$repo_name" "$pr_json" 2>"$gate_err_file") || gate_rc=$?
+            gate_err=$(pick_diagnostic tool "$gate_err_file")
+            rm -f "$gate_err_file"
+            if [[ $gate_rc -ne 0 ]]; then
+                # "Cannot tell what it removes" is not permission to merge it.
+                fail "$repo_name#$number: could not tell which skill keys it drops — ${gate_err:-no diagnostic output}"
+                ((FAIL_COUNT++)) || true
+                continue
+            fi
+            case "$gate_line" in
+                CLEAR) ;;
+                REVIEWED\ *) detail="$detail; ${gate_line#REVIEWED }" ;;
+                *)
+                    log "$repo_name#$number: not merged, HELD — ${gate_line#HELD }"
+                    echo "::warning::$repo_name#$number: held — it drops a skill key with no recorded adversarial review (_agent-guidance#488)."
+                    ((HOLD_COUNT++)) || true
+                    continue
+                    ;;
             esac
 
             if $DRY_RUN; then
@@ -2706,6 +3033,28 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     print(json.load(handle).get("ref", "?"))
 ' "$LOCK_REL_PATH")
 
+    # ── A dropped skill key needs a recorded review (#488) ─────────────
+    # Assessed here, after the shrink guard and before any sentence is
+    # composed, because the answer changes the title, the body and whether
+    # the PR is opened as a draft. A comparison that cannot run at all is a
+    # per-repo failure, like the shrink check's: proposing a re-pin whose
+    # removals nobody could count is exactly the unread fan-out being closed.
+    if ! assess_lost_keys "$lock_file" "$LOCK_REL_PATH" 2>"$WORK_DIR/lost-keys.err"; then
+        fail "$repo_name: could not tell which skill keys this re-pin drops — $(pick_diagnostic tool "$WORK_DIR/lost-keys.err")"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
+    pr_draft_args=()
+    if [[ ${#lost_keys[@]} -gt 0 ]]; then
+        for ((lost_i = 0; lost_i < ${#lost_keys[@]}; lost_i++)); do
+            log "drops skill key ${lost_keys[$lost_i]} — ${lost_key_notes[$lost_i]}"
+        done
+        if [[ "$removal_reviewed" != true ]]; then
+            pr_draft_args=(--draft)
+            echo "::warning::$repo_name: this re-pin drops ${#lost_keys[@]} skill key(s) without a recorded adversarial review for each — opened as a draft, which nothing merges (_agent-guidance#488)."
+        fi
+    fi
+
     # ── Every sentence this PR will carry, built once ──────────────────
     # Title, commit message and body together, from lib/bump-pr-claims.sh,
     # because they state the same two facts and the way that fails is one of
@@ -2903,12 +3252,20 @@ $COMMIT_BODY" 2>&1); then
     # asked against two different temp files.
     # Output captured rather than discarded: gh prints the new PR's URL, and
     # the log line below names it instead of leaving a bare "PR created."
+    # A held removal opens as a DRAFT: pr_merge_verdict refuses every draft,
+    # so nothing merges it unless sweep_removal_gate later finds the review.
     if pr_create_out=$(gh pr create \
         --head "$BRANCH_NAME" \
         --title "$PR_TITLE" \
-        --body "$PR_BODY"); then
+        --body "$PR_BODY" \
+        ${pr_draft_args[@]+"${pr_draft_args[@]}"}); then
         pr_url=$(tail -1 <<< "$pr_create_out")
-        log "PR created: $pr_url"
+        if [[ ${#pr_draft_args[@]} -gt 0 ]]; then
+            log "PR created as a HELD draft (drops a skill key with no recorded review): $pr_url"
+            ((HOLD_COUNT++)) || true
+        else
+            log "PR created: $pr_url"
+        fi
         ((OK_COUNT++)) || true
 
         # Read the new PR back once. GitHub closes a PR whose head a recently
@@ -2971,6 +3328,9 @@ done
 
 echo ""
 echo "=== Lock bump complete: $MERGE_COUNT merged, $OK_COUNT proposed, $SKIP_COUNT skipped, $FAIL_COUNT failed ==="
+if [[ $HOLD_COUNT -gt 0 ]]; then
+    echo "=== Held: $HOLD_COUNT bump pull request(s) drop a skill key with no recorded adversarial review — see the HELD lines above (_agent-guidance#488) ==="
+fi
 
 if [[ $FAIL_COUNT -gt 0 ]]; then
     exit 1

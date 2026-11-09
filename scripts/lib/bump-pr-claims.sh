@@ -55,6 +55,13 @@
 #                           sources other than the lock's own primary
 #                           registry, which is never asked about.
 #   CLAIM_SELF_NAMED        one `sources` entry names the primary registry.
+#   CLAIM_LOST_KEYS         how many `<bundle>/<skill>` keys the re-pinned lock
+#                           no longer has (a skill removed or renamed upstream).
+#   CLAIM_REMOVAL_REVIEWED  every lost key traced to a merged registry pull
+#                           request carrying `Adversarial-review: pass <url>`.
+#                           Meaningless, and false, when nothing was lost.
+#   CLAIM_HELD              keys were lost and not every one was reviewed: the
+#                           PR is opened as a draft and nothing merges it.
 #
 # Sourced, not executed. It defines functions and nothing else, so the test
 # suite can render an artifact for a run state without a fleet, a clone or a
@@ -179,6 +186,22 @@ claims_state() {
     [[ ${#source_registries[@]} -gt 0 ]] && CLAIM_SOURCES_PRESENT=true
     CLAIM_LISTED_SOURCES=0
     CLAIM_SELF_NAMED=false
+    # Read defensively: a caller that never computed a removal (the claims
+    # cross product's older cells, or a run with nothing lost) has neither
+    # array set, and `set -u` would otherwise end the composer.
+    CLAIM_LOST_KEYS=0
+    if declare -p lost_keys >/dev/null 2>&1; then
+        CLAIM_LOST_KEYS=${#lost_keys[@]}
+    fi
+    CLAIM_REMOVAL_REVIEWED=false
+    CLAIM_HELD=false
+    if [[ $CLAIM_LOST_KEYS -gt 0 ]]; then
+        if [[ "${removal_reviewed:-false}" == true ]]; then
+            CLAIM_REMOVAL_REVIEWED=true
+        else
+            CLAIM_HELD=true
+        fi
+    fi
     local reg
     for reg in ${source_registries[@]+"${source_registries[@]}"}; do
         if [[ "$reg" == "$primary_registry" ]]; then
@@ -216,6 +239,17 @@ claims_state() {
     esac
 }
 
+# claim_lost_note_is <reviewed|unreviewed> <index> — what this run found for
+# lost key <index>. The note array is written by the bumper beside the key
+# array, one entry per key, each starting with the word REVIEWED or HELD.
+claim_lost_note_is() {
+    local note="${lost_key_notes[$2]:-}"
+    case "$1" in
+        reviewed)   [[ "$note" == REVIEWED\ * ]] ;;
+        unreviewed) [[ "$note" != REVIEWED\ * ]] ;;
+    esac
+}
+
 claim_drifted() {   # <registry> — did this run's scoped question say it moved?
     local reg
     for reg in ${fed_drifted_regs[@]+"${fed_drifted_regs[@]}"}; do
@@ -232,9 +266,23 @@ claim_drifted() {   # <registry> — did this run's scoped question say it moved
 claim_holds() {
     local id="$1"; shift
     case "$id" in
-        # Skeleton. True of every bump PR there is: what opened it, that it
-        # merges itself, and that its diff is the generator's output.
-        body_opening|body_self_merge|body_generated_lead|body_generated_tail) return 0 ;;
+        # Skeleton. True of every bump PR there is: what opened it and that
+        # its diff is the generator's output.
+        body_opening|body_generated_lead|body_generated_tail) return 0 ;;
+
+        # Whether it merges itself. A re-pin that drops a skill key with no
+        # recorded review is HELD as a draft and nothing merges it, so the
+        # sentence promising a self-merge is false there (_agent-guidance#488).
+        body_self_merge)
+            ! $CLAIM_HELD ;;
+        title_held_prefix|commit_subject_held_prefix|body_held)
+            $CLAIM_HELD ;;
+        body_lost_line_unreviewed)
+            $CLAIM_HELD && claim_lost_note_is unreviewed "$1" ;;
+        body_removal_reviewed)
+            $CLAIM_REMOVAL_REVIEWED ;;
+        body_lost_line_reviewed)
+            [[ $CLAIM_LOST_KEYS -gt 0 ]] && claim_lost_note_is reviewed "$1" ;;
 
         # Titles and commit subjects — one per (reason, federated) cell.
         title_format_fed|moved_format_fed|repro_shape_half)
@@ -376,6 +424,37 @@ claim_text_commit_body_fed_clause() {
 --repin-source, which merges by registry key into the inherited sources array,
 so no source is added, dropped or reordered. That source's digests are
 re-derived at its OWN new pin, in its own repository."
+}
+
+# A re-pin that drops a skill key with no recorded review. The prefix goes on
+# the title and the commit subject because a PR list shows the title alone, and
+# a held removal that reads like a routine re-pin is the thing being prevented.
+claim_text_title_held_prefix()          { printf '%s' "HELD (drops a skill, no recorded review): "; }
+claim_text_commit_subject_held_prefix() { printf '%s' "HELD: "; }
+claim_text_body_held() {
+    printf '%s' "**Held as a draft: this re-pin drops ${CLAIM_LOST_KEYS} skill key(s), and no
+recorded adversarial review was found for every one.** A key that leaves
+\`$LOCK_REL_PATH\` uninstalls that skill from every session here, so the bumper
+merges such a re-pin only when the registry pull request that removed or moved
+the skill carries \`Adversarial-review: pass <url>\` in its body. Nothing merges
+this draft as it stands. If that line is added to the registry pull request, a
+later run of the bumper marks this ready and merges it the usual way; otherwise
+a person decides. See _agent-guidance#488. The keys:"
+}
+claim_text_body_removal_reviewed() {
+    printf '%s' "**This re-pin drops ${CLAIM_LOST_KEYS} skill key(s), each removed by a registry pull
+request that records a passing adversarial review**, so it is proposed like any
+other re-pin. The sweep checks those reviews again before it merges. The keys:"
+}
+# One line per lost key. ${lost_key_notes[i]} is "REVIEWED <pr url> <review
+# url>" or "HELD <why>", written by the bumper; only the part after the first
+# word is shown.
+claim_text_body_lost_line_reviewed() {
+    local rest="${lost_key_notes[$1]#* }"
+    printf '%s' "- \`${lost_keys[$1]}\`: removed in ${rest%% *}, review ${rest#* }"
+}
+claim_text_body_lost_line_unreviewed() {
+    printf '%s' "- \`${lost_keys[$1]}\`: ${lost_key_notes[$1]#* }"
 }
 
 # The PR body's skeleton.
@@ -779,6 +858,7 @@ degraded_fed_remedy() {   # <count of sources a question could be put about> <pr
 #   fed_drifted_regs[] source_registries[] FED_ADVANCE_AVAILABLE
 #   check_out format_out fed_check_out primary_lock lock_file
 #   repin_source_flags_shown repin_source_repo_shown
+#   lost_keys[] lost_key_notes[] removal_reviewed   (optional; #488)
 compose_bump_artifacts() {
     CLAIM_ERRORS=""
     EMITTED_CLAIMS=()
@@ -795,6 +875,7 @@ compose_bump_artifacts() {
 
     # ── The title ─────────────────────────────────────────────────────
     claim_begin
+    if $CLAIM_HELD; then emit title_held_prefix; fi
     if [[ "$CLAIM_REASON" == format ]] && $CLAIM_FED_ADVANCED; then
         emit title_format_fed
     elif [[ "$CLAIM_REASON" == format ]]; then
@@ -810,6 +891,7 @@ compose_bump_artifacts() {
 
     # ── The commit subject ────────────────────────────────────────────
     claim_begin
+    if $CLAIM_HELD; then emit commit_subject_held_prefix; fi
     case "$CLAIM_REASON" in
         format)    emit commit_subject_format ;;
         federated) emit commit_subject_federated ;;
@@ -854,8 +936,23 @@ compose_bump_artifacts() {
         emit moved_content
     fi
     glue $'\n\n'
-    emit body_self_merge
-    glue $'\n\n'
+    if [[ $CLAIM_LOST_KEYS -gt 0 ]]; then
+        if $CLAIM_HELD; then emit body_held; else emit body_removal_reviewed; fi
+        local i
+        for ((i = 0; i < CLAIM_LOST_KEYS; i++)); do
+            glue $'\n'
+            if claim_lost_note_is reviewed "$i"; then
+                emit body_lost_line_reviewed "$i"
+            else
+                emit body_lost_line_unreviewed "$i"
+            fi
+        done
+        glue $'\n\n'
+    fi
+    if ! $CLAIM_HELD; then
+        emit body_self_merge
+        glue $'\n\n'
+    fi
 
     case "$CLAIM_REASON" in
         format)
