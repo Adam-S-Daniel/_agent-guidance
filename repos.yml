@@ -352,6 +352,12 @@ cron_coverage:
   # classified out of scope below.
   fleet:
     - _agent-guidance
+    # The public adoption kit. It is excluded from the AGENTS.md sync above,
+    # but its resync.yml runs daily, and it failed every day from 2026-11-04
+    # to 2026-11-09 with no fleet watcher seeing it. It carries its own
+    # scheduled-run-health.yml caller (acsi-kit#31), so it is audited like
+    # any other repo here (_agent-guidance#492).
+    - acsi-kit
     - adam-agentskills
     - adam-agentskills-private
     - adamdaniel.ai
@@ -399,9 +405,6 @@ cron_coverage:
     # workflow runs on pull requests and pushes; there is no cron to watch.
     # Give it one and it moves to `fleet:`.
     - verify-actions-lock
-    # The public adoption kit, excluded from the sync above. Its workflows run
-    # on pull requests and pushes; there is no cron to watch.
-    - acsi-kit
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file
