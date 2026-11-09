@@ -3,7 +3,7 @@
 - **Vendor repo:** `anthropics/claude-code`
 - **Form:** comment on [#93403](https://github.com/anthropics/claude-code/issues/93403)
 - **Discrepancy:** [agent-claude-code.DISCREPANCIES.md](../../agent-claude-code.DISCREPANCIES.md), entry "2026-11-08 — A repo's own skills never load after `cd` into it from a multi-repo parent folder"
-- **Status:** draft
+- **Status:** submitted https://github.com/anthropics/claude-code/issues/108499 (filed as a new issue, not as the comment on #93403 this draft proposed)
 
 ## Fields
 
