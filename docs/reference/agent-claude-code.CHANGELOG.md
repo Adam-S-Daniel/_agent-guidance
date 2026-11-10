@@ -30,6 +30,29 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-10 — 2.1.321 through 2.1.321
+
+- **Checked:** 2026-11-10T02:30Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z
+- **Window:** v2.1.321 (published 2026-11-09T19:22Z), the first stable release after v2.1.319 (no tag or changelog section exists for 2.1.320, so it is skipped as a gap): 1 release, 118 bullets (the 4 in group 1 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.321` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/0)
+  > Added Claude Fable 5.2 (`claude-fable-5-2`), now the default Fable model — 1M context, $8/$40 per Mtok with $0.20/Mtok cache reads
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/18)
+  > Fixed project skills, commands and agents staying missing after their folder was removed and came back mid-session, such as with `git stash`, including after entering a worktree
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/95)
+  > Changed saved Fable 5.1 model picks to move to `fable`: on Pro and Max plans at once, on Team and Enterprise plans once your organization allows it; use `/model claude-fable-5-1` to switch back
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/97)
+  > Changed nested skill loading: `.claude/skills` folders inside `~/.claude/plugins` no longer load when Claude works on files there
+
+**Issues:** [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) (no label). No earlier trigger issue was open.
+
+No other group met the name-the-surface bar. Codex: no stable release after 0.167.0 (page 1 holds 0.167.0 and alphas only). The open discrepancy about repo skills after `cd` into a nested repo is not fixed by this release: the nearest bullet names a skills folder that is removed and returns mid-session, not `cd`.
+
 ### 2026-11-07 — 2.1.319 through 2.1.319
 
 - **Checked:** 2026-11-07T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
