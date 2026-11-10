@@ -373,6 +373,12 @@ cron_coverage:
     # starves the routine. Added 2026-11-03 (_agent-guidance#423).
     - security-alerts
     - skills-evals
+    # The shared `uses:` action behind the lockfile check (ADR 0024). Its
+    # upstream-release-watch.yml runs weekly (cron) and opens an issue when a
+    # gh-actions-lock release is past the 7-day wait, and it carries its own
+    # scheduled-run-health.yml caller. Moved from `out_of_scope:` on
+    # 2026-11-10, once it had a cron (verify-actions-lock#23).
+    - verify-actions-lock
     - wsl-automation
 
   # Deliberately NOT audited, and not expected to be checked out. Recorded so
@@ -401,10 +407,6 @@ cron_coverage:
     # moves even that out of `.github/workflows/`). Give it a cron anyone
     # depends on and it moves to `fleet:`.
     - scratch-claude-002
-    # The shared `uses:` action behind the lockfile check (ADR 0024). Its only
-    # workflow runs on pull requests and pushes; there is no cron to watch.
-    # Give it one and it moves to `fleet:`.
-    - verify-actions-lock
     # FORKS. Never reachable by discovery either (`gh repo list --source`), so
     # these two can never become a finding — they are written down because
     # "why isn't this audited?" is a question worth answering from this file
