@@ -21,8 +21,9 @@
  *              commit got past (or never met) the local hook.
  *              Per-check rows, one per (week, repo, check id): name = the
  *              check id that refused, blocked = overridden = red runs that
- *              week naming it, invocations = 0 (CI records which checks
- *              refused, not which ran). The ids come from the red job's
+ *              week naming it, invocations = null, meaning not counted (CI
+ *              records which checks refused, not which ran; null is
+ *              "unknown", never "ran zero times"). The ids come from the red job's
  *              `::error title=agent-checks <id>` annotations; a red run
  *              without one (it predates the annotations) adds no such row.
  *   red_runs   one entry per red agent-checks run counted above, newest
@@ -400,7 +401,7 @@ function buildRows(measured, weeks) {
   for (const { week, repo, id, n } of perCheck.values()) {
     rows.push({
       week, kind: "hook", name: id, repo, surface: "ci",
-      invocations: 0, sessions: null, blocked: n, overridden: n, outcome: null,
+      invocations: null, sessions: null, blocked: n, overridden: n, outcome: null,
     });
   }
   // `name` is the hook name on hook rows, so ties fall back to `repo`.

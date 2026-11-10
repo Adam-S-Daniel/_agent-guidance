@@ -173,8 +173,8 @@ test("per-check hook rows count the red runs naming each check id, by week and r
   const rows = checkRows(doc).filter((r) => r.repo === "example-owner/widgets");
   const shape = (r) => [r.week, r.name, r.invocations, r.sessions, r.blocked, r.overridden, r.outcome, r.surface];
   assert.deepEqual(rows.map(shape), [
-    ["2026-10-19", "pr-tldr", 0, null, 1, 1, null, "ci"],
-    ["2026-10-19", "secret-file", 0, null, 2, 2, null, "ci"],
+    ["2026-10-19", "pr-tldr", null, null, 1, 1, null, "ci"],
+    ["2026-10-19", "secret-file", null, null, 2, 2, null, "ci"],
   ]);
   // The agent-checks job rows are untouched.
   assert.equal(row(doc, "2026-10-19", "hook", "example-owner/widgets").blocked, 2);
