@@ -363,9 +363,9 @@ closed as not planned, with that comment.
 
 An `agent-blocked` issue waits on the owner: the worker stopped on it (an
 outage, a revoked secret, a setting only he can change, an ambiguity) and
-said why in a comment. Nothing else reports it, so a health-audit `ci`
-issue that is not the repo's to fix sat blocked with no one told
-([_agent-guidance#492](https://github.com/Adam-S-Daniel/_agent-guidance/issues/492)).
+said why in a comment. Nothing else reports it: the PR pass's list covers
+PRs only, so a health-audit `ci` issue that is not the repo's to fix would
+otherwise stay blocked with no one told.
 
 After the issue's own work, whether this run blocked anything or not, list
 the open `agent-blocked` issues with the same search as the issue pass
