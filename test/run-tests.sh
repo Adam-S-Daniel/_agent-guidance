@@ -25214,7 +25214,7 @@ test_agent_checks_dated_phrasing() {
     else
         fail "dated-phrasing: pre-commit reads the staged content, and only the staged paths — exit $rc, got: $got"
     fi
-    if grep -qF '"checks":["rules-dir","secret-file","skill-shell","dated-phrasing"],"failed":[]' "$TEST_DIR/ac-dated-runs.jsonl"; then
+    if grep -qE '"checks":\["rules-dir","secret-file","skill-shell"(,"lesson-[a-z0-9-]+")*,"dated-phrasing"\],"failed":\[\]' "$TEST_DIR/ac-dated-runs.jsonl"; then
         pass "dated-phrasing: the run log lists the pass as run and never as failed"
     else
         fail "dated-phrasing: the run log lists the pass as run and never as failed — $(cat "$TEST_DIR/ac-dated-runs.jsonl")"
