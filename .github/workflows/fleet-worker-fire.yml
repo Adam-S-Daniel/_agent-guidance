@@ -1,0 +1,83 @@
+name: Fire fleet worker
+
+# Starts the fleet worker routine (docs/routines/fleet-worker.md) every 3
+# hours. The claude.ai Routines page offers hourly or daily, nothing between,
+# and hourly cost about $150-215 a week in sessions that mostly found nothing
+# to do (2026-11-08 measurement), so the schedule lives here and the routine
+# keeps only its API trigger.
+#
+# * schedule and workflow_dispatch only. No pull_request or push, so no path
+#   filter and not a required check. scheduled-run-health.yml reports failed
+#   scheduled runs.
+# * Configuration lives in one place each, with no default: the routine's
+#   fire URL is a repository variable, the fire bearer an Actions secret. A
+#   missing one fails the run naming it, so a missed fire shows red.
+# * Nothing from the event is interpolated into a `run:` block; the only
+#   `${{ }}` uses are the `env:` that hands the URL and bearer to the step.
+# * The bearer reaches curl on stdin through --config -, never argv, and the
+#   response body is never printed.
+# * No `uses:` step, so actions.lock lists this file with no actions.
+# * An optional repository variable, FLEET_WORKER_EVERY_HOURS (3, 6, 12 or
+#   24), thins the schedule for a smaller Claude plan: a scheduled run fires
+#   only when the UTC hour is a multiple of it. Unset, every scheduled run
+#   fires (every 3 hours). A dispatch always fires. Any other value fails the
+#   run naming the variable (acsi-kit#29).
+
+on:
+  schedule:
+    - cron: '20 */3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: fleet-worker-fire
+  cancel-in-progress: false
+
+jobs:
+  fire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fire the fleet worker routine
+        env:
+          FIRE_URL: ${{ vars.FLEET_WORKER_FIRE_URL }}
+          FIRE_BEARER: ${{ secrets.FLEET_WORKER_FIRE_BEARER }}
+          EVERY_HOURS: ${{ vars.FLEET_WORKER_EVERY_HOURS }}
+        run: |
+          set -euo pipefail
+          case "${EVERY_HOURS:-}" in
+            ""|3|6|12|24) ;;
+            *) echo "::error::variable FLEET_WORKER_EVERY_HOURS must be 3, 6, 12 or 24, or unset"; exit 1 ;;
+          esac
+          if [[ -n "${EVERY_HOURS:-}" && "${GITHUB_EVENT_NAME:-}" == schedule ]]; then
+            hour=$(date -u +%-H)
+            if (( hour % EVERY_HOURS != 0 )); then
+              echo "::notice::skipped: FLEET_WORKER_EVERY_HOURS is $EVERY_HOURS and the UTC hour is $hour"
+              exit 0
+            fi
+          fi
+          missing=()
+          [[ -n "$FIRE_URL" ]] || missing+=("variable FLEET_WORKER_FIRE_URL")
+          [[ -n "$FIRE_BEARER" ]] || missing+=("secret FLEET_WORKER_FIRE_BEARER")
+          if (( ${#missing[@]} )); then
+            echo "::error::not configured: ${missing[*]}. Set them in this repository's Actions settings; the routine's API trigger on claude.ai gives both."
+            exit 1
+          fi
+
+          body=$(jq -n --arg t "Scheduled fire from fleet-worker-fire.yml" '{text: $t}')
+          response=$(mktemp)
+          code=$(printf 'header = "Authorization: Bearer %s"\n' "$FIRE_BEARER" |
+            curl -sS --config - -o "$response" -w '%{http_code}' -X POST \
+              "$FIRE_URL" \
+              -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "Content-Type: application/json" \
+              -d "$body") || code="curl-error"
+          rm -f "$response"
+
+          if [[ "$code" != 200 ]]; then
+            echo "::error::fire failed (HTTP $code)"
+            exit 1
+          fi
+          echo "::notice::fleet worker fired"

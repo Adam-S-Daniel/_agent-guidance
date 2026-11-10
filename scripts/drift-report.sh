@@ -1002,6 +1002,21 @@ for repo_name in "${REPOS[@]}"; do
     agents_rc=0
     current_agents=$(fetch_file_content "$repo_name" "AGENTS.md") || agents_rc=$?
 
+    # Inputs for scripts/guidance-overlap.js, only when the caller asks for
+    # them (drift-report.yml does; the tests mostly do not). Written only from a
+    # confident read, so an unreadable file is absent, never empty. The
+    # languages call is best-effort: a failure leaves the file out, and the
+    # overlap report names the repos whose languages it could not read.
+    if [[ -n "${DRIFT_GUIDANCE_DIR:-}" && "$agents_rc" -eq 0 && -n "$current_agents" ]]; then
+        guidance_stem="$DRIFT_GUIDANCE_DIR/${repo_name%%/*}__${repo_name#*/}"
+        printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
+        printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
+        if [[ "$sections_rc" -eq 0 && "${#sections[@]}" -gt 0 ]]; then
+            gh api "repos/$repo_name/languages" > "$guidance_stem.languages.json" 2>/dev/null \
+                || rm -f "$guidance_stem.languages.json"
+        fi
+    fi
+
     if [[ "$agents_rc" -ne 0 ]]; then
         # The status and the note are no longer set here: every other call site in
         # this loop now records the same way, and one shared block below turns the

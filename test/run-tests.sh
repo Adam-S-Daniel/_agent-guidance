@@ -2567,6 +2567,19 @@ case "$1" in
         shift
         jq_filter=$(parse_jq_filter "$@")
 
+        # GET repos/{owner}/{repo}/languages — drift-report.sh asks only when
+        # DRIFT_GUIDANCE_DIR is set. A fixture opts in with
+        # <bare>/<owner>_<repo>.languages.json; without one it fails like a 404.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/languages$ ]]; then
+            lang_file="${MOCK_BARE_DIR}/${BASH_REMATCH[1]}_${BASH_REMATCH[2]}.languages.json"
+            if [[ -f "$lang_file" ]]; then
+                cat "$lang_file"
+                exit 0
+            fi
+            echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+        fi
+
         # DELETE repos/{owner}/{repo}/git/refs/heads/{branch}
         # What delete_bump_branch calls to clean up after a merged bump PR.
         if [[ "$api_method" == "DELETE" \
@@ -2742,15 +2755,39 @@ case "$1" in
             exit 0
         fi
 
+        # repos/{owner}/{repo}/commits/{sha}/pulls — what the lock bumper
+        # asks to find the registry pull request that removed a skill (#488).
+        # Answered from MOCK_COMMIT_PULLS_DIR/<sha>.json; a commit with no file
+        # there has no pull request, which is GitHub's `[]`.
+        # MOCK_COMMIT_PULLS_FAIL makes every such read a 403.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/commits/([0-9a-f]{40})/pulls$ ]]; then
+            if [[ -n "${MOCK_COMMIT_PULLS_FAIL:-}" ]]; then
+                echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+                echo '{"message":"Resource not accessible by integration","status":"403"}'
+                exit 1
+            fi
+            pulls_file="${MOCK_COMMIT_PULLS_DIR:-/nonexistent}/${BASH_REMATCH[3]}.json"
+            if [[ -f "$pulls_file" ]]; then cat "$pulls_file"; else echo '[]'; fi
+            exit 0
+        fi
+
         # repos/{owner}/{repo}/contents/{path}
         if [[ "$api_path" =~ repos/([^/]+)/([^/]+)/contents/(.+) ]]; then
             owner="${BASH_REMATCH[1]}"
             repo="${BASH_REMATCH[2]}"
             file_path="${BASH_REMATCH[3]}"
-            # Strip a ?ref=<sha> query. The mock always serves `main`: pinning
+            # Strip a ?ref=<sha> query. The mock serves `main`: pinning
             # is exercised by the digest check in sync.sh, not by the mock
             # resolving refs, and a mock that pretended to would be testing
-            # itself.
+            # itself. The one exception is MOCK_CONTENTS_HONOR_REF: the lock
+            # bumper's removal gate (#488) compares the lock a bump PR's HEAD
+            # carries with the default branch's, and a mock that answered
+            # `main` for both would make every removal look like no removal.
+            serve_ref=main
+            if [[ -n "${MOCK_CONTENTS_HONOR_REF:-}" && "$file_path" == *\?ref=* ]]; then
+                serve_ref="${file_path#*\?ref=}"
+                serve_ref="${serve_ref%%&*}"
+            fi
             file_path="${file_path%%\?*}"
             repo_slug="${owner}_${repo}"
             bare_path="${MOCK_BARE_DIR}/${repo_slug}"
@@ -2841,15 +2878,15 @@ case "$1" in
             # unchanged, which is what keeps the stdout half independently
             # detectable.
             if [[ " ${MOCK_CONTENTS_404_STDERR_ONLY:-} " == *" $repo_slug "* ]] \
-               && ! git -C "$bare_path" cat-file -e "main:$file_path" 2>/dev/null; then
+               && ! git -C "$bare_path" cat-file -e "$serve_ref:$file_path" 2>/dev/null; then
                 echo "gh: Not Found (HTTP 404)" >&2
                 echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content"}'
                 exit 1
             fi
 
             if [[ -d "$bare_path" ]]; then
-                if git -C "$bare_path" cat-file -e "main:$file_path" 2>/dev/null \
-                   && [[ "$(git -C "$bare_path" cat-file -t "main:$file_path")" == "blob" ]]; then
+                if git -C "$bare_path" cat-file -e "$serve_ref:$file_path" 2>/dev/null \
+                   && [[ "$(git -C "$bare_path" cat-file -t "$serve_ref:$file_path")" == "blob" ]]; then
                     # `size` is not decoration: the real contents API always
                     # sends it, and fetch_file_content verifies its decode
                     # against it. A mock that omits it cannot exercise the
@@ -2857,8 +2894,8 @@ case "$1" in
                     # Read the blob directly. A command substitution strips
                     # trailing newlines and then echo invents one, hiding byte
                     # drift in the fleet-guidance payload.
-                    size=$(git -C "$bare_path" cat-file -s "main:$file_path")
-                    encoded=$(git -C "$bare_path" show "main:$file_path" | base64 -w 0)
+                    size=$(git -C "$bare_path" cat-file -s "$serve_ref:$file_path")
+                    encoded=$(git -C "$bare_path" show "$serve_ref:$file_path" | base64 -w 0)
                     # MOCK_TRUNCATE_CONTENTS=<n> serves the first n base64 chars
                     # while still declaring the honest size -- i.e. the exact
                     # shape of #81: a short body that looks like a whole file.
@@ -3140,6 +3177,12 @@ case "$1" in
                 echo "pr-created" >> "${MOCK_PR_LOG:-/dev/null}"
                 if [[ -n "${MOCK_PR_BODY_DIR:-}" ]]; then
                     mkdir -p "$MOCK_PR_BODY_DIR"
+                    # A held removal (#488) is opened with --draft; recorded
+                    # beside the body so a test can tell the two apart.
+                    rm -f "$MOCK_PR_BODY_DIR/$(basename "$PWD").draft"
+                    for a in "$@"; do
+                        [[ "$a" == "--draft" ]] && : > "$MOCK_PR_BODY_DIR/$(basename "$PWD").draft"
+                    done
                     pr_body=$(parse_flag_value --body "$@")
                     printf '%s\n' "$pr_body" > "$MOCK_PR_BODY_DIR/$(basename "$PWD").body"
                     # The title too: a PR list shows it and nothing else, so a
@@ -3154,6 +3197,11 @@ case "$1" in
             close)
                 # gh pr close <number> --comment ... — log the closed number.
                 echo "pr-closed $3" >> "${MOCK_PR_LOG:-/dev/null}"
+                ;;
+            ready)
+                # gh pr ready <number> --repo <owner/repo> — the sweep marking
+                # a held removal ready once its review is recorded (#488).
+                echo "pr-ready $3 $(parse_flag_value --repo "$@")" >> "${MOCK_PR_LOG:-/dev/null}"
                 ;;
             reopen)
                 # gh pr reopen <number> --repo <owner/repo>
@@ -7932,363 +7980,6 @@ YML
     unset -f assert_reg
 }
 
-# ── Test 6c: capture-routine.py ───────────────────────────────
-#
-# The snapshot in docs/routines/ is the only prior copy of a Routine that is
-# edited on claude.ai, so the ways this script can be wrong are the ways that
-# copy silently stops meaning anything: a field the policy has never seen and
-# quietly drops, an identifier reaching a public repo, runtime state making the
-# file permanently stale, or a render that is not reproducible so --check can
-# never be trusted. Each has a test below, and each refusal is checked against
-# the positive above it.
-
-test_capture_routine() {
-    echo ""
-    echo "=== Test: capture-routine.py (the Routine snapshot must refuse, not guess) ==="
-
-    local script="$REPO_ROOT/scripts/capture-routine.py"
-    local dir="$TEST_DIR/routine"
-    mkdir -p "$dir"
-
-    if ! command -v python3 >/dev/null 2>&1; then
-        fail "routine: python3 is missing — the capture script cannot be exercised"
-        return
-    fi
-
-    # One synthetic routine record, matching the shape `list_triggers` returns.
-    # Deliberately fake throughout: the values below are what the redaction
-    # assertions grep for, so a real id here would be both a leak and a test
-    # that proves nothing.
-    write_fixture() {   # <name> [python mutation over `r`]
-        local name="$1" mutation="${2:-pass}"
-        python3 - "$dir/$name.json" "$mutation" <<'PY'
-import json, sys
-out, mutation = sys.argv[1], sys.argv[2]
-prompt = "Read the spec.\n\n```bash\necho hi\n```\n"
-r = {
-    "id": "trig_FIXTUREfixtureFIXTUREfixture",
-    "name": "Fixture routine",
-    "enabled": True,
-    "cron_expression": "0 7 * * 0",
-    "created_at": "2026-01-01T00:00:00Z",
-    "created_kind": "ROUTINE_CREATED_KIND_ROUTINE",
-    "created_via": "meta_mcp",
-    "creator": {"account_uuid": "ACCOUNTUUIDfixture0000"},
-    "derived_state": {"folders_state": "FOLDERS_STATE_NONE", "model": "", "prompt": prompt},
-    "next_run_at": "NEXTRUNfixture0000",
-    "last_fired_at": "2026-01-02T00:00:00Z",
-    "last_run": {"status": "ROUTINE_RUN_STATUS_SUCCEEDED", "fired_at": "2026-01-02T00:00:00Z",
-                 "finished_at": "2026-01-02T00:01:00Z", "session_id": "SESSIONfixture0000"},
-    "updated_at": "2026-01-03T00:00:00Z",
-    "notifications": {"channel": {"push": True, "email": False, "slack": False}},
-    "mcp_connections": [{"name": "fixture-mcp", "url": "https://mcp.example.com/",
-                         "connector_uuid": "CONNECTORUUIDfixture0000"}],
-    "job_config": {"ccr": {
-        "environment_id": "ENVIRONMENTfixture0000",
-        "events": [{"data": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
-                             "session_id": "", "parent_tool_use_id": None,
-                             "message": {"role": "user", "content": prompt}}}],
-        "session_context": {
-            "allowed_tools": ["preset:default", "Bash"],
-            "autofix_on_pr_create": True,
-            "sources": [{"git_repository": {"url": "https://github.com/testorg/repo-one"}},
-                        {"git_repository": {"url": "https://github.com/testorg/repo-two"}}],
-            "outcomes": [{"git_repository": {"git_info": {"repo": "testorg/repo-one",
-                                                          "branches": ["claude/fixture"]}}}],
-        }}},
-}
-exec(mutation)
-json.dump({"data": [r]}, open(out, "w"))
-PY
-    }
-
-    # <fixture> <expected-exit> <needle> <label>
-    assert_cap() {
-        local fixture="$1" want="$2" needle="$3" label="$4" out rc=0
-        out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-                  --input "$dir/$fixture.json" --out "$dir/$fixture.md" 2>&1) || rc=$?
-        if [[ "$rc" == "$want" ]] && grep -qF -- "$needle" <<<"$out"; then
-            pass "$label"
-        else
-            fail "$label — expected exit $want containing '$needle'; got exit $rc: $(head -2 <<<"$out" | tr '\n' ' ')"
-        fi
-    }
-
-    # ── The positive. Every refusal below is only meaningful against this.
-    write_fixture good
-    assert_cap good 0 "wrote" "routine: a well-formed record renders a snapshot"
-
-    # ── REFUSALS (exit 2): the question could not be answered honestly.
-    write_fixture unknown 'r["brand_new_field"] = "surprise"'
-    assert_cap unknown 2 "brand_new_field" \
-        "routine: a field the policy has never classified REFUSES and names it"
-
-    write_fixture skew 'r["derived_state"]["prompt"] += "drifted"'
-    assert_cap skew 2 "disagree" \
-        "routine: derived_state.prompt disagreeing with the seed event is a refusal"
-
-    write_fixture twoev 'r["job_config"]["ccr"]["events"].append(r["job_config"]["ccr"]["events"][0])'
-    assert_cap twoev 2 "exactly one seed event" \
-        "routine: two seed events make the prompt ambiguous, so it refuses"
-
-    write_fixture noprompt 'r["job_config"]["ccr"]["events"][0]["data"]["message"]["content"] = ""'
-    assert_cap noprompt 2 "no prompt text" \
-        "routine: an empty prompt is a refusal, not an empty snapshot"
-
-    # The REST shape (`GET /v1/code/triggers/<id>`) carries a `session_request`
-    # mirror plus personal and token-hint fields the list tool never had. It must
-    # render, withhold the personal values, and still refuse on a disagreeing
-    # mirror or a populated environment-variable map. The config mirror below
-    # matches `session_context` exactly (sources and tools reordered, which is
-    # not a disagreement), so each skew fixture differs from it in one field.
-    local rest_mut='
-r["api_token_hint"] = "TOKENHINTfixture0000"
-r["creator"]["display_name"] = "DISPLAYNAMEfixture0000"
-r["session_request"] = {"environment_id": "ENVIRONMENTfixture0000",
-    "environment_variables": {}, "metadata": {}, "tags": [],
-    "config": {"allowed_tools": ["Bash", "preset:default"], "autofix_on_pr_create": True,
-        "sources": [{"type": "git_repository", "url": "https://github.com/testorg/repo-two"},
-                    {"type": "git_repository", "url": "https://github.com/testorg/repo-one"}],
-        "outcomes": [{"type": "git_repository", "git_info": {"type": "github",
-            "repo": "testorg/repo-one", "branches": ["claude/fixture"]}}],
-        "worktree": False},
-    "events": [{"ephemeral": False, "payload": {"type": "user", "uuid": "MESSAGEUUIDfixture0000",
-        "session_id": "", "message": {"role": "user", "content": prompt}}}]}'
-    write_fixture rest "$rest_mut"
-    assert_cap rest 0 "wrote" "routine: the REST shape (session_request mirror) renders a snapshot"
-    local lit2 rest_leaked=0
-    for lit2 in TOKENHINTfixture0000 DISPLAYNAMEfixture0000 ENVIRONMENTfixture0000 MESSAGEUUIDfixture0000; do
-        if grep -qF -- "$lit2" "$dir/rest.md"; then
-            fail "routine: $lit2 leaked from the REST shape into the snapshot"
-            rest_leaked=1
-        fi
-    done
-    [[ $rest_leaked -eq 0 ]] && pass "routine: REST-only personal and token-hint values are withheld"
-
-    write_fixture restskew "$rest_mut"'
-r["session_request"]["events"][0]["payload"]["message"]["content"] += "drifted"'
-    assert_cap restskew 2 "session_request" \
-        "routine: a session_request prompt disagreeing with the seed event is a refusal"
-
-    # The four `session_request.config` mirrors of `session_context`: the
-    # snapshot renders the ccr copy, so a mirror that disagrees must refuse
-    # rather than lose silently. Measured: with the check in collect() removed,
-    # all four of these exit 0.
-    write_fixture restsrc "$rest_mut"'
-r["session_request"]["config"]["sources"][0]["url"] = "https://github.com/testorg/repo-drifted"'
-    assert_cap restsrc 2 "session_request.config.sources" \
-        "routine: session_request sources disagreeing with session_context is a refusal"
-
-    write_fixture restout "$rest_mut"'
-r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude/drifted"]'
-    assert_cap restout 2 "session_request.config.outcomes" \
-        "routine: session_request outcomes disagreeing with session_context is a refusal"
-
-    write_fixture restoutrepo "$rest_mut"'
-r["session_request"]["config"]["outcomes"][0]["git_info"]["repo"] = "testorg/repo-drifted"'
-    assert_cap restoutrepo 2 "session_request.config.outcomes" \
-        "routine: session_request outcome repo disagreeing with session_context is a refusal"
-
-    write_fixture restoutorder "$rest_mut"'
-r["job_config"]["ccr"]["session_context"]["outcomes"][0]["git_repository"]["git_info"]["branches"] = ["claude/a", "claude/b"]
-r["session_request"]["config"]["outcomes"][0]["git_info"]["branches"] = ["claude/b", "claude/a"]'
-    assert_cap restoutorder 0 "wrote" \
-        "routine: reordered outcome branches are not a disagreement"
-
-    write_fixture restmixed "$rest_mut"'
-r["session_request"]["config"]["allowed_tools"] = ["Bash", 7]'
-    assert_cap restmixed 2 "1 non-string entry out of 2" \
-        "routine: a non-string in a mirrored list is a clean refusal, not a traceback"
-
-    # `classify()` refuses a non-list at a list path before `collect()` runs,
-    # so the "is not a list" arm is unreachable through the CLI; it is a guard
-    # for a mirror that classifies but is not a list, so call `collect()` directly.
-    local notlist_out notlist_ok=1 notlist_field
-    for notlist_field in allowed_tools sources; do
-        notlist_out=$(python3 - "$script" "$dir/rest.json" "$notlist_field" <<'PY' 2>&1
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("capture_routine", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-record = json.load(open(sys.argv[2]))["data"][0]
-record.setdefault("session_request", {}).setdefault("config", {})[sys.argv[3]] = "not-a-list"
-try:
-    mod.collect(record)
-except mod.Refusal as e:
-    print(e)
-PY
-) || notlist_ok=0
-        grep -qF -- "session_request.config.$notlist_field" <<<"$notlist_out" \
-            && grep -qF -- "is not a list" <<<"$notlist_out" || notlist_ok=0
-    done
-    if [[ $notlist_ok -eq 1 ]]; then
-        pass "routine: a mirrored list that is not a list is a clean refusal"
-    else
-        fail "routine: a mirrored list that is not a list is a clean refusal — last output: $notlist_out"
-    fi
-
-    write_fixture restsrcmixed "$rest_mut"'
-r["session_request"]["config"]["sources"][0]["url"] = 5'
-    assert_cap restsrcmixed 2 "1 non-string entry out of 2" \
-        "routine: a non-string source url is a refusal, not coerced by str()"
-
-    write_fixture restone "$rest_mut"'
-r["session_request"]["config"]["allowed_tools"] = ["Bash"]'
-    assert_cap restone 2 "(1 entry vs" \
-        "routine: a one-entry disagreement says 1 entry, not 1 entries"
-
-    write_fixture resttools "$rest_mut"'
-r["session_request"]["config"]["allowed_tools"].append("Edit")'
-    assert_cap resttools 2 "session_request.config.allowed_tools" \
-        "routine: session_request allowed_tools disagreeing with session_context is a refusal"
-
-    write_fixture restfix "$rest_mut"'
-r["session_request"]["config"]["autofix_on_pr_create"] = False'
-    assert_cap restfix 2 "session_request.config.autofix_on_pr_create" \
-        "routine: session_request autofix disagreeing with session_context is a refusal"
-
-    write_fixture restenv "$rest_mut"'
-r["session_request"]["environment_variables"] = {"FIXTURE_VAR": "x"}'
-    assert_cap restenv 2 "environment_variables.FIXTURE_VAR" \
-        "routine: a populated environment_variables map refuses by its keys"
-
-    printf '{"data":[]}' > "$dir/empty.json"
-    assert_cap empty 2 "zero routines" \
-        "routine: zero routines refuses — an empty list and an unauthorised one look alike"
-
-    printf 'not json' > "$dir/notjson.json"
-    assert_cap notjson 2 "not JSON" \
-        "routine: a non-JSON payload is a refusal"
-
-    local out rc=0
-    out=$(python3 "$script" --id trig_ABSENT --input "$dir/good.json" \
-              --out "$dir/absent.md" 2>&1) || rc=$?
-    if [[ $rc -eq 2 ]] && grep -qF "will not guess" <<<"$out"; then
-        pass "routine: an id that is not in the response refuses rather than picking one"
-    else
-        fail "routine: absent id should exit 2; got $rc"
-    fi
-
-    # ── Redaction. This repo is public, so identifiers must not reach the file.
-    local snap="$dir/good.md" leaked=0 lit
-    for lit in ACCOUNTUUIDfixture0000 ENVIRONMENTfixture0000 CONNECTORUUIDfixture0000 \
-               SESSIONfixture0000 MESSAGEUUIDfixture0000; do
-        if grep -qF -- "$lit" "$snap"; then
-            fail "routine: $lit leaked into the snapshot"
-            leaked=1
-        fi
-    done
-    [[ $leaked -eq 0 ]] && pass "routine: every redacted identifier is absent from the snapshot"
-
-    # The control that keeps the five greps above from being wired to nothing:
-    # a literal that IS expected must be found by the same method.
-    if grep -qF -- "trig_FIXTUREfixtureFIXTUREfixture" "$snap"; then
-        pass "routine: control — the leak check finds a literal that is present"
-    else
-        fail "routine: control failed — the leak greps cannot see the file at all"
-    fi
-
-    # ── Volatility. Committing runtime state guarantees a permanently stale file.
-    if grep -qF -- "NEXTRUNfixture0000" "$snap"; then
-        fail "routine: next_run_at was captured — the snapshot goes stale on every fire"
-    else
-        pass "routine: runtime state is named in the exclusions but its value is not captured"
-    fi
-    assert_contains "$snap" 'next_run_at' "routine: the excluded field is still listed by name"
-
-    # ── Determinism. --check is worthless if two renders of one input differ.
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
-        --out "$dir/again.md" >/dev/null 2>&1
-    if cmp -s "$snap" "$dir/again.md"; then
-        pass "routine: two renders of one payload are byte-identical"
-    else
-        fail "routine: rendering is not deterministic"
-    fi
-
-    rc=0
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
-        --out "$snap" --check >/dev/null 2>&1 || rc=$?
-    [[ $rc -eq 0 ]] && pass "routine: --check passes against a current snapshot" \
-        || fail "routine: --check should pass against its own output; got $rc"
-
-    printf 'drift\n' >> "$snap"
-    rc=0
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture --input "$dir/good.json" \
-        --out "$snap" --check >/dev/null 2>&1 || rc=$?
-    [[ $rc -eq 1 ]] && pass "routine: --check reports exit 1 on a stale snapshot" \
-        || fail "routine: --check should exit 1 on drift; got $rc"
-
-    # ── The wrapping fence must outgrow anything the prompt puts inside it.
-    write_fixture fence 'p = r["derived_state"]["prompt"] + "\n~~~~\ninner\n~~~~\n"; r["derived_state"]["prompt"] = p; r["job_config"]["ccr"]["events"][0]["data"]["message"]["content"] = p'
-    assert_cap fence 0 "wrote" "routine: a prompt containing ~~~~ still renders"
-    if grep -q '^~~~~~text$' "$dir/fence.md"; then
-        pass "routine: the fence lengthens past the longest run inside the prompt"
-    else
-        fail "routine: the fence did not grow — the prompt would close it early"
-    fi
-    if grep -q '^~~~text$' "$dir/good.md"; then
-        pass "routine: control — a prompt with no tildes still uses the short fence"
-    else
-        fail "routine: control failed — the short fence is not what a plain prompt gets"
-    fi
-
-    # ── --runtime: the half the snapshot excludes, answered rather than hidden.
-    # Every assertion below is clock-independent by construction: 2000 is stale
-    # under any clock this runs on, 2099 is not, and neither depends on today.
-    rc=0
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/good.json" --runtime 2>&1) || rc=$?
-    if [[ $rc -eq 0 ]] && grep -q 'next run:' <<<"$out" && grep -q 'last fired:' <<<"$out"; then
-        pass "routine: --runtime prints the volatile fields the snapshot omits"
-    else
-        fail "routine: --runtime should print next run and last fired; got exit $rc"
-    fi
-    if grep -q 'NEXTRUNfixture0000' <<<"$out"; then
-        pass "routine: control — --runtime really does surface the excluded value"
-    else
-        fail "routine: control failed — --runtime printed no next_run_at at all"
-    fi
-    # --out is passed HERE deliberately. Without it this assertion is vacuous:
-    # a path the script was never given cannot appear whatever the code does.
-    # Naming it makes the check real — if --runtime ever fell through to the
-    # renderer, this file would exist.
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-        --input "$dir/good.json" --out "$dir/runtime-must-not-write.md" \
-        --runtime >/dev/null 2>&1
-    if [[ -e "$dir/runtime-must-not-write.md" ]]; then
-        fail "routine: --runtime wrote a snapshot even though it was told not to"
-    else
-        pass "routine: --runtime writes nothing, even when handed an --out path"
-    fi
-
-    write_fixture stale 'r["last_fired_at"] = "2000-01-01T00:00:00Z"'
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/stale.json" --runtime 2>&1)
-    grep -q 'VERDICT: STOPPED' <<<"$out" \
-        && pass "routine: a last fire past the two-week threshold reads STOPPED" \
-        || fail "routine: an ancient last_fired_at should read STOPPED; got: $(tail -1 <<<"$out")"
-
-    write_fixture future 'r["last_fired_at"] = "2099-01-01T00:00:00Z"'
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/future.json" --runtime 2>&1)
-    grep -q 'VERDICT: last fired in the future' <<<"$out" \
-        && pass "routine: a last fire in the future is called out, not read as healthy" \
-        || fail "routine: a future last_fired_at should be flagged; got: $(tail -1 <<<"$out")"
-
-    write_fixture neverfired 'del r["last_fired_at"]; del r["last_run"]'
-    out=$(python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-              --input "$dir/neverfired.json" --runtime 2>&1)
-    grep -q 'VERDICT: never fired' <<<"$out" \
-        && pass "routine: a Routine that has never fired says so rather than looking healthy" \
-        || fail "routine: a never-fired routine should say so; got: $(tail -1 <<<"$out")"
-
-    rc=0
-    python3 "$script" --id trig_FIXTUREfixtureFIXTUREfixture \
-        --input "$dir/good.json" >/dev/null 2>&1 || rc=$?
-    [[ $rc -eq 2 ]] && pass "routine: neither --out nor --runtime is an error, not a silent no-op" \
-        || fail "routine: omitting both --out and --runtime should fail; got $rc"
-}
-
 # ── Test 6: check-cron-coverage.js ────────────────────────────────────────
 #
 # The gate that says a repo running crons actually watches them. It is pinned
@@ -8852,6 +8543,9 @@ run_bump() {   # <output file> [script args...]
     MOCK_PR_UNKNOWN_ALWAYS="${BUMP_UNKNOWN_ALWAYS_FOR_RUN:-}" \
     MOCK_PR_VIEW_COUNT_DIR="${BUMP_VIEW_COUNT_DIR_FOR_RUN:-}" \
     MOCK_PR_CLOSED_ON_CREATE="${BUMP_CLOSED_ON_CREATE_FOR_RUN:-}" \
+    MOCK_CONTENTS_HONOR_REF="${BUMP_HONOR_REF_FOR_RUN:-}" \
+    MOCK_COMMIT_PULLS_DIR="${BUMP_COMMIT_PULLS_DIR_FOR_RUN:-}" \
+    MOCK_COMMIT_PULLS_FAIL="${BUMP_COMMIT_PULLS_FAIL_FOR_RUN:-}" \
     BUMP_UNKNOWN_RETRIES="${BUMP_UNKNOWN_RETRIES_FOR_RUN:-}" \
     BUMP_UNKNOWN_RETRY_DELAY="${BUMP_UNKNOWN_RETRY_DELAY_FOR_RUN:-}" \
     REPOS_YML="$TEST_DIR/repos.yml" \
@@ -9863,6 +9557,261 @@ test_bump_bundle_vanished() {
     fi
 
     rm -rf "$TEST_DIR/bare-vanish" "$work" "$TEST_DIR/registry-vanished"
+}
+
+# ── Test 8r: a re-pin that drops a skill key needs a recorded review ──────
+#
+# _agent-guidance#488. skills_shrink_reason refuses only a WHOLE bundle
+# vanishing, so before this one skill removed upstream dropped its key from
+# every consumer within two nights with nobody reading it. The owner's rule
+# (2026-11-09) keeps removals autonomous but requires a recorded,
+# agent-generated adversarial review: the registry pull request that removed
+# the skill carries `Adversarial-review: pass <url>` (skills-evals#917).
+#
+# The registry here removes adam/writing-adrs in a real --no-ff merge, so the
+# bumper has to find that merge on the first-parent history and ask the mock
+# for its pull request, exactly as it asks GitHub.
+
+# setup_lost_key_registry — $TEST_DIR/registry-lost, the shared registry plus
+# one merged pull request that deletes writing-adrs. Sets LOST_MERGE_SHA.
+setup_lost_key_registry() {
+    rm -rf "$TEST_DIR/registry-lost"
+    git clone -q "file://$TEST_DIR/registry" "$TEST_DIR/registry-lost" >/dev/null 2>&1
+    cd "$TEST_DIR/registry-lost"
+    git config commit.gpgsign false
+    git checkout -q -b retire-skill/writing-adrs
+    git rm -rq plugins/adam/skills/writing-adrs
+    git commit -q -m "retire writing-adrs" >/dev/null 2>&1
+    git checkout -q main
+    git merge -q --no-ff -m "Merge pull request #7 from retire-skill/writing-adrs" \
+        retire-skill/writing-adrs >/dev/null 2>&1
+    LOST_MERGE_SHA=$(git rev-parse HEAD)
+    cd "$REPO_ROOT"
+}
+
+# write_lost_key_pulls <dir> <body> — the commits/<sha>/pulls answer for the
+# removal's merge commit, carrying <body> as the pull request body.
+write_lost_key_pulls() {
+    rm -rf "$1"; mkdir -p "$1"
+    jq -n --arg sha "$LOST_MERGE_SHA" --arg body "$2" \
+        '[{number: 7, html_url: "https://example.com/registry/pull/7",
+           merge_commit_sha: $sha, merged_at: "2026-11-09T00:00:00Z", body: $body}]' \
+        > "$1/$LOST_MERGE_SHA.json"
+}
+
+# make_lost_key_consumer <bare dir> <name> — a consumer pinned at
+# BUMP_REF_OLD, so it carries both skills and the re-pin drops one.
+make_lost_key_consumer() {
+    local bare="$1/bumporg_$2" work="$TEST_DIR/work/lost-$2"
+    rm -rf "$bare" "$work"
+    mkdir -p "$bare" "$work"
+    git init -q --bare --initial-branch=main "$bare"
+    git init -q --initial-branch=main "$work"
+    cd "$work"
+    git config commit.gpgsign false
+    git remote add origin "$bare"
+    echo "# $2" > README.md
+    seed_bump_lock skills.lock "bumporg/agentskills" "$BUMP_REF_OLD"
+    git add -A
+    git commit -q -m "init" >/dev/null 2>&1
+    git push -q origin HEAD:main >/dev/null 2>&1
+    cd "$REPO_ROOT"
+}
+
+run_lost_key_bump() {   # <output file> <pulls dir> [extra env assignments are set by the caller]
+    BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-lost" \
+    BUMP_CHECKOUTS_FOR_RUN="bumporg/agentskills=$TEST_DIR/registry-lost bumporg/cms-platform=$TEST_DIR/cms-platform" \
+    BUMP_COMMIT_PULLS_DIR_FOR_RUN="$2" \
+        run_bump "$1"
+}
+
+test_bump_lost_skill_key() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (a re-pin that drops a skill key) ==="
+
+    setup_lost_key_registry
+    local bodies="$BUMP_PR_BODY_DIR" pulls="$TEST_DIR/lost-pulls" log body
+
+    # ── Reviewed: proposed like any other re-pin ─────────────────────
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'## Adversarial review\n\nAdversarial-review: pass https://example.com/runs/1\n'
+    rm -f "$bodies/bumporg_repo-lost.body" "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-reviewed.txt"
+    run_lost_key_bump "$log" "$pulls"
+    body="$bodies/bumporg_repo-lost.body"
+    assert_contains "$log" "drops skill key adam/writing-adrs — REVIEWED https://example.com/registry/pull/7 https://example.com/runs/1" \
+        "lost key, reviewed: the key and its review are named in the log"
+    assert_contains "$log" "PR created: " "lost key, reviewed: proposed as an ordinary pull request"
+    assert_not_contains "$log" "HELD" "lost key, reviewed: nothing is held"
+    if [[ ! -e "$bodies/bumporg_repo-lost.draft" && -f "$body" ]]; then
+        pass "lost key, reviewed: not opened as a draft"
+    else
+        fail "lost key, reviewed: not opened as a draft"
+    fi
+    assert_contains "$body" "each removed by a registry pull" "lost key, reviewed: the body says the removal was reviewed"
+    assert_contains "$body" "removed in https://example.com/registry/pull/7, review https://example.com/runs/1" \
+        "lost key, reviewed: the body links the pull request and its review"
+    assert_contains "$body" "This pull request merges itself." "lost key, reviewed: it still merges itself"
+    [[ $BUMP_EXIT -eq 0 ]] && pass "lost key, reviewed: the run exits 0" \
+        || fail "lost key, reviewed: the run exits 0 (got $BUMP_EXIT)"
+
+    # ── No review line: held as a draft ──────────────────────────────
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n\nAdversarial-review: pending\n'
+    rm -f "$bodies/bumporg_repo-lost.body" "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-held.txt"
+    run_lost_key_bump "$log" "$pulls"
+    assert_contains "$log" "PR created as a HELD draft" "lost key, no review: opened as a held draft"
+    assert_contains "$log" "carries no Adversarial-review: pass line" "lost key, no review: says why it is held"
+    assert_contains "$log" "=== Held: 1 bump pull request(s)" "lost key, no review: the run summary counts the hold"
+    if [[ -e "$bodies/bumporg_repo-lost.draft" ]]; then
+        pass "lost key, no review: gh pr create was asked for --draft"
+    else
+        fail "lost key, no review: gh pr create was asked for --draft"
+    fi
+    body="$bodies/bumporg_repo-lost.body"
+    assert_contains "$body" "Held as a draft" "lost key, no review: the body says it is held"
+    assert_contains "$body" "adam/writing-adrs" "lost key, no review: the body names the lost key"
+    assert_not_contains "$body" "This pull request merges itself." "lost key, no review: the body does not promise a self-merge"
+    assert_contains "$bodies/bumporg_repo-lost.title" "HELD (drops a skill, no recorded review): " \
+        "lost key, no review: the title says it is held"
+
+    # ── A `block` verdict holds it too, whatever else the body says ──
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\nAdversarial-review: block https://example.com/runs/2\n'
+    rm -f "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-block.txt"
+    run_lost_key_bump "$log" "$pulls"
+    assert_contains "$log" "records Adversarial-review: block" "lost key, blocked: a block line wins over a pass line"
+    [[ -e "$bodies/bumporg_repo-lost.draft" ]] && pass "lost key, blocked: opened as a draft" \
+        || fail "lost key, blocked: opened as a draft"
+
+    # ── The pull request cannot be read: held, never assumed reviewed ─
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\n'
+    rm -f "$bodies/bumporg_repo-lost.draft"
+    log="$TEST_DIR/bump-lost-unreadable.txt"
+    BUMP_COMMIT_PULLS_FAIL_FOR_RUN=1 run_lost_key_bump "$log" "$pulls"
+    unset BUMP_COMMIT_PULLS_FAIL_FOR_RUN
+    assert_contains "$log" "could not read the pull request behind bumporg/agentskills@" \
+        "lost key, unreadable: says the review could not be read"
+    assert_contains "$log" "HTTP 403" "lost key, unreadable: quotes gh's status line"
+    assert_not_contains "$log" "Resource not accessible by integration\",\"status\"" \
+        "lost key, unreadable: never quotes the API's error body"
+    [[ -e "$bodies/bumporg_repo-lost.draft" ]] && pass "lost key, unreadable: opened as a draft" \
+        || fail "lost key, unreadable: opened as a draft"
+
+    # ── No key lost: exactly as before (the control) ─────────────────
+    rm -rf "$TEST_DIR/bare-lost"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" repo-lost
+    rm -f "$bodies/bumporg_repo-lost.draft" "$bodies/bumporg_repo-lost.body"
+    log="$TEST_DIR/bump-lost-control.txt"
+    BUMP_CHECKOUTS_FOR_RUN="$BUMP_CHECKOUTS_ARG" BUMP_BARE_DIR_FOR_RUN="$TEST_DIR/bare-lost" \
+        run_bump "$log"
+    unset BUMP_CHECKOUTS_FOR_RUN BUMP_BARE_DIR_FOR_RUN
+    assert_contains "$log" "PR created: " "no key lost (control): proposed as before"
+    assert_not_contains "$log" "drops skill key" "no key lost (control): no removal is reported"
+    if [[ ! -e "$bodies/bumporg_repo-lost.draft" ]] \
+       && ! grep -q "skill key" "$bodies/bumporg_repo-lost.body"; then
+        pass "no key lost (control): not a draft, and the body says nothing about removals"
+    else
+        fail "no key lost (control): not a draft, and the body says nothing about removals"
+    fi
+
+    rm -rf "$TEST_DIR/bare-lost" "$pulls"
+}
+
+# ── Test 8r2: the sweep asks again before it merges a removal ─────────────
+#
+# The propose pass's draft is not the only guard: a PR body is editable and a
+# draft can be marked ready by hand, so the sweep re-reads both locks and the
+# registry pull request itself. That is also what stops "no checks ran" from
+# being enough to merge a removal (#488 item 3): every PR here has an empty
+# rollup, which pr_merge_verdict alone reads as ready.
+make_lost_key_sweep_repo() {   # <name> <number> <isDraft>
+    local name="$1" bare="$TEST_DIR/bare-lost/bumporg_$1" work="$TEST_DIR/work/lost-sweep-$1"
+    make_lost_key_consumer "$TEST_DIR/bare-lost" "$name"
+    rm -rf "$work"
+    git clone -q "$bare" "$work" >/dev/null 2>&1
+    cd "$work"
+    git config commit.gpgsign false
+    git checkout -q -b skills-lock-bump/update
+    python3 "$TEST_DIR/registry/scripts/generate_skills_lock.py" --repin \
+        --repo "$TEST_DIR/registry-lost" -o skills.lock >/dev/null
+    git add -A
+    git commit -q -m "chore: re-pin skills.lock" >/dev/null 2>&1
+    git push -q origin HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
+    cd "$REPO_ROOT"
+    mkdir -p "$TEST_DIR/lost-pr-dir"
+    printf '[{"number":%s,"headRefName":"skills-lock-bump/update","baseRefName":"main","author":{"login":"agents-md-sync[bot]"},"isDraft":%s,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"","statusCheckRollup":[]}]\n' \
+        "$2" "$3" > "$TEST_DIR/lost-pr-dir/bumporg_$name.json"
+}
+
+run_lost_key_sweep() {   # <output file> <pulls dir>
+    BUMP_PR_DIR_FOR_RUN="$TEST_DIR/lost-pr-dir" \
+    BUMP_HONOR_REF_FOR_RUN=1 \
+        run_lost_key_bump "$1" "$2"
+    unset BUMP_PR_DIR_FOR_RUN BUMP_HONOR_REF_FOR_RUN
+}
+
+test_bump_sweep_lost_skill_key() {
+    echo ""
+    echo "=== Test: bump-consumer-locks.sh (the sweep re-checks a removal's review) ==="
+
+    setup_lost_key_registry
+    local pulls="$TEST_DIR/lost-sweep-pulls" log main_before
+
+    # ── Unreviewed, not a draft, no checks: never merged ─────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-a 301 false
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    main_before=$(git -C "$TEST_DIR/bare-lost/bumporg_repo-lost-a" rev-parse main)
+    log="$TEST_DIR/sweep-lost-held.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-a#301: not merged, HELD — it drops 1 skill key(s) without a recorded review" \
+        "sweep, lost key without review: held even though no checks ran"
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged 301 " "sweep, lost key without review: gh pr merge was never called"
+    if [[ "$(git -C "$TEST_DIR/bare-lost/bumporg_repo-lost-a" rev-parse main)" == "$main_before" ]]; then
+        pass "sweep, lost key without review: the default branch did not move"
+    else
+        fail "sweep, lost key without review: the default branch did not move"
+    fi
+
+    # ── Reviewed, no checks: merged, and says why ────────────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-b 302 false
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\n'
+    log="$TEST_DIR/sweep-lost-reviewed.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-b#302: MERGED with a merge commit — no checks ran on it — this repo reports none; it drops 1 skill key(s), each with a recorded review" \
+        "sweep, lost key with review: merged, naming the review"
+    assert_contains "$BUMP_PR_LOG" "pr-merged 302 --repo bumporg/repo-lost-b --merge" \
+        "sweep, lost key with review: gh pr merge was called"
+
+    # ── A held draft whose review has since landed: marked ready ─────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-c 303 true
+    write_lost_key_pulls "$pulls" $'Adversarial-review: pass https://example.com/runs/1\n'
+    log="$TEST_DIR/sweep-lost-ready.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-c#303: marked ready" "sweep, held draft now reviewed: marked ready"
+    assert_contains "$BUMP_PR_LOG" "pr-ready 303 bumporg/repo-lost-c" "sweep, held draft now reviewed: gh pr ready was called"
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged 303 " "sweep, held draft now reviewed: not merged in the same run"
+
+    # ── A held draft still unreviewed: left alone ────────────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-d 304 true
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-draft.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-d#304: not merged — it is a draft" "sweep, held draft unreviewed: still a draft"
+    assert_not_contains "$BUMP_PR_LOG" "pr-ready 304 " "sweep, held draft unreviewed: not marked ready"
+
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir" "$pulls"
 }
 
 # ── Test 8h1: a lock with NO digests is not a lock with BAD digests ───────
@@ -11275,8 +11224,15 @@ LOCK
 #!/usr/bin/env bash
 set -uo pipefail
 source "$1"
-fx="$2"; out="$3"; reason="$4"; fed="$5"; scoped="$6"
+fx="$2"; out="$3"; reason="$4"; fed="$5"; scoped="$6"; removal="${7:-none}"
 mkdir -p "$out"
+# The #488 axis: what this re-pin drops, and what the registry recorded.
+case "$removal" in
+    reviewed) lost_keys=("b/gone"); lost_key_notes=("REVIEWED https://example.com/pull/7 https://example.com/runs/1"); removal_reviewed=true ;;
+    held)     lost_keys=("b/gone"); lost_key_notes=("HELD https://example.com/pull/7 carries no Adversarial-review: pass line"); removal_reviewed=false ;;
+    mixed)    lost_keys=("b/gone" "c/moved"); lost_key_notes=("REVIEWED https://example.com/pull/7 https://example.com/runs/1" "HELD no merge removes it"); removal_reviewed=false ;;
+    *)        ;;
+esac
 cd "$fx" || exit 9
 LOCK_REL_PATH="skills.lock"
 LOCK_DIGEST_SHAPE='sha256:<64 hex>'
@@ -11336,9 +11292,10 @@ RENDER
     for reason in content format federated unanswerable; do
         for fed in advanced unchanged not_asked self_named self_named_plus self_named_quiet none; do
             for scoped in true false; do
-                cell="$reason-$fed-$scoped"
+              for removal in none reviewed held mixed; do
+                cell="$reason-$fed-$scoped-$removal"
                 out="$dir/out/$cell"
-                bash "$dir/render.sh" "$claims" "$dir/fx" "$out" "$reason" "$fed" "$scoped"
+                bash "$dir/render.sh" "$claims" "$dir/fx" "$out" "$reason" "$fed" "$scoped" "$removal"
 
                 # WHAT THIS CELL IS ALLOWED TO PRODUCE, declared before it is
                 # read. `expect=refuse` is a positive claim about the script —
@@ -11613,14 +11570,17 @@ if whole.strip():
 ' "$out/all" "$out/parts.bin" 2>"$out/closure.err"; then
                     r_closure="$r_closure $cell($(head -1 "$out/closure.err"))"
                 fi
+              done
             done
         done
     done
 
-    if [[ $rendered -eq 26 && $refused -eq 30 ]]; then
-        pass "claims: the cross product is 56 cells — 26 that produce an artifact, 30 that cannot"
+    # 56 run states, each under four removal states (#488): nothing dropped,
+    # a reviewed drop, an unreviewed drop, and one of each.
+    if [[ $rendered -eq 104 && $refused -eq 120 ]]; then
+        pass "claims: the cross product is 224 cells — 104 that produce an artifact, 120 that cannot"
     else
-        fail "claims: the cross product is 56 cells — 26 that produce an artifact, 30 that cannot (got $rendered / $refused)"
+        fail "claims: the cross product is 224 cells — 104 that produce an artifact, 120 that cannot (got $rendered / $refused)"
     fi
     [[ -z "$r_reach" ]] && pass "claims: every cell produces exactly what its run state allows" \
         || fail "claims: every cell produces exactly what its run state allows —$r_reach"
@@ -12712,7 +12672,9 @@ test_bump_sweep_head_match() {
         run_sweep "$TEST_DIR/sweep-garbled.txt"
     unset BUMP_HEAD_GARBLED_FOR_RUN
     log="$TEST_DIR/sweep-garbled.txt"
-    assert_contains "$log" "bumporg/repo-zz-ready#111: its head commit did not read back as a sha" "head match: an unreadable head commit is refused, with the reason"
+    # Refused by the removal gate (#488) now, one step before the merge's own
+    # pin would refuse it: with no readable head there is no lock to compare.
+    assert_contains "$log" "bumporg/repo-zz-ready#111: could not tell which skill keys it drops — its head commit did not read back as a sha" "head match: an unreadable head commit is refused, with the reason"
     assert_not_contains "$log" "bumporg/repo-zz-ready#111: MERGED" "head match: an unreadable head commit is not merged unpinned"
     if [[ "$(sweep_main_sha repo-zz-ready)" == "$before_sha" ]]; then
         pass "head match: the default branch did not move on an unreadable head"
@@ -12733,9 +12695,10 @@ test_bump_sweep_head_match() {
     assert_contains "$log" "bumporg/repo-zz-ready#111: MERGED with a merge commit" "head match: an older gh still merges — the guard is hardening, not a dependency"
     assert_not_contains "$prlog" "--match-head-commit" "head match: the flag is not passed to a gh that would reject it"
 
-    # ── An older gh AND a head oid that does not parse: the merge still
-    # lands unpinned, but the cleanup has no judged commit to pin its delete
-    # to, so it deletes nothing and counts the failure — never by name.
+    # ── An older gh AND a head oid that does not parse. This used to merge
+    # unpinned and then refuse the cleanup; since #488 the removal gate must
+    # read the lock AT the head before any merge, so it refuses first: no
+    # merge, a counted failure, and the branch left alone.
     setup_sweep_repos
     local zz_tip
     zz_tip=$(sweep_bump_branch_sha repo-zz-ready)
@@ -12743,8 +12706,10 @@ test_bump_sweep_head_match() {
         run_sweep "$TEST_DIR/sweep-noflag-garbled.txt"
     unset BUMP_NO_MATCH_FLAG_FOR_RUN BUMP_HEAD_GARBLED_FOR_RUN
     log="$TEST_DIR/sweep-noflag-garbled.txt"
-    assert_contains "$log" "ERROR: bumporg/repo-zz-ready#111: merged, but its head commit did not read back as a sha" \
-        "head match: with no pin and no readable head, the cleanup refuses and counts"
+    assert_contains "$log" "ERROR: bumporg/repo-zz-ready#111: could not tell which skill keys it drops — its head commit did not read back as a sha" \
+        "head match: with no pin and no readable head, the sweep refuses and counts"
+    assert_not_contains "$log" "bumporg/repo-zz-ready#111: MERGED" \
+        "head match: with no pin and no readable head, nothing is merged"
     if [[ -n "$zz_tip" && "$(sweep_bump_branch_sha repo-zz-ready)" == "$zz_tip" ]]; then
         pass "head match: and the branch is not deleted by name"
     else
@@ -13976,6 +13941,24 @@ test_prompt_audit_sweep() {
         pass "prompt-audit sweep policy: 19 passed"
     else
         fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=19, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+# The fleet worker fire workflow (fleet-worker-fire.yml): every 3 hours (or
+# thinned by FLEET_WORKER_EVERY_HOURS), the bearer on stdin only, an
+# unconfigured URL or bearer fails. Never piped.
+test_fleet_worker_fire() {
+    echo ""
+    echo "=== Test: fleet worker fire workflow ==="
+    local out="$TEST_DIR/fleet-worker-fire-tap.txt" rc=0
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-fleet-worker-fire.js" > "$out" 2>&1 || rc=$?
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    if [[ "$rc" -eq 0 && "$pass_n" == "7" && "$fail_n" == "0" ]]; then
+        pass "fleet worker fire workflow: 7 passed"
+    else
+        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=7, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -19856,6 +19839,107 @@ test_base_md_merge_window() {
     fi
 }
 
+# ── drift-report.sh saves the overlap inputs only when asked ───────────────
+#
+# drift-report.yml sets DRIFT_GUIDANCE_DIR and then runs
+# scripts/guidance-overlap.js over what the report saved there: each repo's
+# AGENTS.md, its requested sections, and GitHub's languages map. Unset, the
+# report must write nothing and ask for no languages.
+test_drift_report_guidance_dir() {
+    echo ""
+    echo "=== Test: drift-report.sh (DRIFT_GUIDANCE_DIR overlap inputs) ==="
+
+    # Borrows the fleet-payload fixture (the mock lists only that repo for
+    # fleetorg) and puts it back exactly as it was before returning.
+    local work="$TEST_DIR/work/fleet-payload"
+    local gdir="$TEST_DIR/guidance-dir"
+    local rpt="$TEST_DIR/drift-guidance-dir.md"
+    local saved="$TEST_DIR/guidance-dir-saved"
+    local rc=0
+    mkdir -p "$saved"
+    cp "$work/.agents-sync.yml" "$work/AGENTS.md" "$saved/"
+    printf 'sections:\n  - python\n' >"$work/.agents-sync.yml"
+    { "$REPO_ROOT/scripts/build-agents-md.sh" python; printf '\nOverlap fixture line.\n'; } >"$work/AGENTS.md"
+    push_fleet_payload_fixture
+    printf '{"JavaScript": 100}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+
+    # Unset: nothing is written.
+    rm -rf "$gdir"; mkdir -p "$gdir"
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 && -z "$(ls -A "$gdir")" ]]; then
+        pass "guidance dir: unset DRIFT_GUIDANCE_DIR writes nothing"
+    else
+        fail "guidance dir: unset run exited $rc or wrote: $(ls -A "$gdir" | tr '\n' ' ')"
+    fi
+
+    # Set: AGENTS.md, sections and languages land under <owner>__<repo>.
+    rc=0
+    DRIFT_GUIDANCE_DIR="$gdir" \
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    local stem="$gdir/fleetorg__repo-payload"
+    if [[ "$rc" -eq 0 ]] && grep -qxF 'Overlap fixture line.' "$stem.agents.md" 2>/dev/null; then
+        pass "guidance dir: the repo's AGENTS.md is saved"
+    else
+        fail "guidance dir: run exited $rc; $stem.agents.md missing or wrong"
+    fi
+    if [[ "$(cat "$stem.sections" 2>/dev/null)" == "python" ]]; then
+        pass "guidance dir: the requested sections are saved"
+    else
+        fail "guidance dir: sections file holds '$(cat "$stem.sections" 2>/dev/null)'"
+    fi
+    if grep -qF '"JavaScript"' "$stem.languages.json" 2>/dev/null; then
+        pass "guidance dir: the languages map is saved for a repo with sections"
+    else
+        fail "guidance dir: languages file missing for a repo that requests sections"
+    fi
+
+    # End to end: the overlap script reads the saved files and flags the
+    # python section on a repo GitHub reports no Python for.
+    local out="$TEST_DIR/guidance-overlap-e2e.md"
+    rc=0
+    node "$REPO_ROOT/scripts/guidance-overlap.js" "$gdir" > "$out" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload` requests `python`' "$out"; then
+        pass "guidance dir: guidance-overlap.js flags the section misfit from the saved files"
+    else
+        fail "guidance dir: guidance-overlap.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
+    fi
+
+    cp "$saved/.agents-sync.yml" "$saved/AGENTS.md" "$work/"
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    push_fleet_payload_fixture
+}
+
+test_guidance_overlap() {
+    echo ""
+    echo "=== Test: guidance-overlap.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "guidance overlap: node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/guidance-overlap-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-guidance-overlap.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 11 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 11 ]]; then
+        pass "guidance overlap: node:test suite is green ($pass_n passed)"
+    else
+        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=11): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_routine_merge_gate() {
     echo ""
     echo "=== Test: routine-merge-gate.js (node:test suite) ==="
@@ -25544,6 +25628,7 @@ GROUP_bootstrap=(
     test_sync_bootstrap_fork_migration
     test_drift_report_bootstrap
     test_drift_report_fleet_payload
+    test_drift_report_guidance_dir
     test_drift_report_plugin_copies
     # Immediately after the test that establishes bootorg/repo-adopted's
     # confident verdicts, because those are exactly what its control run
@@ -25589,7 +25674,6 @@ GROUP_drift=(
     test_drift_report_marker_not_through_a_pipe
     test_check_cron_coverage
     test_check_registry
-    test_capture_routine
 )
 
 # The lock-bump lane, in its own mock org (bumporg) so nothing here disturbs
@@ -25612,6 +25696,8 @@ GROUP_bump=(
     test_bump_push_rejected
     test_bump_shrink_check_noisy_python
     test_bump_bundle_vanished
+    test_bump_lost_skill_key
+    test_bump_sweep_lost_skill_key
     test_bump_format_gate_empty_skills
     test_bump_digest_format_gate
     test_bump_generator_without_check_format
@@ -25677,6 +25763,7 @@ GROUP_hook_pin=(
 GROUP_self_hosted=(
     test_on_hold_label
     test_prompt_audit_sweep
+    test_fleet_worker_fire
     test_sync_workflow_trigger
     test_sync_workflow_serialized
     test_self_hosted_hook_pin
@@ -25701,6 +25788,7 @@ GROUP_self_hosted=(
     test_health_reusable_parity
     test_routine_merge_gate
     test_base_md_merge_window
+    test_guidance_overlap
     test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown

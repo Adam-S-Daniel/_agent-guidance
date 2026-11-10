@@ -16,7 +16,8 @@ review for each new batch of Claude Code and Codex releases. Each run:
   changed.
 
 **Status:** enabled on 2026-09-29. The claude.ai Routine "agent changelog
-watcher" fires daily at 01:03 UTC (weekly on Mondays until 2026-09-30),
+watcher" fires daily at 9:03 PM US Eastern (`CRON_TZ=America/New_York 3 21 * * *`:
+02:03 UTC in winter, 01:03 UTC in summer; weekly on Mondays until 2026-09-30),
 and the owner can also start it by hand. Since 2026-10-02 every run
 accumulates on one dedicated branch, `persistent/vendor-changelog`, and a PR
 to `main` opens only when a run makes a substantive change (step 7). The
@@ -534,7 +535,12 @@ The sweep's own spec is
    - **`## To check`** has one box: the sweep fired for this issue logged a
      result in
      [`prompt-audit-runs.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/persistent/prompt-audit-runs/docs/reference/prompt-audit-runs.md)
-     on the `persistent/prompt-audit-runs` branch.
+     on the `persistent/prompt-audit-runs` branch. Add one more box for each
+     open question the issue's **Why it may matter here** raises (a file
+     that may stop loading, a setting whose state is not measured), naming
+     the hands-on check that answers it. The audit reads files; it cannot
+     answer how a live session behaves, so such a question needs its own
+     box or nothing tracks it once the sweep closes the issue.
 4. **No fire from here.** This routine holds no fire URL or bearer and
    sends no request to `api.anthropic.com`. Filing the trigger issue (item
    3) is the whole request: the
