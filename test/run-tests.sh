@@ -48,6 +48,11 @@ export SYNC_READ_RETRY_DELAYS="0 0 0"
 # log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
 export AGENT_CHECKS_LOG=off
 
+# Nor may its local-identity check depend on the machine the suite runs on:
+# generic names are never checked, so only a test that sets both to a
+# fictional identity of its own sees a refusal.
+export AGENT_CHECKS_LOCAL_USER=root AGENT_CHECKS_LOCAL_HOST=localhost
+
 # Nor may it install markdown-it from npm for its dated-phrasing warning pass:
 # point the pass at a directory with no markdown-it, so it prints its one
 # "could not be loaded" warning. The dated-phrasing tests point it at the
