@@ -1,0 +1,57 @@
+# Rebuilds every feed and publishes them to GitHub Pages. Pages is the only
+# output: nothing is committed, so branch protection never comes into play.
+name: feeds
+
+on:
+  schedule:
+    # Hourly, off the top of the hour when GitHub's scheduler is busiest.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "rssinator/**"
+      - "requirements.txt"
+      - ".github/workflows/feeds.yml"
+
+permissions:
+  contents: read
+
+# One deployment at a time; a queued run waits rather than cancelling a live one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt
+      - name: Build feeds
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          python -m rssinator.build --out site --base-url "https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/"
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1

@@ -394,6 +394,36 @@ jobs:
       - name: CI shards cover every test group
         run: node scripts/check-ci-shards.js
 
+      # The real `gh actions-lock --no-fix` against what the sync's lockfile
+      # helper (scripts/actions-lock-entry.sh) writes, on vendored real
+      # lockfiles: the suite's own model of that rule is the helper's rule
+      # again, so only the tool can say the helper is right. Installed the way
+      # Adam-S-Daniel/verify-actions-lock installs it (same release, same
+      # digest; bump the two together with that action). Unconditional like the
+      # rest of this job: a required check cannot be path-filtered, and a
+      # change to sync.sh or the helper must always reach it. The tool resolves
+      # pins over the network, so it gets the job's read-only token through
+      # `env:`, never a `${{ }}` inside `run:`.
+      - name: Install gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK_TOOL_VERSION: v0.3.0
+          LOCK_TOOL_SHA256: 15810767a8cd28d389f0942e3ce515ac0008c3f65301c3834fd4c046d4bda497
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/gh-actions-lock"
+          mkdir -p "$dir"
+          gh release download "$LOCK_TOOL_VERSION" -R github/gh-actions-lock -p linux-amd64 -O "$dir/gh-actions-lock" --clobber
+          echo "$LOCK_TOOL_SHA256  $dir/gh-actions-lock" | sha256sum -c -
+          chmod +x "$dir/gh-actions-lock"
+          (cd "$dir" && gh extension install .)
+          gh actions-lock --version
+
+      - name: Lockfile helper satisfies gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-actions-lock-helper.sh
+
   # THE REQUIRED CONTEXT. Its job id and name are both `test` and must stay
   # so: that is the context branch protection names. `if: always()` and not
   # `!cancelled()` or the default `success()`: under either of those a red or
