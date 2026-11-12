@@ -13955,10 +13955,10 @@ test_fleet_worker_fire() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "7" && "$fail_n" == "0" ]]; then
-        pass "fleet worker fire workflow: 7 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "10" && "$fail_n" == "0" ]]; then
+        pass "fleet worker fire workflow: 10 passed"
     else
-        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=7, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=10, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
