@@ -77,9 +77,16 @@ BEGIN { section = "header"; nw = 0; nd = 0 }
     }
     if (section == "dependencies") {
         if (line ~ /^    \047[^\047]+\047:$/) {
-            nd++; dkey[nd] = line; sub(/^    \047/, "", dkey[nd]); sub(/\047:$/, "", dkey[nd]); dtext[nd] = line; next
+            nd++; dkey[nd] = line; sub(/^    \047/, "", dkey[nd]); sub(/\047:$/, "", dkey[nd]); dtext[nd] = line; usesopen = 0; next
         }
-        if (line ~ /^        [a-z_]+: [^ ].*$/ && nd > 0) { dtext[nd] = dtext[nd] "\n" line; next }
+        if (line ~ /^        [a-z_]+: [^ ].*$/ && nd > 0) { dtext[nd] = dtext[nd] "\n" line; usesopen = 0; next }
+        # A composite action lists what it uses: `        uses:` and then
+        # a deeper list of refs (the pages upload action, say).
+        if (line == "        uses:" && nd > 0) { dtext[nd] = dtext[nd] "\n" line; usesopen = 1; next }
+        if (line ~ /^            - \047[^\047]+\047$/ && usesopen) {
+            dtext[nd] = dtext[nd] "\n" line; r = line; sub(/^            - \047/, "", r); sub(/\047$/, "", r)
+            duses[nd] = duses[nd] " " r; next
+        }
         bad("unrecognized line in dependencies:")
     }
 }
@@ -101,6 +108,17 @@ END {
         m = split(order[i], parts, "\n")
         for (j = 2; j <= m; j++) { r = parts[j]; sub(/^        - \047/, "", r); sub(/\047$/, "", r); live[r] = 1 }
     }
+    # ...and, transitively, every ref a live composite action itself uses
+    # (its `uses:` list): gh actions-lock keeps those out of the workflow
+    # lists but rejects the lockfile if they are dropped.
+    do {
+        grew = 0
+        for (i = 1; i <= nd; i++) {
+            if (!(dkey[i] in live)) continue
+            k = split(duses[i], us, " ")
+            for (j = 1; j <= k; j++) if (!(us[j] in live)) { live[us[j]] = 1; grew = 1 }
+        }
+    } while (grew)
     for (i = 1; i <= nh; i++) print head[i]
     print ver
     print "workflows:"
@@ -113,7 +131,14 @@ END {
     }
 }' "$lock" > "$tmp" || { echo "${0##*/}: $lock has a shape this helper does not recognize — not edited" >&2; exit 2; }
 
-if cmp -s "$tmp" "$lock"; then
+# A file that differs only by a missing final newline is consistent: gh
+# actions-lock reads it without one (checked against v0.3.0), so neither mode
+# touches it. The comparison copy gets the newline; the file itself does not.
+norm=$(mktemp)
+trap 'rm -f "$tmp" "$norm"' EXIT
+cat "$lock" > "$norm"
+[[ -z "$(tail -c1 "$lock")" ]] || echo >> "$norm"
+if cmp -s "$tmp" "$norm"; then
     [[ "$mode" == "apply" ]] && echo unchanged
     exit 0
 fi

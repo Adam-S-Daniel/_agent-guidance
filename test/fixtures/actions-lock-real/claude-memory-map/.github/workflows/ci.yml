@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# The job only checks out, installs and tests; it never writes to the repo.
+# Without this, GITHUB_TOKEN gets the repo's default scope (CodeQL
+# actions/missing-workflow-permissions, alert #1).
+permissions:
+  contents: read
+
+# `test` is meant to be a REQUIRED status check on main (cms-platform#437) —
+# keep it a plain job id with no `name:`, no matrix, no `concurrency` group,
+# and no `timeout-minutes`, and keep it present on every pull request to main.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '20'
+
+      - name: Verify action lockfile
+        uses: Adam-S-Daniel/verify-actions-lock@v1.1.0
+
+      - name: Install dependencies
+        run: npm install
+
+      # GitHub validates .github/dependabot.yml only once it is on main (the
+      # `dependabot` check never runs on a PR), so an invalid key merged green
+      # and silently disabled every Dependabot update for five weeks (#31).
+      # This is the pre-merge guard.
+      - name: Check .github/dependabot.yml
+        run: npm run test:config
+
+      # Executes dependabot-auto-merge.yml's sweep script for real, against a
+      # stubbed `gh` — a schedule-only workflow gets no PR-time run otherwise.
+      - name: Check dependabot-auto-merge.yml
+        run: npm run test:workflows
+
+      - name: Check generated Mermaid suite
+        run: npm run test:suite
+
+      - name: Install Chrome for Testing
+        run: npm run setup:browser
+
+      - name: Build index.html
+        run: npm run build
+
+      # The committed index.html must BE the build output. The site-sync /
+      # site-preview workflows copy the committed file to adamdaniel.ai, so
+      # this check is what makes that copy the verified build artifact.
+      - name: Verify committed index.html matches the build
+        run: |
+          if ! git diff --exit-code -- index.html; then
+            echo "::error::index.html is stale — run 'npm run build' and commit the result."
+            exit 1
+          fi
+
+      - name: Run e2e test suite
+        run: npm test

@@ -24602,7 +24602,7 @@ setup_am_repos() {
     mkdir -p "$bare_dir" "$work"
     for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml am-drift am-cmscall cms-platform \
                 am-symlink am-dangling am-cmlower \
-                am-lk-missing am-lk-old am-lk-solo am-lk-only am-lk-ok am-lk-link; do
+                am-lk-missing am-lk-old am-lk-solo am-lk-only am-lk-ok am-lk-link am-lk-fail; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/amorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
@@ -24650,6 +24650,9 @@ setup_am_repos() {
             am-lk-ok)
                 cp "$REPO_ROOT/templates/dependabot-auto-merge/dependabot-auto-merge.yml" "$work/$name/.github/workflows/"
                 lk_lock consistent > "$work/$name/.github/workflows/actions.lock" ;;
+            # A recognized, fixable lockfile whose `apply` the test stub makes
+            # fail (the marker comment is what the stub keys on).
+            am-lk-fail) { echo "# test-stub: apply fails"; lk_lock missing; } > "$work/$name/.github/workflows/actions.lock" ;;
             am-lk-link)
                 lk_lock missing > "$work/$name/.github/real-actions.lock"
                 ln -s ../real-actions.lock "$work/$name/.github/workflows/actions.lock" ;;
@@ -24750,6 +24753,39 @@ test_actions_lock_entry_helper() {
         && pass "helper: a lockfile as gh wrote it for a small repo is left byte-identical" \
         || fail "helper: a lockfile as gh wrote it for a small repo is left byte-identical"
 
+    # A consistent lockfile missing only its final newline: gh actions-lock
+    # reads that fine, so check says 0 and apply says unchanged and writes nothing.
+    printf '%s' "$(cat "$d/ok.before")" > "$d/nonl.lock"; cp "$d/nonl.lock" "$d/nonl.before"
+    rc=0; "$helper" check "$d/nonl.lock" "$wf" || rc=$?
+    out=$("$helper" apply "$d/nonl.lock" "$wf")
+    if [[ $rc -eq 0 && "$out" == unchanged ]] && cmp -s "$d/nonl.lock" "$d/nonl.before" \
+       && ! cmp -s "$d/nonl.lock" "$d/ok.before"; then
+        pass "helper: a consistent lockfile without a final newline is consistent (check 0, apply unchanged, file untouched)"
+    else
+        fail "helper: a consistent lockfile without a final newline is consistent — check $rc, apply said $out"
+    fi
+
+    # A composite action's own `uses:` list: its target is live through it, so
+    # pruning keeps it, and an orphan beside it still goes.
+    local comp_head
+    comp_head=$(lk_lock missing | sed '/^dependencies:/,$d')
+    {
+        echo "$comp_head"
+        printf '%s\n' "dependencies:" "    'actions/composite@v1.0.0':" "        ref: 'v1.0.0'" \
+            "        commit: 'sha1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'" "        owner_id: 1" "        repo_id: 2" \
+            "        uses:" "            - 'actions/inner@v2.0.0'" \
+            "    'actions/inner@v2.0.0':" "        ref: 'v2.0.0'" \
+            "        commit: 'sha1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'" "        owner_id: 1" "        repo_id: 3"
+        lk_dep_meta
+    } | sed "s|^        - 'actions/checkout@v7.0.1'|        - 'actions/composite@v1.0.0'|" > "$d/comp.lock"
+    rc=0; "$helper" apply "$d/comp.lock" "$wf" > /dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]] && grep -q "'actions/inner@v2.0.0':" "$d/comp.lock" \
+       && grep -q "'actions/composite@v1.0.0':" "$d/comp.lock" && ! grep -q fetch-metadata "$d/comp.lock"; then
+        pass "helper: a dependency used only through a composite action's uses: list is kept, an orphan is dropped"
+    else
+        fail "helper: a dependency used only through a composite action's uses: list is kept (exit $rc)"
+    fi
+
     # Unrecognized shapes: exit 2, file untouched.
     local shape
     for shape in "version only" "version v0.1.0" "no workflows section" "CRLF" "stray line"; do
@@ -24793,9 +24829,16 @@ test_sync_dependabot_auto_merge() {
         MOCK_BARE_DIR="$bare" \
         MOCK_PR_BODY_DIR="$TEST_DIR/am-pr-bodies" \
         REPOS_YML="$yml" \
+        SYNC_TEST_ACTIONS_LOCK_SCRIPT="$TEST_DIR/lk-stub.sh" \
         PATH="$TEST_DIR/bin:$PATH" \
         "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
     }
+    # Stub for sync.sh's test-only SYNC_TEST_ACTIONS_LOCK_SCRIPT hook: the
+    # real helper, except `apply` fails on a lockfile carrying the marker.
+    printf '%s\n' '#!/usr/bin/env bash' \
+        'if [[ "$1" == apply ]] && grep -q "test-stub: apply fails" "$2"; then echo "stub: apply failed" >&2; exit 1; fi' \
+        "exec \"$REPO_ROOT/scripts/actions-lock-entry.sh\" \"\$@\"" > "$TEST_DIR/lk-stub.sh"
+    chmod +x "$TEST_DIR/lk-stub.sh"
     am_section() {    # <log> <repo>
         awk -v start="=== amorg/$2 ===" '
             $0 == start { on = 1; print; next }
@@ -24858,10 +24901,10 @@ test_sync_dependabot_auto_merge() {
     else
         fail "auto-merge (sync): a repo with no dependabot.yml gets it too (security updates need a merge path)"
     fi
-    if cmp -s <(am_show am-lock "$wf") "$tmpl/dependabot-auto-merge.yml"; then
-        pass "auto-merge (sync): a repo with actions.lock receives it (the template has no uses: lines)"
+    if [[ -z "$(am_show am-lock "$wf")" ]]; then
+        pass "auto-merge (sync): a repo whose actions.lock the sync cannot edit does not receive it (no entry would exist)"
     else
-        fail "auto-merge (sync): a repo with actions.lock receives it (the template has no uses: lines)"
+        fail "auto-merge (sync): a repo whose actions.lock the sync cannot edit does not receive it (no entry would exist)"
     fi
     if cmp -s <(am_show am-drift "$wf") "$tmpl/dependabot-auto-merge.yml" \
        && [[ "$(am_show am-drift "$wf")" != *OLD-SWEEP-CONTENT* ]]; then
@@ -25031,24 +25074,39 @@ test_sync_dependabot_auto_merge() {
     am_section "$out-1.log" am-lk-ok > "$out-lk-ok"
     assert_contains "$out-lk-ok" "Up to date" "auto-merge lockfile: the consistent repo is reported up to date"
     # An unrecognized lockfile shape (am-lock holds only a version line) and a
-    # symlinked lockfile are WARNed about and left alone; the workflow is still delivered.
-    if [[ "$(am_show am-lock "$lk_lock_rel")" == "version: 'v0.0.3'" ]] \
-       && cmp -s <(am_show am-lock "$wf") "$tmpl/dependabot-auto-merge.yml"; then
-        pass "auto-merge lockfile: an unrecognized lockfile shape is not edited (workflow still delivered)"
+    # symlinked lockfile are WARNed about and left alone, and the workflow is
+    # NOT delivered either: a workflow with no valid lock entry is exactly what
+    # gh actions-lock --no-fix rejects.
+    if [[ "$(am_show am-lock "$lk_lock_rel")" == "version: 'v0.0.3'" && -z "$(am_show am-lock "$wf")" ]]; then
+        pass "auto-merge lockfile: an unrecognized lockfile shape is not edited and the workflow is not delivered"
     else
-        fail "auto-merge lockfile: an unrecognized lockfile shape is not edited"
+        fail "auto-merge lockfile: an unrecognized lockfile shape is not edited and the workflow is not delivered"
     fi
     am_section "$out-1.log" am-lock > "$out-lk-odd"
     assert_contains "$out-lk-odd" "has a shape the sync does not recognize" "auto-merge lockfile: the unrecognized shape gets a WARN"
     if [[ "$(gattr_git -C "$bare/amorg_am-lk-link" ls-tree main "$lk_lock_rel" | cut -c1-6)" == "120000" ]] \
        && cmp -s <(am_show am-lk-link ".github/real-actions.lock") <(lk_lock missing) \
-       && cmp -s <(am_show am-lk-link "$wf") "$tmpl/dependabot-auto-merge.yml"; then
-        pass "auto-merge lockfile: a symlinked lockfile is not edited through (target unchanged), the workflow is still delivered"
+       && [[ -z "$(am_show am-lk-link "$wf")" ]]; then
+        pass "auto-merge lockfile: a symlinked lockfile is not edited through (target unchanged) and the workflow is not delivered"
     else
-        fail "auto-merge lockfile: a symlinked lockfile is not edited through"
+        fail "auto-merge lockfile: a symlinked lockfile is not edited through and the workflow is not delivered"
     fi
     am_section "$out-1.log" am-lk-link > "$out-lk-link"
     assert_contains "$out-lk-link" "WARN: .github/workflows/actions.lock" "auto-merge lockfile: the symlinked lockfile gets a WARN"
+    assert_contains "$out-lk-link" "is not delivered either" "auto-merge lockfile: the symlinked lockfile's WARN says the workflow is withheld"
+    assert_contains "$out-lk-odd" "is not delivered either" "auto-merge lockfile: the unrecognized shape's WARN says the workflow is withheld"
+    # `apply` failing after `check` passed (the stub): the workflow is not
+    # written, the lockfile is untouched, and no commit names the lane.
+    am_section "$out-1.log" am-lk-fail > "$out-lk-fail"
+    if [[ -z "$(am_show am-lk-fail "$wf")" ]] \
+       && cmp -s <(am_show am-lk-fail "$lk_lock_rel") <({ echo "# test-stub: apply fails"; lk_lock missing; }) \
+       && [[ "$(gattr_git -C "$bare/amorg_am-lk-fail" log -1 --format=%s main)" != *"Dependabot"* \
+             && "$(gattr_git -C "$bare/amorg_am-lk-fail" log -1 --format=%B main)" != *"auto-merge"* ]]; then
+        pass "auto-merge lockfile: when apply fails the workflow is not written, the lockfile is untouched and nothing is committed for the lane"
+    else
+        fail "auto-merge lockfile: when apply fails the workflow is not written, the lockfile is untouched and nothing is committed for the lane"
+    fi
+    assert_contains "$out-lk-fail" "could not edit $lk_lock_rel" "auto-merge lockfile: the apply failure gets a WARN"
 
     # ── Delivery mode is stated: dry run and real run ──
     am_section "$out-dry.log" am-lk-missing > "$out-dry-lk"

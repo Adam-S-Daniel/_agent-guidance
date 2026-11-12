@@ -82,7 +82,10 @@ AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
 # workflow without touching the lockfile broke 17 repos, so the lane edits
 # both (scripts/actions-lock-entry.sh holds the text transform).
 ACTIONS_LOCK_REL_PATH=".github/workflows/actions.lock"
-ACTIONS_LOCK_SCRIPT="$SCRIPT_DIR/actions-lock-entry.sh"
+# SYNC_TEST_ACTIONS_LOCK_SCRIPT exists ONLY so test/run-tests.sh can stub a
+# helper whose `apply` fails after `check` passed. Nothing in production sets
+# it; unset, the real helper runs.
+ACTIONS_LOCK_SCRIPT="${SYNC_TEST_ACTIONS_LOCK_SCRIPT:-$SCRIPT_DIR/actions-lock-entry.sh}"
 # The agent-checks lane (ADR 0021), on when repos.yml's agent_checks.deliver is
 # true. The runner and the Claude Code guard are MANAGED (overwritten whenever
 # they drift, like fleet-memory.sh); the CI workflow is ADDED once and never
@@ -1392,6 +1395,13 @@ for repo_name in "${REPOS[@]}"; do
                     log "WARN: $ACTIONS_LOCK_REL_PATH in $repo_name has a shape the sync does not recognize — not edited; run gh actions-lock there." ;;
             esac
         fi
+        # A repo with a lockfile gets the workflow only together with a lock
+        # edit that will work: a workflow with no valid entry is the exact
+        # state `gh actions-lock --no-fix` rejects. Refused means no write.
+        if [[ "$automerge_lock_state" == "refused" ]]; then
+            automerge_state="skipped"
+            log "WARN: $repo_name has $ACTIONS_LOCK_REL_PATH but the sync cannot edit it, so $AUTOMERGE_WF_REL_PATH is not delivered either (a workflow with no lock entry fails gh actions-lock --no-fix)."
+        fi
         [[ "$automerge_state" == "current" && "$automerge_lock_state" == "fix" ]] && automerge_state="lockfile"
     fi
     automerge_up_to_date=true
@@ -1830,23 +1840,36 @@ for repo_name in "${REPOS[@]}"; do
     automerge_written=false
     automerge_lock_written=false
     if ! $automerge_up_to_date; then
-        if [[ "$automerge_state" != "lockfile" ]]; then
-            mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
-            cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
-            automerge_written=true
-            log "dependabot auto-merge: workflow $([[ "$automerge_state" == "drifted" ]] && echo updated || echo added)."
-        fi
+        # The lockfile edit is built on a temp copy FIRST. Only when it
+        # succeeded are the workflow and the lockfile both put in place, so a
+        # failure leaves the tree with no lane change at all (no workflow
+        # without its lock entry) and nothing for the commit to stage.
+        automerge_lock_tmp=""
+        automerge_lock_result=""
+        automerge_lane_ok=true
         if [[ "$automerge_lock_state" == "fix" ]]; then
-            if automerge_lock_result=$("$ACTIONS_LOCK_SCRIPT" apply "$ACTIONS_LOCK_REL_PATH" "$AUTOMERGE_WF_REL_PATH" 2>/dev/null); then
-                if [[ "$automerge_lock_result" == "updated" ]]; then
-                    automerge_written=true
-                    automerge_lock_written=true
-                    log "dependabot auto-merge: $ACTIONS_LOCK_REL_PATH updated."
-                fi
-            else
-                log "WARN: could not edit $ACTIONS_LOCK_REL_PATH in $repo_name — leaving it untouched; run gh actions-lock there."
+            automerge_lock_tmp=$(mktemp)
+            cp "$ACTIONS_LOCK_REL_PATH" "$automerge_lock_tmp"
+            if ! automerge_lock_result=$("$ACTIONS_LOCK_SCRIPT" apply "$automerge_lock_tmp" "$AUTOMERGE_WF_REL_PATH" 2>/dev/null); then
+                automerge_lane_ok=false
+                log "WARN: could not edit $ACTIONS_LOCK_REL_PATH in $repo_name — the Dependabot auto-merge lane writes nothing; run gh actions-lock there."
             fi
         fi
+        if $automerge_lane_ok; then
+            if [[ "$automerge_state" != "lockfile" ]]; then
+                mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
+                cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
+                automerge_written=true
+                log "dependabot auto-merge: workflow $([[ "$automerge_state" == "drifted" ]] && echo updated || echo added)."
+            fi
+            if [[ "$automerge_lock_result" == "updated" ]]; then
+                cat "$automerge_lock_tmp" > "$ACTIONS_LOCK_REL_PATH"
+                automerge_written=true
+                automerge_lock_written=true
+                log "dependabot auto-merge: $ACTIONS_LOCK_REL_PATH updated."
+            fi
+        fi
+        [[ -z "$automerge_lock_tmp" ]] || rm -f "$automerge_lock_tmp"
     fi
 
     # ── agent-checks: write ────────────────────────────────────────────
