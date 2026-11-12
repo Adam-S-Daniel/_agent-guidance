@@ -43,10 +43,13 @@ review like the one that guards instruction fixes** (spec: step 2d of
 1. **An agent-made change:** a non-draft PR authored by `Adam-S-Daniel` and
    labeled `agent-authored`, into the default branch of any fleet repo
    except the three cms-platform-managed repos, whose merges publish a live
-   site. `agent/issue-*` PRs stay under the narrow rule alone.
+   site. `agent/issue-*` PRs stay under the narrow rule alone, and
+   lesson-check PRs and any PR with auto-merge armed merge themselves.
 2. **The hook pin bump:** `agents-md-sync[bot]`'s `hook-pin-bump/update` PR
    in this repo, touching exactly `repos.yml` and the self-hosted hook,
-   with every commit by the bot. The worker first checks that the hook at
+   with every commit by the bot and `repos.yml` unchanged apart from the
+   two pin values (0010's own guard, since a git identity on an unprotected
+   branch proves nothing). The worker also checks that the hook at
    the pinned `ref` in `adam-agentskills` hashes to the pinned digest and to
    the self-hosted copy, and that `ref` is on that repo's `main`.
 
@@ -57,7 +60,9 @@ parking), the guidance merge window (0039), a head pushed at least an hour
 before the run, and a `CLEAN` verdict on the exact head from a separately
 prompted subagent, told to break the change, that the same run started. A
 stamp comment already on the PR does not count: every agent session posts
-as `Adam-S-Daniel`, so a thread could otherwise stamp its own PR. The review refuses
+as `Adam-S-Daniel`, so a thread could otherwise stamp its own PR. A `FINDINGS` stamp, which
+can only stop a merge, ends review for that head, so a refusal cannot be
+re-rolled into a `CLEAN`. The review refuses
 any change that widens what an agent, routine or bot may merge, approve or
 push to a default branch (or a token's or authorization's scope), any weakened
 control (permissions, pins, rulesets, required checks, environment gates,
