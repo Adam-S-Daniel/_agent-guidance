@@ -19267,8 +19267,8 @@ GHSTUB
 # cms-platform#437: `gh pr merge --auto` does not "no-op" when nothing is
 # required — gh treats CLEAN/HAS_HOOKS/UNSTABLE as already mergeable and
 # merges immediately, `--auto` or not. The fix has two halves, and both are
-# asserted here rather than trusted from the diff: job `auto-merge` no longer
-# carries a merge step at all (structural), and job `sweep`'s merge is gated
+# asserted here rather than trusted from the diff: the workflow is the single
+# job `sweep` with no action to trust (structural), and the sweep's merge is gated
 # on a check from OUTSIDE this workflow and pinned to the head that gate
 # judged (behavioural — extracted from the real YAML and RUN, not read as
 # text, for the same reason test_dependabot_sweep_list_failure above is run
@@ -19284,20 +19284,48 @@ test_dependabot_sweep_merge_gating() {
 
     local wf="$REPO_ROOT/.github/workflows/dependabot-auto-merge.yml"
 
-    # ── Structural: job `auto-merge` carries no merge step of its own ─────
-    local step_names="$TEST_DIR/auto-merge-gating-step-names.txt"
-    local step_names_err="$TEST_DIR/auto-merge-gating-step-names.err"
-    if ! workflow_step_names "$wf" "auto-merge" > "$step_names" 2> "$step_names_err"; then
-        fail "auto-merge: could not read job auto-merge's step names — $(head -1 "$step_names_err")"
+    # ── Structural: one job, no `uses:`, only schedule + workflow_dispatch ─
+    # The repo copy is the template, byte for byte: the sync overwrites any
+    # drift, so a hand edit here that skips the template would be undone.
+    local tmpl_wf="$REPO_ROOT/templates/dependabot-auto-merge/dependabot-auto-merge.yml"
+    if cmp -s "$tmpl_wf" "$wf"; then
+        pass "auto-merge: the repo copy is byte-identical to the template"
     else
-        local expected joined
-        expected=$'Checkout\nFetch base ref\nGet Dependabot metadata\nVerify only manifest paths changed\nDisable auto-merge (path check failed)'
-        joined=$(cat "$step_names")
-        if [[ "$joined" == "$expected" ]]; then
-            pass "auto-merge: job auto-merge's steps are exactly Checkout, Fetch base ref, Get Dependabot metadata, Verify only manifest paths changed, Disable auto-merge (path check failed)"
+        fail "auto-merge: $wf differs from $tmpl_wf — edit the template and copy it over the repo copy"
+    fi
+    local shape="$TEST_DIR/auto-merge-gating-shape.txt" shape_err="$TEST_DIR/auto-merge-gating-shape.err"
+    if ! workflow_shape "$wf" > "$shape" 2> "$shape_err"; then
+        fail "auto-merge: could not read the workflow's shape — $(head -1 "$shape_err")"
+    else
+        if [[ "$(grep '^job ' "$shape")" == "job sweep" ]]; then
+            pass "auto-merge: the workflow has exactly one job, sweep"
         else
-            fail "auto-merge: job auto-merge's steps should be exactly [Checkout, Fetch base ref, Get Dependabot metadata, Verify only manifest paths changed, Disable auto-merge (path check failed)], got [$(tr '\n' ',' < "$step_names")] — per cms-platform#437, gh merges on the spot when nothing is required, so this job must not attempt a merge of its own"
+            fail "auto-merge: the workflow should have exactly one job, sweep — got [$(grep '^job ' "$shape" | tr '\n' ',')]; only the sweep merges (cms-platform#437)"
         fi
+        if [[ "$(grep '^trigger ' "$shape" | sort | tr '\n' ',')" == "trigger schedule,trigger workflow_dispatch," ]]; then
+            pass "auto-merge: the triggers are exactly schedule and workflow_dispatch"
+        else
+            fail "auto-merge: the triggers should be exactly schedule and workflow_dispatch — got [$(grep '^trigger ' "$shape" | tr '\n' ',')]"
+        fi
+    fi
+    local uses_out="$TEST_DIR/auto-merge-gating-uses.txt"
+    if node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+let n = 0;
+for (const spec of Object.values((doc && doc.jobs) || {})) {
+  if (spec && "uses" in spec) console.log("job-level uses: " + spec.uses);
+  for (const step of (spec && spec.steps) || []) {
+    n++;
+    if ("uses" in step) console.log("step uses: " + step.uses);
+  }
+}
+console.log("steps " + n);
+' "$REPO_ROOT" "$wf" > "$uses_out" 2>&1 && [[ "$(cat "$uses_out")" == "steps 1" ]]; then
+        pass "auto-merge: no step uses an action (one run-only step)"
+    else
+        fail "auto-merge: the workflow must have one run-only step and no \`uses:\` — got [$(tr '\n' ',' < "$uses_out")]"
     fi
 
     # ── Behavioural: extract job sweep's "Sweep open Dependabot PRs" run body
@@ -19317,36 +19345,32 @@ test_dependabot_sweep_merge_gating() {
 
     local binhome="$TEST_DIR/auto-merge-gating-bin"
     mkdir -p "$binhome"
+    # The sweep uses only gh and jq. This `git` exits 97 and logs, so a stray
+    # call fails loudly, and the end of the test asserts nothing called it.
     cat > "$binhome/git" <<'GITSTUB'
 #!/usr/bin/env bash
-case "${1:-}" in
-    fetch) exit 0 ;;
-    diff)
-        # The PR's changed files: FIXTURES/diff-files, else one workflow file.
-        if [[ -f "$FIXTURES/diff-files" ]]; then cat "$FIXTURES/diff-files"; else echo ".github/workflows/ci.yml"; fi
-        exit 0
-        ;;
-    rev-list)
-        # How far the PR head is behind its base: FIXTURES/behind-by, else 0.
-        if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
-        exit 0
-        ;;
-    *)
-        echo "mock git: unexpected call: $*" >&2
-        exit 1
-        ;;
-esac
+printf '%s\n' "$*" >> "$FIXTURES/git-called.log"
+exit 97
 GITSTUB
     chmod +x "$binhome/git"
 
     # `gh` stub: logs every call, serves `pr list`/`pr view` from FIXTURES,
     # fails `pr merge` only when its LAST arg (the PR number — kept last by
     # the workflow so `--match-head-commit <sha>` never gets mistaken for it)
-    # is listed in MERGE_FAILS, and answers `api` the way a real 404 does —
-    # body on stdout, exit 1 — per AGENTS.md's "gh api ... --jq on an HTTP
-    # error" trap, so a caller doing `x=$(gh api ...) || x=""` is exercised
-    # honestly. Anything unmodeled exits 90, loud rather than a silent 0/1
-    # that could be mistaken for a modeled outcome.
+    # is listed in MERGE_FAILS. `api .../pulls/N/files` serves
+    # FIXTURES/files-N.json (an array of the API's file objects), else
+    # FIXTURES/diff-files (one path per line), else one workflow file, and
+    # applies the caller's own `--jq` filter with the real jq, so the filter
+    # in the workflow is what is under test; FILES_FAIL=1 makes it fail like
+    # an HTTP error. `api .../compare/...` answers FIXTURES/behind-by, else 0.
+    # Any other `api` answers the way a real 404 does — body on stdout, exit
+    # 1 — per AGENTS.md's "gh api ... --jq on an HTTP error" trap, so a caller
+    # doing `x=$(gh api ...) || x=""` is exercised honestly. A `pr view
+    # --json headRefOid` read is counted apart from the full reads: its first
+    # answer is FIXTURES/recheck-head-N (the head as it is when the file list
+    # has been read), later ones pr-N.after.json. Anything unmodeled exits 90,
+    # loud rather than a silent 0/1 that could be mistaken for a modeled
+    # outcome.
     cat > "$binhome/gh" <<'GHSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FIXTURES/calls.log"
@@ -19359,6 +19383,21 @@ case "${1:-}" in
                 ;;
             view)
                 num="$3"
+                if [[ "$*" == *"--json headRefOid" ]]; then
+                    hc="$FIXTURES/headview-count-${num}"
+                    hn=0
+                    [[ -f "$hc" ]] && hn=$(cat "$hc")
+                    hn=$((hn + 1))
+                    echo "$hn" > "$hc"
+                    if [[ "$hn" -eq 1 && -f "$FIXTURES/recheck-head-${num}" ]]; then
+                        printf '{"headRefOid":"%s"}\n' "$(cat "$FIXTURES/recheck-head-${num}")"
+                    elif [[ "$hn" -gt 1 && -f "$FIXTURES/pr-${num}.after.json" ]]; then
+                        jq -c '{headRefOid}' "$FIXTURES/pr-${num}.after.json"
+                    else
+                        jq -c '{headRefOid}' "$FIXTURES/pr-${num}.json"
+                    fi
+                    exit 0
+                fi
                 counter="$FIXTURES/view-count-${num}"
                 n=0
                 [[ -f "$counter" ]] && n=$(cat "$counter")
@@ -19395,8 +19434,46 @@ case "${1:-}" in
         esac
         ;;
     api)
-        echo '{"message":"Not Found"}'
-        exit 1
+        endpoint=""
+        jqf=""
+        shift
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --paginate) ;;
+                --jq) jqf="$2"; shift ;;
+                *) endpoint="$1" ;;
+            esac
+            shift
+        done
+        case "$endpoint" in
+            repos/*/pulls/*/files\?per_page=100)
+                if [[ -n "${FILES_FAIL:-}" ]]; then
+                    echo '{"message":"Server Error"}'
+                    exit 1
+                fi
+                num="${endpoint#*/pulls/}"
+                num="${num%%/*}"
+                if [[ -f "$FIXTURES/files-${num}.json" ]]; then
+                    src="$FIXTURES/files-${num}.json"
+                elif [[ -f "$FIXTURES/diff-files" ]]; then
+                    src="$FIXTURES/files-from-diff.json"
+                    jq -Rn '[inputs | {filename: .}]' < "$FIXTURES/diff-files" > "$src"
+                else
+                    src="$FIXTURES/files-default.json"
+                    echo '[{"filename":".github/workflows/ci.yml"}]' > "$src"
+                fi
+                jq -r "$jqf" "$src"
+                exit 0
+                ;;
+            repos/*/compare/*)
+                if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
+                exit 0
+                ;;
+            *)
+                echo '{"message":"Not Found"}'
+                exit 1
+                ;;
+        esac
         ;;
     *)
         exit 90
@@ -19409,11 +19486,11 @@ GHSTUB
     printf '#!/usr/bin/env bash\nexit 0\n' > "$binhome/sleep"
     chmod +x "$binhome/sleep"
 
-    # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json>
+    # write_pr <output-file> <num> <head-sha> <mergeable> <merge-state> <rollup-json> [changed-files, default 1]
     write_pr() {
-        local file="$1" num="$2" head="$3" mergeable="$4" mstate="$5" rollup="$6"
-        printf '{"number":%s,"baseRefName":"main","headRefOid":"%s","mergeable":"%s","mergeStateStatus":"%s","statusCheckRollup":%s}\n' \
-            "$num" "$head" "$mergeable" "$mstate" "$rollup" > "$file"
+        local file="$1" num="$2" head="$3" mergeable="$4" mstate="$5" rollup="$6" changed="${7:-1}"
+        printf '{"number":%s,"baseRefName":"main","headRefOid":"%s","mergeable":"%s","mergeStateStatus":"%s","statusCheckRollup":%s,"changedFiles":%s}\n' \
+            "$num" "$head" "$mergeable" "$mstate" "$rollup" "$changed" > "$file"
     }
 
     # run_case <fixtures-dir> <merge-fails> <self-workflow> <out-file> — runs
@@ -19421,6 +19498,7 @@ GHSTUB
     run_case() {
         local fx="$1" mf="$2" sw="$3" out="$4" rc=0
         PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" UPDATE_FAILS="${UPDATE_FAILS:-}" \
+            FILES_FAIL="${FILES_FAIL:-}" \
             GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
             bash "$body" > "$out" 2>&1 || rc=$?
         echo "$rc"
@@ -19657,7 +19735,7 @@ GHSTUB
     printf '900\n' > "$fx_m/pr-numbers.txt"
     printf '.github/workflows/actions.lock\n.github/workflows/ci.yml\n' > "$fx_m/diff-files"
     write_pr "$fx_m/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
-        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]' 2
     local out_m="$TEST_DIR/auto-merge-gating-out-m.txt"
     run_case "$fx_m" "" "$SELF" "$out_m" >/dev/null
     assert_contains "$out_m" "merged=1" \
@@ -19669,23 +19747,94 @@ GHSTUB
     printf '900\n' > "$fx_n/pr-numbers.txt"
     printf '.github/workflows/actions.lock\nscripts/sync.sh\n' > "$fx_n/diff-files"
     write_pr "$fx_n/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
-        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+        '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]' 2
     local out_n="$TEST_DIR/auto-merge-gating-out-n.txt"
     run_case "$fx_n" "" "$SELF" "$out_n" >/dev/null
     assert_not_contains "$fx_n/calls.log" "pr merge" \
         "sweep gating (n): no pr merge call when the diff touches a non-manifest path"
 
-    # Job `auto-merge` runs the same allowlist on each push; it interpolates
-    # \${{ }} so it is not extracted and run here. Both copies must accept the
-    # lockfile, or the job fails the PR the sweep would merge.
-    local lock_arms
-    # `|| true`: grep -c exits 1 on zero matches, which `set -e` would turn
-    # into an aborted group rather than this test's FAIL.
-    lock_arms=$(grep -cE '^ +\.github/workflows/actions\.lock\) ;;$' "$wf" || true)
-    if [[ "$lock_arms" -eq 2 ]]; then
-        pass "auto-merge: both manifest allowlists accept .github/workflows/actions.lock"
+    local cs_ok='[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
+
+    # (o) the files API fails — the diff cannot be read, so the PR is skipped,
+    #     never merged.
+    local fx_o="$TEST_DIR/auto-merge-gating-case-o"
+    mkdir -p "$fx_o"
+    printf '900\n' > "$fx_o/pr-numbers.txt"
+    write_pr "$fx_o/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_ok"
+    local out_o="$TEST_DIR/auto-merge-gating-out-o.txt" rc_o
+    rc_o=$(FILES_FAIL=1 run_case "$fx_o" "" "$SELF" "$out_o")
+    assert_contains "$out_o" "could not list its changed files" \
+        "sweep gating (o): a failed files API call is reported"
+    assert_not_contains "$fx_o/calls.log" "pr merge" \
+        "sweep gating (o): no pr merge call when the file list cannot be read"
+    if [[ "$rc_o" -eq 0 ]]; then
+        pass "sweep gating (o): a skipped PR does not fail the run"
     else
-        fail "auto-merge: both manifest allowlists should accept .github/workflows/actions.lock — found $lock_arms arm(s)"
+        fail "sweep gating (o): a skipped PR does not fail the run — got $rc_o: $(cat "$out_o")"
+    fi
+
+    # (p) the PR reports 3 changed files but only 1 was listed (the endpoint
+    #     caps at 3000) — a partial diff is never judged clean.
+    local fx_p="$TEST_DIR/auto-merge-gating-case-p"
+    mkdir -p "$fx_p"
+    printf '900\n' > "$fx_p/pr-numbers.txt"
+    write_pr "$fx_p/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_ok" 3
+    local out_p="$TEST_DIR/auto-merge-gating-out-p.txt"
+    run_case "$fx_p" "" "$SELF" "$out_p" >/dev/null
+    assert_contains "$out_p" "empty, unreadable or incomplete" \
+        "sweep gating (p): a changedFiles mismatch is reported"
+    assert_not_contains "$fx_p/calls.log" "pr merge" \
+        "sweep gating (p): no pr merge call on a partial file list"
+
+    # (q) a rename: scripts/evil.sh became package.json. The new name is on
+    #     the allowlist; the OLD one is not, so the PR is rejected.
+    local fx_q="$TEST_DIR/auto-merge-gating-case-q"
+    mkdir -p "$fx_q"
+    printf '900\n' > "$fx_q/pr-numbers.txt"
+    printf '[{"filename":"package.json","previous_filename":"scripts/evil.sh"}]\n' > "$fx_q/files-900.json"
+    write_pr "$fx_q/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_ok"
+    local out_q="$TEST_DIR/auto-merge-gating-out-q.txt"
+    run_case "$fx_q" "" "$SELF" "$out_q" >/dev/null
+    assert_contains "$out_q" "touches non-manifest path: scripts/evil.sh" \
+        "sweep gating (q): the old name of a renamed file is judged and rejected"
+    assert_not_contains "$fx_q/calls.log" "pr merge" \
+        "sweep gating (q): no pr merge call for a rename out of a non-manifest path"
+
+    # (r) the head moves between the snapshot and the file listing — the
+    #     files belong to a commit the checks did not judge, so skip.
+    local fx_r="$TEST_DIR/auto-merge-gating-case-r"
+    mkdir -p "$fx_r"
+    printf '900\n' > "$fx_r/pr-numbers.txt"
+    printf '%s\n' "$HEAD_Y" > "$fx_r/recheck-head-900"
+    write_pr "$fx_r/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_ok"
+    local out_r="$TEST_DIR/auto-merge-gating-out-r.txt"
+    run_case "$fx_r" "" "$SELF" "$out_r" >/dev/null
+    assert_contains "$out_r" "could not be confirmed as ${HEAD_X:0:7}" \
+        "sweep gating (r): a head that moved before the file list was pinned is skipped"
+    assert_not_contains "$fx_r/calls.log" "pr merge" \
+        "sweep gating (r): no pr merge call when the head moved under the file list"
+
+    # (s) actions.lock alone is on the allowlist and merges.
+    local fx_s="$TEST_DIR/auto-merge-gating-case-s"
+    mkdir -p "$fx_s"
+    printf '900\n' > "$fx_s/pr-numbers.txt"
+    printf '[{"filename":".github/workflows/actions.lock"}]\n' > "$fx_s/files-900.json"
+    write_pr "$fx_s/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_ok"
+    local out_s="$TEST_DIR/auto-merge-gating-out-s.txt"
+    run_case "$fx_s" "" "$SELF" "$out_s" >/dev/null
+    assert_contains "$out_s" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (s): a diff of .github/workflows/actions.lock alone merges"
+    assert_contains "$fx_s/calls.log" "pr merge --merge --match-head-commit $HEAD_X 900" \
+        "sweep gating (s): the merge call is recorded, pinned to the head"
+
+    # The sweep must never reach for git: every case above ran with a `git`
+    # that exits 97 and logs, so any call shows up here.
+    local git_calls
+    git_calls=$(cat "$TEST_DIR"/auto-merge-gating-case-*/git-called.log 2>/dev/null || true)
+    if [[ -z "$git_calls" ]]; then
+        pass "sweep gating: no case called git (the sweep uses only gh and jq)"
+    else
+        fail "sweep gating: the sweep called git — $git_calls"
     fi
 
     unset -f write_pr
@@ -24264,18 +24413,23 @@ setup_am_repos() {
     local bare_dir="$1" work="$TEST_DIR/am-work" name
     rm -rf "$bare_dir" "$work"
     mkdir -p "$bare_dir" "$work"
-    for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml; do
+    for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml am-drift am-cmscall cms-platform; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/amorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
         mkdir -p "$work/$name/.github/workflows"
         case "$name" in
-            am-yaml) echo "version: 2" > "$work/$name/.github/dependabot.yaml" ;;
+            am-yaml) echo "version: 2" > "$work/$name/.github/dependabot.yaml"
+                     echo "name: yaml spelling" > "$work/$name/.github/workflows/dependabot-auto-merge.yaml" ;;
             am-noconfig) : ;;
             *) echo "version: 2" > "$work/$name/.github/dependabot.yml" ;;
         esac
         case "$name" in
             am-present) echo "name: hand-written" > "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
+            am-drift) echo "name: OLD-SWEEP-CONTENT" > "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
+            am-cmscall)
+                printf 'name: cms caller\njobs:\n  a:\n    uses:   "Adam-S-Daniel/cms-platform/.github/workflows/dependabot-auto-merge.yml@v1"\n' \
+                    > "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
             am-self) echo "name: self" > "$work/$name/.github/workflows/self-dependabot-auto-merge.yml" ;;
             am-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
             am-script)
@@ -24344,13 +24498,21 @@ test_sync_dependabot_auto_merge() {
         fail "auto-merge (dry run): exits 0 and moves no ref — exit $rc"
     fi
     am_section "$out-dry.log" am-none > "$out-dry-none"
-    assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
-        "auto-merge (dry run): a repo missing the workflow is told it would be added"
-    assert_contains "$out-dry-none" "[DRY RUN] Would add $helper" \
-        "auto-merge (dry run): and its helper"
-    am_section "$out-dry.log" am-present > "$out-dry-present"
-    assert_not_contains "$out-dry-present" "Would add $wf" \
-        "auto-merge (dry run): a repo with the workflow is not offered another"
+    assert_contains "$out-dry-none" "[DRY RUN] Would write $wf (Dependabot auto-merge sweep, missing)" \
+        "auto-merge (dry run): a repo missing the workflow is told it would be written"
+    assert_not_contains "$out-dry-none" "workflow-overlap.sh" \
+        "auto-merge (dry run): no helper is mentioned"
+    am_section "$out-dry.log" am-drift > "$out-dry-drift"
+    assert_contains "$out-dry-drift" "[DRY RUN] Would write $wf (Dependabot auto-merge sweep, drifted)" \
+        "auto-merge (dry run): a drifted workflow is told it would be overwritten"
+    am_section "$out-dry.log" am-cmscall > "$out-dry-cmscall"
+    assert_not_contains "$out-dry-cmscall" "Would write $wf" \
+        "auto-merge (dry run): a cms-platform caller is not offered the workflow"
+    if [[ -z "$(am_show am-none "$wf")" && "$(am_show am-drift "$wf")" == "name: OLD-SWEEP-CONTENT" ]]; then
+        pass "auto-merge (dry run): nothing is written"
+    else
+        fail "auto-merge (dry run): nothing is written"
+    fi
 
     # ── The real run ──
     rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-1.log" || rc=$?
@@ -24360,80 +24522,123 @@ test_sync_dependabot_auto_merge() {
         fail "auto-merge (sync): the run exits 0 — got $rc"
     fi
 
-    if cmp -s <(am_show am-none "$wf") "$tmpl/dependabot-auto-merge.yml" \
-       && cmp -s <(am_show am-none "$helper") "$tmpl/workflow-overlap.sh"; then
-        pass "auto-merge (sync): a repo with dependabot.yml and no merge path gets the template's workflow and helper, byte for byte"
+    if cmp -s <(am_show am-none "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a repo with no merge path gets the template's workflow, byte for byte"
     else
-        fail "auto-merge (sync): a repo with dependabot.yml and no merge path gets the template's workflow and helper, byte for byte"
+        fail "auto-merge (sync): a repo with no merge path gets the template's workflow, byte for byte"
     fi
-    got=$(gattr_git -C "$bare/amorg_am-none" ls-tree main -- "$helper" | awk '{print $1}')
-    if [[ "$got" == 100755 ]]; then
-        pass "auto-merge (sync): the helper is committed executable"
+    if cmp -s <(am_show am-noconfig "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a repo with no dependabot.yml gets it too (security updates need a merge path)"
     else
-        fail "auto-merge (sync): the helper is committed executable — mode $got"
+        fail "auto-merge (sync): a repo with no dependabot.yml gets it too (security updates need a merge path)"
     fi
-    if cmp -s <(am_show am-yaml "$wf") "$tmpl/dependabot-auto-merge.yml"; then
-        pass "auto-merge (sync): a .github/dependabot.yaml counts as a Dependabot config too"
+    if cmp -s <(am_show am-lock "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a repo with actions.lock receives it (the template has no uses: lines)"
     else
-        fail "auto-merge (sync): a .github/dependabot.yaml counts as a Dependabot config too"
+        fail "auto-merge (sync): a repo with actions.lock receives it (the template has no uses: lines)"
+    fi
+    if cmp -s <(am_show am-drift "$wf") "$tmpl/dependabot-auto-merge.yml" \
+       && [[ "$(am_show am-drift "$wf")" != *OLD-SWEEP-CONTENT* ]]; then
+        pass "auto-merge (sync): a drifted workflow is overwritten and the old content is gone"
+    else
+        fail "auto-merge (sync): a drifted workflow is overwritten and the old content is gone"
+    fi
+    if cmp -s <(am_show am-present "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a hand-written dependabot-auto-merge.yml is managed too"
+    else
+        fail "auto-merge (sync): a hand-written dependabot-auto-merge.yml is managed too"
+    fi
+    # am-script already had its own helper before the sync; skip it.
+    got=$(for r in "$bare"/amorg_*; do
+              [[ "$r" == */amorg_am-script ]] && continue
+              gattr_git -C "$r" ls-tree -r --name-only main | grep -F workflow-overlap.sh || true
+          done)
+    if [[ -z "$got" ]]; then
+        pass "auto-merge (sync): no workflow-overlap.sh is written to any repo"
+    else
+        fail "auto-merge (sync): no workflow-overlap.sh is written to any repo — $got"
     fi
 
     # The switch-off run already delivered AGENTS.md, so this run's commit is
     # the workflow alone, under its own subject rather than another lane's.
     got=$(gattr_git -C "$bare/amorg_am-none" show --name-only --format= main | sed '/^$/d' | sort | tr '\n' ' ')
-    if [[ "$got" == "$helper $wf " ]]; then
-        pass "auto-merge (sync): the commit carries exactly the workflow and its helper"
+    if [[ "$got" == "$wf " ]]; then
+        pass "auto-merge (sync): the commit carries exactly the workflow"
     else
-        fail "auto-merge (sync): the commit carries exactly the workflow and its helper — files: $got"
+        fail "auto-merge (sync): the commit carries exactly the workflow — files: $got"
     fi
     got=$(gattr_git -C "$bare/amorg_am-none" log -1 --format=%B main)
     if [[ "$got" == "chore: add the Dependabot auto-merge workflow"* \
-          && "$got" == *"Adds .github/workflows/dependabot-auto-merge.yml"* ]]; then
-        pass "auto-merge (sync): the commit's subject and body say why the workflow was added"
+          && "$got" == *"Adds .github/workflows/dependabot-auto-merge.yml"* \
+          && "$got" == *"overwritten on the next sync"* ]]; then
+        pass "auto-merge (sync): a new file's commit says it was added and is managed"
     else
-        fail "auto-merge (sync): the commit's subject and body say why the workflow was added — got: $(head -1 <<< "$got")"
+        fail "auto-merge (sync): a new file's commit says it was added and is managed — got: $(head -1 <<< "$got")"
+    fi
+    got=$(gattr_git -C "$bare/amorg_am-drift" log -1 --format=%B main)
+    if [[ "$got" == "chore: update the Dependabot auto-merge workflow"* \
+          && "$got" == *"Updates .github/workflows/dependabot-auto-merge.yml"* ]]; then
+        pass "auto-merge (sync): a drifted file's commit says it was updated"
+    else
+        fail "auto-merge (sync): a drifted file's commit says it was updated — got: $(head -1 <<< "$got")"
     fi
 
-    if [[ "$(am_show am-present "$wf")" == "name: hand-written" ]]; then
-        pass "auto-merge (sync): an existing dependabot-auto-merge.yml is never overwritten"
+    if [[ "$(am_show am-self "$wf")" == "" \
+          && "$(am_show am-self ".github/workflows/self-dependabot-auto-merge.yml")" == "name: self" ]]; then
+        pass "auto-merge (sync): a repo with self-dependabot-auto-merge.yml is left alone"
     else
-        fail "auto-merge (sync): an existing dependabot-auto-merge.yml is never overwritten"
+        fail "auto-merge (sync): a repo with self-dependabot-auto-merge.yml is left alone"
     fi
-    if [[ -z "$(am_show am-self "$wf")" ]]; then
-        pass "auto-merge (sync): cms-platform's self-dependabot-auto-merge.yml counts as a merge path"
+    if [[ "$(am_show am-cmscall "$wf")" == *'uses:   "Adam-S-Daniel/cms-platform/.github/workflows/dependabot-auto-merge.yml@v1"'* \
+          && "$(am_show am-cmscall "$wf")" != *"gh "* ]] \
+       && ! cmp -s <(am_show am-cmscall "$wf") "$tmpl/dependabot-auto-merge.yml"; then
+        pass "auto-merge (sync): a repo calling cms-platform's reusable workflow is untouched"
     else
-        fail "auto-merge (sync): cms-platform's self-dependabot-auto-merge.yml counts as a merge path"
+        fail "auto-merge (sync): a repo calling cms-platform's reusable workflow is untouched"
     fi
-    if [[ -z "$(am_show am-noconfig "$wf")" ]]; then
-        pass "auto-merge (sync): a repo with no Dependabot config gets nothing"
+    am_section "$out-1.log" am-cmscall > "$out-cmscall"
+    assert_contains "$out-cmscall" "calls cms-platform's reusable workflow" \
+        "auto-merge (sync): the cms-platform caller skip is named in the log"
+    if [[ -z "$(am_show cms-platform "$wf")" ]]; then
+        pass "auto-merge (sync): a repo named cms-platform is untouched"
     else
-        fail "auto-merge (sync): a repo with no Dependabot config gets nothing"
+        fail "auto-merge (sync): a repo named cms-platform is untouched"
     fi
-
-    if [[ -z "$(am_show am-lock "$wf")" ]]; then
-        pass "auto-merge (sync): a repo with actions.lock is not given the SHA-pinned template"
+    am_section "$out-1.log" cms-platform > "$out-cms"
+    assert_contains "$out-cms" "is cms-platform itself" \
+        "auto-merge (sync): the cms-platform skip is named in the log"
+    if [[ -z "$(am_show am-yaml "$wf")" \
+          && "$(am_show am-yaml ".github/workflows/dependabot-auto-merge.yaml")" == "name: yaml spelling" ]]; then
+        pass "auto-merge (sync): a .yaml-only repo is untouched (no second workflow)"
     else
-        fail "auto-merge (sync): a repo with actions.lock is not given the SHA-pinned template"
+        fail "auto-merge (sync): a .yaml-only repo is untouched (no second workflow)"
     fi
-    am_section "$out-1.log" am-lock > "$out-lock"
-    assert_contains "$out-lock" "WARN: amorg/am-lock locks its actions in .github/workflows/actions.lock" \
-        "auto-merge (sync): the actions.lock skip is named in the log"
+    am_section "$out-1.log" am-yaml > "$out-yaml"
+    assert_contains "$out-yaml" "WARN: amorg/am-yaml has .github/workflows/dependabot-auto-merge.yaml" \
+        "auto-merge (sync): the .yaml-only repo gets a WARN"
 
     if cmp -s <(am_show am-script "$wf") "$tmpl/dependabot-auto-merge.yml" \
        && [[ "$(am_show am-script "$helper")" == "# repo's own copy" ]]; then
-        pass "auto-merge (sync): the workflow is added but a repo's existing helper is left as it is"
+        pass "auto-merge (sync): the workflow is written but a repo's existing helper is left as it is"
     else
-        fail "auto-merge (sync): the workflow is added but a repo's existing helper is left as it is"
+        fail "auto-merge (sync): the workflow is written but a repo's existing helper is left as it is"
     fi
 
     # ── Re-run: nothing left to do ──
     before=$(bare_fleet_fingerprint "$bare")
+    local head_none_before
+    head_none_before=$(gattr_git -C "$bare/amorg_am-none" rev-parse main)
     rc=0; run_am_sync "$TEST_DIR/am-repos-on.yml" "$out-2.log" || rc=$?
     after=$(bare_fleet_fingerprint "$bare")
     if [[ $rc -eq 0 && "$before" == "$after" ]]; then
         pass "auto-merge (re-run): a second run moves no ref"
     else
         fail "auto-merge (re-run): a second run moves no ref — exit $rc"
+    fi
+    if [[ "$head_none_before" == "$(gattr_git -C "$bare/amorg_am-none" rev-parse main)" ]]; then
+        pass "auto-merge (re-run): a current workflow is left alone (no new commit)"
+    else
+        fail "auto-merge (re-run): a current workflow is left alone (no new commit)"
     fi
 }
 
