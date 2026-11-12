@@ -164,3 +164,17 @@ the rule reaches the fleet with no ruleset change.
   touches `uses:` or anything outside the `pull_request` trigger's `types`,
   so Dependabot's pin and the sync's trigger edit change different lines, and
   once `edited` is listed the sync leaves the file alone again.
+
+## Addendum (2026-11-12): hosted sessions turn the git hooks on themselves
+
+The runner is delivered to every repo, but a cloud session never ran it as a git hook. Config-based hooks need git 2.54, which cloud containers have, and adam-agentskills' `scripts/install-agent-hooks.sh --system` wires them, but the cloud setup script runs that installer only when an attached repo ships it, and most projects ship none. So no cloud commit or push was checked or logged, and the explorer's hook counts left cloud sessions out.
+
+`fleet-memory.sh` is the one user-scope SessionStart hook every cloud session already runs, and the sync already delivers it to every repo, so it now does the wiring. In a hosted session only (`CLAUDE_CODE_REMOTE=true` or `CLAUDE_CODE_REMOTE_SESSION_ID` set), with git 2.54 or newer, and when neither the system nor the global config already has an `includeIf` naming `agent-hooks.inc`, it writes `~/.config/git/agent-hooks.inc` with the installer's exact text and adds the installer's nine `includeIf` entries (three owners times three URL forms), to the system config when that file is writable and to the global config otherwise.
+
+- **Same fail-safe as the installer.** Nothing points at an absolute script path. Git ignores a missing include file, and a repo without `.githooks/agent-checks` runs nothing, so no state this step leaves behind can break a commit or push by itself.
+- **A refusal is the point.** In a repo that has the runner, a pre-commit or pre-push check that refuses now stops the commit or push in a cloud session, as it does on a laptop. Fix the cause; do not use `--no-verify`.
+- **It never fails the session start.** The step is a function run in a subshell with its output discarded; any error skips it, and the verdict line and exit code are unchanged. It is silent on success and idempotent.
+- **No sibling script.** The sync and the plugin copies deliver `fleet-memory.sh` alone, so a helper beside it would not arrive. The step is a function in the file.
+- **Opt-out.** `FLEET_GIT_HOOKS=off` skips it. The test suite sets it, so a cloud container running the suite does not edit its own git config.
+- **The include text is copied, not read.** adam-agentskills is not available in CI, so `test_fleet_memory_git_hooks` embeds the expected text with a comment naming its source. If the installer's output changes, change both.
+- **Their runs are uploaded.** With the hooks running, the cloud runs reach the private usage store as phase 3 of `guidance-load-record.sh` (ADR 0036, ADR 0037 addenda).

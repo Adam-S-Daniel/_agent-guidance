@@ -2188,6 +2188,266 @@ class SinkHardeningTests(SinkTestCase):
         self.assertFalse(sinkenv.exists())
 
 
+def run_log_line(ts="2026-10-31T11:59:00Z", event="pre-commit", repo="example-org/example-repo",
+                 checks=("rules-dir", "secret-file"), failed=(), runner="0123456789ab"):
+    """One agent-checks run-log line as templates/agent-checks/agent-checks
+    writes it (compact JSON, that key order)."""
+    return json.dumps({"v": 1, "ts": ts, "event": event, "repo": repo, "checks": list(checks),
+                       "failed": list(failed), "runner": runner}, separators=(",", ":"))
+
+
+def hook_upload_line(raw, sid, **fields):
+    """The phase-3 line the hook must upload for the run-log line `raw`."""
+    doc = json.loads(raw)
+    out = {"v": 1, "id": hashlib.sha256(raw.encode()).hexdigest()[:16], "ts": doc["ts"],
+           "kind": "hook", "surface": "cloud", "session": sid, "event": doc["event"],
+           "repo": doc["repo"], "checks": doc["checks"], "failed": doc["failed"],
+           "runner": doc["runner"]}
+    out.update(fields)
+    return json.dumps(out, separators=(",", ":"))
+
+
+class HookRunLineTests(unittest.TestCase):
+    """Phase 3's validation, on the hook's own helper."""
+
+    def setUp(self):
+        self.mod = hook_module()
+        self.sid = "0123456789abcdef"
+
+    def line(self, raw):
+        return self.mod["hook_line"](raw.encode(), self.sid)
+
+    def test_a_valid_line_becomes_the_spec_line(self):
+        raw = run_log_line(failed=("secret-file",))
+        ident, month, text = self.line(raw)
+        self.assertEqual((month, text), ("2026-10", hook_upload_line(raw, self.sid)))
+        self.assertEqual(ident, hashlib.sha256(raw.encode()).hexdigest()[:16])
+        self.assertEqual(list(json.loads(text)), ["v", "id", "ts", "kind", "surface", "session",
+                                                  "event", "repo", "checks", "failed", "runner"])
+
+    def test_null_repo_and_runner_are_kept(self):
+        raw = run_log_line(repo=None, runner=None)
+        doc = json.loads(self.line(raw)[2])
+        self.assertEqual((doc["repo"], doc["runner"]), (None, None))
+
+    def test_malformed_lines_are_skipped(self):
+        bad = [
+            "not json", "[]", "{}", run_log_line().replace('"v":1', '"v":2'),
+            run_log_line(ts="yesterday"), run_log_line(ts="1999-01-01T00:00:00Z"),
+            run_log_line(event="ci"), run_log_line(event="post-commit"),
+            run_log_line(checks=("Not_Kebab",)), run_log_line(checks=("a b",)),
+            run_log_line(checks=("a",), failed=("b",)),          # failed not within checks
+            run_log_line(checks=tuple("c%d" % i for i in range(65))),
+            run_log_line(repo="not a repo"), run_log_line(repo="a/b/c"),
+            run_log_line(runner="XYZ"), run_log_line(runner="0123456789abc"),
+            json.dumps({"v": 1, "ts": "2026-10-31T11:59:00Z", "event": "pre-commit",
+                        "repo": None, "checks": "rules-dir", "failed": [], "runner": None}),
+        ]
+        for raw in bad:
+            with self.subTest(raw=raw[:60]):
+                self.assertIsNone(self.line(raw))
+
+    def test_no_other_key_travels(self):
+        doc = json.loads(run_log_line())
+        doc.update(path="/home/someone/file", message="secret text")
+        out = self.line(json.dumps(doc))[2]
+        self.assertNotIn("someone", out)
+        self.assertNotIn("secret text", out)
+
+
+class HookRunGitTests(CloudTestCase):
+    """Phase 3 on the git route: events/<month>/cloud-hooks/<session>.jsonl."""
+
+    def setUp(self):
+        super().setUp()
+        self.runs = self.home / ".local" / "state" / "agent-checks" / "runs.jsonl"
+        self.runs.parent.mkdir(parents=True)
+        self.sid = CLOUD_SID[:16]
+        self.done_phase1()
+        self.write_transcript([user()])
+
+    def write_runs(self, *lines, mode="w"):
+        with open(self.runs, mode, encoding="utf-8") as handle:
+            handle.write("".join(l + "\n" for l in lines))
+
+    def remote_hooks(self, month="2026-10"):
+        text = self.remote_text(f"events/{month}/cloud-hooks/{self.sid}.jsonl")
+        return text.splitlines() if text is not None else []
+
+    def test_new_run_lines_are_uploaded_with_the_spec_keys(self):
+        a = run_log_line()
+        b = run_log_line(ts="2026-10-31T11:59:30Z", event="pre-push", checks=("rules-dir",), failed=("rules-dir",))
+        self.write_runs(a, "garbage", b, run_log_line(checks=("x",), failed=("y",)))
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid), hook_upload_line(b, self.sid)])
+        self.assertEqual(self.pending(), [])
+
+    def test_a_month_boundary_goes_to_its_own_shard(self):
+        a = run_log_line(ts="2026-11-01T00:00:01Z")
+        self.write_runs(a)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks("2026-11"), [hook_upload_line(a, self.sid)])
+        self.assertEqual(self.remote_hooks("2026-10"), [])
+
+    def test_only_new_lines_go_next_time_and_a_replay_adds_nothing(self):
+        a = run_log_line()
+        self.write_runs(a)
+        self.script([PUSH_OK])
+        self.stop()
+        head = self.commits()
+        self.stop()                                   # nothing new: no commit, no call
+        self.assertEqual(self.commits(), head)
+        b = run_log_line(ts="2026-10-31T12:00:00Z", event="pre-push")
+        self.write_runs(b, mode="a")
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid), hook_upload_line(b, self.sid)])
+        # Losing the offset and the seen ids re-reads the log: the shard's own
+        # ids keep it from growing.
+        doc = self.state_doc()
+        for key in ("hlog", "hseen", "hn"):
+            doc.pop(key)
+        (self.cloud / f"{CLOUD_SID}.state.json").write_text(json.dumps(doc), encoding="utf-8")
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 2)
+
+    def test_a_partial_last_line_waits_for_its_newline(self):
+        a, b = run_log_line(), run_log_line(ts="2026-10-31T12:00:00Z")
+        self.write_runs(a)
+        with open(self.runs, "a", encoding="utf-8") as handle:
+            handle.write(b[:20])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+        with open(self.runs, "a", encoding="utf-8") as handle:
+            handle.write(b[20:] + "\n")
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 2)
+
+    def test_a_shrunk_log_is_read_again_from_the_start(self):
+        a = run_log_line()
+        self.write_runs(a, run_log_line(ts="2026-10-31T12:00:00Z"))
+        self.script([PUSH_OK])
+        self.stop()
+        c = run_log_line(ts="2026-10-31T12:30:00Z", event="pre-push")
+        self.write_runs(c)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks()[-1], hook_upload_line(c, self.sid))
+
+    def test_a_missing_or_off_log_changes_nothing(self):
+        self.runs.unlink(missing_ok=True)
+        self.stop()
+        self.assertEqual((self.calls(), self.commits()), ([], 1))
+        self.assertNotIn("hlog", self.state_doc())
+        self.write_runs(run_log_line())
+        self.stop(env={"AGENT_CHECKS_LOG": "off"})
+        self.assertEqual((self.calls(), self.commits()), ([], 1))
+
+    def test_the_log_path_comes_from_agent_checks_log(self):
+        other = self.tmp / "other-runs.jsonl"
+        a = run_log_line()
+        other.write_text(a + "\n", encoding="utf-8")
+        self.script([PUSH_OK])
+        self.stop(env={"AGENT_CHECKS_LOG": str(other)})
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+
+    def test_not_remote_means_no_phase_3(self):
+        self.write_runs(run_log_line())
+        self.run_hook(session=CLOUD_SESSION, env={"CLAUDE_CODE_REMOTE_SESSION_ID": "x",
+                                                  "GUIDANCE_RECORD_GIT": str(self.bare)})
+        self.assertFalse(self.cloud.exists())
+
+    def test_one_stop_records_at_most_fifty_lines(self):
+        runs = [run_log_line(ts="2026-10-31T12:%02d:%02dZ" % (i // 60, i % 60)) for i in range(60)]
+        self.write_runs(*runs)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 50)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 60)
+
+    def test_hook_lines_share_phase_2s_commit(self):
+        a = run_log_line()
+        self.write_runs(a)
+        self.write_transcript([skill_use("toolu_h1", "a"), skill_result("toolu_h1")])
+        self.script([PUSH_OK])
+        head = self.commits()
+        self.stop()
+        self.assertEqual(self.commits(), head + 1)
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_h1"])
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+
+    def test_a_failed_push_keeps_the_lines_pending(self):
+        a = run_log_line()
+        self.write_runs(a)
+        self.script([PUSH_OK])
+        self.stop(env={"FAKE_GIT_MODE": "refuse-clone"})
+        self.assertEqual([p["id"] for p in self.pending()], [json.loads(hook_upload_line(a, self.sid))["id"]])
+        self.script([PUSH_OK])
+        self.stop(now="2026-10-31T13:00:00Z")  # past the backoff
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+        self.assertEqual(self.pending(), [])
+
+
+class HookRunSinkTests(SinkTestCase):
+    """Phase 3 on the S3 route: the `hooks` key is off until switched on."""
+
+    def setUp(self):
+        super().setUp()
+        self.runs = self.home / ".local" / "state" / "agent-checks" / "runs.jsonl"
+        self.runs.parent.mkdir(parents=True)
+        self.sid = CLOUD_SID[:16]
+        self.line = run_log_line()
+        self.runs.write_text(self.line + "\n", encoding="utf-8")
+        self.write_transcript([skill_use("toolu_s1", "a"), skill_result("toolu_s1")])
+        self.done_phase1()
+
+    def test_the_envelope_has_no_hooks_key_by_default(self):
+        self.stop()
+        [put] = self.puts()
+        self.assertEqual(list(self.body(put)), SINK_BODY_KEYS)
+        self.assertEqual(self.pending(), [])          # nothing was held for later either
+        self.assertNotIn("hseen", self.state_doc())
+
+    def test_no_hook_line_is_sent_when_only_hooks_are_pending(self):
+        self.write_transcript([user()])
+        self.stop()
+        self.assertEqual(self.puts(), [])
+
+    def test_the_switch_adds_the_hooks_key_with_the_exact_lines(self):
+        self.stop(env={"USAGE_SINK_HOOKS": "1"})
+        [put] = self.puts()
+        doc = json.loads(put["body"].decode("utf-8"))
+        self.assertEqual(list(doc), SINK_BODY_KEYS + ["hooks"])
+        self.assertEqual(doc["hooks"], [json.loads(hook_upload_line(self.line, self.sid))])
+        self.assertEqual([s["id"] for s in doc["skills"]], ["toolu_s1"])
+        self.assertEqual(self.pending(), [])
+
+    def test_hooks_alone_still_make_an_object_when_switched_on(self):
+        self.write_transcript([user()])
+        self.stop(env={"USAGE_SINK_HOOKS": "1"})
+        [put] = self.puts()
+        doc = self.body_any(put)
+        self.assertEqual((doc["skills"], len(doc["hooks"])), ([], 1))
+
+    def body_any(self, request):
+        return json.loads(request["body"].decode("utf-8"))
+
+    def test_lines_held_before_the_switch_never_leave_while_it_is_off(self):
+        self.stop(env={"USAGE_SINK_HOOKS": "1", "USAGE_SINK_ENDPOINT": "http://127.0.0.1:9"})
+        self.assertEqual(len(self.pending()), 2)      # the skill and the hook line, both held
+        self.stop()
+        for put in self.puts():
+            self.assertNotIn("hooks", self.body_any(put))
+        self.assertTrue([p for p in self.pending() if p["kind"] == "hook"])
+
+
 class ClockSeamTests(HookTestCase):
     def test_the_clock_seam_needs_the_test_marker(self):
         self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))])

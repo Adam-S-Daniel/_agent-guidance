@@ -48,6 +48,12 @@ export SYNC_READ_RETRY_DELAYS="0 0 0"
 # log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
 export AGENT_CHECKS_LOG=off
 
+# fleet-memory.sh's hosted-session git-hooks step (ADR 0021 addendum) edits the
+# system or global git config when CLAUDE_CODE_REMOTE is set, as it is in a
+# cloud container that runs this suite. No test but test_fleet_memory_git_hooks
+# may do that, and it clears this itself.
+export FLEET_GIT_HOOKS=off
+
 # Nor may it install markdown-it from npm for its dated-phrasing warning pass:
 # point the pass at a directory with no markdown-it, so it prints its one
 # "could not be loaded" warning. The dated-phrasing tests point it at the
@@ -22408,6 +22414,111 @@ test_fleet_memory_payload_stamp() {
 # of what loaded can be compared with what it loaded. It is the LAST 8 hex of
 # the payload's sha256 (the version id the verdict prints is the first 8), it
 # exists only in the written block, and it never reaches stdout.
+test_fleet_memory_git_hooks() {
+    echo ""
+    echo "TEST: fleet-memory.sh (git hooks in hosted sessions)"
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-githooks"
+    local payload="$d/payload.md" out rc
+    mkdir -p "$d/home" "$d/sys"
+    printf '# Fleet guidance\n' > "$payload"
+
+    # Expected include text: a copy of what adam-agentskills'
+    # scripts/install-agent-hooks.sh writes to ~/.config/git/agent-hooks.inc
+    # (ADR 0020 there). That repo is not available in CI, so the text is
+    # embedded; change it only when that script's output changes.
+    local expected="$d/expected.inc"
+    cat > "$expected" <<'INC'
+# Written by adam-agentskills scripts/install-agent-hooks.sh (ADR 0020).
+# Re-run that script to update; edits here are overwritten.
+[hook "agent-checks-pre-commit"]
+	event = pre-commit
+	command = "f=.githooks/agent-checks; [ -f \"$f\" ] || exit 0; exec bash \"$f\" pre-commit"
+[hook "agent-checks-pre-push"]
+	event = pre-push
+	command = "f=.githooks/agent-checks; [ -f \"$f\" ] || exit 0; exec bash \"$f\" pre-push"
+INC
+
+    # One run, hosted unless a case unsets it. HOME and both git config files
+    # are fixtures; the real ones are never read or written.
+    run_githooks() {
+        env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GIT_HOOKS \
+            -u CLAUDE_CODE_REMOTE -u CLAUDE_CODE_REMOTE_SESSION_ID \
+            HOME="$d/home" CLAUDE_CONFIG_DIR="$d/home/.claude" CODEX_HOME="$d/no-codex" \
+            FLEET_GUIDANCE_RECEIPT=0 FLEET_GUIDANCE_PAYLOAD="$payload" \
+            GIT_CONFIG_SYSTEM="$d/sys/gitconfig" GIT_CONFIG_GLOBAL="$d/home/.gitconfig" \
+            "$@" bash "$hook" 2>&1
+    }
+    local inc="$d/home/.config/git/agent-hooks.inc"
+    local glob="$d/home/.gitconfig" sys="$d/sys/gitconfig"
+    reset_githooks() { rm -rf "$d/home" "$sys"; mkdir -p "$d/home"; }
+
+    # 1. Not hosted: nothing is written.
+    reset_githooks
+    out="$(run_githooks)"
+    [[ ! -e "$inc" && ! -e "$glob" && ! -e "$sys" ]] \
+        && pass "git hooks: a non-hosted session writes nothing" \
+        || fail "git hooks: a non-hosted session touched git config"
+
+    # 2. Hosted, system config writable: include file and system entries,
+    #    silent apart from the verdict line.
+    reset_githooks
+    out="$(run_githooks CLAUDE_CODE_REMOTE=true)"; rc=$?
+    [[ $rc -eq 0 ]] && pass "git hooks: hosted run exits 0" || fail "git hooks: hosted run exit $rc"
+    if cmp -s "$inc" "$expected"; then
+        pass "git hooks: include text equals install-agent-hooks.sh's"
+    else
+        fail "git hooks: include text differs from install-agent-hooks.sh's"
+    fi
+    [[ "$(grep -c '^fleet-guidance:' <<< "$out")" -eq 1 && "$(wc -l <<< "$out")" -eq 1 ]] \
+        && pass "git hooks: hosted run stays silent beyond the verdict line" \
+        || fail "git hooks: extra output: $out"
+    local n
+    n="$(git config --file "$sys" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
+    [[ "$n" -eq 9 ]] && pass "git hooks: nine system includeIf entries (3 owners x 3 URL forms)" \
+        || fail "git hooks: expected 9 system entries, got $n"
+    [[ ! -e "$glob" ]] && pass "git hooks: global config untouched when system is writable" \
+        || fail "git hooks: wrote global config although system was writable"
+    git config --file "$sys" --get-all 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' \
+        | grep -qxF '~/.config/git/agent-hooks.inc' \
+        && pass "git hooks: entry value is the ~ path, not an absolute one" \
+        || fail "git hooks: entry value is wrong"
+
+    # 3. Idempotent: a second run, and the session-id trigger, change nothing.
+    local sum_sys sum_inc
+    sum_sys="$(sha256sum "$sys" | cut -d' ' -f1)"; sum_inc="$(sha256sum "$inc" | cut -d' ' -f1)"
+    run_githooks CLAUDE_CODE_REMOTE_SESSION_ID=session_example >/dev/null
+    [[ "$sum_sys" == "$(sha256sum "$sys" | cut -d' ' -f1)" && "$sum_inc" == "$(sha256sum "$inc" | cut -d' ' -f1)" ]] \
+        && pass "git hooks: a second run changes nothing" || fail "git hooks: second run changed files"
+
+    # 4. System config unwritable: entries go to the global config.
+    reset_githooks
+    out="$(run_githooks CLAUDE_CODE_REMOTE=true GIT_CONFIG_SYSTEM=/proc/no-such-dir/gitconfig)"
+    n="$(git config --file "$glob" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
+    [[ "$n" -eq 9 ]] && pass "git hooks: unwritable system config falls back to global" \
+        || fail "git hooks: expected 9 global entries, got $n"
+
+    # 5. An existing includeIf for the file (any scope) means leave it alone.
+    reset_githooks
+    git config --file "$glob" --add 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' '~/.config/git/agent-hooks.inc'
+    run_githooks CLAUDE_CODE_REMOTE=true >/dev/null
+    [[ ! -e "$inc" && ! -e "$sys" ]] && pass "git hooks: an existing includeIf is left alone" \
+        || fail "git hooks: wrote although an includeIf already existed"
+
+    # 6. Opt-out.
+    reset_githooks
+    run_githooks CLAUDE_CODE_REMOTE=true FLEET_GIT_HOOKS=off >/dev/null
+    [[ ! -e "$inc" ]] && pass "git hooks: FLEET_GIT_HOOKS=off skips" || fail "git hooks: opt-out ignored"
+
+    # 7. Errors never fail the hook: HOME's .config is a file, so mkdir fails.
+    reset_githooks
+    : > "$d/home/.config"
+    out="$(run_githooks CLAUDE_CODE_REMOTE=true)"; rc=$?
+    [[ $rc -eq 0 ]] && grep -q '^fleet-guidance: installed' <<< "$out" \
+        && pass "git hooks: an unwritable include dir leaves the verdict and exit code intact" \
+        || fail "git hooks: error changed the hook result (rc=$rc): $out"
+}
+
 test_fleet_memory_check_value() {
     echo ""
     echo "TEST: fleet-memory.sh (check value line)"
@@ -26517,6 +26628,7 @@ GROUP_codex=(
     test_fleet_memory_freshness
     test_fleet_memory_payload_stamp
     test_fleet_memory_check_value
+    test_fleet_memory_git_hooks
     test_fleet_memory_repo_header
     test_fleet_memory_workspace
 )
