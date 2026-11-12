@@ -18,14 +18,22 @@ name: Fire fleet worker
 #   response body is never printed.
 # * No `uses:` step, so actions.lock lists this file with no actions.
 # * An optional repository variable, FLEET_WORKER_EVERY_HOURS (3, 6, 12 or
-#   24), thins the schedule for a smaller Claude plan: a scheduled run fires
-#   only when the UTC hour is a multiple of it. Unset, every scheduled run
-#   fires (every 3 hours). A dispatch always fires. Any other value fails the
-#   run naming the variable (acsi-kit#29).
+#   24), thins the schedule for a smaller Claude plan. Each cron line below
+#   names the longest cadence its slots belong to, and a scheduled run fires
+#   only when its line (github.event.schedule, read from the event file) is
+#   on that cadence. Unset, every scheduled run fires (every 3 hours). A
+#   dispatch always fires. Any other value fails the run naming the variable
+#   (acsi-kit#29).
+#   The cadence never comes from the clock: GitHub starts scheduled runs one
+#   to two hours late, so the earlier "UTC hour is a multiple" test skipped
+#   every fire from 2026-11-10 to 2026-11-12 once the variable was 6.
 
 on:
   schedule:
-    - cron: '20 */3 * * *'
+    - cron: '20 0 * * *'
+    - cron: '20 12 * * *'
+    - cron: '20 6,18 * * *'
+    - cron: '20 3,9,15,21 * * *'
   workflow_dispatch:
 
 permissions: {}
@@ -51,9 +59,16 @@ jobs:
             *) echo "::error::variable FLEET_WORKER_EVERY_HOURS must be 3, 6, 12 or 24, or unset"; exit 1 ;;
           esac
           if [[ -n "${EVERY_HOURS:-}" && "${GITHUB_EVENT_NAME:-}" == schedule ]]; then
-            hour=$(date -u +%-H)
-            if (( hour % EVERY_HOURS != 0 )); then
-              echo "::notice::skipped: FLEET_WORKER_EVERY_HOURS is $EVERY_HOURS and the UTC hour is $hour"
+            line=$(jq -r '.schedule // ""' "$GITHUB_EVENT_PATH")
+            case "$line" in
+              '20 0 * * *') slot=24 ;;
+              '20 12 * * *') slot=12 ;;
+              '20 6,18 * * *') slot=6 ;;
+              '20 3,9,15,21 * * *') slot=3 ;;
+              *) echo "::error::unknown schedule line: $line"; exit 1 ;;
+            esac
+            if (( slot < EVERY_HOURS )); then
+              echo "::notice::skipped: FLEET_WORKER_EVERY_HOURS is $EVERY_HOURS and the cron line '$line' is on the $slot-hour cadence"
               exit 0
             fi
           fi

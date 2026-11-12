@@ -9,7 +9,9 @@ the Routines page on 2026-10-26. It ran hourly from the Routines page until
 nothing to do, and the page offers nothing between hourly and daily. Each fire
 starts a fresh cloud session. The optional repository variable
 `FLEET_WORKER_EVERY_HOURS` (3, 6, 12 or 24) thins the schedule for a smaller
-plan; this repository leaves it unset. Why it exists, and why it may merge one narrow
+plan; it gates on which cron line started the run, never the clock, because
+GitHub starts scheduled runs one to two hours late. This repository has it set
+to 6 (seen in the fire job logs on 2026-11-12), so the worker fires every 6 hours. Why it exists, and why it may merge one narrow
 kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
 widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md).
 

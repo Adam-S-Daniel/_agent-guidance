@@ -17,11 +17,13 @@ const root = path.resolve(__dirname, '..');
 const workflow = '.github/workflows/fleet-worker-fire.yml';
 const doc = () => YAML.parse(fs.readFileSync(path.join(root, workflow), 'utf8'));
 const step = () => doc().jobs.fire.steps[0];
+// Every slot of a 3-hour schedule, each line on the longest cadence it serves.
+const LINES = ['20 0 * * *', '20 12 * * *', '20 6,18 * * *', '20 3,9,15,21 * * *'];
 
 test('fires every 3 hours or by hand, with no permissions, no uses and no interpolation in run', () => {
   const d = doc();
   assert.deepEqual(Object.keys(d.on).sort(), ['schedule', 'workflow_dispatch']);
-  assert.deepEqual(d.on.schedule, [{ cron: '20 */3 * * *' }]);
+  assert.deepEqual(d.on.schedule, LINES.map(cron => ({ cron })));
   assert.deepEqual(d.permissions, {});
   assert.equal(d.concurrency['cancel-in-progress'], false);
   const job = d.jobs.fire;
@@ -42,7 +44,7 @@ test('actions.lock lists the workflow with no actions', () => {
 });
 
 function runFire({ url = 'https://api.example.com/fire', bearer = 'placeholder-value', status = 200,
-  every = '', event = 'schedule', hour = '9' } = {}) {
+  every = '', event = 'schedule', line = '20 3,9,15,21 * * *', hour = '9' } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-fire-test-'));
   try {
     const log = path.join(temp, 'calls.jsonl');
@@ -54,14 +56,17 @@ fs.appendFileSync(process.env.TEST_LOG, JSON.stringify({ args, config }) + '\\n'
 fs.writeFileSync(args[args.indexOf('-o') + 1], '{"secret_field":"response-canary"}');
 process.stdout.write(process.env.TEST_STATUS);
 `, { mode: 0o755 });
-    // A fake date: the step reads only the UTC hour from it.
+    // A fake date: GitHub starts scheduled runs late, so the clock must
+    // never decide whether a run fires.
     fs.writeFileSync(path.join(temp, 'date'), `#!/usr/bin/env bash
 echo "$TEST_HOUR"
 `, { mode: 0o755 });
+    const eventPath = path.join(temp, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(event === 'schedule' ? { schedule: line } : {}));
     const result = spawnSync('bash', ['-c', step().run], { encoding: 'utf8', env: {
       PATH: [temp, process.env.PATH].join(path.delimiter), TEST_LOG: log, TEST_STATUS: String(status),
       FIRE_URL: url, FIRE_BEARER: bearer, EVERY_HOURS: every, GITHUB_EVENT_NAME: event,
-      TEST_HOUR: hour } });
+      GITHUB_EVENT_PATH: eventPath, TEST_HOUR: hour } });
     const curl = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
     return { result, curl };
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
@@ -99,12 +104,16 @@ test('a failed fire fails the run with the status code only', () => {
 
 test('FLEET_WORKER_EVERY_HOURS thins scheduled fires and never blocks a dispatch', () => {
   const cases = [
-    [{ every: '', hour: '9' }, 1],
-    [{ every: '6', hour: '9' }, 0],
-    [{ every: '6', hour: '12' }, 1],
-    [{ every: '24', hour: '21' }, 0],
-    [{ every: '24', hour: '0' }, 1],
-    [{ every: '24', hour: '21', event: 'workflow_dispatch' }, 1],
+    [{ every: '' }, 1],
+    [{ every: '3', line: '20 3,9,15,21 * * *' }, 1],
+    [{ every: '6', line: '20 3,9,15,21 * * *' }, 0],
+    [{ every: '6', line: '20 6,18 * * *' }, 1],
+    [{ every: '6', line: '20 12 * * *' }, 1],
+    [{ every: '12', line: '20 6,18 * * *' }, 0],
+    [{ every: '12', line: '20 12 * * *' }, 1],
+    [{ every: '24', line: '20 12 * * *' }, 0],
+    [{ every: '24', line: '20 0 * * *' }, 1],
+    [{ every: '24', line: '20 3,9,15,21 * * *', event: 'workflow_dispatch' }, 1],
   ];
   for (const [over, fires] of cases) {
     const { result, curl } = runFire(over);
@@ -120,4 +129,31 @@ test('a FLEET_WORKER_EVERY_HOURS outside 3, 6, 12 and 24 fails naming it, and fi
     assert.equal(curl.length, 0, every);
     assert.ok(result.stdout.includes('FLEET_WORKER_EVERY_HOURS'), every);
   }
+});
+
+test('a late start still fires on its cron line, whatever the clock says (2026-11-10 to 11-12 regression)', () => {
+  // The 18:20 UTC slot started at 19:43; the old UTC-hour test skipped it.
+  for (const hour of ['1', '11', '19', '7']) {
+    const { result, curl } = runFire({ every: '6', line: '20 6,18 * * *', hour });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(curl.length, 1, `hour ${hour}`);
+  }
+});
+
+test('the four cron lines cover each 3-hour slot once, and each cadence fires at its own spacing', () => {
+  const hoursOf = l => l.split(' ')[1].split(',').map(Number);
+  const all = LINES.flatMap(hoursOf).sort((a, b) => a - b);
+  assert.deepEqual(all, [0, 3, 6, 9, 12, 15, 18, 21]);
+  for (const [every, want] of [['3', 8], ['6', 4], ['12', 2], ['24', 1]]) {
+    let fired = 0;
+    for (const line of LINES) fired += runFire({ every, line }).curl.length * hoursOf(line).length;
+    assert.equal(fired, want, `every ${every}`);
+  }
+});
+
+test('an unknown schedule line fails naming it, and fires nothing', () => {
+  const { result, curl } = runFire({ every: '6', line: '20 */3 * * *' });
+  assert.equal(result.status, 1);
+  assert.equal(curl.length, 0);
+  assert.ok(result.stdout.includes('unknown schedule line'));
 });
