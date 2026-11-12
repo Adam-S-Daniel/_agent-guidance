@@ -27,7 +27,7 @@ memory note is never the only copy."*
 
 Nothing checked it, and on 2026-09-14 the session writing this ADR proved what
 that is worth: it wrote
-`~/.claude/projects/-home-passp-repos/memory/codex-agents-md-budget.md`, a note
+`~/.claude/projects/<project>/memory/codex-agents-md-budget.md`, a note
 whose facts — Codex's `project_doc_max_bytes` behaviour, the byte ceilings, the
 gate wiring — existed **only** on a PR branch and in that one file. The rule
 was in context, in the session that broke it, and a rule with nothing behind it
@@ -128,7 +128,7 @@ Three properties of the surface shaped what could be built:
   revisiting if repo-delivered user-scope hooks ever exist.
 - **A killed session's note escapes the Stop gate entirely.** Stop does not run
   on a user interrupt, and it cannot run on a crash or a dropped connection —
-  which on `ZENDA` is routine. The note is still caught, one session later, by
+  which on the workstation is routine. The note is still caught, one session later, by
   the SessionStart nudge, because that arm scans everything rather than only
   this session's writes. The gate is therefore two-layered by necessity, not by
   belt-and-braces: neither arm alone is sufficient.

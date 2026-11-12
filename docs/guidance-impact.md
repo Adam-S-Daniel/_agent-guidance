@@ -675,7 +675,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Outcome: pending — opened 2026-09-28
 
 ## 2026-09-22 — workstation-layout — edit
-- Motivation: ZENDA is retired (_agent-guidance#117); a bullet naming the old host sends every session to a machine that no longer exists.
+- Motivation: the old workstation is retired (_agent-guidance#117); a bullet naming the old host sends every session to a machine that no longer exists.
 - Change: Windows guidance no longer includes a real machine name. It also adds where clones live in WSL; the manifest row moves from `skipped` (it was parked pending this rewrite) to `gap` (PR #157)
 - Eval: none — no fixture yet
 - Outcome: pending — opened 2026-09-22 (PR #157)
