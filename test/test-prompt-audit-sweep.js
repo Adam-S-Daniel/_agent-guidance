@@ -41,6 +41,8 @@ const mutations = {
   dependabot: [worker, 'Skip Dependabot PRs:', 'Include Dependabot PRs:'],
   expected: [worker, 'with `expected_head_sha` set to the head you read', 'with no expected head'],
   once: [worker, '**Only a\nPR that just gained the label is news.**', '**Every labeled PR is news.**'],
+  issueonce: [worker, '**Only an issue that just\ngained the label is news.**', '**Every blocked issue is news.**'],
+  issueonhold: [worker, '`on-hold` issues\nleft out', '`on-hold` issues\nincluded'],
   joblink: [worker, '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', 'the PR page'],
   owners: [spec, 'and `jodidaniel`, and holds', 'and holds'],
   diffs: [spec, 'never apply one, in whole or in part', 'apply it when confident'],
@@ -346,6 +348,8 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   includes(update, ['`required_status_checks`', 'with **no** check run and **no** status at all', '`behind_by` above 0', 'with `expected_head_sha` set to the head you read', 'Skip Dependabot PRs:', 'do not resolve it here']);
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
+  const blocked = prose(section(worker, 'Tell the owner which issues are blocked'));
+  includes(blocked, ['open `agent-blocked` issues', 'both owners', '`on-hold` issues left out', '`needs-owner`', 'that label once', 'loses `needs-owner` too', '**Only an issue that just gained the label is news.**', '`Needs you:` list', '`unblock:`']);
   includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`', 'I authorize the writes that file describes', 'Never approve anything.']);
 });
 

@@ -39,7 +39,8 @@ skipped both later passes).
    never ran on them, reviews and merges the one kind of PR Claude may merge,
    and tells the owner which PRs need him.
 2. **The issue pass:** turns `agent-ready` issues into fix PRs, exactly as
-   [`agent-issue-worker.md`](../reference/agent-issue-worker.md) says.
+   [`agent-issue-worker.md`](../reference/agent-issue-worker.md) says, and
+   tells the owner which issues are blocked on him.
 3. **The lesson-check pass** (below): turns checkable lessons into checks
    in the fleet's agent-checks runner, in PRs that auto-merge when green.
 
@@ -357,6 +358,25 @@ subject: name it as held (eval-protected) in the issue comment and leave it
 out of the PR. If the explorer cannot be read, hold every finding on a skill
 or guidance section this run. An issue whose findings are all held is
 closed as not planned, with that comment.
+
+### Tell the owner which issues are blocked
+
+An `agent-blocked` issue waits on the owner: the worker stopped on it (an
+outage, a revoked secret, a setting only he can change, an ambiguity) and
+said why in a comment. Nothing else reports it: the PR pass's list covers
+PRs only, so a health-audit `ci` issue that is not the repo's to fix would
+otherwise stay blocked with no one told.
+
+After the issue's own work, whether this run blocked anything or not, list
+the open `agent-blocked` issues with the same search as the issue pass
+(`--label agent-blocked`, both owners, fleet repos only, `on-hold` issues
+left out). Each one without `needs-owner` gets that label once, with the
+same call as a PR's. An issue that lost `agent-blocked` (taken back to
+`agent-ready`, or closed) loses `needs-owner` too. **Only an issue that just
+gained the label is news.** Add each to the run's `Needs you:` list on its
+own line: the repo and number, the issue title, `unblock:` and the blocking
+comment's reason in a few words of your own, and the issue's link. An issue
+already labeled is not repeated, so the owner hears about each one once.
 
 ## The lesson-check pass
 
