@@ -13,7 +13,8 @@ plan; it gates on which cron line started the run, never the clock, because
 GitHub starts scheduled runs one to two hours late. This repository has it set
 to 6 (seen in the fire job logs on 2026-11-12), so the worker fires every 6 hours. Why it exists, and why it may merge one narrow
 kind of PR: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
-widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md).
+widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md),
+and to reviewed agent-made changes and the hook pin bump by [ADR 0041](../decisions/0041-the-fleet-worker-merges-reviewed-agent-made-changes.md).
 
 This file is the spec. The scheduled task's prompt is short and points here,
 so the procedure is reviewed as a pull request rather than as an edit to a
@@ -38,7 +39,7 @@ and a PR, so a denied label write elsewhere never stops it
 skipped both later passes).
 
 1. **The PR pass** (below): brings open PRs up to date when a required check
-   never ran on them, reviews and merges the one kind of PR Claude may merge,
+   never ran on them, reviews and merges the kinds of PR Claude may merge,
    and tells the owner which PRs need him.
 2. **The issue pass:** turns `agent-ready` issues into fix PRs, exactly as
    [`agent-issue-worker.md`](../reference/agent-issue-worker.md) says, and
@@ -83,7 +84,8 @@ no merge.
   as the prompt-audit sweep does. Never guess the owner. Attach any repo the
   session lacks with `add_repo`; a repo that cannot be read is `NOT REACHED`
   in the summary, never treated as clean.
-- **Merge only what the merge rule (below) allows.** Never merge anything
+- **Merge only what the merge rule (below) allows.** Step 2d's
+  agent-change rule is part of it. Never merge anything
   else, never enable auto-merge except on the lesson-check pass's own PRs
   ([ADR 0027](../decisions/0027-lessons-become-agent-checks-through-the-fleet-worker.md)),
   never push to a default branch, never
@@ -308,6 +310,76 @@ the PR or the issue carries `on-hold`:
 The held findings are not lost: the sweep re-reads every file each run, so
 it raises them again once the subject is no longer protected.
 
+### 2d. Review and merge an agent-made change or a hook pin bump
+
+The narrow rule above covers instruction text only, so every other green PR
+an agent opened waited for the owner's merge, and so did the nightly hook pin
+bump. On 2026-11-12 the owner merged three such PRs by hand
+(`_agent-guidance` #504, #507 and #510; #510 restarted this worker after it
+had skipped every fire for a day and a half) and asked that they stop needing
+him. This rule merges them after the same independent review
+([ADR 0041](../decisions/0041-the-fleet-worker-merges-reviewed-agent-made-changes.md)).
+
+**The agent-change rule.** The routine may also merge a PR that does not meet
+item 1 above when every item here holds, each read fresh:
+
+1. It is one of two kinds:
+   - **An agent-made change:** authored by `Adam-S-Daniel`, labeled
+     `agent-authored`, in a fleet repo other than the three
+     cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
+     `jodidaniel.com`), where a merge publishes the live site.
+   - **The hook pin bump:** in `Adam-S-Daniel/_agent-guidance`, authored by
+     `agents-md-sync[bot]`, head branch `hook-pin-bump/update`, and the
+     changed files are exactly `repos.yml` and
+     `.claude/hooks/skills-bootstrap.sh`.
+2. It is not a draft. A thread that wants the owner's call on a PR leaves it
+   a draft or labels it `on-hold`; this pass never touches either.
+3. Neither the PR nor any issue it closes carries `on-hold`.
+4. Its head commit's committer date is at least 1 hour before the run's
+   start, so a PR whose author is still pushing is not merged under it.
+5. Items 4, 5 and 7 of the merge rule above hold (every check green, no run
+   `waiting` on an environment, `mergeable_state` `clean`, the
+   eval-protection gate exits 0, with a refusal parked as in step 2c).
+6. The PR carries a comment from `Adam-S-Daniel` whose first line is
+   exactly `Independent review: CLEAN at <the full head sha>`, written by
+   the review below. A push after the stamp makes it stale.
+
+**The review.** For a PR meeting items 1 to 4 with no review comment for its
+current head, start one subagent with a fresh prompt, as in step 2a. Give it
+only the PR title and body, the issues it closes or refers to, the PR diff
+and the repo's `AGENTS.md`, never this run's other context. Its job is to
+break the change, not approve it. It answers `CLEAN` only if all of these
+hold, and otherwise `FINDINGS` with each problem:
+
+- every hunk does what the body says and nothing else;
+- new behavior has a test and a bug fix has a regression test, as the fleet
+  guidance requires, and the body names the tests it ran;
+- nothing adds a secret, credential, token or personal data, or prints one
+  to a log;
+- nothing weakens a control: no wider workflow `permissions:`, no
+  `pull_request_target`, no `${{ }}` expression inside a `run:` block, no
+  unpinned action or loosened lockfile, no ruleset, branch protection,
+  required check or environment gate dropped, no test skipped, disabled or
+  deleted to get green;
+- nothing widens what an agent, routine or bot may merge, approve or push
+  to a default branch, or the scope of a token or of a scheduled task's
+  authorization sentence: a merge rule, an ADR granting such a write, a
+  ruleset bypass. Such a change always goes to the owner.
+
+For the hook pin bump, `CLEAN` also requires that the new hook adds no
+network access, writes nothing outside the paths the old hook wrote to, runs
+nothing it downloaded without a digest check, and drops no check the old hook
+made. Post the verdict as in step 2a; the cap of 5 reviews per run is shared
+with step 2a. If the subagent cannot run or gives no verdict, post nothing:
+the PR has no stamp, so it is never merged under this rule.
+
+**The merge.** Run the window check of step 2b first; a PR that changes the
+fleet guidance waits for the window like any other. Then, for a PR meeting
+all six items, merge it with `expected_head_sha` set to the reviewed head, as
+a merge commit, and comment `Merged by the fleet worker: an agent-made change
+that passed CI and an independent review (ADR 0041).` A merge the API
+refuses, or a `FINDINGS` review, goes to the owner under step 3.
+
 ### 3. Tell the owner which PRs need him
 
 A PR **needs the owner** when any of these holds:
@@ -317,10 +389,14 @@ A PR **needs the owner** when any of these holds:
   then that run's `pending_deployments`). Link the waiting job's page,
   `https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`, on
   the current head.
-- **Ready for his merge:** authored by `Adam-S-Daniel`, every check green as
+- **Ready for his merge:** authored by `Adam-S-Daniel` (or the hook pin
+  bump of step 2d), every check green as
   in merge rule item 4, `mergeable_state` `clean`, and the merge rule does not
   allow this routine to merge it, or a review answered `FINDINGS`. A
-  lesson-check PR with auto-merge armed is not one: it merges itself. Nor is
+  lesson-check PR with auto-merge armed is not one: it merges itself. Nor
+  is a PR that step 2d may still merge: one waiting for its review or for
+  item 4's hour. A step 2d `FINDINGS` review or a refused merge does make it
+  one. Nor is
   a PR held only by merge rule item 7: one it refused is parked (step 2c),
   and one it could not decide is retried next run. Nor is
   a Decap CMS post that is still a draft or in review (a `decap-cms/draft`

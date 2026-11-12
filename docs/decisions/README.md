@@ -56,6 +56,7 @@ a page.
 | [0038](0038-memory-curation-checks-claims-against-evidence.md) | Memory curation checks claims against their evidence and keeps the index short |
 | [0039](0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md) | Fleet guidance merges by automation are batched into one weekly window |
 | [0040](0040-the-repo-stub-keeps-only-the-pointer-and-the-irreversible-rules.md) | The repo stub keeps only the pointer and the irreversible rules |
+| [0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) | The fleet worker merges reviewed agent-made changes and the hook pin bump |
 
 ## Format
 
