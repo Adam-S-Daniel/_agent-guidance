@@ -2247,6 +2247,21 @@ class HookRunLineTests(unittest.TestCase):
             with self.subTest(raw=raw[:60]):
                 self.assertIsNone(self.line(raw))
 
+    def test_a_boolean_version_is_not_version_one(self):
+        self.assertIsNone(self.line(run_log_line().replace('"v":1', '"v":true')))
+        self.assertIsNone(self.line(run_log_line().replace('"v":1', '"v":1.0')))
+
+    def test_batches_with_hooks_stay_within_the_object_limit(self):
+        mod = hook_module()
+        mod["S3_HOOKS_DEFAULT"] = True
+        for pad in range(900, 1100):
+            items = [("h%d" % i, "2026-10", '{"kind":"hook","pad":"%s"}' % ("x" * pad))
+                     for i in range(300)]
+            for head, batch in mod["sink_batches"]('{"kind":"guidance-load"}', items):
+                texts = [t for _i, t in batch]
+                body = mod["sink_body"]("2026-10-31T12:00:00Z", head, [], texts)
+                self.assertLessEqual(len(body), 262144, pad)
+
     def test_no_other_key_travels(self):
         doc = json.loads(run_log_line())
         doc.update(path="/home/someone/file", message="secret text")
@@ -2282,6 +2297,14 @@ class HookRunGitTests(CloudTestCase):
         self.stop()
         self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid), hook_upload_line(b, self.sid)])
         self.assertEqual(self.pending(), [])
+
+    def test_hook_lines_alone_are_not_called_skill_events(self):
+        self.write_runs(run_log_line())
+        self.script([PUSH_OK])
+        self.stop()
+        subject = subprocess.run([REAL_GIT, "--git-dir", str(self.bare), "log", "-1", "--format=%s",
+                                  "persistent/usage-events"], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(subject, "cloud hook runs")
 
     def test_a_month_boundary_goes_to_its_own_shard(self):
         a = run_log_line(ts="2026-11-01T00:00:01Z")

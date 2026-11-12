@@ -782,7 +782,7 @@ def hook_line(raw, sid):
         doc = json.loads(raw)
     except (ValueError, RecursionError):
         return None
-    if not isinstance(doc, dict) or doc.get("v") != 1:
+    if not isinstance(doc, dict) or type(doc.get("v")) is not int or doc.get("v") != 1:
         return None
     when = parse_ts(doc.get("ts"))
     event, repo, runner = doc.get("event"), doc.get("repo"), doc.get("runner")
@@ -1073,7 +1073,8 @@ def sink_batches(line, items):
     """[(guidance line or None, [(id, text)])], phase 1's line in the first,
     each body at most SINK_MAX_OBJECT bytes. A line too large for any object
     (none can be: every field is bounded) is left out and stays pending."""
-    overhead = len(sink_body("2000-01-01T00:00:00Z", None, []))
+    # The `hooks` key's `,"hooks":[]` counts whenever phase-3 lines may be sent.
+    overhead = len(sink_body("2000-01-01T00:00:00Z", None, [], [""] if s3_hooks_enabled() else []))
     batches, head, current = [], line, []
     size = overhead + (len(line.encode("utf-8")) if line is not None else 0)
     for ident, _month, text in items:
@@ -1246,7 +1247,9 @@ def upload(line, when, cloud=None):
                 edits += shard_edits(cloud.sid, snap)
             message = {(True, False): "guidance-load event", (False, True): "cloud skill events",
                        (True, True): "guidance-load and cloud skill events"}[(line is not None, bool(snap))]
-            if snap and any(is_hook_line(p[2]) for p in snap):
+            if snap and all(is_hook_line(p[2]) for p in snap):
+                message = "cloud hook runs" if line is None else "guidance-load event and cloud hook runs"
+            elif snap and any(is_hook_line(p[2]) for p in snap):
                 message += " and hook runs"
             outcome = git_commit(work, edits, deadline, message)
             if line is not None and snap and outcome != "ok" and cap_for(deadline) >= MIN_CALL:

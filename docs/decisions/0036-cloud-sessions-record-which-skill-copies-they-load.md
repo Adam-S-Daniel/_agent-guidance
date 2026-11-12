@@ -70,4 +70,4 @@ Phase 3 reads the agent-checks run log (`$AGENT_CHECKS_LOG`, else `${XDG_STATE_H
 - **It shares phase 2's machinery.** Same pending file, lock, backoff and state, an offset into the log, and 50 lines, 1 MiB and 0.5 s per Stop, 2000 lines per session. Its own errors are caught where they arise, so it cannot delay or fail phases 1 and 2.
 - **Malformed lines are skipped silently**, as is any line whose `failed` ids are not within `checks`.
 - **Identical lines collapse.** The id is the hash of the line, and the log's timestamp has one-second resolution, so two identical runs in one second count once. The format fixes that; a counter in the log would have to ship in the runner first.
-- **A restarted container re-reads the log** only if it is the same file, and the shard's id dedupe absorbs it.
+- **Dedupe is per session.** A re-read of the log within a session adds nothing, because the shard's ids absorb it. The shard is named by session, so a container reused across sessions could attribute its earlier runs to the new session; fresh cloud containers do not.

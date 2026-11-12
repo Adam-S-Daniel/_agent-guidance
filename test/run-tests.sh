@@ -22409,11 +22409,6 @@ test_fleet_memory_payload_stamp() {
         'fleet payload stamp: --workspace with no child payload keeps the caller stamp'
 }
 
-# The check value (see CHECK VALUE in fleet-memory.sh, docs/decisions/0035): a
-# plain-text line that ends every block the hook writes, so a session's report
-# of what loaded can be compared with what it loaded. It is the LAST 8 hex of
-# the payload's sha256 (the version id the verdict prints is the first 8), it
-# exists only in the written block, and it never reaches stdout.
 test_fleet_memory_git_hooks() {
     echo ""
     echo "TEST: fleet-memory.sh (git hooks in hosted sessions)"
@@ -22460,6 +22455,13 @@ INC
         && pass "git hooks: a non-hosted session writes nothing" \
         || fail "git hooks: a non-hosted session touched git config"
 
+    # 1b. A session id alone is not enough: CLAUDE_CODE_REMOTE=true is the test.
+    reset_githooks
+    run_githooks CLAUDE_CODE_REMOTE_SESSION_ID=session_example >/dev/null
+    [[ ! -e "$inc" && ! -e "$glob" && ! -e "$sys" ]] \
+        && pass "git hooks: a session id alone writes nothing" \
+        || fail "git hooks: a session id alone touched git config"
+
     # 2. Hosted, system config writable: include file and system entries,
     #    silent apart from the verdict line.
     reset_githooks
@@ -22487,7 +22489,7 @@ INC
     # 3. Idempotent: a second run, and the session-id trigger, change nothing.
     local sum_sys sum_inc
     sum_sys="$(sha256sum "$sys" | cut -d' ' -f1)"; sum_inc="$(sha256sum "$inc" | cut -d' ' -f1)"
-    run_githooks CLAUDE_CODE_REMOTE_SESSION_ID=session_example >/dev/null
+    run_githooks CLAUDE_CODE_REMOTE=true >/dev/null
     [[ "$sum_sys" == "$(sha256sum "$sys" | cut -d' ' -f1)" && "$sum_inc" == "$(sha256sum "$inc" | cut -d' ' -f1)" ]] \
         && pass "git hooks: a second run changes nothing" || fail "git hooks: second run changed files"
 
@@ -22500,10 +22502,24 @@ INC
 
     # 5. An existing includeIf for the file (any scope) means leave it alone.
     reset_githooks
+    mkdir -p "$(dirname "$inc")"; cp "$expected" "$inc"
     git config --file "$glob" --add 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' '~/.config/git/agent-hooks.inc'
     run_githooks CLAUDE_CODE_REMOTE=true >/dev/null
-    [[ ! -e "$inc" && ! -e "$sys" ]] && pass "git hooks: an existing includeIf is left alone" \
+    [[ ! -e "$sys" ]] && pass "git hooks: an existing includeIf is left alone" \
         || fail "git hooks: wrote although an includeIf already existed"
+
+    # 5b. Partial install: an includeIf with no include file is repaired, and a
+    #     missing entry is added, without duplicating the rest.
+    reset_githooks
+    git config --file "$glob" --add 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' '~/.config/git/agent-hooks.inc'
+    run_githooks CLAUDE_CODE_REMOTE=true >/dev/null
+    if cmp -s "$inc" "$expected"; then pass "git hooks: includeIf present, .inc missing: the file is written"
+    else fail "git hooks: partial install left the include file missing"; fi
+    n="$(git config --file "$sys" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
+    [[ "$n" -eq 8 ]] && pass "git hooks: the missing entries are added (8 beside the 1 present)" \
+        || fail "git hooks: expected 8 added system entries, got $n"
+    n="$(git config --file "$glob" --get-all 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' | wc -l)"
+    [[ "$n" -eq 1 ]] && pass "git hooks: the present entry is not duplicated" || fail "git hooks: entry duplicated ($n)"
 
     # 6. Opt-out.
     reset_githooks
@@ -22519,6 +22535,11 @@ INC
         || fail "git hooks: error changed the hook result (rc=$rc): $out"
 }
 
+# The check value (see CHECK VALUE in fleet-memory.sh, docs/decisions/0035): a
+# plain-text line that ends every block the hook writes, so a session's report
+# of what loaded can be compared with what it loaded. It is the LAST 8 hex of
+# the payload's sha256 (the version id the verdict prints is the first 8), it
+# exists only in the written block, and it never reaches stdout.
 test_fleet_memory_check_value() {
     echo ""
     echo "TEST: fleet-memory.sh (check value line)"
