@@ -87,7 +87,7 @@ class DeliveryReceiptTests(unittest.TestCase):
         self.python_shim(self.bin / "python3")
         self.env = dict(os.environ, HOME=str(self.home), CLAUDE_CONFIG_DIR=str(self.claude),
                         CODEX_HOME=str(self.codex), FLEET_GUIDANCE_PAYLOAD=str(self.payload),
-                        FLEET_GUIDANCE_SKIP="0", FLEET_GUIDANCE_RECEIPT="1", PYTHONPATH=str(self.pythonpath),
+                        FLEET_GUIDANCE_SKIP="0", FLEET_GUIDANCE_RECEIPT="1", FLEET_GIT_HOOKS="off", PYTHONPATH=str(self.pythonpath),
                         PYTHONDONTWRITEBYTECODE="1", RECEIPT_TEST_CLAUDE_CALLS=str(self.calls),
                         TMPDIR=str(self.root),
                         PATH=str(self.sentinel_bin) + os.pathsep + str(self.bin) + os.pathsep + os.environ["PATH"])

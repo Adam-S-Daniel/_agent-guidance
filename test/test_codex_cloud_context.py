@@ -52,6 +52,7 @@ class CodexCloudContextCheckTests(unittest.TestCase):
         """The managed block the real hook writes for this payload in Codex Cloud mode."""
         codex_home = self.root / "codex-home"
         env = os.environ.copy()
+        env["FLEET_GIT_HOOKS"] = "off"
         env.update(
             HOME=str(self.root / "home"),
             CODEX_HOME=str(codex_home),
