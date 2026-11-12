@@ -59,9 +59,10 @@
 # _agent-guidance#398 had none). `uploaded` is true or false when an upload was
 # tried, null when it was not. `listing` is optional: "full" or "truncated"
 # when the transcript holds the session's first skill listing (an `attachment`
-# of type skill_listing with isInitial true), "truncated" when a namespaced
+# of type skill_listing with isInitial true), "truncated" when a
 # skill is listed by name alone, and absent (the key is omitted) when no such
-# listing is found. Never "full" without that proof. Apart from registry owner/repo names, this
+# listing is found. Any skill, bare or namespaced, listed by name alone
+# reads "truncated". Never "full" without that proof. Apart from registry owner/repo names, this
 # record holds no paths, names, titles or file content. (Phase 2's lines, below,
 # carry skill names, tool-use ids and digests, and go to the private store or
 # the private bucket only.)
@@ -428,7 +429,10 @@ def listing_state(entry):
     (isInitial) skill listing; None for any other entry. Claude Code cuts the
     listing to a character budget and lists the last skills by name alone; a
     plugin skill always has a description, so a namespaced name with none is
-    that cut. Same rule as skills-evals' model_usage_census.listing_state."""
+    that cut. Stricter than skills-evals' model_usage_census.listing_state: a
+    BARE name with none counts as a cut too, because the registry bundles the
+    skills-bootstrap hook installs in cloud sessions are listed by bare name,
+    and a false "full" could let a used skill be removed."""
     att = entry.get("attachment")
     if not isinstance(att, dict) or att.get("type") != "skill_listing" \
             or att.get("isInitial") is not True:
@@ -438,7 +442,7 @@ def listing_state(entry):
         return None
     for line in content.split("\n"):
         found = _LISTED.match(line)
-        if found and ":" in found.group("name") and not found.group("rest").lstrip(":").strip():
+        if found and not found.group("rest").lstrip(":").strip():
             return "truncated"
     return "full"
 

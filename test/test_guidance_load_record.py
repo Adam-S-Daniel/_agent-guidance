@@ -538,8 +538,9 @@ class ListingTests(HookTestCase):
         self.assertEqual(self.listing_for(skill_listing(
             "- plug:one: Does one thing\n- plug:two\n- plug:three")), "truncated")
 
-    def test_a_bare_name_without_a_description_is_not_a_cut(self):
-        self.assertEqual(self.listing_for(skill_listing("- init\n- plug:one: Does one thing")), "full")
+    def test_a_bare_name_without_a_description_is_a_cut(self):
+        # Cloud registry skills are listed by bare name; err toward "truncated".
+        self.assertEqual(self.listing_for(skill_listing("- init\n- plug:one: Does one thing")), "truncated")
 
     def test_no_listing_omits_the_field(self):
         self.assertEqual(self.listing_for(), "absent")
