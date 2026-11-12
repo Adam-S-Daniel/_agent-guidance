@@ -73,6 +73,16 @@ const mutations = {
   everyrun: [worker, '**every run does all three**', '**a run may stop after any pass**'],
   lessonsline: [worker, '`Lessons: read <n>, new <k>, handled <m>`', '`Lessons handled: <m>`'],
   lessonsfetch: [worker, '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`list the branch with the connector`'],
+  agentstamp: [worker, 'A stamp comment already on the PR, from anyone, counts\n   for nothing', 'A stamp comment already on the PR counts'],
+  agentcms: [worker, 'in a fleet repo other than the three\n     cms-platform-managed repos', 'in any fleet repo, the three\n     cms-platform-managed repos included'],
+  agentage: [worker, 'at least 1 hour before the run\'s start, read from the', 'any time before the run\'s start, read from the'],
+  agentauthority: [worker, 'Such a change always goes to the owner;', 'Such a change is fine;'],
+  hookfiles: [worker, 'the\n     changed files are exactly `repos.yml` and', 'the\n     changed files include `repos.yml` and'],
+  hookbytes: [worker, 'must\n     report `ahead` or `identical`', 'may\n     report anything'],
+  agentci: [worker, 'A repo with\n   no required CI goes to the owner.', 'A repo with\n   no required CI is fine.'],
+  agentreroll: [worker, 'ends step 2d for that head', 'does not end step 2d for that head'],
+  hookyaml: [worker, 'must be equal once\n     `skills_bootstrap.ref`', 'may differ beyond\n     `skills_bootstrap.ref`'],
+  agentissue: [worker, 'A PR on an\n     `agent/issue-<n>-<slug>` branch is never this kind', 'A PR on an\n     `agent/issue-<n>-<slug>` branch may be this kind'],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
 
@@ -341,6 +351,16 @@ test('fleet worker merges only narrow, reviewed instruction fixes and approves n
   includes(prose(section(adr28, 'Addendum (2026-10-28)')), ['in `adam-agentskills` only', 'its diff only adds lines', 'unless each changed skill has a new impact entry', 'swaps `agent-working` for `agent-ready`', 'closes the issue as completed when none are left']);
   includes(prose(section(issueWorker, 'Where it runs')), ['**The owner turns that laptop task off**']);
   includes(prose(section(issueWorker, 'Each run')), ['do only the findings no merged PR fixed', 'close the issue as completed with a comment naming the merged PRs', 'raises the bundle\'s `version` in both `plugin.json` files', 'adds a `docs/skill-impact.md` entry (add lines only)', 'a `PURPOSE.md` beside the `SKILL.md`']);
+});
+
+test('fleet worker merges reviewed agent-made changes and the hook pin bump (ADR 0041)', () => {
+  const rule = prose(section(worker, '2d. Review and merge an agent-made change or a hook pin bump'));
+  includes(rule, ['Its base is the repo\'s default branch', 'labeled `agent-authored`', 'in a fleet repo other than the three cms-platform-managed repos', 'branch is never this kind', '`agents-md-sync[bot]`', 'head branch `hook-pin-bump/update`', 'every commit on it authored and committed by `agents-md-sync[bot]`', 'the changed files are exactly `repos.yml` and `.claude/hooks/skills-bootstrap.sh`', 'must report `ahead` or `identical`', 'Any mismatch goes to the owner.', 'It is not a draft.', 'carries `on-hold`', 'at least 1 hour before the run\'s start', 'never from the commit\'s own date', 'Items 4 and 5 of the merge rule above hold', 'A repo with no required CI goes to the owner.', 'step 2c does not park it', 'A stamp comment already on the PR, from anyone, counts for nothing', 'a read-only checkout of the head commit', 'never this run\'s other context', 'is itself a finding', 'Its job is to break the change, not approve it.', 'no test skipped, disabled or deleted', 'no `${{ inputs.* }}` or `${{ github.event.* }}`', 'nothing adds an outbound network call', 'released at least 7 days ago', '`scripts/eval-protected.js`', 'Such a change always goes to the owner', 'the frontmatter is untouched and no hunk adds a step', 'a new `docs/guidance-impact.md` entry', 'ends step 2d for that head', 'Exit 1 is no decision: do not merge, and retry next run.', 'Nor is an `agent/lesson-check-<id>` PR or any PR with auto-merge armed', 'must be equal once `skills_bootstrap.ref` and `skills_bootstrap.sha256` are removed', '(ADR 0010\'s own guard)', 'byte-identical to the head\'s `agents-md/base.md`', 'the base copy of the hook beside the head copy', 'no closing keyword except before the issue the PR fixes', 'adds no network access', 'the PR is not merged this run and is retried next run', 'Run the window check of step 2b first', '`expected_head_sha` set to the reviewed head', 'goes to the owner under step 3']);
+  includes(prose(section(worker, 'Constraints')), ['Step 2d\'s agent-change rule is part of it.']);
+  includes(prose(section(worker, '3. Tell the owner which PRs need him')), ['(or the hook pin bump of step 2d)', 'A step 2d `FINDINGS` review, a hook pin bump failing step 2d item 1\'s checks, a failed step 2d item 5, a step 2d item 6 exit 2, or a refused merge does make it one.']);
+  const adr41 = 'docs/decisions/0041-the-fleet-worker-merges-reviewed-agent-made-changes.md';
+  includes(prose(section(adr41, 'Decision')), ['independent review', 'Opting out is a draft or `on-hold`.', 'still wait for the owner', 'never approves anything']);
+  includes(read('docs/decisions/0010-the-hook-pin-is-re-pinned-from-here.md'), ['Superseded in part by\n[0041]']);
 });
 
 test('fleet worker updates PRs a required check never ran on and tells the owner once', () => {

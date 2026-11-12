@@ -1,6 +1,6 @@
 # 0028 — The fleet worker also merges skill, fleet guidance and partial fixes
 
-**Status:** Accepted (2026-10-27)
+**Status:** Accepted (2026-10-27). Widened by [0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) (2026-11-12): the fleet worker also merges reviewed agent-made PRs and the hook pin bump.
 
 ## Context
 
