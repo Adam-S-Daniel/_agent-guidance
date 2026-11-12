@@ -142,7 +142,9 @@ class HookTestCase(unittest.TestCase):
         out = []
         for line in log.read_text(encoding="utf-8").splitlines():
             record = json.loads(line)
-            self.assertEqual(list(record), KEYS, line)
+            # `listing` is optional: present only when a skill listing was found.
+            keys = KEYS[:-1] + ["listing"] + KEYS[-1:] if "listing" in record else KEYS
+            self.assertEqual(list(record), keys, line)
             out.append(record)
         return out
 
@@ -513,6 +515,40 @@ class CheckValueTests(HookTestCase):
         record = self.record_for([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)), assistant(1)])
         self.assertEqual(record["v"], 1)
         self.assertEqual(list(record), KEYS)
+
+
+def skill_listing(content, initial=True):
+    return {"type": "attachment", "version": "2.1.312", "entrypoint": "remote_projects",
+            "attachment": {"type": "skill_listing", "isInitial": initial, "content": content}}
+
+
+class ListingTests(HookTestCase):
+    def listing_for(self, *entries):
+        self.write_transcript([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               *entries, assistant(1)])
+        self.run_hook()
+        [record] = self.records()
+        return record.get("listing", "absent")
+
+    def test_a_listing_with_every_description_is_full(self):
+        self.assertEqual(self.listing_for(skill_listing(
+            "- init: Initialize a file\n- plug:one: Does one thing\n- plug:two: Does another")), "full")
+
+    def test_a_namespaced_name_without_a_description_is_truncated(self):
+        self.assertEqual(self.listing_for(skill_listing(
+            "- plug:one: Does one thing\n- plug:two\n- plug:three")), "truncated")
+
+    def test_a_bare_name_without_a_description_is_not_a_cut(self):
+        self.assertEqual(self.listing_for(skill_listing("- init\n- plug:one: Does one thing")), "full")
+
+    def test_no_listing_omits_the_field(self):
+        self.assertEqual(self.listing_for(), "absent")
+
+    def test_a_non_initial_listing_is_not_proof(self):
+        self.assertEqual(self.listing_for(skill_listing("- plug:one: Does one thing", initial=False)), "absent")
+
+    def test_a_listing_without_text_content_omits_the_field(self):
+        self.assertEqual(self.listing_for(skill_listing(None)), "absent")
 
 
 # Invented 40-hex commits; the real ones are what skills-bootstrap.sh fetched.
