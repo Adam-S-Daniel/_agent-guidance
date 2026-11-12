@@ -68,12 +68,14 @@ GREC_MATCHER="*"
 # Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
 GITATTR_REL_PATH=".gitattributes"
 GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
-# The Dependabot merge path every repo running Dependabot needs, ADDED (never
-# overwritten) when repos.yml's dependabot_auto_merge.deliver is true. See the
-# block in repos.yml for why it is off by default.
+# The Dependabot merge path every synced repo needs (fleet.yml turns Dependabot
+# security updates on everywhere), MANAGED like the agent-checks runner: added
+# when missing and overwritten when it drifts from the template, when
+# repos.yml's dependabot_auto_merge.deliver is true. The template has no uses:
+# lines and no helper script, so an actions.lock repo takes it too. See the
+# block in repos.yml for the carve-outs (cms-platform and its callers).
 AUTOMERGE_TEMPLATE_DIR="$REPO_ROOT/templates/dependabot-auto-merge"
 AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
-AUTOMERGE_SCRIPT_REL_PATH=".github/scripts/workflow-overlap.sh"
 # The agent-checks lane (ADR 0021), on when repos.yml's agent_checks.deliver is
 # true. The runner and the Claude Code guard are MANAGED (overwritten whenever
 # they drift, like fleet-memory.sh); the CI workflow is ADDED once and never
@@ -456,8 +458,7 @@ BOOTSTRAP_FETCH_WARNED=false
 # `true` is off: a typo must not start writing workflow files fleet-wide.
 AUTOMERGE_ENABLED=false
 if [[ "$(read_repos_yml '.dependabot_auto_merge.deliver // false')" == "true" ]]; then
-    if [[ -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" \
-          && -s "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" ]]; then
+    if [[ -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" ]]; then
         AUTOMERGE_ENABLED=true
     else
         echo "::warning::repos.yml turns on dependabot_auto_merge.deliver, but $AUTOMERGE_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
@@ -1307,33 +1308,60 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Dependabot auto-merge workflow: classify ───────────────────────
-    # missing  -> deliver; present / n-a -> nothing to do; skipped -> warned.
-    # "present" is any workflow named dependabot-auto-merge.yml or cms-platform's
-    # self-dependabot-auto-merge.yml, whatever its content: the sync adds a
-    # merge path where there is none, it does not police the ones that exist.
+    # missing | current | drifted | skipped | n/a. Managed: missing and
+    # drifted are written. Never written (skipped, with a log line saying why):
+    #   - cms-platform itself (it has its own self- workflow);
+    #   - a repo where ANY .github/workflows/*.y*ml calls cms-platform's
+    #     reusable dependabot workflow, matched case-insensitively
+    #     (adamdaniel.ai, jodidaniel.com);
+    #   - a symlinked .github, .github/workflows or workflow path, or a
+    #     non-regular file at it (WARN, no write);
+    #   - a repo with self-dependabot-auto-merge.yml;
+    #   - a repo with only the .yaml spelling (a .yml would be a second
+    #     workflow), and a gitignored path.
     automerge_state="n/a"
-    if $AUTOMERGE_ENABLED && [[ -f .github/dependabot.yml || -f .github/dependabot.yaml ]]; then
+    if $AUTOMERGE_ENABLED; then
         automerge_state="missing"
-        for wf in .github/workflows/*; do
-            [[ -f "$wf" ]] || continue
-            if [[ "${wf##*/}" =~ ^(self-)?dependabot-auto-merge\.ya?ml$ ]]; then
-                automerge_state="present"
-                break
-            fi
-        done
-        if [[ "$automerge_state" == "missing" ]]; then
-            if [[ -e .github/workflows/actions.lock ]]; then
-                automerge_state="skipped"
-                log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the Dependabot auto-merge workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
-            elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null \
-                 || git check-ignore -q "$AUTOMERGE_SCRIPT_REL_PATH" 2>/dev/null; then
-                automerge_state="skipped"
-                log "WARN: the Dependabot auto-merge workflow's paths are gitignored in $repo_name — not delivered."
-            fi
+        automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
+        # Any workflow file may hold the caller, and the owner's case varies.
+        automerge_cms_caller=false
+        if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
+            for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
+                [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
+                if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
+                    automerge_cms_caller=true
+                    break
+                fi
+            done
+        fi
+        if [[ "${repo_name##*/}" == "cms-platform" ]]; then
+            automerge_state="skipped"
+            log "dependabot auto-merge: $repo_name is cms-platform itself, which has its own workflow — not delivered."
+        elif [[ -e .github/workflows/self-dependabot-auto-merge.yml ]]; then
+            automerge_state="skipped"
+            log "dependabot auto-merge: $repo_name has self-dependabot-auto-merge.yml — not delivered."
+        elif $automerge_cms_caller; then
+            automerge_state="skipped"
+            log "dependabot auto-merge: $repo_name calls cms-platform's reusable workflow — not delivered."
+        elif [[ -e .github/workflows/dependabot-auto-merge.yaml && ! -e "$AUTOMERGE_WF_REL_PATH" ]]; then
+            automerge_state="skipped"
+            log "WARN: $repo_name has .github/workflows/dependabot-auto-merge.yaml; writing the .yml spelling would make a second workflow — not delivered. Rename it to .yml to have it managed."
+        elif [[ -L .github || -L .github/workflows || -L "$AUTOMERGE_WF_REL_PATH" \
+                || ( -e "$AUTOMERGE_WF_REL_PATH" && ! -f "$AUTOMERGE_WF_REL_PATH" ) ]]; then
+            # A symlink would send the write outside the repo (or, dangling,
+            # make `cp` fail and abort the whole fleet run under set -e).
+            automerge_state="skipped"
+            log "WARN: $AUTOMERGE_WF_REL_PATH (or .github, .github/workflows) is a symlink or not a regular file in $repo_name — refusing to write it; the workflow is not delivered."
+        elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null; then
+            automerge_state="skipped"
+            log "WARN: $AUTOMERGE_WF_REL_PATH is gitignored in $repo_name — not delivered."
+        elif [[ -f "$AUTOMERGE_WF_REL_PATH" ]]; then
+            cmp -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH" \
+                && automerge_state="current" || automerge_state="drifted"
         fi
     fi
     automerge_up_to_date=true
-    [[ "$automerge_state" == "missing" ]] && automerge_up_to_date=false
+    [[ "$automerge_state" == "missing" || "$automerge_state" == "drifted" ]] && automerge_up_to_date=false
 
     # ── agent-checks: classify ─────────────────────────────────────────
     # Four parts, each skipped on its own rather than failing the repo:
@@ -1544,9 +1572,7 @@ for repo_name in "${REPOS[@]}"; do
         fi
 
         if ! $automerge_up_to_date; then
-            log "[DRY RUN] Would add $AUTOMERGE_WF_REL_PATH (Dependabot auto-merge sweep; this repo has a Dependabot config and no merge path)"
-            [[ -e "$AUTOMERGE_SCRIPT_REL_PATH" ]] \
-                || log "[DRY RUN] Would add $AUTOMERGE_SCRIPT_REL_PATH (its helper)"
+            log "[DRY RUN] Would write $AUTOMERGE_WF_REL_PATH (Dependabot auto-merge sweep, $automerge_state)"
         fi
 
         if ! $ac_up_to_date; then
@@ -1757,22 +1783,13 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Dependabot auto-merge workflow: write ──────────────────────────
-    # Added, never overwritten. The helper keeps whatever copy the repo
-    # already has: the workflow only calls it, and a differing copy is that
-    # repo's business.
+    # Managed: written when missing, overwritten when drifted.
     automerge_written=false
-    automerge_script_written=false
     if ! $automerge_up_to_date; then
         mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
         cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
         automerge_written=true
-        if [[ ! -e "$AUTOMERGE_SCRIPT_REL_PATH" ]]; then
-            mkdir -p "$(dirname "$AUTOMERGE_SCRIPT_REL_PATH")"
-            cp "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" "$AUTOMERGE_SCRIPT_REL_PATH"
-            chmod 0755 "$AUTOMERGE_SCRIPT_REL_PATH"
-            automerge_script_written=true
-        fi
-        log "dependabot auto-merge: workflow added$($automerge_script_written && echo ' (with its helper)')."
+        log "dependabot auto-merge: workflow $([[ "$automerge_state" == "drifted" ]] && echo updated || echo added)."
     fi
 
     # ── agent-checks: write ────────────────────────────────────────────
@@ -1869,7 +1886,6 @@ for repo_name in "${REPOS[@]}"; do
     $ac_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $skillshell_written && add_paths+=("$SETTINGS_REL_PATH")
     $automerge_written && add_paths+=("$AUTOMERGE_WF_REL_PATH")
-    $automerge_script_written && add_paths+=("$AUTOMERGE_SCRIPT_REL_PATH")
     $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
@@ -1934,11 +1950,11 @@ bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
     if $automerge_written; then
         bootstrap_note="${bootstrap_note}
 
-Adds .github/workflows/dependabot-auto-merge.yml: this repo has a Dependabot
-config but nothing merged its PRs. Its daily sweep merges each Dependabot PR
-once every check on the PR's head is green. Delivered once from
-_agent-guidance's templates/dependabot-auto-merge/; the sync never overwrites
-it afterwards."
+$([[ "$automerge_state" == "drifted" ]] && echo Updates || echo Adds) .github/workflows/dependabot-auto-merge.yml: its daily sweep
+merges each Dependabot PR once every check on the PR's head is green. The file
+is managed by _agent-guidance's templates/dependabot-auto-merge/ and is
+overwritten on the next sync if it drifts, so change the template, not this
+copy."
     fi
 
     if $grec_any_written; then
@@ -1989,7 +2005,7 @@ AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bo
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $grec_any_written \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
-        commit_message="chore: add the Dependabot auto-merge workflow
+        commit_message="chore: $([[ "$automerge_state" == "drifted" ]] && echo update || echo add) the Dependabot auto-merge workflow
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \

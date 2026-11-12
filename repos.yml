@@ -289,20 +289,28 @@ skills_bootstrap:
 
 # ── Dependabot auto-merge workflow delivery ──────────────────────────────
 #
-# Every repo that runs Dependabot needs its own merge path: the
-# `dependabot-auto-merge.yml` workflow whose daily sweep merges a Dependabot
-# PR once every check on its head is green. Nothing added that file to a new
-# repo, so adam-agentskills ran Dependabot without one and its green PRs
-# waited days for a hand merge (adam-agentskills#68).
+# Every synced repo needs a Dependabot merge path: fleet.yml turns Dependabot
+# security updates on everywhere (repo-settings), so a repo with no
+# `dependabot.yml` still gets Dependabot PRs. The `dependabot-auto-merge.yml`
+# workflow's daily sweep merges one once every check on its head is green.
+# Nothing added that file to a new repo, so adam-agentskills ran Dependabot
+# without one and its green PRs waited days for a hand merge
+# (adam-agentskills#68).
 #
-# With `deliver: true`, sync.sh copies templates/dependabot-auto-merge/ into
-# any synced repo that has `.github/dependabot.yml` (or `.yaml`) and no
-# workflow named `dependabot-auto-merge.yml` / `self-dependabot-auto-merge.yml`.
-# It only ever ADDS the files: an existing workflow (or an existing
-# `.github/scripts/workflow-overlap.sh`) is never overwritten. A repo with
-# `.github/workflows/actions.lock` is skipped with a warning, because its
-# `uses:` lines must name tags locked by `gh actions-lock`, which the sync
-# cannot run.
+# With `deliver: true`, sync.sh delivers templates/dependabot-auto-merge/ to
+# EVERY synced repo. The file is MANAGED, like the agent-checks runner: written
+# when missing and overwritten whenever it drifts from the template. Repos
+# with `.github/workflows/actions.lock` take it too: the template is pure
+# gh/jq with no `uses:` lines, so there is nothing for `gh actions-lock` to
+# lock. It is never written, and a log line says why, for:
+#   - cms-platform itself, which has its own self-dependabot-auto-merge.yml;
+#   - a repo whose workflow already calls cms-platform's reusable one
+#     (`uses: Adam-S-Daniel/cms-platform/...`: adamdaniel.ai, jodidaniel.com);
+#   - a repo with its own self-dependabot-auto-merge.yml;
+#   - a repo with only the `.yaml` spelling (a `.yml` would be a second
+#     workflow; the sync warns instead), or whose path is gitignored.
+# A helper `.github/scripts/workflow-overlap.sh` left by an earlier version is
+# not touched.
 #
 # Needs the agents-md-sync App to hold "Workflows: Read and write" on both
 # installations: without it GitHub refuses any push that adds a workflow file,
