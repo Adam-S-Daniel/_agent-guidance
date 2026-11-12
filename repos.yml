@@ -253,7 +253,7 @@ skills_bootstrap:
         Dormant since 2026-03; no session happens there to spend the context.
 
     # A data channel, not a workspace: `feed.json` is rewritten by a scheduled
-    # script on BOXY (wsl-automation's scripts/publish-waiting-feed.sh) and
+    # script on the durable workstation (wsl-automation's scripts/publish-waiting-feed.sh) and
     # read by the "Waiting on Adam" page. Nobody opens a session in it, so
     # the bundle would cost always-on context in sessions that never happen.
     - repo: waiting-feed
