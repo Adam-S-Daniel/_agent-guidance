@@ -2419,7 +2419,8 @@ class HookRunGitTests(CloudTestCase):
 
 
 class HookRunSinkTests(SinkTestCase):
-    """Phase 3 on the S3 route: the `hooks` key is off until switched on."""
+    """Phase 3 on the S3 route: the `hooks` key is on by default, and
+    USAGE_SINK_HOOKS=0 turns it off."""
 
     def setUp(self):
         super().setUp()
@@ -2431,20 +2432,20 @@ class HookRunSinkTests(SinkTestCase):
         self.write_transcript([skill_use("toolu_s1", "a"), skill_result("toolu_s1")])
         self.done_phase1()
 
-    def test_the_envelope_has_no_hooks_key_by_default(self):
-        self.stop()
+    def test_the_envelope_has_no_hooks_key_when_switched_off(self):
+        self.stop(env={"USAGE_SINK_HOOKS": "0"})
         [put] = self.puts()
         self.assertEqual(list(self.body(put)), SINK_BODY_KEYS)
         self.assertEqual(self.pending(), [])          # nothing was held for later either
         self.assertNotIn("hseen", self.state_doc())
 
-    def test_no_hook_line_is_sent_when_only_hooks_are_pending(self):
+    def test_no_hook_line_is_sent_when_only_hooks_are_pending_and_off(self):
         self.write_transcript([user()])
-        self.stop()
+        self.stop(env={"USAGE_SINK_HOOKS": "0"})
         self.assertEqual(self.puts(), [])
 
-    def test_the_switch_adds_the_hooks_key_with_the_exact_lines(self):
-        self.stop(env={"USAGE_SINK_HOOKS": "1"})
+    def test_the_hooks_key_is_on_by_default_with_the_exact_lines(self):
+        self.stop()
         [put] = self.puts()
         doc = json.loads(put["body"].decode("utf-8"))
         self.assertEqual(list(doc), SINK_BODY_KEYS + ["hooks"])
@@ -2465,7 +2466,7 @@ class HookRunSinkTests(SinkTestCase):
     def test_lines_held_before_the_switch_never_leave_while_it_is_off(self):
         self.stop(env={"USAGE_SINK_HOOKS": "1", "USAGE_SINK_ENDPOINT": "http://127.0.0.1:9"})
         self.assertEqual(len(self.pending()), 2)      # the skill and the hook line, both held
-        self.stop()
+        self.stop(env={"USAGE_SINK_HOOKS": "0"})
         for put in self.puts():
             self.assertNotIn("hooks", self.body_any(put))
         self.assertTrue([p for p in self.pending() if p["kind"] == "hook"])

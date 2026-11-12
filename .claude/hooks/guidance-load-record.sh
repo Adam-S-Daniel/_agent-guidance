@@ -267,12 +267,14 @@
 #   events/<YYYY-MM of ts>/cloud-hooks/<session>.jsonl
 # in the same commit and push as phase 2's shard when both are due. On by
 # default: the census reads only files it knows.
-# S3 route: an optional envelope key `hooks` (a list of those lines). skills-evals'
-# ingest rejects any key outside {v,kind,sent,guidance,skills} until its `hooks`
-# change ships, so the key is OFF by default: S3_HOOKS_DEFAULT is False and
-# USAGE_SINK_HOOKS=1 turns it on. While off, phase 3 collects nothing on the S3
-# route and sends no `hooks` key, so an envelope is byte for byte what it was.
-# Flip the constant in a follow-up once that ingest is live.
+# S3 route: an optional envelope key `hooks` (a list of those lines), which
+# skills-evals' ingest accepts since skills-evals#982 (the private ingest
+# workflow's pin moved there in adam-agentskills-private#79). An older ingest
+# rejects any key outside {v,kind,sent,guidance,skills} for good, so the key
+# has a switch: S3_HOOKS_DEFAULT is True, and USAGE_SINK_HOOKS=0 turns it off
+# (1 turns it on when the default is off). While off, phase 3 collects nothing
+# on the S3 route and sends no `hooks` key, so an envelope is byte for byte
+# what it was without phase 3.
 #
 # ONCE PER SESSION, AND NEVER IN THE WAY
 # --------------------------------------
@@ -370,10 +372,9 @@ HOOKS_MAX_LIST = 64             # ids in one line's `checks`
 HOOK_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 HOOK_RUNNER_RE = re.compile(r"[0-9a-f]{12}")
 HOOK_EVENTS = ("pre-commit", "pre-push")
-# The S3 envelope's `hooks` key is a key skills-evals' ingest rejects until its
-# `hooks` change ships. Off by default; USAGE_SINK_HOOKS=1 turns it on, or flip
-# this constant in the follow-up once that ingest is live.
-S3_HOOKS_DEFAULT = False
+# The S3 envelope's `hooks` key: on, since the private ingest's pinned script
+# accepts it (skills-evals#982). USAGE_SINK_HOOKS=0 turns it off.
+S3_HOOKS_DEFAULT = True
 MAX_SCAN = 32 << 20             # bytes read from one transcript per Stop
 MAX_SUBAGENT_FILES = 64
 USES_PER_STOP = 50
@@ -857,7 +858,7 @@ def is_hook_line(text):
 
 def s3_hooks_enabled():
     """Whether the S3 envelope may carry a `hooks` key (see S3_HOOKS_DEFAULT)."""
-    return S3_HOOKS_DEFAULT or os.environ.get("USAGE_SINK_HOOKS") == "1"
+    return os.environ.get("USAGE_SINK_HOOKS", "1" if S3_HOOKS_DEFAULT else "0") == "1"
 
 
 def shard_edits(sid, lines):
