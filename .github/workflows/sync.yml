@@ -30,6 +30,9 @@ on:
       - "scripts/set-skill-shell-setting.sh"
       # And what each consumer's .gitattributes gets (docs/decisions/0019).
       - "scripts/hook-eol-gitattributes.sh"
+      # And what each lockfile repo's actions.lock gets beside the Dependabot
+      # auto-merge workflow.
+      - "scripts/actions-lock-entry.sh"
       # COPIED verbatim into every synced repo, and the payload it installs is
       # agents-md/base.md (covered by `agents-md/**` above). Editing this hook
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
