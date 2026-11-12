@@ -11,6 +11,28 @@
 # PR's head has concluded green, at least one from outside this workflow,
 # and only when every changed file is on the manifest-path allowlist below.
 #
+# THE ALLOWLIST (a path alone is not enough for workflow files):
+#   - dependency manifests and lockfiles by BASENAME, in any directory
+#     (package.json, package-lock.json, Gemfile, Gemfile.lock, pyproject.toml,
+#     poetry.lock, requirements*.txt with no "/" in the basename);
+#   - .github/workflows/actions.lock, by path alone;
+#   - a workflow .yml/.yaml that is a DIRECT child of .github/workflows/ and
+#     only when it is a MODIFIED file whose every added or removed line is a
+#     `uses:` line (optionally a `- ` list item, optionally a trailing
+#     comment): the shape of a Dependabot action bump. A new file, a
+#     rename, a missing patch or any other edited line is left for a human.
+#
+# COMMIT PROVENANCE: the PR author alone proves nothing, since anyone with
+# write access can push a commit onto a dependabot/* branch. Every commit on
+# the PR must be Dependabot's own and GitHub-verified, or the merge commit
+# this sweep's `gh pr update-branch` makes (github-actions[bot], two
+# parents). The commit list is fail closed: an API error, an empty list or
+# 250+ commits (the endpoint's cap) skips the PR.
+#
+# BEHIND PRs ARE REFRESHED, NOT MERGED: a PR behind its base would land a
+# combination no check ran on, so it is refreshed and the next sweep judges
+# the result. An unmeasurable behind-ness skips the PR.
+#
 # Why no job arms native auto-merge (cms-platform#437): with
 # `required_status_checks: []`, `gh pr merge --auto` does not no-op. gh counts
 # CLEAN, HAS_HOOKS and UNSTABLE as already mergeable
@@ -196,6 +218,34 @@ jobs:
             return 0
           }
 
+          # Refresh a stale PR (uses num, base, behind_by, merge_state,
+          # touches_workflows from the loop). A stale branch is genuinely
+          # un-mergeable, and nothing short of updating it can fix that: the
+          # cms-platform #118-122 batch strand, where every merge advances the
+          # base and leaves its still-open siblings out of date.
+          # `gh pr update-branch` pushes a merge commit onto the head, which
+          # starts new checks, so the PR cannot land in THIS sweep BY DESIGN.
+          # The next sweep finishes it: UPDATED is a SUCCESS outcome.
+          refresh_pr() {
+            echo "#${num} — $1 (behind_by=${behind_by}, mergeStateStatus=${merge_state}); refreshing it"
+            if gh pr update-branch "$num"; then
+              echo "refreshed #${num} against ${base} — its checks now re-run; the next sweep merges it"
+              UPDATED=$((UPDATED + 1))
+            else
+              if [ "$touches_workflows" = "true" ]; then
+                # Refreshing a stale workflow-file PR writes workflow content
+                # Dependabot never pushed, which GitHub refuses to any
+                # identity without `workflows` permission; GITHUB_TOKEN can
+                # never hold it. Dependabot can, so a rebase it pushes itself
+                # is the fix (fastmail-actions#24).
+                echo "::error::#${num} — it is behind ${base} and \`gh pr update-branch\` failed. It changes .github/workflows/, and GITHUB_TOKEN cannot write workflow content Dependabot never pushed. Needs a human: comment \`@dependabot rebase\` on the PR; the next sweep merges it once its checks are green."
+              else
+                echo "::error::#${num} — it is behind ${base} and \`gh pr update-branch\` failed; needs a human"
+              fi
+              FAILED=$((FAILED + 1))
+            fi
+          }
+
           for num in "${PR_NUMBERS[@]}"; do
             # An unreadable PR still fails the run loudly.
             if ! read_pr "$num" number,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup,changedFiles; then
@@ -240,11 +290,13 @@ jobs:
               continue
             fi
 
+            # An outside check must have SUCCEEDED: a rollup whose only outside
+            # entries are SKIPPED or NEUTRAL has not shown any CI passing.
             outside=$(jq -r --arg self "$SELF_WORKFLOW" '
-              any(.statusCheckRollup[]?; (.workflowName // "") != $self)
+              any(.statusCheckRollup[]?; (.workflowName // "") != $self and (.conclusion // .state) == "SUCCESS")
             ' <<<"$pr_json")
             if [ "$outside" != "true" ]; then
-              echo "skip #${num} — every check on its head comes from this workflow (${SELF_WORKFLOW}); no CI has reported on it yet"
+              echo "skip #${num} — no check from outside this workflow (${SELF_WORKFLOW}) has succeeded on its head yet"
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
@@ -273,7 +325,7 @@ jobs:
             # allowed path (scripts/evil.sh -> package.json) must be judged by
             # its OLD name as well, so it is rejected.
             if ! files_raw=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${num}/files?per_page=100" \
-              --jq '.[] | {f: .filename, p: (.previous_filename // null)} | @json' 2>/dev/null); then
+              --jq '.[] | {f: .filename, p: (.previous_filename // null), s: .status, d: .patch} | @json' 2>/dev/null); then
               echo "::warning::skip #${num} — could not list its changed files through the API; not merging a PR whose diff cannot be read"
               SKIPPED=$((SKIPPED + 1))
               continue
@@ -315,24 +367,88 @@ jobs:
               continue
             fi
 
-            # The manifest-path allowlist. Dependency manifests/lockfiles (any
-            # directory) plus workflow YAML and the workflow action lockfile
-            # (.github/workflows/actions.lock, which Dependabot rewrites
-            # alongside each action bump since ADR 0024; #296 failed without
-            # it). Dependabot never touches anything else, so a path outside
-            # this list means a misconfiguration or a tampered branch.
+            # Commit provenance (see the header). Fail closed, captured through
+            # command substitutions, never `< <(...)`.
+            if ! commits_raw=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${num}/commits?per_page=100" \
+              --jq '.[] | {sha: .sha, l: (.author.login // ""), v: (.commit.verification.verified == true), np: (.parents | length)} | @json' 2>/dev/null); then
+              echo "::warning::skip #${num} — could not list its commits through the API; not merging a PR whose authorship cannot be read"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            if ! commit_count=$(jq -rs 'length' <<<"$commits_raw" 2>/dev/null) \
+              || [ -z "$commit_count" ] || [ -n "${commit_count//[0-9]/}" ] \
+              || [ "$commit_count" -eq 0 ] || [ "$commit_count" -ge 250 ]; then
+              echo "::warning::skip #${num} — its commit list is empty, unreadable or at the API's 250-commit cap (${commit_count:-?}); leaving for human review"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            # The first commit that is neither Dependabot's verified own nor
+            # this sweep's merge-from-base. Only sanitized characters of the
+            # login are ever printed.
+            if ! bad_commit=$(jq -rs '
+              [.[] | select(((.l == "dependabot[bot]" and .v == true) or (.l == "github-actions[bot]" and .np == 2)) | not)]
+              | first // empty
+              | "\(.sha | tostring | gsub("[^0-9a-f]"; "") | .[0:7]) \(.l | gsub("[^A-Za-z0-9_.\\[\\]-]"; ""))"
+            ' <<<"$commits_raw" 2>/dev/null); then
+              echo "::warning::skip #${num} — could not check its commits; leaving for human review"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            if [ -n "$bad_commit" ]; then
+              echo "::warning::skip #${num} — commit ${bad_commit%% *} (author '${bad_commit#* }') is not a verified Dependabot commit or this sweep's own merge from the base; leaving for human review"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # Workflow-file content: of the .yml/.yaml entries directly under
+            # .github/workflows/, list those that are NOT a modified file whose
+            # added/removed lines are all `uses:` lines (the API patch has only
+            # @@ hunks, no ---/+++ headers). Any rename out of a workflow path
+            # is listed too. The regex is the one in the header.
+            if ! wf_bad=$(jq -rs '
+              .[]
+              | select(
+                  ((.f | test("^[.]github/workflows/[^/]+[.]ya?ml$"))
+                    and ((.s != "modified")
+                      or ((.d | type) != "string")
+                      or (((.d | split("\n")) | map(select(test("^[+-]"))) | all(.[]; test("^[+-][[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*[^[:space:]]+([[:space:]]*#.*)?$"))) | not)))
+                  or ((.p // "") | test("^[.]github/workflows/"))
+                )
+              | .f
+            ' <<<"$files_raw" 2>/dev/null); then
+              echo "::warning::skip #${num} — could not check its workflow-file changes; leaving for human review"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # The manifest-path allowlist (see the header). Basenames are
+            # matched on "${f##*/}" so `*` can never cross a directory.
+            # Dependabot never touches anything else, so a path outside this
+            # list means a misconfiguration or a tampered branch.
             REJECT=0
             for f in "${CHANGED[@]}"; do
+              base_name="${f##*/}"
               case "$f" in
-                package.json|*/package.json|package-lock.json|*/package-lock.json) ;;
-                Gemfile|*/Gemfile|Gemfile.lock|*/Gemfile.lock) ;;
-                pyproject.toml|*/pyproject.toml|poetry.lock|*/poetry.lock) ;;
-                requirements*.txt|*/requirements*.txt) ;;
-                .github/workflows/*.yml|.github/workflows/*.yaml) ;;
                 .github/workflows/actions.lock) ;;
-                *)
-                  echo "::warning::#${num} touches non-manifest path: $f"
+                .github/workflows/*/*)
+                  echo "::warning::#${num} touches a nested workflows path: $f"
                   REJECT=1
+                  ;;
+                .github/workflows/*.yml|.github/workflows/*.yaml)
+                  if grep -qxF -- "$f" <<<"$wf_bad"; then
+                    echo "::warning::#${num} changes workflow file $f beyond \`uses:\` lines (or it is new, renamed or has no patch)"
+                    REJECT=1
+                  fi
+                  ;;
+                *)
+                  case "$base_name" in
+                    package.json|package-lock.json|Gemfile|Gemfile.lock|pyproject.toml|poetry.lock) ;;
+                    requirements*.txt) ;;
+                    *)
+                      echo "::warning::#${num} touches non-manifest path: $f"
+                      REJECT=1
+                      ;;
+                  esac
                   ;;
               esac
             done
@@ -363,13 +479,15 @@ jobs:
             #
             # Behind-ness is measured through the compare API because a base
             # that does not require an up-to-date head never says BEHIND, only
-            # BLOCKED. A failed measurement counts as 0: it affects only the
-            # diagnosis and the refresh path, never whether the gate passes.
-            behind_by=0
-            if behind_raw=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${head_sha}" --jq '.behind_by' 2>/dev/null) \
-              && [ -n "$behind_raw" ] && [ -z "${behind_raw//[0-9]/}" ]; then
-              behind_by=$behind_raw
+            # BLOCKED. A failed or non-numeric measurement skips the PR: a
+            # guess of 0 would merge a possibly stale head.
+            if ! behind_raw=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${head_sha}" --jq '.behind_by' 2>/dev/null) \
+              || [ -z "$behind_raw" ] || [ -n "${behind_raw//[0-9]/}" ]; then
+              echo "::warning::skip #${num} — could not measure how far it is behind ${base}; the next sweep judges it afresh"
+              SKIPPED=$((SKIPPED + 1))
+              continue
             fi
+            behind_by=$behind_raw
             touches_workflows=false
             for f in "${CHANGED[@]}"; do
               case "$f" in
@@ -387,6 +505,16 @@ jobs:
               diagnose_blocked "$base"
               echo "::error::blocked #${num} — mergeable with green checks, but GitHub's base branch policy refuses the merge (mergeStateStatus=BLOCKED); not attempting it. Cause (base ${base}): ${BLOCKED_CAUSE}"
               BLOCKED_PRS=$((BLOCKED_PRS + 1))
+              continue
+            fi
+
+            # mergeStateStatus says BEHIND only when the base branch REQUIRES
+            # an up-to-date head. A base that does not reads a stale PR as
+            # CLEAN, so behind_by is consulted too, and decides: a PR behind
+            # its base is refreshed WITHOUT a merge attempt, since merging it
+            # would land a combination no check ran on.
+            if [ "$behind_by" -gt 0 ]; then
+              refresh_pr "it is ${behind_by} commit(s) behind ${base}, so merging would land a combination its checks never ran on"
               continue
             fi
 
@@ -415,37 +543,10 @@ jobs:
               continue
             fi
 
-            # mergeStateStatus says BEHIND only when the base branch REQUIRES
-            # an up-to-date head. A base that does not reads a stale PR as
-            # CLEAN, so behind_by is consulted too.
-            if [ "$merge_state" = "BEHIND" ] || [ "$behind_by" -gt 0 ]; then
-              # A stale branch is genuinely un-mergeable, and nothing short of
-              # updating it can fix that: the cms-platform #118-122 batch
-              # strand, where every merge advances the base and leaves its
-              # still-open siblings out of date. Refresh, don't retry the
-              # merge in THIS run: `gh pr update-branch` pushes a merge commit
-              # onto the head, which invalidates the checks this run just
-              # verified and starts new ones, so #${num} cannot land in this
-              # sweep BY DESIGN. The next sweep finishes it. That is a SUCCESS
-              # outcome (UPDATED), not a failure.
-              echo "#${num} — merge refused and the PR is behind ${base} (behind_by=${behind_by}, mergeStateStatus=${merge_state}); refreshing it instead of retrying"
-              if gh pr update-branch "$num"; then
-                echo "refreshed #${num} against ${base} — its checks now re-run; the next sweep merges it"
-                UPDATED=$((UPDATED + 1))
-              else
-                if [ "$touches_workflows" = "true" ]; then
-                  # Merging or refreshing a stale workflow-file PR writes
-                  # workflow content Dependabot never pushed, and GitHub
-                  # refuses that to any identity without `workflows`
-                  # permission. GITHUB_TOKEN can never hold it. Dependabot
-                  # can, so a rebase it pushes itself is the fix
-                  # (fastmail-actions#24).
-                  echo "::error::#${num} — merge was refused (behind ${base}) and \`gh pr update-branch\` also failed. It changes .github/workflows/, and GITHUB_TOKEN cannot write workflow content Dependabot never pushed. Needs a human: comment \`@dependabot rebase\` on the PR; the next sweep merges it once its checks are green."
-                else
-                  echo "::error::#${num} — merge was refused (behind ${base}) and \`gh pr update-branch\` also failed; needs a human"
-                fi
-                FAILED=$((FAILED + 1))
-              fi
+            # The merge was refused. mergeStateStatus=BEHIND with a measured
+            # behind_by of 0 still means the base wants an up-to-date head.
+            if [ "$merge_state" = "BEHIND" ]; then
+              refresh_pr "its merge was refused and mergeStateStatus=BEHIND"
             else
               echo "::error::#${num} — merge was refused and the PR is not behind ${base}; needs a human"
               FAILED=$((FAILED + 1))

