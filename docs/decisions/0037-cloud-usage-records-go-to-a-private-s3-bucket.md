@@ -85,3 +85,11 @@ Anthropic's agent proxy can hold a secret itself. A network secret of type AWS S
 The static-key mode (all four of the original variables, signed by the hook) stays only as a fallback for a host without that proxy. Do not set it in a cloud environment.
 
 The GitHub App fallback is removed, with its `USAGE_WRITER_APP_*` variables and the openssl dependency. The proxy rewrites any `Authorization` header to api.github.com and refuses `/app/*`, so the App key never worked in a cloud session (measured 2026-10-31), and the upload runs only in remote sessions. After the session-credential probe fails, the git route now records the upload as not done. The hook also strips `USAGE_WRITER_APP_*` from every subprocess environment while old environments still hold them; remove those variables from them.
+
+## Addendum (2026-11-12): an optional `hooks` envelope key, off until the ingest accepts it
+
+Phase 3 of the hook (ADR 0036 addendum) adds an optional `hooks` key to the envelope, a list of its lines byte for byte as the git route appends them to `cloud-hooks/`. skills-evals' ingest rejects any envelope with a key outside `{v, kind, sent, guidance, skills}`, permanently, so a `hooks` key sent before its `hooks` change ships would lose the whole object, phase 1 and phase 2 lines included.
+
+The key is therefore gated. `S3_HOOKS_DEFAULT` in the hook is `False`, and `USAGE_SINK_HOOKS=1` turns it on. While it is off, phase 3 collects nothing on the S3 route and an envelope has exactly the keys it had before; a hook line already pending (collected under the switch, say) stays pending and is never sent. Once the ingest accepts `hooks`, flip the constant in a follow-up, or set `USAGE_SINK_HOOKS=1` in the environment. The key appears only when there is at least one hook line.
+
+Update (2026-11-12): skills-evals#982 accepts `hooks`, and adam-agentskills-private#79 moved the ingest workflow's pin to it, so `S3_HOOKS_DEFAULT` is now `True`; `USAGE_SINK_HOOKS=0` turns the key off.
