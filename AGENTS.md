@@ -75,8 +75,8 @@ so a substring split anchors on the header, keeps the whole prior managed block
 as "repo-specific" content, and the next regen stacks a second managed block on
 top of it. A doubled file regenerates to itself, so the staleness diff cannot
 see it; `scripts/check-agents-md.sh` counts the markers and asserts their
-order, and CI runs it ahead of the staleness check. (The 2026-08-19 incident:
-[evidence](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/evidence/2026-08-19-agents-md-doubled-managed-block.md).)
+order, and CI runs it ahead of the staleness check.
+([Evidence](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/evidence/2026-08-19-agents-md-doubled-managed-block.md).)
 
 **A new `##` heading in `agents-md/base.md` (or a new file under
 `agents-md/sections/`) needs a row in `agents-md/eval-coverage.yml` in the

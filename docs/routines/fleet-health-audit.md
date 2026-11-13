@@ -45,7 +45,7 @@ report.
   watches only scheduled runs, so a dispatch-only or `workflow_run` workflow
   that fails often (say 3 or more of its last 20 runs) is this audit's
   finding.
-- The owner's durable machine (BOXY) is not reachable from a cloud session.
+- The owner's durable machine is not reachable from a cloud session.
   Read `task-health.json` on the `persistent/task-health` branch of the
   private `Adam-S-Daniel/waiting-feed` repo (attach it with `add_repo`). It is
   replaced daily and holds only names, states, exit codes and UTC times:
@@ -61,7 +61,7 @@ report.
     restic snapshot or keeper line more than a day old), or a nonzero
     `_last_exit`, is a finding.
 
-  If the branch does not exist yet, use the evidence BOXY's tasks leave off
+  If the branch does not exist yet, use the evidence the durable machine's tasks leave off
   the machine (commits on `persistent/*` branches, published files and their
   timestamps) and report the rest as not checked.
 
@@ -159,7 +159,7 @@ not `partial`. A fallback copy or mirror that has drifted from its source is
 ## Issues
 
 - One issue per finding, in the repo the finding is about. For a finding about
-  BOXY state, file it in `Adam-S-Daniel/wsl-automation`; for one about a
+  durable-machine state, file it in `Adam-S-Daniel/wsl-automation`; for one about a
   scheduled task, file it in the repo its spec lives in.
 - Labels: `half-built-or-broken` always. Add `needs-owner` when only the
   owner can act (a setting, a credential, a decision).

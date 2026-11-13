@@ -48,6 +48,11 @@ export SYNC_READ_RETRY_DELAYS="0 0 0"
 # log; the run-log tests point AGENT_CHECKS_LOG at a temp file themselves.
 export AGENT_CHECKS_LOG=off
 
+# Nor may its local-identity check depend on the machine the suite runs on:
+# generic names are never checked, so only a test that sets both to a
+# fictional identity of its own sees a refusal.
+export AGENT_CHECKS_LOCAL_USER=root AGENT_CHECKS_LOCAL_HOST=localhost
+
 # fleet-memory.sh's hosted-session git-hooks step (ADR 0021 addendum) edits the
 # system or global git config when CLAUDE_CODE_REMOTE is set, as it is in a
 # cloud container that runs this suite. No test but test_fleet_memory_git_hooks

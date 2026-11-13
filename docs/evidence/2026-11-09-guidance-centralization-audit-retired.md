@@ -2304,10 +2304,10 @@ no signal of new first-party code in any of the four since the
 
 Six PRs are open in `_agent-guidance` — three new since the 2026-09-22
 measurement (#158, a `skills.lock` re-pin chore touching only that file;
-#157 and #156, two base.md wording edits retiring the "ZENDA" hostname
-in favour of "BOXY" per `_agent-guidance#117`, both still open and
+#157 and #156, two base.md wording edits retiring the old workstation's hostname
+in favour of the new one per `_agent-guidance#117`, both still open and
 unmerged, which is why base.md's fetched content above still names
-ZENDA in the "Workstation layout" and "Sessions get cut off" sections) —
+the old hostname in the "Workstation layout" and "Sessions get cut off" sections) —
 plus #151 (the proposed Codex memory-audit ADR, docs-only), #124 (the
 paused one-way-door review of `.claude/hooks/` and `agents-md/base.md`)
 and #111 (the automated `skills_bootstrap` hook-pin bump, open since
@@ -2480,11 +2480,11 @@ registry-rename migration, unrelated to the `e6-probe-marketplace`
 finding above and confirmed by diffing its `repos.yml` directly, which
 touches only the `agentskills`→`adam-agentskills`/
 `adam-agentskills-private` rename, not the new repo); **#166** and
-**#165**, both titled "Remove references to ZENDA laptop"
+**#165**, both titled "Remove references to [hostname] laptop"
 (`Adam-S-Daniel-patch-2` / `-patch-1`, +2/-15 each, one file, both
 `mergeable_state: blocked`) — apparent operator-authored duplicates of
 the same edit, not this Routine's to deduplicate. Carried forward:
-**#158** (`skills.lock` re-pin), **#157**/**#156** (the ZENDA→BOXY
+**#158** (`skills.lock` re-pin), **#157**/**#156** (the workstation hostname
 base.md wording PRs `#164`'s companion effort, still open), **#151**
 (Codex memory-audit ADR), **#124** (paused one-way-door review),
 **#111** (hook-pin bump). None needed action from this Routine this
@@ -2627,7 +2627,7 @@ comments — demoted to the footer per §0.5 Step 6's "PR open" branch, no
 new PR opened for the same name.
 
 One observation outside this Routine's remit, noted and not acted on:
-`_agent-guidance#157` ("Workstation layout names BOXY") touches the same
+`_agent-guidance#157` ("Workstation layout names [hostname]") touches the same
 `agents-md/base.md` lines `#167` already rewrote to drop the hostname
 entirely, from a base predating `#167`'s merge; it was not opened by
 this Routine and is not a `repos.yml` classify/remove entry, so it is
@@ -2736,7 +2736,7 @@ per §0.5 Step 6's "PR open" branch, no new PR opened for the same name; a
 fresh re-probe of the repo (`GIT_TERMINAL_PROMPT=0 git ls-remote`)
 returned the identical credential-prompt outcome (`could not read
 Username for 'https://github.com': terminal prompts disabled`), unchanged
-from the fourteenth run. **#157** ("Workstation layout names BOXY") —
+from the fourteenth run. **#157** ("Workstation layout names [hostname]") —
 still touches `agents-md/base.md` lines `#167` already rewrote to drop
 the hostname entirely, confirmed again by diffing its patch against the
 current file; not opened by this Routine and not a `repos.yml`
@@ -2932,7 +2932,7 @@ fourteenth run's `e6-probe-marketplace` classification proposal — still open,
 unmerged, CI green (4 check runs: 2 `success`, 2 `skipped`), a fresh
 re-probe of the repo returning the identical credential-prompt outcome
 unchanged since the fourteenth run); **#157** ("Workstation layout names
-BOXY," still touching lines `#167` already rewrote; not this Routine's);
+[hostname]," still touching lines `#167` already rewrote; not this Routine's);
 **#151** (the Codex memory-audit ADR, docs-only); **#124** (the paused
 one-way-door review). None of the six is a `repos.yml` classify/remove entry
 this Routine proposed (other than #168 itself, already demoted to the
