@@ -305,6 +305,25 @@ _row_cell_equals() {   # <row> <needle> — some `|`-delimited cell equals <need
     done
     return 1
 }
+# assert_row_col_equals <file> <row-key> <column-name> <needle> <label> — the
+# cell UNDER the named header column equals <needle>. assert_row_contains accepts
+# any cell, so a `**missing**` in another column would satisfy it.
+assert_row_col_equals() {
+    local file="$1" key="$2" col="$3" needle="$4" label="$5"
+    local header row i idx=-1 cell
+    local -a hcells rcells
+    header=$(grep -m1 '^| Repository |' "$file") || { fail "$label — no table header in $file"; return; }
+    row=$(grep -F -- "$key" "$file" | grep -m1 '^|') || { fail "$label — no row containing '$key' in $file"; return; }
+    IFS='|' read -r -a hcells <<< "$header"
+    IFS='|' read -r -a rcells <<< "$row"
+    for i in "${!hcells[@]}"; do
+        cell="${hcells[$i]}"; cell="${cell#"${cell%%[![:space:]]*}"}"; cell="${cell%"${cell##*[![:space:]]}"}"
+        [[ "$cell" == "$col" ]] && idx=$i
+    done
+    if [[ $idx -lt 0 ]]; then fail "$label — no column '$col' in $file"; return; fi
+    cell="${rcells[$idx]:-}"; cell="${cell#"${cell%%[![:space:]]*}"}"; cell="${cell%"${cell##*[![:space:]]}"}"
+    if [[ "$cell" == "$needle" ]]; then pass "$label"; else fail "$label — column '$col' is '$cell', expected '$needle'"; fi
+}
 # assert_row_note_contains <file> <row-key> <needle> <label> — a substring of
 # the row's LAST cell, which is Notes.
 #
@@ -807,6 +826,7 @@ YAML
     setup_ancestor_branch_repo
     setup_sync_yaml_failure_repo
     setup_big_agents_md_repo
+    setup_contributor_guard_repos
 
     cd "$REPO_ROOT"
 }
@@ -1013,6 +1033,39 @@ YAML
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
+}
+
+# ── Contributor-rules guard fixtures (ADR 0043) ────────────────────────────
+#   cguardorg/repo-drifted   managed header, stale body: refreshed
+#   cguardorg/repo-foreign   a file of the repo's own at the path: refused
+#   cguardorg/repo-symlink   a symlink at the path: refused, target untouched
+setup_contributor_guard_repos() {
+    local name bare work
+    for name in repo-drifted repo-foreign repo-symlink; do
+        bare="$TEST_DIR/bare/cguardorg_$name"
+        work="$TEST_DIR/work/cguardorg-$name"
+        mkdir -p "$bare" "$work/.github"
+        git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+        git init --initial-branch=main "$work" >/dev/null 2>&1
+        (
+            cd "$work"
+            git config commit.gpgsign false
+            git remote add origin "$bare"
+            printf 'sections: []\n' > .agents-sync.yml
+            echo "# $name" > README.md
+            case "$name" in
+                repo-drifted)
+                    printf '<!-- Managed by _agent-guidance: stale copy -->\nold rules\n' > .github/fleet-contributor-rules.md ;;
+                repo-foreign)
+                    printf 'my own contributor notes\n' > .github/fleet-contributor-rules.md ;;
+                repo-symlink)
+                    ln -s ../README.md .github/fleet-contributor-rules.md ;;
+            esac
+            git add -A
+            git commit -m init >/dev/null 2>&1
+            git push origin HEAD:main >/dev/null 2>&1
+        )
+    done
 }
 
 # ── Set up the skills-bootstrap fixtures ───────────────────────────────────
@@ -2385,6 +2438,13 @@ case "$1" in
                           {"nameWithOwner":"bigorg/repo-big-agents-md"}
                         ]'
                         ;;
+                    cguardorg)
+                        json='[
+                          {"nameWithOwner":"cguardorg/repo-drifted"},
+                          {"nameWithOwner":"cguardorg/repo-foreign"},
+                          {"nameWithOwner":"cguardorg/repo-symlink"}
+                        ]'
+                        ;;
                     emptyorg)
                         # An owner that really does hold nothing. Distinct from
                         # `failorg` below, and the distinction is the point:
@@ -3394,7 +3454,25 @@ test_build_script() {
     # ADR 0043: full inlines the contributor file, never base.md, so no
     # owner-only section may reach a repo that cannot receive the hook.
     assert_contains "$TEST_DIR/build-full.md" "Managed by _agent-guidance: built by scripts/build-contributor-rules.js" "full mode inlines the contributor rules header"
-    assert_not_contains "$TEST_DIR/build-full.md" "## Subagent delegation (model routing)" "full mode carries no owner-only heading"
+    assert_contains "$TEST_DIR/build-full.md" "$stub_heading" "full mode keeps the stub (irreversible rules, first-reply check, pointer)"
+    assert_contains "$TEST_DIR/build-full.md" "fleet-guidance check:" "full mode keeps the first-reply check rule"
+    # Owner headings come from the manifest, parsed (not regexed): every row
+    # with audience: owner in agents-md/base.md must be absent from full mode.
+    local owner_headings owner_n=0 owner_h
+    owner_headings=$(cd "$REPO_ROOT" && node -e '
+        const yaml = require("yaml");
+        const rows = yaml.parse(require("fs").readFileSync("agents-md/eval-coverage.yml", "utf8"));
+        const list = Array.isArray(rows) ? rows : (rows.sections || rows.rows || []);
+        for (const r of list) if (r.audience === "owner" && r.file === "agents-md/base.md") console.log(r.heading);
+    ' 2>/dev/null) || owner_headings=""
+    while IFS= read -r owner_h; do
+        [[ -n "$owner_h" ]] || continue
+        owner_n=$((owner_n + 1))
+        assert_not_contains "$TEST_DIR/build-full.md" "## $owner_h" "full mode carries no owner-only heading: $owner_h"
+    done <<<"$owner_headings"
+    if [[ "$owner_n" -lt 1 ]]; then
+        fail "full mode owner-heading check is vacuous: no audience: owner rows read from eval-coverage.yml"
+    fi
 
     # An unrecognised mode must stop, not silently pick one. Captured without a
     # pipe so the exit code is the script's own.
@@ -4548,12 +4626,12 @@ YAML
     rm "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
     run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**missing**" \
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "contributor-rules" "**missing**" \
         "fleet payload: absent contributor rules read missing"
     printf 'stale\n' >"$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
     run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "contributor-rules" "**drifted**" \
         "fleet payload: stale contributor rules read drifted"
     cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
@@ -7273,6 +7351,70 @@ PY
     fi
 }
 
+# ── Test: sync.sh guards the contributor-rules destination (ADR 0043) ──────
+test_sync_contributor_guards() {
+    echo ""
+    echo "=== Test: sync.sh contributor rules (drift refresh, symlink and foreign-file refusal, missing source) ==="
+    local out="$TEST_DIR/sync-cguard.txt" rc=0
+    printf 'exclude: []\n' > "$TEST_DIR/repos-cguard.yml"
+    GITHUB_REPOSITORY_OWNER=cguardorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-cguard.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || rc=$?
+
+    local v="$TEST_DIR/verify-cguard"
+    rm -rf "$v"; mkdir -p "$v"
+    local name
+    for name in repo-drifted repo-foreign repo-symlink; do
+        git clone "$TEST_DIR/bare/cguardorg_$name" "$v/$name" >/dev/null 2>&1 || fail "cguard: could not clone $name"
+    done
+
+    if cmp -s "$v/repo-drifted/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+        pass "cguard: a drifted managed file is refreshed byte for byte"
+    else
+        fail "cguard: a drifted managed file is refreshed byte for byte"
+    fi
+    if git -C "$v/repo-drifted" log -1 --format=%B | grep -qF "contributor rules"; then
+        pass "cguard: the refresh commit message mentions the contributor rules"
+    else
+        fail "cguard: the refresh commit message mentions the contributor rules"
+    fi
+
+    if [[ "$(cat "$v/repo-foreign/.github/fleet-contributor-rules.md")" == "my own contributor notes" ]]; then
+        pass "cguard: a file without the managed header is left alone"
+    else
+        fail "cguard: a file without the managed header is left alone"
+    fi
+    assert_contains "$out" "cguardorg/repo-foreign: .github/fleet-contributor-rules.md exists but does not carry the managed header" "cguard: the foreign-file refusal names the repo"
+
+    if [[ -L "$v/repo-symlink/.github/fleet-contributor-rules.md" && "$(cat "$v/repo-symlink/README.md")" == "# repo-symlink" ]]; then
+        pass "cguard: a symlink at the destination is not written through"
+    else
+        fail "cguard: a symlink at the destination is not written through"
+    fi
+    assert_contains "$out" "cguardorg/repo-symlink: .github/fleet-contributor-rules.md (or .github) is a symlink" "cguard: the symlink refusal names the repo"
+    assert_contains "$out" "2 failed" "cguard: both refusals count as failed repos, the drifted one still synced"
+
+    # A missing or empty source stops the run before any repo is touched.
+    local tree="$TEST_DIR/cguard-tree" src_rc=0
+    rm -rf "$tree"; mkdir -p "$tree/.github"
+    cp -r "$REPO_ROOT/scripts" "$tree/scripts"
+    : > "$tree/.github/fleet-contributor-rules.md"
+    GITHUB_REPOSITORY_OWNER=cguardorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-cguard.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$tree/scripts/sync.sh" > "$TEST_DIR/sync-cguard-nosrc.txt" 2>&1 || src_rc=$?
+    if [[ "$src_rc" -ne 0 ]]; then
+        pass "cguard: an empty contributor-rules source fails the run (rc=$src_rc)"
+    else
+        fail "cguard: an empty contributor-rules source fails the run"
+    fi
+    assert_contains "$TEST_DIR/sync-cguard-nosrc.txt" "is missing or empty" "cguard: the missing-source failure says why"
+    assert_not_contains "$TEST_DIR/sync-cguard-nosrc.txt" "=== cguardorg/" "cguard: no repo was processed after the source check failed"
+}
+
 # ── Test 5b: sync.sh delivers the bootstrap hook (opt-in, double-keyed) ────
 
 test_sync_bootstrap() {
@@ -7435,7 +7577,8 @@ for g in doc["hooks"]["Stop"]:
             pass "repo-ignored: guidance-load-record withheld with fleet-memory"
         fi
         assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
-        assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
+        assert_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: gets the stub (full mode is stub plus contributor rules)"
+        assert_contains "$ignored/AGENTS.md" "Managed by _agent-guidance: built by scripts/build-contributor-rules.js" "repo-ignored: gets the contributor rules inline too"
         assert_contains "$ignored/AGENTS.md" "Mode: full" "repo-ignored: AGENTS.md records full mode"
         if cmp -s "$ignored/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
             pass "repo-ignored: contributor rules delivered even in full mode"
@@ -26945,6 +27088,7 @@ GROUP_sync=(
     test_sync_stale_cleanup
     test_sync_failure_exit_code
     test_sync_round_trip_no_marker
+    test_sync_contributor_guards
 )
 
 # The skills-bootstrap lane mutates the bootorg bares in a fixed order:

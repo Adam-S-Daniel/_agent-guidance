@@ -59,6 +59,7 @@ FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 # independent of fleet-memory: it does not depend on `.claude/` or settings.json.
 CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
 CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
+CONTRIBUTOR_HEADER="<!-- Managed by _agent-guidance"
 # guidance-load-record: the Stop hook that writes one line per session saying
 # whether the full guidance or only the stub loaded. It measures the very
 # delivery fleet-memory makes, so it rides with it: every repo fleet-memory
@@ -222,6 +223,14 @@ if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
     fi
     echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
     echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+
+# The contributor rules are delivered to every repo (ADR 0043). A missing or
+# empty source would otherwise read as "nothing to deliver" and stay green while
+# the whole fleet silently goes without; stop before touching any repo.
+if [[ ! -s "$CONTRIBUTOR_SOURCE" ]]; then
+    echo "::error::$CONTRIBUTOR_SOURCE is missing or empty — the sync delivers it to every repo; regenerate it with 'node scripts/build-contributor-rules.js'." >&2
     exit 2
 fi
 
@@ -1113,6 +1122,20 @@ for repo_name in "${REPOS[@]}"; do
     contributor_state="n/a"   # n/a | missing | current | drifted
     if [[ -s "$CONTRIBUTOR_SOURCE" ]]; then
         contributor_state="missing"
+        # A symlink would send the write outside the repo; a file without the
+        # managed header is someone else's, and the sync must not overwrite it.
+        if [[ -L .github || -L "$CONTRIBUTOR_REL_PATH" ]]; then
+            fail "$repo_name: $CONTRIBUTOR_REL_PATH (or .github) is a symlink — refusing to write the contributor rules."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        if [[ -e "$CONTRIBUTOR_REL_PATH" ]] \
+           && { [[ ! -f "$CONTRIBUTOR_REL_PATH" ]] \
+                || ! head -n 1 "$CONTRIBUTOR_REL_PATH" | grep -qF -- "$CONTRIBUTOR_HEADER"; }; then
+            fail "$repo_name: $CONTRIBUTOR_REL_PATH exists but does not carry the managed header ($CONTRIBUTOR_HEADER) — refusing to overwrite it."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
         if [[ -f "$CONTRIBUTOR_REL_PATH" ]]; then
             cmp -s "$CONTRIBUTOR_REL_PATH" "$CONTRIBUTOR_SOURCE" \
                 && contributor_state="current" || contributor_state="drifted"
@@ -2031,6 +2054,13 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     bootstrap_note=""
+    if $contributor_written; then
+        bootstrap_note="
+
+Also delivers the contributor rules ($CONTRIBUTOR_REL_PATH), the generated
+subset of the fleet guidance an outside contributor's agent reads on demand
+(ADR 0043)."
+    fi
     if $bootstrap_hook_written || $bootstrap_registered_now; then
         bootstrap_note="
 

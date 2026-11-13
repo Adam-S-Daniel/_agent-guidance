@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # still needs on its own: the pointer, the session-start verdict to check, and
 # the floor of rules that must hold even when the guidance did not load.
 STUB_FILE="$REPO_ROOT/agents-md/stub.md"
-# What `full` mode inlines instead: the generated contributor rules (ADR 0043
+# What `full` mode appends after the stub: the generated contributor rules (ADR 0043
 # decision 4), never base.md, so a repo that cannot receive the hook still
 # carries the rules an outside contributor needs and none of the owner-only ones.
 PAYLOAD_FILE="$REPO_ROOT/.github/fleet-contributor-rules.md"
@@ -51,10 +51,12 @@ echo "<!-- Mode: ${MODE} -->"
 echo ""
 
 # ── Managed content ────────────────────────────────────────────────────────
+# The stub carries the irreversible rules, the first-reply check and the
+# pointer in both modes; full mode appends the contributor rules to it.
+cat "$STUB_FILE"
 if [[ "$MODE" == "full" ]]; then
+    echo ""
     cat "$PAYLOAD_FILE"
-else
-    cat "$STUB_FILE"
 fi
 
 # ── Requested language / tooling sections ──────────────────────────────────
