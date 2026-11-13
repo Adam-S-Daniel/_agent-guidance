@@ -1,14 +1,23 @@
 # The weekly window in which a pull request that changes the fleet guidance
 # (agents-md/base.md or agents-md/sections/**) may be merged by automation
-# (ADR 0039). Read by scripts/base-md-merge-window.js, and fetched by
+# (ADR 0039), and in which no eval run starts (skills-evals ADR 0017's
+# eval-pause addendum: a run that starts mid-window could read guidance that
+# is half merged). Read by scripts/base-md-merge-window.js, and fetched by
 # skills-evals' scripts/guidance_merge_window.py. This is the one place the
 # bounds are written; change them here and nowhere else.
 #
-# Every key is required and nothing else is allowed. All times are UTC.
+# Every key is required and nothing else is allowed.
 #
-#   weekday  ISO weekday of the window: 1 is Monday, 7 is Sunday.
-#   start    first minute inside the window, "HH:MM".
-#   end      first minute after the window, "HH:MM", later than start.
+#   timezone  IANA zone the times below are wall-clock times in. A zone
+#             with daylight saving time moves the window's UTC instants
+#             with the clocks: America/New_York 12:00 is 17:00 UTC in
+#             winter (EST) and 16:00 UTC in summer (EDT).
+#   weekday   ISO weekday of the window: 1 is Monday, 7 is Sunday.
+#   start     first minute inside the window, "HH:MM".
+#   end       first minute after the window, "HH:MM", later than start.
+#
+# Owner's rule (2026-11-13): Monday noon to 2 PM US Eastern.
+timezone: America/New_York
 weekday: 1
-start: "17:00"
-end: "19:00"
+start: "12:00"
+end: "14:00"

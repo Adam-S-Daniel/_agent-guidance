@@ -50,8 +50,10 @@ file under `agents-md/sections/`) and regenerate. CI regenerates and diffs it, s
 a stub edit without a regenerated `AGENTS.md` fails the build.
 
 **Fleet guidance merges by automation are batched into one weekly window**
-(Monday 17:00 to 19:00 UTC, bounds only in `scripts/base-md-merge-window.yml`;
+(Monday noon to 2 PM US Eastern, DST included; bounds only in
+`scripts/base-md-merge-window.yml`;
 [ADR 0039](docs/decisions/0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md)).
+skills-evals starts no eval run inside the same window, read from the same file.
 Automation that could merge a PR changing `agents-md/base.md` or
 `agents-md/sections/**` runs `node scripts/base-md-merge-window.js` first. A
 person may merge any time, but a manual merge outside the window restarts every
