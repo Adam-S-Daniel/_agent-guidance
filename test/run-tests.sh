@@ -19539,11 +19539,14 @@ case "${1:-}" in
                     *) exit 0 ;;
                 esac
                 ;;
-            update-branch)
-                if [[ -n "${UPDATE_FAILS:-}" ]]; then
-                    echo "mock gh: update-branch refused" >&2
+            comment)
+                # `gh pr comment <n> --body <text>`: the body is the LAST arg.
+                # It is saved per PR so a case can read its second line.
+                if [[ -n "${COMMENT_FAILS:-}" ]]; then
+                    echo "mock gh: comment refused" >&2
                     exit 1
                 fi
+                printf '%s\n' "${*: -1}" >> "$FIXTURES/comment-${3}.body"
                 exit 0
                 ;;
             *)
@@ -19600,6 +19603,22 @@ case "${1:-}" in
                 jq -r "$jqf" "$src"
                 exit 0
                 ;;
+            repos/*/issues/*/comments\?per_page=100)
+                if [[ -n "${COMMENTS_FAIL:-}" ]]; then
+                    echo '{"message":"Server Error"}'
+                    exit 1
+                fi
+                num="${endpoint#*/issues/}"
+                num="${num%%/*}"
+                if [[ -f "$FIXTURES/comments-${num}.json" ]]; then
+                    src="$FIXTURES/comments-${num}.json"
+                else
+                    src="$FIXTURES/comments-default.json"
+                    echo '[]' > "$src"
+                fi
+                jq -r "$jqf" "$src"
+                exit 0
+                ;;
             repos/*/compare/*)
                 if [[ -f "$FIXTURES/compare-fails" ]]; then
                     echo '{"message":"Not Found"}'
@@ -19636,8 +19655,8 @@ GHSTUB
     # the extracted step against that fixture set and prints the exit code.
     run_case() {
         local fx="$1" mf="$2" sw="$3" out="$4" rc=0
-        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" UPDATE_FAILS="${UPDATE_FAILS:-}" \
-            FILES_FAIL="${FILES_FAIL:-}" COMMITS_FAIL="${COMMITS_FAIL:-}" \
+        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" COMMENT_FAILS="${COMMENT_FAILS:-}" \
+            FILES_FAIL="${FILES_FAIL:-}" COMMITS_FAIL="${COMMITS_FAIL:-}" COMMENTS_FAIL="${COMMENTS_FAIL:-}" \
             GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
             bash "$body" > "$out" 2>&1 || rc=$?
         echo "$rc"
@@ -19728,8 +19747,8 @@ GHSTUB
     else
         fail "sweep gating (d): a refused merge with a moved head still exits 0 — got $rc_d: $(cat "$out_d")"
     fi
-    assert_not_contains "$fx_d/calls.log" "update-branch" \
-        "sweep gating (d): does not fall through to pr update-branch when the head moved"
+    assert_not_contains "$fx_d/calls.log" "pr comment" \
+        "sweep gating (d): does not fall through to a refresh when the head moved"
     assert_contains "$out_d" "its head moved" \
         "sweep gating (d): it says the head moved"
     assert_contains "$out_d" "skipped=1" \
@@ -19775,8 +19794,10 @@ GHSTUB
     else
         fail "sweep gating (g): a refused BEHIND merge with an unmoved head still exits 0 — got $rc_g: $(cat "$out_g")"
     fi
-    assert_contains "$fx_g/calls.log" "update-branch" \
-        "sweep gating (g): falls through to pr update-branch"
+    assert_contains "$fx_g/calls.log" "pr comment 900 --body @dependabot rebase" \
+        "sweep gating (g): falls through to a @dependabot rebase request"
+    assert_not_contains "$fx_g/calls.log" "update-branch" \
+        "sweep gating (g): never pushes to the Dependabot branch"
     assert_contains "$out_g" "updated=1" \
         "sweep gating (g): summary counts it as updated"
 
@@ -19797,15 +19818,17 @@ GHSTUB
     else
         fail "sweep gating (h): a refused CLEAN merge that is behind by commit count exits 0 — got $rc_h: $(cat "$out_h")"
     fi
-    assert_contains "$fx_h/calls.log" "update-branch" \
-        "sweep gating (h): falls through to pr update-branch"
+    assert_contains "$fx_h/calls.log" "pr comment 900 --body @dependabot rebase" \
+        "sweep gating (h): falls through to a @dependabot rebase request"
+    assert_not_contains "$fx_h/calls.log" "update-branch" \
+        "sweep gating (h): never pushes to the Dependabot branch"
     assert_not_contains "$out_h" "is not behind" \
         "sweep gating (h): does not claim the PR is not behind"
     assert_contains "$out_h" "updated=1" \
         "sweep gating (h): summary counts it as updated"
 
-    # (i) same as (h), but update-branch is refused too, as GITHUB_TOKEN is
-    #     for a stale workflow-file PR. The run fails and names the remedy.
+    # (i) same as (h), but posting the comment is refused. The run fails and
+    #     says a human must ask Dependabot to rebase.
     local fx_i="$TEST_DIR/auto-merge-gating-case-i"
     mkdir -p "$fx_i"
     printf '900\n' > "$fx_i/pr-numbers.txt"
@@ -19813,11 +19836,11 @@ GHSTUB
     write_pr "$fx_i/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
         '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
     local out_i="$TEST_DIR/auto-merge-gating-out-i.txt" rc_i
-    rc_i=$(UPDATE_FAILS=1 run_case "$fx_i" "900" "$SELF" "$out_i")
+    rc_i=$(COMMENT_FAILS=1 run_case "$fx_i" "900" "$SELF" "$out_i")
     if [[ "$rc_i" -ne 0 ]]; then
-        pass "sweep gating (i): a stale workflow-file PR that cannot be refreshed fails the run"
+        pass "sweep gating (i): a stale PR whose rebase request cannot be posted fails the run"
     else
-        fail "sweep gating (i): a stale workflow-file PR that cannot be refreshed fails the run — got 0: $(cat "$out_i")"
+        fail "sweep gating (i): a stale PR whose rebase request cannot be posted fails the run — got 0: $(cat "$out_i")"
     fi
     assert_contains "$out_i" "@dependabot rebase" \
         "sweep gating (i): the error names the @dependabot rebase remedy"
@@ -19833,8 +19856,8 @@ GHSTUB
         '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
     local out_j="$TEST_DIR/auto-merge-gating-out-j.txt"
     run_case "$fx_j" "900" "$SELF" "$out_j" >/dev/null
-    assert_not_contains "$fx_j/calls.log" "update-branch" \
-        "sweep gating (j): no pr update-branch when the head is not behind"
+    assert_not_contains "$fx_j/calls.log" "pr comment" \
+        "sweep gating (j): no rebase request when the head is not behind"
     assert_contains "$out_j" "is not behind main" \
         "sweep gating (j): reports the merge refusal as not behind"
 
@@ -20007,9 +20030,15 @@ GHSTUB
         "sweep gating (t): the warning names the short sha and the sanitized login"
     one_case t2 "" "[$(jq -c '.commit.verification.verified=false' <<<"$C_BOT")]"
     no_merge "(t2) an unverified Dependabot commit"
+    # A github-actions[bot] two-parent merge commit (what the old
+    # `gh pr update-branch` refresh pushed) is no longer accepted: skipped
+    # even with every check green and one from outside this workflow.
     one_case t3 "" "[$C_BOT,$C_MERGE]"
-    assert_contains "$oc_out" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
-        "sweep gating (t3): verified Dependabot commits plus the sweep's own two-parent merge commit merge"
+    no_merge "(t3) a github-actions[bot] two-parent merge commit"
+    assert_contains "$oc_out" "commit 2222222 (author 'github-actions[bot]')" \
+        "sweep gating (t3): the warning names the merge commit and its author"
+    assert_contains "$oc_out" "skipped=1" \
+        "sweep gating (t3): summary counts it as skipped"
     one_case t4 "" "[$C_BOT,$(jq -c '.parents=[{}]' <<<"$C_MERGE")]"
     no_merge "(t4) a one-parent github-actions[bot] commit"
     one_case t5 "" "[]"
@@ -20042,8 +20071,60 @@ GHSTUB
     # (v) a PR behind its base is refreshed, never merged; an unmeasurable gap skips.
     one_case v "" "" 2
     no_merge "(v) a PR 2 commits behind"
-    assert_contains "$oc_fx/calls.log" "update-branch" "sweep gating (v): it goes straight to pr update-branch"
+    # Exactly one rebase request carrying the head marker, no update-branch,
+    # no merge.
+    local posts_v
+    posts_v=$(grep -c '^pr comment ' "$oc_fx/calls.log" 2>/dev/null || true)
+    if [[ "$posts_v" == "1" ]]; then
+        pass "sweep gating (v): exactly one pr comment call"
+    else
+        fail "sweep gating (v): exactly one pr comment call — got ${posts_v:-0}: $(cat "$oc_fx/calls.log" 2>/dev/null)"
+    fi
+    assert_contains "$oc_fx/calls.log" "pr comment 900 --body @dependabot rebase" "sweep gating (v): the comment asks Dependabot to rebase"
+    assert_contains "$oc_fx/comment-900.body" "<!-- sweep: behind at $HEAD_X -->" "sweep gating (v): the comment carries the head marker"
+    if [[ "$(head -1 "$oc_fx/comment-900.body" 2>/dev/null)" == "@dependabot rebase" ]]; then
+        pass "sweep gating (v): the first line of the body is exactly @dependabot rebase"
+    else
+        fail "sweep gating (v): the first line of the body is exactly @dependabot rebase — got: $(cat "$oc_fx/comment-900.body" 2>/dev/null)"
+    fi
+    assert_not_contains "$oc_fx/calls.log" "update-branch" "sweep gating (v): the sweep never pushes to the Dependabot branch"
     assert_contains "$oc_out" "updated=1" "sweep gating (v): summary counts it as updated"
+    assert_contains "$oc_out" "requested a Dependabot rebase" "sweep gating (v): a notice says the rebase was requested"
+    # The marker for this head is already there (posted by the sweep): no
+    # second comment, a warning, counted as skipped. A marker by someone else,
+    # or for another head, does not count.
+    local C_MARK="[{\"user\":{\"login\":\"github-actions[bot]\"},\"body\":\"@dependabot rebase\\n<!-- sweep: behind at $HEAD_X -->\"}]"
+    local C_OTHER_HEAD="[{\"user\":{\"login\":\"github-actions[bot]\"},\"body\":\"@dependabot rebase\\n<!-- sweep: behind at $HEAD_Y -->\"}]"
+    local C_OTHER_USER="[{\"user\":{\"login\":\"mallory\"},\"body\":\"@dependabot rebase\\n<!-- sweep: behind at $HEAD_X -->\"}]"
+    oc_fx="$TEST_DIR/auto-merge-gating-case-v4"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+    printf '%s\n' "$C_MARK" > "$oc_fx/comments-900.json"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+    local rc_v4
+    rc_v4=$(run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v4.txt")
+    no_merge "(v4) behind, rebase already requested at this head"
+    assert_not_contains "$oc_fx/calls.log" "pr comment" "sweep gating (v4): no second comment for the same head"
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v4.txt" "::warning::" "sweep gating (v4): a warning is logged"
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v4.txt" "rebase already requested" "sweep gating (v4): the warning says a rebase was already requested"
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v4.txt" "skipped=1" "sweep gating (v4): summary counts it as skipped"
+    if [[ "$rc_v4" -eq 0 ]]; then pass "sweep gating (v4): a still-behind PR does not fail the run"; else fail "sweep gating (v4): a still-behind PR does not fail the run — got $rc_v4"; fi
+    local v5
+    for v5 in "$C_OTHER_HEAD" "$C_OTHER_USER"; do
+        oc_fx="$TEST_DIR/auto-merge-gating-case-v5"; rm -rf "$oc_fx"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+        printf '%s\n' "$v5" > "$oc_fx/comments-900.json"
+        write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+        run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v5.txt" >/dev/null
+        assert_contains "$oc_fx/calls.log" "pr comment 900" "sweep gating (v5): a marker for another head or by another author does not suppress the request"
+    done
+    # The comment list cannot be read: skip, post nothing, do not fail the run.
+    oc_fx="$TEST_DIR/auto-merge-gating-case-v6"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+    local rc_v6
+    rc_v6=$(COMMENTS_FAIL=1 run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v6.txt")
+    no_merge "(v6) a failed comments API call"
+    assert_not_contains "$oc_fx/calls.log" "pr comment" "sweep gating (v6): nothing is posted when the comment list cannot be read"
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v6.txt" "could not list its comments" "sweep gating (v6): the warning says why"
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v6.txt" "skipped=1" "sweep gating (v6): summary counts it as skipped"
+    if [[ "$rc_v6" -eq 0 ]]; then pass "sweep gating (v6): an unreadable comment list does not fail the run"; else fail "sweep gating (v6): an unreadable comment list does not fail the run — got $rc_v6"; fi
     oc_fx="$TEST_DIR/auto-merge-gating-case-v2"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; : > "$oc_fx/compare-fails"
     write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
     run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v2.txt" >/dev/null
