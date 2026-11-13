@@ -21534,7 +21534,7 @@ test_fleet_memory_repo_header() {
 
     # The real payload: its header must match the hook's copy.
     rm -f "$dest"
-    CLAUDE_CONFIG_DIR="$d/cfg" bash "$hook" >/dev/null 2>&1
+    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_OWNER=1 bash "$hook" >/dev/null 2>&1
     assert_contains "$dest" "Only what is **specific to this account" "repo header: real payload body delivered"
     assert_not_contains "$dest" "Edit only below" "repo header: real payload's repo-only notice not delivered"
     # The transcript-count marker sits right after the header, so stripping
@@ -21600,7 +21600,7 @@ PY
         local cwd="$1" cfg="$2" codex="$3"
         mkdir -p "$cfg" "$codex"
         (cd "$cwd" && env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD \
-            CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
+            FLEET_GUIDANCE_OWNER=1 CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$codex" \
             bash -c "$registered_command")
     }
     rc=0
@@ -21689,7 +21689,7 @@ PY
 
     rc=0
     out=$(CLAUDE_CONFIG_DIR="$d/invalid-cfg" CODEX_HOME="$d/invalid-codex" \
-        bash "$hook" --workspace "$d/missing" 2>&1) || rc=$?
+        FLEET_GUIDANCE_OWNER=1 bash "$hook" --workspace "$d/missing" 2>&1) || rc=$?
     if [[ $rc -eq 2 && "$out" == 'fleet-guidance: DEGRADED'* ]]; then
         pass 'fleet workspace: nonexistent directory exits 2 with DEGRADED usage line'
     else
@@ -21759,7 +21759,7 @@ PY
     mkdir -p "$d/fallback-cfg" "$d/fallback-codex"
     rc=0
     out=$(CLAUDE_CONFIG_DIR="$d/fallback-cfg" CODEX_HOME="$d/fallback-codex" \
-        bash "$hook" --workspace "$parent" 2>&1) || rc=$?
+        FLEET_GUIDANCE_OWNER=1 bash "$hook" --workspace "$parent" 2>&1) || rc=$?
     local source_version
     source_version=$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md")
     source_version=${source_version:0:8}
@@ -22346,7 +22346,7 @@ test_fleet_memory_payload_stamp() {
         git -C "$repo" commit -qm 'beside-hook fixture'
     mkdir -p "$d/f-cfg"
     out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD \
-        CLAUDE_CONFIG_DIR="$d/f-cfg" CODEX_HOME="$d/no-codex" \
+        CLAUDE_CONFIG_DIR="$d/f-cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_OWNER=1 \
         FLEET_GUIDANCE_PAYLOAD_STAMP=1700000999 bash "$repo/fleet-memory.sh")"
     assert_contains "$d/f-cfg/CLAUDE.md" 'STAMP PAYLOAD BESIDE HOOK' \
         'fleet payload stamp: the payload beside the hook is delivered without FLEET_GUIDANCE_PAYLOAD'
@@ -22540,6 +22540,280 @@ INC
         || fail "git hooks: error changed the hook result (rc=$rc): $out"
 }
 
+# The OWNER GATE (ADR 0042): on a durable machine fleet-memory.sh is a no-op
+# unless the run carries an explicit signal. Every run here is under `env -i`
+# with a throwaway HOME and every config/state seam pointed inside it, so no
+# inherited variable leaks in and nothing can reach the real home.
+test_fleet_memory_owner_gate() {
+    echo ""
+    echo "TEST: fleet-memory.sh (owner gate)"
+
+    local hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
+    local d="$TEST_DIR/fleetmem-gate"
+    local begin='<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->'
+    local end='<!-- END FLEET GUIDANCE -->'
+    local n=0 h rc cwd
+    rm -rf "$d"
+    mkdir -p "$d/tmp"
+
+    # The plugin-style bundle: the hook beside its payload, not in a git repo.
+    local bundle="$d/bundle"
+    mkdir -p "$bundle"
+    cp "$hook" "$bundle/fleet-memory.sh"
+    printf '# Fleet guidance\n\nThe canary is GATE-PLOVER-58.\n' > "$bundle/fleet-guidance.md"
+    local extpayload="$d/external-payload.md"
+    printf '# Fleet guidance\n\nThe canary is GATE-STORK-61.\n' > "$extpayload"
+
+    # gate_new: a fresh HOME (path in $h) with the seams inside it, cwd in $cwd.
+    gate_new() {
+        n=$((n + 1))
+        h="$d/case$n/home"; cwd="$d/case$n/cwd"
+        mkdir -p "$h" "$cwd"
+    }
+    # gate_run <script> <ENV=val>... -- <hook args>: stdout, stderr and rc land
+    # in $d/out, $d/err and $rc. Receipts are off (the detached writer would
+    # race the assertions); FLEET_GIT_HOOKS=off keeps git config out of it.
+    gate_run() {
+        local script="$1"; shift
+        local -a envs=()
+        while [[ $# -gt 0 && "$1" != -- ]]; do envs+=("$1"); shift; done
+        [[ $# -gt 0 ]] && shift
+        rc=0
+        ( cd "$cwd" && env -i PATH="$PATH" HOME="$h" TMPDIR="$d/tmp" \
+            CLAUDE_CONFIG_DIR="$h/.claude" CODEX_HOME="$h/.codex" \
+            XDG_STATE_HOME="$h/.state" FLEET_GUIDANCE_RECEIPT=0 FLEET_GIT_HOOKS=off \
+            "${envs[@]}" bash "$script" "$@" ) > "$d/out" 2> "$d/err" || rc=$?
+    }
+    # gate_manifest <dir>: every path with type, size, mode, mtime and sha256.
+    gate_manifest() {
+        ( cd "$1" && LC_ALL=C find . -printf '%p\t%y\t%s\t%m\t%T@\n' | LC_ALL=C sort
+          LC_ALL=C find . -type f -exec sha256sum {} + | LC_ALL=C sort -k2 )
+    }
+    # gate_expect_noop <label>: rc 0, silent, and the case's trees unchanged.
+    gate_expect_noop() {
+        local label="$1"
+        [[ $rc -eq 0 ]] && pass "owner gate: $label exits 0" \
+            || fail "owner gate: $label exited $rc"
+        if [[ ! -s "$d/out" && ! -s "$d/err" ]]; then
+            pass "owner gate: $label prints nothing to stdout or stderr"
+        else
+            fail "owner gate: $label printed: $(cat "$d/out" "$d/err")"
+        fi
+        if [[ "$(gate_manifest "$h")" == "$before_home" && "$(gate_manifest "$cwd")" == "$before_cwd" ]]; then
+            pass "owner gate: $label changes no path under HOME or the working directory"
+        else
+            fail "owner gate: $label changed something under HOME or the working directory"
+        fi
+    }
+    # gate_expect_install <label>: verdict `installed` and the block present.
+    gate_expect_install() {
+        local label="$1"
+        if [[ $rc -eq 0 && "$(head -1 "$d/out")" == "fleet-guidance: installed"* ]]; then
+            pass "owner gate: $label installs (verdict says installed)"
+        else
+            fail "owner gate: $label did not install: rc=$rc out=$(cat "$d/out" "$d/err")"
+        fi
+        if [[ -f "$h/.claude/CLAUDE.md" ]] && grep -qxF -- "$begin" "$h/.claude/CLAUDE.md"; then
+            pass "owner gate: $label writes the managed block to CLAUDE.md"
+        else
+            fail "owner gate: $label wrote no managed block to CLAUDE.md"
+        fi
+    }
+    local before_home before_cwd
+    snap() { before_home="$(gate_manifest "$h")"; before_cwd="$(gate_manifest "$cwd")"; }
+
+    # a. No signal, empty HOME: nothing at all.
+    gate_new; snap
+    gate_run "$bundle/fleet-memory.sh" --
+    gate_expect_noop "no signal on an empty HOME"
+    [[ -z "$(find "$h" -mindepth 1 -print -quit)" ]] && pass "owner gate: an empty HOME stays empty" \
+        || fail "owner gate: something was created under an empty HOME"
+
+    # b. No signal, HOME with both user files, each holding own text and a
+    #    managed block: the whole tree is byte-identical afterwards.
+    gate_new
+    mkdir -p "$h/.claude" "$h/.codex"
+    local f
+    for f in "$h/.claude/CLAUDE.md" "$h/.codex/AGENTS.md"; do
+        printf 'MY OWN NOTE.\n%s\n<!-- fleet-guidance-version: 0a1b2c3d -->\nold managed text\n%s\n' \
+            "$begin" "$end" > "$f"
+        touch -d '2020-01-02 03:04:05' "$f"
+    done
+    snap
+    gate_run "$bundle/fleet-memory.sh" --
+    gate_expect_noop "no signal over seeded user files"
+    [[ ! -e "$h/.claude/fleet-delivery.jsonl" ]] && pass "owner gate: no delivery receipt is written" \
+        || fail "owner gate: a delivery receipt was written"
+
+    # c. The same no-op whatever the arguments: --workspace over a parent that
+    #    holds a child repo with a workspace-capable hook, and an invalid one.
+    gate_new
+    local parent="$d/case$n/parent"
+    mkdir -p "$parent/child/.claude/hooks"
+    git init -q "$parent/child" 2>/dev/null
+    printf '# child\n' > "$parent/child/AGENTS.md"
+    printf '# Fleet guidance\n\nThe canary is GATE-CHILD-12.\n' > "$parent/child/.claude/hooks/fleet-guidance.md"
+    snap
+    local before_parent; before_parent="$(gate_manifest "$parent")"
+    gate_run "$bundle/fleet-memory.sh" -- --workspace "$parent"
+    gate_expect_noop "no signal with --workspace"
+    [[ "$(gate_manifest "$parent")" == "$before_parent" ]] && pass "owner gate: --workspace touches nothing under the parent" \
+        || fail "owner gate: --workspace changed the parent tree"
+    gate_run "$bundle/fleet-memory.sh" -- --bogus
+    gate_expect_noop "no signal with an invalid argument"
+
+    # d. Spellings and shapes that are NOT a signal.
+    local spec
+    for spec in 'FLEET_GUIDANCE_OWNER=0' 'FLEET_GUIDANCE_OWNER=false' 'FLEET_GUIDANCE_OWNER=OFF' \
+                'FLEET_GUIDANCE_OWNER=No' 'FLEET_GUIDANCE_OWNER=' 'CLAUDE_CODE_REMOTE=false' \
+                'CLAUDE_CODE_REMOTE_SESSION_ID=' 'FLEET_GUIDANCE_PAYLOAD='; do
+        gate_new; snap
+        gate_run "$bundle/fleet-memory.sh" "$spec" --
+        gate_expect_noop "$spec"
+    done
+    gate_new
+    mkdir -p "$h/.config/fleet-guidance/owner"     # a directory, not a file
+    snap
+    gate_run "$bundle/fleet-memory.sh" --
+    gate_expect_noop "a marker that is a directory"
+    gate_new
+    mkdir -p "$cwd/rel/cfg/fleet-guidance"; : > "$cwd/rel/cfg/fleet-guidance/owner"
+    snap
+    gate_run "$bundle/fleet-memory.sh" XDG_CONFIG_HOME=rel/cfg --
+    gate_expect_noop "a marker only under a relative XDG_CONFIG_HOME"
+
+    # e. Every signal installs, as before the gate.
+    for spec in 'FLEET_GUIDANCE_OWNER=1' 'FLEET_GUIDANCE_OWNER=yes' 'FLEET_GUIDANCE_OWNER=ON' \
+                'CLAUDE_CODE_REMOTE=true' 'CLAUDE_CODE_REMOTE_SESSION_ID=session_example'; do
+        gate_new
+        gate_run "$bundle/fleet-memory.sh" "$spec" --
+        gate_expect_install "$spec"
+    done
+    gate_new
+    mkdir -p "$h/.config/fleet-guidance"; : > "$h/.config/fleet-guidance/owner"
+    gate_run "$bundle/fleet-memory.sh" --
+    gate_expect_install "the marker under HOME/.config with XDG_CONFIG_HOME unset"
+    gate_new
+    mkdir -p "$h/xdgcfg/fleet-guidance"; : > "$h/xdgcfg/fleet-guidance/owner"
+    gate_run "$bundle/fleet-memory.sh" XDG_CONFIG_HOME="$h/xdgcfg" --
+    gate_expect_install "the marker under an absolute XDG_CONFIG_HOME"
+    gate_new
+    mkdir -p "$h/.config/fleet-guidance"; : > "$h/.config/fleet-guidance/owner"
+    gate_run "$bundle/fleet-memory.sh" XDG_CONFIG_HOME=rel/cfg --
+    gate_expect_install "a relative XDG_CONFIG_HOME falls back to HOME/.config"
+    gate_new
+    gate_run "$bundle/fleet-memory.sh" FLEET_GUIDANCE_PAYLOAD="$extpayload" --
+    gate_expect_install "FLEET_GUIDANCE_PAYLOAD alone"
+    assert_contains "$h/.claude/CLAUDE.md" "GATE-STORK-61" "owner gate: a caller-chosen payload is the one delivered"
+
+    # f. --codex-cloud is its own signal and creates CODEX_HOME.
+    gate_new
+    gate_run "$bundle/fleet-memory.sh" -- --codex-cloud
+    if [[ $rc -eq 0 && "$(head -1 "$d/out")" == "fleet-guidance: installed"*"~/.codex/AGENTS.md" ]]; then
+        pass "owner gate: --codex-cloud alone installs into ~/.codex/AGENTS.md"
+    else
+        fail "owner gate: --codex-cloud alone: rc=$rc out=$(cat "$d/out" "$d/err")"
+    fi
+    if [[ -f "$h/.codex/AGENTS.md" ]] && grep -qxF -- "$begin" "$h/.codex/AGENTS.md"; then
+        pass "owner gate: --codex-cloud creates CODEX_HOME and writes the block"
+    else
+        fail "owner gate: --codex-cloud wrote no block under CODEX_HOME"
+    fi
+
+    # g. FLEET_GUIDANCE_SKIP removes the block, with or without the owner var.
+    for spec in '' 'FLEET_GUIDANCE_OWNER=1'; do
+        gate_new
+        mkdir -p "$h/.claude"
+        printf 'MY OWN NOTE.\n%s\n<!-- fleet-guidance-version: 0a1b2c3d -->\nold managed text\n%s\n' \
+            "$begin" "$end" > "$h/.claude/CLAUDE.md"
+        local -a skipenv=(FLEET_GUIDANCE_SKIP=1)
+        [[ -n "$spec" ]] && skipenv+=("$spec")
+        gate_run "$bundle/fleet-memory.sh" "${skipenv[@]}" --
+        if [[ $rc -eq 0 && "$(head -1 "$d/out")" == "fleet-guidance: skipped"* ]]; then
+            pass "owner gate: SKIP ${spec:-alone} reports skipped"
+        else
+            fail "owner gate: SKIP ${spec:-alone}: rc=$rc out=$(cat "$d/out" "$d/err")"
+        fi
+        if ! grep -qF -- "BEGIN FLEET GUIDANCE" "$h/.claude/CLAUDE.md" && grep -qF "MY OWN NOTE." "$h/.claude/CLAUDE.md"; then
+            pass "owner gate: SKIP ${spec:-alone} removes the block and keeps the user's text"
+        else
+            fail "owner gate: SKIP ${spec:-alone} left the file wrong: $(cat "$h/.claude/CLAUDE.md")"
+        fi
+    done
+
+    # h. Plugin style: the bundled payload beside the hook, not a git repo.
+    gate_new
+    gate_run "$bundle/fleet-memory.sh" FLEET_GUIDANCE_OWNER=1 --
+    gate_expect_install "plugin style with the owner signal"
+    assert_contains "$h/.claude/CLAUDE.md" "GATE-PLOVER-58" "owner gate: plugin style delivers the bundled payload"
+    gate_new
+    gate_run "$bundle/fleet-memory.sh" FLEET_GUIDANCE_PAYLOAD="$extpayload" FLEET_GUIDANCE_PAYLOAD_STAMP=1700000000 --
+    gate_expect_install "plugin style with a payload and stamp, no owner var"
+    gate_new; snap
+    gate_run "$bundle/fleet-memory.sh" --
+    gate_expect_noop "plugin style with neither signal"
+
+    # i. The Codex user-level registration command and the Windows launcher,
+    #    run from inside a git repo that carries the synced hook and payload.
+    local regdir="$d/reg" cmd
+    mkdir -p "$regdir/codex"
+    CODEX_HOME="$regdir/codex" HOME="$regdir" XDG_CONFIG_HOME="$regdir/xdg" \
+        bash "$REPO_ROOT/scripts/register-codex-hook.sh" "$regdir/codex/hooks.json" > /dev/null 2>&1
+    cmd="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' \
+        "$regdir/codex/hooks.json")"
+    if [[ "$cmd" == "bash -c '"*"fleet-memory.sh"* ]]; then
+        pass "owner gate: the registered Codex command was read from hooks.json"
+    else
+        fail "owner gate: no usable registered command: '$cmd'"
+    fi
+    local repo="$d/reg-repo" via
+    mkdir -p "$repo/.claude/hooks"
+    git init -q "$repo" 2>/dev/null
+    cp "$hook" "$repo/.claude/hooks/fleet-memory.sh"
+    cp "$bundle/fleet-guidance.md" "$repo/.claude/hooks/fleet-guidance.md"
+    for via in command launcher; do
+        local -a runner
+        if [[ "$via" == command ]]; then runner=(bash -c "$cmd")
+        else runner=(bash "$REPO_ROOT/.claude/hooks/codex-session-start.sh"); fi
+        # With the marker: the block reaches $CODEX_HOME/AGENTS.md.
+        gate_new
+        mkdir -p "$h/.codex" "$h/.config/fleet-guidance"; : > "$h/.config/fleet-guidance/owner"
+        rc=0
+        ( cd "$repo" && env -i PATH="$PATH" HOME="$h" TMPDIR="$d/tmp" CLAUDE_CONFIG_DIR="$h/.claude" \
+            CODEX_HOME="$h/.codex" XDG_STATE_HOME="$h/.state" FLEET_GUIDANCE_RECEIPT=0 FLEET_GIT_HOOKS=off \
+            "${runner[@]}" ) > "$d/out" 2> "$d/err" || rc=$?
+        if [[ $rc -eq 0 && -f "$h/.codex/AGENTS.md" ]] && grep -qxF -- "$begin" "$h/.codex/AGENTS.md"; then
+            pass "owner gate: the Codex $via with the marker installs into \$CODEX_HOME/AGENTS.md"
+        else
+            fail "owner gate: the Codex $via with the marker: rc=$rc out=$(cat "$d/out" "$d/err")"
+        fi
+        # Without it: silent, and nothing written.
+        gate_new
+        mkdir -p "$h/.codex"
+        snap
+        rc=0
+        ( cd "$repo" && env -i PATH="$PATH" HOME="$h" TMPDIR="$d/tmp" CLAUDE_CONFIG_DIR="$h/.claude" \
+            CODEX_HOME="$h/.codex" XDG_STATE_HOME="$h/.state" FLEET_GUIDANCE_RECEIPT=0 FLEET_GIT_HOOKS=off \
+            "${runner[@]}" ) > "$d/out" 2> "$d/err" || rc=$?
+        if [[ $rc -eq 0 && ! -s "$d/out" && ! -s "$d/err" && "$(gate_manifest "$h")" == "$before_home" ]]; then
+            pass "owner gate: the Codex $via without the marker is silent and writes nothing"
+        else
+            fail "owner gate: the Codex $via without the marker: rc=$rc out=$(cat "$d/out" "$d/err")"
+        fi
+    done
+
+    # j. The skills-evals harness environment: PATH, HOME, TMPDIR,
+    #    CLAUDE_CONFIG_DIR and FLEET_GUIDANCE_PAYLOAD, no owner variable.
+    #    FLEET_GUIDANCE_RECEIPT=0 is added only to keep the detached receipt
+    #    writer out of the assertions; it is not a gate signal.
+    gate_new
+    rc=0
+    ( cd "$cwd" && env -i PATH="$PATH" HOME="$h" TMPDIR="$d/tmp" CLAUDE_CONFIG_DIR="$h/.claude" \
+        FLEET_GUIDANCE_PAYLOAD="$extpayload" FLEET_GUIDANCE_RECEIPT=0 FLEET_GIT_HOOKS=off \
+        bash "$bundle/fleet-memory.sh" ) > "$d/out" 2> "$d/err" || rc=$?
+    gate_expect_install "the skills-evals harness environment"
+}
+
 # The check value (see CHECK VALUE in fleet-memory.sh, docs/decisions/0035): a
 # plain-text line that ends every block the hook writes, so a session's report
 # of what loaded can be compared with what it loaded. It is the LAST 8 hex of
@@ -22730,7 +23004,7 @@ test_fleet_memory_check_value() {
     printf 'WORKSPACE CHILD PAYLOAD\n' > "$d/h-ws/child/.claude/hooks/fleet-guidance.md"
     check="$(sha256sum "$d/h-ws/child/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
     out="$(env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD CLAUDE_CONFIG_DIR="$d/h-cfg" \
-        CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --workspace "$d/h-ws")"
+        CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 FLEET_GUIDANCE_OWNER=1 bash "$hook" --workspace "$d/h-ws")"
     [[ "$(line_before_end "$d/h-cfg/CLAUDE.md")" == "fleet-guidance check value: $check" ]] \
         && pass 'fleet check value: workspace mode writes the value of the child payload' \
         || fail 'fleet check value: workspace mode wrote another value'
@@ -22775,7 +23049,7 @@ test_fleet_memory_check_value() {
         'fleet check value: the delivered payload copy carries no check value line'
     cfg="$d/k-cfg"; mkdir -p "$cfg"
     env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
-        CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" >/dev/null
+        CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 FLEET_GUIDANCE_OWNER=1 bash "$hook" >/dev/null
     check="$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
     [[ "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" \
         && "$(grep -c -F 'fleet-guidance check value:' "$cfg/CLAUDE.md")" -eq 1 ]] \
@@ -26654,6 +26928,7 @@ GROUP_codex=(
     test_fleet_memory_freshness
     test_fleet_memory_payload_stamp
     test_fleet_memory_check_value
+    test_fleet_memory_owner_gate
     test_fleet_memory_git_hooks
     test_fleet_memory_repo_header
     test_fleet_memory_workspace

@@ -115,6 +115,9 @@ class HookTestCase(unittest.TestCase):
             "TMPDIR": str(self.tmpdir),
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}",
             "HOME": str(self.home),
+            # The owner gate (ADR 0042): a durable machine records nothing
+            # without a signal, so every case but OwnerGateTests runs as the owner.
+            "FLEET_GUIDANCE_OWNER": "1",
             "GUIDANCE_RECORD_NOW": NOW,
             # The API and git seams are read only under this test marker.
             "GUIDANCE_RECORD_TEST": "1",
@@ -126,12 +129,12 @@ class HookTestCase(unittest.TestCase):
     def write_transcript(self, entries):
         self.transcript.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
 
-    def run_hook(self, session="session-one", env=None, event=None, stdin=None):
+    def run_hook(self, session="session-one", env=None, event=None, stdin=None, cwd=None):
         payload = stdin if stdin is not None else json.dumps(event or {
             "session_id": session, "transcript_path": str(self.transcript),
             "hook_event_name": "Stop"})
         out = subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True,
-                             env=dict(self.env, **(env or {})), timeout=60)
+                             env=dict(self.env, **(env or {})), timeout=60, cwd=cwd)
         self.assertEqual((out.returncode, out.stdout, out.stderr), (0, "", ""))
         return out
 
@@ -279,6 +282,89 @@ class RecordTests(HookTestCase):
         self.run_hook(session="b", env={"CLAUDE_CODE_REMOTE_SESSION_ID": "example-remote"})
         self.run_hook(session="c", env={"CLAUDE_CODE_REMOTE": "false"})
         self.assertEqual([r["remote"] for r in self.records()], [True, True, False])
+
+
+class OwnerGateTests(HookTestCase):
+    """The hook is registered in every public fleet repo, so on a durable machine
+    it records nothing, and creates no state directory, unless the run carries an
+    owner signal: FLEET_GUIDANCE_OWNER on, a hosted session, or the marker file."""
+
+    def setUp(self):
+        super().setUp()
+        self.env.pop("FLEET_GUIDANCE_OWNER")
+        self.xdg_state = self.tmp / "xdg-state"
+        self.write_transcript([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)), assistant(1)])
+
+    def marker(self, config_home):
+        path = pathlib.Path(config_home) / "fleet-guidance" / "owner"
+        path.parent.mkdir(parents=True)
+        path.touch()
+        return path
+
+    def assert_gated(self, env=None, cwd=None):
+        env = dict(env or {}, XDG_STATE_HOME=str(self.xdg_state))
+        before = sorted(p for p in self.home.rglob("*"))
+        self.run_hook(env=env, cwd=cwd)          # also asserts rc 0 and no output
+        self.assertFalse(self.xdg_state.exists(), "state directory was created")
+        self.assertFalse(self.state.exists())
+        self.assertEqual(sorted(self.home.rglob("*")), before)
+        self.assertEqual(self.calls(), [])
+
+    def assert_records(self, env=None, cwd=None):
+        self.run_hook(env=dict(env or {}, XDG_STATE_HOME=str(self.xdg_state)), cwd=cwd)
+        log = self.xdg_state / "fleet-guidance" / "sessions.jsonl"
+        self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_no_signal_records_nothing_and_creates_no_state(self):
+        self.assert_gated()
+
+    def test_no_signal_leaves_the_default_state_directory_absent_too(self):
+        self.run_hook()
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_owner_variable_records(self):
+        self.assert_records({"FLEET_GUIDANCE_OWNER": "1"})
+
+    def test_off_spellings_of_the_owner_variable_are_gated(self):
+        for value in ("0", "false", "FALSE", "no", "No", "off", "OFF", ""):
+            with self.subTest(value=value):
+                self.assert_gated({"FLEET_GUIDANCE_OWNER": value})
+
+    def test_any_other_spelling_of_the_owner_variable_records(self):
+        self.assert_records({"FLEET_GUIDANCE_OWNER": "yes"})
+
+    def test_marker_under_an_absolute_xdg_config_home_records(self):
+        self.marker(self.tmp / "xdg-config")
+        self.assert_records({"XDG_CONFIG_HOME": str(self.tmp / "xdg-config")})
+
+    def test_marker_under_home_config_records(self):
+        self.marker(self.home / ".config")
+        self.assert_records()
+
+    def test_an_absolute_xdg_config_home_replaces_home_config(self):
+        self.marker(self.home / ".config")
+        self.assert_gated({"XDG_CONFIG_HOME": str(self.tmp / "elsewhere")})
+
+    def test_a_relative_xdg_config_home_is_ignored_and_home_config_is_used(self):
+        cwd = self.tmp / "cwd"
+        cwd.mkdir()
+        self.marker(cwd / "rel" / "cfg")
+        self.assert_gated({"XDG_CONFIG_HOME": "rel/cfg"}, cwd=cwd)
+        self.marker(self.home / ".config")
+        self.assert_records({"XDG_CONFIG_HOME": "rel/cfg"}, cwd=cwd)
+
+    def test_a_marker_that_is_a_directory_is_gated(self):
+        (self.home / ".config" / "fleet-guidance" / "owner").mkdir(parents=True)
+        self.assert_gated()
+
+    def test_hosted_session_variables_record(self):
+        self.assert_records({"CLAUDE_CODE_REMOTE": "true"})
+
+    def test_a_remote_session_id_records(self):
+        self.assert_records({"CLAUDE_CODE_REMOTE_SESSION_ID": "session_example"})
+
+    def test_empty_or_false_hosted_variables_are_gated(self):
+        self.assert_gated({"CLAUDE_CODE_REMOTE": "false", "CLAUDE_CODE_REMOTE_SESSION_ID": ""})
 
 
 # Invented 8-hex check values; the real one is the last 8 hex of a payload digest.
@@ -709,7 +795,8 @@ class OncePerSessionTests(HookTestCase):
         empty.mkdir()
         self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))])
         out = subprocess.run([shutil.which("bash"), str(HOOK)], input="{}", capture_output=True,
-                             text=True, env={"PATH": str(empty), "HOME": str(self.home)}, timeout=30)
+                             text=True, env={"PATH": str(empty), "HOME": str(self.home),
+                                                    "FLEET_GUIDANCE_OWNER": "1"}, timeout=30)
         self.assertEqual((out.returncode, out.stdout, out.stderr), (0, "", ""))
         self.assertEqual(self.records(), [])
 

@@ -15,10 +15,16 @@ for what was observed and what remains open.
 ## Local Codex
 
 The `fleet-memory` hook writes the guidance block to `~/.codex/AGENTS.md`
-whenever `~/.codex` exists. That file is Codex's global user instructions,
-outside its 32 KiB `project_doc_max_bytes` project-doc budget. Register the
-hook once per machine with `scripts/register-codex-hook.sh` from an
-`_agent-guidance` checkout, then trust it in `/hooks`.
+whenever `~/.codex` exists and the machine carries the owner signal. That
+file is Codex's global user instructions, outside its 32 KiB
+`project_doc_max_bytes` project-doc budget. Register the hook once per
+machine with `scripts/register-codex-hook.sh` from an `_agent-guidance`
+checkout, then trust it in `/hooks`. The registered command passes no
+signal of its own, so the machine also needs the marker file
+`~/.config/fleet-guidance/owner`, which adam-agentskills'
+`setup.sh --owner-machine` writes; without it the hook does nothing
+([ADR 0042](decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md)).
+Codex Cloud's `--codex-cloud` mode needs no marker.
 
 `codex debug prompt-input` renders instructions loaded from disk by its own
 diagnostic process; it does not run SessionStart hooks or inspect an existing

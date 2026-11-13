@@ -126,6 +126,13 @@ by `codex-rs/codex-home/src/instructions/mod.rs` and are *not* counted against
 the project-doc budget. The Codex write happens only when `~/.codex` already
 exists; the hook never creates it, so a machine without Codex gets nothing new.
 One verdict line covers both, and `FLEET_GUIDANCE_SKIP` opts out of both.
+On a durable machine the hook writes nothing, prints nothing and exits 0
+unless the run carries an owner signal: the marker file
+`~/.config/fleet-guidance/owner` (adam-agentskills' `setup.sh --owner-machine`
+writes it), `FLEET_GUIDANCE_OWNER=1` (the plugin passes it), or a
+caller-chosen `FLEET_GUIDANCE_PAYLOAD`. Hosted sessions and `--codex-cloud`
+need none. The Stop hook `guidance-load-record.sh` takes the same gate; see
+[ADR 0042](docs/decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md).
 Normal hook runs keep the freshest delivered block per destination and report
 when a checkout is older; see [ADR 0016](docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md).
 
@@ -189,7 +196,8 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 `~/.codex/hooks.json`) and then **trusted once** in the Codex TUI with
 `/hooks` — Codex trusts non-managed hooks per definition hash per config layer,
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
-Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
+The registered command passes no owner signal, so the machine also needs the
+owner marker (ADR 0042). Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 On **native Windows Codex**, run the registrar from Git Bash: Codex runs hooks
 through `cmd.exe`, where a bare `bash` is WSL's launcher and single quotes are
 not quoting, so the registrar also writes a `commandWindows` override that runs
@@ -203,7 +211,8 @@ registered command runs the first child hook supporting `--workspace`; that
 hook selects the freshest immediate child's payload using the same delivery
 stamp and installed-block arbitration as normal runs. A second
 `fleet-workspace:` line lists the child repos whose `AGENTS.md` must be read
-before working in them, even when guidance is opted out. Codex does not load
+before working in them, even when guidance is opted out (but not on a durable
+machine without the owner signal, where the hook prints nothing). Codex does not load
 child instructions from the parent (nor through `--add-dir`); inlining 19
 repos' files would consume a large context budget for instructions relevant
 only while working in each repo. **Upgrade once per machine:** run
