@@ -262,6 +262,15 @@ function validate({ headings, rows, skillsEvals }) {
     if (!["gap", "covered", "skipped"].includes(row.status)) {
       errors.push(`row "${row.id}" has status "${row.status}", expected gap, covered or skipped`);
     }
+    // ADR 0043: every row says who the section is for, because
+    // scripts/build-contributor-rules.js decides from this field alone what
+    // ships to every consumer repo. No default: a new section that forgot to
+    // say would otherwise silently land on one side of that boundary.
+    if (!["contributor", "owner"].includes(row.audience)) {
+      errors.push(
+        `row "${row.id}" has audience "${row.audience}", expected contributor or owner (ADR 0043: who the section is for)`,
+      );
+    }
 
     if (row.status === "covered") {
       if (typeof row.fixture !== "string" || row.fixture.length === 0) {

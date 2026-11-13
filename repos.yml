@@ -29,7 +29,13 @@
 #     Code in the clone, so a managed AGENTS.md there (and the hooks the sync
 #     delivers with it) would load this fleet's rules into their setup
 #     session. Its agent-checks workflow and .githooks/ are copied by hand
-#     instead, as for verify-actions-lock.
+#     instead.
+#   • verify-actions-lock is NOT excluded, although it is a published Action:
+#     the sync reaches it like any fleet repo, with the stub AGENTS.md, the
+#     agent-checks runner, CI check and guard, and skills-bootstrap per its
+#     skills.lock. Until ADR 0043 step 5 it also gets the owner payload and
+#     its hooks; after it, the contributor file in their place. Whether to
+#     exclude it is a separate question.
 exclude:
   - acsi-kit
 default_sections: []
