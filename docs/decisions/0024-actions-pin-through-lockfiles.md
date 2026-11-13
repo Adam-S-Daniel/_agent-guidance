@@ -21,8 +21,10 @@ That gives readable `uses:` lines and an immutable pin together, and
 
 The pilot on `ai-usage-dashboard`
 ([PR #11](https://github.com/Adam-S-Daniel/ai-usage-dashboard/pull/11)) and the
-experiments below were run with `gh-actions-lock` v0.2.0 on 2026-10-20. Two
-results drive this decision ([evidence](../evidence/2026-10-20-stale-lockfile.md)):
+experiments below were run with `gh-actions-lock` v0.2.0 on 2026-10-20, and
+both tables were re-run on v0.4.1 on 2026-11-13
+([evidence](../evidence/2026-11-13-gh-actions-lock-v0.4.1.md)); each result
+names the version it was observed on. Two v0.2.0 results drive this decision ([evidence](../evidence/2026-10-20-stale-lockfile.md)):
 
 1. **The runner trusts the lockfile over the tag.** A lockfile pointing
    `actions/checkout@v7.0.1` at v7.0.0's commit ran that commit with no error.
@@ -35,25 +37,30 @@ results drive this decision ([evidence](../evidence/2026-10-20-stale-lockfile.md
 
 Each case was locked with `gh actions-lock --no-narrow` and then checked with
 `gh actions-lock --verify --no-interactive --json=valid,findings` (exit code,
-`valid`, finding categories).
+`valid`, finding categories). The lockfile column is the same on both
+versions unless it says otherwise; "not run" means that version was not
+tested for the row.
 
-| Case | Lockfile | `--verify` |
-|---|---|---|
-| `docker://alpine:3.20` step | no entry | exit 0, valid, no findings |
-| Docker-container action (`actions/hello-world-docker-action@v2`) | action repo commit only; the image is not locked | exit 0, no findings |
-| Major-only tag (`…@v1`, no `vX.Y.Z` exists) | entry with `ref: 'v1'` | exit 0, no findings |
-| Branch ref (`actions/checkout@main`) | entry with `ref: 'main'` | exit 0, no findings |
-| Bare SHA ref in a lockfile repo | entry | exit 0, `sha-as-ref` (warning) |
-| Workflow listing an entry it no longer uses | — | exit 1, `stale` + `ref-changed` (errors) |
-| Dependency listed under no workflow | — | exit 0, no findings (ignored) |
-| Workflow with no lockfile entry | — | exit 1, `not-pinned` |
-| `./` local action with `--no-migrate-local-actions` | workflow onboarded with no entries | exit 1, `local-action` ("not supported") |
-| Same, written `$/` (the tool's default rewrite) | the composite's inner actions locked transitively | exit 0, no findings |
-| Cross-repo reusable workflow, by tag, branch or SHA (`jobs.<id>.uses`) | workflow onboarded as `[]`; no entry | exit 0, no findings |
-| Same-repo reusable workflow, `./.github/workflows/<x>.yml` | left as `./` (not rewritten); caller `[]`, the called workflow onboarded with its own actions locked | exit 0, no findings |
-| `Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.163` | `[]`; no entry | exit 0, no findings |
-| API unreachable | — | exit 0, `reachability-unknown` (warning) |
-| Pin disagreeing with its tag | — | exit 1, `unreachable-pin` |
+| Case | Lockfile | `--verify`, v0.2.0 (2026-10-20) | `--verify`, v0.4.1 (2026-11-13) |
+|---|---|---|---|
+| `docker://alpine:3.20` step | no entry | exit 0, valid, no findings | exit 0, valid, `container-image` (warning) |
+| Docker-container action (`actions/hello-world-docker-action@v2`) | action repo commit only; the image is not locked | exit 0, no findings | exit 0, valid, `container-image` (warning) |
+| Major-only tag (`…@v1`, no `vX.Y.Z` exists) | entry with `ref: 'v1'` | exit 0, no findings | exit 0, valid; `container-image` (warning) only because the v0.4.1 run used `actions/hello-world-docker-action@v1` |
+| Branch ref (`actions/checkout@main`) | entry with `ref: 'main'` | exit 0, no findings | exit 0, valid, no findings |
+| Bare SHA ref in a lockfile repo | entry (v0.4.1: keyed by the SHA, `ref` resolved to the tag) | exit 0, `sha-as-ref` (warning) | exit 0, valid, `sha-as-ref` (warning) |
+| Workflow listing an entry it no longer uses | — | exit 1, `stale` + `ref-changed` (errors) | exit 1, `stale` + `ref-changed` (errors) |
+| Dependency listed under no workflow | — | exit 0, no findings (ignored) | exit 0, valid, no findings (ignored) |
+| Workflow with no lockfile entry | — | exit 1, `not-pinned` | exit 1, `not-pinned` |
+| `./` local action, plain `gh actions-lock` run | v0.4.1: run exits 1 with `local-action` and writes nothing; `./` is not rewritten | not run | exit 1, `not-pinned` + `local-action` (errors) |
+| `./` local action with `--no-migrate-local-actions` | workflow onboarded with no entries (v0.4.1: flag still accepted, not in `--help`) | exit 1, `local-action` ("not supported") | exit 1, `local-action` (error; message names `--migrate-local-actions` and `--ignore-local-actions`) |
+| Same, written `$/` (v0.2.0: the tool's default rewrite; v0.4.1: rewritten only with `--migrate-local-actions`) | the composite's inner actions locked transitively | exit 0, no findings | exit 0, valid, no findings (written by hand and via `--migrate-local-actions`) |
+| Cross-repo reusable workflow, by tag, branch or SHA (`jobs.<id>.uses`) | workflow onboarded as `[]`; no entry | exit 0, no findings | exit 0, valid, no findings (branch and SHA; tag by the `cms-platform` row) |
+| Same-repo reusable workflow, `./.github/workflows/<x>.yml` | left as `./` (not rewritten); caller `[]`, the called workflow onboarded with its own actions locked | exit 0, no findings | exit 0, valid, no findings |
+| `Adam-S-Daniel/cms-platform/.github/workflows/scheduled-run-health.yml@v0.1.163` | `[]`; no entry | exit 0, no findings | exit 0, valid, no findings |
+| API unreachable | — | exit 0, `reachability-unknown` (warning) | exit 1, `valid: false`, `reachability-unknown` (error, `"retryable": true`) |
+| Pin disagreeing with its tag (an older commit in the tag's history) | — | exit 1, `unreachable-pin` | exit 1, `tag-commit-mismatch` (error) |
+| Pin not in the action's history (a commit that does not exist) | — | not run | exit 1, `unreachable-pin` (error) |
+| Nested pin unchanged across a composite bump (`DeterminateSystems/update-flake-lock@v28` bumped to `@v29`, regenerated with a plain run; its child `DamianReeves/write-file-action@6929a9a…` has a mixed-case owner, [github/gh-actions-lock#257](https://github.com/github/gh-actions-lock/issues/257)) | v0.4.1: all five child pins kept, that one in both the parent's `uses:` and `dependencies:`; v0.4.0 not run | not run | exit 0, valid, no findings |
 
 Linters, on a workflow with a `$/` action step and a `$/` workflow call:
 
@@ -78,12 +85,12 @@ a temporary probe reverted the next commit):
 Recovery, tested on a hand-edited lockfile (a commit reachable but not the
 tag's, and a commit that does not exist):
 
-| Command | Mismatched pin | Unreachable pin |
-|---|---|---|
-| `gh actions-lock` (plain fix run) | still fails | still fails |
-| `--relock` | fixed | **still fails** |
-| `--accept-moved` | fixed | fixed |
-| `--relock --accept-moved` | fixed | fixed |
+| Command | Mismatched pin, v0.2.0 | Mismatched pin, v0.4.1 | Unreachable pin, v0.2.0 | Unreachable pin, v0.4.1 |
+|---|---|---|---|---|
+| `gh actions-lock` (plain fix run) | still fails | still fails (`tag-commit-mismatch`) | still fails | still fails (`unreachable-pin`) |
+| `--relock` | fixed | fixed | **still fails** | **still fails** |
+| `--accept-moved` | fixed | fixed | fixed | fixed |
+| `--relock --accept-moved` | fixed | fixed | fixed | fixed |
 
 ## Decision
 
@@ -104,10 +111,11 @@ target.
   exact tag, `vX.Y.Z` when one exists, otherwise the most specific tag it has
   (`v1`), and a branch only when it has no tag. Then run
   `gh actions-lock --no-narrow`, which keeps the ref as written and locks it.
-  Local actions are written `$/<path>`: `--verify` rejects `./`, and the
-  default run rewrites `./` to `$/` (so do not pass
-  `--no-migrate-local-actions`). Never a bare SHA in this form: it trips
-  `sha-as-ref`, which fails the check below.
+  Local actions are written `$/<path>`: `--verify` rejects `./`, and on
+  v0.4.1 a plain run fails on a `./` local action and writes nothing (v0.2.0
+  rewrote it; `--migrate-local-actions` does so now). Never a bare SHA in
+  this form: it trips `sha-as-ref`, a warning the check below prints without
+  failing (v0.4.1; see the 2026-11-13 addendum).
 - **Legacy form,** until a repo migrates: a full 40-character SHA with no
   trailing comment, exactly as 0007 decided.
 - **Cross-repo reusable workflows take a full SHA in both forms.** No
@@ -131,7 +139,7 @@ target.
   from the release binary checked against a sha256 written in the action, not
   by `gh extension install` on a tag. It is referenced by release tag
   (`@v1.0.0`) and locked in each repo's `actions.lock` like any action: a bare
-  SHA ref would trip `sha-as-ref`.
+  SHA ref would trip the `sha-as-ref` warning.
 - **The repo also turns on GitHub's Require lockfile policy** (Settings →
   Actions → Policies) once its migration PR merges. The policy is GitHub's
   runtime enforcement point: it blocks a targeted workflow that is not
@@ -235,8 +243,10 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   - Docker images (`docker://`, a Docker action's image) are not locked.
   - Dependabot regenerates the matching lockfile entry in its own version-update
     PR, but does not onboard a new workflow (GitHub's lockfile docs).
-  - "Pinned commit not in upstream history" (`unreachable-pin`) also fires when
-    a pin merely disagrees with its tag.
+  - "Pinned commit not in upstream history" (`unreachable-pin`) fires only
+    when the commit is not in the action's history. On v0.2.0 it also fired
+    for a pin that merely disagreed with its tag; v0.4.1 reports that as
+    `tag-commit-mismatch`.
 - **Recovery:** `gh actions-lock --accept-moved`. It re-resolves only the
   flagged pins to the tag's current commit and fixes both a mismatched and an
   unreachable pin. `--relock` alone leaves an unreachable pin failing and
@@ -282,3 +292,26 @@ carries no error text, so this rests on the docs and that pattern.
 - **Any other cms-platform reusable has the same problem** for a lockfile
   caller. Check where a reusable is defined before calling it from a lockfile
   repo.
+
+## Addendum, 2026-11-13: three rules corrected, one confirmed, for gh-actions-lock v0.4.1
+
+The v0.4.1 re-run ([evidence](../evidence/2026-11-13-gh-actions-lock-v0.4.1.md))
+contradicted three rule statements above; each is corrected in place, and in
+`base.md`'s "Pinning GitHub Actions" where it appeared there. The fourth
+finding confirms a standing decision.
+
+- **`./` is not migrated by a plain run.** It fails and writes nothing; write
+  `$/<path>` by hand, or pass `--migrate-local-actions` once.
+- **A bare SHA is a warning, not a failure.** `sha-as-ref` has `valid: true`
+  and exit 0, and the shared check (v1.1.0 onward) passes warnings. Decision:
+  no new check for it. The lockfile form's rule (never a bare SHA) stands, the
+  warning is printed in the job, and the tool still locks the SHA's tag.
+- **A pin that disagrees with its tag is `tag-commit-mismatch`**, fixed by
+  `--relock`; `unreachable-pin` is a commit outside the history, fixed by
+  `--accept-moved`. The recovery rule above still holds.
+- **An unreachable API is an error** (`reachability-unknown`, exit 1,
+  `"retryable": true`). That is what the "A GitHub API outage fails the check"
+  decision already assumed, so it stands: the tool retries three times, then
+  the check fails and is re-run when the API is back. No change to the shared
+  action is recorded here; a retry or `retryable` handling there is a
+  question for [verify-actions-lock](https://github.com/Adam-S-Daniel/verify-actions-lock/issues).
