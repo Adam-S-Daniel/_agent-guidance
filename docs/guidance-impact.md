@@ -51,7 +51,7 @@ Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-11-13 — eval-rules — create
-- Motivation: Adam asked (2026-11-13) for one source of truth on the eval, keep/remove and pause rules that agents in any repo can check against; restated thresholds had drifted (a memory note still said keep at 85% with Holm)
+- Motivation: Adam asked (2026-11-13) for one source of truth on the eval, keep/remove and pause rules that agents in any repo can check against; restated thresholds had drifted (a project memory note still gave a superseded keep level)
 - Change: new one-line section pointing at skills-evals' generated `docs/rules.md`, generated from its policy YAMLs (PR #558)
 - Eval: exempt (skipped row)
 - Outcome: pending — opened 2026-11-13
