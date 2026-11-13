@@ -2559,6 +2559,77 @@ class HookRunSinkTests(SinkTestCase):
         self.assertTrue([p for p in self.pending() if p["kind"] == "hook"])
 
 
+# ADR 0042 treats a nonempty FLEET_GUIDANCE_PAYLOAD, and FLEET_GUIDANCE_OWNER
+# on, as an owner signal. That is safe only while nothing this repo delivers
+# into a consumer SETS either name: a stranger's clone would then pass the
+# gate. The delivered hooks legitimately READ both, so the rule is not "never
+# mention the name" but "never set it". A line sets it when, after the read
+# forms ($NAME, ${NAME}, ${NAME:-x}, ${NAME-x}, ${NAME:+x}, ${NAME+x},
+# ${NAME:?x}, ${NAME?x}) and whole-line comments are removed, the bare name is
+# still there: an `export`, an `NAME=value` or `env NAME=value` prefix, a
+# JSON/YAML key or `env:` entry, a `${NAME:=x}` default-assign, a
+# CLAUDE_ENV_FILE line. Anything else spelling the name is flagged too: a new
+# use must be a read, or this test is changed on purpose, in review.
+OWNER_SIGNAL = re.compile(r"\bFLEET_GUIDANCE_(?:PAYLOAD|OWNER)\b")
+OWNER_SIGNAL_READ = re.compile(
+    r"\$\{FLEET_GUIDANCE_(?:PAYLOAD|OWNER)(?::?[-+?]|\})|\$FLEET_GUIDANCE_(?:PAYLOAD|OWNER)\b")
+
+
+def owner_signal_sets(text):
+    """Return the (line number, line) pairs that could set an owner signal."""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith(("#", "//")):
+            continue
+        if OWNER_SIGNAL.search(OWNER_SIGNAL_READ.sub("", line)):
+            found.append((number, line.strip()))
+    return found
+
+
+class OwnerSignalNotDeliveredTests(unittest.TestCase):
+    def delivered_files(self):
+        files = [REPO_ROOT / "scripts" / "sync.sh", REPO_ROOT / ".claude" / "settings.json"]
+        files += sorted((REPO_ROOT / ".claude" / "hooks").glob("*"))
+        files += sorted(p for p in (REPO_ROOT / "templates").rglob("*") if p.is_file())
+        return [p for p in files if p.is_file()]
+
+    def test_nothing_the_sync_delivers_sets_an_owner_signal(self):
+        files = self.delivered_files()
+        self.assertTrue(any(p.name == "fleet-memory.sh" for p in files))
+        self.assertTrue(any(p.name == "sync.sh" for p in files))
+        for path in files:
+            with self.subTest(path=str(path.relative_to(REPO_ROOT))):
+                text = path.read_text(encoding="utf-8", errors="replace")
+                self.assertEqual(owner_signal_sets(text), [])
+
+    def test_the_detector_flags_every_way_to_set_a_signal(self):
+        for line in (
+            "export FLEET_GUIDANCE_PAYLOAD=/tmp/x",
+            "FLEET_GUIDANCE_OWNER=1 bash hook.sh",
+            "env FLEET_GUIDANCE_OWNER=1 bash hook.sh",
+            '  "FLEET_GUIDANCE_PAYLOAD": "/tmp/x"',
+            "    FLEET_GUIDANCE_OWNER: 1",
+            ': "${FLEET_GUIDANCE_OWNER:=1}"',
+            'echo "FLEET_GUIDANCE_OWNER=1" >> "$CLAUDE_ENV_FILE"',
+            'jq -n --arg FLEET_GUIDANCE_PAYLOAD x',
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(owner_signal_sets(line), line)
+
+    def test_the_detector_passes_reads_and_comments(self):
+        for line in (
+            'PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"',
+            '[ -n "${FLEET_GUIDANCE_PAYLOAD:-}" ] && return 0',
+            'case "${FLEET_GUIDANCE_OWNER:-}" in',
+            'echo "$FLEET_GUIDANCE_OWNER"',
+            "# export FLEET_GUIDANCE_PAYLOAD=/tmp/x",
+            "caller_stamp=\"${FLEET_GUIDANCE_PAYLOAD_STAMP:-}\"",
+            "FLEET_GUIDANCE_PAYLOAD_STAMP=123",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(owner_signal_sets(line), [], line)
+
+
 class ClockSeamTests(HookTestCase):
     def test_the_clock_seam_needs_the_test_marker(self):
         self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))])

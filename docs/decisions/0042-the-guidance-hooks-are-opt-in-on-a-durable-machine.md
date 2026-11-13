@@ -46,10 +46,13 @@ from its own setup script.
    - a nonempty `FLEET_GUIDANCE_PAYLOAD`: a caller that chose the payload
      itself is a caller, not a repo default. Nothing the sync delivers sets
      it: `scripts/sync.sh`, `templates/` and `.claude/settings.json` here do
-     not name it, and neither does any `.claude/` or `*.json` file on the
-     default branch of the fleet repos checked on 2026-11-12 (the copies of
-     the hooks themselves aside). So a stranger's clone does not set it
-     unless the stranger does;
+     not set it (a test fails if one ever does), and a search of every
+     tracked file on the default branch of all 16 repos in
+     `cron_coverage.fleet`, taken from the registry on 2026-11-13, found only
+     reads in the delivered hooks and the expected setters in this repo's
+     tests, adam-agentskills' plugin hook and skills-evals' harness
+     ([evidence](../evidence/2026-11-13-fleet-guidance-payload-unset.md)). So
+     a stranger's clone does not set it unless the stranger does;
    - the marker file `${XDG_CONFIG_HOME:-$HOME/.config}/fleet-guidance/owner`
      (`XDG_CONFIG_HOME` only when absolute, as the XDG spec requires), a
      regular file whose content is ignored.
