@@ -50,13 +50,13 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
-## 2026-11-16 — writing-for-adam — create
+## 2026-11-13 — writing-for-adam — create
 - Motivation: ADR 0043 step 1: "Working in these repos" ships to every contributor in `.github/fleet-contributor-rules.md`, and two of its bullets are for the owner's agents only
 - Change: the `adam-writing-style` and "text to paste" bullets move verbatim into this new owner section (PR #548)
 - Eval: none — no fixture yet
 - Outcome: pending
 
-## 2026-11-16 — working-in-these-repos — edit
+## 2026-11-13 — working-in-these-repos — edit
 - Motivation: ADR 0043 step 1: this section is contributor audience and ships to every fleet repo; two bullets were owner-only
 - Change: the `adam-writing-style` and "text to paste" bullets move to the new owner section writing-for-adam; no other text changes (PR #548)
 - Eval: fixture evals/guidance/working-in-these-repos/ was not re-run; the change removes two owner bullets the fixture does not test; `node scripts/check-guidance-coverage.js --check-bytes` exit 0
