@@ -5,6 +5,11 @@ claude.ai scheduled task named `Fleet health audit`, created from a project
 thread. Each fire starts a fresh session. The prompt is short and points here,
 so the procedure changes by pull request.
 
+**Model:** Sonnet 5.5, set on the task (Adam, 2026-11-13). The audit reads
+widely and files or closes issues but never merges code, so a wrong call costs
+one issue that the next weekly run corrects; Opus would cost more for little
+gain.
+
 The audit looks across every repo in the fleet, every scheduled task and every
 workflow for functionality that is:
 
