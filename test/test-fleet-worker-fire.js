@@ -146,17 +146,33 @@ test('a late start still fires on its cron line, whatever the clock says (2026-1
 });
 
 test('the five cron lines cover each 3-hour slot of the week once, and each cadence fires at its own spacing', () => {
+  // Expand each line to its exact (day, hour) slots, so a line moved to
+  // another day or hour fails here, not just a changed total.
   const hoursOf = l => l.split(' ')[1].split(',').map(Number);
-  const daysOf = l => l.split(' ')[4] === '*' ? 7 : l.split(' ')[4].split(',').reduce((n, p) => {
-    const [a, b = a] = p.split('-').map(Number);
-    return n + b - a + 1;
-  }, 0);
-  const slots = LINES.reduce((n, l) => n + hoursOf(l).length * daysOf(l), 0);
-  assert.equal(slots, 56);
-  for (const [every, want] of [['3', 56], ['6', 28], ['12', 14], ['24', 7], ['168', 1]]) {
-    let fired = 0;
-    for (const line of LINES) fired += runFire({ every, line }).curl.length * hoursOf(line).length * daysOf(line);
-    assert.equal(fired, want, `every ${every}`);
+  const daysOf = l => {
+    const field = l.split(' ')[4];
+    if (field === '*') return [0, 1, 2, 3, 4, 5, 6];
+    return field.split(',').flatMap(p => {
+      const [a, b = a] = p.split('-').map(Number);
+      return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+    });
+  };
+  const slotsOf = l => daysOf(l).flatMap(d => hoursOf(l).map(h => `${d}@${h}`));
+  const sorted = a => [...a].sort((x, y) => x.localeCompare(y, 'en', { numeric: true }));
+  const all = [];
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h += 3) all.push(`${d}@${h}`);
+  assert.deepEqual(sorted(LINES.flatMap(slotsOf)), sorted(all));
+  assert.equal(LINES[0].split(' ')[4], '2', 'the weekly line fires on Tuesday');
+  const want = {
+    '3': all,
+    '6': all.filter(s => Number(s.split('@')[1]) % 6 === 0),
+    '12': all.filter(s => Number(s.split('@')[1]) % 12 === 0),
+    '24': all.filter(s => s.endsWith('@0')),
+    '168': ['2@0'],
+  };
+  for (const [every, slots] of Object.entries(want)) {
+    const fired = LINES.filter(line => runFire({ every, line }).curl.length === 1).flatMap(slotsOf);
+    assert.deepEqual(sorted(fired), sorted(slots), `every ${every}`);
   }
 });
 
