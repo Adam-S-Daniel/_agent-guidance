@@ -1,6 +1,6 @@
 # 0043 — The owner-only guidance leaves the consumer repos, and the stub stays the only per-repo copy
 
-**Status:** Proposed (2026-11-13). For the owner to accept. It amends
+**Status:** Accepted (2026-11-13, by the owner). It amends
 [0012](0012-codex-gets-the-guidance-as-user-instructions.md) (the repo hook as
 the Codex route), [0016](0016-the-freshest-delivery-wins-the-shared-global-block.md)
 (a byte copy of `base.md` in every checkout) and
