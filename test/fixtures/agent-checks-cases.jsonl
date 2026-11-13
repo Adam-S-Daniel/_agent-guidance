@@ -39,3 +39,41 @@
 {"id": "skill-shell-en-space-before-bang-refused", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "---\nname: demo\n---\n\nBranch:\u2000!`git branch --show-current`\n"}, "expect": "refuse", "message": "skills/demo/SKILL.md: a line starts a shell command"}
 {"id": "skill-shell-inline-fence-refused", "lesson": "skill-shell-unicode", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "---\nname: demo\n---\n\nSee ```!echo invented``` inline.\n"}, "expect": "refuse", "message": "skills/demo/SKILL.md: a line starts a shell command"}
 {"id": "skill-shell-bang-after-a-word-passes", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nWow!`ls` is not a command, and neither is caf\u00e9!`ls`.\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-r-tab", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:\t!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-vt", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:\u000b!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-ff", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:\f!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-cr", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:\r!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-nbsp", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-ogham", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2000", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2001", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2002", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2003", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2004", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2005", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2006", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2007", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2008", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u2009", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-u200a", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-ls", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-ps", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-nnbsp", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-mmsp", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch: !`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-ideo", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:　!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-bom", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:﻿!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-p-zwsp", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:​!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u2027", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:‧!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u202a", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:‪!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-nel", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u180e", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:᠎!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u2060", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:⁠!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u3001", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:、!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u205e", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:⁞!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-u2100", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nBranch:℀!`git status`\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-r-crlf", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\r\n!`git status`\r\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-bom-start", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "﻿!`git status`\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-cmd", "event": "pre-commit", "files": {".claude/commands/x.md": "See ```!echo x```\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-r-4tick", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "````!\necho x\n````\n"}, "expect": "refuse", "message": "a line starts a shell command"}
+{"id": "skill-shell-ws-p-plain", "event": "pre-commit", "files": {"skills/demo/SKILL.md": "# Demo\n\nUse `!` for negation and ``` fences.\n"}, "expect": "pass"}
+{"id": "skill-shell-ws-p-notskill", "event": "pre-commit", "files": {"docs/README.md": "Branch: !`git status`\n"}, "expect": "pass"}
