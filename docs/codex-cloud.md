@@ -60,38 +60,73 @@ download, digest check or commit lookup stops setup (the `--codex-cloud` mode
 fails closed rather than launching without the guidance):
 
 ```bash
-# The pin is these two variables and nothing else. To bump it, take this
-# repository's current main commit and that file's digest:
+# The pin is these two variables and nothing else. To bump it, fetch first,
+# then take this repository's current main commit and that file's digest:
 #   git rev-parse origin/main
 #   git show origin/main:.claude/hooks/fleet-memory.sh | sha256sum
+# Then re-paste this block into every environment's setup AND maintenance script.
 fleet_pin_commit=0ef732fdbd825e35ad6bd853855fe158b61ada2b
 fleet_pin_sha256=cfc01078b9d06990c2e458bade9aebffe10e7e25a97eaec23a59e2d3f28a2241
 fleet_guidance_install() (
   set -euo pipefail
   raw=https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance
+  # The verified installer stays at a digest-named path: it re-reads its own
+  # file after it exits (to write its receipt), so it must outlive this function.
+  hook_dir="${CODEX_HOME:-/opt/codex}/fleet-guidance"
+  umask 077
+  mkdir -p "$hook_dir"
+  chmod 700 "$hook_dir"
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
-  # The installer runs only if its bytes match the pin.
-  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
-    --max-filesize 4194304 -o "$tmp/fleet-memory.sh" \
-    "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh"
-  printf '%s  %s\n' "$fleet_pin_sha256" "$tmp/fleet-memory.sh" | sha256sum --check --status
+  dl=$(mktemp "$hook_dir/.download.XXXXXX")
+  trap 'rm -rf "$tmp"; rm -f "$dl"' EXIT
+  hook="$hook_dir/fleet-memory-$fleet_pin_sha256.sh"
+  # Reuse a verified copy; else fetch the pin, verify, then move it into place.
+  if ! { [ -f "$hook" ] && [ ! -L "$hook" ] &&
+         [ "$(sha256sum < "$hook" | cut -d' ' -f1)" = "$fleet_pin_sha256" ]; }; then
+    curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+      --max-filesize 4194304 -o "$dl" \
+      "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh"
+    printf '%s  %s\n' "$fleet_pin_sha256" "$dl" | sha256sum --check --status
+    mv -f "$dl" "$hook"
+  fi
   # The payload: main's HEAD commit (commit-only fetch), base.md at that commit,
   # stamped with the commit's committer time.
-  git init -q --bare --template= "$tmp/g"
-  GIT_TERMINAL_PROMPT=0 timeout 30 git --git-dir="$tmp/g" -c credential.helper= \
+  g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE
+     -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES
+     -u GIT_SHALLOW_FILE -u GIT_NAMESPACE -u GIT_GRAFT_FILE
+     GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=)
+  "${g[@]}" git init -q --bare --template= "$tmp/g"
+  "${g[@]}" timeout -k 5 30 git --git-dir="$tmp/g" \
+    -c credential.helper= -c core.askPass= -c core.hooksPath=/dev/null \
+    -c protocol.allow=never -c protocol.https.allow=always \
     fetch -q --no-tags --depth=1 --filter=tree:0 \
     https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main
-  read -r head_sha stamp < <(git --git-dir="$tmp/g" log -1 --no-show-signature \
-    --format='%H %ct' FETCH_HEAD)
+  line=$("${g[@]}" git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD)
+  line=${line//$'\r'/}
+  head_sha=${line%% *}
+  stamp=${line#* }
   [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]]
   curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
     --max-filesize 1048576 -o "$tmp/base.md" "$raw/$head_sha/agents-md/base.md"
+  # The plugin's own check: the exact header every base.md starts with.
+  header=$'# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**'
+  n="$(LC_ALL=C; printf '%s' "${#header}")"
+  [ "$(head -c "$n" "$tmp/base.md"; printf x)" = "${header}x" ]
   CODEX_HOME="${CODEX_HOME:-/opt/codex}" FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" \
-    FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" bash "$tmp/fleet-memory.sh" --codex-cloud
+    FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" bash "$hook" --codex-cloud
+  echo "fleet-guidance-source: _agent-guidance@$head_sha"
 )
-fleet_guidance_install
 ```
+
+Then call it once, in the setup script and again in the maintenance script:
+
+```bash
+fleet_guidance_install || exit 1
+```
+
+Because it fails closed, setup and maintenance now fail while GitHub or
+`raw.githubusercontent.com` is unreachable (an outage), instead of launching
+without the guidance.
 
 4. Reset the environment cache before the first verification. Cloud runs setup
    while caching the default branch for a fresh container, then checks out the
@@ -126,7 +161,7 @@ The environment script's relevant steps are:
 ```bash
 cd "/workspace/$repository_name"
 if [[ -f package-lock.json ]]; then npm ci; fi
-fleet_guidance_install   # the function from "Configure the environment", step 3
+fleet_guidance_install || exit 1   # defined in "Configure the environment", step 3
 if [[ ! -e skills.lock && ! -L skills.lock ]]; then
   printf '%s\n' 'skills: skipped (no skills.lock in selected repository)'
 else
@@ -255,6 +290,18 @@ checker computes the expected block from its bytes). The logged
 file's SHA-256, so find the commit of `main` whose `base.md` hashes to it, for
 example with `git log --format=%H -- agents-md/base.md`, then
 `git show <commit>:agents-md/base.md > base.md-at-the-delivered-commit.md`.
+
+The checker fails closed unless that envelope contains the payload exactly
+as the hook delivers it (byte-exact after dropping the repo-only `# AGENTS.md`
+header that the hook's `PAYLOAD_REPO_HEADER` names) inside one complete
+managed block, its one persisted installed verdict, the check value line that
+ends the block ([ADR 0035](decisions/0035-sessions-prove-the-guidance-loaded-with-a-check-value.md)),
+and the expected repo-specific additions through end of file. It prints only a
+non-identifying result; it does not fetch authenticated task data. Raw task
+captures are authenticated and stay local—do not commit them or paste private
+environment IDs or task URLs into the repo. This response shape is an observed
+internal endpoint and may change; the checker fails closed if the response is
+unavailable or its structure changes.
 
 ### Verify skill discovery
 
