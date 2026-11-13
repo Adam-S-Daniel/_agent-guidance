@@ -13,12 +13,14 @@ guidance-marker: fleet-stub (transcript counts use this line; keep it)
 
 ## Fleet guidance is delivered once per session — not by this file
 
-The full guidance, floor rules included, is installed into user memory by
-the `fleet-memory` SessionStart hook, whose verdict line says whether it
-loaded. `installed` or `current`: it is in context. `DEGRADED` or no verdict:
-it is not, so read [`agents-md/base.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/agents-md/base.md)
-before non-trivial work and say you ran degraded. `skipped`: read it too, but
-it is the owner's choice, so do not report or "fix" it. Always, and above all
+The repo owner's full guidance is installed into user memory at session
+start by the owner's own setup, whose `fleet-guidance:` verdict line says
+whether it loaded. `installed` or `current`: it is in context. `DEGRADED`,
+`skipped` or no verdict: it is not, so read `.github/fleet-contributor-rules.md`
+in this checkout before non-trivial work. Working for the repo owner, read
+[`agents-md/base.md`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/agents-md/base.md)
+instead and say you ran degraded; after `skipped` (the owner's choice) do not
+report or "fix" it. Always, and above all
 before you have read it: never push to a default branch, force-push a shared
 branch, commit a secret, or print personal data to a CI log. Keep this file
 under 32 KiB (Codex silently truncates it).

@@ -595,7 +595,9 @@ YAML
     mkdir -p .claude/hooks
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
     cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
-    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md
+    mkdir -p .github
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" .github/fleet-contributor-rules.md
+    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md .github/fleet-contributor-rules.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
@@ -942,7 +944,9 @@ YAML
     mkdir -p .claude/hooks
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
     cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
-    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md
+    mkdir -p .github
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" .github/fleet-contributor-rules.md
+    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md .github/fleet-contributor-rules.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
@@ -3387,6 +3391,10 @@ test_build_script() {
     echo "$output" > "$TEST_DIR/build-full.md"
     assert_contains "$TEST_DIR/build-full.md" "$base_heading" "full mode inlines base content"
     assert_contains "$TEST_DIR/build-full.md" "Mode: full" "full mode reports itself"
+    # ADR 0043: full inlines the contributor file, never base.md, so no
+    # owner-only section may reach a repo that cannot receive the hook.
+    assert_contains "$TEST_DIR/build-full.md" "Managed by _agent-guidance: built by scripts/build-contributor-rules.js" "full mode inlines the contributor rules header"
+    assert_not_contains "$TEST_DIR/build-full.md" "## Subagent delegation (model routing)" "full mode carries no owner-only heading"
 
     # An unrecognised mode must stop, not silently pick one. Captured without a
     # pipe so the exit code is the script's own.
@@ -4524,6 +4532,8 @@ YAML
     "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
     cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
+    mkdir -p "$work/.github"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
 
     run_fleet_payload_report
@@ -4534,6 +4544,19 @@ YAML
     expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
     assert_row_note_contains "$rpt" "fleetorg/repo-payload" "expected \`${expected_sha:0:8}\`, found \`${expected_sha:0:8}\`" \
         "fleet payload: current hash matches the installed verdict"
+
+    rm "$work/.github/fleet-contributor-rules.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**missing**" \
+        "fleet payload: absent contributor rules read missing"
+    printf 'stale\n' >"$work/.github/fleet-contributor-rules.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
+        "fleet payload: stale contributor rules read drifted"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
+    push_fleet_payload_fixture
 
     # A changed body and a changed trailing newline must both be visible.
     printf 'stale payload\n' >"$work/.claude/hooks/fleet-guidance.md"
@@ -7326,6 +7349,12 @@ test_sync_bootstrap() {
     else
         fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
     fi
+    # ADR 0043: the contributor rules go to every synced repo, byte for byte.
+    if cmp -s "$nolock/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+        pass "repo-no-lock: contributor rules delivered byte for byte"
+    else
+        fail "repo-no-lock: contributor rules delivered byte for byte"
+    fi
     # The guidance-load record rides with fleet-memory: same repos, a managed
     # byte-identical copy, executable, and one Stop group with its timeout.
     if cmp -s "$nolock/$GREC_REL_PATH_T" "$REPO_ROOT/$GREC_REL_PATH_T" && [[ -x "$nolock/$GREC_REL_PATH_T" ]]; then
@@ -7408,6 +7437,11 @@ for g in doc["hooks"]["Stop"]:
         assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
         assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
         assert_contains "$ignored/AGENTS.md" "Mode: full" "repo-ignored: AGENTS.md records full mode"
+        if cmp -s "$ignored/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+            pass "repo-ignored: contributor rules delivered even in full mode"
+        else
+            fail "repo-ignored: contributor rules delivered even in full mode"
+        fi
     fi
 
     # ── repo-unparseable: refuse to edit, deliver nothing, leave it alone.
@@ -7726,6 +7760,7 @@ test_sync_bootstrap_dry_run() {
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would add .claude/hooks/skills-bootstrap.sh" "dry-run: names the hook it would add"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would append a SessionStart entry" "dry-run: names the settings.json append"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "existing entries preserved" "dry-run: states that existing entries are preserved"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would add .github/fleet-contributor-rules.md" "dry-run: names the contributor rules it would add"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would NOT touch skills.lock" "dry-run: states that skills.lock is never touched"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "no skills.lock in the repo yet" "dry-run: explains the withheld repo"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would write $GREC_REL_PATH_T (guidance-load record hook missing)" "dry-run: names the guidance-load-record hook it would add"

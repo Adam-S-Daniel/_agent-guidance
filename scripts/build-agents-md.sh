@@ -12,20 +12,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # The ALWAYS-ON half. base.md is deliberately NOT inlined here any more: it is
-# delivered once per session to user memory by the fleet-memory SessionStart
+# owner-only guidance (ADR 0043), delivered once per session to user memory by the fleet-memory SessionStart
 # hook (see .claude/hooks/fleet-memory.sh). Inlining it made every repo carry
 # an identical ~52 kB, so a session with 19 repos attached spent 332.3k tokens
 # on 19 copies of one file — measured 2026-08-29. stub.md is what each repo
 # still needs on its own: the pointer, the session-start verdict to check, and
 # the floor of rules that must hold even when the guidance did not load.
 STUB_FILE="$REPO_ROOT/agents-md/stub.md"
-PAYLOAD_FILE="$REPO_ROOT/agents-md/base.md"
+# What `full` mode inlines instead: the generated contributor rules (ADR 0043
+# decision 4), never base.md, so a repo that cannot receive the hook still
+# carries the rules an outside contributor needs and none of the owner-only ones.
+PAYLOAD_FILE="$REPO_ROOT/.github/fleet-contributor-rules.md"
 SECTIONS_DIR="$REPO_ROOT/agents-md/sections"
 SECTIONS=("${@}")
 
 # MODE decides whether this repo gets the always-on STUB (the default, and what
-# every repo that can receive the fleet-memory hook gets) or the FULL guidance
-# inlined the old way.
+# every repo that can receive the fleet-memory hook gets) or the FULL mode, which
+# inlines the contributor rules the old way.
 #
 # `full` is the fail-safe, and it is the whole reason the stub is safe to ship.
 # A repo that cannot receive the hook — `.claude/` is gitignored there, or its
