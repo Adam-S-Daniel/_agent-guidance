@@ -49,7 +49,48 @@ instructions and verdict; see the
 
 ```bash
 npm ci
-bash .claude/hooks/fleet-memory.sh --codex-cloud
+```
+
+followed by this block, which no longer runs the checkout's copy of the hook
+([ADR 0043](decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md)):
+a consumer repo does not carry `fleet-memory.sh` or the payload, so setup
+downloads the reviewed installer at a pinned commit, verifies its SHA-256 before
+running it, and passes it `base.md` from `main`'s HEAD as the payload. A failed
+download, digest check or commit lookup stops setup (the `--codex-cloud` mode
+fails closed rather than launching without the guidance):
+
+```bash
+# The pin is these two variables and nothing else. To bump it, take this
+# repository's current main commit and that file's digest:
+#   git rev-parse origin/main
+#   git show origin/main:.claude/hooks/fleet-memory.sh | sha256sum
+fleet_pin_commit=0ef732fdbd825e35ad6bd853855fe158b61ada2b
+fleet_pin_sha256=cfc01078b9d06990c2e458bade9aebffe10e7e25a97eaec23a59e2d3f28a2241
+fleet_guidance_install() (
+  set -euo pipefail
+  raw=https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  # The installer runs only if its bytes match the pin.
+  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+    --max-filesize 4194304 -o "$tmp/fleet-memory.sh" \
+    "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh"
+  printf '%s  %s\n' "$fleet_pin_sha256" "$tmp/fleet-memory.sh" | sha256sum --check --status
+  # The payload: main's HEAD commit (commit-only fetch), base.md at that commit,
+  # stamped with the commit's committer time.
+  git init -q --bare --template= "$tmp/g"
+  GIT_TERMINAL_PROMPT=0 timeout 30 git --git-dir="$tmp/g" -c credential.helper= \
+    fetch -q --no-tags --depth=1 --filter=tree:0 \
+    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main
+  read -r head_sha stamp < <(git --git-dir="$tmp/g" log -1 --no-show-signature \
+    --format='%H %ct' FETCH_HEAD)
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]]
+  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+    --max-filesize 1048576 -o "$tmp/base.md" "$raw/$head_sha/agents-md/base.md"
+  CODEX_HOME="${CODEX_HOME:-/opt/codex}" FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" \
+    FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" bash "$tmp/fleet-memory.sh" --codex-cloud
+)
+fleet_guidance_install
 ```
 
 4. Reset the environment cache before the first verification. Cloud runs setup
@@ -85,7 +126,7 @@ The environment script's relevant steps are:
 ```bash
 cd "/workspace/$repository_name"
 if [[ -f package-lock.json ]]; then npm ci; fi
-CODEX_HOME="${CODEX_HOME:-/opt/codex}" bash .claude/hooks/fleet-memory.sh --codex-cloud
+fleet_guidance_install   # the function from "Configure the environment", step 3
 if [[ ! -e skills.lock && ! -L skills.lock ]]; then
   printf '%s\n' 'skills: skipped (no skills.lock in selected repository)'
 else
@@ -107,22 +148,20 @@ Here `repository_name` is supplied from each environment's validated target,
 not copied from another environment. This recipe is for the rollout script;
 keep the existing environment's other setup commands when applying it.
 
-Once the hook is on the default branch, the relative command above is the
-durable configuration. Because fresh setup may run against the default branch,
-the successful pre-merge check used a temporary bridge: it downloaded the
-installer from reviewed commit
+The installer is pinned by commit and digest in the block above, so no bridge
+is needed before a change merges: the payload always comes from `main`'s HEAD,
+and the pinned installer is the only reviewed code the setup runs. Before
+ADR 0043, setup ran the checkout's own `.claude/hooks/fleet-memory.sh`, with a
+temporary pinned bridge (reviewed commit
 [`f417c13`](https://github.com/Adam-S-Daniel/_agent-guidance/commit/f417c13d27f99336169966c9709c1a8293686f74),
-verified SHA-256
-`d33d8e08de029bb118eb1f395b2b4b2f0f4c70b9cb85828ceb2e9580617e1845`,
-and pointed `FLEET_GUIDANCE_PAYLOAD` at the current checkout's
-`.claude/hooks/fleet-guidance.md`. That pinned the reviewed installer while
-still testing the payload from the branch Cloud actually checked out. The SHA
-pin and digest are unnecessary after the hook merges to the default branch.
+SHA-256 `d33d8e08de029bb118eb1f395b2b4b2f0f4c70b9cb85828ceb2e9580617e1845`)
+for the pre-merge check; that history is in the verification record below.
 
 ### Setup and agent environments
 
 A controlled 2026-09-15 probe removed the persistent UI `CODEX_HOME` and ran
-the installer with a command-local default:
+the installer (then the checkout's copy, now the downloaded one) with a
+command-local default:
 
 ```bash
 CODEX_HOME="${CODEX_HOME:-/opt/codex}" \
@@ -206,21 +245,16 @@ reload the completed task, and save the JSON response from
 ```bash
 python3 scripts/check-codex-cloud-context.py \
   saved-task-response.json \
-  .claude/hooks/fleet-guidance.md \
+  base.md-at-the-delivered-commit.md \
   AGENTS.md
 ```
 
-The checker fails closed unless that envelope contains the payload exactly
-as the hook delivers it (byte-exact after dropping the repo-only `# AGENTS.md`
-header that the hook's `PAYLOAD_REPO_HEADER` names) inside one complete
-managed block, its one persisted installed verdict, the check value line that
-ends the block ([ADR 0035](decisions/0035-sessions-prove-the-guidance-loaded-with-a-check-value.md)),
-and the expected repo-specific additions through end of file. It prints only a
-non-identifying result; it does not fetch authenticated task data. Raw task
-captures are authenticated and stay local—do not commit them or paste private
-environment IDs or task URLs into the repo. This response shape is an observed
-internal endpoint and may change; the checker fails closed if the response is
-unavailable or its structure changes.
+The second argument is the `agents-md/base.md` the setup delivered (the
+checker computes the expected block from its bytes). The logged
+`fleet-guidance: installed (v...)` version is the first eight hex digits of that
+file's SHA-256, so find the commit of `main` whose `base.md` hashes to it, for
+example with `git log --format=%H -- agents-md/base.md`, then
+`git show <commit>:agents-md/base.md > base.md-at-the-delivered-commit.md`.
 
 ### Verify skill discovery
 
