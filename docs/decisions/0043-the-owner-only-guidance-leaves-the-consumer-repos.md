@@ -342,6 +342,34 @@ removed, so no owner session goes without the guidance in between.
 9. **Close issue 473** when step 4's stub change merges; the per-repo cost was
    settled by 0040 and this ADR.
 
+## Implementation notes (2026-11-13)
+
+Departures found while implementing, recorded here so the steps above are not
+re-run as written:
+
+- **The two owner bullets stay in "Working in these repos".** Moving them
+  ([#548](https://github.com/Adam-S-Daniel/_agent-guidance/pull/548), closed)
+  edits two eval-protected sections (`working-in-these-repos`,
+  `anything-you-name-gets-its-link`), which `scripts/eval-protected.js` allows
+  only as a marked correctness fix, and a move is not one. Both bullets are
+  harmless to a contributor, so they ship in the contributor file until the
+  section is next rewritten through the eval lane.
+- **The guidance loop writes the contributor file too.** skills-evals'
+  improvement gate and guidance-removal lane commit `base.md` edits here; they
+  rebuild `.github/fleet-contributor-rules.md` and install this repo's locked
+  node dependencies first
+  ([skills-evals#1009](https://github.com/Adam-S-Daniel/skills-evals/pull/1009)).
+  Step 6 must also retire their re-copy of `base.md` to
+  `.claude/hooks/fleet-guidance.md`.
+- **The stub's pointer** names the owner (`Adam-S-Daniel`, "unsure means no")
+  rather than "the repo owner", which a fork's owner would also match; treats a
+  `fleet-guidance check value:` line in context as loaded; covers `skipped`;
+  and says not to fetch or recreate a missing contributor file. These came
+  from its adversarial rounds.
+- **The sync delivers the contributor file before it removes anything**, so
+  the stub never points at a file the repo lacks; the removals stay gated as
+  step 5 says.
+
 ## References
 
 - Issue 523, "Move the owner-only guidance out of the consumer repos":
