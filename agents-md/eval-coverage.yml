@@ -118,7 +118,7 @@
     scores whether the link is followed, which a with arm passes by reading it,
     and the weekly plan holds it as out of scope.
   since: 2026-11-03
-  bytes: 295
+  bytes: 357
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection

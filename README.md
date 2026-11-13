@@ -386,8 +386,9 @@ through the real `fleet-memory.sh` and proving each arm got it
 results go to skills-evals' [`persistent/eval-results`](https://github.com/Adam-S-Daniel/skills-evals/tree/persistent/eval-results)
 branch. From there the regression detector and the gates read them. A section
 is retired when its `full` against `full-minus-section` pair, pooled across
-versions of the rest of the guidance, shows with 90% confidence that it does
-not improve results by 0.15 or more. Retirement is an auto-merging pull
+versions of the rest of the guidance, shows no benefit by the thresholds in
+skills-evals' [`docs/rules.md`](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/rules.md).
+Retirement is an auto-merging pull
 request in this repo, with no human approval. Each removal is followed by a
 skills-evals notice issue to Adam with the way to revert it, and a section
 that helps only alone gets a shorten-or-merge issue
