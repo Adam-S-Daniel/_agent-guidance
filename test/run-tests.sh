@@ -27067,9 +27067,6 @@ GROUP_drift_testorg=(
     test_drift_tree_clean
 )
 
-# The sync lane direct-pushes to main; this lane observes the pre-sync
-# baseline, which a fresh group's bares already are (test_sync_multi_owner
-# resets them itself).
 # The drift_testorg group must leave the working tree as it found it (#547): a test that
 # ran scripts/drift-report.sh without DRIFT_REPORT_OUTPUT wrote the report and
 # its sidecars into the repo root, and a worker PR committed one. These two
@@ -27092,6 +27089,9 @@ test_drift_tree_clean() {
     fi
 }
 
+# The sync lane direct-pushes to main; this lane observes the pre-sync
+# baseline, which a fresh group's bares already are (test_sync_multi_owner
+# resets them itself).
 GROUP_drift=(
     test_drift_report
     test_sync_multi_owner
