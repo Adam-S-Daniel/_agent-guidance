@@ -482,7 +482,8 @@ holds, each read fresh:
    one has already been made). A fetch that fails or a missing entry is no
    decision: do not merge, and retry next run. `keep`, `insufficient`,
    `ceiling` or any other verdict means the evidence changed: comment on the
-   PR and the issue, close the PR without merging, remove `agent-ready` and
+   PR and the issue, label the PR `loop-withdrawn` and close it without
+   merging, remove `agent-ready` and
    `agent-working` from the issue and leave it open (the removal bot labels
    it again if the verdict returns to `retire`), and list it in the summary
    as a withdrawn removal.

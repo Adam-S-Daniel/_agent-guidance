@@ -176,9 +176,11 @@ registry repo the body names, and nowhere else.
   comment its link, swap `agent-ready` for `agent-working`, and take the
   next issue.
 - If a PR from `retire-skill/<skill>` in the registry was closed without
-  merging by anyone other than the fleet worker after this issue opened,
-  that is the owner declining the removal: comment its link, close the issue
-  as not planned, and take the next issue.
+  merging after this issue opened, and it is not labeled `loop-withdrawn`
+  (which the eval loop and the fleet worker's step 2e put on a removal they
+  withdraw), that is the owner declining the removal: comment its link, close the issue as not planned, and take the
+  next issue. The closer's login cannot tell the owner from the worker,
+  since both act as Adam-S-Daniel.
 - Work on a branch named `retire-skill/<skill>` (not `agent/issue-*`) from
   the registry's default branch, following that repo's `AGENTS.md`:
   - delete the skill's directory;
