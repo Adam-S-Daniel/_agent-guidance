@@ -8,7 +8,7 @@ the Routines page on 2026-10-26. It ran hourly from the Routines page until
 2026-11-08; that cost about $150-215 a week, mostly in runs that found
 nothing to do, and the page offers nothing between hourly and daily. Each fire
 starts a fresh cloud session. The optional repository variable
-`FLEET_WORKER_EVERY_HOURS` (3, 6, 12 or 24) thins the schedule for a smaller
+`FLEET_WORKER_EVERY_HOURS` (3, 6, 12, 24 or 168) thins the schedule for a smaller
 plan; it gates on which cron line started the run, never the clock, because
 GitHub starts scheduled runs one to two hours late. This repository has it set
 to 6 (seen in the fire job logs on 2026-11-12), so the worker fires every 6 hours. Why it exists, and why it may merge the

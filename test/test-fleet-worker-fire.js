@@ -18,7 +18,7 @@ const workflow = '.github/workflows/fleet-worker-fire.yml';
 const doc = () => YAML.parse(fs.readFileSync(path.join(root, workflow), 'utf8'));
 const step = () => doc().jobs.fire.steps[0];
 // Every slot of a 3-hour schedule, each line on the longest cadence it serves.
-const LINES = ['20 0 * * *', '20 12 * * *', '20 6,18 * * *', '20 3,9,15,21 * * *'];
+const LINES = ['20 0 * * 2', '20 0 * * 0,1,3-6', '20 12 * * *', '20 6,18 * * *', '20 3,9,15,21 * * *'];
 
 test('fires every 3 hours or by hand, with no permissions, no uses and no interpolation in run', () => {
   const d = doc();
@@ -112,7 +112,12 @@ test('FLEET_WORKER_EVERY_HOURS thins scheduled fires and never blocks a dispatch
     [{ every: '12', line: '20 6,18 * * *' }, 0],
     [{ every: '12', line: '20 12 * * *' }, 1],
     [{ every: '24', line: '20 12 * * *' }, 0],
-    [{ every: '24', line: '20 0 * * *' }, 1],
+    [{ every: '24', line: '20 0 * * 0,1,3-6' }, 1],
+    [{ every: '24', line: '20 0 * * 2' }, 1],
+    [{ every: '168', line: '20 0 * * 2' }, 1],
+    [{ every: '168', line: '20 0 * * 0,1,3-6' }, 0],
+    [{ every: '168', line: '20 12 * * *' }, 0],
+    [{ every: '168', line: '20 3,9,15,21 * * *', event: 'workflow_dispatch' }, 1],
     [{ every: '24', line: '20 3,9,15,21 * * *', event: 'workflow_dispatch' }, 1],
   ];
   for (const [over, fires] of cases) {
@@ -122,8 +127,8 @@ test('FLEET_WORKER_EVERY_HOURS thins scheduled fires and never blocks a dispatch
   }
 });
 
-test('a FLEET_WORKER_EVERY_HOURS outside 3, 6, 12 and 24 fails naming it, and fires nothing', () => {
-  for (const every of ['5', '0', 'daily', '48']) {
+test('a FLEET_WORKER_EVERY_HOURS outside 3, 6, 12, 24 and 168 fails naming it, and fires nothing', () => {
+  for (const every of ['5', '0', 'daily', '48', '72']) {
     const { result, curl } = runFire({ every });
     assert.equal(result.status, 1, every);
     assert.equal(curl.length, 0, every);
@@ -140,14 +145,34 @@ test('a late start still fires on its cron line, whatever the clock says (2026-1
   }
 });
 
-test('the four cron lines cover each 3-hour slot once, and each cadence fires at its own spacing', () => {
+test('the five cron lines cover each 3-hour slot of the week once, and each cadence fires at its own spacing', () => {
+  // Expand each line to its exact (day, hour) slots, so a line moved to
+  // another day or hour fails here, not just a changed total.
   const hoursOf = l => l.split(' ')[1].split(',').map(Number);
-  const all = LINES.flatMap(hoursOf).sort((a, b) => a - b);
-  assert.deepEqual(all, [0, 3, 6, 9, 12, 15, 18, 21]);
-  for (const [every, want] of [['3', 8], ['6', 4], ['12', 2], ['24', 1]]) {
-    let fired = 0;
-    for (const line of LINES) fired += runFire({ every, line }).curl.length * hoursOf(line).length;
-    assert.equal(fired, want, `every ${every}`);
+  const daysOf = l => {
+    const field = l.split(' ')[4];
+    if (field === '*') return [0, 1, 2, 3, 4, 5, 6];
+    return field.split(',').flatMap(p => {
+      const [a, b = a] = p.split('-').map(Number);
+      return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+    });
+  };
+  const slotsOf = l => daysOf(l).flatMap(d => hoursOf(l).map(h => `${d}@${h}`));
+  const sorted = a => [...a].sort((x, y) => x.localeCompare(y, 'en', { numeric: true }));
+  const all = [];
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h += 3) all.push(`${d}@${h}`);
+  assert.deepEqual(sorted(LINES.flatMap(slotsOf)), sorted(all));
+  assert.equal(LINES[0].split(' ')[4], '2', 'the weekly line fires on Tuesday');
+  const want = {
+    '3': all,
+    '6': all.filter(s => Number(s.split('@')[1]) % 6 === 0),
+    '12': all.filter(s => Number(s.split('@')[1]) % 12 === 0),
+    '24': all.filter(s => s.endsWith('@0')),
+    '168': ['2@0'],
+  };
+  for (const [every, slots] of Object.entries(want)) {
+    const fired = LINES.filter(line => runFire({ every, line }).curl.length === 1).flatMap(slotsOf);
+    assert.deepEqual(sorted(fired), sorted(slots), `every ${every}`);
   }
 });
 
