@@ -17,6 +17,11 @@ The owner can also start it with **Run now** and an article URL.
 "Automatic Continuous Self Improvement and Evals" project. Its prompt is short and points here, so the procedure is
 reviewed as a pull request.
 
+**Model:** Sonnet 5.5, set on the task (Adam, 2026-11-13). A run reads one
+article and turns what applies into small pull requests and a report, which
+Sonnet does reliably; Opus would cost more for little gain. Never leave it on
+the account default, which can change (it became Fable 5.2 on 2026-11-12).
+
 ## How the watch decides what fires
 
 `scripts/article_watch.py` holds the rules and `test/test_article_watch.py`
