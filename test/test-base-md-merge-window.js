@@ -19,15 +19,36 @@ const ROOT = path.join(__dirname, "..");
 const SCRIPT = path.join(ROOT, "scripts", "base-md-merge-window.js");
 const WINDOW = mod.loadWindow();
 
-// 2026-11-09 is a Monday.
+// 2026-11-09 is a Monday, in EST (UTC-5): noon ET is 17:00 UTC.
 const MON_OPEN = "2026-11-09T17:00:00Z";
 const MON_LAST = "2026-11-09T18:59:59Z";
 const MON_CLOSE = "2026-11-09T19:00:00Z";
 
-test("the shipped bounds are Monday 17:00 to 19:00 UTC", () => {
-  assert.deepEqual(WINDOW, { weekday: 1, start: "17:00", end: "19:00" });
+test("the shipped bounds are Monday noon to 2 PM US Eastern", () => {
+  assert.deepEqual(WINDOW, { timezone: "America/New_York", weekday: 1, start: "12:00", end: "14:00" });
   const raw = YAML.parse(fs.readFileSync(path.join(ROOT, "scripts", "base-md-merge-window.yml"), "utf8"));
-  assert.deepEqual(Object.keys(raw).sort(), ["end", "start", "weekday"]);
+  assert.deepEqual(Object.keys(raw).sort(), ["end", "start", "timezone", "weekday"]);
+});
+
+test("daylight saving time moves the UTC instants with the clocks", () => {
+  // 2026-06-15 is a Monday in EDT (UTC-4): noon ET is 16:00 UTC.
+  assert.equal(mod.inWindow(new Date("2026-06-15T15:59:59Z"), WINDOW), false);
+  assert.equal(mod.inWindow(new Date("2026-06-15T16:00:00Z"), WINDOW), true);
+  assert.equal(mod.inWindow(new Date("2026-06-15T17:59:59Z"), WINDOW), true);
+  assert.equal(mod.inWindow(new Date("2026-06-15T18:00:00Z"), WINDOW), false);
+  // Clocks go back Sunday 2026-11-01 and forward Sunday 2027-03-14; the next
+  // start is found across each change.
+  assert.equal(mod.nextWindowStart(new Date("2026-10-27T00:00:00Z"), WINDOW), "2026-11-02T17:00:00.000Z");
+  assert.equal(mod.nextWindowStart(new Date("2027-03-09T00:00:00Z"), WINDOW), "2027-03-15T16:00:00.000Z");
+  assert.equal(mod.nextWindowStart(new Date("2026-10-26T15:00:00Z"), WINDOW), "2026-10-26T16:00:00.000Z");
+});
+
+test("the weekday is the zone's, not UTC's", () => {
+  // Monday 23:30 UTC is still Monday 18:30 ET; Tuesday 01:00 UTC is Monday 20:00 ET.
+  const late = { timezone: "America/New_York", weekday: 1, start: "18:00", end: "21:00" };
+  assert.equal(mod.inWindow(new Date("2026-11-09T23:30:00Z"), late), true);
+  assert.equal(mod.inWindow(new Date("2026-11-10T01:00:00Z"), late), true);
+  assert.equal(mod.inWindow(new Date("2026-11-10T02:00:00Z"), late), false);
 });
 
 test("the window is half open: start is inside, end is outside", () => {
@@ -44,7 +65,7 @@ test("the same hours on any other day are outside", () => {
 });
 
 test("Sunday is ISO weekday 7, not 0", () => {
-  const sunday = { weekday: 7, start: "17:00", end: "19:00" };
+  const sunday = { timezone: "UTC", weekday: 7, start: "17:00", end: "19:00" };
   assert.equal(mod.inWindow(new Date("2026-11-08T17:30:00Z"), sunday), true);
   assert.equal(mod.inWindow(new Date(MON_OPEN), sunday), false);
 });
@@ -81,16 +102,22 @@ test("the next start is later the same day before the window and next week after
 
 test("checkWindow rejects bad bounds", () => {
   const bad = [
-    null, [], { weekday: 1, start: "17:00" },
-    { weekday: 1, start: "17:00", end: "19:00", tz: "UTC" },
-    { weekday: 0, start: "17:00", end: "19:00" },
-    { weekday: 8, start: "17:00", end: "19:00" },
-    { weekday: "1", start: "17:00", end: "19:00" },
-    { weekday: 1, start: "5pm", end: "19:00" },
-    { weekday: 1, start: "17:00", end: "24:00" },
-    { weekday: 1, start: "19:00", end: "17:00" },
-    { weekday: 1, start: "17:00", end: "17:00" },
+    null, [], { timezone: "UTC", weekday: 1, start: "17:00" },
+    { weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "UTC", weekday: 1, start: "17:00", end: "19:00", tz: "UTC" },
+    { timezone: "Eastern", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "america/new_york", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "+05:00", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: 5, weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "UTC", weekday: 0, start: "17:00", end: "19:00" },
+    { timezone: "UTC", weekday: 8, start: "17:00", end: "19:00" },
+    { timezone: "UTC", weekday: "1", start: "17:00", end: "19:00" },
+    { timezone: "UTC", weekday: 1, start: "5pm", end: "19:00" },
+    { timezone: "UTC", weekday: 1, start: "17:00", end: "24:00" },
+    { timezone: "UTC", weekday: 1, start: "19:00", end: "17:00" },
+    { timezone: "UTC", weekday: 1, start: "17:00", end: "17:00" },
   ];
+  assert.doesNotThrow(() => mod.checkWindow({ timezone: "UTC", weekday: 1, start: "17:00", end: "19:00" }));
   for (const doc of bad) assert.throws(() => mod.checkWindow(doc), undefined, JSON.stringify(doc));
 });
 
@@ -121,7 +148,7 @@ test("CLI: --files-json and --window", () => {
     const files = path.join(dir, "files.json");
     fs.writeFileSync(files, JSON.stringify([{ filename: "agents-md/base.md" }]));
     const win = path.join(dir, "win.yml");
-    fs.writeFileSync(win, "weekday: 3\nstart: \"01:00\"\nend: \"02:00\"\n");
+    fs.writeFileSync(win, "timezone: UTC\nweekday: 3\nstart: \"01:00\"\nend: \"02:00\"\n");
     assert.equal(run(["--now", MON_OPEN, "--files-json", files]).code, 0);
     assert.equal(run(["--now", MON_OPEN, "--files-json", files, "--window", win]).code, 2);
     assert.equal(run(["--now", "2026-11-11T01:30:00Z", "--files-json", files, "--window", win]).code, 0);
