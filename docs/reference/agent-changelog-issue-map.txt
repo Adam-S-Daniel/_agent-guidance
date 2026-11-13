@@ -32,3 +32,4 @@ codex/2026-10-29/1 Adam-S-Daniel/_agent-guidance#363
 claude-code/2026-10-31/1 Adam-S-Daniel/skills-evals#484
 claude-code/2026-11-07/1 Adam-S-Daniel/_agent-guidance#459
 claude-code/2026-11-10/1 Adam-S-Daniel/_agent-guidance#501
+claude-code/2026-11-13/1 Adam-S-Daniel/adam-agentskills#155

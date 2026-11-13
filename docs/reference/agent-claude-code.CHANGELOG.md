@@ -30,6 +30,27 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-13 — 2.1.322 through 2.1.323
+
+- **Checked:** 2026-11-13T17:40Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323), published 2026-11-12T22:12Z
+- **Window:** v2.1.322 (published 2026-11-10T02:29Z) and v2.1.323 (published 2026-11-12T22:12Z), the first stable releases after v2.1.321: 2 releases, 295 bullets (the 2 in group 1 are indexed). Publish times are the `datetime` attributes on the tag pages, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.322` and `v2.1.323` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. subagentStatusLine removed, plugin agent setting deprecated
+
+- [v2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323), published 2026-11-12T22:12Z (bullet 2.1.323/246)
+  > Removed the `subagentStatusLine` setting: subagent rows always use the default look, and settings files that still hold the key load as before
+- [v2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323), published 2026-11-12T22:12Z (bullet 2.1.323/247)
+  > Deprecated a plugin's `agent` setting: it still applies, and now warns at startup, in `claude plugin list` and in `claude plugin validate`
+
+**Issues:** [adam-agentskills#155](https://github.com/Adam-S-Daniel/adam-agentskills/issues/155).
+
+**Prompt-audit sweep:** not requested. Bullets 2.1.323/72 (plugins with `defaultEnabled: false` staying off in a claude.ai cloud session) and 2.1.323/86 (plugins with a version list in `enabledPlugins` staying off with no message) touch plugin loading, but the sweep trigger issue [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) is still open, so no second one is filed (step 4a).
+
+No other group met the name-the-surface bar. Considered and dropped: the `engines["claude-code"]` plugin manifest key, the Bash sandbox change that makes `git worktree add` read-only (no fleet script runs it in a sandbox), the `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` entries (no fleet use), and 2.1.322 (one bullet, Vertex fast mode). The open discrepancy about repo skills after `cd` is not fixed by either release.
+
 ### 2026-11-10 — 2.1.321 through 2.1.321
 
 - **Checked:** 2026-11-10T02:30Z, [release log](https://github.com/anthropics/claude-code/releases)
