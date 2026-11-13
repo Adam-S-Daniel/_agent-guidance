@@ -19333,7 +19333,9 @@ process.exit(1);
 #!/usr/bin/env bash
 if [[ "${1:-}" == "pr" ]]; then
     has_repo=0
-    [[ -n "${GH_REPO:-}" ]] && has_repo=1
+    # Only the value the test substitutes for github.repository is a valid
+    # repository; anything else fails as real gh does for an unknown repo.
+    [[ "${GH_REPO:-}" == "example-owner/example-repo" ]] && has_repo=1
     for a in "$@"; do
         [[ "$a" == "--repo" || "$a" == "-R" ]] && has_repo=1
     done
