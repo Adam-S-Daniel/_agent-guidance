@@ -502,7 +502,6 @@ holds, each read fresh:
    `clean`). A run waiting on `plugin-runtime-review` or
    `regression-review` sends the PR to the owner: those are his to approve.
 6. The review below answered `CLEAN` on the current head.
-
 7. The eval-protection gate (item 7 of the merge rule above) exits 0 when
    run on the PR's file list without the files under the removed skill's
    directory: the removed skill is exempt on its own verdict, which item 3
