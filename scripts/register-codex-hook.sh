@@ -4,8 +4,8 @@ set -euo pipefail
 # register-codex-hook.sh — Idempotently register the fleet-guidance
 # SessionStart hook in Codex's USER-level hooks.json.
 #
-# WHY USER LEVEL, when skills-bootstrap and fleet-memory are both delivered
-# per-repo by the sync. Codex (codex-cli 0.154.0, measured 2026-09-14) requires
+# WHY USER LEVEL, when skills-bootstrap and (until ADR 0043) fleet-memory are
+# both delivered per-repo by the sync. Codex (codex-cli 0.154.0, measured 2026-09-14) requires
 # every non-managed hook to be REVIEWED AND TRUSTED BY HASH before it runs, and
 # it records that trust per hook definition per config layer. A
 # `<repo>/.codex/hooks.json` delivered by the sync would therefore cost one
@@ -27,18 +27,26 @@ set -euo pipefail
 # runs enabled hooks without persisted trust. Neither is something this script
 # can do on the operator's behalf, which is why it says so instead.
 #
-# THE COMMAND resolves the repo's OWN synced copy of the hook at the git root:
+# THE COMMAND runs a per-user LAUNCHER, not a file in any repo (ADR 0043):
 #
-#   bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
+#   bash -c 'd="${XDG_DATA_HOME:-}"; case "$d" in /*) ;; *) d="$HOME/.local/share" ;; esac; l="$d/fleet-guidance/codex-session-start.sh"; [ -f "$l" ] && exec bash "$l"; exit 0'
 #
-# Codex runs command hooks with the session `cwd` as the working directory and
-# may be started from a SUBDIRECTORY, so the docs recommend resolving repo-local
-# paths from the git root rather than relatively — that is what the
-# `git rev-parse` does. From a multi-repo parent, the first immediate child
-# with a workspace-capable hook delivers the freshest child payload. Elsewhere
-# without such a child, the hook exits silently. The old default command is
-# upgraded in place on re-registration; the changed definition needs one new
-# trust action in `/hooks`.
+# The launcher is installed by adam-agentskills' `setup.sh --owner-machine` at
+# ${XDG_DATA_HOME:-$HOME/.local/share}/fleet-guidance/codex-session-start.sh
+# (XDG_DATA_HOME counts only when absolute, the rule setup.sh applies). It runs
+# the installed adam-anything-anywhere plugin's fleet-guidance hook with
+# FLEET_GUIDANCE_OWNER=1, so no consumer repo has to carry fleet-memory.sh for
+# Codex. This script refuses (exit 6) when that file is absent, because the
+# registered hook would silently do nothing. The command itself exits 0
+# silently when the launcher goes missing later.
+#
+# Earlier versions registered a command that ran the git root's own
+# `.claude/hooks/fleet-memory.sh` (and, from a multi-repo parent, a child's with
+# `--workspace`). Both exact earlier commands are upgraded in place on
+# re-registration; the changed definition needs one new trust action in
+# `/hooks`. The parent-directory `--workspace` listing is not part of the
+# launcher route: the plugin hook installs the guidance, and repo AGENTS.md
+# files are Codex's to load.
 #
 # NATIVE WINDOWS CODEX. On Windows, Codex runs a hook's command through
 # %COMSPEC% as `cmd.exe /C "<command>"`
@@ -61,19 +69,17 @@ set -euo pipefail
 # So when this script runs under Git Bash/MSYS/Cygwin (`uname -s` matching
 # MINGW*|MSYS*|CYGWIN*), or with `--windows` (for tests), the handler it writes
 # ALSO carries a `commandWindows` that holds NO shell logic at all, only two
-# quoted paths — Git Bash and a tracked launcher that holds the snippet:
+# quoted paths — Git Bash and the same per-user launcher:
 #
-#   "commandWindows": "\"C:\Program Files\Git\bin\bash.exe\" \"D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh\""
+#   "commandWindows": "\"C:\Program Files\Git\bin\bash.exe\" \"C:/Users/me/.local/share/fleet-guidance/codex-session-start.sh\""
 #
-# The launcher, .claude/hooks/codex-session-start.sh, is the `command` snippet
-# as a file (same git-root lookup, same --workspace loop, same silent exit).
-# Its path is this script's OWN checkout, in Windows mixed form (`cygpath -m`
-# when available); `--launcher <path>` overrides it, like `--hook` in
-# register-memory-home-hook.sh. The Git Bash path defaults to
+# The launcher path is the one above, in Windows mixed form (`cygpath -m` when
+# available), under Git Bash's own $HOME; `--launcher <path>` overrides it,
+# like `--hook` in register-memory-home-hook.sh. The Git Bash path defaults to
 # C:\Program Files\Git\bin\bash.exe; set CODEX_HOOK_GIT_BASH (a Windows-form
 # path) to override it. The script refuses (exit 5) instead of writing a hook
-# that cannot run: when `cygpath` is available and Git Bash or the launcher is
-# absent, or when either path contains a cmd metacharacter (& | < > ^ %).
+# that cannot run: when `cygpath` is available and Git Bash is absent, or when
+# either path contains a cmd metacharacter (& | < > ^ %).
 # An exact registration that lacks `commandWindows` is upgraded in place on
 # Windows (group, position and other fields preserved; the trust hash changes,
 # so re-trust it in `/hooks`); one that already carries a `commandWindows`,
@@ -119,14 +125,15 @@ set -euo pipefail
 #   register-codex-hook: already-registered   — no write; the hook was already named
 #   register-codex-hook: refused-unparseable  — no write; the file is not a JSON object
 #   register-codex-hook: refused-no-codex-home — no write; the parent directory is absent
-#   register-codex-hook: refused-no-git-bash  — no write; Windows, but Git Bash or the launcher cannot be used
+#   register-codex-hook: refused-no-git-bash  — no write; Windows, but Git Bash or a path cannot be used
+#   register-codex-hook: refused-no-launcher  — no write; run setup.sh --owner-machine first
 #
 # Exit: 0 on registered, updated, or already-registered; 2 on usage, 3 on an unparseable
 #       file, 4 when there is no Codex home to register into, 5 when a Windows
-#       registration has no usable Git Bash or launcher to point at.
+#       registration has no usable Git Bash to point at or a path cmd.exe cannot
+#       take, 6 when the launcher is not installed.
 
 USAGE="Usage: register-codex-hook.sh [--windows] [--launcher <path>] [path-to-hooks.json]"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHER=""
 WINDOWS=0
 case "$(uname -s 2>/dev/null)" in
@@ -175,13 +182,35 @@ fi
 # SECONDS in Codex; 30 is generous for a strip-and-copy of one file and well
 # under Codex's 600s default. `statusMessage` is what the TUI shows while the
 # hook runs, so it names the thing being delivered rather than the script.
-LEGACY_HOOK_COMMAND="bash -c 'h=\"\$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh\"; [ -f \"\$h\" ] && exec bash \"\$h\"; exit 0'"
-HOOK_COMMAND="bash -c 'r=\"\$(git rev-parse --show-toplevel 2>/dev/null)\"; h=\"\$r/.claude/hooks/fleet-memory.sh\"; [ -n \"\$r\" ] && [ -f \"\$h\" ] && exec bash \"\$h\"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace \"\$h\" 2>/dev/null && exec bash \"\$h\" --workspace \"\$PWD\"; done; exit 0'"
+# Both earlier commands, which ran a repo's own fleet-memory.sh, are upgraded in
+# place (newline-separated; neither contains a newline).
+LEGACY_HOOK_COMMAND_1="bash -c 'h=\"\$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh\"; [ -f \"\$h\" ] && exec bash \"\$h\"; exit 0'"
+LEGACY_HOOK_COMMAND_2="bash -c 'r=\"\$(git rev-parse --show-toplevel 2>/dev/null)\"; h=\"\$r/.claude/hooks/fleet-memory.sh\"; [ -n \"\$r\" ] && [ -f \"\$h\" ] && exec bash \"\$h\"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace \"\$h\" 2>/dev/null && exec bash \"\$h\" --workspace \"\$PWD\"; done; exit 0'"
+LEGACY_HOOK_COMMANDS="$LEGACY_HOOK_COMMAND_1"$'\n'"$LEGACY_HOOK_COMMAND_2"
+# No single quote inside, so it nests in bash -c '...'.
+HOOK_SNIPPET='d="${XDG_DATA_HOME:-}"; case "$d" in /*) ;; *) d="$HOME/.local/share" ;; esac; l="$d/fleet-guidance/codex-session-start.sh"; [ -f "$l" ] && exec bash "$l"; exit 0'
+HOOK_COMMAND="bash -c '$HOOK_SNIPPET'"
 HOOK_COMMAND="${CODEX_HOOK_COMMAND:-$HOOK_COMMAND}"
 HOOK_MATCHER="${CODEX_HOOK_MATCHER:-startup|resume}"
 HOOK_TIMEOUT="${CODEX_HOOK_TIMEOUT:-30}"
 HOOK_STATUS="${CODEX_HOOK_STATUS:-fleet-guidance}"
-HOOK_NEEDLE="${CODEX_HOOK_NEEDLE:-fleet-memory.sh}"
+HOOK_NEEDLE="${CODEX_HOOK_NEEDLE:-codex-session-start.sh}"
+
+# Where setup.sh --owner-machine installs the launcher (XDG_DATA_HOME only when
+# absolute). The registration is refused when it is absent: the hook would
+# otherwise run nothing, and nothing would say so.
+if [[ "${XDG_DATA_HOME:-}" == /* ]]; then
+    DEFAULT_LAUNCHER_PATH="$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
+else
+    DEFAULT_LAUNCHER_PATH="$HOME/.local/share/fleet-guidance/codex-session-start.sh"
+fi
+refuse_no_launcher() {
+    echo "register-codex-hook: refused-no-launcher — the launcher $1 does not exist. Run adam-agentskills' \`setup.sh --owner-machine\` on this machine to install it, then re-run this script. Nothing written."
+    exit 6
+}
+if [[ ! -f "$DEFAULT_LAUNCHER_PATH" && ( "$WINDOWS" -eq 0 || -z "$LAUNCHER" ) ]]; then
+    refuse_no_launcher "$DEFAULT_LAUNCHER_PATH"
+fi
 
 # Windows: two quoted paths and no shell logic, so cmd.exe has no metacharacter
 # to misread and cannot resolve `bash` to WSL's launcher. The snippet lives in
@@ -189,11 +218,8 @@ HOOK_NEEDLE="${CODEX_HOOK_NEEDLE:-fleet-memory.sh}"
 HOOK_COMMAND_WINDOWS=""
 if [[ "$WINDOWS" -eq 1 ]]; then
     GIT_BASH="${CODEX_HOOK_GIT_BASH:-C:\\Program Files\\Git\\bin\\bash.exe}"
-    DEFAULT_LAUNCHER=0
     if [[ -z "$LAUNCHER" ]]; then
-        DEFAULT_LAUNCHER=1
-        LAUNCHER="$SCRIPT_DIR/../.claude/hooks/codex-session-start.sh"
-        LAUNCHER="$(cd "$(dirname "$LAUNCHER")" && pwd)/$(basename "$LAUNCHER")"
+        LAUNCHER="$DEFAULT_LAUNCHER_PATH"
         if command -v cygpath >/dev/null 2>&1; then
             LAUNCHER="$(cygpath -m "$LAUNCHER")"
         fi
@@ -205,10 +231,7 @@ if [[ "$WINDOWS" -eq 1 ]]; then
     if command -v cygpath >/dev/null 2>&1; then
         [[ -f "$(cygpath -u "$GIT_BASH")" ]] \
             || refuse_no_git_bash "$GIT_BASH does not exist, so a Windows hook pointing at it could not run (install Git for Windows, or set CODEX_HOOK_GIT_BASH to its bash.exe)"
-        [[ -f "$(cygpath -u "$LAUNCHER")" ]] \
-            || refuse_no_git_bash "the launcher $LAUNCHER does not exist (pass --launcher)"
-    elif [[ "$DEFAULT_LAUNCHER" -eq 1 && ! -f "$LAUNCHER" ]]; then
-        refuse_no_git_bash "the launcher $LAUNCHER does not exist (pass --launcher)"
+        [[ -f "$(cygpath -u "$LAUNCHER")" ]] || refuse_no_launcher "$LAUNCHER"
     fi
     HOOK_COMMAND_WINDOWS="\"$GIT_BASH\" \"$LAUNCHER\""
     # cmd.exe reads these outside its quotes' protection in some contexts, so a
@@ -227,7 +250,7 @@ matcher  = sys.argv[3]
 timeout  = int(sys.argv[4])
 status   = sys.argv[5]
 needle   = sys.argv[6]
-legacy   = sys.argv[7]
+legacy   = sys.argv[7].split("\n")
 command_windows = sys.argv[8]  # "" off Windows: no field is written
 
 group = {
@@ -291,11 +314,11 @@ if isinstance(existing, list):
                     continue
                 print("already-registered")
                 sys.exit(0)
-            if needle in str(existing_command):
-                if existing_command == legacy and legacy_location is None:
+            if existing_command in legacy:
+                if legacy_location is None:
                     legacy_location = (group_index, entry_index)
-                else:
-                    manual_found = True
+            elif needle in str(existing_command):
+                manual_found = True
 
 if windows_location is None and legacy_location is None and manual_found:
     print("already-registered")
@@ -340,7 +363,7 @@ if json.loads(candidate) != want:
 with open(target, "w", encoding="utf-8") as fh:
     fh.write(candidate)
 print(outcome)
-' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_STATUS" "$HOOK_NEEDLE" "$LEGACY_HOOK_COMMAND" "$HOOK_COMMAND_WINDOWS") || {
+' "$TARGET" "$HOOK_COMMAND" "$HOOK_MATCHER" "$HOOK_TIMEOUT" "$HOOK_STATUS" "$HOOK_NEEDLE" "$LEGACY_HOOK_COMMANDS" "$HOOK_COMMAND_WINDOWS") || {
     status=$?
     if [[ "$result" == "refused-unparseable" ]]; then
         echo "register-codex-hook: refused-unparseable — $TARGET is not a JSON object. Nothing written; fix or move that file and re-run."
@@ -352,7 +375,7 @@ print(outcome)
 
 case "$result" in
     already-registered)
-        echo "register-codex-hook: already-registered — $TARGET already runs fleet-memory.sh on SessionStart. Nothing written."
+        echo "register-codex-hook: already-registered — $TARGET already runs the fleet-guidance launcher on SessionStart. Nothing written."
         ;;
     registered)
         echo "register-codex-hook: registered — added a SessionStart hook to $TARGET. Trust it once in the Codex TUI with \`/hooks\` before it will run (or pass --dangerously-bypass-hook-trust for a one-off \`codex exec\`)."

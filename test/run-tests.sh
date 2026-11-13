@@ -21396,9 +21396,24 @@ test_register_codex_hook() {
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
     local d="$TEST_DIR/codexhook"
     rm -rf "$d"
-    mkdir -p "$d/home"
+    mkdir -p "$d/home" "$d/nolauncher"
     local target="$d/home/hooks.json"
     local out rc shape
+
+    # 0. The registered command runs the per-user launcher that adam-agentskills'
+    #    setup.sh --owner-machine installs (ADR 0043). With none installed there
+    #    is nothing for the hook to run, so refuse (exit 6) and write nothing.
+    local -x XDG_DATA_HOME="$d/xdg-data"
+    rc=0
+    out=$(CODEX_HOME="$d/nolauncher" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 6 && "$out" == *refused-no-launcher* && "$out" == *'setup.sh --owner-machine'* \
+            && ! -e "$d/nolauncher/hooks.json" ]]; then
+        pass "register-codex-hook: an absent launcher is refused with exit 6, naming setup.sh --owner-machine, and nothing is written"
+    else
+        fail "register-codex-hook: absent launcher exit $rc, file=$(ls "$d/nolauncher"): $out"
+    fi
+    mkdir -p "$XDG_DATA_HOME/fleet-guidance"
+    printf '#!/usr/bin/env bash\necho launcher-ran\n' > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
 
     # 1. Absent file → created.
     rc=0
@@ -21428,8 +21443,9 @@ e = entries[0]
 assert e["type"] == "command", "type is %r" % e.get("type")
 assert e["timeout"] == 30, "timeout is %r" % e.get("timeout")
 assert e["statusMessage"] == "fleet-guidance", "statusMessage is %r" % e.get("statusMessage")
-assert "fleet-memory.sh" in e["command"], "command does not name the hook"
-assert "git rev-parse --show-toplevel" in e["command"], "command does not resolve from the git root"
+assert "fleet-guidance/codex-session-start.sh" in e["command"], "command does not name the launcher"
+assert "XDG_DATA_HOME" in e["command"], "command does not resolve the launcher from XDG_DATA_HOME"
+assert "fleet-memory.sh" not in e["command"], "command still runs a repo's fleet-memory.sh"
 print("OK")
 PY
 ) || rc=$?
@@ -21507,7 +21523,7 @@ a = after["hooks"]["SessionStart"]
 assert len(a) == len(b) + 1, "expected one added group, got %d -> %d" % (len(b), len(a))
 # Order AND content: the operator's group is still first and is deep-equal.
 assert a[0] == b[0], "the pre-existing group changed: %r -> %r" % (b[0], a[0])
-assert a[-1]["hooks"][0]["command"].find("fleet-memory.sh") >= 0, "ours was not appended last"
+assert a[-1]["hooks"][0]["command"].find("codex-session-start.sh") >= 0, "ours was not appended last"
 # Nothing else in the document moved.
 assert after["description"] == before["description"], "an unrelated top-level key changed"
 assert after["hooks"]["SessionEnd"] == before["hooks"]["SessionEnd"], "an unrelated event changed"
@@ -21570,11 +21586,14 @@ test_register_codex_hook_workspace_upgrade() {
     echo "TEST: register-codex-hook.sh (workspace command and legacy upgrade)"
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
     local d="$TEST_DIR/codexhook-workspace"
-    local target="$d/empty/hooks.json" out rc command
-    mkdir -p "$d/empty" "$d/legacy" "$d/manual"
+    local target="$d/empty/hooks.json" out rc command rc2 out2
+    rm -rf "$d"
+    mkdir -p "$d/empty" "$d/legacy" "$d/legacy2" "$d/manual" "$d/xdg-data/fleet-guidance"
     : > "$target"
+    local -x XDG_DATA_HOME="$d/xdg-data"
+    : > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
     cat > "$d/expected-command" <<'EOF'
-bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
+bash -c 'd="${XDG_DATA_HOME:-}"; case "$d" in /*) ;; *) d="$HOME/.local/share" ;; esac; l="$d/fleet-guidance/codex-session-start.sh"; [ -f "$l" ] && exec bash "$l"; exit 0'
 EOF
     rc=0
     out=$(CODEX_HOME="$d/empty" "$script" 2>&1) || rc=$?
@@ -21591,7 +21610,7 @@ print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
 PY
 ) || rc=$?
     if [[ $rc -eq 0 && "$command" == "$(cat "$d/expected-command")" ]]; then
-        pass 'register workspace: empty hooks.json gets the exact workspace-capable command'
+        pass 'register workspace: empty hooks.json gets the exact launcher command'
     else
         fail 'register workspace: empty hooks.json command differs from the delivery contract'
     fi
@@ -21660,6 +21679,37 @@ PY
         fail "register workspace: rerun after upgrade changed hooks.json: $out"
     fi
 
+    # The previous default (the workspace-capable repo command) is upgraded in
+    # place too, and nothing but its command field changes.
+    python3 - "$d/legacy2/hooks.json" <<'PY'
+import json, sys
+previous = """bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'"""
+doc = {"hooks": {"SessionStart": [
+    {"matcher": "mine", "hooks": [{"type": "command", "command": "true"}]},
+    {"matcher": "startup|resume", "hooks": [
+        {"type": "command", "command": previous, "timeout": 30, "statusMessage": "fleet-guidance"}]},
+]}, "other": 1}
+json.dump(doc, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PY
+    cp "$d/legacy2/hooks.json" "$d/legacy2-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/legacy2" "$script" 2>&1) || rc=$?
+    rc2=0
+    out2=$(python3 - "$d/legacy2-before.json" "$d/legacy2/hooks.json" "$d/expected-command" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+before["hooks"]["SessionStart"][1]["hooks"][0]["command"] = open(sys.argv[3], encoding="utf-8").read().rstrip("\n")
+assert before == after, "upgrade changed more than the command field"
+print("OK")
+PY
+) || rc2=$?
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && $rc2 -eq 0 && "$out2" == OK ]]; then
+        pass 'register workspace: the previous workspace command is upgraded to the launcher command in place'
+    else
+        fail "register workspace: previous-command upgrade exit $rc: $out / $out2"
+    fi
+
     # A current registration wins over a leftover legacy entry regardless of
     # position. In particular, a legacy entry encountered first must not be
     # rewritten when the current definition is already present elsewhere.
@@ -21700,7 +21750,7 @@ PY
     python3 - "$d/manual/hooks.json" <<'PY'
 import json, sys
 doc = {"hooks": {"SessionStart": [{"matcher": "mine", "hooks": [
-    {"type": "command", "command": "bash my/fleet-memory.sh", "timeout": 4}
+    {"type": "command", "command": "bash my/codex-session-start.sh", "timeout": 4}
 ]}]}}
 with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump(doc, fh, separators=(",", ":"))
@@ -21727,11 +21777,14 @@ test_register_codex_hook_windows() {
     local d="$TEST_DIR/codexhook-windows"
     local out rc
     rm -rf "$d"
-    mkdir -p "$d/fresh" "$d/upgrade" "$d/plain" "$d/override" "$d/nobash" "$d/stub"
+    mkdir -p "$d/fresh" "$d/upgrade" "$d/plain" "$d/override" "$d/nobash" "$d/stub" \
+        "$d/default" "$d/nolauncher" "$d/xdg-data/fleet-guidance"
+    local -x XDG_DATA_HOME="$d/xdg-data"
+    : > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
     local expected_bash='C:\Program Files\Git\bin\bash.exe'
     # The launcher is passed explicitly in Windows mixed form, as `cygpath -m`
     # would produce, so the expected string is the same on every machine.
-    local launcher='D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh'
+    local launcher='D:/Users/me/.local/share/fleet-guidance/codex-session-start.sh'
     local helper="$d/check.py"
     cat > "$helper" <<'PY'
 import json, sys
@@ -21905,6 +21958,26 @@ PY
         fail "register windows: a foreign commandWindows was changed: $out"
     fi
 
+    # 7b. With no --launcher the default is the per-user launcher under
+    #     XDG_DATA_HOME (no cygpath here, so it is written as found); with none
+    #     installed the registration is refused with exit 6, before Windows
+    #     handling, and nothing is written.
+    rc=0
+    out=$(CODEX_HOME="$d/default" "$script" --windows 2>&1) || rc=$?
+    result=$(python3 "$helper" "$d/default/hooks.json" "$expected_bash" "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh" 2>&1) || true
+    if [[ $rc -eq 0 && "$result" == OK ]]; then
+        pass "register windows: the default launcher is the per-user one under XDG_DATA_HOME"
+    else
+        fail "register windows: default launcher exit $rc — $result $out"
+    fi
+    rc=0
+    out=$(XDG_DATA_HOME="$d/none" CODEX_HOME="$d/nolauncher" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 6 && "$out" == *'refused-no-launcher'* && ! -e "$d/nolauncher/hooks.json" ]]; then
+        pass "register windows: an uninstalled default launcher is refused with exit 6"
+    else
+        fail "register windows: uninstalled launcher exit $rc, file=$(ls "$d/nolauncher"): $out"
+    fi
+
     # 8. A launcher path carrying a cmd metacharacter is refused, nothing written.
     mkdir -p "$d/meta"
     rc=0
@@ -21916,59 +21989,38 @@ PY
     fi
 }
 
-# The Windows launcher is the registered `bash -c` snippet as a file, so it must
-# behave identically to it. Both are run in the same fixtures: a repo with a
-# synced hook at its git root (started from a subdirectory), a multi-repo
-# parent whose child hook supports --workspace, and a directory with neither.
-# The stub hooks print their arguments, so a wrong branch is visible.
-test_codex_session_start_launcher() {
+# The registered command must find the launcher where setup.sh --owner-machine
+# installs it: under an absolute XDG_DATA_HOME, else $HOME/.local/share (a
+# relative XDG_DATA_HOME is ignored, as setup.sh ignores it), pass its stdout
+# through untouched, and exit 0 silently when the launcher is gone.
+test_register_codex_hook_command_runs_the_launcher() {
     echo ""
-    echo "TEST: codex-session-start.sh launcher (same behavior as the registered snippet)"
-    local launcher="$REPO_ROOT/.claude/hooks/codex-session-start.sh"
+    echo "TEST: registered Codex command runs the per-user launcher"
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
-    local d="$TEST_DIR/codex-launcher"
-    local out_old out_new rc_old rc_new snippet
+    local d="$TEST_DIR/codexhook-command" cmd out rc
     rm -rf "$d"
-    mkdir -p "$d/home" "$d/repo/.claude/hooks" "$d/repo/sub/dir" \
-        "$d/parent/child/.claude/hooks" "$d/parent/plain" "$d/empty"
-    git -C "$d/repo" init -q
-    printf '#!/usr/bin/env bash\necho "root-hook args=[$*]"\n' > "$d/repo/.claude/hooks/fleet-memory.sh"
-    printf '#!/usr/bin/env bash\n# supports --workspace\necho "child-hook args=[$*]"\n' > "$d/parent/child/.claude/hooks/fleet-memory.sh"
-
-    CODEX_HOME="$d/home" "$script" >/dev/null 2>&1 || true
-    snippet=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/home/hooks.json")
-
-    if [[ -x "$launcher" ]]; then
-        pass "launcher: codex-session-start.sh is executable"
-    else
-        fail "launcher: codex-session-start.sh is not executable"
-    fi
-
-    local where label
-    for where in repo/sub/dir parent empty; do
-        rc_old=0
-        out_old=$(cd "$d/$where" && GIT_CEILING_DIRECTORIES="$d" bash -c "$snippet" 2>&1) || rc_old=$?
-        rc_new=0
-        out_new=$(cd "$d/$where" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1) || rc_new=$?
-        label="$where"
-        if [[ "$out_old" == "$out_new" && $rc_old -eq $rc_new && $rc_new -eq 0 ]]; then
-            pass "launcher: matches the registered snippet from $label (output [$out_new])"
-        else
-            fail "launcher: differs from the registered snippet from $label — old [$out_old] rc=$rc_old, new [$out_new] rc=$rc_new"
-        fi
-    done
-    out_new=$(cd "$d/repo/sub/dir" && bash "$launcher" 2>&1)
-    [[ "$out_new" == "root-hook args=[]" ]] \
-        && pass "launcher: a git root's own hook runs with no arguments" \
-        || fail "launcher: git root hook branch wrong: $out_new"
-    out_new=$(cd "$d/parent" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1)
-    [[ "$out_new" == "child-hook args=[--workspace $d/parent]" ]] \
-        && pass "launcher: a parent dir runs the workspace-capable child hook with --workspace" \
-        || fail "launcher: workspace branch wrong: $out_new"
-    out_new=$(cd "$d/empty" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1)
-    [[ -z "$out_new" ]] \
-        && pass "launcher: with no hook anywhere it exits silently" \
-        || fail "launcher: expected silence, got: $out_new"
+    mkdir -p "$d/codex" "$d/xdg/fleet-guidance" "$d/home/.local/share/fleet-guidance" "$d/cwd"
+    printf '#!/usr/bin/env bash\necho "xdg-launcher args=[$*]"\n' > "$d/xdg/fleet-guidance/codex-session-start.sh"
+    printf '#!/usr/bin/env bash\necho "home-launcher"\n' > "$d/home/.local/share/fleet-guidance/codex-session-start.sh"
+    XDG_DATA_HOME="$d/xdg" CODEX_HOME="$d/codex" "$script" >/dev/null 2>&1 || true
+    cmd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/codex/hooks.json")
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/home" XDG_DATA_HOME="$d/xdg" bash -c "$cmd" 2>&1)
+    [[ "$out" == "xdg-launcher args=[]" ]] \
+        && pass "registered command: an absolute XDG_DATA_HOME launcher runs and its stdout passes through" \
+        || fail "registered command: XDG launcher branch wrong: $out"
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/home" XDG_DATA_HOME="relative/data" bash -c "$cmd" 2>&1)
+    [[ "$out" == "home-launcher" ]] \
+        && pass "registered command: a relative XDG_DATA_HOME is ignored for \$HOME/.local/share" \
+        || fail "registered command: relative XDG branch wrong: $out"
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/home" bash -c "$cmd" 2>&1)
+    [[ "$out" == "home-launcher" ]] \
+        && pass "registered command: with no XDG_DATA_HOME it uses \$HOME/.local/share" \
+        || fail "registered command: HOME branch wrong: $out"
+    rc=0
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" bash -c "$cmd" 2>&1) || rc=$?
+    [[ $rc -eq 0 && -z "$out" ]] \
+        && pass "registered command: with the launcher gone it exits 0 silently" \
+        || fail "registered command: expected silence, rc=$rc: $out"
 }
 
 # base.md opens with a repo-file header ("# AGENTS.md" plus "Edit only below
@@ -22029,30 +22081,22 @@ test_fleet_memory_repo_header() {
     assert_not_contains "$d/codex/AGENTS.md" "Edit only below" "repo header: Codex Cloud drops the repo-only notice"
 }
 
-# Run the actual command the registration script wrote, so a stale hook
-# definition cannot hide behind tests that invoke fleet-memory.sh directly.
+# Run the workspace command that drove fleet-memory.sh --workspace before the
+# registration moved to the launcher (ADR 0043), so the mode keeps its tests.
 # Fixture repos are fresh git init repositories with no remote and fixed commit
 # dates; their payload stamps do not depend on the machine's clock.
 test_fleet_memory_workspace() {
     echo ""
-    echo "TEST: registered Codex hook (multi-repo workspace)"
+    echo "TEST: fleet-memory.sh --workspace command (multi-repo parent)"
     local d="$TEST_DIR/fleet-workspace"
     local parent="$d/parent" empty="$d/empty" registered_command out rc
     local repo hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
     mkdir -p "$parent/alpha/.claude/hooks" "$parent/beta/.claude/hooks" \
         "$empty" "$d/register-home"
-    rc=0
-    out=$(CODEX_HOME="$d/register-home" "$REPO_ROOT/scripts/register-codex-hook.sh" 2>&1) || rc=$?
-    if [[ $rc -ne 0 ]]; then
-        fail "fleet workspace: registration for command behavior exit $rc: $out"
-        return
-    fi
-    registered_command=$(python3 - "$d/register-home/hooks.json" <<'PY'
-import json, sys
-doc = json.load(open(sys.argv[1], encoding="utf-8"))
-print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
-PY
-)
+    # ADR 0043: the registered Codex command no longer runs a repo's hook, but
+    # fleet-memory.sh keeps its --workspace mode, so the command that used to
+    # drive it is spelled out here.
+    registered_command='r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
     for repo in alpha beta; do
         git init -q "$parent/$repo"
         git -C "$parent/$repo" config --local user.name 'Fleet fixture'
@@ -23247,15 +23291,18 @@ test_fleet_memory_owner_gate() {
     gate_run "$bundle/fleet-memory.sh" --
     gate_expect_noop "plugin style with neither signal"
 
-    # i. The Codex user-level registration command and the Windows launcher,
-    #    run from inside a git repo that carries the synced hook and payload.
+    # i. The Codex user-level registration command, which runs the per-user
+    #    launcher (ADR 0043). The launcher stands in for adam-agentskills' real
+    #    one: it runs the hook and payload of a git repo, as the plugin's hook
+    #    does with its own bundled copy, so the gate is what is under test.
     local regdir="$d/reg" cmd
-    mkdir -p "$regdir/codex"
-    CODEX_HOME="$regdir/codex" HOME="$regdir" XDG_CONFIG_HOME="$regdir/xdg" \
+    mkdir -p "$regdir/codex" "$regdir/.local/share/fleet-guidance"
+    : > "$regdir/.local/share/fleet-guidance/codex-session-start.sh"
+    CODEX_HOME="$regdir/codex" HOME="$regdir" XDG_CONFIG_HOME="$regdir/xdg" XDG_DATA_HOME="" \
         bash "$REPO_ROOT/scripts/register-codex-hook.sh" "$regdir/codex/hooks.json" > /dev/null 2>&1
     cmd="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' \
         "$regdir/codex/hooks.json")"
-    if [[ "$cmd" == "bash -c '"*"fleet-memory.sh"* ]]; then
+    if [[ "$cmd" == "bash -c '"*"fleet-guidance/codex-session-start.sh"* ]]; then
         pass "owner gate: the registered Codex command was read from hooks.json"
     else
         fail "owner gate: no usable registered command: '$cmd'"
@@ -23265,12 +23312,18 @@ test_fleet_memory_owner_gate() {
     git init -q "$repo" 2>/dev/null
     cp "$hook" "$repo/.claude/hooks/fleet-memory.sh"
     cp "$bundle/fleet-guidance.md" "$repo/.claude/hooks/fleet-guidance.md"
-    for via in command launcher; do
-        local -a runner
-        if [[ "$via" == command ]]; then runner=(bash -c "$cmd")
-        else runner=(bash "$REPO_ROOT/.claude/hooks/codex-session-start.sh"); fi
+    # The stand-in launcher goes in the fresh home before the run; it is part
+    # of the manifest the no-marker leg compares, so it is written first.
+    gate_launcher() {
+        mkdir -p "$h/.local/share/fleet-guidance"
+        printf '#!/usr/bin/env bash\ncd "%s" && exec bash .claude/hooks/fleet-memory.sh\n' "$repo" \
+            > "$h/.local/share/fleet-guidance/codex-session-start.sh"
+    }
+    for via in command; do
+        local -a runner=(bash -c "$cmd")
         # With the marker: the block reaches $CODEX_HOME/AGENTS.md.
         gate_new
+        gate_launcher
         mkdir -p "$h/.codex" "$h/.config/fleet-guidance"; : > "$h/.config/fleet-guidance/owner"
         rc=0
         ( cd "$repo" && env -i PATH="$PATH" HOME="$h" TMPDIR="$d/tmp" CLAUDE_CONFIG_DIR="$h/.claude" \
@@ -23283,6 +23336,7 @@ test_fleet_memory_owner_gate() {
         fi
         # Without it: silent, and nothing written.
         gate_new
+        gate_launcher
         mkdir -p "$h/.codex"
         snap
         rc=0
@@ -27443,7 +27497,7 @@ GROUP_codex=(
     test_register_codex_hook
     test_register_codex_hook_workspace_upgrade
     test_register_codex_hook_windows
-    test_codex_session_start_launcher
+    test_register_codex_hook_command_runs_the_launcher
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness
