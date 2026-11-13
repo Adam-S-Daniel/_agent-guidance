@@ -19274,6 +19274,111 @@ GHSTUB
         "sweep (control): an empty listing did not become one nameless PR"
 }
 
+# ── Test: the sweep step has repository context without a checkout ────────
+#
+# The job has no checkout (see the workflow header), so on the real runner the
+# step's cwd is not a git repository. gh then needs GH_REPO (or --repo) for
+# every `gh pr ...` call and otherwise runs git to find a repository, failing
+# with "failed to run git: fatal: not a git repository". Every fleet repo's
+# scheduled sweep failed that way on 2026-11-13. The tests above run the step
+# from inside this repo's checkout with a stub gh that needs no context, which
+# is why they never saw it. This one models the runner: the step's own `env:`
+# from the YAML, a cwd that is not a git repository, and a gh stub that
+# refuses like the real one.
+test_dependabot_sweep_repo_context() {
+    echo ""
+    echo "=== Test: dependabot-auto-merge.yml (the sweep has repo context with no checkout) ==="
+
+    local wf="$REPO_ROOT/.github/workflows/dependabot-auto-merge.yml"
+    local body="$TEST_DIR/repoctx-step.sh" envfile="$TEST_DIR/repoctx-env.txt"
+
+    if ! workflow_run_body "$wf" 'app/dependabot' > "$body" 2>"$TEST_DIR/repoctx-extract.err"; then
+        fail "sweep repo context: could not extract the sweep step — $(cat "$TEST_DIR/repoctx-extract.err")"
+        return
+    fi
+
+    # The step's env as the runner would export it: NAME=value lines, with the
+    # three expressions this workflow uses replaced by fixed fakes.
+    if ! node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const subs = {
+  "github.repository": "example-owner/example-repo",
+  "secrets.GITHUB_TOKEN": "dummy-value",
+  "github.workflow": "Dependabot auto-merge",
+};
+for (const spec of Object.values((doc && doc.jobs) || {})) {
+  for (const step of (spec && spec.steps) || []) {
+    if (typeof step.run !== "string" || !step.run.includes("app/dependabot")) continue;
+    for (const [k, v] of Object.entries(step.env || {})) {
+      const val = String(v).replace(/\$\{\{\s*([\w.]+)\s*\}\}/g, (m, e) => {
+        if (!(e in subs)) { console.error("unmodeled expression: " + e); process.exit(2); }
+        return subs[e];
+      });
+      process.stdout.write(k + "=" + val + "\0");
+    }
+    process.exit(0);
+  }
+}
+process.exit(1);
+' "$REPO_ROOT" "$wf" > "$envfile" 2>"$TEST_DIR/repoctx-env.err"; then
+        fail "sweep repo context: could not read the sweep step's env — $(cat "$TEST_DIR/repoctx-env.err")"
+        return
+    fi
+
+    # gh as the real one behaves with no git repository around it.
+    mkdir -p "$TEST_DIR/bin-repoctx"
+    cat > "$TEST_DIR/bin-repoctx/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" ]]; then
+    has_repo=0
+    [[ -n "${GH_REPO:-}" ]] && has_repo=1
+    for a in "$@"; do
+        [[ "$a" == "--repo" || "$a" == "-R" ]] && has_repo=1
+    done
+    if [[ $has_repo -eq 0 ]]; then
+        echo "failed to run git: fatal: not a git repository (or any of the parent directories): .git" >&2
+        exit 1
+    fi
+    if [[ "${2:-}" == "list" ]]; then
+        exit 0
+    fi
+fi
+echo "mock gh: unexpected call: $*" >&2
+exit 1
+GHSTUB
+    chmod +x "$TEST_DIR/bin-repoctx/gh"
+
+    local nogit; nogit="$(mktemp -d)"
+    local -a envargs=()
+    local item
+    while IFS= read -r -d '' item; do envargs+=("$item"); done < "$envfile"
+
+    # Negative control: the same env minus GH_REPO must be refused by the stub,
+    # so the test can fail.
+    local ctl="$TEST_DIR/repoctx-control.txt" ctl_code=0
+    local -a noenv=()
+    for item in "${envargs[@]}"; do [[ "$item" == GH_REPO=* ]] || noenv+=("$item"); done
+    (cd "$nogit" && env -u GH_REPO "${noenv[@]}" PATH="$TEST_DIR/bin-repoctx:$PATH" bash "$body") > "$ctl" 2>&1 || ctl_code=$?
+    if [[ $ctl_code -ne 0 ]] && grep -qF "not a git repository" "$ctl"; then
+        pass "sweep repo context (control): without GH_REPO and without a checkout gh refuses"
+    else
+        fail "sweep repo context (control): the stub did not refuse without GH_REPO (exit $ctl_code): $(cat "$ctl")"
+    fi
+
+    local out="$TEST_DIR/repoctx-out.txt" code=0
+    (cd "$nogit" && env -u GH_REPO "${envargs[@]}" PATH="$TEST_DIR/bin-repoctx:$PATH" bash "$body") > "$out" 2>&1 || code=$?
+    if [[ $code -eq 0 ]]; then
+        pass "sweep repo context: the step exits 0 from a directory that is not a git repository"
+    else
+        fail "sweep repo context: the step exits 0 from a non-git directory (got $code): $(cat "$out")"
+    fi
+    assert_contains "$out" "No open Dependabot PRs" \
+        "sweep repo context: it reaches the empty-sweep branch with the env the workflow declares"
+    rm -rf "$nogit"
+}
+
 # ── Test: dependabot-auto-merge.yml no longer merges before CI reports ────
 #
 # cms-platform#437: `gh pr merge --auto` does not "no-op" when nothing is
@@ -26894,6 +26999,7 @@ GROUP_self_hosted=(
     test_yq_preflight
     test_shared_repos_yml_helpers_are_identical
     test_dependabot_sweep_list_failure
+    test_dependabot_sweep_repo_context
     test_dependabot_sweep_merge_gating
     test_dependabot_config_health
     test_impact_report
