@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-10-31), recording what [skills-evals#124](https://github.com/Adam-S-Daniel/skills-evals/issues/124) built. It extends [0002](0002-unconditional-rules-live-in-the-guidance-not-a-skill.md), which put rules in the guidance and left open how a rule earns its place there.
 
+**Current values:** the thresholds and removal rules in force are in skills-evals' generated [`docs/rules.md`](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/rules.md); numbers below are as decided at the time.
+
 ## Context
 
 A skill costs context only when it is invoked. A `##` section of `agents-md/base.md` is delivered into every session of every fleet repo, so each byte is paid for in every session whether or not the section matters to that task. [`agents-md/eval-coverage.yml`](../../agents-md/eval-coverage.yml) records each section's byte extent in its `bytes` column.
