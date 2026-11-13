@@ -32,6 +32,10 @@ hosted git-hooks step of
 2 and 3 of the Stop hook) or a nonempty `CLAUDE_CODE_REMOTE_SESSION_ID` (the
 Stop hook's `remote` field). Codex Cloud runs `fleet-memory.sh --codex-cloud`
 from its own setup script.
+Which hosted surfaces set one of those variables was checked on a
+real session only for Claude Code on the web (run as a claude.ai project
+thread); the rest are recorded as not tested in
+[the evidence](../evidence/2026-11-13-hosted-surface-owner-signal.md).
 
 ## Decision
 
