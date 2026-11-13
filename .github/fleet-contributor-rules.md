@@ -31,9 +31,6 @@ session.
   `test()` blocks exist, what sits inside what, a call's arguments) **parses
   a real AST, never a regex or line scan** — regex cannot see a template-literal
   variable. Use `acorn`/`acorn-walk` for JS, `yaml` for YAML; regex only for a lexical token.
-- Writing that goes out under Adam's name: invoke the
-  `adam-writing-style` skill.
-- Text to paste: give all of it, never edits.
 
 ## Security
 

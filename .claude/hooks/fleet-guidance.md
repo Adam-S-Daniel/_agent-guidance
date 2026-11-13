@@ -34,10 +34,6 @@ incident behind each rule: `docs/evidence/base-md-incidents.md`.
   `test()` blocks exist, what sits inside what, a call's arguments) **parses
   a real AST, never a regex or line scan** — regex cannot see a template-literal
   variable. Use `acorn`/`acorn-walk` for JS, `yaml` for YAML; regex only for a lexical token.
-- Writing that goes out under Adam's name: invoke the
-  `adam-writing-style` skill.
-- Text to paste: give all of it, never edits.
-
 ## Anything you name gets its link
 
 Any noun the reader might open gets its URL in the same sentence:
@@ -53,6 +49,12 @@ it), **what you cite as DONE**.
   it. A bare `repo#123` autolinks only inside that repo; elsewhere, full URL.
 - **No URL? Say so** — "No link — local task `abc123`, output at `/tmp/…`".
 - **Stop naming it once it stops blocking** — cancel the check-in on a merged PR or finished run, and say so.
+
+## Writing for Adam
+
+- Writing that goes out under Adam's name: invoke the
+  `adam-writing-style` skill.
+- Text to paste: give all of it, never edits.
 
 ## Finding your unknowns
 

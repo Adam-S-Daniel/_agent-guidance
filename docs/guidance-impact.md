@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-16 — writing-for-adam — create
+- Motivation: ADR 0043 step 1: "Working in these repos" ships to every contributor in `.github/fleet-contributor-rules.md`, and two of its bullets are for the owner's agents only
+- Change: the `adam-writing-style` and "text to paste" bullets move verbatim into this new owner section (PR #NNN)
+- Eval: none — no fixture yet
+- Outcome: pending
+
+## 2026-11-16 — working-in-these-repos — edit
+- Motivation: ADR 0043 step 1: this section is contributor audience and ships to every fleet repo; two bullets were owner-only
+- Change: the `adam-writing-style` and "text to paste" bullets move to the new owner section writing-for-adam; no other text changes (PR #NNN)
+- Eval: fixture evals/guidance/working-in-these-repos/ was not re-run; the change removes two owner bullets the fixture does not test; `node scripts/check-guidance-coverage.js --check-bytes` exit 0
+- Outcome: pending
+
 ## 2026-11-08 — subagent-delegation — edit
 - Motivation: the 2026-11-08 rewrite (PR #472) dropped the old "Don't write code in the orchestrating session" mandate; a thread started right after it built three fixtures in its own Opus context with no subagent (session transcript, 19:50-20:33 UTC)
 - Change: "Do judgment and ~10-call tasks yourself (...); delegate bigger implementation" restores the mandate; the reported-subagent bullet drops its 999/0 example to stay inside the full-build byte cap

@@ -47,7 +47,7 @@
   audience: contributor
   status: covered
   fixture: evals/guidance/working-in-these-repos/
-  bytes: 1422
+  bytes: 1291
 
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
@@ -56,6 +56,13 @@
   status: covered
   fixture: evals/guidance/anything-you-name-gets-its-link/
   bytes: 886
+
+- id: writing-for-adam
+  heading: Writing for Adam
+  file: agents-md/base.md
+  audience: owner
+  status: gap
+  bytes: 152
 
 - id: finding-your-unknowns
   heading: Finding your unknowns
@@ -83,8 +90,8 @@
     in advance; the risk is the fact going stale, checked for freshness instead.
     Rechecked 2026-11-09, holds: fails criteria 3 and 5 (the section's body is
     unchanged since this row was written and is still a clone-path fact, so a
-    with arm passes by reading it). Its harder-fixture request, skills-evals#876,
-    is unbuilt.
+    with arm passes by reading it). Its harder-fixture request,
+    skills-evals#876, is unbuilt.
   since: 2026-11-03
   bytes: 149
 
@@ -268,11 +275,11 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 447
 
@@ -284,11 +291,11 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 278
 
@@ -300,11 +307,11 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 313
 
@@ -316,11 +323,11 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 249
 
@@ -332,11 +339,11 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 786
 
@@ -348,11 +355,11 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 305
 
@@ -364,10 +371,10 @@
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
     repos.yml default_sections is [] and no repo opts in, so it reaches no real
-    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds:
-    fails criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections:
-    none" for all 21 fleet repos under both owners, and repos.yml
-    default_sections is still []). The weekly plan holds its scheduled
-    fixtures as out of scope, so they fire no runs.
+    session. Re-cover it when a repo opts in. Rechecked 2026-11-09, holds: fails
+    criterion 1 (the sync run of 2026-11-09 19:01 UTC logged "Sections: none"
+    for all 21 fleet repos under both owners, and repos.yml default_sections is
+    still []). The weekly plan holds its scheduled fixtures as out of scope, so
+    they fire no runs.
   since: 2026-11-03
   bytes: 526
