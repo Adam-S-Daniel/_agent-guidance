@@ -178,16 +178,24 @@ commit or comment list skips the PR and is noted in the summary.
 1. **Rebase.** If it is behind its base, every commit is a verified
    `dependabot[bot]` commit, and no comment contains
    `<!-- fleet-worker: behind at <head sha> -->` for the current head sha,
-   post a comment whose first line is exactly `@dependabot rebase`, then a
-   blank line, that marker, a blank line, and the standard agent marker
-   footer.
+   post a comment whose first line is exactly `@dependabot rebase` (the
+   command alone on that line), then a blank line, that marker, a blank
+   line, and the standard agent marker footer.
 2. **Recreate.** If it carries a commit that is not a verified
    `dependabot[bot]` commit (for example a `github-actions[bot]` merge commit
    from the old sweep's `update-branch`) and no comment contains
    `<!-- fleet-worker: recreate at <head sha> -->`, post the same shape with
    `@dependabot recreate` as the first line and that marker.
 
-The marker names the head sha, so a new head gets a new request. The sweep
+Only a comment whose `author_association` is `OWNER`, `MEMBER` or
+`COLLABORATOR` counts as an existing marker, for both the rebase and the
+recreate marker: anyone can paste a public head sha and the marker into a
+comment, and Dependabot obeys only users with push access, so a stranger's
+comment must never stop the real request.
+
+The marker names the head sha, so a new head gets a new request. On a later
+run, if Dependabot has neither reacted nor rebased, do not post again for that
+head; the sweep's 24 hour red run is the alarm. The sweep
 reads the rebase marker to tell how long a PR has waited: a request more than
 24 hours old on a PR still behind at the same head turns the sweep's run red.
 

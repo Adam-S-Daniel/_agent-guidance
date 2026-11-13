@@ -28,7 +28,8 @@
 # the commits, not that CI ran on them: CI coverage rests on the outside-check
 # floor above and on each repo's ruleset. A PR with any other commit (a person's,
 # an unverified one, or a github-actions[bot] merge commit pushed by an older
-# version of this sweep) is BLOCKED: the run goes red and names the remedy,
+# version of this sweep) is BLOCKED whatever its check state: the run goes
+# red and names the remedy,
 # a `@dependabot recreate` comment, which the fleet worker posts. The commit
 # list is fail closed: an API error, an empty list or 250+ commits (the
 # endpoint's cap) skips the PR.
@@ -42,10 +43,14 @@
 # with Dependabot-only commits is skipped and counted WAITING (a notice names
 # it), and the fleet worker (docs/routines/fleet-worker.md) asks Dependabot to
 # rebase it with a comment carrying the marker
-# `<!-- fleet-worker: behind at <head sha> -->`. If that request for THIS head
+# `<!-- fleet-worker: behind at <head sha> -->`. Only a comment by an OWNER,
+# MEMBER or COLLABORATOR whose first line is exactly `@dependabot rebase`
+# counts: anyone can post a comment, and Dependabot obeys only users with
+# push access. If that request for THIS head
 # is more than 24 hours old and the PR is still behind at the same head, the
 # PR is BLOCKED (the run goes red): Dependabot has not rebased it, and a person
-# should check the PR. An unreadable comment list is FAILED (fail closed), and
+# should check the PR. This applies to any behind PR with Dependabot-only
+# commits, a workflow-file bump included. An unreadable comment list is FAILED (fail closed), and
 # an unmeasurable behind-ness skips the PR.
 #
 # Why no job arms native auto-merge (cms-platform#437): with
@@ -255,11 +260,12 @@ jobs:
             marker="<!-- fleet-worker: behind at ${head_sha} -->"
             echo "::notice::#${num} — $1 (behind_by=${behind_by}, mergeStateStatus=${merge_state}); not merging or touching it; the fleet worker asks Dependabot to rebase it"
             if ! comments_raw=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${num}/comments?per_page=100" \
-              --jq '.[] | {l: (.user.login // ""), t: (.user.type // ""), b: (.body // ""), c: (.created_at // "")} | @json' 2>/dev/null) \
+              --jq '.[] | {l: (.user.login // ""), t: (.user.type // ""), a: (.author_association // ""), b: (.body // ""), c: (.created_at // "")} | @json' 2>/dev/null) \
               || ! requested_at=$(jq -rs --arg m "$marker" '
                 [.[]
                   | select(.t != "Bot" and (.l | endswith("[bot]") | not))
-                  | select(.b | startswith("@dependabot rebase"))
+                  | select(.a == "OWNER" or .a == "MEMBER" or .a == "COLLABORATOR")
+                  | select((.b | split("\n") | .[0] | rtrimstr("\r")) == "@dependabot rebase")
                   | select(.b | contains($m))
                   | .c | fromdateiso8601]
                 | min // empty' <<<"$comments_raw" 2>/dev/null); then
@@ -297,6 +303,46 @@ jobs:
             base=$(jq -r '.baseRefName' <<<"$pr_json")
             head_sha=$(jq -r '.headRefOid' <<<"$pr_json")
             expected_files=$(jq -r '.changedFiles // empty' <<<"$pr_json")
+
+            # Commit provenance (see the header). It runs FIRST, before the
+            # mergeable and checks gates: a stranded PR carrying an older
+            # sweep's github-actions[bot] merge commit has an EMPTY check
+            # rollup (GITHUB_TOKEN pushes start no CI), and behind a checks
+            # gate it would be skipped as "not green yet" forever. Fail
+            # closed, captured through command substitutions, never
+            # `< <(...)`.
+            if ! commits_raw=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${num}/commits?per_page=100" \
+              --jq '.[] | {sha: .sha, l: (.author.login // ""), v: (.commit.verification.verified == true)} | @json' 2>/dev/null); then
+              echo "::warning::skip #${num} — could not list its commits through the API; not merging a PR whose authorship cannot be read"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            if ! commit_count=$(jq -rs 'length' <<<"$commits_raw" 2>/dev/null) \
+              || [ -z "$commit_count" ] || [ -n "${commit_count//[0-9]/}" ] \
+              || [ "$commit_count" -eq 0 ] || [ "$commit_count" -ge 250 ]; then
+              echo "::warning::skip #${num} — its commit list is empty, unreadable or at the API's 250-commit cap (${commit_count:-?}); leaving for human review"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            # The first commit that is not Dependabot's verified own (a
+            # github-actions[bot] merge commit from an older sweep's
+            # update-branch is not accepted). Only sanitized characters of the
+            # login are ever printed.
+            if ! bad_commit=$(jq -rs '
+              [.[] | select((.l == "dependabot[bot]" and .v == true) | not)]
+              | first // empty
+              | "\(.sha | tostring | gsub("[^0-9a-f]"; "") | .[0:7]) \(.l | gsub("[^A-Za-z0-9_.\\[\\]-]"; ""))"
+            ' <<<"$commits_raw" 2>/dev/null); then
+              echo "::warning::skip #${num} — could not check its commits; leaving for human review"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            if [ -n "$bad_commit" ]; then
+              echo "::error::blocked #${num} — commit ${bad_commit%% *} (author '${bad_commit#* }') is not a verified Dependabot commit, so it is not merged. Needs a human: comment \`@dependabot recreate\` on the PR (the fleet worker does this); the next sweep judges the recreated branch."
+              BLOCKED_PRS=$((BLOCKED_PRS + 1))
+              HELD_PRS=$((HELD_PRS + 1))
+              continue
+            fi
 
             if [ "$mergeable" != "MERGEABLE" ]; then
               unknown_note=""
@@ -406,41 +452,6 @@ jobs:
               continue
             fi
 
-            # Commit provenance (see the header). Fail closed, captured through
-            # command substitutions, never `< <(...)`.
-            if ! commits_raw=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${num}/commits?per_page=100" \
-              --jq '.[] | {sha: .sha, l: (.author.login // ""), v: (.commit.verification.verified == true), np: (.parents | length)} | @json' 2>/dev/null); then
-              echo "::warning::skip #${num} — could not list its commits through the API; not merging a PR whose authorship cannot be read"
-              SKIPPED=$((SKIPPED + 1))
-              continue
-            fi
-            if ! commit_count=$(jq -rs 'length' <<<"$commits_raw" 2>/dev/null) \
-              || [ -z "$commit_count" ] || [ -n "${commit_count//[0-9]/}" ] \
-              || [ "$commit_count" -eq 0 ] || [ "$commit_count" -ge 250 ]; then
-              echo "::warning::skip #${num} — its commit list is empty, unreadable or at the API's 250-commit cap (${commit_count:-?}); leaving for human review"
-              SKIPPED=$((SKIPPED + 1))
-              continue
-            fi
-            # The first commit that is not Dependabot's verified own (a
-            # github-actions[bot] merge commit from an older sweep's
-            # update-branch is not accepted). Only sanitized characters of the
-            # login are ever printed.
-            if ! bad_commit=$(jq -rs '
-              [.[] | select((.l == "dependabot[bot]" and .v == true) | not)]
-              | first // empty
-              | "\(.sha | tostring | gsub("[^0-9a-f]"; "") | .[0:7]) \(.l | gsub("[^A-Za-z0-9_.\\[\\]-]"; ""))"
-            ' <<<"$commits_raw" 2>/dev/null); then
-              echo "::warning::skip #${num} — could not check its commits; leaving for human review"
-              SKIPPED=$((SKIPPED + 1))
-              continue
-            fi
-            if [ -n "$bad_commit" ]; then
-              echo "::error::blocked #${num} — commit ${bad_commit%% *} (author '${bad_commit#* }') is not a verified Dependabot commit, so it is not merged. Needs a human: comment \`@dependabot recreate\` on the PR (the fleet worker does this); the next sweep judges the recreated branch."
-              BLOCKED_PRS=$((BLOCKED_PRS + 1))
-              HELD_PRS=$((HELD_PRS + 1))
-              continue
-            fi
-
             # Workflow-file content: of the .yml/.yaml entries directly under
             # .github/workflows/, list those that are NOT a modified file whose
             # added/removed lines are all `uses:` lines (the API patch has only
@@ -505,18 +516,12 @@ jobs:
             # anyway produced a daily red naming no cause and no remedy. Skip
             # the doomed attempt and print the diagnosis instead.
             #
-            # BEHIND is deliberately NOT caught here: a stale branch is a
-            # state this sweep can fix, further down, by asking Dependabot to
-            # rebase it.
-            #
-            # mergeStateStatus is answered for the TOKEN asking, and
-            # GITHUB_TOKEN can never hold `workflows`. A workflow-file PR that
-            # has fallen behind its base therefore reads BLOCKED to this
-            # sweep even when the ruleset is satisfied: the merge commit would
-            # carry workflow content Dependabot never pushed, which GitHub
-            # refuses to write for this identity (#296 went red on four sweeps
-            # naming causes that did not exist). A base-policy probe answers
-            # the wrong question here, so it is not asked.
+            # A PR that is BEHIND its base is deliberately handled first,
+            # below: a stale branch waits for Dependabot's rebase. That
+            # includes a workflow-file PR, which reads BLOCKED to this sweep
+            # because GITHUB_TOKEN can never hold `workflows` (#296 went red
+            # on four sweeps naming causes that did not exist); the policy
+            # probe answers the wrong question for it, so it is not asked.
             #
             # Behind-ness is measured through the compare API because a base
             # that does not require an up-to-date head never says BEHIND, only
@@ -529,16 +534,19 @@ jobs:
               continue
             fi
             behind_by=$behind_raw
-            touches_workflows=false
-            for f in "${CHANGED[@]}"; do
-              case "$f" in
-                .github/workflows/*) touches_workflows=true ;;
-              esac
-            done
 
-            if [ "$merge_state" = "BLOCKED" ] && [ "$touches_workflows" = "true" ] && [ "$behind_by" -gt 0 ]; then
-              echo "::error::blocked #${num} — it changes .github/workflows/ and is ${behind_by} commit(s) behind ${base}, so GITHUB_TOKEN (which cannot hold the \`workflows\` permission) cannot write the merge commit; GitHub reports that as mergeStateStatus=BLOCKED. Not attempting it. Needs a human: comment \`@dependabot rebase\` on the PR; the next sweep merges it once its checks are green."
-              BLOCKED_PRS=$((BLOCKED_PRS + 1))
+            # mergeStateStatus says BEHIND only when the base branch REQUIRES
+            # an up-to-date head. A base that does not reads a stale PR as
+            # CLEAN, so behind_by is consulted too, and decides: a PR behind
+            # its base waits for Dependabot's rebase WITHOUT a merge attempt,
+            # since merging it would land a combination no check ran on. This
+            # comes before the BLOCKED arm below and applies whatever files the
+            # PR changes: a behind workflow-file PR reads BLOCKED to
+            # GITHUB_TOKEN (it cannot hold `workflows`) for the same reason it
+            # needs a rebase, and the fleet worker asks Dependabot for one, so
+            # it gets the same WAITING and 24 hour grace as any other.
+            if [ "$behind_by" -gt 0 ]; then
+              wait_for_rebase "it is ${behind_by} commit(s) behind ${base}, so merging would land a combination its checks never ran on"
               continue
             fi
 
@@ -546,16 +554,6 @@ jobs:
               diagnose_blocked "$base"
               echo "::error::blocked #${num} — mergeable with green checks, but GitHub's base branch policy refuses the merge (mergeStateStatus=BLOCKED); not attempting it. Cause (base ${base}): ${BLOCKED_CAUSE}"
               BLOCKED_PRS=$((BLOCKED_PRS + 1))
-              continue
-            fi
-
-            # mergeStateStatus says BEHIND only when the base branch REQUIRES
-            # an up-to-date head. A base that does not reads a stale PR as
-            # CLEAN, so behind_by is consulted too, and decides: a PR behind
-            # its base gets a rebase request WITHOUT a merge attempt, since
-            # merging it would land a combination no check ran on.
-            if [ "$behind_by" -gt 0 ]; then
-              wait_for_rebase "it is ${behind_by} commit(s) behind ${base}, so merging would land a combination its checks never ran on"
               continue
             fi
 
@@ -625,9 +623,7 @@ jobs:
             elif [ -n "$BLOCKED_CAUSE" ]; then
               echo "::error::$((BLOCKED_PRS - HELD_PRS)) Dependabot PR(s) blocked by the base branch policy — ${BLOCKED_CAUSE}"
             else
-              # Only the workflow-file arm blocked, which never probes the
-              # policy, so there is no cause to repeat here.
-              echo "::error::$((BLOCKED_PRS - HELD_PRS)) Dependabot PR(s) blocked — stale workflow-file PR(s) GITHUB_TOKEN cannot merge; see the per-PR remedy above."
+              echo "::error::$((BLOCKED_PRS - HELD_PRS)) Dependabot PR(s) blocked by the base branch policy — see the per-PR causes above."
             fi
           fi
           if [ "$FAILED" -gt 0 ]; then

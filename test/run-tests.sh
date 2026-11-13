@@ -19791,7 +19791,7 @@ GHSTUB
     assert_not_contains "$fx_g/calls.log" "update-branch" \
         "sweep gating (g): never pushes to the Dependabot branch"
     assert_contains "$out_g" "waiting=1" \
-        "sweep gating (g): summary counts it as updated"
+        "sweep gating (g): summary counts it as waiting"
 
     # (h) #296 on 2026-10-20: the merge is refused and mergeStateStatus is
     #     CLEAN (main does not require an up-to-date head), but the head is
@@ -19817,7 +19817,7 @@ GHSTUB
     assert_not_contains "$out_h" "is not behind" \
         "sweep gating (h): does not claim the PR is not behind"
     assert_contains "$out_h" "waiting=1" \
-        "sweep gating (h): summary counts it as updated"
+        "sweep gating (h): summary counts it as waiting"
 
     # (i) a PR behind its base with the owner's rebase request for THIS head
     #     (a non-bot comment: first line @dependabot rebase, then the marker):
@@ -19832,7 +19832,7 @@ GHSTUB
         printf '900\n' > "$fx_i/pr-numbers.txt"
         printf '2\n' > "$fx_i/behind-by"
         req_iso=$(iso_ago "$hrs")
-        printf '[{"user":{"login":"some-owner","type":"User"},"created_at":"%s","body":"@dependabot rebase\\n\\n<!-- fleet-worker: behind at %s -->\\n\\nfooter"}]\n' \
+        printf '[{"user":{"login":"some-owner","type":"User"},"author_association":"OWNER","created_at":"%s","body":"@dependabot rebase\\r\\n\\r\\n<!-- fleet-worker: behind at %s -->\\n\\nfooter"}]\n' \
             "$req_iso" "$HEAD_X" > "$fx_i/comments-900.json"
         write_pr "$fx_i/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
             '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
@@ -19856,7 +19856,7 @@ GHSTUB
     mkdir -p "$fx_i"
     printf '900\n' > "$fx_i/pr-numbers.txt"
     printf '2\n' > "$fx_i/behind-by"
-    printf '[{"user":{"login":"some-owner","type":"User"},"created_at":"2100-01-01T00:00:00Z","body":"@dependabot rebase\\n\\n<!-- fleet-worker: behind at %s -->"}]\n' "$HEAD_X" > "$fx_i/comments-900.json"
+    printf '[{"user":{"login":"some-owner","type":"User"},"author_association":"OWNER","created_at":"2100-01-01T00:00:00Z","body":"@dependabot rebase\\n\\n<!-- fleet-worker: behind at %s -->"}]\n' "$HEAD_X" > "$fx_i/comments-900.json"
     write_pr "$fx_i/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
         '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
     out_i="$TEST_DIR/auto-merge-gating-out-inoseam.txt"
@@ -20104,19 +20104,22 @@ GHSTUB
     assert_contains "$oc_out" "the fleet worker asks Dependabot to rebase it" "sweep gating (v): the notice says the fleet worker asks"
     # A request for ANOTHER head, a bot's comment or a comment without the
     # exact first line does not start the 24 h clock: still waiting at 100 h.
-    local C_USER_X="\"user\":{\"login\":\"some-owner\",\"type\":\"User\"}"
+    local C_USER_X="\"user\":{\"login\":\"some-owner\",\"type\":\"User\"},\"author_association\":\"OWNER\""
+    local C_STRANGER="\"user\":{\"login\":\"some-stranger\",\"type\":\"User\"},\"author_association\":\"NONE\""
     local C_OLD="$(iso_ago 100)"
     local v5 v5n=0
     for v5 in \
         "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebase\\n\\n<!-- fleet-worker: behind at $HEAD_Y -->\"}]" \
         "[{\"user\":{\"login\":\"github-actions[bot]\",\"type\":\"Bot\"},\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebase\\n\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]" \
-        "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"please @dependabot rebase\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]"; do
+        "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"please @dependabot rebase\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]" \
+        "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebased\\n\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]" \
+        "[{$C_STRANGER,\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebase\\n\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]"; do
         v5n=$((v5n + 1))
         oc_fx="$TEST_DIR/auto-merge-gating-case-v5$v5n"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
         printf '%s\n' "$v5" > "$oc_fx/comments-900.json"
         write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
         oc_rc=$(SWEEP_TEST=1 SWEEP_NOW_EPOCH=$NOW_EPOCH run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v5$v5n.txt")
-        assert_contains "$TEST_DIR/auto-merge-gating-out-v5$v5n.txt" "waiting=1" "sweep gating (v5.$v5n): a request for another head, by a bot or not starting with the command does not count"
+        assert_contains "$TEST_DIR/auto-merge-gating-out-v5$v5n.txt" "waiting=1" "sweep gating (v5.$v5n): a request for another head, by a bot, by a NONE-association author, or not exactly the command on the first line does not count"
     done
     # The comment list cannot be read: fail closed as FAILED (run goes red),
     # never merged, and not counted as waiting.
@@ -20135,6 +20138,27 @@ GHSTUB
     no_merge "(v2) a failed compare call (not assumed 0)"
     one_case v3 "" "" "oops"
     no_merge "(v3) a non-numeric behind_by"
+
+    # Provenance runs BEFORE the checks gate: a stranded PR with the old
+    # github-actions[bot] merge commit and an EMPTY rollup (GITHUB_TOKEN pushes
+    # start no CI) is BLOCKED, not skipped as "checks not green" forever.
+    one_case t8 "" "[$C_BOT,$C_MERGE]" "" "[]"
+    no_merge "(t8) a merge-commit PR with an empty check rollup"
+    assert_contains "$oc_out" "@dependabot recreate" "sweep gating (t8): the empty-rollup PR still gets the recreate remedy"
+    assert_contains "$oc_out" "blocked=1" "sweep gating (t8): counted as blocked"
+    if [[ "$oc_rc" -ne 0 ]]; then pass "sweep gating (t8): the run exits non-zero"; else fail "sweep gating (t8): the run exits non-zero — got 0"; fi
+
+    # A behind PR that changes a workflow file (a Dependabot actions bump),
+    # even when GitHub reads it BLOCKED to GITHUB_TOKEN, takes the same
+    # WAITING path and 24 h grace as any other: not red on the first night,
+    # and no "needs a human" text where the fleet worker does it.
+    oc_fx="$TEST_DIR/auto-merge-gating-case-wf"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "BLOCKED" "$cs_two"
+    oc_rc=$(run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-wf.txt")
+    no_merge "(wf) a behind workflow-file PR"
+    if [[ "$oc_rc" -eq 0 ]]; then pass "sweep gating (wf): a behind workflow-file PR waits and exits 0"; else fail "sweep gating (wf): a behind workflow-file PR waits and exits 0 — got $oc_rc: $(cat "$TEST_DIR/auto-merge-gating-out-wf.txt")"; fi
+    assert_contains "$TEST_DIR/auto-merge-gating-out-wf.txt" "waiting=1" "sweep gating (wf): counted as waiting"
+    assert_not_contains "$TEST_DIR/auto-merge-gating-out-wf.txt" "Needs a human" "sweep gating (wf): no needs-a-human text"
 
     # (w) a SKIPPED-only outside check does not satisfy the outside-CI floor.
     one_case w "" "" "" '[{"workflowName":"CI","name":"test","conclusion":"SKIPPED"}]'

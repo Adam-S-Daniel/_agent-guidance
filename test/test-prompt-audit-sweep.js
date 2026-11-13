@@ -367,7 +367,7 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   const update = prose(section(worker, '1. Bring it up to date when a required check never ran'));
   includes(update, ['`required_status_checks`', 'with **no** check run and **no** status at all', '`behind_by` above 0', 'with `expected_head_sha` set to the head you read', 'Skip Dependabot PRs:', 'do not resolve it here']);
   const dep = prose(section(worker, '1b. Ask Dependabot to rebase or recreate its own PR'));
-  includes(dep, ['never pushes to a Dependabot branch and never comments', '`<!-- fleet-worker: behind at <head sha> -->`', '`<!-- fleet-worker: recreate at <head sha> -->`', 'first line is exactly `@dependabot rebase`', '`@dependabot recreate` as the first line', 'Never push to, merge, approve or label a Dependabot PR', 'Dependabot rebase requests: <n>']);
+  includes(dep, ['never pushes to a Dependabot branch and never comments', '`<!-- fleet-worker: behind at <head sha> -->`', '`<!-- fleet-worker: recreate at <head sha> -->`', 'first line is exactly `@dependabot rebase`', '`@dependabot recreate` as the first line', '`OWNER`, `MEMBER` or `COLLABORATOR` counts', 'do not post again for that head', 'Never push to, merge, approve or label a Dependabot PR', 'Dependabot rebase requests: <n>']);
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
   const blocked = prose(section(worker, 'Tell the owner which issues are blocked'));
