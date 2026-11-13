@@ -4173,9 +4173,12 @@ test_drift_report_partial_read() {
         fail "partial read: the short read was silent -- no ::error:: annotation"
     fi
 
-    # Restore a clean report for any test that runs after this one.
+    # Restore a clean report for any test that runs after this one. Its output
+    # goes under $TEST_DIR: the default is the repo root, where the report and
+    # its sidecars would be left for `git add -A` to commit (#547).
     (
         GITHUB_REPOSITORY_OWNER=testorg \
+        DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-restore.md" \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
@@ -27055,16 +27058,40 @@ GROUP_bootstrap=(
 # reset — so they always saw pristine testorg bares, which is what a fresh
 # group gives them.
 GROUP_drift_testorg=(
+    test_drift_tree_baseline
     test_drift_report_skills_classification
     test_drift_report_registry_orphan
     test_drift_report_registry_orphan_multi_owner
     test_drift_report_registry_orphan_owner_failure
     test_drift_report_partial_read
+    test_drift_tree_clean
 )
 
 # The sync lane direct-pushes to main; this lane observes the pre-sync
 # baseline, which a fresh group's bares already are (test_sync_multi_owner
 # resets them itself).
+# The drift_testorg group must leave the working tree as it found it (#547): a test that
+# ran scripts/drift-report.sh without DRIFT_REPORT_OUTPUT wrote the report and
+# its sidecars into the repo root, and a worker PR committed one. These two
+# bracket the group. `--ignored` is part of the snapshot because a gitignored
+# leftover is as wrong as an untracked one; it just does not show in a plain
+# `git status --porcelain`.
+test_drift_tree_baseline() {
+    DRIFT_TREE_BASELINE="$(git -C "$REPO_ROOT" status --porcelain --ignored 2>/dev/null | LC_ALL=C sort)"
+}
+
+test_drift_tree_clean() {
+    echo ""
+    echo "TEST: the drift_testorg group leaves the working tree unchanged"
+    local after
+    after="$(git -C "$REPO_ROOT" status --porcelain --ignored 2>/dev/null | LC_ALL=C sort)"
+    if [[ "$after" == "$DRIFT_TREE_BASELINE" ]]; then
+        pass "drift_testorg group: git status --porcelain --ignored is unchanged"
+    else
+        fail "drift_testorg group: left files in the working tree: $(diff <(printf '%s\n' "$DRIFT_TREE_BASELINE") <(printf '%s\n' "$after") | grep '^>' | tr '\n' ' ')"
+    fi
+}
+
 GROUP_drift=(
     test_drift_report
     test_sync_multi_owner
