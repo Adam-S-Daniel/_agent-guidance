@@ -637,6 +637,33 @@ class ListingTests(HookTestCase):
     def test_a_listing_without_text_content_omits_the_field(self):
         self.assertEqual(self.listing_for(skill_listing(None)), "absent")
 
+    def install(self, *names, registry="https://github.com/Adam-S-Daniel/adam-agentskills.git"):
+        record = self.home / ".claude" / "skills" / ".skills-bootstrap-installed.json"
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps({"installed": [
+            {"name": n, "registry": registry, "bundle": "b", "digest": "d", "ref": "0" * 40}
+            for n in names]}), encoding="utf-8")
+
+    def test_a_cut_past_every_installed_registry_skill_is_full(self):
+        # The cloud case: account skills at the end lose their descriptions.
+        self.install("one", "two")
+        self.assertEqual(self.listing_for(skill_listing(
+            "- one: Does one thing\n- two: Does another\n- acct:docs\n- acct:pdf")), "full")
+
+    def test_an_installed_registry_skill_by_name_alone_is_truncated(self):
+        self.install("one", "two")
+        self.assertEqual(self.listing_for(skill_listing(
+            "- one: Does one thing\n- two\n- acct:docs")), "truncated")
+
+    def test_an_installed_registry_skill_missing_from_the_listing_is_truncated(self):
+        self.install("one", "two")
+        self.assertEqual(self.listing_for(skill_listing("- one: Does one thing")), "truncated")
+
+    def test_skills_from_another_registry_do_not_narrow_the_judgment(self):
+        self.install("one", registry="https://github.com/example/skills.git")
+        self.assertEqual(self.listing_for(skill_listing(
+            "- one: Does one thing\n- acct:docs")), "truncated")
+
 
 # Invented 40-hex commits; the real ones are what skills-bootstrap.sh fetched.
 SHA_A = "a" * 40
