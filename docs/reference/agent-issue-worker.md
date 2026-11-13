@@ -152,20 +152,26 @@ credential reached its run. The owner wants removals made without him
 **Which issues.** An open issue in `Adam-S-Daniel/skills-evals`, opened by
 `github-actions[bot]`, labeled `agent-ready`, whose body carries both
 `<!-- skills-evals:retirement-issue:agent -->` and
-`<!-- skills-evals:retire-skill:<skill> -->`. Its body names the registry
-repo and the skill's path there. The registry must be
+`<!-- skills-evals:retire-skill:<skill> -->`. The registry and the path are
+never taken from the body alone: the registry is the `registry` field of
+the skill's entry in the explorer data (below), the path is that registry's
+layout in skills-evals' `harness/registries.yml`, and the body must name
+the same repo and path. The registry must be
 `Adam-S-Daniel/adam-agentskills`, `Adam-S-Daniel/cms-platform` or
 `Adam-S-Daniel/adamdaniel.ai`; anything else (above all
-adam-agentskills-private) is a stop under step 7. These issues are the one
+adam-agentskills-private), or a body that disagrees, is a stop under step 7. These issues are the one
 exception to "act only in that issue's own repo": the work happens in the
 registry repo the body names, and nowhere else.
 
 **How it differs from the steps above:**
 
-- Before claiming it, read the skill's `verdict` from a fresh
-  `explorer/latest.json` on skills-evals branch `persistent/eval-results`.
-  If it is not `retire`, comment that, remove `agent-ready`, and take the
-  next issue. The removal bot labels it again if the verdict returns.
+- Before claiming it, read the skill's entry (its `name` and `registry`)
+  from a fresh `explorer/latest.json` on skills-evals branch
+  `persistent/eval-results`. A fetch that fails or a missing entry: leave
+  the issue as it is and take the next one. A `verdict` other than
+  `retire` or `retire-pending`: comment that, remove `agent-ready`, and
+  take the next issue. The removal bot labels it again if the verdict
+  returns.
 - If an open PR from `retire-skill/<skill>` already exists in the registry,
   comment its link, swap `agent-ready` for `agent-working`, and take the
   next issue.
@@ -178,7 +184,18 @@ registry repo the body names, and nowhere else.
     drop each one. A fact another file sends readers to the skill for
     (a secret's required scopes, a setup step) moves into that repo's
     `docs/` or `AGENTS.md` first, so nothing a workflow message, script or
-    doc points at is lost; the skill's description and trigger text go;
+    doc points at is lost. Keep the error and symptom strings from the
+    skill's description in the moved text (they are what a reader
+    searches for); its trigger phrasing goes. A message that a reusable
+    workflow or script prints in another repo names the full URL of the
+    moved doc, not a path that repo does not have;
+  - leave files the _agent-guidance sync manages alone (`.githooks/`,
+    `.claude/hooks/fleet-guidance.md`, and `AGENTS.md` above its
+    `## Repo-specific additions` heading): a stale mention there is
+    harmless and the next sync owns it. List mentions in those files and in
+    other repos (`gh api -X GET search/code -f q='<skill>'` across both
+    fleet owners) in the PR body under "References elsewhere", and comment
+    the same list on the skills-evals issue; they are not edited in this PR;
   - in adam-agentskills, make the edits its `AGENTS.md` asks of a removal
     (both manifests' `version` raised a major, `scripts/plugin_layout.json`,
     the README skill table regenerated with its own script, and a
@@ -192,8 +209,7 @@ registry repo the body names, and nowhere else.
   `Closes Adam-S-Daniel/skills-evals#<n>`. The body says how to restore the
   skill (revert the merge) and links the verdict.
 - The fleet worker's PR pass merges it under its step 2e after an
-  independent review; in cms-platform and adamdaniel.ai do not arm
-  auto-merge (step 5 above).
+  independent review. Never arm auto-merge on it.
 
 ## Stale claims
 
