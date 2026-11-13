@@ -69,10 +69,13 @@ function checkWindow(doc) {
   return { timezone: doc.timezone, weekday: doc.weekday, start: doc.start, end: doc.end };
 }
 
+/** A canonical IANA name only, spelled exactly as Intl resolves it: Intl
+ * also takes lower case and offsets such as "+05:00", which skills-evals'
+ * Python reader (zoneinfo) refuses, so both readers accept the same values. */
 function validZone(zone) {
+  if (!/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/.test(zone)) return false;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone });
-    return true;
+    return new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone === zone;
   } catch {
     return false;
   }

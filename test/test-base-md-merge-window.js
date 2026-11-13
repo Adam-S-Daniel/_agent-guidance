@@ -106,6 +106,8 @@ test("checkWindow rejects bad bounds", () => {
     { weekday: 1, start: "17:00", end: "19:00" },
     { timezone: "UTC", weekday: 1, start: "17:00", end: "19:00", tz: "UTC" },
     { timezone: "Eastern", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "america/new_york", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "+05:00", weekday: 1, start: "17:00", end: "19:00" },
     { timezone: 5, weekday: 1, start: "17:00", end: "19:00" },
     { timezone: "UTC", weekday: 0, start: "17:00", end: "19:00" },
     { timezone: "UTC", weekday: 8, start: "17:00", end: "19:00" },
