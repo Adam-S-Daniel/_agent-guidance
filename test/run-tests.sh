@@ -22814,11 +22814,29 @@ INC
     run_githooks CLAUDE_CODE_REMOTE=true >/dev/null
     if cmp -s "$inc" "$expected"; then pass "git hooks: includeIf present, .inc missing: the file is written"
     else fail "git hooks: partial install left the include file missing"; fi
+    # The read has the write's scope (#542), so an entry in the GLOBAL config
+    # does not count for the system one: all nine system entries are written
+    # and the global entry stays as it was.
     n="$(git config --file "$sys" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
-    [[ "$n" -eq 8 ]] && pass "git hooks: the missing entries are added (8 beside the 1 present)" \
-        || fail "git hooks: expected 8 added system entries, got $n"
+    [[ "$n" -eq 9 ]] && pass "git hooks: the entries missing from the write scope are added (9 system entries)" \
+        || fail "git hooks: expected 9 system entries, got $n"
     n="$(git config --file "$glob" --get-all 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' | wc -l)"
-    [[ "$n" -eq 1 ]] && pass "git hooks: the present entry is not duplicated" || fail "git hooks: entry duplicated ($n)"
+    [[ "$n" -eq 1 ]] && pass "git hooks: the present global entry is not duplicated" || fail "git hooks: entry duplicated ($n)"
+
+    # 5c. A repo-local includeIf (the session's cwd is a project) must not
+    #     suppress the system entry: the read uses the scope the write does.
+    reset_githooks
+    local proj="$d/proj" owner prefix
+    rm -rf "$proj"; mkdir -p "$proj"; git init -q "$proj"
+    for owner in Adam-S-Daniel adam-s-daniel jodidaniel; do
+        for prefix in https://github.com/ git@github.com: ssh://git@github.com/; do
+            git -C "$proj" config --local --add "includeIf.hasconfig:remote.*.url:${prefix}${owner}/**.path" '~/.config/git/agent-hooks.inc'
+        done
+    done
+    ( cd "$proj" && run_githooks CLAUDE_CODE_REMOTE=true >/dev/null )
+    n="$(git config --file "$sys" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
+    [[ "$n" -eq 9 ]] && pass "git hooks: repo-local includeIf entries do not suppress the system entries" \
+        || fail "git hooks: repo-local includeIf suppressed the install (got $n system entries)"
 
     # 6. Opt-out.
     reset_githooks
