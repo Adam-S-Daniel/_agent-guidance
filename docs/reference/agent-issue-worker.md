@@ -154,11 +154,11 @@ credential reached its run. The owner wants removals made without him
 `<!-- skills-evals:retirement-issue:agent -->` and
 `<!-- skills-evals:retire-skill:<skill> -->`. The registry and the path are
 never taken from the body alone: the registry is the `registry` field of
-the skill's entry in the explorer data (below), the path is that registry's
-layout in skills-evals' `harness/registries.yml`, and the body must name
-the same repo and path. The registry must be
-`Adam-S-Daniel/adam-agentskills`, `Adam-S-Daniel/cms-platform` or
-`Adam-S-Daniel/adamdaniel.ai`; anything else (above all
+the skill's entry in the explorer data (below), which holds the short repo
+name (`cms-platform`), so the repo is `Adam-S-Daniel/<registry>`; the path is
+that registry's layout in skills-evals' `harness/registries.yml`, and the
+body must name the same repo and path. The registry must be
+`adam-agentskills`, `cms-platform` or `adamdaniel.ai`; anything else (above all
 adam-agentskills-private), or a body that disagrees, is a stop under step 7. These issues are the one
 exception to "act only in that issue's own repo": the work happens in the
 registry repo the body names, and nowhere else.
@@ -175,6 +175,10 @@ registry repo the body names, and nowhere else.
 - If an open PR from `retire-skill/<skill>` already exists in the registry,
   comment its link, swap `agent-ready` for `agent-working`, and take the
   next issue.
+- If a PR from `retire-skill/<skill>` in the registry was closed without
+  merging by anyone other than the fleet worker after this issue opened,
+  that is the owner declining the removal: comment its link, close the issue
+  as not planned, and take the next issue.
 - Work on a branch named `retire-skill/<skill>` (not `agent/issue-*`) from
   the registry's default branch, following that repo's `AGENTS.md`:
   - delete the skill's directory;

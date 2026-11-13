@@ -474,7 +474,8 @@ holds, each read fresh:
    `<!-- skills-evals:retire-skill:<skill> -->` for the same `<skill>`, and
    carries neither `on-hold` nor `agent-blocked`.
 3. The verdict, read as the issue worker reads it (the skills entry whose
-   `name` is `<skill>` and whose `registry` is this repo, in a fresh
+   `name` is `<skill>` and whose `registry` is this repo's short name, such
+   as `cms-platform`, in a fresh
    `explorer/latest.json` from `Adam-S-Daniel/skills-evals` branch
    `persistent/eval-results`), is `retire` or `retire-pending` (`retire-pending`
    is still a removal: only one removal is acted on per evaluation, and this
