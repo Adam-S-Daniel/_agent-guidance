@@ -154,7 +154,7 @@ so the PR stays blocked with nothing red to fix (the 2026-10-25 case:
   `behind_by` above 0), call `PUT /repos/<owner>/<repo>/pulls/<n>/update-branch`
   with `expected_head_sha` set to the head you read. That merges the base
   into the PR branch with a merge commit, which starts every check.
-- Skip Dependabot PRs here: an update by anyone else stops Dependabot from
+- Skip Dependabot PRs: an update by anyone else stops Dependabot from
   rebasing. Step 1b asks Dependabot to rebase them instead.
 - If the update is refused (a merge conflict, a 422), do not resolve it here.
   List the PR in the summary under "Conflicts".
