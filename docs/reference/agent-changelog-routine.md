@@ -113,10 +113,11 @@ touches, and say so in the run log and the PR.
   list is empty) must have the repos in **Repos considered** attached,
   plus `_agent-guidance`, and no others: every attached repo's
   `skills.lock` feeds the `skills-bootstrap` hook, and one stale lock from
-  a repo outside the list removed this run's own skill (#509).
+  a repo outside the list kept nine skills from installing, this run's own
+  among them ([#509](https://github.com/Adam-S-Daniel/_agent-guidance/issues/509)).
 - `openai/codex` and `anthropics/claude-code` are not attached, and need
-  not be. The daily runs have read both from github.com without them since
-  the Routine went live; the owner confirmed on 2026-11-13 that they were
+  not be. The daily runs to date have read both from github.com without
+  them; the owner confirmed on 2026-11-13 that they were
   never attached.
 - Prompt, exactly:
 
@@ -334,9 +335,9 @@ version number after a newer one.
 
 The route for Codex is the release HTML pages on `github.com`
 (`github.com/openai/codex/releases`). The session proxy allows github.com
-release pages without either vendor repo attached (see **The trigger**). The session
-proxy blocks the GitHub API and `codeload` for repos not attached to the
-session. Don't request push access to a vendor repo to read it; it is
+release pages and the `git clone` below without either vendor repo attached
+(see **The trigger**). Treat the GitHub API and `codeload` as unavailable for
+these repos, and don't depend on them. Don't request push access to a vendor repo to read it; it is
 refused, and it is never needed. If a list-page or tag-page fetch fails (a
 non-200 response, a redirect off `github.com`, or an HTML page with no
 release blocks), stop and report exactly
