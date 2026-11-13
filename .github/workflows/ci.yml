@@ -322,6 +322,14 @@ jobs:
       - name: Section manifest covers every guidance heading
         run: node scripts/check-guidance-coverage.js --skills-evals skills-evals --check-bytes
 
+      # ADR 0043: the contributor half of base.md, built from the sections
+      # eval-coverage.yml marks `audience: contributor`. Like AGENTS.md, the
+      # file is a committed artifact the sync delivers, so CI regenerates it
+      # and fails on any difference, naming the one-line fix. After the
+      # manifest gate, which reports a missing row or audience in detail.
+      - name: Contributor rules match base.md
+        run: node scripts/build-contributor-rules.js --check
+
       # The touch gate (_agent-guidance#120), after the graduation gate above
       # so a heading with no row at all is reported once, by that step, not
       # twice. `pull_request`-only: the check diffs base vs head, and a push

@@ -20,6 +20,16 @@
 #              evals/guidance/<id>/) names the eval that exercises it.
 #   skipped  — deliberately not covered; `reason` and `since` are required.
 #
+# audience: (ADR 0043) who the section is for.
+#   contributor — any contributor's agent needs it in a fleet repo; for
+#                 agents-md/base.md rows, scripts/build-contributor-rules.js
+#                 copies these sections, in base.md order, into
+#                 .github/fleet-contributor-rules.md, which the sync delivers.
+#   owner       — the owner and his agents only; reaches them through the
+#                 owner-side routes (ADR 0043 decision 2), never a consumer.
+#   The split is section-granular: a bullet that must not reach contributors
+#   moves to an owner section.
+#
 # `bytes` is generated — the section's byte extent from its heading through
 # the line before the next `##` heading (or end of file). Regenerate with
 # `node scripts/check-guidance-coverage.js --write-bytes`; CI runs
@@ -34,6 +44,7 @@
 - id: working-in-these-repos
   heading: Working in these repos
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/working-in-these-repos/
   bytes: 1422
@@ -41,6 +52,7 @@
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/anything-you-name-gets-its-link/
   bytes: 886
@@ -48,6 +60,7 @@
 - id: finding-your-unknowns
   heading: Finding your unknowns
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/finding-your-unknowns/
   bytes: 1015
@@ -55,6 +68,7 @@
 - id: turn-lessons-into-checks
   heading: Turn lessons into checks, skills and guidance
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/turn-lessons-into-checks/
   bytes: 705
@@ -62,6 +76,7 @@
 - id: workstation-layout
   heading: Workstation layout
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: >-
     Account facts the model cannot know otherwise, so an eval's outcome is known
@@ -76,6 +91,7 @@
 - id: security
   heading: Security
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/security/
   bytes: 617
@@ -83,6 +99,7 @@
 - id: data-exposure-in-ci
   heading: Data exposure in CI and public repos
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/data-exposure-in-ci/
   bytes: 1197
@@ -90,6 +107,7 @@
 - id: read-before-you-start
   heading: Read before you start
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: >-
     Account facts the model cannot know otherwise, so an eval's outcome is known
@@ -105,6 +123,7 @@
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/automation-vs-branch-protection/
   bytes: 2201
@@ -112,6 +131,7 @@
 - id: two-github-connectors
   heading: Two GitHub connectors, and which one you are holding
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/two-github-connectors/
   bytes: 1283
@@ -119,6 +139,7 @@
 - id: agent-contribution-markers
   heading: Agent-made GitHub contributions carry a marker
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/agent-contribution-markers/
   bytes: 622
@@ -126,6 +147,7 @@
 - id: pr-tldr
   heading: PR descriptions open with a TLDR
   file: agents-md/base.md
+  audience: contributor
   status: skipped
   reason: >-
     Enforced mechanically by agent-checks' pr-tldr check, whose refusal message
@@ -139,6 +161,7 @@
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/github-404-means-not-authorized/
   bytes: 875
@@ -146,6 +169,7 @@
 - id: fleet-spans-two-owners
   heading: The fleet spans TWO owners, and a scoped search will not say so
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/fleet-spans-two-owners/
   bytes: 963
@@ -153,6 +177,7 @@
 - id: watch-finished-is-not-ci-passed
   heading: '"The watch finished" is not "CI passed"'
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/watch-finished-is-not-ci-passed/
   bytes: 1364
@@ -160,6 +185,7 @@
 - id: git-push-does-not-mean-commit-exists
   heading: A successful `git push` does not mean your commit exists
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/git-push-does-not-mean-commit-exists/
   bytes: 1102
@@ -167,6 +193,7 @@
 - id: dependency-updates
   heading: Dependency updates
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/dependency-updates/
   bytes: 534
@@ -174,6 +201,7 @@
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/name-becomes-scanner-data/
   bytes: 1003
@@ -181,6 +209,7 @@
 - id: pinning-github-actions
   heading: Pinning GitHub Actions
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/pinning-github-actions/
   bytes: 1153
@@ -188,6 +217,7 @@
 - id: test-that-can-signal-kills-every-session
   heading: A test that can signal can kill every session
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/test-that-can-signal-kills-every-session/
   bytes: 918
@@ -195,6 +225,7 @@
 - id: subagent-delegation
   heading: Subagent delegation (model routing)
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/subagent-delegation/
   bytes: 2644
@@ -202,6 +233,7 @@
 - id: skills-ecosystem
   heading: Skills ecosystem
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: >-
     Account facts the model cannot know otherwise, so an eval's outcome is known
@@ -215,6 +247,7 @@
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/two-setup-gaps/
   bytes: 1970
@@ -222,6 +255,7 @@
 - id: git-practices
   heading: Git practices
   file: agents-md/base.md
+  audience: contributor
   status: covered
   fixture: evals/guidance/git-practices/
   bytes: 1396
@@ -229,6 +263,7 @@
 - id: section-docker
   heading: Docker
   file: agents-md/sections/docker.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
@@ -244,6 +279,7 @@
 - id: section-dotnet
   heading: .NET / C#
   file: agents-md/sections/dotnet.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
@@ -259,6 +295,7 @@
 - id: section-go
   heading: Go
   file: agents-md/sections/go.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
@@ -274,6 +311,7 @@
 - id: section-javascript
   heading: JavaScript
   file: agents-md/sections/javascript.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
@@ -289,6 +327,7 @@
 - id: section-python
   heading: Python
   file: agents-md/sections/python.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
@@ -304,6 +343,7 @@
 - id: section-rust
   heading: Rust
   file: agents-md/sections/rust.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
@@ -319,6 +359,7 @@
 - id: section-typescript
   heading: TypeScript
   file: agents-md/sections/typescript.md
+  audience: contributor
   status: skipped
   reason: >-
     Appended only for a repo that opts in via its own .agents-sync.yml;
