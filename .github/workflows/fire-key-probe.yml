@@ -28,7 +28,7 @@ jobs:
                 --header 'Content-Type: application/json' \
                 --data-binary '{' --output /dev/null --write-out '%{http_code}')" || status=000
           echo "::notice::fire probe status ${status}"
-      - name: Control: probe with a known-bad key
+      - name: Control, probe with a known-bad key
         env:
           BEARER: not-a-real-key
         run: |
