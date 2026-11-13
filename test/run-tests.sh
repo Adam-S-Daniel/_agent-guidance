@@ -7394,7 +7394,8 @@ test_sync_contributor_guards() {
         fail "cguard: a symlink at the destination is not written through"
     fi
     assert_contains "$out" "cguardorg/repo-symlink: .github/fleet-contributor-rules.md (or .github) is a symlink" "cguard: the symlink refusal names the repo"
-    assert_contains "$out" "2 failed" "cguard: both refusals count as failed repos, the drifted one still synced"
+    assert_contains "$out" "synced, 0 skipped, 2 failed ===" "cguard: both refusals count as failed repos, the drifted one still synced"
+    [[ "$rc" -ne 0 ]] && pass "cguard: a run with refused repos exits nonzero" || fail "cguard: a run with refused repos exits nonzero (got $rc)"
 
     # A missing or empty source stops the run before any repo is touched.
     local tree="$TEST_DIR/cguard-tree" src_rc=0

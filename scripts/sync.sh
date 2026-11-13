@@ -1124,6 +1124,9 @@ for repo_name in "${REPOS[@]}"; do
         contributor_state="missing"
         # A symlink would send the write outside the repo; a file without the
         # managed header is someone else's, and the sync must not overwrite it.
+        # Either refusal skips the whole repo on purpose, stub update included:
+        # the new stub points agents at this path, so the old stub stays until
+        # the file there is ours.
         if [[ -L .github || -L "$CONTRIBUTOR_REL_PATH" ]]; then
             fail "$repo_name: $CONTRIBUTOR_REL_PATH (or .github) is a symlink — refusing to write the contributor rules."
             ((FAIL_COUNT++)) || true
@@ -2062,7 +2065,7 @@ subset of the fleet guidance an outside contributor's agent reads on demand
 (ADR 0043)."
     fi
     if $bootstrap_hook_written || $bootstrap_registered_now; then
-        bootstrap_note="
+        bootstrap_note="${bootstrap_note}
 
 Also delivers the skills-bootstrap SessionStart hook, fetched from
 ${BOOTSTRAP_REGISTRY}@${BOOTSTRAP_REF:0:7} (pinned in _agent-guidance's
