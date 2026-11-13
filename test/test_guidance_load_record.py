@@ -1364,9 +1364,24 @@ class CloudStorageTests(CloudTestCase):
         self.script([PUSH_OK])
         counter = self.reject_pushes(7)
         self.write_transcript([skill_use("toolu_l3", "a"), skill_result("toolu_l3")])
-        self.stop()
+        # The deadline is driven by the hook's test clock (a counter, 1 ms per
+        # reading), not by real seconds a loaded machine can stretch.
+        self.stop(env={"GUIDANCE_RECORD_TEST_TICK": "0.001"})
         self.assertEqual(counter.read_text().strip(), "7")
         self.assertEqual([l["id"] for l in self.shard()], ["toolu_l3"])
+
+    def test_rebuilding_after_rejections_stops_at_the_deadline(self):
+        # The other half: with the clock running fast the same rejections
+        # outlast the deadline, so the hook stops pushing and keeps its lines.
+        self.done_phase1()
+        self.script([PUSH_OK])
+        counter = self.reject_pushes(50)
+        self.write_transcript([skill_use("toolu_l4", "a"), skill_result("toolu_l4")])
+        self.stop(env={"GUIDANCE_RECORD_TEST_TICK": "0.05"})
+        tried = int(counter.read_text().strip())
+        self.assertGreater(tried, 0)
+        self.assertLess(tried, 50)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_l4"])
 
 
 class CloudWatermarkTests(CloudTestCase):
@@ -1751,11 +1766,13 @@ class CloudGateTests(CloudTestCase):
         # test-only seam), so the bound checked is 20 s * SCALE.
         scale = 0.12
         (self.bin / "curl").write_text(SLOW_CURL, encoding="utf-8")
-        import time
-        began = time.monotonic()
+        # The hook reports its own run time (from its start, so the interpreter
+        # start-up a loaded machine slows is not counted).
+        elapsed_file = self.tmp / "elapsed"
         self.stop(env={"FAKE_GIT_MODE": "hang-network", "GUIDANCE_RECORD_TEST": "1",
-                       "GUIDANCE_RECORD_TEST_SCALE": str(scale)})
-        self.assertLess(time.monotonic() - began, 20 * scale)
+                       "GUIDANCE_RECORD_TEST_SCALE": str(scale),
+                       "GUIDANCE_RECORD_TEST_ELAPSED_FILE": str(elapsed_file)})
+        self.assertLess(float(elapsed_file.read_text()), 20 * scale)
         # It did wait on the hung calls, rather than skip them.
         self.assertTrue(any("clone" in c for c in self.git_calls()))
         # The timeout killed the whole process group, the hung child included.
