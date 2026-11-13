@@ -14814,6 +14814,35 @@ EOF
         "check-agents-md: the out-of-order failure names it as an ordering problem"
 }
 
+# ── Test: build-contributor-rules.js (ADR 0043 contributor file) ──
+test_contributor_rules() {
+    echo ""
+    echo "=== Test: build-contributor-rules.js (contributor half of base.md) ==="
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" || ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "contributor rules: node_modules/yaml or node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+    local out="$TEST_DIR/contributor-rules-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-contributor-rules.js" > "$out" 2>&1 || rc=$?
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    # 7 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 7 ]]; then
+        pass "contributor rules: node:test suite is green ($pass_n passed)"
+    else
+        fail "contributor rules: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=7): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+    local facts="$TEST_DIR/contributor-rules-step.txt"
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "build-contributor-rules.js --check" checks > "$facts" 2>/dev/null \
+            && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
+        pass "contributor rules: ci.yml's checks job runs the staleness check unconditionally"
+    else
+        fail "contributor rules: ci.yml's checks job should run node scripts/build-contributor-rules.js --check with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
+    fi
+}
+
 # ── Test: check-guidance-coverage.js (section manifest graduation gate) ──
 #
 # agents-md/eval-coverage.yml is the join between a `##` heading in the
@@ -14881,6 +14910,7 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 '
@@ -14914,6 +14944,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 '
@@ -14933,6 +14964,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/heading-one/
   bytes: 12
@@ -14953,6 +14985,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: skipped
   since: "2026-01-01"
   bytes: 12
@@ -14970,12 +15003,42 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: deliberately not covered, for this test fixture
   bytes: 12
 '
     assert_guidance skipped_no_since 1 "is status: skipped but has no 'since'" \
         "guidance coverage: a skipped row with no since date fails"
+
+    # 4c. A row with no `audience` (ADR 0043). build-contributor-rules.js
+    #     decides from this field alone what ships to every consumer repo, so
+    #     a missing or misspelled value fails here rather than defaulting.
+    guidance_fixture no_audience \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 19
+'
+    assert_guidance no_audience 1 'has audience "undefined", expected contributor or owner' \
+        "guidance coverage: a row with no audience fails"
+    guidance_fixture bad_audience \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  audience: everyone
+  status: gap
+  bytes: 19
+'
+    assert_guidance bad_audience 1 'has audience "everyone", expected contributor or owner' \
+        "guidance coverage: a row with an unknown audience fails"
 
     # 6. Zero headings anywhere — refused (exit 2), never a silent pass. Per
     #    the fleet's own convention, a gate that finds nothing must not read
@@ -15001,12 +15064,14 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 21
 
 - id: heading-two
   heading: Heading Two
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: deliberately not covered, for this test fixture
   since: "2026-01-01"
@@ -15025,6 +15090,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 999999
 '
@@ -15062,6 +15128,7 @@ some text
 '- id: only-heading
   heading: Only Heading
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 555
 '
@@ -15114,6 +15181,7 @@ text $i
             manifest+="- id: heading-$i
   heading: Heading $i
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 0
 
@@ -15142,6 +15210,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 
@@ -15185,6 +15254,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 
@@ -15218,6 +15288,7 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 999999
 '
@@ -15242,6 +15313,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 
@@ -15287,6 +15359,7 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/heading-one/
   bytes: 21
@@ -15294,6 +15367,7 @@ more text
 - id: heading-two
   heading: Heading Two
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/heading-two/
   bytes: 25
@@ -15327,12 +15401,14 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 15
 
 - id: section-heading
   heading: Section Heading
   file: agents-md/sections/extra.md
+  audience: owner
   status: covered
   fixture: evals/guidance/section-heading/
   bytes: 16
@@ -15434,12 +15510,14 @@ more text
 '- id: closed-form
   heading: Closed Form
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 10
 
 - id: indented-heading
   heading: Indented Heading
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 10
 '
@@ -26997,6 +27075,7 @@ GROUP_self_hosted=(
     test_yq_install_pinned
     test_check_agents_md
     test_check_guidance_coverage
+    test_contributor_rules
     test_check_guidance_touch
     test_yq_preflight
     test_shared_repos_yml_helpers_are_identical
