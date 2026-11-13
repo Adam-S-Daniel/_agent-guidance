@@ -366,6 +366,13 @@ re-run as written:
   `fleet-guidance check value:` line in context as loaded; covers `skipped`;
   and says not to fetch or recreate a missing contributor file. These came
   from its adversarial rounds.
+- **Local Codex no longer registers `fleet-memory.sh --workspace`.** The
+  launcher route runs the plugin's hook, so a Codex session started from a
+  multi-repo parent gets no list of child `AGENTS.md` files. The mode stays in
+  `fleet-memory.sh`. Windows owners must re-run adam-agentskills'
+  `setup.sh --owner-machine` and then `register-codex-hook.sh` after pulling,
+  because the old `commandWindows` pointed at the deleted
+  `.claude/hooks/codex-session-start.sh`.
 - **The sync delivers the contributor file before it removes anything**, so
   the stub never points at a file the repo lacks; the removals stay gated as
   step 5 says.

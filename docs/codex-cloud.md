@@ -14,16 +14,19 @@ for what was observed and what remains open.
 
 ## Local Codex
 
-The `fleet-memory` hook writes the guidance block to `~/.codex/AGENTS.md`
-whenever `~/.codex` exists and the machine carries the owner signal. That
-file is Codex's global user instructions, outside its 32 KiB
-`project_doc_max_bytes` project-doc budget. Register the hook once per
-machine with `scripts/register-codex-hook.sh` from an `_agent-guidance`
-checkout, then trust it in `/hooks`. The registered command passes no
-signal of its own, so the machine also needs the marker file
-`~/.config/fleet-guidance/owner`, which adam-agentskills'
-`setup.sh --owner-machine` writes; without it the hook does nothing
-([ADR 0042](decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md)).
+The owner's guidance reaches `~/.codex/AGENTS.md` (Codex's global user
+instructions, outside its 32 KiB `project_doc_max_bytes` project-doc budget)
+whenever `~/.codex` exists and the machine carries the owner signal. Local
+Codex gets it from a per-user launcher that adam-agentskills'
+`setup.sh --owner-machine` installs at
+`${XDG_DATA_HOME:-$HOME/.local/share}/fleet-guidance/codex-session-start.sh`;
+it runs the installed `adam-anything-anywhere` plugin's fleet-guidance hook
+with `FLEET_GUIDANCE_OWNER=1`
+([ADR 0043](decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md)).
+Register it once per machine with `scripts/register-codex-hook.sh` from an
+`_agent-guidance` checkout (it refuses until the launcher exists), then trust
+it in `/hooks`. The same `setup.sh --owner-machine` writes the marker file
+`~/.config/fleet-guidance/owner` ([ADR 0042](decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md)).
 Codex Cloud's `--codex-cloud` mode needs no marker.
 
 `codex debug prompt-input` renders instructions loaded from disk by its own
