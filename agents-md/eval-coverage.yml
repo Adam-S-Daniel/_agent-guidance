@@ -118,7 +118,20 @@
     scores whether the link is followed, which a with arm passes by reading it,
     and the weekly plan holds it as out of scope.
   since: 2026-11-03
-  bytes: 357
+  bytes: 295
+
+- id: eval-rules
+  heading: Eval rules
+  file: agents-md/base.md
+  audience: owner
+  status: skipped
+  reason: >-
+    A pointer to skills-evals' generated docs/rules.md, the one source for the
+    eval, keep, remove and pause rules (Adam, 2026-11-13). A with arm passes by
+    reading it, and skills-evals' check_rule_restatements.py and its daily
+    rules-consistency workflow enforce the rule mechanically.
+  since: 2026-11-13
+  bytes: 71
 
 - id: automation-vs-branch-protection
   heading: Automation vs branch protection
