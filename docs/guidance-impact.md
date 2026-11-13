@@ -26,13 +26,13 @@ sensitive rejection is recorded by PR link alone.
 ```
 ## YYYY-MM-DD — <section-id> — <create|edit|rename|remove|rejected>
 - Motivation: one line — the incident, pattern, or issue that prompted it
-- Change: one line — what changed (PR #NNN)
+- Change: one line — what changed (PR #548)
 - Eval: a real result naming both what was measured and its outcome — an
   exit code (`exit 0`), a score fraction (`7.0/8`), or a sample size (`n=3`),
   alongside a fixture path, eval id, or report link for context; "none — no
   fixture yet" (legal only while the manifest row is `gap`); or "exempt
   (skipped row)" (legal only while the manifest row is `skipped`). Nothing
-  else satisfies this bullet — a placeholder like "TBD" or "TBD (PR #NNN)"
+  else satisfies this bullet — a placeholder like "TBD" or "TBD (PR #548)"
   does not, even though the latter contains a digit.
 - Outcome: merged YYYY-MM-DD, or rejected YYYY-MM-DD — one line why. The
   full proposal survives in the closed PR; link it rather than pasting it.
@@ -52,13 +52,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-11-16 — writing-for-adam — create
 - Motivation: ADR 0043 step 1: "Working in these repos" ships to every contributor in `.github/fleet-contributor-rules.md`, and two of its bullets are for the owner's agents only
-- Change: the `adam-writing-style` and "text to paste" bullets move verbatim into this new owner section (PR #NNN)
+- Change: the `adam-writing-style` and "text to paste" bullets move verbatim into this new owner section (PR #548)
 - Eval: none — no fixture yet
 - Outcome: pending
 
 ## 2026-11-16 — working-in-these-repos — edit
 - Motivation: ADR 0043 step 1: this section is contributor audience and ships to every fleet repo; two bullets were owner-only
-- Change: the `adam-writing-style` and "text to paste" bullets move to the new owner section writing-for-adam; no other text changes (PR #NNN)
+- Change: the `adam-writing-style` and "text to paste" bullets move to the new owner section writing-for-adam; no other text changes (PR #548)
 - Eval: fixture evals/guidance/working-in-these-repos/ was not re-run; the change removes two owner bullets the fixture does not test; `node scripts/check-guidance-coverage.js --check-bytes` exit 0
 - Outcome: pending
 
