@@ -115,8 +115,10 @@ irreversible rules; _agent-guidance#473). `base.md` itself
 is held under 26 KiB (26,624 bytes) by an assertion in
 `test/test-on-hold-label.js`, raised from 25 KiB on 2026-11-04 to fit the
 "Turn lessons into checks, skills and guidance" section. Measured
-2026-10-04 with `wc -c`: `base.md` 24,930 bytes, full build 29,113, stub
-build 4,859.
+2026-11-13 with `wc -c`: `base.md` 26,548 bytes, full build 26,739, stub
+build 1,509. These drift with every guidance edit; rerun `wc -c` on
+`agents-md/base.md` and the output of `scripts/build-agents-md.sh` (with
+`AGENTS_MD_MODE=full` for the full build) before quoting them.
 
 The guidance itself reaches Codex a different way. The `fleet-memory`
 SessionStart hook (`.claude/hooks/fleet-memory.sh`) writes its marked block to
