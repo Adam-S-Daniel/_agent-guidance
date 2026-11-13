@@ -19,6 +19,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/create-github-app-token@v3.3.0'
         - 'actions/setup-node@v7.1.0'
+    '.github/workflows/fire-key-probe.yml': []
     '.github/workflows/fleet-worker-fire.yml': []
     '.github/workflows/health-reusable-parity.yml':
         - 'actions/checkout@v7.0.1'

@@ -1,0 +1,43 @@
+name: Fire key probe (temporary)
+
+# Temporary, branch-only: checks that the ARTICLE_WATCH_FIRE_BEARER secret is accepted by the
+# routine fire API without starting a session. It sends a deliberately
+# malformed body: a valid key gets a 4xx body error (400/422), a bad key
+# 401/403. Only the status code is printed. Delete this branch after one run.
+on:
+  push:
+    branches: [claude/project-thread-t7onlc]
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Probe the fire key
+        env:
+          BEARER: ${{ secrets.ARTICLE_WATCH_FIRE_BEARER }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BEARER" ]; then echo "::error::secret ARTICLE_WATCH_FIRE_BEARER is empty"; exit 1; fi
+          status="$(printf 'Authorization: Bearer %s\n' "$BEARER" \
+            | curl --silent --proto '=https' --max-time 60 --request POST \
+                'https://api.anthropic.com/v1/claude_code/routines/trig_01XJcDyBebR2FQ9TuGVLwXUF/fire' --header @- --header 'anthropic-beta: experimental-cc-routine-2026-04-01' \
+                --header 'anthropic-version: 2023-06-01' \
+                --header 'Content-Type: application/json' \
+                --data-binary '{' --output /dev/null --write-out '%{http_code}')" || status=000
+          echo "::notice::fire probe status ${status}"
+      - name: Control: probe with a known-bad key
+        env:
+          BEARER: not-a-real-key
+        run: |
+          set -euo pipefail
+          if [ -z "$BEARER" ]; then echo "::error::secret ARTICLE_WATCH_FIRE_BEARER is empty"; exit 1; fi
+          status="$(printf 'Authorization: Bearer %s\n' "$BEARER" \
+            | curl --silent --proto '=https' --max-time 60 --request POST \
+                'https://api.anthropic.com/v1/claude_code/routines/trig_01XJcDyBebR2FQ9TuGVLwXUF/fire' --header @- --header 'anthropic-beta: experimental-cc-routine-2026-04-01' \
+                --header 'anthropic-version: 2023-06-01' \
+                --header 'Content-Type: application/json' \
+                --data-binary '{' --output /dev/null --write-out '%{http_code}')" || status=000
+          echo "::notice::control (bad key) status ${status}"
