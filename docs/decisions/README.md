@@ -58,6 +58,7 @@ a page.
 | [0040](0040-the-repo-stub-keeps-only-the-pointer-and-the-irreversible-rules.md) | The repo stub keeps only the pointer and the irreversible rules |
 | [0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) | The fleet worker merges reviewed agent-made changes and the hook pin bump |
 | [0042](0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md) | The guidance hooks are opt-in on a durable machine |
+| [0043](0043-the-owner-only-guidance-leaves-the-consumer-repos.md) | The owner-only guidance leaves the consumer repos, and the stub stays the only per-repo copy |
 
 ## Format
 

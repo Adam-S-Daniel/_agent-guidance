@@ -14814,6 +14814,35 @@ EOF
         "check-agents-md: the out-of-order failure names it as an ordering problem"
 }
 
+# ── Test: build-contributor-rules.js (ADR 0043 contributor file) ──
+test_contributor_rules() {
+    echo ""
+    echo "=== Test: build-contributor-rules.js (contributor half of base.md) ==="
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" || ! -d "$REPO_ROOT/node_modules/markdown-it" ]]; then
+        fail "contributor rules: node_modules/yaml or node_modules/markdown-it is missing — run \`npm ci\` first"
+        return
+    fi
+    local out="$TEST_DIR/contributor-rules-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-contributor-rules.js" > "$out" 2>&1 || rc=$?
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    # 7 is the suite's actual count; a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 7 ]]; then
+        pass "contributor rules: node:test suite is green ($pass_n passed)"
+    else
+        fail "contributor rules: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=7): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+    local facts="$TEST_DIR/contributor-rules-step.txt"
+    if workflow_step_by_run "$REPO_ROOT/.github/workflows/ci.yml" "build-contributor-rules.js --check" checks > "$facts" 2>/dev/null \
+            && grep -qxF -- "found" "$facts" && grep -qxF -- "if -" "$facts"; then
+        pass "contributor rules: ci.yml's checks job runs the staleness check unconditionally"
+    else
+        fail "contributor rules: ci.yml's checks job should run node scripts/build-contributor-rules.js --check with no if: — got: $(tr '\n' ' ' < "$facts" 2>/dev/null)"
+    fi
+}
+
 # ── Test: check-guidance-coverage.js (section manifest graduation gate) ──
 #
 # agents-md/eval-coverage.yml is the join between a `##` heading in the
@@ -14881,6 +14910,7 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 '
@@ -14914,6 +14944,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 '
@@ -14933,6 +14964,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/heading-one/
   bytes: 12
@@ -14953,6 +14985,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: skipped
   since: "2026-01-01"
   bytes: 12
@@ -14970,12 +15003,42 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: deliberately not covered, for this test fixture
   bytes: 12
 '
     assert_guidance skipped_no_since 1 "is status: skipped but has no 'since'" \
         "guidance coverage: a skipped row with no since date fails"
+
+    # 4c. A row with no `audience` (ADR 0043). build-contributor-rules.js
+    #     decides from this field alone what ships to every consumer repo, so
+    #     a missing or misspelled value fails here rather than defaulting.
+    guidance_fixture no_audience \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  status: gap
+  bytes: 19
+'
+    assert_guidance no_audience 1 'has audience "undefined", expected contributor or owner' \
+        "guidance coverage: a row with no audience fails"
+    guidance_fixture bad_audience \
+'## Heading One
+text
+' \
+'- id: heading-one
+  heading: Heading One
+  file: agents-md/base.md
+  audience: everyone
+  status: gap
+  bytes: 19
+'
+    assert_guidance bad_audience 1 'has audience "everyone", expected contributor or owner' \
+        "guidance coverage: a row with an unknown audience fails"
 
     # 6. Zero headings anywhere — refused (exit 2), never a silent pass. Per
     #    the fleet's own convention, a gate that finds nothing must not read
@@ -15001,12 +15064,14 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 21
 
 - id: heading-two
   heading: Heading Two
   file: agents-md/base.md
+  audience: owner
   status: skipped
   reason: deliberately not covered, for this test fixture
   since: "2026-01-01"
@@ -15025,6 +15090,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 999999
 '
@@ -15062,6 +15128,7 @@ some text
 '- id: only-heading
   heading: Only Heading
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 555
 '
@@ -15114,6 +15181,7 @@ text $i
             manifest+="- id: heading-$i
   heading: Heading $i
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 0
 
@@ -15142,6 +15210,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 
@@ -15185,6 +15254,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 
@@ -15218,6 +15288,7 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 999999
 '
@@ -15242,6 +15313,7 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 12
 
@@ -15287,6 +15359,7 @@ more text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/heading-one/
   bytes: 21
@@ -15294,6 +15367,7 @@ more text
 - id: heading-two
   heading: Heading Two
   file: agents-md/base.md
+  audience: owner
   status: covered
   fixture: evals/guidance/heading-two/
   bytes: 25
@@ -15327,12 +15401,14 @@ text
 '- id: heading-one
   heading: Heading One
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 15
 
 - id: section-heading
   heading: Section Heading
   file: agents-md/sections/extra.md
+  audience: owner
   status: covered
   fixture: evals/guidance/section-heading/
   bytes: 16
@@ -15434,12 +15510,14 @@ more text
 '- id: closed-form
   heading: Closed Form
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 10
 
 - id: indented-heading
   heading: Indented Heading
   file: agents-md/base.md
+  audience: owner
   status: gap
   bytes: 10
 '
@@ -19274,6 +19352,113 @@ GHSTUB
         "sweep (control): an empty listing did not become one nameless PR"
 }
 
+# ── Test: the sweep step has repository context without a checkout ────────
+#
+# The job has no checkout (see the workflow header), so on the real runner the
+# step's cwd is not a git repository. gh then needs GH_REPO (or --repo) for
+# every `gh pr ...` call and otherwise runs git to find a repository, failing
+# with "failed to run git: fatal: not a git repository". Every fleet repo's
+# scheduled sweep failed that way on 2026-11-13. The tests above run the step
+# from inside this repo's checkout with a stub gh that needs no context, which
+# is why they never saw it. This one models the runner: the step's own `env:`
+# from the YAML, a cwd that is not a git repository, and a gh stub that
+# refuses like the real one.
+test_dependabot_sweep_repo_context() {
+    echo ""
+    echo "=== Test: dependabot-auto-merge.yml (the sweep has repo context with no checkout) ==="
+
+    local wf="$REPO_ROOT/.github/workflows/dependabot-auto-merge.yml"
+    local body="$TEST_DIR/repoctx-step.sh" envfile="$TEST_DIR/repoctx-env.txt"
+
+    if ! workflow_run_body "$wf" 'app/dependabot' > "$body" 2>"$TEST_DIR/repoctx-extract.err"; then
+        fail "sweep repo context: could not extract the sweep step — $(cat "$TEST_DIR/repoctx-extract.err")"
+        return
+    fi
+
+    # The step's env as the runner would export it: NAME=value lines, with the
+    # three expressions this workflow uses replaced by fixed fakes.
+    if ! node -e '
+const fs = require("node:fs");
+const YAML = require(process.argv[1] + "/node_modules/yaml");
+const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+const subs = {
+  "github.repository": "example-owner/example-repo",
+  "secrets.GITHUB_TOKEN": "dummy-value",
+  "github.workflow": "Dependabot auto-merge",
+};
+for (const spec of Object.values((doc && doc.jobs) || {})) {
+  for (const step of (spec && spec.steps) || []) {
+    if (typeof step.run !== "string" || !step.run.includes("app/dependabot")) continue;
+    for (const [k, v] of Object.entries(step.env || {})) {
+      const val = String(v).replace(/\$\{\{\s*([\w.]+)\s*\}\}/g, (m, e) => {
+        if (!(e in subs)) { console.error("unmodeled expression: " + e); process.exit(2); }
+        return subs[e];
+      });
+      process.stdout.write(k + "=" + val + "\0");
+    }
+    process.exit(0);
+  }
+}
+process.exit(1);
+' "$REPO_ROOT" "$wf" > "$envfile" 2>"$TEST_DIR/repoctx-env.err"; then
+        fail "sweep repo context: could not read the sweep step's env — $(cat "$TEST_DIR/repoctx-env.err")"
+        return
+    fi
+
+    # gh as the real one behaves with no git repository around it.
+    mkdir -p "$TEST_DIR/bin-repoctx"
+    cat > "$TEST_DIR/bin-repoctx/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" ]]; then
+    has_repo=0
+    # Only the value the test substitutes for github.repository is a valid
+    # repository; anything else fails as real gh does for an unknown repo.
+    [[ "${GH_REPO:-}" == "example-owner/example-repo" ]] && has_repo=1
+    for a in "$@"; do
+        [[ "$a" == "--repo" || "$a" == "-R" ]] && has_repo=1
+    done
+    if [[ $has_repo -eq 0 ]]; then
+        echo "failed to run git: fatal: not a git repository (or any of the parent directories): .git" >&2
+        exit 1
+    fi
+    if [[ "${2:-}" == "list" ]]; then
+        exit 0
+    fi
+fi
+echo "mock gh: unexpected call: $*" >&2
+exit 1
+GHSTUB
+    chmod +x "$TEST_DIR/bin-repoctx/gh"
+
+    local nogit; nogit="$(mktemp -d)"
+    local -a envargs=()
+    local item
+    while IFS= read -r -d '' item; do envargs+=("$item"); done < "$envfile"
+
+    # Negative control: the same env minus GH_REPO must be refused by the stub,
+    # so the test can fail.
+    local ctl="$TEST_DIR/repoctx-control.txt" ctl_code=0
+    local -a noenv=()
+    for item in "${envargs[@]}"; do [[ "$item" == GH_REPO=* ]] || noenv+=("$item"); done
+    (cd "$nogit" && env -u GH_REPO "${noenv[@]}" PATH="$TEST_DIR/bin-repoctx:$PATH" bash "$body") > "$ctl" 2>&1 || ctl_code=$?
+    if [[ $ctl_code -ne 0 ]] && grep -qF "not a git repository" "$ctl"; then
+        pass "sweep repo context (control): without GH_REPO and without a checkout gh refuses"
+    else
+        fail "sweep repo context (control): the stub did not refuse without GH_REPO (exit $ctl_code): $(cat "$ctl")"
+    fi
+
+    local out="$TEST_DIR/repoctx-out.txt" code=0
+    (cd "$nogit" && env -u GH_REPO "${envargs[@]}" PATH="$TEST_DIR/bin-repoctx:$PATH" bash "$body") > "$out" 2>&1 || code=$?
+    if [[ $code -eq 0 ]]; then
+        pass "sweep repo context: the step exits 0 from a directory that is not a git repository"
+    else
+        fail "sweep repo context: the step exits 0 from a non-git directory (got $code): $(cat "$out")"
+    fi
+    assert_contains "$out" "No open Dependabot PRs" \
+        "sweep repo context: it reaches the empty-sweep branch with the env the workflow declares"
+    rm -rf "$nogit"
+}
+
 # ── Test: dependabot-auto-merge.yml no longer merges before CI reports ────
 #
 # cms-platform#437: `gh pr merge --auto` does not "no-op" when nothing is
@@ -19432,13 +19617,6 @@ case "${1:-}" in
                     *) exit 0 ;;
                 esac
                 ;;
-            update-branch)
-                if [[ -n "${UPDATE_FAILS:-}" ]]; then
-                    echo "mock gh: update-branch refused" >&2
-                    exit 1
-                fi
-                exit 0
-                ;;
             *)
                 echo "mock gh: unexpected pr subcommand: $*" >&2
                 exit 1
@@ -19493,6 +19671,22 @@ case "${1:-}" in
                 jq -r "$jqf" "$src"
                 exit 0
                 ;;
+            repos/*/issues/*/comments\?per_page=100)
+                if [[ -n "${COMMENTS_FAIL:-}" ]]; then
+                    echo '{"message":"Server Error"}'
+                    exit 1
+                fi
+                num="${endpoint#*/issues/}"
+                num="${num%%/*}"
+                if [[ -f "$FIXTURES/comments-${num}.json" ]]; then
+                    src="$FIXTURES/comments-${num}.json"
+                else
+                    src="$FIXTURES/comments-default.json"
+                    echo '[]' > "$src"
+                fi
+                jq -r "$jqf" "$src"
+                exit 0
+                ;;
             repos/*/compare/*)
                 if [[ -f "$FIXTURES/compare-fails" ]]; then
                     echo '{"message":"Not Found"}'
@@ -19529,8 +19723,8 @@ GHSTUB
     # the extracted step against that fixture set and prints the exit code.
     run_case() {
         local fx="$1" mf="$2" sw="$3" out="$4" rc=0
-        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" UPDATE_FAILS="${UPDATE_FAILS:-}" \
-            FILES_FAIL="${FILES_FAIL:-}" COMMITS_FAIL="${COMMITS_FAIL:-}" \
+        PATH="$binhome:$PATH" FIXTURES="$fx" MERGE_FAILS="$mf" SWEEP_TEST="${SWEEP_TEST:-}" SWEEP_NOW_EPOCH="${SWEEP_NOW_EPOCH:-}" \
+            FILES_FAIL="${FILES_FAIL:-}" COMMITS_FAIL="${COMMITS_FAIL:-}" COMMENTS_FAIL="${COMMENTS_FAIL:-}" \
             GITHUB_REPOSITORY="Adam-S-Daniel/_agent-guidance" SELF_WORKFLOW="$sw" \
             bash "$body" > "$out" 2>&1 || rc=$?
         echo "$rc"
@@ -19568,8 +19762,8 @@ GHSTUB
     else
         fail "sweep gating (a): the merge call should end with the PR number — got: $(cat "$fx_a/calls.log" 2>/dev/null)"
     fi
-    assert_contains "$out_a" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
-        "sweep gating (a): summary is merged=1 updated=0 skipped=0 blocked=0 failed=0"
+    assert_contains "$out_a" "merged=1 waiting=0 skipped=0 blocked=0 failed=0" \
+        "sweep gating (a): summary is merged=1 waiting=0 skipped=0 blocked=0 failed=0"
 
     # (b) every check on the head is from THIS workflow — no real CI has
     #     reported, so the floor must not be satisfied by the gate itself.
@@ -19606,7 +19800,7 @@ GHSTUB
     fi
 
     # (d) the pinned merge is refused and the head has since moved — do not
-    #     fall through to update-branch; the next sweep judges the new head.
+    #     treat it as behind; the next sweep judges the new head.
     local fx_d="$TEST_DIR/auto-merge-gating-case-d"
     mkdir -p "$fx_d"
     printf '900\n' > "$fx_d/pr-numbers.txt"
@@ -19622,7 +19816,9 @@ GHSTUB
         fail "sweep gating (d): a refused merge with a moved head still exits 0 — got $rc_d: $(cat "$out_d")"
     fi
     assert_not_contains "$fx_d/calls.log" "update-branch" \
-        "sweep gating (d): does not fall through to pr update-branch when the head moved"
+        "sweep gating (d): never calls pr update-branch"
+    assert_not_contains "$fx_d/calls.log" "pr comment" \
+        "sweep gating (d): never comments"
     assert_contains "$out_d" "its head moved" \
         "sweep gating (d): it says the head moved"
     assert_contains "$out_d" "skipped=1" \
@@ -19655,7 +19851,7 @@ GHSTUB
     fi
 
     # (g) the pinned merge is refused, the head has NOT moved, and the PR is
-    #     BEHIND — refresh the branch rather than retry the merge.
+    #     BEHIND — it waits for Dependabot's rebase rather than retry the merge.
     local fx_g="$TEST_DIR/auto-merge-gating-case-g"
     mkdir -p "$fx_g"
     printf '900\n' > "$fx_g/pr-numbers.txt"
@@ -19668,15 +19864,17 @@ GHSTUB
     else
         fail "sweep gating (g): a refused BEHIND merge with an unmoved head still exits 0 — got $rc_g: $(cat "$out_g")"
     fi
-    assert_contains "$fx_g/calls.log" "update-branch" \
-        "sweep gating (g): falls through to pr update-branch"
-    assert_contains "$out_g" "updated=1" \
-        "sweep gating (g): summary counts it as updated"
+    assert_not_contains "$fx_g/calls.log" "pr comment" \
+        "sweep gating (g): the sweep never comments"
+    assert_not_contains "$fx_g/calls.log" "update-branch" \
+        "sweep gating (g): never pushes to the Dependabot branch"
+    assert_contains "$out_g" "waiting=1" \
+        "sweep gating (g): summary counts it as waiting"
 
     # (h) #296 on 2026-10-20: the merge is refused and mergeStateStatus is
     #     CLEAN (main does not require an up-to-date head), but the head is
-    #     2 commits behind main. Treat it as stale and refresh it, rather than
-    #     report "not behind".
+    #     2 commits behind main. Treat it as stale and wait for Dependabot,
+    #     rather than report "not behind".
     local fx_h="$TEST_DIR/auto-merge-gating-case-h"
     mkdir -p "$fx_h"
     printf '900\n' > "$fx_h/pr-numbers.txt"
@@ -19690,32 +19888,58 @@ GHSTUB
     else
         fail "sweep gating (h): a refused CLEAN merge that is behind by commit count exits 0 — got $rc_h: $(cat "$out_h")"
     fi
-    assert_contains "$fx_h/calls.log" "update-branch" \
-        "sweep gating (h): falls through to pr update-branch"
+    assert_not_contains "$fx_h/calls.log" "pr comment" \
+        "sweep gating (h): the sweep never comments"
+    assert_not_contains "$fx_h/calls.log" "update-branch" \
+        "sweep gating (h): never pushes to the Dependabot branch"
     assert_not_contains "$out_h" "is not behind" \
         "sweep gating (h): does not claim the PR is not behind"
-    assert_contains "$out_h" "updated=1" \
-        "sweep gating (h): summary counts it as updated"
+    assert_contains "$out_h" "waiting=1" \
+        "sweep gating (h): summary counts it as waiting"
 
-    # (i) same as (h), but update-branch is refused too, as GITHUB_TOKEN is
-    #     for a stale workflow-file PR. The run fails and names the remedy.
-    local fx_i="$TEST_DIR/auto-merge-gating-case-i"
+    # (i) a PR behind its base with the owner's rebase request for THIS head
+    #     (a non-bot comment: first line @dependabot rebase, then the marker):
+    #     25 h old is BLOCKED (the run goes red), 23 h old is still WAITING.
+    #     "Now" is the SWEEP_NOW_EPOCH test seam, honored only with SWEEP_TEST=1.
+    local NOW_EPOCH=1800000000 req_iso
+    iso_ago() { date -u -d "@$((NOW_EPOCH - $1 * 3600))" +%Y-%m-%dT%H:%M:%SZ; }
+    local fx_i out_i rc_i
+    for hrs in 25 23; do
+        fx_i="$TEST_DIR/auto-merge-gating-case-i$hrs"
+        mkdir -p "$fx_i"
+        printf '900\n' > "$fx_i/pr-numbers.txt"
+        printf '2\n' > "$fx_i/behind-by"
+        req_iso=$(iso_ago "$hrs")
+        printf '[{"user":{"login":"some-owner","type":"User"},"author_association":"OWNER","created_at":"%s","body":"@dependabot rebase\\r\\n\\r\\n<!-- fleet-worker: behind at %s -->\\n\\nfooter"}]\n' \
+            "$req_iso" "$HEAD_X" > "$fx_i/comments-900.json"
+        write_pr "$fx_i/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
+            '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
+        out_i="$TEST_DIR/auto-merge-gating-out-i$hrs.txt"
+        rc_i=$(SWEEP_TEST=1 SWEEP_NOW_EPOCH=$NOW_EPOCH run_case "$fx_i" "" "$SELF" "$out_i")
+        assert_not_contains "$fx_i/calls.log" "pr merge" "sweep gating (i$hrs): a behind PR is never merged"
+        if [[ "$hrs" == 25 ]]; then
+            if [[ "$rc_i" -ne 0 ]]; then pass "sweep gating (i25): a rebase request over 24 h old exits non-zero"; else fail "sweep gating (i25): a rebase request over 24 h old exits non-zero — got 0: $(cat "$out_i")"; fi
+            assert_contains "$out_i" "blocked=1" "sweep gating (i25): counted as blocked"
+            assert_contains "$out_i" "Dependabot has not rebased it" "sweep gating (i25): the error says Dependabot has not rebased it"
+            assert_not_contains "$out_i" "blocked by the base branch policy" "sweep gating (i25): the policy summary does not claim a policy cause"
+        else
+            if [[ "$rc_i" -eq 0 ]]; then pass "sweep gating (i23): a rebase request under 24 h old exits 0"; else fail "sweep gating (i23): a rebase request under 24 h old exits 0 — got $rc_i: $(cat "$out_i")"; fi
+            assert_contains "$out_i" "waiting=1" "sweep gating (i23): still waiting"
+            assert_contains "$out_i" "blocked=0" "sweep gating (i23): not blocked"
+        fi
+    done
+    # The seam is ignored without SWEEP_TEST=1: a request dated 2100 is not
+    # 24 h old by the real clock, though the seam would say it is.
+    fx_i="$TEST_DIR/auto-merge-gating-case-inoseam"
     mkdir -p "$fx_i"
     printf '900\n' > "$fx_i/pr-numbers.txt"
     printf '2\n' > "$fx_i/behind-by"
+    printf '[{"user":{"login":"some-owner","type":"User"},"author_association":"OWNER","created_at":"2100-01-01T00:00:00Z","body":"@dependabot rebase\\n\\n<!-- fleet-worker: behind at %s -->"}]\n' "$HEAD_X" > "$fx_i/comments-900.json"
     write_pr "$fx_i/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" \
         '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
-    local out_i="$TEST_DIR/auto-merge-gating-out-i.txt" rc_i
-    rc_i=$(UPDATE_FAILS=1 run_case "$fx_i" "900" "$SELF" "$out_i")
-    if [[ "$rc_i" -ne 0 ]]; then
-        pass "sweep gating (i): a stale workflow-file PR that cannot be refreshed fails the run"
-    else
-        fail "sweep gating (i): a stale workflow-file PR that cannot be refreshed fails the run — got 0: $(cat "$out_i")"
-    fi
-    assert_contains "$out_i" "@dependabot rebase" \
-        "sweep gating (i): the error names the @dependabot rebase remedy"
-    assert_contains "$out_i" "failed=1" \
-        "sweep gating (i): summary counts it as failed"
+    out_i="$TEST_DIR/auto-merge-gating-out-inoseam.txt"
+    rc_i=$(SWEEP_NOW_EPOCH=5000000000 run_case "$fx_i" "" "$SELF" "$out_i")
+    assert_contains "$out_i" "waiting=1" "sweep gating (i): SWEEP_NOW_EPOCH is ignored unless SWEEP_TEST=1"
 
     # (j) control: refused, CLEAN and NOT behind — still the "not behind"
     #     error, and no refresh attempt.
@@ -19726,8 +19950,8 @@ GHSTUB
         '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
     local out_j="$TEST_DIR/auto-merge-gating-out-j.txt"
     run_case "$fx_j" "900" "$SELF" "$out_j" >/dev/null
-    assert_not_contains "$fx_j/calls.log" "update-branch" \
-        "sweep gating (j): no pr update-branch when the head is not behind"
+    assert_not_contains "$fx_j/calls.log" "pr comment" \
+        "sweep gating (j): no rebase request when the head is not behind"
     assert_contains "$out_j" "is not behind main" \
         "sweep gating (j): reports the merge refusal as not behind"
 
@@ -19743,7 +19967,7 @@ GHSTUB
         '[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"},{"workflowName":"Dependabot auto-merge","name":"auto-merge","conclusion":"SUCCESS"}]'
     local out_k="$TEST_DIR/auto-merge-gating-out-k.txt"
     run_case "$fx_k" "" "$SELF" "$out_k" >/dev/null
-    assert_contains "$out_k" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+    assert_contains "$out_k" "merged=1 waiting=0 skipped=0 blocked=0 failed=0" \
         "sweep gating (k): a first-read UNKNOWN is re-read and then merged"
 
     # (l) control: UNKNOWN on every read stops after the bound and skips,
@@ -19854,7 +20078,7 @@ GHSTUB
     write_pr "$fx_s/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_ok"
     local out_s="$TEST_DIR/auto-merge-gating-out-s.txt"
     run_case "$fx_s" "" "$SELF" "$out_s" >/dev/null
-    assert_contains "$out_s" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
+    assert_contains "$out_s" "merged=1 waiting=0 skipped=0 blocked=0 failed=0" \
         "sweep gating (s): a diff of .github/workflows/actions.lock alone merges"
     assert_contains "$fx_s/calls.log" "pr merge --merge --match-head-commit $HEAD_X 900" \
         "sweep gating (s): the merge call is recorded, pinned to the head"
@@ -19866,7 +20090,7 @@ GHSTUB
     local C_MERGE='{"sha":"2222222222222222222222222222222222222222","author":{"login":"github-actions[bot]"},"commit":{"verification":{"verified":true}},"parents":[{},{}]}'
     # one_case <name> <files-json|""> <commits-json|""> [behind-by] [rollup]:
     # one PR, run once; output in $oc_out, fixtures in $oc_fx.
-    local oc_out oc_fx
+    local oc_out oc_fx oc_rc
     one_case() {
         oc_fx="$TEST_DIR/auto-merge-gating-case-$1"
         oc_out="$TEST_DIR/auto-merge-gating-out-$1.txt"
@@ -19880,7 +20104,7 @@ GHSTUB
         if [[ -n "$3" ]]; then printf '%s\n' "$3" > "$oc_fx/commits-900.json"; fi
         if [[ -n "${4:-}" ]]; then printf '%s\n' "$4" > "$oc_fx/behind-by"; fi
         write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "${5:-$cs_two}" "$nfiles"
-        run_case "$oc_fx" "" "$SELF" "$oc_out" >/dev/null
+        oc_rc=$(run_case "$oc_fx" "" "$SELF" "$oc_out")
     }
     # no_merge <label>: the last one_case made no `pr merge` call.
     no_merge() {
@@ -19900,9 +20124,19 @@ GHSTUB
         "sweep gating (t): the warning names the short sha and the sanitized login"
     one_case t2 "" "[$(jq -c '.commit.verification.verified=false' <<<"$C_BOT")]"
     no_merge "(t2) an unverified Dependabot commit"
+    # A github-actions[bot] two-parent merge commit (what an older sweep's
+    # `gh pr update-branch` pushed) is not accepted: BLOCKED (red) with the
+    # recreate remedy, never merged, even with every check green and one from
+    # outside this workflow.
     one_case t3 "" "[$C_BOT,$C_MERGE]"
-    assert_contains "$oc_out" "merged=1 updated=0 skipped=0 blocked=0 failed=0" \
-        "sweep gating (t3): verified Dependabot commits plus the sweep's own two-parent merge commit merge"
+    no_merge "(t3) a github-actions[bot] two-parent merge commit"
+    assert_contains "$oc_out" "commit 2222222 (author 'github-actions[bot]')" \
+        "sweep gating (t3): the error names the merge commit and its author"
+    assert_contains "$oc_out" "@dependabot recreate" \
+        "sweep gating (t3): the error names the recreate remedy"
+    assert_contains "$oc_out" "blocked=1" \
+        "sweep gating (t3): summary counts it as blocked"
+    if [[ "$oc_rc" -ne 0 ]]; then pass "sweep gating (t3): the run exits non-zero"; else fail "sweep gating (t3): the run exits non-zero — got 0"; fi
     one_case t4 "" "[$C_BOT,$(jq -c '.parents=[{}]' <<<"$C_MERGE")]"
     no_merge "(t4) a one-parent github-actions[bot] commit"
     one_case t5 "" "[]"
@@ -19932,17 +20166,77 @@ GHSTUB
     one_case u7 "[{\"filename\":\".github/workflows/ci.yml\",\"status\":\"renamed\",\"previous_filename\":\".github/workflows/old.yml\",\"patch\":\"$PATCH_OK\"}]" ""
     no_merge "(u7) a renamed workflow file"
 
-    # (v) a PR behind its base is refreshed, never merged; an unmeasurable gap skips.
+    # (v) a PR behind its base with Dependabot-only commits WAITS: no merge, no
+    #     write call of any kind (no comment, no update-branch), exit 0, a
+    #     notice naming the PR and the fleet worker. An unmeasurable gap skips.
     one_case v "" "" 2
     no_merge "(v) a PR 2 commits behind"
-    assert_contains "$oc_fx/calls.log" "update-branch" "sweep gating (v): it goes straight to pr update-branch"
-    assert_contains "$oc_out" "updated=1" "sweep gating (v): summary counts it as updated"
+    if grep -qE '^pr (merge|comment|edit|review|close)|update-branch|(^| )(-X|--method) ' "$oc_fx/calls.log" 2>/dev/null; then
+        fail "sweep gating (v): no gh write call — got: $(cat "$oc_fx/calls.log")"
+    else
+        pass "sweep gating (v): no gh write call"
+    fi
+    if [[ "$oc_rc" -eq 0 ]]; then pass "sweep gating (v): a waiting PR exits 0"; else fail "sweep gating (v): a waiting PR exits 0 — got $oc_rc: $(cat "$oc_out")"; fi
+    assert_contains "$oc_out" "waiting=1" "sweep gating (v): summary counts it as waiting"
+    assert_contains "$oc_out" "::notice::#900" "sweep gating (v): a notice names the PR"
+    assert_contains "$oc_out" "the fleet worker asks Dependabot to rebase it" "sweep gating (v): the notice says the fleet worker asks"
+    # A request for ANOTHER head, a bot's comment or a comment without the
+    # exact first line does not start the 24 h clock: still waiting at 100 h.
+    local C_USER_X="\"user\":{\"login\":\"some-owner\",\"type\":\"User\"},\"author_association\":\"OWNER\""
+    local C_STRANGER="\"user\":{\"login\":\"some-stranger\",\"type\":\"User\"},\"author_association\":\"NONE\""
+    local C_OLD="$(iso_ago 100)"
+    local v5 v5n=0
+    for v5 in \
+        "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebase\\n\\n<!-- fleet-worker: behind at $HEAD_Y -->\"}]" \
+        "[{\"user\":{\"login\":\"github-actions[bot]\",\"type\":\"Bot\"},\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebase\\n\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]" \
+        "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"please @dependabot rebase\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]" \
+        "[{$C_USER_X,\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebased\\n\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]" \
+        "[{$C_STRANGER,\"created_at\":\"$C_OLD\",\"body\":\"@dependabot rebase\\n\\n<!-- fleet-worker: behind at $HEAD_X -->\"}]"; do
+        v5n=$((v5n + 1))
+        oc_fx="$TEST_DIR/auto-merge-gating-case-v5$v5n"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+        printf '%s\n' "$v5" > "$oc_fx/comments-900.json"
+        write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+        oc_rc=$(SWEEP_TEST=1 SWEEP_NOW_EPOCH=$NOW_EPOCH run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v5$v5n.txt")
+        assert_contains "$TEST_DIR/auto-merge-gating-out-v5$v5n.txt" "waiting=1" "sweep gating (v5.$v5n): a request for another head, by a bot, by a NONE-association author, or not exactly the command on the first line does not count"
+    done
+    # The comment list cannot be read: fail closed as FAILED (run goes red),
+    # never merged, and not counted as waiting.
+    oc_fx="$TEST_DIR/auto-merge-gating-case-v6"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
+    local rc_v6
+    rc_v6=$(COMMENTS_FAIL=1 run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v6.txt")
+    no_merge "(v6) a failed comments API call"
+    if [[ "$rc_v6" -ne 0 ]]; then pass "sweep gating (v6): an unreadable comment list exits non-zero"; else fail "sweep gating (v6): an unreadable comment list exits non-zero — got 0"; fi
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v6.txt" "failed=1" "sweep gating (v6): counted as failed"
+    assert_contains "$TEST_DIR/auto-merge-gating-out-v6.txt" "waiting=0" "sweep gating (v6): not counted as waiting"
+    assert_not_contains "$oc_fx/calls.log" "pr comment" "sweep gating (v6): nothing is posted"
     oc_fx="$TEST_DIR/auto-merge-gating-case-v2"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; : > "$oc_fx/compare-fails"
     write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "CLEAN" "$cs_two"
     run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-v2.txt" >/dev/null
     no_merge "(v2) a failed compare call (not assumed 0)"
     one_case v3 "" "" "oops"
     no_merge "(v3) a non-numeric behind_by"
+
+    # Provenance runs BEFORE the checks gate: a stranded PR with the old
+    # github-actions[bot] merge commit and an EMPTY rollup (GITHUB_TOKEN pushes
+    # start no CI) is BLOCKED, not skipped as "checks not green" forever.
+    one_case t8 "" "[$C_BOT,$C_MERGE]" "" "[]"
+    no_merge "(t8) a merge-commit PR with an empty check rollup"
+    assert_contains "$oc_out" "@dependabot recreate" "sweep gating (t8): the empty-rollup PR still gets the recreate remedy"
+    assert_contains "$oc_out" "blocked=1" "sweep gating (t8): counted as blocked"
+    if [[ "$oc_rc" -ne 0 ]]; then pass "sweep gating (t8): the run exits non-zero"; else fail "sweep gating (t8): the run exits non-zero — got 0"; fi
+
+    # A behind PR that changes a workflow file (a Dependabot actions bump),
+    # even when GitHub reads it BLOCKED to GITHUB_TOKEN, takes the same
+    # WAITING path and 24 h grace as any other: not red on the first night,
+    # and no "needs a human" text where the fleet worker does it.
+    oc_fx="$TEST_DIR/auto-merge-gating-case-wf"; mkdir -p "$oc_fx"; printf '900\n' > "$oc_fx/pr-numbers.txt"; printf '2\n' > "$oc_fx/behind-by"
+    write_pr "$oc_fx/pr-900.json" 900 "$HEAD_X" "MERGEABLE" "BLOCKED" "$cs_two"
+    oc_rc=$(run_case "$oc_fx" "" "$SELF" "$TEST_DIR/auto-merge-gating-out-wf.txt")
+    no_merge "(wf) a behind workflow-file PR"
+    if [[ "$oc_rc" -eq 0 ]]; then pass "sweep gating (wf): a behind workflow-file PR waits and exits 0"; else fail "sweep gating (wf): a behind workflow-file PR waits and exits 0 — got $oc_rc: $(cat "$TEST_DIR/auto-merge-gating-out-wf.txt")"; fi
+    assert_contains "$TEST_DIR/auto-merge-gating-out-wf.txt" "waiting=1" "sweep gating (wf): counted as waiting"
+    assert_not_contains "$TEST_DIR/auto-merge-gating-out-wf.txt" "Needs a human" "sweep gating (wf): no needs-a-human text"
 
     # (w) a SKIPPED-only outside check does not satisfy the outside-CI floor.
     one_case w "" "" "" '[{"workflowName":"CI","name":"test","conclusion":"SKIPPED"}]'
@@ -26890,10 +27184,12 @@ GROUP_self_hosted=(
     test_yq_install_pinned
     test_check_agents_md
     test_check_guidance_coverage
+    test_contributor_rules
     test_check_guidance_touch
     test_yq_preflight
     test_shared_repos_yml_helpers_are_identical
     test_dependabot_sweep_list_failure
+    test_dependabot_sweep_repo_context
     test_dependabot_sweep_merge_gating
     test_dependabot_config_health
     test_impact_report

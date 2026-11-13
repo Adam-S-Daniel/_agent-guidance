@@ -133,6 +133,25 @@ bytes is decided by skills-evals' ablation fixtures, and a section that adds
 nothing is removed by an automatic pull request, not by a person
 ([ADR 0030](docs/decisions/0030-a-sections-worth-is-measured-by-ablation-and-weighed-against-its-bytes.md)).
 
+**Workflows, their triggers and which are required.** Every workflow that runs
+on `pull_request` or `push` filters on its salient paths or says why not;
+`schedule`, `workflow_dispatch`, `workflow_call` and `workflow_run` workflows do
+not run on a change, so they have no path filter. The required contexts on
+`main` are `test` (the `ci.yml` aggregator) and `agent-checks`.
+
+| Workflow | Runs on | Salient-path handling | Required |
+| --- | --- | --- | --- |
+| `ci.yml` | `pull_request`, push to `main` | Broad trigger; each `suite` shard and `checks` decide from `scripts/ci-scope.sh` and the job still reports success | `test` (aggregator) |
+| `agent-checks.yml` | `pull_request`, push to `main` | None: a required check cannot use `on.paths`, and the runner itself passes when nothing it checks changed | `agent-checks` |
+| `health-reusable-parity.yml` | `pull_request` with `paths:` (`scheduled-run-health-reusable.yml`, itself, `scripts/check-health-reusable-parity.js`), daily schedule | `on.paths` | No: with `on.paths` it would be missing, not skipped, on every other PR and block the merge |
+| `sync.yml` | push to `main` with `paths:` (the sync inputs and `templates/**`) | `on.paths` | No: post-merge, not a PR check |
+| `vendor-discrepancy-alert.yml` | push to `main` with `paths:` (the vendor discrepancy and draft files) | `on.paths` | No: post-merge |
+| `vendor-changelog-merge.yml` | `workflow_run` of `CI` and `agent-checks` | Gates on the completed run | No |
+| `prompt-audit-fire.yml` | `issues` opened | Not applicable | No |
+| `skills-lock-bump.yml` | schedule, `repository_dispatch` | Not applicable | No |
+| `article-watch.yml`, `dependabot-auto-merge.yml`, `dependabot-config-health.yml`, `drift-report.yml`, `fleet-worker-fire.yml`, `impact-report.yml`, `scheduled-run-health.yml` | schedule (and manual) | Not applicable | No |
+| `scheduled-run-health-reusable.yml` | `workflow_call` | Not applicable | No |
+
 **Action pins.** This repo's own workflows name third-party actions by exact
 release tag, and [`.github/workflows/actions.lock`](.github/workflows/actions.lock)
 locks each tag to a commit ([ADR 0024](docs/decisions/0024-actions-pin-through-lockfiles.md)).
