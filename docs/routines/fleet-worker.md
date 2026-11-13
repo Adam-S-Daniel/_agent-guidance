@@ -154,10 +154,47 @@ so the PR stays blocked with nothing red to fix (the 2026-10-25 case:
   `behind_by` above 0), call `PUT /repos/<owner>/<repo>/pulls/<n>/update-branch`
   with `expected_head_sha` set to the head you read. That merges the base
   into the PR branch with a merge commit, which starts every check.
-- Skip Dependabot PRs: `dependabot-rearm-sweep` and Dependabot itself
-  handle those, and an update by anyone else stops Dependabot from rebasing.
+- Skip Dependabot PRs here: an update by anyone else stops Dependabot from
+  rebasing. Step 1b asks Dependabot to rebase them instead.
 - If the update is refused (a merge conflict, a 422), do not resolve it here.
   List the PR in the summary under "Conflicts".
+
+### 1b. Ask Dependabot to rebase or recreate its own PR
+
+The Dependabot auto-merge sweep
+([`dependabot-auto-merge.yml`](../../templates/dependabot-auto-merge/dependabot-auto-merge.yml))
+never pushes to a Dependabot branch and never comments: `GITHUB_TOKEN` pushes
+start no CI, and Dependabot ignores commands from `github-actions[bot]`. It
+leaves a PR that is behind its base as waiting, and fails its run on one with
+a commit Dependabot did not write. Asking Dependabot is this step's job, since
+Dependabot honors a command from a user with push access.
+
+For each open PR authored by `app/dependabot` in the repos this pass reads
+(the same list, no other), read `compare` for `behind_by`, the PR's commits
+(`GET /repos/<owner>/<repo>/pulls/<n>/commits`, paginated) and its comments
+(`GET /repos/<owner>/<repo>/issues/<n>/comments`, paginated). An unreadable
+commit or comment list skips the PR and is noted in the summary.
+
+1. **Rebase.** If it is behind its base, every commit is a verified
+   `dependabot[bot]` commit, and no comment contains
+   `<!-- fleet-worker: behind at <head sha> -->` for the current head sha,
+   post a comment whose first line is exactly `@dependabot rebase`, then a
+   blank line, that marker, a blank line, and the standard agent marker
+   footer.
+2. **Recreate.** If it carries a commit that is not a verified
+   `dependabot[bot]` commit (for example a `github-actions[bot]` merge commit
+   from the old sweep's `update-branch`) and no comment contains
+   `<!-- fleet-worker: recreate at <head sha> -->`, post the same shape with
+   `@dependabot recreate` as the first line and that marker.
+
+The marker names the head sha, so a new head gets a new request. The sweep
+reads the rebase marker to tell how long a PR has waited: a request more than
+24 hours old on a PR still behind at the same head turns the sweep's run red.
+
+Never push to, merge, approve or label a Dependabot PR, and every other
+Dependabot PR is skipped as before. The on-hold check above applies. Count the
+requests for the summary: `Dependabot rebase requests: <n>` and
+`Dependabot recreate requests: <n>`.
 
 ### 2. Review and merge a narrow instruction fix
 
@@ -631,7 +668,8 @@ under "Needs you".
 The run's final message has, in this order:
 
 1. `Needs you:` and its list, only when something is news (above).
-2. One line each for: PRs brought up to date, reviews posted (with their
+2. One line each for: PRs brought up to date, Dependabot rebase and recreate
+   requests (step 1b), reviews posted (with their
    verdicts), PRs merged, issues taken and their PRs, issues blocked and
    why, lessons handled and their verdicts or PRs, PRs parked
    (eval-protected), stale claims, conflicts, `NOT REACHED` repos, and

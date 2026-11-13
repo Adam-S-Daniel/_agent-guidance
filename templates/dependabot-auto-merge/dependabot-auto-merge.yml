@@ -24,21 +24,29 @@
 #
 # COMMIT PROVENANCE: the PR author alone proves nothing, since anyone with
 # write access can push a commit onto a dependabot/* branch. Every commit on
-# the PR must be Dependabot's own and GitHub-verified; a commit by anyone
-# else, this sweep included, skips the PR. The commit list is fail closed: an
-# API error, an empty list or 250+ commits (the endpoint's cap) skips the PR.
+# the PR must be Dependabot's own and GitHub-verified. That proves WHO wrote
+# the commits, not that CI ran on them: CI coverage rests on the outside-check
+# floor above and on each repo's ruleset. A PR with any other commit (a person's,
+# an unverified one, or a github-actions[bot] merge commit pushed by an older
+# version of this sweep) is BLOCKED: the run goes red and names the remedy,
+# a `@dependabot recreate` comment, which the fleet worker posts. The commit
+# list is fail closed: an API error, an empty list or 250+ commits (the
+# endpoint's cap) skips the PR.
 #
-# BEHIND PRs GET A REBASE REQUEST, NOT A MERGE: a PR behind its base would
-# land a combination no check ran on. The sweep never pushes to a Dependabot
-# branch: a push made with GITHUB_TOKEN starts no workflow runs, so the repo's
-# own CI would never run on the new head, and Dependabot refuses to rebase a
-# branch someone else pushed to. It comments `@dependabot rebase` instead, so
-# the new head is Dependabot's own push and CI runs on it as a normal
-# pull_request event. The comment's second line is a marker naming the head
-# the PR was behind at, which keeps it to one request per head; a PR still
-# behind at a head that already has the marker is logged with a warning, so a
-# Dependabot that ignores the request is visible. The next sweep judges the
-# rebased head. An unmeasurable behind-ness skips the PR.
+# BEHIND PRs WAIT, THE SWEEP NEVER PUSHES OR COMMENTS: a PR behind its base
+# would land a combination no check ran on. This sweep must not push to a
+# Dependabot branch: a push made with GITHUB_TOKEN starts no workflow runs, so
+# the repo's CI would not run on the new head, and Dependabot refuses to
+# rebase a branch someone else pushed to. It cannot ask Dependabot to rebase
+# either: Dependabot ignores commands from github-actions[bot]. So a behind PR
+# with Dependabot-only commits is skipped and counted WAITING (a notice names
+# it), and the fleet worker (docs/routines/fleet-worker.md) asks Dependabot to
+# rebase it with a comment carrying the marker
+# `<!-- fleet-worker: behind at <head sha> -->`. If that request for THIS head
+# is more than 24 hours old and the PR is still behind at the same head, the
+# PR is BLOCKED (the run goes red): Dependabot has not rebased it, and a person
+# should check the PR. An unreadable comment list is FAILED (fail closed), and
+# an unmeasurable behind-ness skips the PR.
 #
 # Why no job arms native auto-merge (cms-platform#437): with
 # `required_status_checks: []`, `gh pr merge --auto` does not no-op. gh counts
@@ -85,9 +93,9 @@ jobs:
     # still open in the batch goes OUT OF DATE with the new base, and a stale
     # branch is genuinely un-mergeable; only updating the branch can fix it.
     # This job merges DIRECTLY once every check on the PR's head has concluded
-    # green, pinned to that head, and asks Dependabot to rebase (rather than
-    # force-merging) a PR that has fallen behind its base so the next sweep can
-    # land it cleanly.
+    # green, pinned to that head, and leaves a PR that has fallen behind its
+    # base waiting for Dependabot to rebase it (never merging it, never
+    # pushing to it), so a later sweep can land it cleanly.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -137,13 +145,14 @@ jobs:
 
           if [ "${#PR_NUMBERS[@]}" -eq 0 ]; then
             echo "::notice::No open Dependabot PRs — nothing to sweep."
-            echo "merged=0 updated=0 skipped=0 blocked=0 failed=0"
+            echo "merged=0 waiting=0 skipped=0 blocked=0 failed=0"
             exit 0
           fi
 
           echo "Open Dependabot PR(s): ${PR_NUMBERS[*]}"
           MERGED=0
-          UPDATED=0
+          WAITING=0
+          HELD_PRS=0
           SKIPPED=0
           BLOCKED_PRS=0
           FAILED=0
@@ -229,45 +238,50 @@ jobs:
             return 0
           }
 
-          # Ask Dependabot to rebase a stale PR (uses num, base, head_sha,
-          # behind_by, merge_state from the loop). A stale branch is genuinely
-          # un-mergeable, and nothing short of rebasing it can fix that: the
+          # A stale PR (uses num, base, head_sha, behind_by, merge_state from
+          # the loop) is skipped, never merged and never touched: a stale
+          # branch is genuinely un-mergeable until Dependabot rebases it (the
           # cms-platform #118-122 batch strand, where every merge advances the
-          # base and leaves its still-open siblings out of date.
-          # The sweep does NOT push to the branch itself: GITHUB_TOKEN pushes
-          # start no workflow runs, so the repo's CI would never run on the
-          # new head. A comment makes Dependabot push, and that push runs CI.
-          # The PR cannot land in THIS sweep BY DESIGN; the next one finishes
-          # it. Requesting is a SUCCESS outcome (counted as UPDATED).
-          # The request is made once per head: the comment's second line is a
-          # marker naming head_sha, and a marker posted by this workflow's
-          # identity for the same head means it was already asked. The
-          # comment list is fail closed: an unreadable list skips the PR
-          # without posting, so an API error cannot cause a comment per sweep.
-          request_rebase() {
-            local marker comments_raw already
-            marker="<!-- sweep: behind at ${head_sha} -->"
-            echo "#${num} — $1 (behind_by=${behind_by}, mergeStateStatus=${merge_state}); asking Dependabot to rebase it"
+          # base and leaves its still-open siblings out of date), and this
+          # sweep can neither push (GITHUB_TOKEN pushes start no CI) nor ask
+          # (Dependabot ignores github-actions[bot]). The fleet worker asks,
+          # with a comment carrying the marker below. WAITING is a success
+          # outcome, until the owner's request for this head is a day old.
+          # "Now" is `date -u +%s`; SWEEP_NOW_EPOCH replaces it only when
+          # SWEEP_TEST=1 marks a test run, so a leaked value is ignored.
+          # The comment list is fail closed: unreadable is FAILED.
+          wait_for_rebase() {
+            local marker comments_raw requested_at now age
+            marker="<!-- fleet-worker: behind at ${head_sha} -->"
+            echo "::notice::#${num} — $1 (behind_by=${behind_by}, mergeStateStatus=${merge_state}); not merging or touching it; the fleet worker asks Dependabot to rebase it"
             if ! comments_raw=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${num}/comments?per_page=100" \
-              --jq '.[] | {l: (.user.login // ""), b: (.body // "")} | @json' 2>/dev/null) \
-              || ! already=$(jq -rs --arg m "$marker" \
-                'any(.[]; .l == "github-actions[bot]" and ((.b | split("\n")) | any(. == $m)))' <<<"$comments_raw" 2>/dev/null) \
-              || { [ "$already" != "true" ] && [ "$already" != "false" ]; }; then
-              echo "::warning::skip #${num} — could not list its comments through the API, so whether a rebase was already requested is unknown; not posting another"
-              SKIPPED=$((SKIPPED + 1))
-              return 0
-            fi
-            if [ "$already" = "true" ]; then
-              echo "::warning::#${num} is still ${behind_by} commit(s) behind ${base} at ${head_sha:0:7} and a rebase already requested at this head has not been honored; Dependabot may be ignoring it, so it may need a human"
-              SKIPPED=$((SKIPPED + 1))
-              return 0
-            fi
-            if gh pr comment "$num" --body "$(printf '@dependabot rebase\n%s' "$marker")"; then
-              echo "::notice::#${num} requested a Dependabot rebase against ${base} at ${head_sha:0:7}; its checks run on the rebased head and the next sweep merges it"
-              UPDATED=$((UPDATED + 1))
-            else
-              echo "::error::#${num} — it is behind ${base} and posting \`@dependabot rebase\` failed; needs a human: comment \`@dependabot rebase\` on the PR"
+              --jq '.[] | {l: (.user.login // ""), t: (.user.type // ""), b: (.body // ""), c: (.created_at // "")} | @json' 2>/dev/null) \
+              || ! requested_at=$(jq -rs --arg m "$marker" '
+                [.[]
+                  | select(.t != "Bot" and (.l | endswith("[bot]") | not))
+                  | select(.b | startswith("@dependabot rebase"))
+                  | select(.b | contains($m))
+                  | .c | fromdateiso8601]
+                | min // empty' <<<"$comments_raw" 2>/dev/null); then
+              echo "::error::#${num} — could not read its comments through the API, so whether a rebase was requested at ${head_sha:0:7} is unknown; not merging it. Fail closed: counted as failed"
               FAILED=$((FAILED + 1))
+              return 0
+            fi
+            if [ -z "$requested_at" ]; then
+              WAITING=$((WAITING + 1))
+              return 0
+            fi
+            now="${SWEEP_NOW_EPOCH:-}"
+            if [ "${SWEEP_TEST:-}" != "1" ] || [ -z "$now" ] || [ -n "${now//[0-9]/}" ]; then
+              now=$(date -u +%s)
+            fi
+            age=$((now - requested_at))
+            if [ "$age" -gt 86400 ]; then
+              echo "::error::blocked #${num} — a rebase was requested at ${head_sha:0:7} more than 24 hours ago ($((age / 3600)) h) and it is still ${behind_by} commit(s) behind ${base}; Dependabot has not rebased it. A person should check the PR (Dependabot may have answered with a reason)."
+              BLOCKED_PRS=$((BLOCKED_PRS + 1))
+              HELD_PRS=$((HELD_PRS + 1))
+            else
+              WAITING=$((WAITING + 1))
             fi
           }
 
@@ -407,9 +421,10 @@ jobs:
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
-            # The first commit that is not Dependabot's verified own (this
-            # sweep's own merge commits are not accepted: it pushes none). Only
-            # sanitized characters of the login are ever printed.
+            # The first commit that is not Dependabot's verified own (a
+            # github-actions[bot] merge commit from an older sweep's
+            # update-branch is not accepted). Only sanitized characters of the
+            # login are ever printed.
             if ! bad_commit=$(jq -rs '
               [.[] | select((.l == "dependabot[bot]" and .v == true) | not)]
               | first // empty
@@ -420,8 +435,9 @@ jobs:
               continue
             fi
             if [ -n "$bad_commit" ]; then
-              echo "::warning::skip #${num} — commit ${bad_commit%% *} (author '${bad_commit#* }') is not a verified Dependabot commit; leaving for human review"
-              SKIPPED=$((SKIPPED + 1))
+              echo "::error::blocked #${num} — commit ${bad_commit%% *} (author '${bad_commit#* }') is not a verified Dependabot commit, so it is not merged. Needs a human: comment \`@dependabot recreate\` on the PR (the fleet worker does this); the next sweep judges the recreated branch."
+              BLOCKED_PRS=$((BLOCKED_PRS + 1))
+              HELD_PRS=$((HELD_PRS + 1))
               continue
             fi
 
@@ -539,7 +555,7 @@ jobs:
             # its base gets a rebase request WITHOUT a merge attempt, since
             # merging it would land a combination no check ran on.
             if [ "$behind_by" -gt 0 ]; then
-              request_rebase "it is ${behind_by} commit(s) behind ${base}, so merging would land a combination its checks never ran on"
+              wait_for_rebase "it is ${behind_by} commit(s) behind ${base}, so merging would land a combination its checks never ran on"
               continue
             fi
 
@@ -571,24 +587,27 @@ jobs:
             # The merge was refused. mergeStateStatus=BEHIND with a measured
             # behind_by of 0 still means the base wants an up-to-date head.
             if [ "$merge_state" = "BEHIND" ]; then
-              request_rebase "its merge was refused and mergeStateStatus=BEHIND"
+              wait_for_rebase "its merge was refused and mergeStateStatus=BEHIND"
             else
               echo "::error::#${num} — merge was refused and the PR is not behind ${base}; needs a human"
               FAILED=$((FAILED + 1))
             fi
           done
 
-          echo "::notice::Sweep complete — merged=${MERGED} updated=${UPDATED} skipped=${SKIPPED} blocked=${BLOCKED_PRS} failed=${FAILED}"
-          echo "merged=${MERGED} updated=${UPDATED} skipped=${SKIPPED} blocked=${BLOCKED_PRS} failed=${FAILED}"
+          echo "::notice::Sweep complete — merged=${MERGED} waiting=${WAITING} skipped=${SKIPPED} blocked=${BLOCKED_PRS} failed=${FAILED}"
+          echo "merged=${MERGED} waiting=${WAITING} skipped=${SKIPPED} blocked=${BLOCKED_PRS} failed=${FAILED}"
 
-          # Exit non-zero ONLY when a PR could be neither merged, updated, nor
+          # Exit non-zero ONLY when a PR could be neither merged, left waiting, nor
           # legitimately skipped: a red run must mean a human is needed. Two
           # reasons, kept apart in the counters because they want different
           # humans:
           #
           #   blocked=N  GitHub's base branch policy refuses the merge. A
           #              standing POLICY state, named above, not a fault; we
-          #              never attempted the merge.
+          #              never attempted the merge. It also counts a PR with a
+          #              non-Dependabot commit and a PR still behind a day
+          #              after the owner's rebase request: each is named per PR
+          #              with its remedy, and kept out of the policy summary.
           #   failed=N   we attempted something and it broke unexpectedly.
           #
           # `blocked` fails the run deliberately: it is clearable (the named
@@ -596,23 +615,23 @@ jobs:
           # and the scheduled-run-health audit scans only for failure /
           # startup_failure / timed_out, so an exit-0 sweep is invisible to
           # the one alarm watching these crons.
-          if [ "$BLOCKED_PRS" -gt 0 ]; then
+          if [ $((BLOCKED_PRS - HELD_PRS)) -gt 0 ]; then
             # shellcheck disable=SC2086  # deliberate word-splitting: count bases
             set -- ${BLOCKED_BASES}
             if [ "$#" -gt 1 ]; then
               # BLOCKED_CAUSE holds only the LAST base probed, so naming it
               # here would attribute one branch's policy to every branch.
-              echo "::error::${BLOCKED_PRS} Dependabot PR(s) blocked by the base branch policy across $# base branches (${BLOCKED_BASES}) — see the per-PR causes above."
+              echo "::error::$((BLOCKED_PRS - HELD_PRS)) Dependabot PR(s) blocked by the base branch policy across $# base branches (${BLOCKED_BASES}) — see the per-PR causes above."
             elif [ -n "$BLOCKED_CAUSE" ]; then
-              echo "::error::${BLOCKED_PRS} Dependabot PR(s) blocked by the base branch policy — ${BLOCKED_CAUSE}"
+              echo "::error::$((BLOCKED_PRS - HELD_PRS)) Dependabot PR(s) blocked by the base branch policy — ${BLOCKED_CAUSE}"
             else
               # Only the workflow-file arm blocked, which never probes the
               # policy, so there is no cause to repeat here.
-              echo "::error::${BLOCKED_PRS} Dependabot PR(s) blocked — stale workflow-file PR(s) GITHUB_TOKEN cannot merge; see the per-PR remedy above."
+              echo "::error::$((BLOCKED_PRS - HELD_PRS)) Dependabot PR(s) blocked — stale workflow-file PR(s) GITHUB_TOKEN cannot merge; see the per-PR remedy above."
             fi
           fi
           if [ "$FAILED" -gt 0 ]; then
-            echo "::error::${FAILED} Dependabot PR(s) could be neither merged nor updated — see the errors above."
+            echo "::error::${FAILED} Dependabot PR(s) could be neither merged nor left waiting — see the errors above."
           fi
           if [ "$BLOCKED_PRS" -gt 0 ] || [ "$FAILED" -gt 0 ]; then
             exit 1
