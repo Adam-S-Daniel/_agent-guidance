@@ -21428,7 +21428,7 @@ test_register_codex_hook() {
     assert_contains "$d/out1" "/hooks" "register-codex-hook: names the trust step the operator still owes"
 
     rc=0
-    shape=$(python3 - "$target" 2>&1 <<'PY'
+    shape=$(python3 - "$target" "$XDG_DATA_HOME" 2>&1 <<'PY'
 import json, sys
 
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -21444,7 +21444,8 @@ assert e["type"] == "command", "type is %r" % e.get("type")
 assert e["timeout"] == 30, "timeout is %r" % e.get("timeout")
 assert e["statusMessage"] == "fleet-guidance", "statusMessage is %r" % e.get("statusMessage")
 assert "fleet-guidance/codex-session-start.sh" in e["command"], "command does not name the launcher"
-assert "XDG_DATA_HOME" in e["command"], "command does not resolve the launcher from XDG_DATA_HOME"
+assert e["command"].endswith(" _ " + sys.argv[2] + "/fleet-guidance/codex-session-start.sh"), "command does not bake in the absolute launcher path: %r" % e["command"]
+assert "XDG_DATA_HOME" not in e["command"], "command still reads XDG_DATA_HOME when Codex runs"
 assert "fleet-memory.sh" not in e["command"], "command still runs a repo's fleet-memory.sh"
 print("OK")
 PY
@@ -21592,9 +21593,7 @@ test_register_codex_hook_workspace_upgrade() {
     : > "$target"
     local -x XDG_DATA_HOME="$d/xdg-data"
     : > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
-    cat > "$d/expected-command" <<'EOF'
-bash -c 'd="${XDG_DATA_HOME:-}"; case "$d" in /*) ;; *) d="$HOME/.local/share" ;; esac; l="$d/fleet-guidance/codex-session-start.sh"; [ -f "$l" ] && exec bash "$l"; exit 0'
-EOF
+    printf '%s\n' "bash -c '[ -f \"\$1\" ] && exec bash \"\$1\"; exit 0' _ $XDG_DATA_HOME/fleet-guidance/codex-session-start.sh" > "$d/expected-command"
     rc=0
     out=$(CODEX_HOME="$d/empty" "$script" 2>&1) || rc=$?
     if [[ $rc -eq 0 ]]; then
@@ -21708,6 +21707,84 @@ PY
         pass 'register workspace: the previous workspace command is upgraded to the launcher command in place'
     else
         fail "register workspace: previous-command upgrade exit $rc: $out / $out2"
+    fi
+
+    # The deleted repo launcher, named by a manual CODEX_HOOK_COMMAND recipe,
+    # is an old command too: it is upgraded in place, never "already registered".
+    mkdir -p "$d/deleted-launcher"
+    python3 - "$d/deleted-launcher/hooks.json" <<'PY'
+import json, sys
+doc = {"hooks": {"SessionStart": [{"matcher": "startup|resume", "hooks": [
+    {"type": "command", "command": "bash /home/me/proj/.claude/hooks/codex-session-start.sh",
+     "timeout": 30, "statusMessage": "fleet-guidance"}]}]}}
+json.dump(doc, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PY
+    rc=0
+    out=$(CODEX_HOME="$d/deleted-launcher" "$script" 2>&1) || rc=$?
+    command=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/deleted-launcher/hooks.json")
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && "$command" == "$(cat "$d/expected-command")" ]]; then
+        pass 'register workspace: a command naming the deleted repo launcher is upgraded in place'
+    else
+        fail "register workspace: deleted-launcher command exit $rc: $out / $command"
+    fi
+
+    # An old Windows entry (the previous command with its commandWindows
+    # pointing at the deleted file): a Windows run swaps in the new
+    # commandWindows, a non-Windows run drops the stale one.
+    local old_win='"C:\Program Files\Git\bin\bash.exe" "D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh"'
+    local variant
+    for variant in windows plain; do
+        mkdir -p "$d/oldwin-$variant"
+        python3 - "$d/legacy2/hooks.json" "$d/oldwin-$variant/hooks.json" "$old_win" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+doc["hooks"]["SessionStart"][1]["hooks"][0] = {
+    "type": "command",
+    "command": "bash -c 'r=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; h=\"$r/.claude/hooks/fleet-memory.sh\"; [ -n \"$r\" ] && [ -f \"$h\" ] && exec bash \"$h\"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace \"$h\" 2>/dev/null && exec bash \"$h\" --workspace \"$PWD\"; done; exit 0'",
+    "timeout": 30, "statusMessage": "fleet-guidance", "commandWindows": sys.argv[3]}
+json.dump(doc, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+PY
+    done
+    rc=0
+    out=$(CODEX_HOME="$d/oldwin-windows" "$script" --windows --launcher 'D:/Users/me/fleet-guidance/codex-session-start.sh' 2>&1) || rc=$?
+    rc2=0
+    out2=$(python3 - "$d/oldwin-windows/hooks.json" "$d/expected-command" 2>&1 <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][1]["hooks"][0]
+assert e["command"] == open(sys.argv[2]).read().rstrip("\n"), e["command"]
+assert e["commandWindows"] == '"C:\\Program Files\\Git\\bin\\bash.exe" "D:/Users/me/fleet-guidance/codex-session-start.sh"', e["commandWindows"]
+print("OK")
+PY
+) || rc2=$?
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && $rc2 -eq 0 && "$out2" == OK ]]; then
+        pass 'register workspace: an old Windows entry gets the new command and commandWindows'
+    else
+        fail "register workspace: old Windows entry exit $rc: $out / $out2"
+    fi
+    rc=0
+    out=$(CODEX_HOME="$d/oldwin-plain" "$script" 2>&1) || rc=$?
+    rc2=0
+    out2=$(python3 - "$d/oldwin-plain/hooks.json" 2>&1 <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][1]["hooks"][0]
+assert "commandWindows" not in e, e
+print("OK")
+PY
+) || rc2=$?
+    if [[ $rc -eq 0 && $rc2 -eq 0 && "$out2" == OK ]]; then
+        pass 'register workspace: a non-Windows upgrade drops a stale commandWindows naming the deleted file'
+    else
+        fail "register workspace: stale commandWindows kept, exit $rc: $out / $out2"
+    fi
+
+    # A CODEX_HOOK_COMMAND override is not refused for a missing default launcher.
+    mkdir -p "$d/override"
+    rc=0
+    out=$(XDG_DATA_HOME="$d/none" CODEX_HOOK_COMMAND='bash /my/own/codex-session-start.sh' CODEX_HOME="$d/override" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'registered'* ]]; then
+        pass 'register workspace: a CODEX_HOOK_COMMAND override registers without the default launcher'
+    else
+        fail "register workspace: override refused, exit $rc: $out"
     fi
 
     # A current registration wins over a leftover legacy entry regardless of
@@ -21999,25 +22076,26 @@ test_register_codex_hook_command_runs_the_launcher() {
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
     local d="$TEST_DIR/codexhook-command" cmd out rc
     rm -rf "$d"
-    mkdir -p "$d/codex" "$d/xdg/fleet-guidance" "$d/home/.local/share/fleet-guidance" "$d/cwd"
-    printf '#!/usr/bin/env bash\necho "xdg-launcher args=[$*]"\n' > "$d/xdg/fleet-guidance/codex-session-start.sh"
+    mkdir -p "$d/codex" "$d/xdg dir/fleet-guidance" "$d/home/.local/share/fleet-guidance" "$d/cwd" "$d/codex2"
+    printf '#!/usr/bin/env bash\necho "xdg-launcher args=[$*]"\n' > "$d/xdg dir/fleet-guidance/codex-session-start.sh"
     printf '#!/usr/bin/env bash\necho "home-launcher"\n' > "$d/home/.local/share/fleet-guidance/codex-session-start.sh"
-    XDG_DATA_HOME="$d/xdg" CODEX_HOME="$d/codex" "$script" >/dev/null 2>&1 || true
+    # The absolute path (here with a space in it) is fixed when registering, so
+    # the command works from an environment with no XDG_DATA_HOME and another HOME.
+    HOME="$d/home" XDG_DATA_HOME="$d/xdg dir" CODEX_HOME="$d/codex" "$script" >/dev/null 2>&1 || true
     cmd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/codex/hooks.json")
-    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/home" XDG_DATA_HOME="$d/xdg" bash -c "$cmd" 2>&1)
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" sh -c "$cmd" 2>&1)
     [[ "$out" == "xdg-launcher args=[]" ]] \
-        && pass "registered command: an absolute XDG_DATA_HOME launcher runs and its stdout passes through" \
-        || fail "registered command: XDG launcher branch wrong: $out"
-    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/home" XDG_DATA_HOME="relative/data" bash -c "$cmd" 2>&1)
+        && pass "registered command: the baked-in launcher path runs from any environment, spaces included" \
+        || fail "registered command: baked path branch wrong: $out"
+    HOME="$d/home" XDG_DATA_HOME="relative/data" CODEX_HOME="$d/codex2" "$script" >/dev/null 2>&1 || true
+    cmd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/codex2/hooks.json")
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" sh -c "$cmd" 2>&1)
     [[ "$out" == "home-launcher" ]] \
-        && pass "registered command: a relative XDG_DATA_HOME is ignored for \$HOME/.local/share" \
+        && pass "registered command: a relative XDG_DATA_HOME is ignored at registration for \$HOME/.local/share" \
         || fail "registered command: relative XDG branch wrong: $out"
-    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/home" bash -c "$cmd" 2>&1)
-    [[ "$out" == "home-launcher" ]] \
-        && pass "registered command: with no XDG_DATA_HOME it uses \$HOME/.local/share" \
-        || fail "registered command: HOME branch wrong: $out"
+    rm -f "$d/home/.local/share/fleet-guidance/codex-session-start.sh"
     rc=0
-    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" bash -c "$cmd" 2>&1) || rc=$?
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" sh -c "$cmd" 2>&1) || rc=$?
     [[ $rc -eq 0 && -z "$out" ]] \
         && pass "registered command: with the launcher gone it exits 0 silently" \
         || fail "registered command: expected silence, rc=$rc: $out"
@@ -23312,12 +23390,11 @@ test_fleet_memory_owner_gate() {
     git init -q "$repo" 2>/dev/null
     cp "$hook" "$repo/.claude/hooks/fleet-memory.sh"
     cp "$bundle/fleet-guidance.md" "$repo/.claude/hooks/fleet-guidance.md"
-    # The stand-in launcher goes in the fresh home before the run; it is part
-    # of the manifest the no-marker leg compares, so it is written first.
+    # The stand-in launcher is written before each run.
     gate_launcher() {
-        mkdir -p "$h/.local/share/fleet-guidance"
+        # At the path baked into the registered command, outside the fresh $h.
         printf '#!/usr/bin/env bash\ncd "%s" && exec bash .claude/hooks/fleet-memory.sh\n' "$repo" \
-            > "$h/.local/share/fleet-guidance/codex-session-start.sh"
+            > "$regdir/.local/share/fleet-guidance/codex-session-start.sh"
     }
     for via in command; do
         local -a runner=(bash -c "$cmd")

@@ -215,19 +215,19 @@ the same launcher under Git Bash by explicit path (override with
 registration in place, including either earlier command that ran a repo's own
 `fleet-memory.sh`; re-trust the changed definition in `/hooks`.
 
-**2026-09-28 — parent-directory launches:** from a multi-repo parent, the
-registered command runs the first child hook supporting `--workspace`; that
-hook selects the freshest immediate child's payload using the same delivery
-stamp and installed-block arbitration as normal runs. A second
-`fleet-workspace:` line lists the child repos whose `AGENTS.md` must be read
-before working in them, even when guidance is opted out (but not on a durable
-machine without the owner signal, where the hook prints nothing). Codex does not load
-child instructions from the parent (nor through `--add-dir`); inlining 19
-repos' files would consume a large context budget for instructions relevant
-only while working in each repo. **Upgrade once per machine:** run
-[`scripts/register-codex-hook.sh`](scripts/register-codex-hook.sh), then
-re-trust the changed definition in `/hooks`. Only the exact previous default
-command is upgraded; hand-written variants stay untouched.
+**2026-09-28 — parent-directory launches (historical):** `fleet-memory.sh
+--workspace <dir>` still selects the freshest immediate child's payload and
+prints a `fleet-workspace:` line naming the child repos whose `AGENTS.md` must
+be read, because Codex does not load child instructions from a parent (nor
+through `--add-dir`). Since ADR 0043 the registered local-Codex command runs the
+per-user launcher, which does not call that mode, so a Codex session started
+from a multi-repo parent gets no such list; the guidance itself still arrives
+through the plugin hook. **Upgrade once per machine:** run
+[`scripts/register-codex-hook.sh`](scripts/register-codex-hook.sh) after
+`setup.sh --owner-machine`, then re-trust the changed definition in `/hooks`.
+Both earlier defaults, and a command naming the deleted
+`.claude/hooks/codex-session-start.sh`, are upgraded in place; other
+hand-written variants stay untouched.
 
 The Codex Cloud cold-start path is verified with **Manual** environment setup
 and persistent `CODEX_HOME=/opt/codex`: preserve `npm ci`, then run

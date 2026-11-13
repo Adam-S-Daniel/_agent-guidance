@@ -29,8 +29,9 @@ set -euo pipefail
 #
 # THE COMMAND runs a per-user LAUNCHER, not a file in any repo (ADR 0043):
 #
-#   bash -c 'd="${XDG_DATA_HOME:-}"; case "$d" in /*) ;; *) d="$HOME/.local/share" ;; esac; l="$d/fleet-guidance/codex-session-start.sh"; [ -f "$l" ] && exec bash "$l"; exit 0'
+#   bash -c '[ -f "$1" ] && exec bash "$1"; exit 0' _ /home/me/.local/share/fleet-guidance/codex-session-start.sh
 #
+# with the launcher's absolute path (shell-quoted) fixed at registration time.
 # The launcher is installed by adam-agentskills' `setup.sh --owner-machine` at
 # ${XDG_DATA_HOME:-$HOME/.local/share}/fleet-guidance/codex-session-start.sh
 # (XDG_DATA_HOME counts only when absolute, the rule setup.sh applies). It runs
@@ -187,10 +188,8 @@ fi
 LEGACY_HOOK_COMMAND_1="bash -c 'h=\"\$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/fleet-memory.sh\"; [ -f \"\$h\" ] && exec bash \"\$h\"; exit 0'"
 LEGACY_HOOK_COMMAND_2="bash -c 'r=\"\$(git rev-parse --show-toplevel 2>/dev/null)\"; h=\"\$r/.claude/hooks/fleet-memory.sh\"; [ -n \"\$r\" ] && [ -f \"\$h\" ] && exec bash \"\$h\"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace \"\$h\" 2>/dev/null && exec bash \"\$h\" --workspace \"\$PWD\"; done; exit 0'"
 LEGACY_HOOK_COMMANDS="$LEGACY_HOOK_COMMAND_1"$'\n'"$LEGACY_HOOK_COMMAND_2"
-# No single quote inside, so it nests in bash -c '...'.
-HOOK_SNIPPET='d="${XDG_DATA_HOME:-}"; case "$d" in /*) ;; *) d="$HOME/.local/share" ;; esac; l="$d/fleet-guidance/codex-session-start.sh"; [ -f "$l" ] && exec bash "$l"; exit 0'
-HOOK_COMMAND="bash -c '$HOOK_SNIPPET'"
-HOOK_COMMAND="${CODEX_HOOK_COMMAND:-$HOOK_COMMAND}"
+HOOK_COMMAND_OVERRIDDEN=0
+[[ -n "${CODEX_HOOK_COMMAND:-}" ]] && HOOK_COMMAND_OVERRIDDEN=1
 HOOK_MATCHER="${CODEX_HOOK_MATCHER:-startup|resume}"
 HOOK_TIMEOUT="${CODEX_HOOK_TIMEOUT:-30}"
 HOOK_STATUS="${CODEX_HOOK_STATUS:-fleet-guidance}"
@@ -204,11 +203,20 @@ if [[ "${XDG_DATA_HOME:-}" == /* ]]; then
 else
     DEFAULT_LAUNCHER_PATH="$HOME/.local/share/fleet-guidance/codex-session-start.sh"
 fi
+# The launcher's absolute path is baked into the command now, as commandWindows
+# already does, so what Codex runs does not depend on the environment it starts
+# in. printf %q makes it safe for the shell Codex runs the command through, and
+# it is passed as $1 so it never sits inside the single-quoted bash -c script.
+if [[ "$HOOK_COMMAND_OVERRIDDEN" -eq 0 ]]; then
+    HOOK_COMMAND="bash -c '[ -f \"\$1\" ] && exec bash \"\$1\"; exit 0' _ $(printf '%q' "$DEFAULT_LAUNCHER_PATH")"
+else
+    HOOK_COMMAND="$CODEX_HOOK_COMMAND"
+fi
 refuse_no_launcher() {
     echo "register-codex-hook: refused-no-launcher — the launcher $1 does not exist. Run adam-agentskills' \`setup.sh --owner-machine\` on this machine to install it, then re-run this script. Nothing written."
     exit 6
 }
-if [[ ! -f "$DEFAULT_LAUNCHER_PATH" && ( "$WINDOWS" -eq 0 || -z "$LAUNCHER" ) ]]; then
+if [[ "$HOOK_COMMAND_OVERRIDDEN" -eq 0 && ! -f "$DEFAULT_LAUNCHER_PATH" && ( "$WINDOWS" -eq 0 || -z "$LAUNCHER" ) ]]; then
     refuse_no_launcher "$DEFAULT_LAUNCHER_PATH"
 fi
 
@@ -314,7 +322,9 @@ if isinstance(existing, list):
                     continue
                 print("already-registered")
                 sys.exit(0)
-            if existing_command in legacy:
+            # The deleted repo launcher (a manual CODEX_HOOK_COMMAND recipe) is an
+            # old command too: it would run nothing.
+            if existing_command in legacy or ".claude/hooks/codex-session-start.sh" in str(existing_command):
                 if legacy_location is None:
                     legacy_location = (group_index, entry_index)
             elif needle in str(existing_command):
@@ -348,6 +358,8 @@ else:
     legacy_entry["command"] = command
     if command_windows:
         legacy_entry["commandWindows"] = command_windows
+    elif ".claude/hooks/codex-session-start.sh" in str(legacy_entry.get("commandWindows", "")):
+        del legacy_entry["commandWindows"]
     outcome = "updated"
 
 candidate = json.dumps(want, indent=2) + "\n"

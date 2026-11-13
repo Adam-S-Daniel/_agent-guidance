@@ -233,7 +233,7 @@ now exercises the byte-identical
 `/hooks` review persisted trust, without a bypass or a forged trust entry.
 The [registrar](../../scripts/register-codex-hook.sh) used its documented
 command override with the existing
-[`codex-session-start.sh`](../../.claude/hooks/codex-session-start.sh)
+[`codex-session-start.sh`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/59eb697/.claude/hooks/codex-session-start.sh)
 launcher; its default inline command was not exercised. A synthetic 29-byte
 payload was delivered in both trusted and explicitly untrusted project
 states. The latter omitted project instructions while retaining the global
