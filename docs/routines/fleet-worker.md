@@ -39,8 +39,9 @@ and a PR, so a denied label write elsewhere never stops it
 skipped both later passes).
 
 1. **The PR pass** (below): brings open PRs up to date when a required check
-   never ran on them, reviews and merges the kinds of PR Claude may merge,
-   and tells the owner which PRs need him.
+   never ran on them, reviews and merges the kinds of PR Claude may merge
+   (skill removals among them, step 2e), and tells the owner which PRs need
+   him.
 2. **The issue pass:** turns `agent-ready` issues into fix PRs, exactly as
    [`agent-issue-worker.md`](../reference/agent-issue-worker.md) says, and
    tells the owner which issues are blocked on him.
@@ -49,6 +50,7 @@ skipped both later passes).
 
 Its work sources are the `agent-ready` issues the
 [prompt-audit sweep](prompt-audit-sweep.md), the agent changelog routine,
+skills-evals' removal bot (skill removal issues, step 2e),
 the [memory curation routine](memory-curation.md) and the daily
 scheduled-run health audit file. The audit is the fleet's one detector for
 failing workflow runs: scheduled runs, plus push, dispatch and other runs on
@@ -85,7 +87,7 @@ no merge.
   session lacks with `add_repo`; a repo that cannot be read is `NOT REACHED`
   in the summary, never treated as clean.
 - **Merge only what the merge rule (below) allows.** Step 2d's
-  agent-change rule is part of it. Never merge anything
+  agent-change rule and step 2e's removal rule are part of it. Never merge anything
   else, never enable auto-merge except on the lesson-check pass's own PRs
   ([ADR 0027](../decisions/0027-lessons-become-agent-checks-through-the-fleet-worker.md)),
   never push to a default branch, never
@@ -446,6 +448,68 @@ worker: an agent-made change that passed CI and an independent review (ADR
 that fails item 1's checks, a failed item 5, or item 6's exit 2 goes to
 the owner under step 3.
 
+### 2e. Review and merge a skill removal
+
+A `retire` verdict in skills-evals removes the skill with no human in the
+loop (Adam, 2026-11-13: "I want removals to occur without requiring my
+intervention/approval."). When its removal bot cannot open the removal
+itself, it files an `agent-ready` skill removal issue that the issue pass
+works ([`agent-issue-worker.md`](../reference/agent-issue-worker.md),
+"Skill removal issues"); this step merges the PR that results
+([ADR 0044](../decisions/0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md)).
+
+**The removal rule.** The routine may also merge a PR when every item here
+holds, each read fresh:
+
+1. Its base is the default branch of `Adam-S-Daniel/adam-agentskills`,
+   `Adam-S-Daniel/cms-platform` or `Adam-S-Daniel/adamdaniel.ai`, its head
+   branch is `retire-skill/<skill>` in that same repo, it is authored by
+   `Adam-S-Daniel` and labeled `agent-authored`, and auto-merge is not armed.
+2. The first line of its body after the `## TLDR` section is
+   `Closes Adam-S-Daniel/skills-evals#<n>`, where issue `<n>` is a skill
+   removal issue (as the issue worker defines it) for the same `<skill>`,
+   naming this repo as the registry.
+3. The skill's `verdict` in a fresh `explorer/latest.json` from
+   `Adam-S-Daniel/skills-evals` branch `persistent/eval-results` is still
+   `retire`. Any other verdict: comment on the PR and the issue that the
+   verdict changed, close the PR without merging, remove `agent-ready` and
+   `agent-working` from the issue and leave it open (the removal bot labels
+   it again if the verdict returns to `retire`), and list it in the summary
+   as a withdrawn removal.
+4. Every deleted file is under the skill's own directory
+   (`plugins/<plugin>/skills/<skill>/` in adam-agentskills,
+   `skills/<skill>/` in cms-platform, `.claude/skills/<skill>/` in
+   adamdaniel.ai), and that directory no longer exists at the head.
+5. Items 2 to 5 of step 2d hold (not a draft, no `on-hold`, head pushed at
+   least an hour before, every check green with a required check and a
+   passing test run, no run `waiting` on an environment, `mergeable_state`
+   `clean`). A run waiting on `plugin-runtime-review` or
+   `regression-review` sends the PR to the owner: those are his to approve.
+6. The review below answered `CLEAN` on the current head.
+
+Step 2d's eval-protection gate does not apply: the subject is being removed
+on its own verdict, which item 3 rechecks.
+
+**The review.** Exactly as step 2d's, from a fresh subagent given only the
+PR title and body, the issue, the base branch's `AGENTS.md` and the diff,
+with every step 2d bullet except the eval-protection one, plus: `CLEAN`
+also requires that every remaining reference to the skill by name is
+repointed or dropped (a `git grep -n <skill>` at the head finds only
+`docs/skill-impact.md`, dated history such as a version log, and uses of
+the same words that do not mean the skill), that a fact
+another file relied on the skill for now lives in that repo's `docs/` or
+`AGENTS.md` rather than being lost, and that the registry's removal
+requirements in its `AGENTS.md` are met. It shares step 2d's cap of 5
+reviews per run.
+
+**The merge.** With `expected_head_sha` set to the reviewed head: a merge
+commit in adam-agentskills, a squash in cms-platform and adamdaniel.ai.
+Comment `Merged by the fleet worker: a skill removal its eval verdict
+decided (ADR 0044). Restore it by reverting this merge.` Then confirm the
+skills-evals issue closed; if the closing keyword did not close it, close
+it as completed with a comment linking the merged PR. A refused merge or a
+`FINDINGS` review goes to the owner under step 3.
+
 ### 3. Tell the owner which PRs need him
 
 A PR **needs the owner** when any of these holds:
@@ -633,8 +697,8 @@ The run's final message has, in this order:
 1. `Needs you:` and its list, only when something is news (above).
 2. One line each for: PRs brought up to date, reviews posted (with their
    verdicts), PRs merged, issues taken and their PRs, issues blocked and
-   why, lessons handled and their verdicts or PRs, PRs parked
-   (eval-protected), stale claims, conflicts, `NOT REACHED` repos, and
+   why, lessons handled and their verdicts or PRs, skill removals merged
+   or withdrawn, PRs parked (eval-protected), stale claims, conflicts, `NOT REACHED` repos, and
    `on hold` items.
 3. If nothing else happened: `Nothing to do.`
 4. **Always, as the last line, even when all three numbers are zero:**
