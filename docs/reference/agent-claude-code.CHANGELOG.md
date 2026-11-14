@@ -45,14 +45,14 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/96)
   > Changed managed settings that turn the sandbox on: to keep commands running without prompts, set `sandbox.autoAllowBashIfSandboxed: true` in your highest-ranking managed source
 
-**Issues:** PENDING.
+**Issues:** [skills-evals#1023](https://github.com/Adam-S-Daniel/skills-evals/issues/1023).
 
 #### 2. Cloud sessions start despite `sandbox.failIfUnavailable`
 
 - [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/116)
   > Changed Claude Code on the web, cloud scheduled tasks and Cowork cloud sessions to start despite `sandbox.failIfUnavailable`: the hosted container has no command sandbox
 
-**Issues:** PENDING.
+**Issues:** [skills-evals#1024](https://github.com/Adam-S-Daniel/skills-evals/issues/1024).
 
 **Prompt-audit sweep:** not requested. No bullet changes models, `/doctor` or how an instruction file loads on a surface the fleet uses (the nested skill loading change is for `--plugin-dir` plugins, which no fleet file passes), and the earlier trigger issue [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) is still open, so none would be filed in any case (step 4a).
 
