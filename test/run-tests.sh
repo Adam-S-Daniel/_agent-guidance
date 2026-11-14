@@ -26839,7 +26839,11 @@ test_agent_checks_dated_phrasing() {
         '' \
         'Not a date: 2026-02-30. A link: https://example.com/2026-08-29/x.' \
         '' \
-        '    indented code is now 2026-08-29' > "$repo/AGENTS.md"
+        '    indented code is now 2026-08-29' \
+        '' \
+        'The gate now closes the loop (#123, example-owner/widgets#45), same as before this existed.' \
+        '' \
+        'Watch done means now verify, and now this: [issue #67](https://example.com/issues/67), `#89`, https://example.com/x#10.' > "$repo/AGENTS.md"
     echo 'This repo was formerly a fork.' > "$repo/CLAUDE.md"
     printf '# Skill\n\nUse it as of today.\n' > "$repo/skills/x/SKILL.md"
     echo 'The rule recently changed.' > "$repo/agents-md/base.md"
@@ -26868,14 +26872,15 @@ test_agent_checks_dated_phrasing() {
         fail "dated-phrasing: the runner exits 0 when it warns — exit $rc: $(head -3 "$out-tree.err")"
     fi
     got=$(dated_lines "$out-tree.err")
-    if [[ "$got" == "AGENTS.md:23 AGENTS.md:7 AGENTS.md:9 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
+    if [[ "$got" == "AGENTS.md:23 AGENTS.md:29 AGENTS.md:29 AGENTS.md:29 AGENTS.md:29 AGENTS.md:7 AGENTS.md:9 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
         pass "dated-phrasing: a date and a phrase in prose warn, in every file in scope, at their own line"
     else
         fail "dated-phrasing: a date and a phrase in prose warn, in every file in scope, at their own line — got: $got"
     fi
     for line in "3:the managed half of AGENTS.md" "12:a fenced code block" "15:inline code" \
                 "17:link text" "19:a block quote" "21:an HTML block" "25:a URL and a date that is no calendar day" \
-                "27:an indented code block"; do
+                "27:an indented code block" \
+                "31:a bare \"now <verb>\", \"now this\", an issue number in link text or inline code, and a URL fragment"; do
         label=${line#*:}
         if [[ " $got " != *" AGENTS.md:${line%%:*} "* ]]; then
             pass "dated-phrasing: no warning in $label"
@@ -26887,6 +26892,14 @@ test_agent_checks_dated_phrasing() {
         pass "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
     else
         fail "dated-phrasing: README.md, other Markdown, eval fixture seeds and the fleet-guidance payload are out of scope"
+    fi
+    if grep -qF 'AGENTS.md:29: dated phrasing: the phrase "now closes".' "$out-tree.err" \
+       && grep -qF 'AGENTS.md:29: dated phrasing: an issue or pull request number in prose, "#123".' "$out-tree.err" \
+       && grep -qF 'AGENTS.md:29: dated phrasing: an issue or pull request number in prose, "example-owner/widgets#45".' "$out-tree.err" \
+       && grep -qF 'AGENTS.md:29: dated phrasing: the phrase "before this existed".' "$out-tree.err"; then
+        pass "dated-phrasing: \"now <verb>s\", \"before this existed\" and an issue or PR number each warn by name"
+    else
+        fail "dated-phrasing: \"now <verb>s\", \"before this existed\" and an issue or PR number each warn by name — $(grep -c 'AGENTS.md:29' "$out-tree.err") hits on line 29"
     fi
     if grep -qF 'AGENTS.md:7: dated phrasing: the phrase "is now".' "$out-tree.err" \
        && grep -qF 'AGENTS.md:9: dated phrasing: a date in prose, "2026-08-29".' "$out-tree.err" \
@@ -26900,7 +26913,7 @@ test_agent_checks_dated_phrasing() {
     # ── GitHub Actions: annotations ──
     rc=0; DATED_GHA=1 AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-gha" tree || rc=$?
     n=$(grep -c '^::warning file=[^,]*,line=[0-9]*,title=dated-phrasing::dated phrasing: ' "$out-gha.out" || true)
-    if [[ $rc -eq 0 && "$n" == 6 ]] \
+    if [[ $rc -eq 0 && "$n" == 10 ]] \
        && grep -qxF '::warning file=AGENTS.md,line=7,title=dated-phrasing::dated phrasing: the phrase "is now". Instruction files load into every session and are read as the rule that holds now, so history (what changed, and when) goes stale here and belongs in docs/evidence/ or git. Reword it as the present-tense rule; if it is right as written, add a line to .agent-checks/dated-phrasing-allowlist.txt (format: the header of .githooks/dated-phrasing-allowlist.txt). Warning only.' "$out-gha.out"; then
         pass "dated-phrasing: under GitHub Actions each hit is one ::warning annotation with file, line and title"
     else
@@ -26918,7 +26931,7 @@ test_agent_checks_dated_phrasing() {
         '* agents-md/base.md :: rule   recently' > "$fleet/dated-phrasing-allowlist.txt"
     rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$fleet/agent-checks" "$out-allow" tree || rc=$?
     got=$(dated_lines "$out-allow.err")
-    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:9 CLAUDE.md:1 skills/x/SKILL.md:3 " ]]; then
+    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:29 AGENTS.md:29 AGENTS.md:29 AGENTS.md:29 AGENTS.md:9 CLAUDE.md:1 skills/x/SKILL.md:3 " ]]; then
         pass "dated-phrasing: a fleet allowlist entry silences exactly its block; another repo's entry does not apply; * matches any repo"
     else
         fail "dated-phrasing: a fleet allowlist entry silences exactly its block; another repo's entry does not apply; * matches any repo — exit $rc, got: $got"
@@ -26929,7 +26942,7 @@ test_agent_checks_dated_phrasing() {
     GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m allow
     rc=0; AGENT_CHECKS_DATED_PHRASING_MODULES="$mods" run_dated "$tmpl/agent-checks" "$out-own" tree || rc=$?
     got=$(dated_lines "$out-own.err")
-    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:7 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
+    if [[ $rc -eq 0 && "$got" == "AGENTS.md:23 AGENTS.md:29 AGENTS.md:29 AGENTS.md:29 AGENTS.md:29 AGENTS.md:7 CLAUDE.md:1 agents-md/base.md:1 skills/x/SKILL.md:3 " ]]; then
         pass "dated-phrasing: the repo's own .agent-checks/dated-phrasing-allowlist.txt silences its entry's block"
     else
         fail "dated-phrasing: the repo's own .agent-checks/dated-phrasing-allowlist.txt silences its entry's block — exit $rc, got: $got"
