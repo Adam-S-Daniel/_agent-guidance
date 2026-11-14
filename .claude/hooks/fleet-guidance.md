@@ -38,6 +38,10 @@ incident behind each rule: `docs/evidence/base-md-incidents.md`.
   `adam-writing-style` skill.
 - Text to paste: give all of it, never edits.
 
+## Pasted config is a stub
+
+A routine prompt or setup script you paste runs or reads a repo file, so changes ship by PR.
+
 ## Anything you name gets its link
 
 Any noun the reader might open gets its URL in the same sentence:
@@ -426,8 +430,6 @@ A mocked pid became `kill(-1, SIGKILL)`; every user process died
   `adam-anything-anywhere`, `adam-coding-anywhere`,
   `adam-coding-local`, `adam-non-coding-local`; invoke
   `/<plugin>:<skill>`; `setup.sh` sets up a machine.
-- **A `git push` failing in EVERY repo**: retired sync-skills hook targets a
-  deleted script; `setup.sh --owner-machine` removes it.
 - Cloud/ephemeral sessions get no plugins from repo-declared settings
   (registry ADR 0001): the repo's `skills.lock` and `skills-bootstrap`
   SessionStart hook install the bundles, digest-verified; read the

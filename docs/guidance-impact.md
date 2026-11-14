@@ -50,6 +50,18 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-14 — pasted-config-is-a-stub — create
+- Motivation: Adam's 2026-11-13 rule (routine prompts point at repo files so the task rarely needs edits) lived only in one project's memory; on 2026-11-14 an agent handed him a ~180-line environment setup script to paste, and he had to ask whether it maximized what a versioned file could hold
+- Change: new one-line owner section: a pasted routine prompt or setup script runs or reads a repo file, so changes ship by PR
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-11-14
+
+## 2026-11-14 — skills-ecosystem — edit
+- Motivation: base.md sat 17 bytes under its 26 KiB budget (test/test-on-hold-label.js), so the new pasted-config section needed room
+- Change: removed the retired sync-skills `git push` bullet; adam-agentskills' AGENTS.md still documents the `setup.sh --owner-machine` fix where that hook lived
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-11-14
+
 ## 2026-11-13 — eval-rules — create
 - Motivation: Adam asked (2026-11-13) for one source of truth on the eval, keep/remove and pause rules that agents in any repo can check against; restated thresholds had drifted (a project memory note still gave a superseded keep level)
 - Change: new one-line section pointing at skills-evals' generated `docs/rules.md`, generated from its policy YAMLs (PR #558)
