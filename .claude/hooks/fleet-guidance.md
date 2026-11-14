@@ -38,6 +38,10 @@ incident behind each rule: `docs/evidence/base-md-incidents.md`.
   `adam-writing-style` skill.
 - Text to paste: give all of it, never edits.
 
+## Pasted config is a stub
+
+A pasted routine prompt or setup script only runs or reads a repo file.
+
 ## Anything you name gets its link
 
 Any noun the reader might open gets its URL in the same sentence:
@@ -214,9 +218,8 @@ Explain a merge, close or label change in a marked comment.
 ## PR descriptions open with a TLDR
 
 Start every PR description with a `## TLDR` heading and one to three
-plain-English sentences on what changes and why. Only an attribution block
-(HTML comments, a `_Requested by …_` line) may precede it. `agent-checks`
-fails a PR without it; editing the description re-runs the check.
+plain-English sentences on what changes and why; only an attribution block
+may precede it (`agent-checks` enforces it).
 
 ## A GitHub 404 means "not authorized", not "not there"
 
