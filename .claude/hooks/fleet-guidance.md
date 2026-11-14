@@ -40,7 +40,7 @@ incident behind each rule: `docs/evidence/base-md-incidents.md`.
 
 ## Pasted config is a stub
 
-A routine prompt or setup script you paste runs or reads a repo file, so changes ship by PR.
+A pasted routine prompt or setup script only runs or reads a repo file.
 
 ## Anything you name gets its link
 
@@ -218,9 +218,8 @@ Explain a merge, close or label change in a marked comment.
 ## PR descriptions open with a TLDR
 
 Start every PR description with a `## TLDR` heading and one to three
-plain-English sentences on what changes and why. Only an attribution block
-(HTML comments, a `_Requested by …_` line) may precede it. `agent-checks`
-fails a PR without it; editing the description re-runs the check.
+plain-English sentences on what changes and why; only an attribution block
+may precede it (`agent-checks` enforces it).
 
 ## A GitHub 404 means "not authorized", not "not there"
 
@@ -430,6 +429,8 @@ A mocked pid became `kill(-1, SIGKILL)`; every user process died
   `adam-anything-anywhere`, `adam-coding-anywhere`,
   `adam-coding-local`, `adam-non-coding-local`; invoke
   `/<plugin>:<skill>`; `setup.sh` sets up a machine.
+- **A `git push` failing in EVERY repo**: retired sync-skills hook targets a
+  deleted script; `setup.sh --owner-machine` removes it.
 - Cloud/ephemeral sessions get no plugins from repo-declared settings
   (registry ADR 0001): the repo's `skills.lock` and `skills-bootstrap`
   SessionStart hook install the bundles, digest-verified; read the

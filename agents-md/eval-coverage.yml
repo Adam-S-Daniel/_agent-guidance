@@ -60,7 +60,7 @@
     runs or reads a repo file. It is checked by review of what an agent hands
     the owner to paste; no fixture can watch a settings page.
   since: 2026-11-14
-  bytes: 122
+  bytes: 101
 
 - id: anything-you-name-gets-its-link
   heading: Anything you name gets its link
@@ -182,7 +182,7 @@
     templates/agent-checks/agent-checks, and the section's body is unchanged
     since this row was written).
   since: 2026-11-02
-  bytes: 324
+  bytes: 227
 
 - id: github-404-means-not-authorized
   heading: A GitHub 404 means "not authorized", not "not there"
@@ -268,7 +268,7 @@
     unchanged since this row was written and is still account facts). No
     freshness check reads base.md yet; that lighter check is still to build.
   since: 2026-11-03
-  bytes: 1094
+  bytes: 1228
 
 - id: two-setup-gaps
   heading: Two setup gaps you may close, and must not nag about
