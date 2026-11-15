@@ -1262,6 +1262,97 @@ class CloudVectorTests(CloudTestCase):
         self.assertEqual(lines[2]["digest_null_reason"], "no-base-dir")
 
 
+def tool_use(call, tool, given, ts=USE_TS, session=CLOUD_SESSION):
+    return {"type": "assistant", "sessionId": session, "timestamp": ts, "version": "2.1.312",
+            "uuid": "a-" + call, "message": {"id": "msg_" + call, "role": "assistant", "content": [
+                {"type": "tool_use", "id": call, "name": tool, "input": given}]}}
+
+
+class CloudReadTests(CloudTestCase):
+    """Reading an installed skill copy's files is a use too (kind skill-read)."""
+
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.script([PUSH_OK])
+        write_vector(self.skills / "vector")
+
+    def test_a_read_of_an_installed_skill_md_is_one_read_line_with_the_copys_digest(self):
+        self.write_transcript([tool_use("toolu_r1", "Read",
+                                        {"file_path": str(self.skills / "vector" / "SKILL.md")})])
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual(line, {
+            "v": 1, "id": "toolu_r1", "ts": "2099-01-01T00:00:00Z", "kind": "skill-read",
+            "surface": "cloud", "session": CLOUD_SID[:16], "cli": "2.1.312", "name": "vector",
+            "base_kind": "user-skills", "registry": None, "ref": None,
+            "digest": VECTOR_ALL_FILES, "digest_null_reason": None})
+        self.assertEqual(set(line), SHARD_KEYS)
+        text = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        self.assertNotIn(str(self.home), text)
+        self.assertNotIn("SKILL.md", text)
+
+    def test_bash_cat_of_a_tilde_path_counts(self):
+        self.write_transcript([tool_use("toolu_r2", "Bash",
+                                        {"command": "cat ~/.claude/skills/vector/ref.md | head"})])
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual((line["id"], line["kind"], line["name"], line["digest"]),
+                         ("toolu_r2", "skill-read", "vector", VECTOR_ALL_FILES))
+
+    def test_a_registry_checkout_path_does_not_count(self):
+        checkout = self.tmp / "adam-agentskills" / "plugins" / "p" / "skills" / "vector"
+        write_vector(checkout)
+        self.write_transcript([
+            tool_use("toolu_r3", "Read", {"file_path": "/home/user/adam-agentskills/plugins/p/skills/x/SKILL.md"}),
+            tool_use("toolu_r4", "Read", {"file_path": str(checkout / "SKILL.md")}),
+            tool_use("toolu_r5", "Grep", {"pattern": "x", "path": str(checkout)}),
+            later_turn(1)])
+        self.stop()
+        self.assertEqual(self.shard(), [])
+        self.assertEqual(self.pending(), [])
+
+    def test_a_session_that_calls_the_skill_records_no_read_for_it(self):
+        # The call comes after the read and in a subagent transcript: still no read line.
+        self.write_transcript([tool_use("toolu_r6", "Read",
+                                        {"file_path": str(self.skills / "vector" / "SKILL.md")})])
+        sub = self.tmp / CLOUD_SESSION / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a.jsonl").write_text("".join(json.dumps(e) + "\n" for e in self.use_with_base(
+            "toolu_c1", "example:vector", self.skills / "vector")), encoding="utf-8")
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard()], [("toolu_c1", "skill")])
+
+    def test_a_call_in_an_earlier_stop_keeps_a_later_read_out(self):
+        entries = self.use_with_base("toolu_c2", "vector", self.skills / "vector")
+        self.write_transcript(entries)
+        self.stop()
+        self.write_transcript(entries + [tool_use("toolu_r7", "Glob", {
+            "pattern": "**/*.md", "path": str(self.skills / "vector")})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard() + self.pending()],
+                         [("toolu_c2", "skill")])
+
+    def test_two_reads_give_one_line_keyed_on_the_first(self):
+        first = tool_use("toolu_r8", "Read", {"file_path": str(self.skills / "vector" / "SKILL.md")})
+        second = tool_use("toolu_r9", "Bash", {"command": "ls $HOME/.claude/skills/vector"})
+        self.write_transcript([first, second])
+        self.stop()
+        self.write_transcript([first, second, tool_use("toolu_r10", "Read", {
+            "file_path": str(self.skills / "vector" / "a" / "b" / "c.txt")})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard() + self.pending()],
+                         [("toolu_r8", "skill-read")])
+
+    def test_a_path_to_no_copy_records_nothing(self):
+        self.write_transcript([tool_use("toolu_r11", "Bash", {"command": "ls ~/.claude/skills/missing/"}),
+                               tool_use("toolu_r12", "Glob", {"pattern": "~/.claude/skills/*/SKILL.md"})])
+        self.stop()
+        self.assertEqual(self.shard(), [])
+
+
 class CloudStorageTests(CloudTestCase):
     def setUp(self):
         super().setUp()
