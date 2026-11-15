@@ -135,8 +135,7 @@ class LaneTestCase(unittest.TestCase):
         path = self.tmp / "cases.jsonl"
         # A candidate replaces the template's real lessons, so their own
         # cases are left out: they would refuse nothing under it.
-        base = "".join(line + "\n" for line in CASES.read_text(encoding="utf-8").splitlines()
-                       if line.strip() and "lesson" not in json.loads(line)) if include_default else ""
+        base = cases_without_lessons(CASES.read_text(encoding="utf-8")) if include_default else ""
         path.write_text(base + "".join(line + "\n" for line in lines), encoding="utf-8")
         return path
 
@@ -361,6 +360,14 @@ def declared_lessons():
     return runner_lesson_parts(RUNNER)[1]
 
 
+def cases_without_lessons(text):
+    """The case table's lines that are not tagged for a lesson. One case is
+    one line ended by a newline; str.splitlines() would also cut at U+2028,
+    form feeds and the like inside a case's file content."""
+    return "".join(line + "\n" for line in text.split("\n")
+                   if line.strip() and "lesson" not in json.loads(line))
+
+
 class CandidateHelperTests(unittest.TestCase):
     """The helper that builds a candidate runner works on a template that
     already holds lessons: the first real lesson must not break this module."""
@@ -379,6 +386,11 @@ class CandidateHelperTests(unittest.TestCase):
 
     def test_default_clears_the_id_list(self):
         self.assertIn('lesson_checks=""\n', with_lesson_arm(self.TEMPLATE, PATH_ARM))
+
+    def test_a_case_holding_other_line_separators_stays_one_line(self):
+        odd = json.dumps({"id": "odd", "files": {"a.txt": "one\u2028two\x0cthree\x85four"}}, ensure_ascii=False)
+        tagged = json.dumps({"id": "real", "lesson": "real-one"})
+        self.assertEqual(cases_without_lessons(odd + "\n" + tagged + "\n\n"), odd + "\n")
 
     def test_refuses_a_template_without_check_lessons(self):
         with self.assertRaises(AssertionError):
