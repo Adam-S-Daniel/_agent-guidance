@@ -42,8 +42,9 @@ Agent sessions have reported that the feed host could not be reached from a
 cloud session or from the owner's VM network (not verified here); the workflow
 runs on GitHub Actions and reaches it directly. A git clone of
 `Adam-S-Daniel/rss-inator` shows how the feed is built (its scraper reads
-the upstream page), not the items it currently holds; for those, read the
-latest `article-watch.yml` run's log.
+the upstream page), not the items it currently holds; for those, read
+`article-watch/state.json` on the branch `persistent/article-watch`, which
+records every item the workflow has seen.
 
 ## Each run
 
