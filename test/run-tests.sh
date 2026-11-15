@@ -9945,6 +9945,27 @@ make_lost_key_sweep_repo() {   # <name> <number> <isDraft>
         "$2" "$3" > "$TEST_DIR/lost-pr-dir/bumporg_$name.json"
 }
 
+# make_lost_key_branch_stale <name> — the bump branch moves to a commit whose
+# lock differs from the one tonight's re-pin would write, as when the registry
+# has moved on since a held draft was opened.
+make_lost_key_branch_stale() {
+    local work="$TEST_DIR/work/lost-sweep-$1"
+    cd "$work"
+    python3 - <<'PY'
+import json
+with open("skills.lock", encoding="utf-8") as handle:
+    lock = json.load(handle)
+lock["ref"] = "0" * 40
+with open("skills.lock", "w", encoding="utf-8") as handle:
+    json.dump(lock, handle, indent=2)
+    handle.write("\n")
+PY
+    git add -A
+    git commit -q -m "chore: re-pin skills.lock (older registry state)" >/dev/null 2>&1
+    git push -q origin HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
+    cd "$REPO_ROOT"
+}
+
 run_lost_key_sweep() {   # <output file> <pulls dir>
     BUMP_PR_DIR_FOR_RUN="$TEST_DIR/lost-pr-dir" \
     BUMP_HONOR_REF_FOR_RUN=1 \
@@ -10004,6 +10025,42 @@ test_bump_sweep_lost_skill_key() {
     run_lost_key_sweep "$log" "$pulls"
     assert_contains "$log" "bumporg/repo-lost-d#304: not merged — it is a draft" "sweep, held draft unreviewed: still a draft"
     assert_not_contains "$BUMP_PR_LOG" "pr-ready 304 " "sweep, held draft unreviewed: not marked ready"
+
+    # ── A held draft that went STALE (#566): the branch differs from tonight's
+    # re-pin, and tonight's is held too. Not a failure, never force-pushed,
+    # reported as a hold and in the job summary; the gate itself is unchanged.
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-e 305 true
+    make_lost_key_branch_stale repo-lost-e
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-stale-draft.txt"
+    stale_before=$(git -C "$TEST_DIR/bare-lost/bumporg_repo-lost-e" rev-parse refs/heads/skills-lock-bump/update)
+    GITHUB_STEP_SUMMARY="$TEST_DIR/stale-draft-summary.md" run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-e: skills-lock-bump/update already carries this bumper's HELD draft #305" \
+        "stale held draft: named as a hold"
+    assert_not_contains "$log" "ERROR:" "stale held draft: nothing is reported as an error"
+    assert_contains "$log" " 0 failed ===" \
+        "stale held draft: zero failures"
+    assert_contains "$log" "=== Held: 1 bump pull request(s)" "stale held draft: counted as a hold"
+    assert_contains "$TEST_DIR/stale-draft-summary.md" "HELD draft #305" "stale held draft: the job summary carries the notice"
+    [[ $BUMP_EXIT -eq 0 ]] && pass "stale held draft: the run exits 0" || fail "stale held draft: the run exits 0 (got $BUMP_EXIT)"
+    if [[ "$(git -C "$TEST_DIR/bare-lost/bumporg_repo-lost-e" rev-parse refs/heads/skills-lock-bump/update)" == "$stale_before" ]]; then
+        pass "stale held draft: the branch was not force-pushed"
+    else
+        fail "stale held draft: the branch was not force-pushed"
+    fi
+
+    # ── The same stale branch under a pull request that is NOT this bumper's
+    # draft keeps failing: the carve-out is that one shape and no other.
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-f 306 true
+    make_lost_key_branch_stale repo-lost-f
+    sed -i 's/agents-md-sync\[bot\]/someone-else/' "$TEST_DIR/lost-pr-dir/bumporg_repo-lost-f.json"
+    log="$TEST_DIR/sweep-lost-stale-foreign.txt"
+    run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "ERROR: bumporg/repo-lost-f: skills-lock-bump/update already exists with different content" \
+        "stale foreign draft: still a failure"
+    [[ $BUMP_EXIT -ne 0 ]] && pass "stale foreign draft: the run exits non-zero" || fail "stale foreign draft: the run exits non-zero"
 
     rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir" "$pulls"
 }
