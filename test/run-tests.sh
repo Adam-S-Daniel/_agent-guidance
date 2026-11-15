@@ -305,6 +305,25 @@ _row_cell_equals() {   # <row> <needle> — some `|`-delimited cell equals <need
     done
     return 1
 }
+# assert_row_col_equals <file> <row-key> <column-name> <needle> <label> — the
+# cell UNDER the named header column equals <needle>. assert_row_contains accepts
+# any cell, so a `**missing**` in another column would satisfy it.
+assert_row_col_equals() {
+    local file="$1" key="$2" col="$3" needle="$4" label="$5"
+    local header row i idx=-1 cell
+    local -a hcells rcells
+    header=$(grep -m1 '^| Repository |' "$file") || { fail "$label — no table header in $file"; return; }
+    row=$(grep -F -- "$key" "$file" | grep -m1 '^|') || { fail "$label — no row containing '$key' in $file"; return; }
+    IFS='|' read -r -a hcells <<< "$header"
+    IFS='|' read -r -a rcells <<< "$row"
+    for i in "${!hcells[@]}"; do
+        cell="${hcells[$i]}"; cell="${cell#"${cell%%[![:space:]]*}"}"; cell="${cell%"${cell##*[![:space:]]}"}"
+        [[ "$cell" == "$col" ]] && idx=$i
+    done
+    if [[ $idx -lt 0 ]]; then fail "$label — no column '$col' in $file"; return; fi
+    cell="${rcells[$idx]:-}"; cell="${cell#"${cell%%[![:space:]]*}"}"; cell="${cell%"${cell##*[![:space:]]}"}"
+    if [[ "$cell" == "$needle" ]]; then pass "$label"; else fail "$label — column '$col' is '$cell', expected '$needle'"; fi
+}
 # assert_row_note_contains <file> <row-key> <needle> <label> — a substring of
 # the row's LAST cell, which is Notes.
 #
@@ -595,7 +614,9 @@ YAML
     mkdir -p .claude/hooks
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
     cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
-    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md
+    mkdir -p .github
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" .github/fleet-contributor-rules.md
+    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md .github/fleet-contributor-rules.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
@@ -805,6 +826,7 @@ YAML
     setup_ancestor_branch_repo
     setup_sync_yaml_failure_repo
     setup_big_agents_md_repo
+    setup_contributor_guard_repos
 
     cd "$REPO_ROOT"
 }
@@ -942,7 +964,9 @@ YAML
     mkdir -p .claude/hooks
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
     cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
-    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md
+    mkdir -p .github
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" .github/fleet-contributor-rules.md
+    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md .github/fleet-contributor-rules.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
@@ -1009,6 +1033,39 @@ YAML
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
+}
+
+# ── Contributor-rules guard fixtures (ADR 0043) ────────────────────────────
+#   cguardorg/repo-drifted   managed header, stale body: refreshed
+#   cguardorg/repo-foreign   a file of the repo's own at the path: refused
+#   cguardorg/repo-symlink   a symlink at the path: refused, target untouched
+setup_contributor_guard_repos() {
+    local name bare work
+    for name in repo-drifted repo-foreign repo-symlink; do
+        bare="$TEST_DIR/bare/cguardorg_$name"
+        work="$TEST_DIR/work/cguardorg-$name"
+        mkdir -p "$bare" "$work/.github"
+        git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
+        git init --initial-branch=main "$work" >/dev/null 2>&1
+        (
+            cd "$work"
+            git config commit.gpgsign false
+            git remote add origin "$bare"
+            printf 'sections: []\n' > .agents-sync.yml
+            echo "# $name" > README.md
+            case "$name" in
+                repo-drifted)
+                    printf '<!-- Managed by _agent-guidance: stale copy -->\nold rules\n' > .github/fleet-contributor-rules.md ;;
+                repo-foreign)
+                    printf 'my own contributor notes\n' > .github/fleet-contributor-rules.md ;;
+                repo-symlink)
+                    ln -s ../README.md .github/fleet-contributor-rules.md ;;
+            esac
+            git add -A
+            git commit -m init >/dev/null 2>&1
+            git push origin HEAD:main >/dev/null 2>&1
+        )
+    done
 }
 
 # ── Set up the skills-bootstrap fixtures ───────────────────────────────────
@@ -2381,6 +2438,13 @@ case "$1" in
                           {"nameWithOwner":"bigorg/repo-big-agents-md"}
                         ]'
                         ;;
+                    cguardorg)
+                        json='[
+                          {"nameWithOwner":"cguardorg/repo-drifted"},
+                          {"nameWithOwner":"cguardorg/repo-foreign"},
+                          {"nameWithOwner":"cguardorg/repo-symlink"}
+                        ]'
+                        ;;
                     emptyorg)
                         # An owner that really does hold nothing. Distinct from
                         # `failorg` below, and the distinction is the point:
@@ -3387,6 +3451,28 @@ test_build_script() {
     echo "$output" > "$TEST_DIR/build-full.md"
     assert_contains "$TEST_DIR/build-full.md" "$base_heading" "full mode inlines base content"
     assert_contains "$TEST_DIR/build-full.md" "Mode: full" "full mode reports itself"
+    # ADR 0043: full inlines the contributor file, never base.md, so no
+    # owner-only section may reach a repo that cannot receive the hook.
+    assert_contains "$TEST_DIR/build-full.md" "Managed by _agent-guidance: built by scripts/build-contributor-rules.js" "full mode inlines the contributor rules header"
+    assert_contains "$TEST_DIR/build-full.md" "$stub_heading" "full mode keeps the stub (irreversible rules, first-reply check, pointer)"
+    assert_contains "$TEST_DIR/build-full.md" "fleet-guidance check:" "full mode keeps the first-reply check rule"
+    # Owner headings come from the manifest, parsed (not regexed): every row
+    # with audience: owner in agents-md/base.md must be absent from full mode.
+    local owner_headings owner_n=0 owner_h
+    owner_headings=$(cd "$REPO_ROOT" && node -e '
+        const yaml = require("yaml");
+        const rows = yaml.parse(require("fs").readFileSync("agents-md/eval-coverage.yml", "utf8"));
+        const list = Array.isArray(rows) ? rows : (rows.sections || rows.rows || []);
+        for (const r of list) if (r.audience === "owner" && r.file === "agents-md/base.md") console.log(r.heading);
+    ' 2>/dev/null) || owner_headings=""
+    while IFS= read -r owner_h; do
+        [[ -n "$owner_h" ]] || continue
+        owner_n=$((owner_n + 1))
+        assert_not_contains "$TEST_DIR/build-full.md" "## $owner_h" "full mode carries no owner-only heading: $owner_h"
+    done <<<"$owner_headings"
+    if [[ "$owner_n" -lt 1 ]]; then
+        fail "full mode owner-heading check is vacuous: no audience: owner rows read from eval-coverage.yml"
+    fi
 
     # An unrecognised mode must stop, not silently pick one. Captured without a
     # pipe so the exit code is the script's own.
@@ -4173,9 +4259,12 @@ test_drift_report_partial_read() {
         fail "partial read: the short read was silent -- no ::error:: annotation"
     fi
 
-    # Restore a clean report for any test that runs after this one.
+    # Restore a clean report for any test that runs after this one. Its output
+    # goes under $TEST_DIR: the default is the repo root, where the report and
+    # its sidecars would be left for `git add -A` to commit (#547).
     (
         GITHUB_REPOSITORY_OWNER=testorg \
+        DRIFT_REPORT_OUTPUT="$TEST_DIR/drift-restore.md" \
         MOCK_BARE_DIR="$TEST_DIR/bare" \
         REPOS_YML="$TEST_DIR/repos.yml" \
         PATH="$TEST_DIR/bin:$PATH" \
@@ -4524,6 +4613,8 @@ YAML
     "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
     cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
+    mkdir -p "$work/.github"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
 
     run_fleet_payload_report
@@ -4534,6 +4625,19 @@ YAML
     expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
     assert_row_note_contains "$rpt" "fleetorg/repo-payload" "expected \`${expected_sha:0:8}\`, found \`${expected_sha:0:8}\`" \
         "fleet payload: current hash matches the installed verdict"
+
+    rm "$work/.github/fleet-contributor-rules.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "contributor-rules" "**missing**" \
+        "fleet payload: absent contributor rules read missing"
+    printf 'stale\n' >"$work/.github/fleet-contributor-rules.md"
+    push_fleet_payload_fixture
+    run_fleet_payload_report
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "contributor-rules" "**drifted**" \
+        "fleet payload: stale contributor rules read drifted"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
+    push_fleet_payload_fixture
 
     # A changed body and a changed trailing newline must both be visible.
     printf 'stale payload\n' >"$work/.claude/hooks/fleet-guidance.md"
@@ -7250,6 +7354,71 @@ PY
     fi
 }
 
+# ── Test: sync.sh guards the contributor-rules destination (ADR 0043) ──────
+test_sync_contributor_guards() {
+    echo ""
+    echo "=== Test: sync.sh contributor rules (drift refresh, symlink and foreign-file refusal, missing source) ==="
+    local out="$TEST_DIR/sync-cguard.txt" rc=0
+    printf 'exclude: []\n' > "$TEST_DIR/repos-cguard.yml"
+    GITHUB_REPOSITORY_OWNER=cguardorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-cguard.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/sync.sh" > "$out" 2>&1 || rc=$?
+
+    local v="$TEST_DIR/verify-cguard"
+    rm -rf "$v"; mkdir -p "$v"
+    local name
+    for name in repo-drifted repo-foreign repo-symlink; do
+        git clone "$TEST_DIR/bare/cguardorg_$name" "$v/$name" >/dev/null 2>&1 || fail "cguard: could not clone $name"
+    done
+
+    if cmp -s "$v/repo-drifted/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+        pass "cguard: a drifted managed file is refreshed byte for byte"
+    else
+        fail "cguard: a drifted managed file is refreshed byte for byte"
+    fi
+    if git -C "$v/repo-drifted" log -1 --format=%B | grep -qF "contributor rules"; then
+        pass "cguard: the refresh commit message mentions the contributor rules"
+    else
+        fail "cguard: the refresh commit message mentions the contributor rules"
+    fi
+
+    if [[ "$(cat "$v/repo-foreign/.github/fleet-contributor-rules.md")" == "my own contributor notes" ]]; then
+        pass "cguard: a file without the managed header is left alone"
+    else
+        fail "cguard: a file without the managed header is left alone"
+    fi
+    assert_contains "$out" "cguardorg/repo-foreign: .github/fleet-contributor-rules.md exists but does not carry the managed header" "cguard: the foreign-file refusal names the repo"
+
+    if [[ -L "$v/repo-symlink/.github/fleet-contributor-rules.md" && "$(cat "$v/repo-symlink/README.md")" == "# repo-symlink" ]]; then
+        pass "cguard: a symlink at the destination is not written through"
+    else
+        fail "cguard: a symlink at the destination is not written through"
+    fi
+    assert_contains "$out" "cguardorg/repo-symlink: .github/fleet-contributor-rules.md (or .github) is a symlink" "cguard: the symlink refusal names the repo"
+    assert_contains "$out" "synced, 0 skipped, 2 failed ===" "cguard: both refusals count as failed repos, the drifted one still synced"
+    [[ "$rc" -ne 0 ]] && pass "cguard: a run with refused repos exits nonzero" || fail "cguard: a run with refused repos exits nonzero (got $rc)"
+
+    # A missing or empty source stops the run before any repo is touched.
+    local tree="$TEST_DIR/cguard-tree" src_rc=0
+    rm -rf "$tree"; mkdir -p "$tree/.github"
+    cp -r "$REPO_ROOT/scripts" "$tree/scripts"
+    : > "$tree/.github/fleet-contributor-rules.md"
+    GITHUB_REPOSITORY_OWNER=cguardorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos-cguard.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$tree/scripts/sync.sh" > "$TEST_DIR/sync-cguard-nosrc.txt" 2>&1 || src_rc=$?
+    if [[ "$src_rc" -ne 0 ]]; then
+        pass "cguard: an empty contributor-rules source fails the run (rc=$src_rc)"
+    else
+        fail "cguard: an empty contributor-rules source fails the run"
+    fi
+    assert_contains "$TEST_DIR/sync-cguard-nosrc.txt" "is missing or empty" "cguard: the missing-source failure says why"
+    assert_not_contains "$TEST_DIR/sync-cguard-nosrc.txt" "=== cguardorg/" "cguard: no repo was processed after the source check failed"
+}
+
 # ── Test 5b: sync.sh delivers the bootstrap hook (opt-in, double-keyed) ────
 
 test_sync_bootstrap() {
@@ -7325,6 +7494,12 @@ test_sync_bootstrap() {
         pass "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
     else
         fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
+    fi
+    # ADR 0043: the contributor rules go to every synced repo, byte for byte.
+    if cmp -s "$nolock/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+        pass "repo-no-lock: contributor rules delivered byte for byte"
+    else
+        fail "repo-no-lock: contributor rules delivered byte for byte"
     fi
     # The guidance-load record rides with fleet-memory: same repos, a managed
     # byte-identical copy, executable, and one Stop group with its timeout.
@@ -7406,8 +7581,14 @@ for g in doc["hooks"]["Stop"]:
             pass "repo-ignored: guidance-load-record withheld with fleet-memory"
         fi
         assert_contains "$ignored/AGENTS.md" "$full_sentinel" "repo-ignored: keeps the FULL guidance inline (undeliverable repo)"
-        assert_not_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: is NOT given the stub"
+        assert_contains "$ignored/AGENTS.md" "$stub_sentinel" "repo-ignored: gets the stub (full mode is stub plus contributor rules)"
+        assert_contains "$ignored/AGENTS.md" "Managed by _agent-guidance: built by scripts/build-contributor-rules.js" "repo-ignored: gets the contributor rules inline too"
         assert_contains "$ignored/AGENTS.md" "Mode: full" "repo-ignored: AGENTS.md records full mode"
+        if cmp -s "$ignored/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+            pass "repo-ignored: contributor rules delivered even in full mode"
+        else
+            fail "repo-ignored: contributor rules delivered even in full mode"
+        fi
     fi
 
     # ── repo-unparseable: refuse to edit, deliver nothing, leave it alone.
@@ -7726,6 +7907,7 @@ test_sync_bootstrap_dry_run() {
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would add .claude/hooks/skills-bootstrap.sh" "dry-run: names the hook it would add"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would append a SessionStart entry" "dry-run: names the settings.json append"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "existing entries preserved" "dry-run: states that existing entries are preserved"
+    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would add .github/fleet-contributor-rules.md" "dry-run: names the contributor rules it would add"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would NOT touch skills.lock" "dry-run: states that skills.lock is never touched"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "no skills.lock in the repo yet" "dry-run: explains the withheld repo"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would write $GREC_REL_PATH_T (guidance-load record hook missing)" "dry-run: names the guidance-load-record hook it would add"
@@ -13949,10 +14131,10 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "20" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 20 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "21" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 21 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=20, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=21, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -21214,9 +21396,24 @@ test_register_codex_hook() {
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
     local d="$TEST_DIR/codexhook"
     rm -rf "$d"
-    mkdir -p "$d/home"
+    mkdir -p "$d/home" "$d/nolauncher"
     local target="$d/home/hooks.json"
     local out rc shape
+
+    # 0. The registered command runs the per-user launcher that adam-agentskills'
+    #    setup.sh --owner-machine installs (ADR 0043). With none installed there
+    #    is nothing for the hook to run, so refuse (exit 6) and write nothing.
+    local -x XDG_DATA_HOME="$d/xdg-data"
+    rc=0
+    out=$(CODEX_HOME="$d/nolauncher" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 6 && "$out" == *refused-no-launcher* && "$out" == *'setup.sh --owner-machine'* \
+            && ! -e "$d/nolauncher/hooks.json" ]]; then
+        pass "register-codex-hook: an absent launcher is refused with exit 6, naming setup.sh --owner-machine, and nothing is written"
+    else
+        fail "register-codex-hook: absent launcher exit $rc, file=$(ls "$d/nolauncher"): $out"
+    fi
+    mkdir -p "$XDG_DATA_HOME/fleet-guidance"
+    printf '#!/usr/bin/env bash\necho launcher-ran\n' > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
 
     # 1. Absent file → created.
     rc=0
@@ -21231,7 +21428,7 @@ test_register_codex_hook() {
     assert_contains "$d/out1" "/hooks" "register-codex-hook: names the trust step the operator still owes"
 
     rc=0
-    shape=$(python3 - "$target" 2>&1 <<'PY'
+    shape=$(python3 - "$target" "$XDG_DATA_HOME" 2>&1 <<'PY'
 import json, sys
 
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -21246,8 +21443,10 @@ e = entries[0]
 assert e["type"] == "command", "type is %r" % e.get("type")
 assert e["timeout"] == 30, "timeout is %r" % e.get("timeout")
 assert e["statusMessage"] == "fleet-guidance", "statusMessage is %r" % e.get("statusMessage")
-assert "fleet-memory.sh" in e["command"], "command does not name the hook"
-assert "git rev-parse --show-toplevel" in e["command"], "command does not resolve from the git root"
+assert "fleet-guidance/codex-session-start.sh" in e["command"], "command does not name the launcher"
+assert e["command"].endswith(" _ " + sys.argv[2] + "/fleet-guidance/codex-session-start.sh"), "command does not bake in the absolute launcher path: %r" % e["command"]
+assert "XDG_DATA_HOME" not in e["command"], "command still reads XDG_DATA_HOME when Codex runs"
+assert "fleet-memory.sh" not in e["command"], "command still runs a repo's fleet-memory.sh"
 print("OK")
 PY
 ) || rc=$?
@@ -21325,7 +21524,7 @@ a = after["hooks"]["SessionStart"]
 assert len(a) == len(b) + 1, "expected one added group, got %d -> %d" % (len(b), len(a))
 # Order AND content: the operator's group is still first and is deep-equal.
 assert a[0] == b[0], "the pre-existing group changed: %r -> %r" % (b[0], a[0])
-assert a[-1]["hooks"][0]["command"].find("fleet-memory.sh") >= 0, "ours was not appended last"
+assert a[-1]["hooks"][0]["command"].find("codex-session-start.sh") >= 0, "ours was not appended last"
 # Nothing else in the document moved.
 assert after["description"] == before["description"], "an unrelated top-level key changed"
 assert after["hooks"]["SessionEnd"] == before["hooks"]["SessionEnd"], "an unrelated event changed"
@@ -21388,12 +21587,13 @@ test_register_codex_hook_workspace_upgrade() {
     echo "TEST: register-codex-hook.sh (workspace command and legacy upgrade)"
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
     local d="$TEST_DIR/codexhook-workspace"
-    local target="$d/empty/hooks.json" out rc command
-    mkdir -p "$d/empty" "$d/legacy" "$d/manual"
+    local target="$d/empty/hooks.json" out rc command rc2 out2
+    rm -rf "$d"
+    mkdir -p "$d/empty" "$d/legacy" "$d/legacy2" "$d/manual" "$d/xdg-data/fleet-guidance"
     : > "$target"
-    cat > "$d/expected-command" <<'EOF'
-bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
-EOF
+    local -x XDG_DATA_HOME="$d/xdg-data"
+    : > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
+    printf '%s\n' "bash -c '[ -f \"\$1\" ] && exec bash \"\$1\"; exit 0' _ $XDG_DATA_HOME/fleet-guidance/codex-session-start.sh" > "$d/expected-command"
     rc=0
     out=$(CODEX_HOME="$d/empty" "$script" 2>&1) || rc=$?
     if [[ $rc -eq 0 ]]; then
@@ -21409,7 +21609,7 @@ print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
 PY
 ) || rc=$?
     if [[ $rc -eq 0 && "$command" == "$(cat "$d/expected-command")" ]]; then
-        pass 'register workspace: empty hooks.json gets the exact workspace-capable command'
+        pass 'register workspace: empty hooks.json gets the exact launcher command'
     else
         fail 'register workspace: empty hooks.json command differs from the delivery contract'
     fi
@@ -21478,6 +21678,115 @@ PY
         fail "register workspace: rerun after upgrade changed hooks.json: $out"
     fi
 
+    # The previous default (the workspace-capable repo command) is upgraded in
+    # place too, and nothing but its command field changes.
+    python3 - "$d/legacy2/hooks.json" <<'PY'
+import json, sys
+previous = """bash -c 'r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'"""
+doc = {"hooks": {"SessionStart": [
+    {"matcher": "mine", "hooks": [{"type": "command", "command": "true"}]},
+    {"matcher": "startup|resume", "hooks": [
+        {"type": "command", "command": previous, "timeout": 30, "statusMessage": "fleet-guidance"}]},
+]}, "other": 1}
+json.dump(doc, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PY
+    cp "$d/legacy2/hooks.json" "$d/legacy2-before.json"
+    rc=0
+    out=$(CODEX_HOME="$d/legacy2" "$script" 2>&1) || rc=$?
+    rc2=0
+    out2=$(python3 - "$d/legacy2-before.json" "$d/legacy2/hooks.json" "$d/expected-command" 2>&1 <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+before["hooks"]["SessionStart"][1]["hooks"][0]["command"] = open(sys.argv[3], encoding="utf-8").read().rstrip("\n")
+assert before == after, "upgrade changed more than the command field"
+print("OK")
+PY
+) || rc2=$?
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && $rc2 -eq 0 && "$out2" == OK ]]; then
+        pass 'register workspace: the previous workspace command is upgraded to the launcher command in place'
+    else
+        fail "register workspace: previous-command upgrade exit $rc: $out / $out2"
+    fi
+
+    # The deleted repo launcher, named by a manual CODEX_HOOK_COMMAND recipe,
+    # is an old command too: it is upgraded in place, never "already registered".
+    mkdir -p "$d/deleted-launcher"
+    python3 - "$d/deleted-launcher/hooks.json" <<'PY'
+import json, sys
+doc = {"hooks": {"SessionStart": [{"matcher": "startup|resume", "hooks": [
+    {"type": "command", "command": "bash /home/me/proj/.claude/hooks/codex-session-start.sh",
+     "timeout": 30, "statusMessage": "fleet-guidance"}]}]}}
+json.dump(doc, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PY
+    rc=0
+    out=$(CODEX_HOME="$d/deleted-launcher" "$script" 2>&1) || rc=$?
+    command=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/deleted-launcher/hooks.json")
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && "$command" == "$(cat "$d/expected-command")" ]]; then
+        pass 'register workspace: a command naming the deleted repo launcher is upgraded in place'
+    else
+        fail "register workspace: deleted-launcher command exit $rc: $out / $command"
+    fi
+
+    # An old Windows entry (the previous command with its commandWindows
+    # pointing at the deleted file): a Windows run swaps in the new
+    # commandWindows, a non-Windows run drops the stale one.
+    local old_win='"C:\Program Files\Git\bin\bash.exe" "D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh"'
+    local variant
+    for variant in windows plain; do
+        mkdir -p "$d/oldwin-$variant"
+        python3 - "$d/legacy2/hooks.json" "$d/oldwin-$variant/hooks.json" "$old_win" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+doc["hooks"]["SessionStart"][1]["hooks"][0] = {
+    "type": "command",
+    "command": "bash -c 'r=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; h=\"$r/.claude/hooks/fleet-memory.sh\"; [ -n \"$r\" ] && [ -f \"$h\" ] && exec bash \"$h\"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace \"$h\" 2>/dev/null && exec bash \"$h\" --workspace \"$PWD\"; done; exit 0'",
+    "timeout": 30, "statusMessage": "fleet-guidance", "commandWindows": sys.argv[3]}
+json.dump(doc, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+PY
+    done
+    rc=0
+    out=$(CODEX_HOME="$d/oldwin-windows" "$script" --windows --launcher 'D:/Users/me/fleet-guidance/codex-session-start.sh' 2>&1) || rc=$?
+    rc2=0
+    out2=$(python3 - "$d/oldwin-windows/hooks.json" "$d/expected-command" 2>&1 <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][1]["hooks"][0]
+assert e["command"] == open(sys.argv[2]).read().rstrip("\n"), e["command"]
+assert e["commandWindows"] == '"C:\\Program Files\\Git\\bin\\bash.exe" "D:/Users/me/fleet-guidance/codex-session-start.sh"', e["commandWindows"]
+print("OK")
+PY
+) || rc2=$?
+    if [[ $rc -eq 0 && "$out" == *'register-codex-hook: updated'* && $rc2 -eq 0 && "$out2" == OK ]]; then
+        pass 'register workspace: an old Windows entry gets the new command and commandWindows'
+    else
+        fail "register workspace: old Windows entry exit $rc: $out / $out2"
+    fi
+    rc=0
+    out=$(CODEX_HOME="$d/oldwin-plain" "$script" 2>&1) || rc=$?
+    rc2=0
+    out2=$(python3 - "$d/oldwin-plain/hooks.json" 2>&1 <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][1]["hooks"][0]
+assert "commandWindows" not in e, e
+print("OK")
+PY
+) || rc2=$?
+    if [[ $rc -eq 0 && $rc2 -eq 0 && "$out2" == OK ]]; then
+        pass 'register workspace: a non-Windows upgrade drops a stale commandWindows naming the deleted file'
+    else
+        fail "register workspace: stale commandWindows kept, exit $rc: $out / $out2"
+    fi
+
+    # A CODEX_HOOK_COMMAND override is not refused for a missing default launcher.
+    mkdir -p "$d/override"
+    rc=0
+    out=$(XDG_DATA_HOME="$d/none" CODEX_HOOK_COMMAND='bash /my/own/codex-session-start.sh' CODEX_HOME="$d/override" "$script" 2>&1) || rc=$?
+    if [[ $rc -eq 0 && "$out" == *'registered'* ]]; then
+        pass 'register workspace: a CODEX_HOOK_COMMAND override registers without the default launcher'
+    else
+        fail "register workspace: override refused, exit $rc: $out"
+    fi
+
     # A current registration wins over a leftover legacy entry regardless of
     # position. In particular, a legacy entry encountered first must not be
     # rewritten when the current definition is already present elsewhere.
@@ -21518,7 +21827,7 @@ PY
     python3 - "$d/manual/hooks.json" <<'PY'
 import json, sys
 doc = {"hooks": {"SessionStart": [{"matcher": "mine", "hooks": [
-    {"type": "command", "command": "bash my/fleet-memory.sh", "timeout": 4}
+    {"type": "command", "command": "bash my/codex-session-start.sh", "timeout": 4}
 ]}]}}
 with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump(doc, fh, separators=(",", ":"))
@@ -21545,11 +21854,14 @@ test_register_codex_hook_windows() {
     local d="$TEST_DIR/codexhook-windows"
     local out rc
     rm -rf "$d"
-    mkdir -p "$d/fresh" "$d/upgrade" "$d/plain" "$d/override" "$d/nobash" "$d/stub"
+    mkdir -p "$d/fresh" "$d/upgrade" "$d/plain" "$d/override" "$d/nobash" "$d/stub" \
+        "$d/default" "$d/nolauncher" "$d/xdg-data/fleet-guidance"
+    local -x XDG_DATA_HOME="$d/xdg-data"
+    : > "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh"
     local expected_bash='C:\Program Files\Git\bin\bash.exe'
     # The launcher is passed explicitly in Windows mixed form, as `cygpath -m`
     # would produce, so the expected string is the same on every machine.
-    local launcher='D:/repos/_agent-guidance/.claude/hooks/codex-session-start.sh'
+    local launcher='D:/Users/me/.local/share/fleet-guidance/codex-session-start.sh'
     local helper="$d/check.py"
     cat > "$helper" <<'PY'
 import json, sys
@@ -21723,6 +22035,26 @@ PY
         fail "register windows: a foreign commandWindows was changed: $out"
     fi
 
+    # 7b. With no --launcher the default is the per-user launcher under
+    #     XDG_DATA_HOME (no cygpath here, so it is written as found); with none
+    #     installed the registration is refused with exit 6, before Windows
+    #     handling, and nothing is written.
+    rc=0
+    out=$(CODEX_HOME="$d/default" "$script" --windows 2>&1) || rc=$?
+    result=$(python3 "$helper" "$d/default/hooks.json" "$expected_bash" "$XDG_DATA_HOME/fleet-guidance/codex-session-start.sh" 2>&1) || true
+    if [[ $rc -eq 0 && "$result" == OK ]]; then
+        pass "register windows: the default launcher is the per-user one under XDG_DATA_HOME"
+    else
+        fail "register windows: default launcher exit $rc — $result $out"
+    fi
+    rc=0
+    out=$(XDG_DATA_HOME="$d/none" CODEX_HOME="$d/nolauncher" "$script" --windows 2>&1) || rc=$?
+    if [[ $rc -eq 6 && "$out" == *'refused-no-launcher'* && ! -e "$d/nolauncher/hooks.json" ]]; then
+        pass "register windows: an uninstalled default launcher is refused with exit 6"
+    else
+        fail "register windows: uninstalled launcher exit $rc, file=$(ls "$d/nolauncher"): $out"
+    fi
+
     # 8. A launcher path carrying a cmd metacharacter is refused, nothing written.
     mkdir -p "$d/meta"
     rc=0
@@ -21734,59 +22066,39 @@ PY
     fi
 }
 
-# The Windows launcher is the registered `bash -c` snippet as a file, so it must
-# behave identically to it. Both are run in the same fixtures: a repo with a
-# synced hook at its git root (started from a subdirectory), a multi-repo
-# parent whose child hook supports --workspace, and a directory with neither.
-# The stub hooks print their arguments, so a wrong branch is visible.
-test_codex_session_start_launcher() {
+# The registered command must find the launcher where setup.sh --owner-machine
+# installs it: under an absolute XDG_DATA_HOME, else $HOME/.local/share (a
+# relative XDG_DATA_HOME is ignored, as setup.sh ignores it), pass its stdout
+# through untouched, and exit 0 silently when the launcher is gone.
+test_register_codex_hook_command_runs_the_launcher() {
     echo ""
-    echo "TEST: codex-session-start.sh launcher (same behavior as the registered snippet)"
-    local launcher="$REPO_ROOT/.claude/hooks/codex-session-start.sh"
+    echo "TEST: registered Codex command runs the per-user launcher"
     local script="$REPO_ROOT/scripts/register-codex-hook.sh"
-    local d="$TEST_DIR/codex-launcher"
-    local out_old out_new rc_old rc_new snippet
+    local d="$TEST_DIR/codexhook-command" cmd out rc
     rm -rf "$d"
-    mkdir -p "$d/home" "$d/repo/.claude/hooks" "$d/repo/sub/dir" \
-        "$d/parent/child/.claude/hooks" "$d/parent/plain" "$d/empty"
-    git -C "$d/repo" init -q
-    printf '#!/usr/bin/env bash\necho "root-hook args=[$*]"\n' > "$d/repo/.claude/hooks/fleet-memory.sh"
-    printf '#!/usr/bin/env bash\n# supports --workspace\necho "child-hook args=[$*]"\n' > "$d/parent/child/.claude/hooks/fleet-memory.sh"
-
-    CODEX_HOME="$d/home" "$script" >/dev/null 2>&1 || true
-    snippet=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/home/hooks.json")
-
-    if [[ -x "$launcher" ]]; then
-        pass "launcher: codex-session-start.sh is executable"
-    else
-        fail "launcher: codex-session-start.sh is not executable"
-    fi
-
-    local where label
-    for where in repo/sub/dir parent empty; do
-        rc_old=0
-        out_old=$(cd "$d/$where" && GIT_CEILING_DIRECTORIES="$d" bash -c "$snippet" 2>&1) || rc_old=$?
-        rc_new=0
-        out_new=$(cd "$d/$where" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1) || rc_new=$?
-        label="$where"
-        if [[ "$out_old" == "$out_new" && $rc_old -eq $rc_new && $rc_new -eq 0 ]]; then
-            pass "launcher: matches the registered snippet from $label (output [$out_new])"
-        else
-            fail "launcher: differs from the registered snippet from $label — old [$out_old] rc=$rc_old, new [$out_new] rc=$rc_new"
-        fi
-    done
-    out_new=$(cd "$d/repo/sub/dir" && bash "$launcher" 2>&1)
-    [[ "$out_new" == "root-hook args=[]" ]] \
-        && pass "launcher: a git root's own hook runs with no arguments" \
-        || fail "launcher: git root hook branch wrong: $out_new"
-    out_new=$(cd "$d/parent" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1)
-    [[ "$out_new" == "child-hook args=[--workspace $d/parent]" ]] \
-        && pass "launcher: a parent dir runs the workspace-capable child hook with --workspace" \
-        || fail "launcher: workspace branch wrong: $out_new"
-    out_new=$(cd "$d/empty" && GIT_CEILING_DIRECTORIES="$d" bash "$launcher" 2>&1)
-    [[ -z "$out_new" ]] \
-        && pass "launcher: with no hook anywhere it exits silently" \
-        || fail "launcher: expected silence, got: $out_new"
+    mkdir -p "$d/codex" "$d/xdg dir/fleet-guidance" "$d/home/.local/share/fleet-guidance" "$d/cwd" "$d/codex2"
+    printf '#!/usr/bin/env bash\necho "xdg-launcher args=[$*]"\n' > "$d/xdg dir/fleet-guidance/codex-session-start.sh"
+    printf '#!/usr/bin/env bash\necho "home-launcher"\n' > "$d/home/.local/share/fleet-guidance/codex-session-start.sh"
+    # The absolute path (here with a space in it) is fixed when registering, so
+    # the command works from an environment with no XDG_DATA_HOME and another HOME.
+    HOME="$d/home" XDG_DATA_HOME="$d/xdg dir" CODEX_HOME="$d/codex" "$script" >/dev/null 2>&1 || true
+    cmd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/codex/hooks.json")
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" sh -c "$cmd" 2>&1)
+    [[ "$out" == "xdg-launcher args=[]" ]] \
+        && pass "registered command: the baked-in launcher path runs from any environment, spaces included" \
+        || fail "registered command: baked path branch wrong: $out"
+    HOME="$d/home" XDG_DATA_HOME="relative/data" CODEX_HOME="$d/codex2" "$script" >/dev/null 2>&1 || true
+    cmd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$d/codex2/hooks.json")
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" sh -c "$cmd" 2>&1)
+    [[ "$out" == "home-launcher" ]] \
+        && pass "registered command: a relative XDG_DATA_HOME is ignored at registration for \$HOME/.local/share" \
+        || fail "registered command: relative XDG branch wrong: $out"
+    rm -f "$d/home/.local/share/fleet-guidance/codex-session-start.sh"
+    rc=0
+    out=$(cd "$d/cwd" && env -i PATH="$PATH" HOME="$d/none" sh -c "$cmd" 2>&1) || rc=$?
+    [[ $rc -eq 0 && -z "$out" ]] \
+        && pass "registered command: with the launcher gone it exits 0 silently" \
+        || fail "registered command: expected silence, rc=$rc: $out"
 }
 
 # base.md opens with a repo-file header ("# AGENTS.md" plus "Edit only below
@@ -21847,30 +22159,22 @@ test_fleet_memory_repo_header() {
     assert_not_contains "$d/codex/AGENTS.md" "Edit only below" "repo header: Codex Cloud drops the repo-only notice"
 }
 
-# Run the actual command the registration script wrote, so a stale hook
-# definition cannot hide behind tests that invoke fleet-memory.sh directly.
+# Run the workspace command that drove fleet-memory.sh --workspace before the
+# registration moved to the launcher (ADR 0043), so the mode keeps its tests.
 # Fixture repos are fresh git init repositories with no remote and fixed commit
 # dates; their payload stamps do not depend on the machine's clock.
 test_fleet_memory_workspace() {
     echo ""
-    echo "TEST: registered Codex hook (multi-repo workspace)"
+    echo "TEST: fleet-memory.sh --workspace command (multi-repo parent)"
     local d="$TEST_DIR/fleet-workspace"
     local parent="$d/parent" empty="$d/empty" registered_command out rc
     local repo hook="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
     mkdir -p "$parent/alpha/.claude/hooks" "$parent/beta/.claude/hooks" \
         "$empty" "$d/register-home"
-    rc=0
-    out=$(CODEX_HOME="$d/register-home" "$REPO_ROOT/scripts/register-codex-hook.sh" 2>&1) || rc=$?
-    if [[ $rc -ne 0 ]]; then
-        fail "fleet workspace: registration for command behavior exit $rc: $out"
-        return
-    fi
-    registered_command=$(python3 - "$d/register-home/hooks.json" <<'PY'
-import json, sys
-doc = json.load(open(sys.argv[1], encoding="utf-8"))
-print(doc["hooks"]["SessionStart"][0]["hooks"][0]["command"])
-PY
-)
+    # ADR 0043: the registered Codex command no longer runs a repo's hook, but
+    # fleet-memory.sh keeps its --workspace mode, so the command that used to
+    # drive it is spelled out here.
+    registered_command='r="$(git rev-parse --show-toplevel 2>/dev/null)"; h="$r/.claude/hooks/fleet-memory.sh"; [ -n "$r" ] && [ -f "$h" ] && exec bash "$h"; for h in ./*/.claude/hooks/fleet-memory.sh; do grep -q -e --workspace "$h" 2>/dev/null && exec bash "$h" --workspace "$PWD"; done; exit 0'
     for repo in alpha beta; do
         git init -q "$parent/$repo"
         git -C "$parent/$repo" config --local user.name 'Fleet fixture'
@@ -22814,11 +23118,29 @@ INC
     run_githooks CLAUDE_CODE_REMOTE=true >/dev/null
     if cmp -s "$inc" "$expected"; then pass "git hooks: includeIf present, .inc missing: the file is written"
     else fail "git hooks: partial install left the include file missing"; fi
+    # The read has the write's scope (#542), so an entry in the GLOBAL config
+    # does not count for the system one: all nine system entries are written
+    # and the global entry stays as it was.
     n="$(git config --file "$sys" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
-    [[ "$n" -eq 8 ]] && pass "git hooks: the missing entries are added (8 beside the 1 present)" \
-        || fail "git hooks: expected 8 added system entries, got $n"
+    [[ "$n" -eq 9 ]] && pass "git hooks: the entries missing from the write scope are added (9 system entries)" \
+        || fail "git hooks: expected 9 system entries, got $n"
     n="$(git config --file "$glob" --get-all 'includeIf.hasconfig:remote.*.url:https://github.com/jodidaniel/**.path' | wc -l)"
-    [[ "$n" -eq 1 ]] && pass "git hooks: the present entry is not duplicated" || fail "git hooks: entry duplicated ($n)"
+    [[ "$n" -eq 1 ]] && pass "git hooks: the present global entry is not duplicated" || fail "git hooks: entry duplicated ($n)"
+
+    # 5c. A repo-local includeIf (the session's cwd is a project) must not
+    #     suppress the system entry: the read uses the scope the write does.
+    reset_githooks
+    local proj="$d/proj" owner prefix
+    rm -rf "$proj"; mkdir -p "$proj"; git init -q "$proj"
+    for owner in Adam-S-Daniel adam-s-daniel jodidaniel; do
+        for prefix in https://github.com/ git@github.com: ssh://git@github.com/; do
+            git -C "$proj" config --local --add "includeIf.hasconfig:remote.*.url:${prefix}${owner}/**.path" '~/.config/git/agent-hooks.inc'
+        done
+    done
+    ( cd "$proj" && run_githooks CLAUDE_CODE_REMOTE=true >/dev/null )
+    n="$(git config --file "$sys" --get-regexp '^includeif\..*\.path$' | grep -c 'agent-hooks.inc$' || true)"
+    [[ "$n" -eq 9 ]] && pass "git hooks: repo-local includeIf entries do not suppress the system entries" \
+        || fail "git hooks: repo-local includeIf suppressed the install (got $n system entries)"
 
     # 6. Opt-out.
     reset_githooks
@@ -23047,15 +23369,18 @@ test_fleet_memory_owner_gate() {
     gate_run "$bundle/fleet-memory.sh" --
     gate_expect_noop "plugin style with neither signal"
 
-    # i. The Codex user-level registration command and the Windows launcher,
-    #    run from inside a git repo that carries the synced hook and payload.
+    # i. The Codex user-level registration command, which runs the per-user
+    #    launcher (ADR 0043). The launcher stands in for adam-agentskills' real
+    #    one: it runs the hook and payload of a git repo, as the plugin's hook
+    #    does with its own bundled copy, so the gate is what is under test.
     local regdir="$d/reg" cmd
-    mkdir -p "$regdir/codex"
-    CODEX_HOME="$regdir/codex" HOME="$regdir" XDG_CONFIG_HOME="$regdir/xdg" \
+    mkdir -p "$regdir/codex" "$regdir/.local/share/fleet-guidance"
+    : > "$regdir/.local/share/fleet-guidance/codex-session-start.sh"
+    CODEX_HOME="$regdir/codex" HOME="$regdir" XDG_CONFIG_HOME="$regdir/xdg" XDG_DATA_HOME="" \
         bash "$REPO_ROOT/scripts/register-codex-hook.sh" "$regdir/codex/hooks.json" > /dev/null 2>&1
     cmd="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' \
         "$regdir/codex/hooks.json")"
-    if [[ "$cmd" == "bash -c '"*"fleet-memory.sh"* ]]; then
+    if [[ "$cmd" == "bash -c '"*"fleet-guidance/codex-session-start.sh"* ]]; then
         pass "owner gate: the registered Codex command was read from hooks.json"
     else
         fail "owner gate: no usable registered command: '$cmd'"
@@ -23065,12 +23390,17 @@ test_fleet_memory_owner_gate() {
     git init -q "$repo" 2>/dev/null
     cp "$hook" "$repo/.claude/hooks/fleet-memory.sh"
     cp "$bundle/fleet-guidance.md" "$repo/.claude/hooks/fleet-guidance.md"
-    for via in command launcher; do
-        local -a runner
-        if [[ "$via" == command ]]; then runner=(bash -c "$cmd")
-        else runner=(bash "$REPO_ROOT/.claude/hooks/codex-session-start.sh"); fi
+    # The stand-in launcher is written before each run.
+    gate_launcher() {
+        # At the path baked into the registered command, outside the fresh $h.
+        printf '#!/usr/bin/env bash\ncd "%s" && exec bash .claude/hooks/fleet-memory.sh\n' "$repo" \
+            > "$regdir/.local/share/fleet-guidance/codex-session-start.sh"
+    }
+    for via in command; do
+        local -a runner=(bash -c "$cmd")
         # With the marker: the block reaches $CODEX_HOME/AGENTS.md.
         gate_new
+        gate_launcher
         mkdir -p "$h/.codex" "$h/.config/fleet-guidance"; : > "$h/.config/fleet-guidance/owner"
         rc=0
         ( cd "$repo" && env -i PATH="$PATH" HOME="$h" TMPDIR="$d/tmp" CLAUDE_CONFIG_DIR="$h/.claude" \
@@ -23083,6 +23413,7 @@ test_fleet_memory_owner_gate() {
         fi
         # Without it: silent, and nothing written.
         gate_new
+        gate_launcher
         mkdir -p "$h/.codex"
         snap
         rc=0
@@ -27019,6 +27350,7 @@ GROUP_sync=(
     test_sync_stale_cleanup
     test_sync_failure_exit_code
     test_sync_round_trip_no_marker
+    test_sync_contributor_guards
 )
 
 # The skills-bootstrap lane mutates the bootorg bares in a fixed order:
@@ -27055,12 +27387,36 @@ GROUP_bootstrap=(
 # reset — so they always saw pristine testorg bares, which is what a fresh
 # group gives them.
 GROUP_drift_testorg=(
+    test_drift_tree_baseline
     test_drift_report_skills_classification
     test_drift_report_registry_orphan
     test_drift_report_registry_orphan_multi_owner
     test_drift_report_registry_orphan_owner_failure
     test_drift_report_partial_read
+    test_drift_tree_clean
 )
+
+# The drift_testorg group must leave the working tree as it found it (#547): a test that
+# ran scripts/drift-report.sh without DRIFT_REPORT_OUTPUT wrote the report and
+# its sidecars into the repo root, and a worker PR committed one. These two
+# bracket the group. `--ignored` is part of the snapshot because a gitignored
+# leftover is as wrong as an untracked one; it just does not show in a plain
+# `git status --porcelain`.
+test_drift_tree_baseline() {
+    DRIFT_TREE_BASELINE="$(git -C "$REPO_ROOT" status --porcelain --ignored 2>/dev/null | LC_ALL=C sort)"
+}
+
+test_drift_tree_clean() {
+    echo ""
+    echo "TEST: the drift_testorg group leaves the working tree unchanged"
+    local after
+    after="$(git -C "$REPO_ROOT" status --porcelain --ignored 2>/dev/null | LC_ALL=C sort)"
+    if [[ "$after" == "$DRIFT_TREE_BASELINE" ]]; then
+        pass "drift_testorg group: git status --porcelain --ignored is unchanged"
+    else
+        fail "drift_testorg group: left files in the working tree: $(diff <(printf '%s\n' "$DRIFT_TREE_BASELINE") <(printf '%s\n' "$after") | grep '^>' | tr '\n' ' ')"
+    fi
+}
 
 # The sync lane direct-pushes to main; this lane observes the pre-sync
 # baseline, which a fresh group's bares already are (test_sync_multi_owner
@@ -27218,7 +27574,7 @@ GROUP_codex=(
     test_register_codex_hook
     test_register_codex_hook_workspace_upgrade
     test_register_codex_hook_windows
-    test_codex_session_start_launcher
+    test_register_codex_hook_command_runs_the_launcher
     test_fleet_memory_hook
     test_fleet_memory_codex
     test_fleet_memory_freshness

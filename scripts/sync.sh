@@ -53,6 +53,13 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# The contributor rules (ADR 0043): the generated subset of base.md an outside
+# contributor's agent needs, read on demand and never imported by AGENTS.md.
+# Delivered byte for byte to EVERY synced repo in both AGENTS_MD_MODE values,
+# independent of fleet-memory: it does not depend on `.claude/` or settings.json.
+CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
+CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
+CONTRIBUTOR_HEADER="<!-- Managed by _agent-guidance"
 # guidance-load-record: the Stop hook that writes one line per session saying
 # whether the full guidance or only the stub loaded. It measures the very
 # delivery fleet-memory makes, so it rides with it: every repo fleet-memory
@@ -216,6 +223,14 @@ if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
     fi
     echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
     echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+
+# The contributor rules are delivered to every repo (ADR 0043). A missing or
+# empty source would otherwise read as "nothing to deliver" and stay green while
+# the whole fleet silently goes without; stop before touching any repo.
+if [[ ! -s "$CONTRIBUTOR_SOURCE" ]]; then
+    echo "::error::$CONTRIBUTOR_SOURCE is missing or empty — the sync delivers it to every repo; regenerate it with 'node scripts/build-contributor-rules.js'." >&2
     exit 2
 fi
 
@@ -1103,6 +1118,38 @@ for repo_name in "${REPOS[@]}"; do
         grec_up_to_date=false
     fi
 
+    # ── contributor rules: classify ────────────────────────────────────
+    contributor_state="n/a"   # n/a | missing | current | drifted
+    if [[ -s "$CONTRIBUTOR_SOURCE" ]]; then
+        contributor_state="missing"
+        # A symlink would send the write outside the repo; a file without the
+        # managed header is someone else's, and the sync must not overwrite it.
+        # Either refusal skips the whole repo on purpose, stub update included:
+        # the new stub points agents at this path, so the old stub stays until
+        # the file there is ours.
+        if [[ -L .github || -L "$CONTRIBUTOR_REL_PATH" ]]; then
+            fail "$repo_name: $CONTRIBUTOR_REL_PATH (or .github) is a symlink — refusing to write the contributor rules."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        if [[ -e "$CONTRIBUTOR_REL_PATH" ]] \
+           && { [[ ! -f "$CONTRIBUTOR_REL_PATH" ]] \
+                || ! head -n 1 "$CONTRIBUTOR_REL_PATH" | grep -qF -- "$CONTRIBUTOR_HEADER"; }; then
+            fail "$repo_name: $CONTRIBUTOR_REL_PATH exists but does not carry the managed header ($CONTRIBUTOR_HEADER) — refusing to overwrite it."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        if [[ -f "$CONTRIBUTOR_REL_PATH" ]]; then
+            cmp -s "$CONTRIBUTOR_REL_PATH" "$CONTRIBUTOR_SOURCE" \
+                && contributor_state="current" || contributor_state="drifted"
+        fi
+        log "contributor-rules: file=$contributor_state"
+    fi
+    contributor_up_to_date=true
+    if [[ "$contributor_state" == "missing" || "$contributor_state" == "drifted" ]]; then
+        contributor_up_to_date=false
+    fi
+
     # ── Build managed content ──────────────────────────────────────────
 
     managed_content=$(AGENTS_MD_MODE="$FLEET_MODE" "$BUILD_SCRIPT" "${sections[@]}")
@@ -1529,7 +1576,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $grec_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $grec_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1602,6 +1649,13 @@ for repo_name in "${REPOS[@]}"; do
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
+        fi
+
+        if ! $contributor_up_to_date; then
+            case "$contributor_state" in
+                missing) log "[DRY RUN] Would add $CONTRIBUTOR_REL_PATH (the contributor rules, $(wc -c < "$CONTRIBUTOR_SOURCE" | tr -d ' ') bytes) $delivery_note" ;;
+                drifted) log "[DRY RUN] Would refresh drifted $CONTRIBUTOR_REL_PATH $delivery_note" ;;
+            esac
         fi
 
         if ! $grec_up_to_date; then
@@ -1793,6 +1847,15 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── contributor rules: write ───────────────────────────────────────
+    contributor_written=false
+    if ! $contributor_up_to_date; then
+        mkdir -p "$(dirname "$CONTRIBUTOR_REL_PATH")"
+        cp "$CONTRIBUTOR_SOURCE" "$CONTRIBUTOR_REL_PATH"
+        contributor_written=true
+        log "contributor-rules: file ${contributor_state} — written ($(wc -c < "$CONTRIBUTOR_SOURCE" | tr -d ' ') bytes)."
+    fi
+
     # ── guidance-load-record: write ────────────────────────────────────
     grec_written=false
     grec_registered_now=false
@@ -1973,6 +2036,7 @@ for repo_name in "${REPOS[@]}"; do
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
     $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
+    $contributor_written && add_paths+=("$CONTRIBUTOR_REL_PATH")
     $grec_written && add_paths+=("$GREC_REL_PATH")
     $grec_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     # Both hooks can register in the same file in one run; add it once.
@@ -1993,8 +2057,15 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     bootstrap_note=""
-    if $bootstrap_hook_written || $bootstrap_registered_now; then
+    if $contributor_written; then
         bootstrap_note="
+
+Also delivers the contributor rules ($CONTRIBUTOR_REL_PATH), the generated
+subset of the fleet guidance an outside contributor's agent reads on demand
+(ADR 0043)."
+    fi
+    if $bootstrap_hook_written || $bootstrap_registered_now; then
+        bootstrap_note="${bootstrap_note}
 
 Also delivers the skills-bootstrap SessionStart hook, fetched from
 ${BOOTSTRAP_REGISTRY}@${BOOTSTRAP_REF:0:7} (pinned in _agent-guidance's
@@ -2078,6 +2149,13 @@ workflow; see the 2026-11-02 addendum to docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $contributor_written && ! $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: deliver the fleet contributor rules
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then

@@ -38,6 +38,9 @@ on:
       # changes what lands in ~20 repos' .claude/hooks/, so without this entry
       # a fix to it would sit here firing no run to deliver itself.
       - ".claude/hooks/fleet-memory.sh"
+      # The generated contributor rules (ADR 0043), delivered byte for byte to
+      # every synced repo, so an edit reaches ~20 repos' .github/.
+      - ".github/fleet-contributor-rules.md"
       # Delivered and refreshed with fleet-memory.sh, for the same reason.
       - ".claude/hooks/guidance-load-record.sh"
       # templates/dependabot-auto-merge/ is COPIED into every synced repo that

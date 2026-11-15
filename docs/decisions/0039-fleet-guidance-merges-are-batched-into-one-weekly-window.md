@@ -29,7 +29,8 @@ touch these paths.
 
 1. **One window.** Automation merges a pull request that changes
    `agents-md/base.md` or a file under `agents-md/sections/` only on Monday
-   from 17:00 up to 19:00 UTC. The bounds live in
+   from 17:00 up to 19:00 UTC (noon to 2 PM US Eastern since the 2026-11-13
+   addendum below). The bounds live in
    `scripts/base-md-merge-window.yml` and nowhere else.
 2. **A check automation runs, not a required status check.** A required check
    that fails outside the window would block the owner too and would need a
@@ -57,3 +58,20 @@ touch these paths.
   from here; the one such prompt change is the owner's to make.
 - A new automated path that can change these files must call the check, and
   gets a row in the table above.
+
+## Addendum (2026-11-13): the window is in US Eastern time, and evals pause in it
+
+The owner asked that evals pause Mondays from noon to 2 PM Eastern, so that no
+eval run starts on guidance that is half merged. Two changes follow.
+
+1. **The bounds are wall-clock times in a named zone.** The bounds file gains
+   a required `timezone` key (`America/New_York`) and the window becomes
+   12:00 to 14:00 there. In winter (EST) that is 17:00 to 19:00 UTC, the
+   same instants as before; in summer (EDT) it is 16:00 to 18:00 UTC, so the
+   window then opens an hour before the weekly allowance reset (17:00 UTC)
+   instead of at it. The owner's stated hours win over the alignment.
+2. **The same file is the eval pause.** skills-evals'
+   `scripts/guidance_merge_window.py eval-pause` reads it, and every
+   automated eval launcher there refuses to start a run inside the window
+   (skills-evals ADR 0017's addendum of the same date). There is no second
+   copy of the bounds.

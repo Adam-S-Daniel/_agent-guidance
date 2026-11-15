@@ -30,6 +30,34 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-14 — 2.1.325 through 2.1.325
+
+- **Checked:** 2026-11-14T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z
+- **Window:** v2.1.325 (published 2026-11-13T20:40Z), the first stable release after v2.1.323 (no tag or changelog section exists for 2.1.324, so it is skipped as a gap): 1 release, 139 bullets (the 3 in groups 1 and 2 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.325` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time and its opening bullets matched the clone.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. Sandboxed Bash no longer auto-allowed by default
+
+- [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/95)
+  > Changed sandboxed Bash commands to follow the normal permission flow by default; set `sandbox.autoAllowBashIfSandboxed: true` to keep running them without prompts
+- [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/96)
+  > Changed managed settings that turn the sandbox on: to keep commands running without prompts, set `sandbox.autoAllowBashIfSandboxed: true` in your highest-ranking managed source
+
+**Issues:** [skills-evals#1023](https://github.com/Adam-S-Daniel/skills-evals/issues/1023).
+
+#### 2. Cloud sessions start despite `sandbox.failIfUnavailable`
+
+- [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/116)
+  > Changed Claude Code on the web, cloud scheduled tasks and Cowork cloud sessions to start despite `sandbox.failIfUnavailable`: the hosted container has no command sandbox
+
+**Issues:** [skills-evals#1024](https://github.com/Adam-S-Daniel/skills-evals/issues/1024).
+
+**Prompt-audit sweep:** not requested. No bullet changes models, `/doctor` or how an instruction file loads on a surface the fleet uses (the nested skill loading change is for `--plugin-dir` plugins, which no fleet file passes), and the earlier trigger issue [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) is still open, so none would be filed in any case (step 4a).
+
+No other group met the name-the-surface bar. Considered and dropped: scheduled tasks and `/loop` asking before running a skill that declares `allowed-tools` or hooks (the only such skills, in `adam-agentskills`' `adam-non-coding-local` plugin, are run by hand, not scheduled); read-only git commands asking in a repository outside the project (`wsl-automation`'s `run-memory-curation.sh` already names its extra folder with `--add-dir`); the marketplace `ref` change (no fleet marketplace pins a commit); the `pluginDigests`, `prependPlugins` and `appendPlugins` entries (no fleet use); the saved `sonnet[1m]` fix (no fleet setting holds it); and the `ALL_PROXY` CONNECT change (`skills-evals` only forwards the variable). Codex: no stable release after 0.169.0 (page 1 holds 0.169.0 and 0.170.0 and 0.171.0 alphas). The open discrepancy about repo skills after `cd` is not fixed by this release.
+
 ### 2026-11-13 — 2.1.322 through 2.1.323
 
 - **Checked:** 2026-11-13T17:40Z, [release log](https://github.com/anthropics/claude-code/releases)

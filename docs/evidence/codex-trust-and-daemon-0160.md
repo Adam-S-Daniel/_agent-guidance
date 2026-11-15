@@ -350,7 +350,7 @@ One standalone Git project, initialized without a remote, was exercised with
 explicit `trusted` and `untrusted` statuses in two separate threads. Its
 [`fleet-memory.sh`](../../.claude/hooks/fleet-memory.sh) was byte-identical
 to the tracked script; the existing
-[`codex-session-start.sh`](../../.claude/hooks/codex-session-start.sh)
+[`codex-session-start.sh`](https://github.com/Adam-S-Daniel/_agent-guidance/blob/59eb697/.claude/hooks/codex-session-start.sh)
 launcher was copied individually too. The adjacent synthetic payload was
 exactly 29 bytes: `FLEET_ACTUAL_PAYLOAD_181_NEW` followed by a newline.
 The project instructions contained `PROJECT_CANARY_181`; the disposable
