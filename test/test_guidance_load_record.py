@@ -1359,7 +1359,13 @@ class CloudReadTests(CloudTestCase):
                     f"cat > /tmp/x <<'EOF'\nsee {copy}/SKILL.md\nEOF",
                     f"mkdir -p {copy} && cp -r a {copy}", f"rm -rf {copy}",
                     f"sed -i s/a/b/ {copy}/SKILL.md", f"cat a > {copy}/SKILL.md",
-                    f"curl https://example.com{copy}/SKILL.md"]
+                    f"curl https://example.com{copy}/SKILL.md",
+                    # Second review: heredoc body lines, combined sed flags, perl -pi, a grep pattern.
+                    f"cat > /tmp/x <<'EOF'\ncat {copy}/SKILL.md\nEOF",
+                    f"git commit -F - <<'EOF'\nfix\n{copy}/SKILL.md\nEOF",
+                    f"sed -Ei s/a/b/ {copy}/SKILL.md", f"sed --in-place=.bak s/a/b/ {copy}/SKILL.md",
+                    f"perl -pi -e s/a/b/ {copy}/SKILL.md", f"grep '{copy}' notes.txt",
+                    f"find {copy} -delete", f"cat {copy}/../../../etc/hosts"]
         self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
                                for i, c in enumerate(commands)] + [later_turn(1)])
         self.stop()
@@ -1372,6 +1378,13 @@ class CloudReadTests(CloudTestCase):
         self.stop()
         self.assertEqual([(l["id"], l["name"]) for l in self.shard() + self.pending()],
                          [("toolu_m99", "vector")])
+
+    def test_an_apostrophe_in_a_heredoc_does_not_hide_an_earlier_read(self):
+        copy = str(self.skills / "vector")
+        self.write_transcript([tool_use("toolu_r16", "Bash", {
+            "command": f"cat {copy}/SKILL.md && cat > f <<EOF\ndon't\nEOF"})])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard()], [("toolu_r16", "vector")])
 
     def test_a_missing_copy_named_first_does_not_hide_a_real_one(self):
         self.write_transcript([tool_use("toolu_r13", "Bash", {

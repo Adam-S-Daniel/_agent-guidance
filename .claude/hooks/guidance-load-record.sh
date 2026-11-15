@@ -501,13 +501,8 @@ BASE_DIR_LINE = "Base directory for this skill: "
 # never count. Kept in step with skills-evals' model_usage_census.skill_reads.
 READ_TOOLS = {"Read": ("file_path",), "NotebookRead": ("notebook_path",), "Grep": ("path",),
               "Glob": ("path", "pattern")}
-READ_PROGRAMS = frozenset({"cat", "head", "tail", "less", "more", "bat", "nl", "wc", "grep",
-                           "egrep", "fgrep", "rg", "ls", "tree", "stat", "file", "sed", "awk",
-                           "python", "python3", "bash", "sh", "node", "ruby", "perl"})
 READ_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 READ_ROOT_RE = re.compile(r"(~|\$HOME|\$\{HOME\}|)/")
-ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
-SHELL_SEPARATORS = frozenset(";&|\n()")
 MAX_READ_INPUT = 64 << 10       # characters of one tool input searched for paths
 # Claude Code's built-in prompt skills, which write no base-directory message.
 BUILTIN_SKILLS = frozenset({"schedule", "update-config", "loop", "simplify",
@@ -1536,13 +1531,15 @@ def skill_copy(path, home):
             return None
         path = home.rstrip("/") + path[root.end() - 1:]
     parts = path.split("/")
+    if ".." in parts:
+        return None
     for i, part in enumerate(parts):
         if part != ".claude":
             continue
         rest = parts[i + 1:]
         if rest[:1] == ["skills"]:
             mid = rest[:1]
-            if rest[1:2] == ["synced"] and len(rest) > 2:
+            if rest[1:2] == ["synced"]:
                 mid = rest[:2]
         elif rest[:1] == ["plugins"] and "skills" in rest[1:]:
             mid = rest[:rest.index("skills", 1) + 1]
@@ -1555,31 +1552,82 @@ def skill_copy(path, home):
     return None
 
 
-def bash_read_paths(command):
-    """The path arguments of each simple command in `command` whose program
-    reads files (READ_PROGRAMS, or a path run directly); [] when it does not
-    tokenize. A `sed -i`, and a redirection target, are writes."""
-    lex = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()\n")
+#: Programs whose path arguments a command reads (or runs, for a skill script).
+#: awk and perl are left out: `awk -i inplace` and `perl -pi` write.
+READ_PROGRAMS = frozenset({"cat", "head", "tail", "less", "more", "bat", "nl", "wc", "grep",
+                           "egrep", "fgrep", "rg", "ls", "tree", "stat", "file", "sed", "find",
+                           "python", "python3", "bash", "sh", "node", "ruby"})
+#: Words that run the command after them: the reading program follows.
+COMMAND_PREFIXES = frozenset({"sudo", "env", "time", "nohup", "command", "exec"})
+#: Options after which a reading program writes, deletes or runs something.
+WRITE_FLAGS = {"sed": re.compile(r"-[A-Za-z]*i.*|--in-place.*"),
+               "find": re.compile(r"-(delete|exec|execdir|ok|okdir|fprint.*)")}
+PATTERN_PROGRAMS = frozenset({"grep", "egrep", "fgrep", "rg"})
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+SHELL_SEPARATORS = frozenset(";&|\n()")
+
+
+def without_heredoc_bodies(command):
+    """`command` with each here-document's body left out: a body is data a
+    command reads from stdin, never a command line."""
+    out, end = [], None
+    for line in command.split("\n"):
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        out.append(line)
+        found = HEREDOC_RE.search(line)
+        if found:
+            end = found.group(2)
+    return "\n".join(out)
+
+
+def shell_tokens(text):
+    lex = shlex.shlex(text, posix=True, punctuation_chars=";&|<>()\n")
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
+    return list(lex)
+
+
+def bash_read_paths(command):
+    """The path arguments of each simple command in `command` whose program
+    reads files (READ_PROGRAMS, or a path run directly). Here-document bodies
+    are skipped; a command that does not tokenize whole is read line by line,
+    so one stray quote loses only its own line. A write flag (`sed -i`,
+    `find -delete`), a redirection target and a grep pattern are not reads."""
+    command = without_heredoc_bodies(command)
     try:
-        tokens = list(lex)
+        tokens = shell_tokens(command)
     except ValueError:
-        return []
+        tokens = []
+        for line in command.split("\n"):
+            try:
+                tokens += shell_tokens(line) + [";"]
+            except ValueError:
+                continue
     paths, segment = [], []
     for token in tokens + [";"]:
         if token and set(token) <= SHELL_SEPARATORS:
             words = [w for w in segment if not ASSIGN_RE.fullmatch(w)]
-            if words[:1] == ["sudo"]:
-                words = words[1:]
+            while words and words[0] in COMMAND_PREFIXES:
+                words = [w for w in words[1:] if not ASSIGN_RE.fullmatch(w)]
             if words:
-                program = words[0].rsplit("/", 1)[-1]
-                if ".claude/" in words[0]:
+                program = re.split(r"[/\\]", words[0])[-1]
+                args = words[1:]
+                flags = WRITE_FLAGS.get(program)
+                if ".claude/" in words[0] or ".claude\\" in words[0]:
                     paths.append(words[0])
                 elif program in READ_PROGRAMS and not (
-                        program == "sed" and any(w.startswith("-i") or w == "--in-place"
-                                                 for w in words[1:])):
-                    paths += words[1:]
+                        flags and any(flags.fullmatch(w) for w in args)):
+                    if program in PATTERN_PROGRAMS and not any(
+                            w in ("-e", "-f") or w.startswith(("-e", "-f", "--regexp", "--file"))
+                            for w in args):
+                        plain = [i for i, w in enumerate(args) if not w.startswith("-")]
+                        if plain:
+                            args = args[:plain[0]] + args[plain[0] + 1:]
+                    paths += args
             segment = []
         elif token and set(token) <= set("<>"):
             segment.append(token)
