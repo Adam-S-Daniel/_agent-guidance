@@ -40,9 +40,9 @@ in the feed, run the workflow by hand with `reseed` checked.
 
 Agent sessions have reported that the feed host could not be reached from a
 cloud session or from the owner's VM network (not verified here); the workflow
-runs on GitHub Actions and reaches it directly. If a fetch of the published
-URL fails from an agent session, look for the feed's source in a git clone of
-`Adam-S-Daniel/rss-inator`, which rebuilds the feed (`article-watch.yml`).
+runs on GitHub Actions and reaches it directly. If a fetch fails from an
+agent session, read the feed's source in a git clone of
+`Adam-S-Daniel/rss-inator` instead of the URL that `article-watch.yml` polls.
 
 ## Each run
 
