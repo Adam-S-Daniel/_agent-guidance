@@ -380,8 +380,10 @@ here holds, each read fresh:
      `agent-authored`, in a fleet repo other than the three
      cms-platform-managed repos (`cms-platform`, `adamdaniel.ai`,
      `jodidaniel.com`), where a merge publishes the live site. A PR on an
-     `agent/issue-<n>-<slug>` branch is never this kind: only the narrow
-     rule above may merge it. Nor is a PR on a `retire-skill/*` branch:
+     `agent/issue-<n>-<slug>` branch is this kind only when its issue is
+     neither a sweep nor a memory-promotion issue (the titles in merge rule
+     item 1): those stay under the narrow rule alone
+     ([ADR 0045](../decisions/0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md)). Nor is a PR on a `retire-skill/*` branch:
      only step 2e may merge it. Nor is a PR from a `persistent/*` branch,
      whose routine's own merge gate decides it. Nor is an `agent/lesson-check-<id>` PR or any
      PR with auto-merge armed (`auto_merge` not null): those merge themselves
