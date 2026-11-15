@@ -32,6 +32,13 @@ least an hour old, all checks green with a required check and a passing
 test run, the eval-protection gate, the merge window for fleet guidance,
 and a `CLEAN` verdict from the run's own fresh-context reviewer.
 
+The issue is the one the branch names, in the same repo, and the body's
+first line after `## TLDR` must close or refer to that same issue; anything
+else goes to the owner, so a sweep fix cannot pass as a regular one by
+naming another issue. After the merge the worker handles the issue as the
+narrow rule does: a `Closes` issue is confirmed closed, and a `Refs` issue
+goes back to `agent-ready` for the findings left.
+
 Sweep and memory-promotion PRs stay under the narrow rule alone: their
 issues ask for instruction edits only, and the narrow rule's file list is
 the stricter check for them.
