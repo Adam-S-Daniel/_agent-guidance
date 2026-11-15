@@ -83,7 +83,8 @@ const mutations = {
   agentreroll: [worker, 'ends step 2d for that head', 'does not end step 2d for that head'],
   hookyaml: [worker, 'must be equal once\n     `skills_bootstrap.ref`', 'may differ beyond\n     `skills_bootstrap.ref`'],
   decidenotpark: [issueWorker, 'An ambiguity or a choice between fixes is the\n   worker\'s to make, not a stop', 'An ambiguity or a choice between fixes is a\n   stop'],
-  blockedrequeue: [worker, 'take it\nback to `agent-ready` with a comment saying so', 'label it\n`needs-owner` anyway'],
+  blockedrequeue: [worker, 'swap `agent-blocked` for `agent-ready` and comment', 'label it `needs-owner` anyway and comment'],
+  requeueonce: [worker, 'An issue requeued\nonce that blocks again goes to the owner', 'An issue requeued\nonce that blocks again is requeued again'],
   agentissue: [worker, 'A PR on an\n     `agent/issue-<n>-<slug>` branch is never this kind', 'A PR on an\n     `agent/issue-<n>-<slug>` branch may be this kind'],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
@@ -388,7 +389,7 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
   const blocked = prose(section(worker, 'Tell the owner which issues are blocked'));
-  includes(blocked, ['An ambiguity is never a reason', 'take it back to `agent-ready` with a comment saying so', 'open `agent-blocked` issues', 'both owners', '`on-hold` issues left out', '`needs-owner`', 'that label once', 'loses `needs-owner` too', '**Only an issue that just gained the label is news.**', '`Needs you:` list', '`unblock:`']);
+  includes(blocked, ['An ambiguity is never a reason', 'swap `agent-blocked` for `agent-ready` and comment', '`<!-- fleet-worker: requeued -->`', 'An issue requeued once that blocks again goes to the owner', 'open `agent-blocked` issues', 'both owners', '`on-hold` issues left out', '`needs-owner`', 'that label once', 'loses `needs-owner` too', '**Only an issue that just gained the label is news.**', '`Needs you:` list', '`unblock:`']);
   includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`', 'I authorize the writes that file describes', 'Never approve anything.']);
 });
 
