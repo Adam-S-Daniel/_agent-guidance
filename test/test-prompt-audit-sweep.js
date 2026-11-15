@@ -82,6 +82,9 @@ const mutations = {
   agentci: [worker, 'A repo with\n   no required CI goes to the owner.', 'A repo with\n   no required CI is fine.'],
   agentreroll: [worker, 'ends step 2d for that head', 'does not end step 2d for that head'],
   hookyaml: [worker, 'must be equal once\n     `skills_bootstrap.ref`', 'may differ beyond\n     `skills_bootstrap.ref`'],
+  decidenotpark: [issueWorker, 'An ambiguity or a choice between fixes is the\n   worker\'s to make, not a stop', 'An ambiguity or a choice between fixes is a\n   stop'],
+  blockedrequeue: [worker, 'swap `agent-blocked` for `agent-ready` and comment', 'label it `needs-owner` anyway and comment'],
+  requeueonce: [worker, 'An issue requeued\nonce that blocks again goes to the owner', 'An issue requeued\nonce that blocks again is requeued again'],
   agentissue: [worker, 'A PR on an\n     `agent/issue-<n>-<slug>` branch is never this kind', 'A PR on an\n     `agent/issue-<n>-<slug>` branch may be this kind'],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
@@ -350,6 +353,7 @@ test('fleet worker merges only narrow, reviewed instruction fixes and approves n
   includes(prose(section(adr28, 'Decision')), ['byte-identical', 'only removes lines', 'never approves anything', 'Nothing merges without', 'goes to the owner']);
   includes(prose(section(adr28, 'Addendum (2026-10-28)')), ['in `adam-agentskills` only', 'its diff only adds lines', 'unless each changed skill has a new impact entry', 'swaps `agent-working` for `agent-ready`', 'closes the issue as completed when none are left']);
   includes(prose(section(issueWorker, 'Where it runs')), ['**The owner turns that laptop task off**']);
+  includes(prose(section(issueWorker, 'Each run')), ["An ambiguity or a choice between fixes is the worker's to make, not a stop", 'name the choice and why in the PR body', 'Stop only on what no agent can do', 'the exact action the owner must take']);
   includes(prose(section(issueWorker, 'Each run')), ['do only the findings no merged PR fixed', 'close the issue as completed with a comment naming the merged PRs', 'raises the bundle\'s `version` in both `plugin.json` files', 'adds a `docs/skill-impact.md` entry (add lines only)', 'a `PURPOSE.md` beside the `SKILL.md`']);
 });
 
@@ -385,7 +389,7 @@ test('fleet worker updates PRs a required check never ran on and tells the owner
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
   const blocked = prose(section(worker, 'Tell the owner which issues are blocked'));
-  includes(blocked, ['open `agent-blocked` issues', 'both owners', '`on-hold` issues left out', '`needs-owner`', 'that label once', 'loses `needs-owner` too', '**Only an issue that just gained the label is news.**', '`Needs you:` list', '`unblock:`']);
+  includes(blocked, ['An ambiguity is never a reason', 'swap `agent-blocked` for `agent-ready` and comment', '`<!-- fleet-worker: requeued -->`', 'An issue requeued once that blocks again goes to the owner', 'open `agent-blocked` issues', 'both owners', '`on-hold` issues left out', '`needs-owner`', 'that label once', 'loses `needs-owner` too', '**Only an issue that just gained the label is news.**', '`Needs you:` list', '`unblock:`']);
   includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`', 'I authorize the writes that file describes', 'Never approve anything.']);
 });
 

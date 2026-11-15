@@ -131,10 +131,20 @@ blocked comments. The on-hold stop overrides step 7 below.
    is null; if something armed auto-merge, disable it.
 6. **Mark progress.** Leave `agent-working` on the issue and comment the PR's
    link.
-7. **On any stop** — tests red that it cannot fix, an ambiguity it cannot
-   resolve from the issue, missing access — comment what blocked it with
-   the evidence, swap `agent-working` for `agent-blocked`, keep any branch it
-   pushed, and move on to the next issue.
+7. **Decide, don't park.** An ambiguity or a choice between fixes is the
+   worker's to make, not a stop: the owner's standing rule is a closed loop
+   that puts as few decisions to him as it can. Take the most likely reading,
+   or the option the repo's `AGENTS.md`, ADRs and the fleet guidance point
+   to, and name the choice and why in the PR body; the merge rules and the
+   independent review still check the result, and a merge commit is one
+   revert away. Stop only on what no agent can do: tests red that it cannot
+   fix, missing access, a credential or secret only the owner can mint, a
+   setting or environment approval only he can give, an action the fleet
+   guidance reserves for him (widening what an agent may merge or push,
+   anything that needs paid GitHub), or a step that cannot be undone. **On a
+   stop,** comment what blocked it with the evidence and the exact action
+   the owner must take, swap `agent-working` for `agent-blocked`, keep any
+   branch it pushed, and move on to the next issue.
 8. **Finish with a summary:** the issues taken, the PR links, and the blocked
    issues with why. If there were no candidates, say so and end.
 
