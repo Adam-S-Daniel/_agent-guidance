@@ -1447,6 +1447,27 @@ sweep_branch_without_pr() {
     return 0
 }
 
+# open_bump_draft_number <repo> — prints the number of the ONE open pull request
+# on the bump branch when it is a DRAFT opened by this bumper (a held removal,
+# #488), else prints nothing. Returns 1 when the listing cannot be read, which
+# the caller treats as "not a held draft" and so keeps failing: an unreadable
+# answer is never a reason to go quiet.
+open_bump_draft_number() {
+    local repo_name="$1" rows count number is_draft login want
+    rows=$(gh pr list --repo "$repo_name" --head "$BRANCH_NAME" --state open \
+        --json number,headRefName,isDraft,author \
+        --jq '.[] | select(.headRefName == "'"$BRANCH_NAME"'") | [.number, .isDraft, (.author.login // "")] | @tsv' \
+        2>/dev/null) || return 1
+    count=$(grep -c . <<< "$rows" || true)
+    [[ "$count" -eq 1 ]] || return 1
+    IFS=$'\t' read -r number is_draft login <<< "$rows"
+    [[ "$is_draft" == true ]] || return 1
+    login="${login,,}"; login="${login#app/}"; login="${login%\[bot\]}"
+    want="${PR_AUTHOR,,}"; want="${want#app/}"; want="${want%\[bot\]}"
+    [[ -n "$want" && "$login" == "$want" && "$number" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$number"
+}
+
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
@@ -3102,6 +3123,29 @@ with open(sys.argv[1], encoding="utf-8") as handle:
         # "0 failed" while jodidaniel.com sat behind the fleet (#263).
         if [[ -n "${BRANCH_BLOCKED_THIS_RUN[$repo_name]:-}" ]]; then
             log "$BRANCH_NAME already exists with different content — refusing to force-push; the sweep above already counted this repo's blocked branch as a failure."
+            ((SKIP_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        # THE ONE BLOCKED BRANCH THAT IS NOT A FAILURE: this re-pin is HELD
+        # (it drops a skill key with no recorded review, #488) and the branch
+        # is already carrying this bumper's own open HELD DRAFT from an earlier
+        # night, left stale because the registry has moved since. Nothing is
+        # wrong and nothing a person must do tonight: no draft is ever merged,
+        # the gate stays exactly as strict, and the sweep marks that draft ready
+        # the moment the review is recorded. Failing here turned the run red
+        # every night for as long as the hold lasted (#566). Still never
+        # force-pushed; still reported, as a hold and in the job summary.
+        # Anything else — a non-draft PR, someone else's PR, a re-pin that is
+        # NOT held — keeps failing below.
+        if [[ ${#lost_keys[@]} -gt 0 && "$removal_reviewed" != true ]] \
+           && held_draft=$(open_bump_draft_number "$repo_name") && [[ -n "$held_draft" ]]; then
+            held_msg="$repo_name: $BRANCH_NAME already carries this bumper's HELD draft #$held_draft, and this re-pin is held too (drops a skill key with no recorded adversarial review, _agent-guidance#488). Not force-pushed and not a failure; the draft is left as it is until the review is recorded or a person closes it."
+            log "$held_msg"
+            echo "::notice::$held_msg"
+            if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+                printf -- '- %s\n' "$held_msg" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            fi
+            ((HOLD_COUNT++)) || true
             ((SKIP_COUNT++)) || true
             cd "$REPO_ROOT"; continue
         fi
