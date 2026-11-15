@@ -2,7 +2,8 @@
 
 Every repo is a temp directory with a temp HOME and no global or system git
 config. The candidate runners are temp copies of the template with one arm
-inserted into check_lessons, the way the lesson-check lane adds one.
+with check_lessons and lesson_checks replaced, the way the lesson-check lane
+adds a lesson.
 
 GITHUB_EVENT_NAME, GITHUB_EVENT_PATH and GITHUB_ACTIONS are dropped from every
 environment here: under GitHub Actions they describe the real pull request,
@@ -347,10 +348,17 @@ class RunnerTreeTests(LaneTestCase):
         self.assertIn("tree: 'no-such-branch' is not a commit or tree", out.stderr)
 
 
-def core_checks(entry):
-    """A run-log entry's checks without the lesson checks, which grow as the
-    lesson-check lane adds lessons to the template."""
-    return [c for c in entry["checks"] if not c.startswith("lesson-")]
+def expected_checks(core, declared):
+    """The run-log checks a run must write: `core` with the lesson ids the
+    template declares in lesson_checks, each once and in declared order,
+    spliced in right after skill-shell, where run_checks logs them."""
+    at = core.index("skill-shell") + 1
+    return core[:at] + list(declared) + core[at:]
+
+
+def declared_lessons():
+    """The ids the real template's lesson_checks names."""
+    return runner_lesson_parts(RUNNER)[1]
 
 
 class CandidateHelperTests(unittest.TestCase):
@@ -587,9 +595,37 @@ class RunLogTests(LaneTestCase):
         self.assertRegex(entry["ts"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
         self.assertEqual(entry["event"], "pre-commit")
         self.assertEqual(entry["repo"], "example-owner/widgets")
-        self.assertEqual(core_checks(entry), ["rules-dir", "secret-file", "skill-shell"])
+        self.assertEqual(entry["checks"], expected_checks(["rules-dir", "secret-file", "skill-shell"], declared_lessons()))
         self.assertEqual(entry["failed"], [])
         self.assertEqual(entry["runner"], hashlib.sha256(RUNNER.read_bytes()).hexdigest()[:12])
+
+    def test_run_log_lessons_must_equal_the_declared_ones(self):
+        """A runner that logs a lesson twice, or one lesson_checks does not
+        name, writes a log the exact comparison rejects."""
+        loop = 'for id in $lesson_checks; do note_ran "$id"; done'
+        text = with_lesson_arm(RUNNER.read_text(encoding="utf-8"), PATH_ARM, "lesson-example-path")
+        self.assertEqual(text.count(loop), 1, "run_checks no longer logs lessons this way")
+        self.stage({"README.md": "# Example\n"})
+        want = expected_checks(["rules-dir", "secret-file", "skill-shell"], ["lesson-example-path"])
+        for name, mutant in (("faithful", loop),):
+            self.assertEqual(self.logged_checks(text, name, loop, mutant), want)
+        for name, mutant in (
+                ("bogus and doubled", 'for id in $lesson_checks lesson-bogus; do note_ran "$id"; note_ran "$id"; done'),
+                ("bogus only", 'for id in $lesson_checks lesson-bogus; do note_ran "$id"; done'),
+                ("none logged", ":")):
+            self.assertNotEqual(self.logged_checks(text, name, loop, mutant), want, name)
+
+    def logged_checks(self, text, name, loop, mutant):
+        copy = self.tmp / name.replace(" ", "-") / "agent-checks"
+        copy.parent.mkdir()
+        copy.write_text(text.replace(loop, mutant), encoding="utf-8")
+        log = self.tmp / "state" / f"{copy.parent.name}.jsonl"
+        env = dict(self.env, AGENT_CHECKS_LOG=str(log))
+        out = subprocess.run(["bash", str(copy), "pre-commit"], cwd=str(self.repo), env=env,
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        [line] = log.read_text(encoding="utf-8").splitlines()
+        return json.loads(line)["checks"]
 
     def test_runner_digest_follows_the_runner_file(self):
         self.stage({"README.md": "# Example\n"})
@@ -623,7 +659,8 @@ class RunLogTests(LaneTestCase):
         self.assertIn("refusing to push to main", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(core_checks(entry), ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file", "skill-shell"])
+        self.assertEqual(entry["checks"], expected_checks(
+            ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file", "skill-shell"], declared_lessons()))
         self.assertEqual(entry["failed"], ["push-to-default"])
 
     def test_repo_local_check_is_logged(self):
@@ -631,7 +668,7 @@ class RunLogTests(LaneTestCase):
         out = self.run_logged("pre-commit")
         self.assertEqual(out.returncode, 1, out.stderr)
         [entry] = self.entries()
-        self.assertEqual(core_checks(entry), ["rules-dir", "secret-file", "skill-shell", "repo-local"])
+        self.assertEqual(entry["checks"], expected_checks(["rules-dir", "secret-file", "skill-shell", "repo-local"], declared_lessons()))
         self.assertEqual(entry["failed"], ["repo-local"])
 
     def test_ci_tree_and_unknown_events_write_nothing(self):
