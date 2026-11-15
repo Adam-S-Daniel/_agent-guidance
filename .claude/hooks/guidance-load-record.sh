@@ -219,14 +219,18 @@
 # census skips it. A typed command with no base directory is kept only for a
 # built-in skill or a name skills-bootstrap.sh installed.
 # A read use is a Read, NotebookRead, Grep, Glob or Bash tool_use (keyed on its
-# id) whose input (file_path, notebook_path, path, pattern or command, split
-# into tokens at whitespace, quotes and shell operators) names a path under an
-# installed copy: <root>/.claude/skills/<name>, or <root>/.claude/plugins/
-# followed later by /skills/<name>, then `/` or the token's end; <root> is
-# absolute, empty, `~`, $HOME or ${HOME} (the last three expand with HOME). A
-# registry checkout's plugins/<p>/skills/<name> has no `.claude` and never
-# counts; nor does a directory that does not exist. Its copy is that <name>
-# directory, resolved exactly as a use's base directory, and its name is the
+# id) that reads a path under an installed copy: <root>/.claude/skills/<name>
+# (skills/synced/<name> names <name>), or <root>/.claude/plugins/ followed
+# later by /skills/<name>; <root> is absolute, `~`, $HOME or ${HOME} (the last
+# three expand with HOME). Read, NotebookRead, Grep and Glob give the path in
+# file_path, notebook_path, path or pattern. In a Bash command only the
+# arguments of a program that reads files (cat, head, grep, ls, sed without -i
+# and the like) or runs a script (python3, bash, node and the like), or a copy's
+# script run directly, count: a path a command writes, copies, deletes, fetches
+# or only mentions does not. A relative path, a registry checkout's
+# plugins/<p>/skills/<name> (no `.claude`) and a directory that does not exist
+# never count. Its copy is that <name> directory, resolved exactly as a use's
+# base directory, and its name is the
 # bare directory name. At most one read line per session and name (state
 # remembers the names), keyed on the first qualifying read, and none for a
 # name the session has called (a Skill call or typed command anywhere in the
@@ -360,6 +364,7 @@ import hmac
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -486,18 +491,23 @@ HTTPS_GITHUB_RE = re.compile(
     r"https://github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?")
 COMMAND_NAME_RE = re.compile(r"<command-name>([^<]{0,200})</command-name>")
 BASE_DIR_LINE = "Base directory for this skill: "
-# A skill read (see CLOUD SKILL RECORDS in the header): the tools whose input
-# can name a file, the input keys each is read from, and an installed copy's
-# path, `<root>/.claude/skills/<name>` or `<root>/.claude/plugins/.../skills/<name>`,
-# then `/` or the end of the token. A token ends at whitespace, a quote or a
-# shell operator, so a registry checkout's plugins/<p>/skills/<name> (no
-# `.claude`) and a relative `.claude/...` never match.
+# A skill read (see CLOUD SKILL RECORDS in the header): a Read, NotebookRead,
+# Grep or Glob of an absolute path in an installed copy,
+# `<root>/.claude/skills/<name>` (`skills/synced/<name>` keys `<name>`) or
+# `<root>/.claude/plugins/.../skills/<name>`, or such a path as an argument of
+# a Bash program that reads files or runs a script, or run directly. A path a
+# command writes, copies, deletes, fetches or only mentions (a commit message,
+# an echo, a heredoc), a relative path and a registry checkout (no `.claude`)
+# never count. Kept in step with skills-evals' model_usage_census.skill_reads.
 READ_TOOLS = {"Read": ("file_path",), "NotebookRead": ("notebook_path",), "Grep": ("path",),
-              "Glob": ("path", "pattern"), "Bash": ("command",)}
-READ_SPLIT_RE = re.compile(r"[\s'\"`;|&<>()=,]+")
-READ_PATH_RE = re.compile(
-    r"(?P<root>~|\$HOME|\$\{HOME\}|/.*?)?/\.claude/(?P<mid>skills|plugins/.+?/skills)/"
-    r"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,127})(?:/|$)")
+              "Glob": ("path", "pattern")}
+READ_PROGRAMS = frozenset({"cat", "head", "tail", "less", "more", "bat", "nl", "wc", "grep",
+                           "egrep", "fgrep", "rg", "ls", "tree", "stat", "file", "sed", "awk",
+                           "python", "python3", "bash", "sh", "node", "ruby", "perl"})
+READ_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+READ_ROOT_RE = re.compile(r"(~|\$HOME|\$\{HOME\}|)/")
+ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+SHELL_SEPARATORS = frozenset(";&|\n()")
 MAX_READ_INPUT = 64 << 10       # characters of one tool input searched for paths
 # Claude Code's built-in prompt skills, which write no base-directory message.
 BUILTIN_SKILLS = frozenset({"schedule", "update-config", "loop", "simplify",
@@ -1515,33 +1525,92 @@ def bare_name(raw):
     return name.split(":", 1)[-1]
 
 
+def skill_copy(path, home):
+    """(skill name, copy directory) for an absolute path inside an installed
+    skill copy, else None; `~` and $HOME expand with HOME."""
+    root = READ_ROOT_RE.match(path)
+    if root is None:
+        return None
+    if root.group(1):
+        if not home.startswith("/"):
+            return None
+        path = home.rstrip("/") + path[root.end() - 1:]
+    parts = path.split("/")
+    for i, part in enumerate(parts):
+        if part != ".claude":
+            continue
+        rest = parts[i + 1:]
+        if rest[:1] == ["skills"]:
+            mid = rest[:1]
+            if rest[1:2] == ["synced"] and len(rest) > 2:
+                mid = rest[:2]
+        elif rest[:1] == ["plugins"] and "skills" in rest[1:]:
+            mid = rest[:rest.index("skills", 1) + 1]
+        else:
+            continue
+        name = rest[len(mid)] if len(rest) > len(mid) else ""
+        if not READ_NAME_RE.fullmatch(name):
+            return None
+        return name, "/".join(parts[:i + 1] + mid + [name])
+    return None
+
+
+def bash_read_paths(command):
+    """The path arguments of each simple command in `command` whose program
+    reads files (READ_PROGRAMS, or a path run directly); [] when it does not
+    tokenize. A `sed -i`, and a redirection target, are writes."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError:
+        return []
+    paths, segment = [], []
+    for token in tokens + [";"]:
+        if token and set(token) <= SHELL_SEPARATORS:
+            words = [w for w in segment if not ASSIGN_RE.fullmatch(w)]
+            if words[:1] == ["sudo"]:
+                words = words[1:]
+            if words:
+                program = words[0].rsplit("/", 1)[-1]
+                if ".claude/" in words[0]:
+                    paths.append(words[0])
+                elif program in READ_PROGRAMS and not (
+                        program == "sed" and any(w.startswith("-i") or w == "--in-place"
+                                                 for w in words[1:])):
+                    paths += words[1:]
+            segment = []
+        elif token and set(token) <= set("<>"):
+            segment.append(token)
+        elif segment and segment[-1] in (">", ">>", "<>", ">|"):
+            segment.pop()              # a redirection target is written, not read
+        else:
+            segment.append(token)
+    return paths
+
+
 def read_targets(item):
     """[(skill name, copy directory)] for the installed skill copies a
-    Read/NotebookRead/Grep/Glob/Bash tool_use's input names, in order and
-    once each; `~` and $HOME expand with HOME. Paths never leave this hook."""
-    given = item.get("input")
-    keys = READ_TOOLS.get(item.get("name"))
-    if not keys or not isinstance(given, dict):
+    Read/NotebookRead/Grep/Glob/Bash tool_use reads, in order and once each.
+    Paths never leave this hook."""
+    tool, given = item.get("name"), item.get("input")
+    if not isinstance(tool, str) or not isinstance(given, dict):
         return []
+    if tool == "Bash":
+        command = given.get("command")
+        candidates = bash_read_paths(command[:MAX_READ_INPUT]) \
+            if isinstance(command, str) else []
+    else:
+        candidates = [given.get(key) for key in READ_TOOLS.get(tool, ())]
     home = os.environ.get("HOME") or ""
     out, names = [], set()
-    for key in keys:
-        value = given.get(key)
-        if not isinstance(value, str):
+    for path in candidates:
+        found = skill_copy(path, home) if isinstance(path, str) and ".claude/" in path else None
+        if found is None or found[0] in names:
             continue
-        for token in READ_SPLIT_RE.split(value[:MAX_READ_INPUT]):
-            found = READ_PATH_RE.match(token) if ".claude/" in token else None
-            if found is None:
-                continue
-            root, name = found.group("root") or "", found.group("name")
-            if root in ("~", "$HOME", "${HOME}"):
-                if not home.startswith("/"):
-                    continue
-                root = home.rstrip("/")
-            if name in names:
-                continue
-            names.add(name)
-            out.append((name, "%s/.claude/%s/%s" % (root, found.group("mid"), name)))
+        names.add(found[0])
+        out.append(found)
     return out
 
 
@@ -2087,7 +2156,8 @@ class Cloud:
                         continue
                     if use.get("read"):
                         target = next(((n, b) for n, b in use["targets"]
-                                       if n not in called and n not in read_names), None)
+                                       if n not in called and n not in read_names
+                                       and os.path.isdir(b)), None)
                         if target is None:
                             continue
                         use = dict(use, name=target[0], base=target[1])

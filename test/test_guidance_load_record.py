@@ -1352,6 +1352,48 @@ class CloudReadTests(CloudTestCase):
         self.stop()
         self.assertEqual(self.shard(), [])
 
+    def test_a_command_that_only_mentions_writes_or_fetches_a_copy_records_nothing(self):
+        # Review findings, 2026-11-15: each of these recorded a read before.
+        copy = str(self.skills / "vector")
+        commands = [f"git commit -m 'fix {copy}/SKILL.md'", f"echo {copy}/SKILL.md",
+                    f"cat > /tmp/x <<'EOF'\nsee {copy}/SKILL.md\nEOF",
+                    f"mkdir -p {copy} && cp -r a {copy}", f"rm -rf {copy}",
+                    f"sed -i s/a/b/ {copy}/SKILL.md", f"cat a > {copy}/SKILL.md",
+                    f"curl https://example.com{copy}/SKILL.md"]
+        self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
+                               for i, c in enumerate(commands)] + [later_turn(1)])
+        self.stop()
+        self.assertEqual(self.shard() + self.pending(), [])
+        # Control: a script the copy ships, run by its interpreter, is a read.
+        self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
+                               for i, c in enumerate(commands)] + [later_turn(1), tool_use(
+            "toolu_m99", "Bash", {"command": f"cd /tmp && python3 {copy}/scripts/x.py"})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard() + self.pending()],
+                         [("toolu_m99", "vector")])
+
+    def test_a_missing_copy_named_first_does_not_hide_a_real_one(self):
+        self.write_transcript([tool_use("toolu_r13", "Bash", {
+            "command": "ls ~/.claude/skills/missing ~/.claude/skills/vector"})])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard()], [("toolu_r13", "vector")])
+
+    def test_an_account_synced_copy_is_named_by_its_own_directory(self):
+        write_vector(self.skills / "synced" / "vector-sync")
+        self.write_transcript([tool_use("toolu_r14", "Read", {
+            "file_path": str(self.skills / "synced" / "vector-sync" / "SKILL.md")})])
+        self.stop()
+        self.assertEqual([(l["name"], l["kind"]) for l in self.shard()],
+                         [("vector-sync", "skill-read")])
+
+    def test_a_malformed_tool_name_does_not_stop_a_valid_call_being_recorded(self):
+        bad = tool_use("toolu_r15", "Read", {"file_path": str(self.skills / "vector" / "SKILL.md")})
+        bad["message"]["content"][0]["name"] = ["Read"]
+        self.write_transcript([bad] + self.use_with_base("toolu_c3", "vector", self.skills / "vector"))
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard()], [("toolu_c3", "skill")])
+
 
 class CloudStorageTests(CloudTestCase):
     def setUp(self):
