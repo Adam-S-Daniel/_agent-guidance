@@ -2,7 +2,8 @@
 
 Every repo is a temp directory with a temp HOME and no global or system git
 config. The candidate runners are temp copies of the template with one arm
-inserted into check_lessons, the way the lesson-check lane adds one.
+with check_lessons and lesson_checks replaced, the way the lesson-check lane
+adds a lesson.
 
 GITHUB_EVENT_NAME, GITHUB_EVENT_PATH and GITHUB_ACTIONS are dropped from every
 environment here: under GitHub Actions they describe the real pull request,
@@ -28,7 +29,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LANE = REPO_ROOT / "scripts" / "agent_check_lane.py"
 RUNNER = REPO_ROOT / "templates" / "agent-checks" / "agent-checks"
 CASES = REPO_ROOT / "test" / "fixtures" / "agent-checks-cases.jsonl"
-EMPTY_LESSONS = "check_lessons() {\n  :\n}\n"
+LESSONS_HEAD = "check_lessons() {\n"
+LESSONS_END = "\n}\n"
+LESSON_CHECKS_LINE = 'lesson_checks="'
+
+
+def with_lesson_arm(text, arm, ids=""):
+    """The runner's text with its whole check_lessons function replaced by
+    `arm` and lesson_checks set to `ids`, whatever lessons the template has
+    by now. The function ends at the first closing brace in column 0, which
+    is how the runner writes every function."""
+    assert text.count(LESSONS_HEAD) == 1, "the template must define check_lessons exactly once"
+    start = text.index(LESSONS_HEAD)
+    end = text.index(LESSONS_END, start) + len(LESSONS_END)
+    text = text[:start] + arm + text[end:]
+    lines = text.split("\n")
+    hits = [i for i, line in enumerate(lines) if line.startswith(LESSON_CHECKS_LINE)]
+    assert len(hits) == 1, "the template must set lesson_checks exactly once"
+    lines[hits[0]] = f'{LESSON_CHECKS_LINE}{ids}"'
+    return "\n".join(lines)
 GITHUB_RUN_VARS = ("GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_ACTIONS")
 
 # A path-based lesson: refuse any *.notes-secret file.
@@ -101,9 +120,8 @@ class LaneTestCase(unittest.TestCase):
 
     def candidate(self, arm, name="candidate"):
         text = RUNNER.read_text(encoding="utf-8")
-        self.assertEqual(text.count(EMPTY_LESSONS), 1, "the template's check_lessons is no longer empty")
         path = self.tmp / name
-        path.write_text(text.replace(EMPTY_LESSONS, arm), encoding="utf-8")
+        path.write_text(with_lesson_arm(text, arm), encoding="utf-8")
         return path
 
     def runner(self, runner, repo, *args):
@@ -116,7 +134,9 @@ class LaneTestCase(unittest.TestCase):
 
     def cases_file(self, *lines, include_default=True):
         path = self.tmp / "cases.jsonl"
-        base = CASES.read_text(encoding="utf-8") if include_default else ""
+        # A candidate replaces the template's real lessons, so their own
+        # cases are left out: they would refuse nothing under it.
+        base = cases_without_lessons(CASES.read_text(encoding="utf-8")) if include_default else ""
         path.write_text(base + "".join(line + "\n" for line in lines), encoding="utf-8")
         return path
 
@@ -326,6 +346,56 @@ class RunnerTreeTests(LaneTestCase):
         out = self.runner(RUNNER, repo, "tree", "no-such-branch")
         self.assertEqual(out.returncode, 1)
         self.assertIn("tree: 'no-such-branch' is not a commit or tree", out.stderr)
+
+
+def expected_checks(core, declared):
+    """The run-log checks a run must write: `core` with the lesson ids the
+    template declares in lesson_checks, each once and in declared order,
+    spliced in right after skill-shell, where run_checks logs them."""
+    at = core.index("skill-shell") + 1
+    return core[:at] + list(declared) + core[at:]
+
+
+def declared_lessons():
+    """The ids the real template's lesson_checks names."""
+    return runner_lesson_parts(RUNNER)[1]
+
+
+def cases_without_lessons(text):
+    """The case table's lines that are not tagged for a lesson. One case is
+    one line ended by a newline; str.splitlines() would also cut at U+2028,
+    form feeds and the like inside a case's file content."""
+    return "".join(line + "\n" for line in text.split("\n")
+                   if line.strip() and "lesson" not in json.loads(line))
+
+
+class CandidateHelperTests(unittest.TestCase):
+    """The helper that builds a candidate runner works on a template that
+    already holds lessons: the first real lesson must not break this module."""
+
+    TEMPLATE = ('before\nlesson_checks="lesson-real-one"\n\ncheck_lessons() {\n  local x\n  case "$1" in\n'
+                '    *.real)\n      if [ -n "$x" ]; then\n        problem lesson-real-one "$1: no."\n      fi ;;\n'
+                '  esac\n}\n\nafter() {\n  :\n}\n')
+
+    def test_replaces_a_non_empty_check_lessons_and_its_id_list(self):
+        out = with_lesson_arm(self.TEMPLATE, PATH_ARM, "lesson-example-path")
+        self.assertIn(PATH_ARM, out)
+        self.assertNotIn("lesson-real-one", out)
+        self.assertIn('lesson_checks="lesson-example-path"\n', out)
+        self.assertTrue(out.startswith("before\n"))
+        self.assertTrue(out.endswith("\nafter() {\n  :\n}\n"))
+
+    def test_default_clears_the_id_list(self):
+        self.assertIn('lesson_checks=""\n', with_lesson_arm(self.TEMPLATE, PATH_ARM))
+
+    def test_a_case_holding_other_line_separators_stays_one_line(self):
+        odd = json.dumps({"id": "odd", "files": {"a.txt": "one\u2028two\x0cthree\x85four"}}, ensure_ascii=False)
+        tagged = json.dumps({"id": "real", "lesson": "real-one"})
+        self.assertEqual(cases_without_lessons(odd + "\n" + tagged + "\n\n"), odd + "\n")
+
+    def test_refuses_a_template_without_check_lessons(self):
+        with self.assertRaises(AssertionError):
+            with_lesson_arm('lesson_checks=""\n', PATH_ARM)
 
 
 class ContentArmTests(LaneTestCase):
@@ -538,9 +608,37 @@ class RunLogTests(LaneTestCase):
         self.assertRegex(entry["ts"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
         self.assertEqual(entry["event"], "pre-commit")
         self.assertEqual(entry["repo"], "example-owner/widgets")
-        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell"])
+        self.assertEqual(entry["checks"], expected_checks(["rules-dir", "secret-file", "skill-shell"], declared_lessons()))
         self.assertEqual(entry["failed"], [])
         self.assertEqual(entry["runner"], hashlib.sha256(RUNNER.read_bytes()).hexdigest()[:12])
+
+    def test_run_log_lessons_must_equal_the_declared_ones(self):
+        """A runner that logs a lesson twice, or one lesson_checks does not
+        name, writes a log the exact comparison rejects."""
+        loop = 'for id in $lesson_checks; do note_ran "$id"; done'
+        text = with_lesson_arm(RUNNER.read_text(encoding="utf-8"), PATH_ARM, "lesson-example-path")
+        self.assertEqual(text.count(loop), 1, "run_checks no longer logs lessons this way")
+        self.stage({"README.md": "# Example\n"})
+        want = expected_checks(["rules-dir", "secret-file", "skill-shell"], ["lesson-example-path"])
+        for name, mutant in (("faithful", loop),):
+            self.assertEqual(self.logged_checks(text, name, loop, mutant), want)
+        for name, mutant in (
+                ("bogus and doubled", 'for id in $lesson_checks lesson-bogus; do note_ran "$id"; note_ran "$id"; done'),
+                ("bogus only", 'for id in $lesson_checks lesson-bogus; do note_ran "$id"; done'),
+                ("none logged", ":")):
+            self.assertNotEqual(self.logged_checks(text, name, loop, mutant), want, name)
+
+    def logged_checks(self, text, name, loop, mutant):
+        copy = self.tmp / name.replace(" ", "-") / "agent-checks"
+        copy.parent.mkdir()
+        copy.write_text(text.replace(loop, mutant), encoding="utf-8")
+        log = self.tmp / "state" / f"{copy.parent.name}.jsonl"
+        env = dict(self.env, AGENT_CHECKS_LOG=str(log))
+        out = subprocess.run(["bash", str(copy), "pre-commit"], cwd=str(self.repo), env=env,
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        [line] = log.read_text(encoding="utf-8").splitlines()
+        return json.loads(line)["checks"]
 
     def test_runner_digest_follows_the_runner_file(self):
         self.stage({"README.md": "# Example\n"})
@@ -574,7 +672,8 @@ class RunLogTests(LaneTestCase):
         self.assertIn("refusing to push to main", out.stderr)
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
-        self.assertEqual(entry["checks"], ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file", "skill-shell"])
+        self.assertEqual(entry["checks"], expected_checks(
+            ["staged-index", "push-to-default", "persistent-delete", "rules-dir", "secret-file", "skill-shell"], declared_lessons()))
         self.assertEqual(entry["failed"], ["push-to-default"])
 
     def test_repo_local_check_is_logged(self):
@@ -582,7 +681,7 @@ class RunLogTests(LaneTestCase):
         out = self.run_logged("pre-commit")
         self.assertEqual(out.returncode, 1, out.stderr)
         [entry] = self.entries()
-        self.assertEqual(entry["checks"], ["rules-dir", "secret-file", "skill-shell", "repo-local"])
+        self.assertEqual(entry["checks"], expected_checks(["rules-dir", "secret-file", "skill-shell", "repo-local"], declared_lessons()))
         self.assertEqual(entry["failed"], ["repo-local"])
 
     def test_ci_tree_and_unknown_events_write_nothing(self):
@@ -848,8 +947,7 @@ class CheckIdTests(unittest.TestCase):
                 tmp = Path(tempfile.mkdtemp(prefix="agent-check-ids-"))
                 self.addCleanup(shutil.rmtree, tmp, True)
                 runner = tmp / "candidate"
-                text = RUNNER.read_text(encoding="utf-8").replace(EMPTY_LESSONS, arm)
-                runner.write_text(text.replace('lesson_checks=""', 'lesson_checks="lesson-example-path"'),
+                runner.write_text(with_lesson_arm(RUNNER.read_text(encoding="utf-8"), arm, "lesson-example-path"),
                                   encoding="utf-8")
             body, listed = runner_lesson_parts(runner)
             arm_ids = [ident for ident, _ in problem_calls(body)]
