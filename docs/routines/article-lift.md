@@ -38,10 +38,11 @@ Configuration, each set in one place with no default:
 A missing one fails the run with a message naming it. To skip everything now
 in the feed, run the workflow by hand with `reseed` checked.
 
-The feed host cannot be reached from a cloud session or from the owner's VM
-network; the workflow runs on GitHub Actions and reaches it directly. To
-inspect the feed by hand from an agent session, read its source in a git clone
-of `Adam-S-Daniel/rss-inator` rather than fetching the published URL.
+Agent sessions have reported that the feed host could not be reached from a
+cloud session or from the owner's VM network (not verified here); the workflow
+runs on GitHub Actions and reaches it directly. If a fetch of the published
+URL fails from an agent session, look for the feed's source in a git clone of
+`Adam-S-Daniel/rss-inator`, which rebuilds the feed (`article-watch.yml`).
 
 ## Each run
 
