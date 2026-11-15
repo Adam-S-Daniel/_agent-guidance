@@ -13,9 +13,11 @@ labeled `agent-ready`, and turns each one into a ready-for-review
 PR in that issue's repo. It also takes skills-evals' skill removal issues,
 whose PR goes to the skill's registry repo instead ("Skill removal
 issues", below). The worker never merges. The fleet worker's PR pass
-may later merge one narrow kind of fix PR
-([ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md));
-the owner merges the rest. The decision behind the split between a cloud
+may later merge its PRs: a narrow instruction fix under
+[ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
+and any other issue fix after an independent review under
+[ADR 0045](../decisions/0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md);
+the owner merges only what those rules send him. The decision behind the split between a cloud
 routine that opens a PR only on a substantive change and a worker that does
 the repo work is repo-settings
 [ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md)
