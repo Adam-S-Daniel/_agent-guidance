@@ -645,8 +645,12 @@ closed as not planned, with that comment.
 ### Tell the owner which issues are blocked
 
 An `agent-blocked` issue waits on the owner: the worker stopped on it (an
-outage, a revoked secret, a setting only he can change, an ambiguity) and
-said why in a comment. Nothing else reports it: the PR pass's list covers
+outage, a revoked secret, a setting only he can change) and said why in a
+comment. An ambiguity is never a reason: the worker decides it
+([`agent-issue-worker.md`](../reference/agent-issue-worker.md), step 7). An
+`agent-blocked` issue whose blocking comment names no action only the owner
+can take is the worker's again: before labeling it `needs-owner`, take it
+back to `agent-ready` with a comment saying so. Nothing else reports it: the PR pass's list covers
 PRs only, so a health-audit `ci` issue that is not the repo's to fix would
 otherwise stay blocked with no one told.
 
