@@ -34,9 +34,12 @@ test('fires on the schedule or by hand, with no permissions, no uses and no inte
   assert.equal(job.steps.length, 1);
   assert.ok(!('uses' in step()));
   assert.ok(!/\$\{\{/.test(step().run), 'no ${{ }} expression may reach a run: block');
+  assert.ok(!/secrets\[/.test(fs.readFileSync(path.join(root, workflow), 'utf8')),
+    'no dynamic secrets[...] index: it exposes every secret to the runner');
   assert.deepEqual(step().env, {
     FIRE_URL: '${{ vars[matrix.url_var] }}',
-    FIRE_BEARER: '${{ secrets[matrix.bearer_var] }}',
+    FLEET_BEARER: '${{ secrets.FLEET_WORKER_FIRE_BEARER }}',
+    LOOP_BEARER: '${{ secrets.LOOP_WORKER_FIRE_BEARER }}',
     EVERY_HOURS: '${{ vars[matrix.every_var] }}',
     WORKER: '${{ matrix.worker }}',
     URL_VAR: '${{ matrix.url_var }}',
@@ -78,7 +81,9 @@ function stepEnv(role, { url, bearer, every }) {
   for (const [name, expr] of Object.entries(step().env)) {
     const lookup = expr.match(/^\$\{\{ (vars|secrets)\[matrix\.(\w+)\] \}\}$/);
     const plain = expr.match(/^\$\{\{ matrix\.(\w+) \}\}$/);
-    if (lookup) out[name] = ({ [e.url_var]: url, [e.bearer_var]: bearer, [e.every_var]: every })[e[lookup[2]]];
+    const named = expr.match(/^\$\{\{ secrets\.(\w+) \}\}$/);
+    if (named) out[name] = named[1] === e.bearer_var ? bearer : 'other-task-value';
+    else if (lookup) out[name] = ({ [e.url_var]: url, [e.bearer_var]: bearer, [e.every_var]: every })[e[lookup[2]]];
     else if (plain) out[name] = e[plain[1]];
     else throw new Error(`unresolved env expression ${expr}`);
   }

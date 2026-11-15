@@ -12,9 +12,10 @@ name: Fire fleet worker
 #   filter and not a required check. scheduled-run-health.yml reports failed
 #   scheduled runs.
 # * One matrix job fires both tasks, so the gating below is written once. Each
-#   matrix entry names its own variables and secret, and the step reads them
-#   by name (`vars[matrix.url_var]`), so an unset one can never fall through
-#   to the other task's value. fail-fast is off, and each entry has its own
+#   matrix entry names its own variables and secret. The step reads the
+#   variables by name (`vars[matrix.url_var]`) and picks the bearer from two
+#   named secrets by worker, so an unset one can never fall through to the
+#   other task's value. fail-fast is off, and each entry has its own
 #   concurrency group, so a failed or slow fire of one never cancels or
 #   queues behind the other.
 # * Configuration lives in one place each, with no default: a task's fire URL
@@ -87,7 +88,10 @@ jobs:
       - name: Fire the ${{ matrix.worker }} worker routine
         env:
           FIRE_URL: ${{ vars[matrix.url_var] }}
-          FIRE_BEARER: ${{ secrets[matrix.bearer_var] }}
+          # Named secrets only, never a dynamic secrets index, which hands every
+          # repository secret to the runner (CodeQL excessive-secrets-exposure).
+          FLEET_BEARER: ${{ secrets.FLEET_WORKER_FIRE_BEARER }}
+          LOOP_BEARER: ${{ secrets.LOOP_WORKER_FIRE_BEARER }}
           EVERY_HOURS: ${{ vars[matrix.every_var] }}
           WORKER: ${{ matrix.worker }}
           URL_VAR: ${{ matrix.url_var }}
@@ -97,6 +101,11 @@ jobs:
           FIRE_TEXT: ${{ matrix.text }}
         run: |
           set -euo pipefail
+          case "$WORKER" in
+            fleet) FIRE_BEARER="$FLEET_BEARER" ;;
+            loop) FIRE_BEARER="$LOOP_BEARER" ;;
+            *) echo "::error::unknown worker: $WORKER"; exit 1 ;;
+          esac
           if [[ "$EVERY_REQUIRED" == true && -z "${EVERY_HOURS:-}" ]]; then
             echo "::error::not configured: variable $EVERY_VAR (3, 6, 12, 24 or 168). It has no default; set it in this repository's Actions settings."
             exit 1
