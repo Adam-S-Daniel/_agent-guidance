@@ -17,10 +17,12 @@ The owner can also start it with **Run now** and an article URL.
 "Automatic Continuous Self Improvement and Evals" project. Its prompt is short and points here, so the procedure is
 reviewed as a pull request.
 
-**Model:** Sonnet 5.5, set on the task (Adam, 2026-11-13). A run reads one
-article and turns what applies into small pull requests and a report, which
-Sonnet does reliably; Opus would cost more for little gain. Never leave it on
-the account default, which can change (it became Fable 5.2 on 2026-11-12).
+**Model:** Sonnet 5.5 is set on the task (Adam, 2026-11-13), but it does not
+take effect: a task created from a project thread starts a project thread, and
+those run on Opus whatever the task page says (the Fleet health audit, set the
+same way, ran Opus on 2026-11-16). Sonnet would only apply to a task created
+on the claude.ai Routines page, which this routine could be, since it needs
+only its repos.
 
 ## How the watch decides what fires
 
