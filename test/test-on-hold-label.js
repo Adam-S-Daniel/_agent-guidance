@@ -61,7 +61,9 @@ test('fleet rule protects issues and PRs, with owner control and passive status'
   const body = prose(section('agents-md/base.md', 'Working in these repos'));
   includes(body, ['issue or PR labeled `on-hold` is paused by the owner', 'no commits, reviews, merges, closing or follow-ups that do it', 'read, cite and list it as on hold without asking again', 'A held PR stays open', 'Only the owner adds or removes the label', 'an agent the owner directs in that session']);
   assert.ok(Buffer.byteLength(read('agents-md/base.md')) < 26624);
-  assert.equal(read('agents-md/base.md'), read('.claude/hooks/fleet-guidance.md'));
+  // ADR 0043: base.md reaches this repo's sessions through the owner's plugin;
+  // no mirror copy may come back.
+  assert.ok(!fs.existsSync(path.join(root, '.claude/hooks/fleet-guidance.md')));
 });
 
 test('reference specifies exact label and prohibited work without closing held PRs', () => {

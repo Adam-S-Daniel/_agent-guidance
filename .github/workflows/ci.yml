@@ -253,19 +253,17 @@ jobs:
       - name: Agent Markdown warnings (spelling, dangling references)
         run: node scripts/check-agent-markdown.js
 
-      # This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a
-      # hand-made byte-identical copy of agents-md/base.md that nothing syncs
-      # (SYNC_SELF_REPO) and no drift report names; the same step proves every
-      # docs/evidence/ file that base.md and stub.md point at still exists.
-      # Unconditional and not path-filtered, like the rest of this job. The
-      # integration suite compares the same two files and fails on the same
-      # drift, but with a FAIL line buried in a shard's log; this step's
-      # message names the one-line fix. So it must never be skipped behind a
-      # failure: the suite now runs in the separate `suite` job, which this
-      # job does not need, and within this job it sits right after `npm ci`,
-      # ahead of every step that can fail, because a later step without
-      # `if: always()` is skipped once an earlier one fails.
-      - name: Fleet payload mirrors base.md
+      # ADR 0043 retired this repo's `.claude/hooks/fleet-guidance.md` mirror
+      # of agents-md/base.md (the owner's plugin installs base.md here as
+      # everywhere), so this step fails if a tool re-creates it. It also proves
+      # every docs/evidence/ file that base.md and stub.md point at still
+      # exists, and that each guidance marker appears once, in its own file.
+      # Unconditional and not path-filtered, like the rest of this job. It must
+      # never be skipped behind a failure: the suite runs in the separate
+      # `suite` job, which this job does not need, and within this job it sits
+      # right after `npm ci`, ahead of every step that can fail, because a later
+      # step without `if: always()` is skipped once an earlier one fails.
+      - name: Guidance markers, evidence pointers, no payload mirror
         run: node scripts/check-fleet-guidance-mirror.js
 
       # This repo runs crons of its own (drift-report, the Dependabot sweep),

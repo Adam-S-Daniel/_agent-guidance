@@ -407,16 +407,20 @@ guidance view.
 The harness is described in skills-evals'
 [DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
 
-### Payload mirror
+### No payload mirror
 
-This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
-byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
-nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
-(CI: the "Fleet payload mirrors base.md" step in
-[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails when
-the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
-pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
-exist.
+Until [ADR 0043](docs/decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md),
+this repo's own sessions loaded `.claude/hooks/fleet-guidance.md`, a hand-made
+byte copy of `agents-md/base.md`. The owner's plugin now installs `base.md`
+into this repo's sessions as into every other, so the copy and this repo's
+fleet-memory and Stop registrations are gone; `.claude/hooks/fleet-memory.sh`
+and `guidance-load-record.sh` stay as the sources the tests run.
+[`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
+(CI: the "Guidance markers, evidence pointers, no payload mirror" step in
+[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails
+if the copy comes back, when a `docs/evidence/<file>` pointer in `base.md`,
+`stub.md` or `sections/*.md` names a file that does not exist, and when a
+guidance marker is missing, duplicated or in the wrong file.
 
 ### Agent Markdown warnings
 

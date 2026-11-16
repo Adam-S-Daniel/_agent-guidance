@@ -14213,49 +14213,41 @@ test_fleet_worker_fire() {
     fi
 }
 
-# ── The self-hosted fleet-memory payload matches agents-md/base.md ────────
+# ── This repo keeps no fleet-memory payload mirror (ADR 0043) ─────────────
 #
-# This repo is excluded from the sync (SYNC_SELF_REPO), so nothing overwrites
-# a drifted copy here and no drift report mentions it — the same blind spot
-# test 7b covers for the bootstrap hook. It matters more here than it looks:
-# this repo's own AGENTS.md is now the STUB, so this payload is the only copy
-# of the guidance its own sessions will ever load. If it drifts from base.md,
-# every session in _agent-guidance is quietly reading something the fleet is
-# not.
+# Until ADR 0043 this repo's own sessions loaded a hand-made copy of
+# agents-md/base.md through its own fleet-memory registration. The owner's
+# plugin now installs base.md here as everywhere, so Decision 3 dropped the
+# copy and the registrations, and kept the two hook scripts as sources the
+# tests run. A mirror that came back would be a second, unsynced payload; a
+# registration that came back would run a hook with no payload beside it and
+# print a DEGRADED verdict in every session here.
 test_self_hosted_fleet_payload() {
     echo ""
-    echo "=== Test: the self-hosted fleet-memory payload matches base.md ==="
+    echo "=== Test: this repo keeps no fleet-memory payload mirror (ADR 0043) ==="
 
-    local payload="$REPO_ROOT/.claude/hooks/fleet-guidance.md"
-    local source="$REPO_ROOT/agents-md/base.md"
-
-    if [[ ! -s "$payload" ]]; then
-        fail "self-hosted payload: $payload is missing or empty — this repo's own sessions would open DEGRADED"
-        return
-    fi
-    if cmp -s "$payload" "$source"; then
-        pass "self-hosted payload: byte-identical to agents-md/base.md"
+    if [[ -e "$REPO_ROOT/.claude/hooks/fleet-guidance.md" ]]; then
+        fail "self-hosted payload: .claude/hooks/fleet-guidance.md is back — ADR 0043 retired it; git rm it"
     else
-        fail "self-hosted payload: differs from agents-md/base.md — re-copy it (nothing syncs this repo)"
+        pass "self-hosted payload: no .claude/hooks/fleet-guidance.md mirror"
     fi
 
-    # The stub must not have quietly become the payload, or the repo would
-    # deliver a pointer to itself and nothing else.
-    if grep -qF "Fleet guidance is delivered once per session" "$payload"; then
-        fail "self-hosted payload: looks like the stub, not the full guidance"
-    else
-        pass "self-hosted payload: is the full guidance, not the stub"
-    fi
-
-    # And this repo must actually RUN it — a payload nothing invokes is inert.
-    local reg
-    reg=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
-          "$REPO_ROOT/scripts/bootstrap-status.sh" "$REPO_ROOT/.claude/settings.json")
-    if [[ "$reg" == "registered" ]]; then
-        pass "self-hosted payload: fleet-memory.sh is registered in this repo's settings.json"
-    else
-        fail "self-hosted payload: fleet-memory.sh is $reg in this repo's settings.json — the hook would never run here"
-    fi
+    local hook reg event
+    for hook in fleet-memory.sh:SessionStart guidance-load-record.sh:Stop; do
+        event=${hook#*:}; hook=${hook%%:*}
+        if [[ -s "$REPO_ROOT/.claude/hooks/$hook" ]]; then
+            pass "self-hosted payload: $hook stays as a source the tests run"
+        else
+            fail "self-hosted payload: .claude/hooks/$hook is missing — it is the source the tests and the owner routes use"
+        fi
+        reg=$(BOOTSTRAP_HOOK_EVENT="$event" BOOTSTRAP_HOOK_BASENAME="$hook" \
+              "$REPO_ROOT/scripts/bootstrap-status.sh" "$REPO_ROOT/.claude/settings.json")
+        if [[ "$reg" == "no-entry" ]]; then
+            pass "self-hosted payload: $hook is not registered on $event in this repo's settings.json"
+        else
+            fail "self-hosted payload: $hook is $reg on $event in this repo's settings.json — ADR 0043 Decision 3 dropped that registration"
+        fi
+    done
 }
 
 # ── Test 7b: the self-hosted hook matches the pin in repos.yml ────────────
@@ -20814,7 +20806,7 @@ test_eval_protected() {
 
 test_fleet_guidance_mirror() {
     echo ""
-    echo "=== Test: check-fleet-guidance-mirror.js (payload mirror + evidence pointers) ==="
+    echo "=== Test: check-fleet-guidance-mirror.js (no payload mirror, evidence pointers, markers) ==="
 
     # Same non-silent-skip rule as the other node suites: never skip on a
     # missing dependency (the CI wiring check below needs the yaml package).
@@ -20832,10 +20824,10 @@ test_fleet_guidance_mirror() {
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
     # 19 is the suite's actual count; a deleted test fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 19 ]]; then
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 17 ]]; then
         pass "fleet guidance mirror: node:test suite is green ($pass_n passed)"
     else
-        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=19): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet guidance mirror: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=17): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 
     # The checker only protects anything if CI runs it. Unconditional (no
@@ -20859,7 +20851,7 @@ test_fleet_guidance_mirror() {
     local names="$TEST_DIR/fleet-guidance-mirror-step-names.txt" suite_names="$TEST_DIR/fleet-guidance-mirror-suite-names.txt"
     if workflow_step_names "$wf" checks > "$names" 2>/dev/null && workflow_step_names "$wf" suite > "$suite_names" 2>/dev/null; then
         local mirror_line before
-        mirror_line=$(grep -nxF -- "Fleet payload mirrors base.md" "$names" | head -1 | cut -d: -f1) || mirror_line=""
+        mirror_line=$(grep -nxF -- "Guidance markers, evidence pointers, no payload mirror" "$names" | head -1 | cut -d: -f1) || mirror_line=""
         if [[ -n "$mirror_line" ]]; then
             before=$(head -n $((mirror_line - 1)) "$names" | grep -vxF -e "-" -e "Setup Node" -e "Install the workflow parser" \
                 -e "Agent Markdown warnings (spelling, dangling references)" | tr '\n' ' ') || before=""
@@ -22195,9 +22187,12 @@ test_fleet_memory_repo_header() {
     CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_PAYLOAD="$payload" bash "$hook" >/dev/null 2>&1
     assert_contains "$dest" "# AGENTS.md" "repo header: non-prefix text is delivered verbatim"
 
-    # The real payload: its header must match the hook's copy.
+    # The real payload, agents-md/base.md: its header must match the hook's
+    # copy. ADR 0043 removed the copy beside the hook, so it comes through the
+    # payload seam every owner route uses.
     rm -f "$dest"
-    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_OWNER=1 bash "$hook" >/dev/null 2>&1
+    CLAUDE_CONFIG_DIR="$d/cfg" FLEET_GUIDANCE_OWNER=1 \
+        FLEET_GUIDANCE_PAYLOAD="$REPO_ROOT/agents-md/base.md" bash "$hook" >/dev/null 2>&1
     assert_contains "$dest" "Only what is **specific to this account" "repo header: real payload body delivered"
     assert_not_contains "$dest" "Edit only below" "repo header: real payload's repo-only notice not delivered"
     # The transcript-count marker sits right after the header, so stripping
@@ -22210,7 +22205,8 @@ test_fleet_memory_repo_header() {
         || fail "repo header: real payload's body starts with '$line', not the fleet-full marker"
 
     # Codex Cloud writes the same block through its own path.
-    CODEX_HOME="$d/codex" FLEET_GUIDANCE_RECEIPT=0 bash "$hook" --codex-cloud > "$d/out-cloud" 2>&1
+    CODEX_HOME="$d/codex" FLEET_GUIDANCE_RECEIPT=0 \
+        FLEET_GUIDANCE_PAYLOAD="$REPO_ROOT/agents-md/base.md" bash "$hook" --codex-cloud > "$d/out-cloud" 2>&1
     assert_contains "$d/out-cloud" "fleet-guidance: installed" "repo header: Codex Cloud reports installed"
     assert_contains "$d/codex/AGENTS.md" "Only what is **specific to this account" "repo header: Codex Cloud body delivered"
     assert_not_contains "$d/codex/AGENTS.md" "Edit only below" "repo header: Codex Cloud drops the repo-only notice"
@@ -22408,15 +22404,18 @@ test_fleet_memory_workspace() {
     fi
 
     # With no child payload, workspace mode uses the payload beside the
-    # invoked hook. The source hook has its own real fleet-guidance.md.
+    # invoked hook. This repo keeps no payload beside its source hook (ADR
+    # 0043), so the invoked hook is a copy with base.md placed beside it.
     mv "$parent/alpha/.claude/hooks/fleet-guidance.md" "$d/alpha-payload.saved"
     mv "$parent/beta/.claude/hooks/fleet-guidance.md" "$d/beta-payload.saved"
-    mkdir -p "$d/fallback-cfg" "$d/fallback-codex"
+    mkdir -p "$d/fallback-cfg" "$d/fallback-codex" "$d/fallback-hook"
+    cp "$hook" "$d/fallback-hook/fleet-memory.sh"
+    cp "$REPO_ROOT/agents-md/base.md" "$d/fallback-hook/fleet-guidance.md"
     rc=0
     out=$(CLAUDE_CONFIG_DIR="$d/fallback-cfg" CODEX_HOME="$d/fallback-codex" \
-        FLEET_GUIDANCE_OWNER=1 bash "$hook" --workspace "$parent" 2>&1) || rc=$?
+        FLEET_GUIDANCE_OWNER=1 bash "$d/fallback-hook/fleet-memory.sh" --workspace "$parent" 2>&1) || rc=$?
     local source_version
-    source_version=$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md")
+    source_version=$(sha256sum "$d/fallback-hook/fleet-guidance.md")
     source_version=${source_version:0:8}
     if [[ $rc -eq 0 && -f "$d/fallback-codex/AGENTS.md" ]] \
             && grep -qF "fleet-guidance-version: $source_version" "$d/fallback-codex/AGENTS.md" \
@@ -23723,16 +23722,16 @@ test_fleet_memory_check_value() {
     assert_contains "$d/j-cfg/CLAUDE.md" 'The canary is JADE-OTTER-35.' 'fleet check value: no-digest run delivers the payload'
     assert_not_contains "$d/j-cfg/CLAUDE.md" 'check value' 'fleet check value: no digest, no check line'
 
-    # (k) The shipped payload, and base.md it mirrors, never carry the line:
-    # only a block this hook writes does.
+    # (k) base.md, the payload every owner route installs, never carries the
+    # line: only a block this hook writes does. ADR 0043 removed the copy that
+    # sat beside the hook, so the hook reads base.md through the payload seam.
     assert_not_contains "$REPO_ROOT/agents-md/base.md" 'fleet-guidance check value:' \
         'fleet check value: base.md carries no check value line'
-    assert_not_contains "$REPO_ROOT/.claude/hooks/fleet-guidance.md" 'fleet-guidance check value:' \
-        'fleet check value: the delivered payload copy carries no check value line'
     cfg="$d/k-cfg"; mkdir -p "$cfg"
-    env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+    env -u FLEET_GUIDANCE_SKIP -u FLEET_GUIDANCE_PAYLOAD_STAMP \
+        FLEET_GUIDANCE_PAYLOAD="$REPO_ROOT/agents-md/base.md" \
         CLAUDE_CONFIG_DIR="$cfg" CODEX_HOME="$d/no-codex" FLEET_GUIDANCE_RECEIPT=0 FLEET_GUIDANCE_OWNER=1 bash "$hook" >/dev/null
-    check="$(sha256sum "$REPO_ROOT/.claude/hooks/fleet-guidance.md" | cut -c57-64)"
+    check="$(sha256sum "$REPO_ROOT/agents-md/base.md" | cut -c57-64)"
     [[ "$(line_before_end "$cfg/CLAUDE.md")" == "fleet-guidance check value: $check" \
         && "$(grep -c -F 'fleet-guidance check value:' "$cfg/CLAUDE.md")" -eq 1 ]] \
         && pass 'fleet check value: the shipped payload is delivered with exactly one line' \
@@ -27351,20 +27350,12 @@ PY
     fi
 }
 
-# This repo is excluded from its own sync, so it registers the hook by hand:
-# the same classifier sync.sh uses must read it as registered on Stop.
+# The hook stays here as the source the owner's plugin route copies (ADR 0043
+# Decision 3 dropped this repo's own Stop registration; see
+# test_self_hosted_fleet_payload). The source must stay executable and LF.
 test_self_hosted_guidance_record() {
     echo ""
-    echo "=== Test: this repo runs the guidance-load-record hook it delivers ==="
-    local reg
-    reg=$(BOOTSTRAP_HOOK_EVENT="Stop" BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
-          BOOTSTRAP_HOOK_MATCHER="*" \
-          "$REPO_ROOT/scripts/bootstrap-status.sh" "$REPO_ROOT/.claude/settings.json")
-    if [[ "$reg" == "registered" ]]; then
-        pass "self guidance-load-record: registered on Stop in this repo's settings.json"
-    else
-        fail "self guidance-load-record: registered on Stop in this repo's settings.json — got $reg"
-    fi
+    echo "=== Test: the guidance-load-record source hook is executable and LF ==="
     if [[ -x "$REPO_ROOT/$GREC_REL_PATH_T" ]] && ! grep -q $'\r' "$REPO_ROOT/$GREC_REL_PATH_T"; then
         pass "self guidance-load-record: the hook is executable and LF"
     else

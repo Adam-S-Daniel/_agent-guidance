@@ -1,20 +1,18 @@
 #!/usr/bin/env node
 /*
  * check-fleet-guidance-mirror.js — three consistency checks over the guidance
- * this repo ships to itself.
+ * sources in this repo. (The name predates ADR 0043, when check 1 compared a
+ * mirror; it now requires the mirror's absence.)
  *
- * 1. MIRROR. `.claude/hooks/fleet-guidance.md` is the payload the fleet-memory
- *    hook installs into user memory, and in this repo it is a hand-made COPY of
- *    `agents-md/base.md`: byte-identical, no script derives it (the hook's
- *    PAYLOAD default, scripts/sync.sh and scripts/drift-report.sh all treat it
- *    as an opaque file). This repo is excluded from the sync
- *    (SYNC_SELF_REPO), so nothing overwrites a stale copy and no drift report
- *    names it, and its own AGENTS.md is the stub — so the payload is the only
- *    copy of the guidance this repo's own sessions load. A base.md edit with no
- *    re-copy leaves those sessions reading something the fleet is not.
- *    test_self_hosted_fleet_payload (test/run-tests.sh) already compares the two
- *    inside the integration suite; this runs as its own early CI step
- *    so the failure names the one-line fix instead of a buried FAIL line.
+ * 1. NO MIRROR. Until ADR 0043, `.claude/hooks/fleet-guidance.md` was a
+ *    hand-made byte copy of `agents-md/base.md` that this repo's own
+ *    fleet-memory registration installed. ADR 0043 Decision 3 retired it: the
+ *    owner's plugin installs `base.md` into this repo's sessions as into every
+ *    other, so a copy here is a second, unsynced payload that nothing reads and
+ *    that would go stale on the next base.md edit. A tool that still re-copies
+ *    base.md here (an older improvement or removal lane) is what this catches.
+ *    `.claude/hooks/fleet-memory.sh` and `guidance-load-record.sh` stay: they
+ *    are the sources the tests run.
  *
  * 2. EVIDENCE POINTERS. #251 moved long incident narratives out of base.md and
  *    stub.md into docs/evidence/ and left dated links behind. Nothing checks a
@@ -55,25 +53,10 @@ const MARKERS = [
 const MARKER_LINE = (kind) => `guidance-marker: ${kind} (transcript counts use this line; keep it)`;
 const EVIDENCE_RE = /docs\/evidence\/([A-Za-z0-9._-]+\.md)/g;
 
-function firstDifferingLine(a, b) {
-  const x = a.toString("utf8").split("\n");
-  const y = b.toString("utf8").split("\n");
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) if (x[i] !== y[i]) return i + 1;
-  return 0;
-}
-
-function checkMirror(root) {
-  const src = fs.readFileSync(path.join(root, SOURCE));
-  const payloadPath = path.join(root, PAYLOAD);
-  if (!fs.existsSync(payloadPath) || fs.statSync(payloadPath).size === 0) {
-    return [`${PAYLOAD} is missing or empty — this repo's own sessions would open DEGRADED. Fix: cp ${SOURCE} ${PAYLOAD}`];
-  }
-  const payload = fs.readFileSync(payloadPath);
-  if (src.equals(payload)) return [];
-  const line = firstDifferingLine(src, payload);
+function checkNoMirror(root) {
+  if (!fs.existsSync(path.join(root, PAYLOAD))) return [];
   return [
-    `${PAYLOAD} differs from ${SOURCE} (${payload.length} vs ${src.length} bytes, first difference at line ${line}) — nothing syncs this repo, so re-copy it. Fix: cp ${SOURCE} ${PAYLOAD}`,
+    `${PAYLOAD} exists, but ADR 0043 retired this repo's payload mirror: the owner's plugin installs ${SOURCE}, and nothing reads this copy. Fix: git rm ${PAYLOAD} (and stop whatever tool re-copied it)`,
   ];
 }
 
@@ -122,17 +105,17 @@ function run(root) {
   for (const rel of POINTER_SOURCES) {
     if (!fs.existsSync(path.join(root, rel))) return { code: 2, lines: [`missing input ${rel} under ${root}`] };
   }
-  const lines = [...checkMirror(root), ...checkEvidencePointers(root), ...checkMarkers(root)];
+  const lines = [...checkNoMirror(root), ...checkEvidencePointers(root), ...checkMarkers(root)];
   return { code: lines.length ? 1 : 0, lines };
 }
 
-module.exports = { run, checkMirror, checkEvidencePointers, checkMarkers };
+module.exports = { run, checkNoMirror, checkEvidencePointers, checkMarkers };
 
 if (require.main === module) {
   const i = process.argv.indexOf("--root");
   const root = path.resolve(i > -1 ? process.argv[i + 1] : path.join(__dirname, ".."));
   const { code, lines } = run(root);
   for (const l of lines) console.error(`::error::${l}`);
-  if (code === 0) console.log("fleet-guidance mirror: payload is byte-identical to agents-md/base.md; every docs/evidence/ pointer resolves; each guidance marker appears once, in its own file");
+  if (code === 0) console.log("fleet-guidance sources: no payload mirror (ADR 0043); every docs/evidence/ pointer resolves; each guidance marker appears once, in its own file");
   process.exit(code);
 }

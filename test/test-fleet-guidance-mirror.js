@@ -27,7 +27,6 @@ function tree(overrides = {}) {
   const files = {
     "agents-md/base.md": BASE,
     "agents-md/stub.md": STUB,
-    ".claude/hooks/fleet-guidance.md": BASE,
     "docs/evidence/2026-01-01-x.md": "evidence\n",
     ...overrides,
   };
@@ -43,31 +42,21 @@ test("green baseline passes", () => {
   assert.deepEqual(run(tree()), { code: 0, lines: [] });
 });
 
-test("a drifted payload fails and names the fix and the first differing line", () => {
-  const r = run(tree({ ".claude/hooks/fleet-guidance.md": BASE.replace("Guidance", "Guidance v2") }));
+test("a payload mirror fails and names the fix (ADR 0043 retired it)", () => {
+  const r = run(tree({ ".claude/hooks/fleet-guidance.md": BASE }));
   assert.equal(r.code, 1);
-  assert.match(r.lines[0], /differs from agents-md\/base\.md/);
-  assert.match(r.lines[0], /first difference at line 1/);
-  assert.match(r.lines[0], /cp agents-md\/base\.md \.claude\/hooks\/fleet-guidance\.md/);
+  assert.equal(r.lines.length, 1);
+  assert.match(r.lines[0], /ADR 0043 retired this repo's payload mirror/);
+  assert.match(r.lines[0], /Fix: git rm \.claude\/hooks\/fleet-guidance\.md/);
 });
 
-test("a trailing-newline-only drift fails (byte-identical, not text-equivalent)", () => {
-  const r = run(tree({ ".claude/hooks/fleet-guidance.md": BASE + "\n" }));
-  assert.equal(r.code, 1);
-});
-
-test("a stub copied over the payload fails", () => {
-  assert.equal(run(tree({ ".claude/hooks/fleet-guidance.md": STUB })).code, 1);
-});
-
-test("a missing or empty payload fails", () => {
-  assert.equal(run(tree({ ".claude/hooks/fleet-guidance.md": null })).code, 1);
+test("an empty payload file still fails: absence, not emptiness, is the rule", () => {
   assert.equal(run(tree({ ".claude/hooks/fleet-guidance.md": "" })).code, 1);
 });
 
 test("a dead docs/evidence pointer in base.md fails, with file and line", () => {
   const base = BASE + "\nAlso docs/evidence/gone.md.\n";
-  const r = run(tree({ "agents-md/base.md": base, ".claude/hooks/fleet-guidance.md": base }));
+  const r = run(tree({ "agents-md/base.md": base }));
   assert.equal(r.code, 1);
   assert.equal(r.lines.length, 1);
   assert.match(r.lines[0], /^agents-md\/base\.md:7 points at docs\/evidence\/gone\.md,/);
@@ -88,7 +77,7 @@ test("deleting the evidence file a pointer names fails", () => {
 
 test("a bare docs/evidence/ directory mention is not a pointer", () => {
   const base = BASE + "\nLong narratives live under docs/evidence/.\n";
-  assert.equal(run(tree({ "agents-md/base.md": base, ".claude/hooks/fleet-guidance.md": base })).code, 0);
+  assert.equal(run(tree({ "agents-md/base.md": base })).code, 0);
 });
 
 test("missing base.md or stub.md is exit 2, never a pass", () => {
@@ -96,10 +85,9 @@ test("missing base.md or stub.md is exit 2, never a pass", () => {
   assert.equal(run(tree({ "agents-md/base.md": null })).code, 2);
 });
 
-// Marker cases: base.md is rewritten together with its mirror, so each case
-// breaks only the marker and never the byte-identical payload check.
+// Marker cases rewrite base.md alone and break only the marker.
 function withBase(base) {
-  return { "agents-md/base.md": base, ".claude/hooks/fleet-guidance.md": base };
+  return { "agents-md/base.md": base };
 }
 
 test("a missing fleet-full marker in base.md fails and names the line to restore", () => {
@@ -154,7 +142,7 @@ test("a marker mentioned mid-line is not a marker line", () => {
 test("CLI: exit codes and annotations on a temp tree", () => {
   const ok = spawnSync("node", [SCRIPT, "--root", tree()], { encoding: "utf8" });
   assert.equal(ok.status, 0);
-  const bad = spawnSync("node", [SCRIPT, "--root", tree({ ".claude/hooks/fleet-guidance.md": STUB })], { encoding: "utf8" });
+  const bad = spawnSync("node", [SCRIPT, "--root", tree({ ".claude/hooks/fleet-guidance.md": BASE })], { encoding: "utf8" });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /^::error::/);
 });

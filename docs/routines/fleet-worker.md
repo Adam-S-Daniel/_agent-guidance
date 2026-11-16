@@ -330,8 +330,10 @@ each read fresh:
      only removes lines.
    - in `_agent-guidance` only, the fleet guidance: `agents-md/base.md`,
      `agents-md/stub.md` and `agents-md/sections/*.md`, together with what
-     an edit to them requires in the same PR: the byte-identical
-     `.claude/hooks/fleet-guidance.md` mirror, `agents-md/eval-coverage.yml`
+     an edit to them requires in the same PR: the regenerated
+     `.github/fleet-contributor-rules.md` and `AGENTS.md` (ADR 0043 retired
+     the `.claude/hooks/fleet-guidance.md` mirror; CI fails if it comes
+     back), `agents-md/eval-coverage.yml`
      rows whose only changes are `bytes` and `heading` values, and
      `docs/guidance-impact.md`, whose diff only adds lines.
    - in `Adam-S-Daniel/adam-agentskills` only, and only beside a qualifying
@@ -552,9 +554,7 @@ each problem:
   ruleset, branch protection, required check or environment gate dropped,
   no test skipped, disabled or deleted to get green, and no change to
   any `.claude/settings*.json` or `.mcp.json`, any plugin `hooks/`
-  directory or `hooks.json`, `.claude/hooks/` (except a
-  `.claude/hooks/fleet-guidance.md` byte-identical to the head's
-  `agents-md/base.md`, the mirror CI requires), `.githooks/`, the
+  directory or `hooks.json`, `.claude/hooks/`, `.githooks/`, the
   agent-checks runner, `CODEOWNERS`, a gitleaks config or allowlist, or a
   gate this worker relies on (`scripts/eval-protected.js`,
   `scripts/base-md-merge-window.js`, a `scripts/check-*.js` CI gate);

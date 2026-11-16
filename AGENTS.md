@@ -59,17 +59,18 @@ Automation that could merge a PR changing `agents-md/base.md` or
 person may merge any time, but a manual merge outside the window restarts every
 guidance section's eval evidence.
 
-**`agents-md/base.md` is the fleet-memory payload, with a mirror.** Every edit to
-it is copied byte for byte to `.claude/hooks/fleet-guidance.md`, which this
-repo's own sessions load. CI's "Fleet payload mirrors base.md" step
-(`scripts/check-fleet-guidance-mirror.js`) fails on any difference and names the
-fix. A PR that changes `base.md` shows the payload consumers receive on their
-next session; one that changes `stub.md` shows the text each consumer repo's
-`AGENTS.md` gets on the next sync.
-
-Why it is committed here at all, when `sync.sh` writes it everywhere else: the
-sync excludes its own repo (`SYNC_SELF_REPO`), so without this copy it would be
-the one repo in the fleet whose agents never read the fleet's guidance.
+**`agents-md/base.md` is the fleet-memory payload, and this repo keeps no copy
+of it.** The owner's plugin installs it into this repo's sessions as into every
+other ([ADR 0043](docs/decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md));
+`.claude/hooks/fleet-guidance.md` and this repo's own fleet-memory and Stop
+registrations are gone, and `.claude/hooks/fleet-memory.sh` and
+`guidance-load-record.sh` stay only as the sources the tests run. CI's
+"Guidance markers, evidence pointers, no payload mirror" step
+(`scripts/check-fleet-guidance-mirror.js`) fails if a tool re-creates the copy.
+A PR that changes `base.md` shows the payload the owner's sessions install; one
+that changes a contributor section also changes
+`.github/fleet-contributor-rules.md`, and one that changes `stub.md` shows the
+text each consumer repo's `AGENTS.md` gets on the next sync.
 
 Regenerate with:
 
