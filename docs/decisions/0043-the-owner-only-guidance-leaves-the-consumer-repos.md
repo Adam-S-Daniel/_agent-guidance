@@ -7,8 +7,9 @@ the Codex route), [0016](0016-the-freshest-delivery-wins-the-shared-global-block
 [0040](0040-the-repo-stub-keeps-only-the-pointer-and-the-irreversible-rules.md)
 (where the stub's degraded pointer leads), and builds on
 [0042](0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md) (the owner
-signal). Nothing here is implemented; the steps that would follow acceptance
-are listed at the end.
+signal). Partly implemented: the owner's routes and the contributor file are
+in place, and the removal from the consumer repos is not. See
+[Implementation status](#implementation-status-2026-11-16).
 
 ## Context
 
@@ -287,7 +288,7 @@ a five-repo thread), accepted as the price of the guarantee.
 - **A second owner signal** (for example a cloud-only variable). Issue 523
   rules it out and 0042's set already covers every route above. Rejected.
 
-## Implementation steps (after acceptance; none done here)
+## Implementation steps (after acceptance)
 
 In rollout order: every owner route works before any consumer copy is
 removed, so no owner session goes without the guidance in between.
@@ -341,6 +342,32 @@ removed, so no owner session goes without the guidance in between.
    mirror paragraph.
 9. **Close issue 473** when step 4's stub change merges; the per-repo cost was
    settled by 0040 and this ADR.
+
+## Implementation status (2026-11-16)
+
+Read from the default branches of `_agent-guidance` (`98cba59`),
+`adam-agentskills`, `adam-agentskills-private` and `skills-evals` on
+2026-11-16. Everything that adds a route or a file is done. Nothing that
+removes one is: every synced repo still receives
+`.claude/hooks/fleet-guidance.md`, `fleet-memory.sh` and
+`guidance-load-record.sh` with their registrations, next to the new
+contributor file. Update this table in the pull request that changes a row.
+
+| Step | State | What is in place, and what is left |
+|---|---|---|
+| 1. Boundary | done, with one departure | Every `agents-md/eval-coverage.yml` row has `audience`, and `scripts/check-guidance-coverage.js` requires it ([#544](https://github.com/Adam-S-Daniel/_agent-guidance/pull/544)). The two owner bullets were not moved ([#548](https://github.com/Adam-S-Daniel/_agent-guidance/pull/548), closed; see the notes below) |
+| 2. adam-agentskills | done | The bundled installer was refreshed ([adam-agentskills#152](https://github.com/Adam-S-Daniel/adam-agentskills/issues/152), closed). The Stop hook is in the private plugin, `adam-private-anything-anywhere` ([adam-agentskills-private#84](https://github.com/Adam-S-Daniel/adam-agentskills-private/pull/84)). `setup.sh --owner-machine` installs the local Codex launcher ([adam-agentskills#167](https://github.com/Adam-S-Daniel/adam-agentskills/pull/167)) and `scripts/register-codex-hook.sh` registers it ([#559](https://github.com/Adam-S-Daniel/_agent-guidance/pull/559)). `docs/multi-repo-delivery.md` says the environment wiring no longer delivers the guidance |
+| 3. Owner cloud environments | code done, verification not recorded | The owner block in adam-agentskills' `scripts/cloud-env-setup.sh` ([adam-agentskills#169](https://github.com/Adam-S-Daniel/adam-agentskills/pull/169)) and the `docs/codex-cloud.md` recipe ([#563](https://github.com/Adam-S-Daniel/_agent-guidance/pull/563)) download the pinned installer and verify its SHA-256. Not found in any repo: that each of the owner's environments runs the new script, the check-value test in a cloud session with no fleet repo attached, and which hosted surfaces run the synced plugin's hook ([#525](https://github.com/Adam-S-Daniel/_agent-guidance/issues/525), open) |
+| 4. Contributor file and stub | done | `scripts/build-contributor-rules.js` with its `--check` step in `ci.yml` ([#544](https://github.com/Adam-S-Daniel/_agent-guidance/pull/544)); the stub's degraded pointer and `AGENTS_MD_MODE=full` inlining the contributor file ([#552](https://github.com/Adam-S-Daniel/_agent-guidance/pull/552)) |
+| 5. The sync | half done | Done: `scripts/sync.sh` delivers `.github/fleet-contributor-rules.md` to every repo ([#552](https://github.com/Adam-S-Daniel/_agent-guidance/pull/552)). Not done: it still writes and registers the three leaving files, and has no removal code or tests for it. It waits on step 3's verification |
+| 6. What assumes the mirror | not done | `scripts/check-fleet-guidance-mirror.js` still compares the mirror; `test/test-on-hold-label.js` still asserts it; `scripts/drift-report.sh` gained a contributor-rules column but still compares the payload and does not report a leftover one as drift; skills-evals' `scripts/guidance_improve_gate.py` still re-copies `base.md` to the mirror. The remaining items of the step were not checked for this table |
+| 7. `repos.yml` comment | done | The comment says what `verify-actions-lock` receives before and after step 5 ([#544](https://github.com/Adam-S-Daniel/_agent-guidance/pull/544)) |
+| 8. Guidance text that describes delivery | not done | The `base.md` preamble is unchanged, and this repo's `AGENTS.md` still has the mirror paragraph. It belongs with steps 5 and 6, since the text is true until they land |
+| 9. Close issue 473 | done | Closed on 2026-11-13. [Issue 523](https://github.com/Adam-S-Daniel/_agent-guidance/issues/523) stays open until step 5's removal merges |
+
+Decision 3's last paragraph (this repo drops its own mirror and its own
+fleet-memory and Stop registrations) is also not done: both are still in
+`.claude/hooks/` and `.claude/settings.json`.
 
 ## Implementation notes (2026-11-13)
 
