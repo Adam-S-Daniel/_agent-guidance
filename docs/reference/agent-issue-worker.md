@@ -225,7 +225,7 @@ registry repo the body names, and nowhere else.
     workflow or script prints in another repo names the full URL of the
     moved doc, not a path that repo does not have;
   - leave files the _agent-guidance sync manages alone (`.githooks/`,
-    `.claude/hooks/fleet-guidance.md`, and `AGENTS.md` above its
+    `.github/fleet-contributor-rules.md`, and `AGENTS.md` above its
     `## Repo-specific additions` heading): a stale mention there is
     harmless and the next sync owns it. List mentions in those files and in
     other repos (`gh api -X GET search/code -f q='<skill>'` across both

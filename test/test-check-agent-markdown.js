@@ -191,10 +191,10 @@ test("scans exactly the agent-facing set, and skips the rest", () => {
     "CLAUDE.md": bad,
     "agents-md/base.md": bad,
     "agents-md/sections/go.md": bad,
-    ".claude/hooks/fleet-guidance.md": bad,
     "plugins/p/skills/s/SKILL.md": bad,
     "SKILL.md": bad,
-    // not agent-facing:
+    // not agent-facing (ADR 0043 retired the byte copy of base.md here):
+    ".claude/hooks/fleet-guidance.md": bad,
     "README.md": bad,
     "docs/notes.md": bad,
     "agents-md/eval-coverage.yml": "colour: x\n",
@@ -208,7 +208,6 @@ test("scans exactly the agent-facing set, and skips the rest", () => {
   assert.deepEqual(
     r.findings.map((f) => f.file),
     [
-      ".claude/hooks/fleet-guidance.md",
       "AGENTS.md",
       "CLAUDE.md",
       "SKILL.md",

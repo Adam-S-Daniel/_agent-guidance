@@ -80,7 +80,7 @@ test("only base.md and sections files are guidance paths", () => {
 });
 
 test("a guidance change is allowed inside the window and refused outside", () => {
-  const files = ["agents-md/base.md", ".claude/hooks/fleet-guidance.md"];
+  const files = ["agents-md/base.md"];
   assert.equal(mod.decide({ files, now: new Date(MON_OPEN), window: WINDOW }).allowed, true);
   const out = mod.decide({ files, now: new Date(MON_CLOSE), window: WINDOW });
   assert.equal(out.allowed, false);
