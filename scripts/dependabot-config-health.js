@@ -17,12 +17,19 @@
  * outside that one repo's own PR/commit UI.
  *
  * THE REMEDY. A daily sweep of every non-fork, non-archived repo under both
- * SYNC_OWNERS, using two independent signals per repo:
+ * SYNC_OWNERS, using three signals per repo:
  *   1. GitHub's own `.github/dependabot.yml` check run (app slug
  *      `dependabot`) on the commit that brought the config onto the default
  *      branch — INVALID when it concludes failure.
  *   2. Whether an update-job workflow run has fired recently enough given
  *      the config's own shortest schedule interval — SILENT when it has not.
+ *   3. Whether every `updates[]` entry sets a `cooldown` with `default-days`
+ *      (parsed with YAML, no regex) — NO-COOLDOWN when one does not. The
+ *      fleet convention is `default-days: 7` so a release waits a week before
+ *      a version-update PR opens (security updates bypass it); an entry for
+ *      cms-platform's own releases excludes them with `exclude:
+ *      ["Adam-S-Daniel/cms-platform/*"]`. This signal reads the config text
+ *      alone, so it needs no extra API call.
  * A finding files or updates a single `ci`-labelled tracking issue in the
  * AFFECTED repo (never here), keyed on a hidden evidence marker so repeat
  * runs don't spam duplicate comments, and the issue is shut once both
@@ -323,6 +330,38 @@ function buildApi(env) {
 
 // ── Pure helpers (exported; every one is unit-tested directly) ────────────
 
+// cooldownGaps(text) — one label per `updates[]` entry that has no usable
+// cooldown: `cooldown` missing, null or not a mapping, or a mapping with no
+// `default-days`. The label names the ecosystem and directory only (never
+// anything else from the file), restricted to characters that cannot break
+// the space-separated hidden evidence block or close its HTML comment.
+// Unparseable YAML yields [] — that is the invalid-config signal's job.
+function cooldownGaps(text) {
+  let doc;
+  try {
+    doc = YAML.parse(text);
+  } catch {
+    return [];
+  }
+  const updates = doc && typeof doc === "object" ? doc.updates : undefined;
+  if (!Array.isArray(updates)) return [];
+  const gaps = [];
+  for (const u of updates) {
+    if (!u || typeof u !== "object") continue;
+    const cd = u.cooldown;
+    const ok =
+      cd && typeof cd === "object" && !Array.isArray(cd) &&
+      cd["default-days"] !== undefined && cd["default-days"] !== null;
+    if (ok) continue;
+    const eco = typeof u["package-ecosystem"] === "string" ? u["package-ecosystem"] : "unknown";
+    let dir = "?";
+    if (typeof u.directory === "string") dir = u.directory;
+    else if (Array.isArray(u.directories)) dir = u.directories.filter((d) => typeof d === "string").join(",") || "?";
+    gaps.push(`${eco}@${dir}`.replace(/[^A-Za-z0-9_.\/*@,-]/g, "_"));
+  }
+  return gaps;
+}
+
 // parseSchedule(text) — walk `updates[].schedule.interval` in a Dependabot
 // config's YAML text. A recognised interval maps to INTERVAL_DAYS; anything
 // else (a `cron:`-only entry, a missing interval) is collected in
@@ -456,14 +495,14 @@ function jobsState({ lastJobAt, configCommitAt, thresholdDays, nowMs }) {
   return "pending";
 }
 
-// verdictFor — the single place the two signals combine into one verdict.
+// verdictFor — the single place the signals combine into one verdict.
 // "healthy" therefore requires check success AND jobs recent — see the
 // precedence chain at the bottom. `firstCommitProof` is #194's narrow
 // exception: truthy only when the caller has already confirmed both (a) the
 // config's path has exactly one commit ever and (b) a successful update job
 // started after it (see firstCommitProvesHealthy) — everything else about a
 // missing check is untouched.
-function verdictFor({ config, check, jobs, firstCommitProof }) {
+function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps }) {
   if (!config) {
     return { verdict: "no-config", findings: [], unknowns: [], notices: [] };
   }
@@ -475,6 +514,9 @@ function verdictFor({ config, check, jobs, firstCommitProof }) {
   }
   if (jobs.state === "silent") {
     findings.push({ kind: "silent", key: `silent:${jobs.lastJobAt || "never"}` });
+  }
+  for (const g of gaps || []) {
+    findings.push({ kind: "no-cooldown", key: `no-cooldown:${g}` });
   }
   if (check.state === "missing") {
     if (firstCommitProof) {
@@ -590,6 +632,23 @@ function renderSilentSection(assessment) {
   ];
 }
 
+function renderNoCooldownSection(findings) {
+  const entries = findings
+    .filter((f) => f.kind === "no-cooldown")
+    .map((f) => `- \`${f.key.slice("no-cooldown:".length)}\``);
+  return [
+    "**No cooldown.** These `updates` entries set no `cooldown` with `default-days`:",
+    "",
+    ...entries,
+    "",
+    "The fleet convention is `cooldown: default-days: 7`, so a release must be a week old before " +
+      "Dependabot opens a version-update PR (security updates bypass it). An entry that also " +
+      "tracks cms-platform releases adds `exclude: [\"Adam-S-Daniel/cms-platform/*\"]`, because " +
+      "those are this account's own gated code and do not need the wait. `github-actions` " +
+      "entries take only `default-days`; other `semver-*-days` keys are not supported there.",
+  ];
+}
+
 const FOOTER = "_Filed by the dependabot-config-health sweep in Adam-S-Daniel/_agent-guidance._";
 
 function renderIssueBody(assessment) {
@@ -600,6 +659,9 @@ function renderIssueBody(assessment) {
   }
   if (assessment.findings.some((f) => f.kind === "silent")) {
     lines.push(...renderSilentSection(assessment), "");
+  }
+  if (assessment.findings.some((f) => f.kind === "no-cooldown")) {
+    lines.push(...renderNoCooldownSection(assessment.findings), "");
   }
   lines.push(
     "**What to do:** repair the config on the default branch. The sweep comments new evidence " +
@@ -619,6 +681,9 @@ function renderComment(assessment, freshFindings) {
   }
   if (freshFindings.some((f) => f.kind === "silent")) {
     lines.push(...renderSilentSection(assessment), "");
+  }
+  if (freshFindings.some((f) => f.kind === "no-cooldown")) {
+    lines.push(...renderNoCooldownSection(freshFindings), "");
   }
   lines.push(FOOTER);
   return lines.join("\n");
@@ -898,7 +963,7 @@ function assessRepo(target, api, nowMs, opts) {
       }
     }
 
-    verdictResult = verdictFor({ config, check, jobs, firstCommitProof });
+    verdictResult = verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: cooldownGaps(config.raw) });
   }
 
   const unknowns = [...extraUnknowns, ...verdictResult.unknowns];
@@ -1170,6 +1235,7 @@ module.exports = {
   firstCommitProvesHealthy,
   jobsState,
   verdictFor,
+  cooldownGaps,
   extractReportedEvidence,
   hiddenEvidenceBlock,
   planIssueAction,

@@ -21,6 +21,11 @@
  * names another bounds file (tests). `--now` is required: the clock is never
  * read implicitly, so a caller states the instant it judged.
  *
+ * The bounds are wall-clock times in the file's IANA `timezone`, so a zone
+ * with daylight saving time moves the window's UTC instants with the clocks
+ * (America/New_York 12:00 is 17:00 UTC in EST, 16:00 UTC in EDT). Node's
+ * built-in Intl time zone data does the conversion.
+ *
  * Exit codes: 0 allowed (not gated, or inside the window); 2 refused (gated,
  * outside the window; stdout names the next window start); 1 bad input.
  */
@@ -32,7 +37,8 @@ const YAML = require("yaml");
 const DEFAULT_WINDOW = path.join(__dirname, "base-md-merge-window.yml");
 const BASE_MD = "agents-md/base.md";
 const SECTIONS_PREFIX = "agents-md/sections/";
-const KEYS = ["weekday", "start", "end"];
+const KEYS = ["timezone", "weekday", "start", "end"];
+const WEEKDAYS = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
 const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 function minutes(hhmm) {
@@ -50,6 +56,9 @@ function checkWindow(doc) {
   if (extra.length || missing.length) {
     throw new Error(`window file keys wrong (extra: ${extra.join(",") || "none"}; missing: ${missing.join(",") || "none"})`);
   }
+  if (typeof doc.timezone !== "string" || !validZone(doc.timezone)) {
+    throw new Error("timezone must be an IANA zone name such as America/New_York");
+  }
   if (!Number.isInteger(doc.weekday) || doc.weekday < 1 || doc.weekday > 7) {
     throw new Error("weekday must be an integer 1 to 7");
   }
@@ -57,33 +66,70 @@ function checkWindow(doc) {
     if (typeof doc[k] !== "string" || !HHMM.test(doc[k])) throw new Error(`${k} must be a "HH:MM" string`);
   }
   if (minutes(doc.start) >= minutes(doc.end)) throw new Error("end must be later than start");
-  return { weekday: doc.weekday, start: doc.start, end: doc.end };
+  return { timezone: doc.timezone, weekday: doc.weekday, start: doc.start, end: doc.end };
+}
+
+/** A canonical IANA name only, spelled exactly as Intl resolves it: Intl
+ * also takes lower case and offsets such as "+05:00", which skills-evals'
+ * Python reader (zoneinfo) refuses, so both readers accept the same values. */
+function validZone(zone) {
+  if (!/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/.test(zone)) return false;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone === zone;
+  } catch {
+    return false;
+  }
 }
 
 function loadWindow(file = DEFAULT_WINDOW) {
   return checkWindow(YAML.parse(fs.readFileSync(file, "utf8")));
 }
 
-/** ISO weekday (1 Monday .. 7 Sunday) and minute of the day, both UTC. */
-function utcParts(now) {
+/** Wall-clock calendar date, ISO weekday (1 Monday .. 7 Sunday) and minute
+ * of the day of the instant `now` in `zone`. */
+function zonedParts(now, zone) {
   if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error("now is not a valid instant");
-  return { weekday: now.getUTCDay() === 0 ? 7 : now.getUTCDay(), minute: now.getUTCHours() * 60 + now.getUTCMinutes() };
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone, hourCycle: "h23", weekday: "short",
+    year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric",
+  });
+  const p = Object.fromEntries(fmt.formatToParts(now).map((x) => [x.type, x.value]));
+  return {
+    year: Number(p.year), month: Number(p.month), day: Number(p.day),
+    weekday: WEEKDAYS[p.weekday], minute: Number(p.hour) * 60 + Number(p.minute),
+  };
 }
 
-/** True from `start` (inclusive) to `end` (exclusive) on the window's day. */
+/** The instant whose wall-clock time in `zone` is the given date and time.
+ * Two passes of the zone's offset settle it on either side of a DST change;
+ * the window's hours are never in a skipped or repeated hour. */
+function zonedInstant(year, month, day, hour, minute, zone) {
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute);
+  const offsetAt = (t) => {
+    const p = zonedParts(new Date(t), zone);
+    return Date.UTC(p.year, p.month - 1, p.day, Math.floor(p.minute / 60), p.minute % 60) - t;
+  };
+  const first = asUtc - offsetAt(asUtc);
+  return new Date(asUtc - offsetAt(first));
+}
+
+/** True from `start` (inclusive) to `end` (exclusive) on the window's day,
+ * in the window's zone. */
 function inWindow(now, win) {
-  const { weekday, minute } = utcParts(now);
+  const { weekday, minute } = zonedParts(now, win.timezone);
   return weekday === win.weekday && minute >= minutes(win.start) && minute < minutes(win.end);
 }
 
 /** The first window start strictly after `now`, as an ISO instant. */
 function nextWindowStart(now, win) {
-  utcParts(now);
+  const today = zonedParts(now, win.timezone);
   const [h, m] = win.start.split(":").map(Number);
   for (let d = 0; d <= 7; d += 1) {
-    const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + d, h, m));
-    const wd = day.getUTCDay() === 0 ? 7 : day.getUTCDay();
-    if (wd === win.weekday && day.getTime() > now.getTime()) return day.toISOString();
+    const cal = new Date(Date.UTC(today.year, today.month - 1, today.day + d));
+    const wd = cal.getUTCDay() === 0 ? 7 : cal.getUTCDay();
+    if (wd !== win.weekday) continue;
+    const start = zonedInstant(cal.getUTCFullYear(), cal.getUTCMonth() + 1, cal.getUTCDate(), h, m, win.timezone);
+    if (start.getTime() > now.getTime()) return start.toISOString();
   }
   throw new Error("no window start found");
 }

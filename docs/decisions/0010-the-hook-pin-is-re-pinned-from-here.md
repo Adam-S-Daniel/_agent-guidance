@@ -4,7 +4,10 @@
 [0005](0005-consumer-locks-are-re-pinned-from-here.md) to the second pin, and
 deliberately does **not** extend [0006](0006-bump-prs-land-on-a-sweep.md)'s
 sweep to it — the *Decision* below says why that asymmetry is the point rather
-than an oversight.
+than an oversight. Superseded in part by
+[0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) (2026-11-12):
+the fleet worker now merges the bump after an independent review, so "proposes
+and stops" no longer holds. The rest of this ADR stands.
 
 ## Context
 

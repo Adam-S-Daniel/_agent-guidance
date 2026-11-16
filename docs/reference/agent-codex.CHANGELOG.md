@@ -30,6 +30,18 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-13 — 0.167.1 through 0.169.0
+
+- **Checked:** 2026-11-13T17:40Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.169.0](https://github.com/openai/codex/releases/tag/rust-v0.169.0), published 2026-11-13T08:37Z
+- **Window:** 0.167.1 (2026-11-10T21:32Z), 0.167.2 (2026-11-11T22:44Z), 0.168.0 (2026-11-13T03:54Z) and 0.169.0 (2026-11-13T08:37Z), the first stable releases after 0.167.0: 4 stable releases, 32 highlight bullets (not individually indexed: no group was drafted). Pre-releases (`-alpha`) excluded. Publish times are read from the tag pages' `datetime` attribute, in UTC.
+- **Source text:** the GitHub release list pages 1-3 and the four tag pages; page 3 included `rust-v0.167.0`, the previous entry's last version.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+No group met the name-the-surface bar. The closest was 0.169.0's note that `codex exec` keeps project configuration and MCP servers disabled in untrusted directories (new `--trust` flag): `docs/evidence/codex-trust-and-daemon-0160.md` already records that missing trust disables the project config layer, and `scripts/register-codex-hook.sh` only names `--dangerously-bypass-hook-trust`, so nothing documented changes. A grep of the fleet for `multi_agent`, `tui_workspace` and `codex review` found no use outside the vendor repo.
+
+**Issues:** none.
+
 ### 2026-11-06 — 0.167.0 through 0.167.0
 
 - **Checked:** 2026-11-06T02:10Z, [release log](https://github.com/openai/codex/releases)

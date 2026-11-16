@@ -1,6 +1,6 @@
 # 0025 — A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest
 
-**Status:** Accepted (2026-10-25)
+**Status:** Accepted (2026-10-25). Widened by [0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) (2026-11-12): the fleet worker also merges reviewed agent-made PRs and the hook pin bump.
 
 ## Context
 

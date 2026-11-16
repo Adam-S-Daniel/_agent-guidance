@@ -115,6 +115,9 @@ class HookTestCase(unittest.TestCase):
             "TMPDIR": str(self.tmpdir),
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}",
             "HOME": str(self.home),
+            # The owner gate (ADR 0042): a durable machine records nothing
+            # without a signal, so every case but OwnerGateTests runs as the owner.
+            "FLEET_GUIDANCE_OWNER": "1",
             "GUIDANCE_RECORD_NOW": NOW,
             # The API and git seams are read only under this test marker.
             "GUIDANCE_RECORD_TEST": "1",
@@ -126,12 +129,12 @@ class HookTestCase(unittest.TestCase):
     def write_transcript(self, entries):
         self.transcript.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
 
-    def run_hook(self, session="session-one", env=None, event=None, stdin=None):
+    def run_hook(self, session="session-one", env=None, event=None, stdin=None, cwd=None):
         payload = stdin if stdin is not None else json.dumps(event or {
             "session_id": session, "transcript_path": str(self.transcript),
             "hook_event_name": "Stop"})
         out = subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True,
-                             env=dict(self.env, **(env or {})), timeout=60)
+                             env=dict(self.env, **(env or {})), timeout=60, cwd=cwd)
         self.assertEqual((out.returncode, out.stdout, out.stderr), (0, "", ""))
         return out
 
@@ -142,7 +145,9 @@ class HookTestCase(unittest.TestCase):
         out = []
         for line in log.read_text(encoding="utf-8").splitlines():
             record = json.loads(line)
-            self.assertEqual(list(record), KEYS, line)
+            # `listing` is optional: present only when a skill listing was found.
+            keys = KEYS[:-1] + ["listing"] + KEYS[-1:] if "listing" in record else KEYS
+            self.assertEqual(list(record), keys, line)
             out.append(record)
         return out
 
@@ -277,6 +282,89 @@ class RecordTests(HookTestCase):
         self.run_hook(session="b", env={"CLAUDE_CODE_REMOTE_SESSION_ID": "example-remote"})
         self.run_hook(session="c", env={"CLAUDE_CODE_REMOTE": "false"})
         self.assertEqual([r["remote"] for r in self.records()], [True, True, False])
+
+
+class OwnerGateTests(HookTestCase):
+    """The hook is registered in every public fleet repo, so on a durable machine
+    it records nothing, and creates no state directory, unless the run carries an
+    owner signal: FLEET_GUIDANCE_OWNER on, a hosted session, or the marker file."""
+
+    def setUp(self):
+        super().setUp()
+        self.env.pop("FLEET_GUIDANCE_OWNER")
+        self.xdg_state = self.tmp / "xdg-state"
+        self.write_transcript([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)), assistant(1)])
+
+    def marker(self, config_home):
+        path = pathlib.Path(config_home) / "fleet-guidance" / "owner"
+        path.parent.mkdir(parents=True)
+        path.touch()
+        return path
+
+    def assert_gated(self, env=None, cwd=None):
+        env = dict(env or {}, XDG_STATE_HOME=str(self.xdg_state))
+        before = sorted(p for p in self.home.rglob("*"))
+        self.run_hook(env=env, cwd=cwd)          # also asserts rc 0 and no output
+        self.assertFalse(self.xdg_state.exists(), "state directory was created")
+        self.assertFalse(self.state.exists())
+        self.assertEqual(sorted(self.home.rglob("*")), before)
+        self.assertEqual(self.calls(), [])
+
+    def assert_records(self, env=None, cwd=None):
+        self.run_hook(env=dict(env or {}, XDG_STATE_HOME=str(self.xdg_state)), cwd=cwd)
+        log = self.xdg_state / "fleet-guidance" / "sessions.jsonl"
+        self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_no_signal_records_nothing_and_creates_no_state(self):
+        self.assert_gated()
+
+    def test_no_signal_leaves_the_default_state_directory_absent_too(self):
+        self.run_hook()
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_owner_variable_records(self):
+        self.assert_records({"FLEET_GUIDANCE_OWNER": "1"})
+
+    def test_off_spellings_of_the_owner_variable_are_gated(self):
+        for value in ("0", "false", "FALSE", "no", "No", "off", "OFF", ""):
+            with self.subTest(value=value):
+                self.assert_gated({"FLEET_GUIDANCE_OWNER": value})
+
+    def test_any_other_spelling_of_the_owner_variable_records(self):
+        self.assert_records({"FLEET_GUIDANCE_OWNER": "yes"})
+
+    def test_marker_under_an_absolute_xdg_config_home_records(self):
+        self.marker(self.tmp / "xdg-config")
+        self.assert_records({"XDG_CONFIG_HOME": str(self.tmp / "xdg-config")})
+
+    def test_marker_under_home_config_records(self):
+        self.marker(self.home / ".config")
+        self.assert_records()
+
+    def test_an_absolute_xdg_config_home_replaces_home_config(self):
+        self.marker(self.home / ".config")
+        self.assert_gated({"XDG_CONFIG_HOME": str(self.tmp / "elsewhere")})
+
+    def test_a_relative_xdg_config_home_is_ignored_and_home_config_is_used(self):
+        cwd = self.tmp / "cwd"
+        cwd.mkdir()
+        self.marker(cwd / "rel" / "cfg")
+        self.assert_gated({"XDG_CONFIG_HOME": "rel/cfg"}, cwd=cwd)
+        self.marker(self.home / ".config")
+        self.assert_records({"XDG_CONFIG_HOME": "rel/cfg"}, cwd=cwd)
+
+    def test_a_marker_that_is_a_directory_is_gated(self):
+        (self.home / ".config" / "fleet-guidance" / "owner").mkdir(parents=True)
+        self.assert_gated()
+
+    def test_hosted_session_variables_record(self):
+        self.assert_records({"CLAUDE_CODE_REMOTE": "true"})
+
+    def test_a_remote_session_id_records(self):
+        self.assert_records({"CLAUDE_CODE_REMOTE_SESSION_ID": "session_example"})
+
+    def test_empty_or_false_hosted_variables_are_gated(self):
+        self.assert_gated({"CLAUDE_CODE_REMOTE": "false", "CLAUDE_CODE_REMOTE_SESSION_ID": ""})
 
 
 # Invented 8-hex check values; the real one is the last 8 hex of a payload digest.
@@ -515,6 +603,68 @@ class CheckValueTests(HookTestCase):
         self.assertEqual(list(record), KEYS)
 
 
+def skill_listing(content, initial=True):
+    return {"type": "attachment", "version": "2.1.312", "entrypoint": "remote_projects",
+            "attachment": {"type": "skill_listing", "isInitial": initial, "content": content}}
+
+
+class ListingTests(HookTestCase):
+    def listing_for(self, *entries):
+        self.write_transcript([user(), instructions(memfile("/w/r/AGENTS.md", "Project", STUB)),
+                               *entries, assistant(1)])
+        self.run_hook()
+        [record] = self.records()
+        return record.get("listing", "absent")
+
+    def test_a_listing_with_every_description_is_full(self):
+        self.assertEqual(self.listing_for(skill_listing(
+            "- init: Initialize a file\n- plug:one: Does one thing\n- plug:two: Does another")), "full")
+
+    def test_a_namespaced_name_without_a_description_is_truncated(self):
+        self.assertEqual(self.listing_for(skill_listing(
+            "- plug:one: Does one thing\n- plug:two\n- plug:three")), "truncated")
+
+    def test_a_bare_name_without_a_description_is_a_cut(self):
+        # Cloud registry skills are listed by bare name; err toward "truncated".
+        self.assertEqual(self.listing_for(skill_listing("- init\n- plug:one: Does one thing")), "truncated")
+
+    def test_no_listing_omits_the_field(self):
+        self.assertEqual(self.listing_for(), "absent")
+
+    def test_a_non_initial_listing_is_not_proof(self):
+        self.assertEqual(self.listing_for(skill_listing("- plug:one: Does one thing", initial=False)), "absent")
+
+    def test_a_listing_without_text_content_omits_the_field(self):
+        self.assertEqual(self.listing_for(skill_listing(None)), "absent")
+
+    def install(self, *names, registry="https://github.com/Adam-S-Daniel/adam-agentskills.git"):
+        record = self.home / ".claude" / "skills" / ".skills-bootstrap-installed.json"
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps({"installed": [
+            {"name": n, "registry": registry, "bundle": "b", "digest": "d", "ref": "0" * 40}
+            for n in names]}), encoding="utf-8")
+
+    def test_a_cut_past_every_installed_registry_skill_is_full(self):
+        # The cloud case: account skills at the end lose their descriptions.
+        self.install("one", "two")
+        self.assertEqual(self.listing_for(skill_listing(
+            "- one: Does one thing\n- two: Does another\n- acct:docs\n- acct:pdf")), "full")
+
+    def test_an_installed_registry_skill_by_name_alone_is_truncated(self):
+        self.install("one", "two")
+        self.assertEqual(self.listing_for(skill_listing(
+            "- one: Does one thing\n- two\n- acct:docs")), "truncated")
+
+    def test_an_installed_registry_skill_missing_from_the_listing_is_truncated(self):
+        self.install("one", "two")
+        self.assertEqual(self.listing_for(skill_listing("- one: Does one thing")), "truncated")
+
+    def test_skills_from_another_registry_do_not_narrow_the_judgment(self):
+        self.install("one", registry="https://github.com/example/skills.git")
+        self.assertEqual(self.listing_for(skill_listing(
+            "- one: Does one thing\n- acct:docs")), "truncated")
+
+
 # Invented 40-hex commits; the real ones are what skills-bootstrap.sh fetched.
 SHA_A = "a" * 40
 SHA_B = "0123456789abcdef0123456789abcdef01234567"
@@ -672,7 +822,8 @@ class OncePerSessionTests(HookTestCase):
         empty.mkdir()
         self.write_transcript([instructions(memfile("/w/r/AGENTS.md", "Project", STUB))])
         out = subprocess.run([shutil.which("bash"), str(HOOK)], input="{}", capture_output=True,
-                             text=True, env={"PATH": str(empty), "HOME": str(self.home)}, timeout=30)
+                             text=True, env={"PATH": str(empty), "HOME": str(self.home),
+                                                    "FLEET_GUIDANCE_OWNER": "1"}, timeout=30)
         self.assertEqual((out.returncode, out.stdout, out.stderr), (0, "", ""))
         self.assertEqual(self.records(), [])
 
@@ -1111,6 +1262,152 @@ class CloudVectorTests(CloudTestCase):
         self.assertEqual(lines[2]["digest_null_reason"], "no-base-dir")
 
 
+def tool_use(call, tool, given, ts=USE_TS, session=CLOUD_SESSION):
+    return {"type": "assistant", "sessionId": session, "timestamp": ts, "version": "2.1.312",
+            "uuid": "a-" + call, "message": {"id": "msg_" + call, "role": "assistant", "content": [
+                {"type": "tool_use", "id": call, "name": tool, "input": given}]}}
+
+
+class CloudReadTests(CloudTestCase):
+    """Reading an installed skill copy's files is a use too (kind skill-read)."""
+
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.script([PUSH_OK])
+        write_vector(self.skills / "vector")
+
+    def test_a_read_of_an_installed_skill_md_is_one_read_line_with_the_copys_digest(self):
+        self.write_transcript([tool_use("toolu_r1", "Read",
+                                        {"file_path": str(self.skills / "vector" / "SKILL.md")})])
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual(line, {
+            "v": 1, "id": "toolu_r1", "ts": "2099-01-01T00:00:00Z", "kind": "skill-read",
+            "surface": "cloud", "session": CLOUD_SID[:16], "cli": "2.1.312", "name": "vector",
+            "base_kind": "user-skills", "registry": None, "ref": None,
+            "digest": VECTOR_ALL_FILES, "digest_null_reason": None})
+        self.assertEqual(set(line), SHARD_KEYS)
+        text = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        self.assertNotIn(str(self.home), text)
+        self.assertNotIn("SKILL.md", text)
+
+    def test_bash_cat_of_a_tilde_path_counts(self):
+        self.write_transcript([tool_use("toolu_r2", "Bash",
+                                        {"command": "cat ~/.claude/skills/vector/ref.md | head"})])
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual((line["id"], line["kind"], line["name"], line["digest"]),
+                         ("toolu_r2", "skill-read", "vector", VECTOR_ALL_FILES))
+
+    def test_a_registry_checkout_path_does_not_count(self):
+        checkout = self.tmp / "adam-agentskills" / "plugins" / "p" / "skills" / "vector"
+        write_vector(checkout)
+        self.write_transcript([
+            tool_use("toolu_r3", "Read", {"file_path": "/home/user/adam-agentskills/plugins/p/skills/x/SKILL.md"}),
+            tool_use("toolu_r4", "Read", {"file_path": str(checkout / "SKILL.md")}),
+            tool_use("toolu_r5", "Grep", {"pattern": "x", "path": str(checkout)}),
+            later_turn(1)])
+        self.stop()
+        self.assertEqual(self.shard(), [])
+        self.assertEqual(self.pending(), [])
+
+    def test_a_session_that_calls_the_skill_records_no_read_for_it(self):
+        # The call comes after the read and in a subagent transcript: still no read line.
+        self.write_transcript([tool_use("toolu_r6", "Read",
+                                        {"file_path": str(self.skills / "vector" / "SKILL.md")})])
+        sub = self.tmp / CLOUD_SESSION / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a.jsonl").write_text("".join(json.dumps(e) + "\n" for e in self.use_with_base(
+            "toolu_c1", "example:vector", self.skills / "vector")), encoding="utf-8")
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard()], [("toolu_c1", "skill")])
+
+    def test_a_call_in_an_earlier_stop_keeps_a_later_read_out(self):
+        entries = self.use_with_base("toolu_c2", "vector", self.skills / "vector")
+        self.write_transcript(entries)
+        self.stop()
+        self.write_transcript(entries + [tool_use("toolu_r7", "Glob", {
+            "pattern": "**/*.md", "path": str(self.skills / "vector")})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard() + self.pending()],
+                         [("toolu_c2", "skill")])
+
+    def test_two_reads_give_one_line_keyed_on_the_first(self):
+        first = tool_use("toolu_r8", "Read", {"file_path": str(self.skills / "vector" / "SKILL.md")})
+        second = tool_use("toolu_r9", "Bash", {"command": "ls $HOME/.claude/skills/vector"})
+        self.write_transcript([first, second])
+        self.stop()
+        self.write_transcript([first, second, tool_use("toolu_r10", "Read", {
+            "file_path": str(self.skills / "vector" / "a" / "b" / "c.txt")})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard() + self.pending()],
+                         [("toolu_r8", "skill-read")])
+
+    def test_a_path_to_no_copy_records_nothing(self):
+        self.write_transcript([tool_use("toolu_r11", "Bash", {"command": "ls ~/.claude/skills/missing/"}),
+                               tool_use("toolu_r12", "Glob", {"pattern": "~/.claude/skills/*/SKILL.md"})])
+        self.stop()
+        self.assertEqual(self.shard(), [])
+
+    def test_a_command_that_only_mentions_writes_or_fetches_a_copy_records_nothing(self):
+        # Review findings, 2026-11-15: each of these recorded a read before.
+        copy = str(self.skills / "vector")
+        commands = [f"git commit -m 'fix {copy}/SKILL.md'", f"echo {copy}/SKILL.md",
+                    f"cat > /tmp/x <<'EOF'\nsee {copy}/SKILL.md\nEOF",
+                    f"mkdir -p {copy} && cp -r a {copy}", f"rm -rf {copy}",
+                    f"sed -i s/a/b/ {copy}/SKILL.md", f"cat a > {copy}/SKILL.md",
+                    f"curl https://example.com{copy}/SKILL.md",
+                    # Second review: heredoc body lines, combined sed flags, perl -pi, a grep pattern.
+                    f"cat > /tmp/x <<'EOF'\ncat {copy}/SKILL.md\nEOF",
+                    f"git commit -F - <<'EOF'\nfix\n{copy}/SKILL.md\nEOF",
+                    f"sed -Ei s/a/b/ {copy}/SKILL.md", f"sed --in-place=.bak s/a/b/ {copy}/SKILL.md",
+                    f"perl -pi -e s/a/b/ {copy}/SKILL.md", f"grep '{copy}' notes.txt",
+                    f"find {copy} -delete", f"cat {copy}/../../../etc/hosts"]
+        self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
+                               for i, c in enumerate(commands)] + [later_turn(1)])
+        self.stop()
+        self.assertEqual(self.shard() + self.pending(), [])
+        # Control: a script the copy ships, run by its interpreter, is a read.
+        self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
+                               for i, c in enumerate(commands)] + [later_turn(1), tool_use(
+            "toolu_m99", "Bash", {"command": f"cd /tmp && python3 {copy}/scripts/x.py"})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard() + self.pending()],
+                         [("toolu_m99", "vector")])
+
+    def test_an_apostrophe_in_a_heredoc_does_not_hide_an_earlier_read(self):
+        copy = str(self.skills / "vector")
+        self.write_transcript([tool_use("toolu_r16", "Bash", {
+            "command": f"cat {copy}/SKILL.md && cat > f <<EOF\ndon't\nEOF"})])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard()], [("toolu_r16", "vector")])
+
+    def test_a_missing_copy_named_first_does_not_hide_a_real_one(self):
+        self.write_transcript([tool_use("toolu_r13", "Bash", {
+            "command": "ls ~/.claude/skills/missing ~/.claude/skills/vector"})])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard()], [("toolu_r13", "vector")])
+
+    def test_an_account_synced_copy_is_named_by_its_own_directory(self):
+        write_vector(self.skills / "synced" / "vector-sync")
+        self.write_transcript([tool_use("toolu_r14", "Read", {
+            "file_path": str(self.skills / "synced" / "vector-sync" / "SKILL.md")})])
+        self.stop()
+        self.assertEqual([(l["name"], l["kind"]) for l in self.shard()],
+                         [("vector-sync", "skill-read")])
+
+    def test_a_malformed_tool_name_does_not_stop_a_valid_call_being_recorded(self):
+        bad = tool_use("toolu_r15", "Read", {"file_path": str(self.skills / "vector" / "SKILL.md")})
+        bad["message"]["content"][0]["name"] = ["Read"]
+        self.write_transcript([bad] + self.use_with_base("toolu_c3", "vector", self.skills / "vector"))
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard()], [("toolu_c3", "skill")])
+
+
 class CloudStorageTests(CloudTestCase):
     def setUp(self):
         super().setUp()
@@ -1240,9 +1537,24 @@ class CloudStorageTests(CloudTestCase):
         self.script([PUSH_OK])
         counter = self.reject_pushes(7)
         self.write_transcript([skill_use("toolu_l3", "a"), skill_result("toolu_l3")])
-        self.stop()
+        # The deadline is driven by the hook's test clock (a counter, 1 ms per
+        # reading), not by real seconds a loaded machine can stretch.
+        self.stop(env={"GUIDANCE_RECORD_TEST_TICK": "0.001"})
         self.assertEqual(counter.read_text().strip(), "7")
         self.assertEqual([l["id"] for l in self.shard()], ["toolu_l3"])
+
+    def test_rebuilding_after_rejections_stops_at_the_deadline(self):
+        # The other half: with the clock running fast the same rejections
+        # outlast the deadline, so the hook stops pushing and keeps its lines.
+        self.done_phase1()
+        self.script([PUSH_OK])
+        counter = self.reject_pushes(50)
+        self.write_transcript([skill_use("toolu_l4", "a"), skill_result("toolu_l4")])
+        self.stop(env={"GUIDANCE_RECORD_TEST_TICK": "0.05"})
+        tried = int(counter.read_text().strip())
+        self.assertGreater(tried, 0)
+        self.assertLess(tried, 50)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_l4"])
 
 
 class CloudWatermarkTests(CloudTestCase):
@@ -1627,11 +1939,13 @@ class CloudGateTests(CloudTestCase):
         # test-only seam), so the bound checked is 20 s * SCALE.
         scale = 0.12
         (self.bin / "curl").write_text(SLOW_CURL, encoding="utf-8")
-        import time
-        began = time.monotonic()
+        # The hook reports its own run time (from its start, so the interpreter
+        # start-up a loaded machine slows is not counted).
+        elapsed_file = self.tmp / "elapsed"
         self.stop(env={"FAKE_GIT_MODE": "hang-network", "GUIDANCE_RECORD_TEST": "1",
-                       "GUIDANCE_RECORD_TEST_SCALE": str(scale)})
-        self.assertLess(time.monotonic() - began, 20 * scale)
+                       "GUIDANCE_RECORD_TEST_SCALE": str(scale),
+                       "GUIDANCE_RECORD_TEST_ELAPSED_FILE": str(elapsed_file)})
+        self.assertLess(float(elapsed_file.read_text()), 20 * scale)
         # It did wait on the hung calls, rather than skip them.
         self.assertTrue(any("clone" in c for c in self.git_calls()))
         # The timeout killed the whole process group, the hung child included.
@@ -2149,6 +2463,361 @@ class SinkHardeningTests(SinkTestCase):
         self.assertEqual(len(self.puts()), 1)
         self.assertTrue(any("--show-toplevel" in c for c in self.git_calls()))
         self.assertFalse(sinkenv.exists())
+
+
+def run_log_line(ts="2026-10-31T11:59:00Z", event="pre-commit", repo="example-org/example-repo",
+                 checks=("rules-dir", "secret-file"), failed=(), runner="0123456789ab"):
+    """One agent-checks run-log line as templates/agent-checks/agent-checks
+    writes it (compact JSON, that key order)."""
+    return json.dumps({"v": 1, "ts": ts, "event": event, "repo": repo, "checks": list(checks),
+                       "failed": list(failed), "runner": runner}, separators=(",", ":"))
+
+
+def hook_upload_line(raw, sid, **fields):
+    """The phase-3 line the hook must upload for the run-log line `raw`."""
+    doc = json.loads(raw)
+    out = {"v": 1, "id": hashlib.sha256(raw.encode()).hexdigest()[:16], "ts": doc["ts"],
+           "kind": "hook", "surface": "cloud", "session": sid, "event": doc["event"],
+           "repo": doc["repo"], "checks": doc["checks"], "failed": doc["failed"],
+           "runner": doc["runner"]}
+    out.update(fields)
+    return json.dumps(out, separators=(",", ":"))
+
+
+class HookRunLineTests(unittest.TestCase):
+    """Phase 3's validation, on the hook's own helper."""
+
+    def setUp(self):
+        self.mod = hook_module()
+        self.sid = "0123456789abcdef"
+
+    def line(self, raw):
+        return self.mod["hook_line"](raw.encode(), self.sid)
+
+    def test_a_valid_line_becomes_the_spec_line(self):
+        raw = run_log_line(failed=("secret-file",))
+        ident, month, text = self.line(raw)
+        self.assertEqual((month, text), ("2026-10", hook_upload_line(raw, self.sid)))
+        self.assertEqual(ident, hashlib.sha256(raw.encode()).hexdigest()[:16])
+        self.assertEqual(list(json.loads(text)), ["v", "id", "ts", "kind", "surface", "session",
+                                                  "event", "repo", "checks", "failed", "runner"])
+
+    def test_null_repo_and_runner_are_kept(self):
+        raw = run_log_line(repo=None, runner=None)
+        doc = json.loads(self.line(raw)[2])
+        self.assertEqual((doc["repo"], doc["runner"]), (None, None))
+
+    def test_malformed_lines_are_skipped(self):
+        bad = [
+            "not json", "[]", "{}", run_log_line().replace('"v":1', '"v":2'),
+            run_log_line(ts="yesterday"), run_log_line(ts="1999-01-01T00:00:00Z"),
+            run_log_line(event="ci"), run_log_line(event="post-commit"),
+            run_log_line(checks=("Not_Kebab",)), run_log_line(checks=("a b",)),
+            run_log_line(checks=("a",), failed=("b",)),          # failed not within checks
+            run_log_line(checks=tuple("c%d" % i for i in range(65))),
+            run_log_line(repo="not a repo"), run_log_line(repo="a/b/c"),
+            run_log_line(runner="XYZ"), run_log_line(runner="0123456789abc"),
+            json.dumps({"v": 1, "ts": "2026-10-31T11:59:00Z", "event": "pre-commit",
+                        "repo": None, "checks": "rules-dir", "failed": [], "runner": None}),
+        ]
+        for raw in bad:
+            with self.subTest(raw=raw[:60]):
+                self.assertIsNone(self.line(raw))
+
+    def test_a_boolean_version_is_not_version_one(self):
+        self.assertIsNone(self.line(run_log_line().replace('"v":1', '"v":true')))
+        self.assertIsNone(self.line(run_log_line().replace('"v":1', '"v":1.0')))
+
+    def test_batches_with_hooks_stay_within_the_object_limit(self):
+        mod = hook_module()
+        mod["S3_HOOKS_DEFAULT"] = True
+        for pad in range(900, 1100):
+            items = [("h%d" % i, "2026-10", '{"kind":"hook","pad":"%s"}' % ("x" * pad))
+                     for i in range(300)]
+            for head, batch in mod["sink_batches"]('{"kind":"guidance-load"}', items):
+                texts = [t for _i, t in batch]
+                body = mod["sink_body"]("2026-10-31T12:00:00Z", head, [], texts)
+                self.assertLessEqual(len(body), 262144, pad)
+
+    def test_no_other_key_travels(self):
+        doc = json.loads(run_log_line())
+        doc.update(path="/home/someone/file", message="secret text")
+        out = self.line(json.dumps(doc))[2]
+        self.assertNotIn("someone", out)
+        self.assertNotIn("secret text", out)
+
+
+class HookRunGitTests(CloudTestCase):
+    """Phase 3 on the git route: events/<month>/cloud-hooks/<session>.jsonl."""
+
+    def setUp(self):
+        super().setUp()
+        self.runs = self.home / ".local" / "state" / "agent-checks" / "runs.jsonl"
+        self.runs.parent.mkdir(parents=True)
+        self.sid = CLOUD_SID[:16]
+        self.done_phase1()
+        self.write_transcript([user()])
+
+    def write_runs(self, *lines, mode="w"):
+        with open(self.runs, mode, encoding="utf-8") as handle:
+            handle.write("".join(l + "\n" for l in lines))
+
+    def remote_hooks(self, month="2026-10"):
+        text = self.remote_text(f"events/{month}/cloud-hooks/{self.sid}.jsonl")
+        return text.splitlines() if text is not None else []
+
+    def test_new_run_lines_are_uploaded_with_the_spec_keys(self):
+        a = run_log_line()
+        b = run_log_line(ts="2026-10-31T11:59:30Z", event="pre-push", checks=("rules-dir",), failed=("rules-dir",))
+        self.write_runs(a, "garbage", b, run_log_line(checks=("x",), failed=("y",)))
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid), hook_upload_line(b, self.sid)])
+        self.assertEqual(self.pending(), [])
+
+    def test_hook_lines_alone_are_not_called_skill_events(self):
+        self.write_runs(run_log_line())
+        self.script([PUSH_OK])
+        self.stop()
+        subject = subprocess.run([REAL_GIT, "--git-dir", str(self.bare), "log", "-1", "--format=%s",
+                                  "persistent/usage-events"], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(subject, "cloud hook runs")
+
+    def test_a_month_boundary_goes_to_its_own_shard(self):
+        a = run_log_line(ts="2026-11-01T00:00:01Z")
+        self.write_runs(a)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks("2026-11"), [hook_upload_line(a, self.sid)])
+        self.assertEqual(self.remote_hooks("2026-10"), [])
+
+    def test_only_new_lines_go_next_time_and_a_replay_adds_nothing(self):
+        a = run_log_line()
+        self.write_runs(a)
+        self.script([PUSH_OK])
+        self.stop()
+        head = self.commits()
+        self.stop()                                   # nothing new: no commit, no call
+        self.assertEqual(self.commits(), head)
+        b = run_log_line(ts="2026-10-31T12:00:00Z", event="pre-push")
+        self.write_runs(b, mode="a")
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid), hook_upload_line(b, self.sid)])
+        # Losing the offset and the seen ids re-reads the log: the shard's own
+        # ids keep it from growing.
+        doc = self.state_doc()
+        for key in ("hlog", "hseen", "hn"):
+            doc.pop(key)
+        (self.cloud / f"{CLOUD_SID}.state.json").write_text(json.dumps(doc), encoding="utf-8")
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 2)
+
+    def test_a_partial_last_line_waits_for_its_newline(self):
+        a, b = run_log_line(), run_log_line(ts="2026-10-31T12:00:00Z")
+        self.write_runs(a)
+        with open(self.runs, "a", encoding="utf-8") as handle:
+            handle.write(b[:20])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+        with open(self.runs, "a", encoding="utf-8") as handle:
+            handle.write(b[20:] + "\n")
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 2)
+
+    def test_a_shrunk_log_is_read_again_from_the_start(self):
+        a = run_log_line()
+        self.write_runs(a, run_log_line(ts="2026-10-31T12:00:00Z"))
+        self.script([PUSH_OK])
+        self.stop()
+        c = run_log_line(ts="2026-10-31T12:30:00Z", event="pre-push")
+        self.write_runs(c)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(self.remote_hooks()[-1], hook_upload_line(c, self.sid))
+
+    def test_a_missing_or_off_log_changes_nothing(self):
+        self.runs.unlink(missing_ok=True)
+        self.stop()
+        self.assertEqual((self.calls(), self.commits()), ([], 1))
+        self.assertNotIn("hlog", self.state_doc())
+        self.write_runs(run_log_line())
+        self.stop(env={"AGENT_CHECKS_LOG": "off"})
+        self.assertEqual((self.calls(), self.commits()), ([], 1))
+
+    def test_the_log_path_comes_from_agent_checks_log(self):
+        other = self.tmp / "other-runs.jsonl"
+        a = run_log_line()
+        other.write_text(a + "\n", encoding="utf-8")
+        self.script([PUSH_OK])
+        self.stop(env={"AGENT_CHECKS_LOG": str(other)})
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+
+    def test_not_remote_means_no_phase_3(self):
+        self.write_runs(run_log_line())
+        self.run_hook(session=CLOUD_SESSION, env={"CLAUDE_CODE_REMOTE_SESSION_ID": "x",
+                                                  "GUIDANCE_RECORD_GIT": str(self.bare)})
+        self.assertFalse(self.cloud.exists())
+
+    def test_one_stop_records_at_most_fifty_lines(self):
+        runs = [run_log_line(ts="2026-10-31T12:%02d:%02dZ" % (i // 60, i % 60)) for i in range(60)]
+        self.write_runs(*runs)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 50)
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual(len(self.remote_hooks()), 60)
+
+    def test_hook_lines_share_phase_2s_commit(self):
+        a = run_log_line()
+        self.write_runs(a)
+        self.write_transcript([skill_use("toolu_h1", "a"), skill_result("toolu_h1")])
+        self.script([PUSH_OK])
+        head = self.commits()
+        self.stop()
+        self.assertEqual(self.commits(), head + 1)
+        self.assertEqual([l["id"] for l in self.shard()], ["toolu_h1"])
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+
+    def test_a_failed_push_keeps_the_lines_pending(self):
+        a = run_log_line()
+        self.write_runs(a)
+        self.script([PUSH_OK])
+        self.stop(env={"FAKE_GIT_MODE": "refuse-clone"})
+        self.assertEqual([p["id"] for p in self.pending()], [json.loads(hook_upload_line(a, self.sid))["id"]])
+        self.script([PUSH_OK])
+        self.stop(now="2026-10-31T13:00:00Z")  # past the backoff
+        self.assertEqual(self.remote_hooks(), [hook_upload_line(a, self.sid)])
+        self.assertEqual(self.pending(), [])
+
+
+class HookRunSinkTests(SinkTestCase):
+    """Phase 3 on the S3 route: the `hooks` key is on by default, and
+    USAGE_SINK_HOOKS=0 turns it off."""
+
+    def setUp(self):
+        super().setUp()
+        self.runs = self.home / ".local" / "state" / "agent-checks" / "runs.jsonl"
+        self.runs.parent.mkdir(parents=True)
+        self.sid = CLOUD_SID[:16]
+        self.line = run_log_line()
+        self.runs.write_text(self.line + "\n", encoding="utf-8")
+        self.write_transcript([skill_use("toolu_s1", "a"), skill_result("toolu_s1")])
+        self.done_phase1()
+
+    def test_the_envelope_has_no_hooks_key_when_switched_off(self):
+        self.stop(env={"USAGE_SINK_HOOKS": "0"})
+        [put] = self.puts()
+        self.assertEqual(list(self.body(put)), SINK_BODY_KEYS)
+        self.assertEqual(self.pending(), [])          # nothing was held for later either
+        self.assertNotIn("hseen", self.state_doc())
+
+    def test_no_hook_line_is_sent_when_only_hooks_are_pending_and_off(self):
+        self.write_transcript([user()])
+        self.stop(env={"USAGE_SINK_HOOKS": "0"})
+        self.assertEqual(self.puts(), [])
+
+    def test_the_hooks_key_is_on_by_default_with_the_exact_lines(self):
+        self.stop()
+        [put] = self.puts()
+        doc = json.loads(put["body"].decode("utf-8"))
+        self.assertEqual(list(doc), SINK_BODY_KEYS + ["hooks"])
+        self.assertEqual(doc["hooks"], [json.loads(hook_upload_line(self.line, self.sid))])
+        self.assertEqual([s["id"] for s in doc["skills"]], ["toolu_s1"])
+        self.assertEqual(self.pending(), [])
+
+    def test_hooks_alone_still_make_an_object_when_switched_on(self):
+        self.write_transcript([user()])
+        self.stop(env={"USAGE_SINK_HOOKS": "1"})
+        [put] = self.puts()
+        doc = self.body_any(put)
+        self.assertEqual((doc["skills"], len(doc["hooks"])), ([], 1))
+
+    def body_any(self, request):
+        return json.loads(request["body"].decode("utf-8"))
+
+    def test_lines_held_before_the_switch_never_leave_while_it_is_off(self):
+        self.stop(env={"USAGE_SINK_HOOKS": "1", "USAGE_SINK_ENDPOINT": "http://127.0.0.1:9"})
+        self.assertEqual(len(self.pending()), 2)      # the skill and the hook line, both held
+        self.stop(env={"USAGE_SINK_HOOKS": "0"})
+        for put in self.puts():
+            self.assertNotIn("hooks", self.body_any(put))
+        self.assertTrue([p for p in self.pending() if p["kind"] == "hook"])
+
+
+# ADR 0042 treats a nonempty FLEET_GUIDANCE_PAYLOAD, and FLEET_GUIDANCE_OWNER
+# on, as an owner signal. That is safe only while nothing this repo delivers
+# into a consumer SETS either name: a stranger's clone would then pass the
+# gate. The delivered hooks legitimately READ both, so the rule is not "never
+# mention the name" but "never set it". A line sets it when, after the read
+# forms ($NAME, ${NAME}, ${NAME:-x}, ${NAME-x}, ${NAME:+x}, ${NAME+x},
+# ${NAME:?x}, ${NAME?x}) and whole-line comments are removed, the bare name is
+# still there: an `export`, an `NAME=value` or `env NAME=value` prefix, a
+# JSON/YAML key or `env:` entry, a `${NAME:=x}` default-assign, a
+# CLAUDE_ENV_FILE line. Anything else spelling the name is flagged too: a new
+# use must be a read, or this test is changed on purpose, in review.
+OWNER_SIGNAL = re.compile(r"\bFLEET_GUIDANCE_(?:PAYLOAD|OWNER)\b")
+OWNER_SIGNAL_READ = re.compile(
+    r"\$\{FLEET_GUIDANCE_(?:PAYLOAD|OWNER)(?::?[-+?]|\})|\$FLEET_GUIDANCE_(?:PAYLOAD|OWNER)\b")
+
+
+def owner_signal_sets(text):
+    """Return the (line number, line) pairs that could set an owner signal."""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith(("#", "//")):
+            continue
+        if OWNER_SIGNAL.search(OWNER_SIGNAL_READ.sub("", line)):
+            found.append((number, line.strip()))
+    return found
+
+
+class OwnerSignalNotDeliveredTests(unittest.TestCase):
+    def delivered_files(self):
+        files = [REPO_ROOT / "scripts" / "sync.sh", REPO_ROOT / ".claude" / "settings.json"]
+        files += sorted((REPO_ROOT / ".claude" / "hooks").glob("*"))
+        files += sorted(p for p in (REPO_ROOT / "templates").rglob("*") if p.is_file())
+        return [p for p in files if p.is_file()]
+
+    def test_nothing_the_sync_delivers_sets_an_owner_signal(self):
+        files = self.delivered_files()
+        self.assertTrue(any(p.name == "fleet-memory.sh" for p in files))
+        self.assertTrue(any(p.name == "sync.sh" for p in files))
+        for path in files:
+            with self.subTest(path=str(path.relative_to(REPO_ROOT))):
+                text = path.read_text(encoding="utf-8", errors="replace")
+                self.assertEqual(owner_signal_sets(text), [])
+
+    def test_the_detector_flags_every_way_to_set_a_signal(self):
+        for line in (
+            "export FLEET_GUIDANCE_PAYLOAD=/tmp/x",
+            "FLEET_GUIDANCE_OWNER=1 bash hook.sh",
+            "env FLEET_GUIDANCE_OWNER=1 bash hook.sh",
+            '  "FLEET_GUIDANCE_PAYLOAD": "/tmp/x"',
+            "    FLEET_GUIDANCE_OWNER: 1",
+            ': "${FLEET_GUIDANCE_OWNER:=1}"',
+            'echo "FLEET_GUIDANCE_OWNER=1" >> "$CLAUDE_ENV_FILE"',
+            'jq -n --arg FLEET_GUIDANCE_PAYLOAD x',
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(owner_signal_sets(line), line)
+
+    def test_the_detector_passes_reads_and_comments(self):
+        for line in (
+            'PAYLOAD="${FLEET_GUIDANCE_PAYLOAD:-$HOOK_DIR/fleet-guidance.md}"',
+            '[ -n "${FLEET_GUIDANCE_PAYLOAD:-}" ] && return 0',
+            'case "${FLEET_GUIDANCE_OWNER:-}" in',
+            'echo "$FLEET_GUIDANCE_OWNER"',
+            "# export FLEET_GUIDANCE_PAYLOAD=/tmp/x",
+            "caller_stamp=\"${FLEET_GUIDANCE_PAYLOAD_STAMP:-}\"",
+            "FLEET_GUIDANCE_PAYLOAD_STAMP=123",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(owner_signal_sets(line), [], line)
 
 
 class ClockSeamTests(HookTestCase):

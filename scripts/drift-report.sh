@@ -40,6 +40,9 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/$FLEET_HOOK_REL_PATH"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# ADR 0043: the generated contributor rules sync.sh delivers in every mode.
+CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
+CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
 # The hook-script LF line sync.sh keeps in each root .gitattributes, judged by
@@ -811,9 +814,9 @@ if [[ $repo_list_rc -ne 0 ]]; then
         echo ""
         echo "> Organization: \`$ORG\` — **not scanned this run**"
         echo ""
-        echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | fleet-memory | fleet-guidance | Open PR | Sections | Notes |"
-        echo "|------------|--------|------------|-------------------|------------------|--------------|----------------|---------|----------|-------|"
-        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | ? | ? | $repo_list_note |"
+        echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | fleet-memory | fleet-guidance | contributor-rules | Open PR | Sections | Notes |"
+        echo "|------------|--------|------------|-------------------|------------------|--------------|----------------|-------------------|---------|----------|-------|"
+        echo "| *(owner not readable)* | **fetch-failed** | ? | ? | ? | ? | ? | ? | ? | ? | $repo_list_note |"
     } >> "$OUTPUT_FILE"
     OWNER_FAILURES+=("$ORG")
     continue
@@ -882,12 +885,12 @@ echo ""
     echo ""
     echo "> Organization: \`$ORG\` — ${#REPOS[@]} repo(s) scanned"
     echo ""
-    echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | fleet-memory | fleet-guidance | Open PR | Sections | Notes |"
-    echo "|------------|--------|------------|-------------------|------------------|--------------|----------------|---------|----------|-------|"
+    echo "| Repository | Status | Has marker | CLAUDE.md bridge | skills-bootstrap | fleet-memory | fleet-guidance | contributor-rules | Open PR | Sections | Notes |"
+    echo "|------------|--------|------------|-------------------|------------------|--------------|----------------|-------------------|---------|----------|-------|"
 } >> "$OUTPUT_FILE"
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
-    echo "| *(no repos found)* | — | — | — | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
+    echo "| *(no repos found)* | — | — | — | — | — | — | — | — | — | Check org name and gh auth |" >> "$OUTPUT_FILE"
 fi
 
 for repo_name in "${REPOS[@]}"; do
@@ -902,6 +905,7 @@ for repo_name in "${REPOS[@]}"; do
     fleet_mode="unknown"
     fleet_hook_cell="unverified"
     fleet_payload_cell="unverified"
+    contributor_cell="unverified"
     fleet_drift=false
 
     # Every path this row could not READ, or could not UNDERSTAND. A name lands
@@ -1001,6 +1005,21 @@ for repo_name in "${REPOS[@]}"; do
     # and reporting the first as the second is what made #81 silent.
     agents_rc=0
     current_agents=$(fetch_file_content "$repo_name" "AGENTS.md") || agents_rc=$?
+
+    # Inputs for scripts/guidance-overlap.js, only when the caller asks for
+    # them (drift-report.yml does; the tests mostly do not). Written only from a
+    # confident read, so an unreadable file is absent, never empty. The
+    # languages call is best-effort: a failure leaves the file out, and the
+    # overlap report names the repos whose languages it could not read.
+    if [[ -n "${DRIFT_GUIDANCE_DIR:-}" && "$agents_rc" -eq 0 && -n "$current_agents" ]]; then
+        guidance_stem="$DRIFT_GUIDANCE_DIR/${repo_name%%/*}__${repo_name#*/}"
+        printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
+        printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
+        if [[ "$sections_rc" -eq 0 && "${#sections[@]}" -gt 0 ]]; then
+            gh api "repos/$repo_name/languages" > "$guidance_stem.languages.json" 2>/dev/null \
+                || rm -f "$guidance_stem.languages.json"
+        fi
+    fi
 
     if [[ "$agents_rc" -ne 0 ]]; then
         # The status and the note are no longer set here: every other call site in
@@ -1208,6 +1227,26 @@ for repo_name in "${REPOS[@]}"; do
         notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found missing"
     elif [[ "$fleet_mode" == "full" ]]; then
         fleet_payload_cell="—"
+    fi
+
+    # The contributor rules are delivered in both modes, so absence is drift
+    # whatever the mode records.
+    contributor_file="$WORK_DIR/contributor-rules"
+    contributor_rc=0
+    fetch_file_content "$repo_name" "$CONTRIBUTOR_REL_PATH" >"$contributor_file" || contributor_rc=$?
+    if [[ "$contributor_rc" -ne 0 ]]; then
+        fetch_failed_paths+=("$CONTRIBUTOR_REL_PATH")
+        contributor_cell="?"
+    elif [[ "$FETCH_FILE_PRESENT" == "yes" ]]; then
+        if cmp -s "$CONTRIBUTOR_SOURCE" "$contributor_file"; then
+            contributor_cell="ok"
+        else
+            contributor_cell="**drifted**"
+            fleet_drift=true
+        fi
+    else
+        contributor_cell="**missing**"
+        fleet_drift=true
     fi
 
     if $fleet_drift && [[ "$status" == "**up-to-date**" ]]; then
@@ -1434,7 +1473,7 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Write row ──────────────────────────────────────────────────────
 
-    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $bootstrap_cell | $fleet_hook_cell | $fleet_payload_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
+    echo "| [\`$repo_name\`](https://github.com/$repo_name) | $status | $has_marker | $bridge_cell | $bootstrap_cell | $fleet_hook_cell | $fleet_payload_cell | $contributor_cell | $open_pr | $sections_display | $notes |" >> "$OUTPUT_FILE"
 done
 
 # ── Unclassified for cron coverage ─────────────────────────────────────────
@@ -1691,6 +1730,9 @@ fi
     echo "unknown mode does not establish that absent files are missing. Present"
     echo "files are compared byte for byte in every mode. A drifted payload's"
     echo "expected and found eight-character sha256 prefixes appear in **Notes**."
+    echo "The contributor-rules column compares \`.github/fleet-contributor-rules.md\`"
+    echo "the same way, but it is delivered in both modes, so absence is **missing**"
+    echo "whatever the mode."
     echo ""
     echo "| Status | Meaning |"
     echo "|--------|---------|"

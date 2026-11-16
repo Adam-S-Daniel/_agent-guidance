@@ -281,6 +281,15 @@ Coverage: every step 1 path the report neither cites nor lists as read is
 `not audited` in the run log. Never call a repo clean when a path went
 unaudited.
 
+In `adam-agentskills`, also run
+`python3 scripts/check_skills.py --registry adam-agentskills=. --json` from
+its checkout root and take every `advisories` entry whose `rule` is
+`british-spelling` as a finding at its `path:line`. Its exit code does not
+matter here (a missing private sibling registry makes it 1). These are
+wording, so step 3's eval-protected rule holds them while their skill is
+protected and routes them once it is not: the cheapest time to fix a
+spelling in a skill is when its eval evidence is not at stake.
+
 ### 3. Route every finding
 
 Keep a finding only if it names a `file:line` in a reached repo and the

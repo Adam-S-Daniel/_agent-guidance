@@ -53,6 +53,13 @@ FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
 FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+# The contributor rules (ADR 0043): the generated subset of base.md an outside
+# contributor's agent needs, read on demand and never imported by AGENTS.md.
+# Delivered byte for byte to EVERY synced repo in both AGENTS_MD_MODE values,
+# independent of fleet-memory: it does not depend on `.claude/` or settings.json.
+CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
+CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
+CONTRIBUTOR_HEADER="<!-- Managed by _agent-guidance"
 # guidance-load-record: the Stop hook that writes one line per session saying
 # whether the full guidance or only the stub loaded. It measures the very
 # delivery fleet-memory makes, so it rides with it: every repo fleet-memory
@@ -68,12 +75,24 @@ GREC_MATCHER="*"
 # Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
 GITATTR_REL_PATH=".gitattributes"
 GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
-# The Dependabot merge path every repo running Dependabot needs, ADDED (never
-# overwritten) when repos.yml's dependabot_auto_merge.deliver is true. See the
-# block in repos.yml for why it is off by default.
+# The Dependabot merge path every synced repo needs (fleet.yml turns Dependabot
+# security updates on everywhere), MANAGED like the agent-checks runner: added
+# when missing and overwritten when it drifts from the template, when
+# repos.yml's dependabot_auto_merge.deliver is true. The template has no uses:
+# lines and no helper script, so an actions.lock repo takes it too. See the
+# block in repos.yml for the carve-outs (cms-platform and its callers).
 AUTOMERGE_TEMPLATE_DIR="$REPO_ROOT/templates/dependabot-auto-merge"
 AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
-AUTOMERGE_SCRIPT_REL_PATH=".github/scripts/workflow-overlap.sh"
+# A repo that pins actions through `gh actions-lock` keeps a lockfile naming
+# every workflow; `gh actions-lock --no-fix` rejects one without an entry for
+# a workflow file, or with a dependency no workflow lists. Overwriting the
+# workflow without touching the lockfile broke 17 repos, so the lane edits
+# both (scripts/actions-lock-entry.sh holds the text transform).
+ACTIONS_LOCK_REL_PATH=".github/workflows/actions.lock"
+# SYNC_TEST_ACTIONS_LOCK_SCRIPT exists ONLY so test/run-tests.sh can stub a
+# helper whose `apply` fails after `check` passed. Nothing in production sets
+# it; unset, the real helper runs.
+ACTIONS_LOCK_SCRIPT="${SYNC_TEST_ACTIONS_LOCK_SCRIPT:-$SCRIPT_DIR/actions-lock-entry.sh}"
 # The agent-checks lane (ADR 0021), on when repos.yml's agent_checks.deliver is
 # true. The runner and the Claude Code guard are MANAGED (overwritten whenever
 # they drift, like fleet-memory.sh); the CI workflow is ADDED once and never
@@ -204,6 +223,14 @@ if ! printf 'a: 1\n' | yq -o=json -I0 . >/dev/null 2>&1; then
     fi
     echo "::error::the yq on PATH does not accept '-o=json -I0', which this script's repos.yml reads need — $yq_found" >&2
     echo "::error::This repo requires mikefarah's Go yq; a 'yq' that rejects that flag is usually kislyuk's Python jq-wrapper, which Debian ships under the same name. CI installs the required one version-pinned and digest-verified in the 'Install yq' step of .github/workflows/{ci,sync,drift-report,skills-lock-bump}.yml." >&2
+    exit 2
+fi
+
+# The contributor rules are delivered to every repo (ADR 0043). A missing or
+# empty source would otherwise read as "nothing to deliver" and stay green while
+# the whole fleet silently goes without; stop before touching any repo.
+if [[ ! -s "$CONTRIBUTOR_SOURCE" ]]; then
+    echo "::error::$CONTRIBUTOR_SOURCE is missing or empty — the sync delivers it to every repo; regenerate it with 'node scripts/build-contributor-rules.js'." >&2
     exit 2
 fi
 
@@ -456,8 +483,7 @@ BOOTSTRAP_FETCH_WARNED=false
 # `true` is off: a typo must not start writing workflow files fleet-wide.
 AUTOMERGE_ENABLED=false
 if [[ "$(read_repos_yml '.dependabot_auto_merge.deliver // false')" == "true" ]]; then
-    if [[ -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" \
-          && -s "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" ]]; then
+    if [[ -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" ]]; then
         AUTOMERGE_ENABLED=true
     else
         echo "::warning::repos.yml turns on dependabot_auto_merge.deliver, but $AUTOMERGE_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
@@ -1092,6 +1118,38 @@ for repo_name in "${REPOS[@]}"; do
         grec_up_to_date=false
     fi
 
+    # ── contributor rules: classify ────────────────────────────────────
+    contributor_state="n/a"   # n/a | missing | current | drifted
+    if [[ -s "$CONTRIBUTOR_SOURCE" ]]; then
+        contributor_state="missing"
+        # A symlink would send the write outside the repo; a file without the
+        # managed header is someone else's, and the sync must not overwrite it.
+        # Either refusal skips the whole repo on purpose, stub update included:
+        # the new stub points agents at this path, so the old stub stays until
+        # the file there is ours.
+        if [[ -L .github || -L "$CONTRIBUTOR_REL_PATH" ]]; then
+            fail "$repo_name: $CONTRIBUTOR_REL_PATH (or .github) is a symlink — refusing to write the contributor rules."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        if [[ -e "$CONTRIBUTOR_REL_PATH" ]] \
+           && { [[ ! -f "$CONTRIBUTOR_REL_PATH" ]] \
+                || ! head -n 1 "$CONTRIBUTOR_REL_PATH" | grep -qF -- "$CONTRIBUTOR_HEADER"; }; then
+            fail "$repo_name: $CONTRIBUTOR_REL_PATH exists but does not carry the managed header ($CONTRIBUTOR_HEADER) — refusing to overwrite it."
+            ((FAIL_COUNT++)) || true
+            cd "$REPO_ROOT"; continue
+        fi
+        if [[ -f "$CONTRIBUTOR_REL_PATH" ]]; then
+            cmp -s "$CONTRIBUTOR_REL_PATH" "$CONTRIBUTOR_SOURCE" \
+                && contributor_state="current" || contributor_state="drifted"
+        fi
+        log "contributor-rules: file=$contributor_state"
+    fi
+    contributor_up_to_date=true
+    if [[ "$contributor_state" == "missing" || "$contributor_state" == "drifted" ]]; then
+        contributor_up_to_date=false
+    fi
+
     # ── Build managed content ──────────────────────────────────────────
 
     managed_content=$(AGENTS_MD_MODE="$FLEET_MODE" "$BUILD_SCRIPT" "${sections[@]}")
@@ -1307,33 +1365,94 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Dependabot auto-merge workflow: classify ───────────────────────
-    # missing  -> deliver; present / n-a -> nothing to do; skipped -> warned.
-    # "present" is any workflow named dependabot-auto-merge.yml or cms-platform's
-    # self-dependabot-auto-merge.yml, whatever its content: the sync adds a
-    # merge path where there is none, it does not police the ones that exist.
+    # missing | current | drifted | skipped | n/a. Managed: missing and
+    # drifted are written. Never written (skipped, with a log line saying why):
+    #   - cms-platform itself (it has its own self- workflow);
+    #   - a repo where ANY .github/workflows/*.y*ml calls cms-platform's
+    #     reusable dependabot workflow, matched case-insensitively
+    #     (adamdaniel.ai, jodidaniel.com);
+    #   - a symlinked .github, .github/workflows or workflow path, or a
+    #     non-regular file at it (WARN, no write);
+    #   - a repo with self-dependabot-auto-merge.yml;
+    #   - a repo with only the .yaml spelling (a .yml would be a second
+    #     workflow), and a gitignored path.
     automerge_state="n/a"
-    if $AUTOMERGE_ENABLED && [[ -f .github/dependabot.yml || -f .github/dependabot.yaml ]]; then
+    if $AUTOMERGE_ENABLED; then
         automerge_state="missing"
-        for wf in .github/workflows/*; do
-            [[ -f "$wf" ]] || continue
-            if [[ "${wf##*/}" =~ ^(self-)?dependabot-auto-merge\.ya?ml$ ]]; then
-                automerge_state="present"
-                break
-            fi
-        done
-        if [[ "$automerge_state" == "missing" ]]; then
-            if [[ -e .github/workflows/actions.lock ]]; then
-                automerge_state="skipped"
-                log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the Dependabot auto-merge workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
-            elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null \
-                 || git check-ignore -q "$AUTOMERGE_SCRIPT_REL_PATH" 2>/dev/null; then
-                automerge_state="skipped"
-                log "WARN: the Dependabot auto-merge workflow's paths are gitignored in $repo_name — not delivered."
-            fi
+        automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
+        # Any workflow file may hold the caller, and the owner's case varies.
+        automerge_cms_caller=false
+        if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
+            for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
+                [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
+                if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
+                    automerge_cms_caller=true
+                    break
+                fi
+            done
+        fi
+        if [[ "${repo_name##*/}" == "cms-platform" ]]; then
+            automerge_state="skipped"
+            log "dependabot auto-merge: $repo_name is cms-platform itself, which has its own workflow — not delivered."
+        elif [[ -e .github/workflows/self-dependabot-auto-merge.yml ]]; then
+            automerge_state="skipped"
+            log "dependabot auto-merge: $repo_name has self-dependabot-auto-merge.yml — not delivered."
+        elif $automerge_cms_caller; then
+            automerge_state="skipped"
+            log "dependabot auto-merge: $repo_name calls cms-platform's reusable workflow — not delivered."
+        elif [[ -e .github/workflows/dependabot-auto-merge.yaml && ! -e "$AUTOMERGE_WF_REL_PATH" ]]; then
+            automerge_state="skipped"
+            log "WARN: $repo_name has .github/workflows/dependabot-auto-merge.yaml; writing the .yml spelling would make a second workflow — not delivered. Rename it to .yml to have it managed."
+        elif [[ -L .github || -L .github/workflows || -L "$AUTOMERGE_WF_REL_PATH" \
+                || ( -e "$AUTOMERGE_WF_REL_PATH" && ! -f "$AUTOMERGE_WF_REL_PATH" ) ]]; then
+            # A symlink would send the write outside the repo (or, dangling,
+            # make `cp` fail and abort the whole fleet run under set -e).
+            automerge_state="skipped"
+            log "WARN: $AUTOMERGE_WF_REL_PATH (or .github, .github/workflows) is a symlink or not a regular file in $repo_name — refusing to write it; the workflow is not delivered."
+        elif git check-ignore -q "$AUTOMERGE_WF_REL_PATH" 2>/dev/null; then
+            automerge_state="skipped"
+            log "WARN: $AUTOMERGE_WF_REL_PATH is gitignored in $repo_name — not delivered."
+        elif [[ -f "$AUTOMERGE_WF_REL_PATH" ]]; then
+            cmp -s "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH" \
+                && automerge_state="current" || automerge_state="drifted"
         fi
     fi
+    # The lockfile half. automerge_lock_state: n/a (no lockfile, or the lane
+    # is skipped), ok (consistent already), fix (the entry or a dependency
+    # needs editing), refused (a symlink, a non-regular file, a gitignored
+    # path or a shape the helper does not recognize: WARN, no edit).
+    # A workflow that is already current but whose lockfile needs the fix
+    # becomes state "lockfile": only the lockfile is written.
+    automerge_lock_state="n/a"
+    if [[ "$automerge_state" != "skipped" && "$automerge_state" != "n/a" \
+            && ( -e "$ACTIONS_LOCK_REL_PATH" || -L "$ACTIONS_LOCK_REL_PATH" ) ]]; then
+        if [[ -L .github || -L .github/workflows || -L "$ACTIONS_LOCK_REL_PATH" || ! -f "$ACTIONS_LOCK_REL_PATH" ]]; then
+            automerge_lock_state="refused"
+            log "WARN: $ACTIONS_LOCK_REL_PATH (or .github, .github/workflows) is a symlink or not a regular file in $repo_name — refusing to edit it; the lockfile is left as it is."
+        elif git check-ignore -q "$ACTIONS_LOCK_REL_PATH" 2>/dev/null; then
+            automerge_lock_state="refused"
+            log "WARN: $ACTIONS_LOCK_REL_PATH is gitignored in $repo_name — not edited."
+        else
+            automerge_lock_rc=0
+            "$ACTIONS_LOCK_SCRIPT" check "$ACTIONS_LOCK_REL_PATH" "$AUTOMERGE_WF_REL_PATH" 2>/dev/null || automerge_lock_rc=$?
+            case "$automerge_lock_rc" in
+                0)  automerge_lock_state="ok" ;;
+                10) automerge_lock_state="fix" ;;
+                *)  automerge_lock_state="refused"
+                    log "WARN: $ACTIONS_LOCK_REL_PATH in $repo_name has a shape the sync does not recognize — not edited; run gh actions-lock there." ;;
+            esac
+        fi
+        # A repo with a lockfile gets the workflow only together with a lock
+        # edit that will work: a workflow with no valid entry is the exact
+        # state `gh actions-lock --no-fix` rejects. Refused means no write.
+        if [[ "$automerge_lock_state" == "refused" ]]; then
+            automerge_state="skipped"
+            log "WARN: $repo_name has $ACTIONS_LOCK_REL_PATH but the sync cannot edit it, so $AUTOMERGE_WF_REL_PATH is not delivered either (a workflow with no lock entry fails gh actions-lock --no-fix)."
+        fi
+        [[ "$automerge_state" == "current" && "$automerge_lock_state" == "fix" ]] && automerge_state="lockfile"
+    fi
     automerge_up_to_date=true
-    [[ "$automerge_state" == "missing" ]] && automerge_up_to_date=false
+    [[ "$automerge_state" == "missing" || "$automerge_state" == "drifted" || "$automerge_state" == "lockfile" ]] && automerge_up_to_date=false
 
     # ── agent-checks: classify ─────────────────────────────────────────
     # Four parts, each skipped on its own rather than failing the repo:
@@ -1457,7 +1576,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $grec_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $grec_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1478,13 +1597,17 @@ for repo_name in "${REPOS[@]}"; do
         cd "$REPO_ROOT"; continue
     fi
 
+    # How every write below is delivered, said once and reused by each lane's
+    # dry-run line: the real run logs what happened after the push step.
+    delivery_note="(direct push to $default_branch; PR fallback if rejected)"
+
     if $DRY_RUN; then
         if ! $agents_up_to_date; then
-            log "[DRY RUN] Would update AGENTS.md (direct push to $default_branch; PR fallback if rejected)"
+            log "[DRY RUN] Would update AGENTS.md $delivery_note"
         elif $needs_claude_fix; then
-            log "[DRY RUN] AGENTS.md up to date; would rewrite CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true)"
+            log "[DRY RUN] AGENTS.md up to date; would rewrite CLAUDE.md to the standard @AGENTS.md bridge (fix_claude_md: true) $delivery_note"
         elif ! $claude_md_present; then
-            log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge"
+            log "[DRY RUN] AGENTS.md up to date; would add missing CLAUDE.md bridge $delivery_note"
         fi
 
         # The bootstrap artifact is reported line-by-line and separately from
@@ -1492,13 +1615,13 @@ for repo_name in "${REPOS[@]}"; do
         # a dry run that hid that would be lying about the run it previews.
         if ! $bootstrap_up_to_date; then
             case "$hook_state" in
-                missing) log "[DRY RUN] Would add $HOOK_REL_PATH (from $BOOTSTRAP_REGISTRY@${BOOTSTRAP_REF:0:7})" ;;
-                drifted) log "[DRY RUN] Would overwrite drifted $HOOK_REL_PATH with the pinned copy (${BOOTSTRAP_REF:0:7})" ;;
+                missing) log "[DRY RUN] Would add $HOOK_REL_PATH (from $BOOTSTRAP_REGISTRY@${BOOTSTRAP_REF:0:7}) $delivery_note" ;;
+                drifted) log "[DRY RUN] Would overwrite drifted $HOOK_REL_PATH with the pinned copy (${BOOTSTRAP_REF:0:7}) $delivery_note" ;;
             esac
             if [[ "$reg_state" == "stale-matcher" ]]; then
-                log "[DRY RUN] Would widen the hook's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed)"
+                log "[DRY RUN] Would widen the hook's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed) $delivery_note"
             elif [[ "$reg_state" != "registered" ]]; then
-                log "[DRY RUN] Would append a SessionStart entry for the hook to $SETTINGS_REL_PATH (existing entries preserved)"
+                log "[DRY RUN] Would append a SessionStart entry for the hook to $SETTINGS_REL_PATH (existing entries preserved) $delivery_note"
             fi
         fi
         if $bootstrap_deliver; then
@@ -1511,65 +1634,75 @@ for repo_name in "${REPOS[@]}"; do
         # previewing a repo losing its guidance.
         if ! $fleet_up_to_date; then
             case "$fleet_hook_state" in
-                missing) log "[DRY RUN] Would add $FLEET_HOOK_REL_PATH" ;;
-                drifted) log "[DRY RUN] Would overwrite drifted $FLEET_HOOK_REL_PATH" ;;
+                missing) log "[DRY RUN] Would add $FLEET_HOOK_REL_PATH $delivery_note" ;;
+                drifted) log "[DRY RUN] Would overwrite drifted $FLEET_HOOK_REL_PATH $delivery_note" ;;
             esac
             case "$fleet_payload_state" in
-                missing) log "[DRY RUN] Would add $FLEET_PAYLOAD_REL_PATH (the guidance itself, $(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes, outside any memory-file path)" ;;
-                drifted) log "[DRY RUN] Would refresh drifted $FLEET_PAYLOAD_REL_PATH" ;;
+                missing) log "[DRY RUN] Would add $FLEET_PAYLOAD_REL_PATH (the guidance itself, $(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes, outside any memory-file path) $delivery_note" ;;
+                drifted) log "[DRY RUN] Would refresh drifted $FLEET_PAYLOAD_REL_PATH $delivery_note" ;;
             esac
             if [[ "$fleet_reg_state" == "stale-matcher" ]]; then
-                log "[DRY RUN] Would widen fleet-memory.sh's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed)"
+                log "[DRY RUN] Would widen fleet-memory.sh's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed) $delivery_note"
             elif [[ "$fleet_reg_state" != "registered" ]]; then
-                log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved)"
+                log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved) $delivery_note"
             fi
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
             log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
         fi
 
+        if ! $contributor_up_to_date; then
+            case "$contributor_state" in
+                missing) log "[DRY RUN] Would add $CONTRIBUTOR_REL_PATH (the contributor rules, $(wc -c < "$CONTRIBUTOR_SOURCE" | tr -d ' ') bytes) $delivery_note" ;;
+                drifted) log "[DRY RUN] Would refresh drifted $CONTRIBUTOR_REL_PATH $delivery_note" ;;
+            esac
+        fi
+
         if ! $grec_up_to_date; then
             [[ "$grec_state" != "current" ]] \
-                && log "[DRY RUN] Would write $GREC_REL_PATH (guidance-load record hook $grec_state)"
+                && log "[DRY RUN] Would write $GREC_REL_PATH (guidance-load record hook $grec_state) $delivery_note"
             [[ "$grec_reg_state" != "registered" ]] \
-                && log "[DRY RUN] Would register guidance-load-record.sh on Stop in $SETTINGS_REL_PATH (currently: $grec_reg_state)"
+                && log "[DRY RUN] Would register guidance-load-record.sh on Stop in $SETTINGS_REL_PATH (currently: $grec_reg_state) $delivery_note"
         fi
 
         if ! $gitattr_up_to_date; then
             if [[ -e "$GITATTR_REL_PATH" ]]; then
-                log "[DRY RUN] Would append the hook-script LF line to $GITATTR_REL_PATH (existing lines preserved)"
+                log "[DRY RUN] Would append the hook-script LF line to $GITATTR_REL_PATH (existing lines preserved) $delivery_note"
             else
-                log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF"
+                log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF $delivery_note"
             fi
         fi
 
         if ! $automerge_up_to_date; then
-            log "[DRY RUN] Would add $AUTOMERGE_WF_REL_PATH (Dependabot auto-merge sweep; this repo has a Dependabot config and no merge path)"
-            [[ -e "$AUTOMERGE_SCRIPT_REL_PATH" ]] \
-                || log "[DRY RUN] Would add $AUTOMERGE_SCRIPT_REL_PATH (its helper)"
+            if [[ "$automerge_state" != "lockfile" ]]; then
+                log "[DRY RUN] Would write $AUTOMERGE_WF_REL_PATH (Dependabot auto-merge sweep, $automerge_state) $delivery_note"
+            fi
+            if [[ "$automerge_lock_state" == "fix" ]]; then
+                log "[DRY RUN] Would edit $ACTIONS_LOCK_REL_PATH to list $AUTOMERGE_WF_REL_PATH with no actions and drop dependencies no workflow uses $delivery_note"
+            fi
         fi
 
         if ! $ac_up_to_date; then
             [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]] \
-                && log "[DRY RUN] Would write $AC_RUNNER_REL_PATH (runner $ac_runner_state)"
+                && log "[DRY RUN] Would write $AC_RUNNER_REL_PATH (runner $ac_runner_state) $delivery_note"
             [[ "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" ]] \
-                && log "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing $ac_dated_state)"
+                && log "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing $ac_dated_state) $delivery_note"
             [[ "$ac_wf_state" == "missing" ]] \
-                && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check)"
+                && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check) $delivery_note"
             [[ "$ac_trigger_state" == "missing-edited" ]] \
-                && log "[DRY RUN] Would add edited to the pull_request types in $AC_WF_REL_PATH (a description edit must re-run the pr-tldr check)"
+                && log "[DRY RUN] Would add edited to the pull_request types in $AC_WF_REL_PATH (a description edit must re-run the pr-tldr check) $delivery_note"
             [[ "$ac_eol_state" == "missing" ]] \
-                && log "[DRY RUN] Would append the agent-checks LF line to $GITATTR_REL_PATH"
+                && log "[DRY RUN] Would append the agent-checks LF line to $GITATTR_REL_PATH $delivery_note"
             if $ac_guard_deliver; then
                 [[ "$ac_guard_state" != "current" ]] \
-                    && log "[DRY RUN] Would write $AC_GUARD_REL_PATH (guard $ac_guard_state)"
+                    && log "[DRY RUN] Would write $AC_GUARD_REL_PATH (guard $ac_guard_state) $delivery_note"
                 [[ "$ac_reg_state" != "registered" ]] \
-                    && log "[DRY RUN] Would register the agent-checks guard on PreToolUse in $SETTINGS_REL_PATH (currently: $ac_reg_state)"
+                    && log "[DRY RUN] Would register the agent-checks guard on PreToolUse in $SETTINGS_REL_PATH (currently: $ac_reg_state) $delivery_note"
             fi
         fi
 
         if ! $skillshell_up_to_date; then
-            log "[DRY RUN] Would set disableSkillShellExecution: true in $SETTINGS_REL_PATH (existing keys preserved)"
+            log "[DRY RUN] Would set disableSkillShellExecution: true in $SETTINGS_REL_PATH (existing keys preserved) $delivery_note"
         fi
 
         ((SKIP_COUNT++)) || true
@@ -1714,6 +1847,15 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
+    # ── contributor rules: write ───────────────────────────────────────
+    contributor_written=false
+    if ! $contributor_up_to_date; then
+        mkdir -p "$(dirname "$CONTRIBUTOR_REL_PATH")"
+        cp "$CONTRIBUTOR_SOURCE" "$CONTRIBUTOR_REL_PATH"
+        contributor_written=true
+        log "contributor-rules: file ${contributor_state} — written ($(wc -c < "$CONTRIBUTOR_SOURCE" | tr -d ' ') bytes)."
+    fi
+
     # ── guidance-load-record: write ────────────────────────────────────
     grec_written=false
     grec_registered_now=false
@@ -1757,22 +1899,40 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── Dependabot auto-merge workflow: write ──────────────────────────
-    # Added, never overwritten. The helper keeps whatever copy the repo
-    # already has: the workflow only calls it, and a differing copy is that
-    # repo's business.
+    # Managed: written when missing, overwritten when drifted.
     automerge_written=false
-    automerge_script_written=false
+    automerge_lock_written=false
     if ! $automerge_up_to_date; then
-        mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
-        cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
-        automerge_written=true
-        if [[ ! -e "$AUTOMERGE_SCRIPT_REL_PATH" ]]; then
-            mkdir -p "$(dirname "$AUTOMERGE_SCRIPT_REL_PATH")"
-            cp "$AUTOMERGE_TEMPLATE_DIR/workflow-overlap.sh" "$AUTOMERGE_SCRIPT_REL_PATH"
-            chmod 0755 "$AUTOMERGE_SCRIPT_REL_PATH"
-            automerge_script_written=true
+        # The lockfile edit is built on a temp copy FIRST. Only when it
+        # succeeded are the workflow and the lockfile both put in place, so a
+        # failure leaves the tree with no lane change at all (no workflow
+        # without its lock entry) and nothing for the commit to stage.
+        automerge_lock_tmp=""
+        automerge_lock_result=""
+        automerge_lane_ok=true
+        if [[ "$automerge_lock_state" == "fix" ]]; then
+            automerge_lock_tmp=$(mktemp)
+            cp "$ACTIONS_LOCK_REL_PATH" "$automerge_lock_tmp"
+            if ! automerge_lock_result=$("$ACTIONS_LOCK_SCRIPT" apply "$automerge_lock_tmp" "$AUTOMERGE_WF_REL_PATH" 2>/dev/null); then
+                automerge_lane_ok=false
+                log "WARN: could not edit $ACTIONS_LOCK_REL_PATH in $repo_name — the Dependabot auto-merge lane writes nothing; run gh actions-lock there."
+            fi
         fi
-        log "dependabot auto-merge: workflow added$($automerge_script_written && echo ' (with its helper)')."
+        if $automerge_lane_ok; then
+            if [[ "$automerge_state" != "lockfile" ]]; then
+                mkdir -p "$(dirname "$AUTOMERGE_WF_REL_PATH")"
+                cp "$AUTOMERGE_TEMPLATE_DIR/dependabot-auto-merge.yml" "$AUTOMERGE_WF_REL_PATH"
+                automerge_written=true
+                log "dependabot auto-merge: workflow $([[ "$automerge_state" == "drifted" ]] && echo updated || echo added)."
+            fi
+            if [[ "$automerge_lock_result" == "updated" ]]; then
+                cat "$automerge_lock_tmp" > "$ACTIONS_LOCK_REL_PATH"
+                automerge_written=true
+                automerge_lock_written=true
+                log "dependabot auto-merge: $ACTIONS_LOCK_REL_PATH updated."
+            fi
+        fi
+        [[ -z "$automerge_lock_tmp" ]] || rm -f "$automerge_lock_tmp"
     fi
 
     # ── agent-checks: write ────────────────────────────────────────────
@@ -1868,14 +2028,15 @@ for repo_name in "${REPOS[@]}"; do
     $ac_eol_written && add_paths+=("$GITATTR_REL_PATH")
     $ac_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $skillshell_written && add_paths+=("$SETTINGS_REL_PATH")
-    $automerge_written && add_paths+=("$AUTOMERGE_WF_REL_PATH")
-    $automerge_script_written && add_paths+=("$AUTOMERGE_SCRIPT_REL_PATH")
+    $automerge_written && [[ "$automerge_state" != "lockfile" ]] && add_paths+=("$AUTOMERGE_WF_REL_PATH")
+    $automerge_lock_written && add_paths+=("$ACTIONS_LOCK_REL_PATH")
     $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
     $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
+    $contributor_written && add_paths+=("$CONTRIBUTOR_REL_PATH")
     $grec_written && add_paths+=("$GREC_REL_PATH")
     $grec_registered_now && add_paths+=("$SETTINGS_REL_PATH")
     # Both hooks can register in the same file in one run; add it once.
@@ -1896,8 +2057,15 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     bootstrap_note=""
-    if $bootstrap_hook_written || $bootstrap_registered_now; then
+    if $contributor_written; then
         bootstrap_note="
+
+Also delivers the contributor rules ($CONTRIBUTOR_REL_PATH), the generated
+subset of the fleet guidance an outside contributor's agent reads on demand
+(ADR 0043)."
+    fi
+    if $bootstrap_hook_written || $bootstrap_registered_now; then
+        bootstrap_note="${bootstrap_note}
 
 Also delivers the skills-bootstrap SessionStart hook, fetched from
 ${BOOTSTRAP_REGISTRY}@${BOOTSTRAP_REF:0:7} (pinned in _agent-guidance's
@@ -1931,14 +2099,22 @@ else in the file changed): a Windows autocrlf checkout gives them CRLF, which
 bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
     fi
 
-    if $automerge_written; then
+    if $automerge_written && [[ "$automerge_state" != "lockfile" ]]; then
         bootstrap_note="${bootstrap_note}
 
-Adds .github/workflows/dependabot-auto-merge.yml: this repo has a Dependabot
-config but nothing merged its PRs. Its daily sweep merges each Dependabot PR
-once every check on the PR's head is green. Delivered once from
-_agent-guidance's templates/dependabot-auto-merge/; the sync never overwrites
-it afterwards."
+$([[ "$automerge_state" == "drifted" ]] && echo Updates || echo Adds) .github/workflows/dependabot-auto-merge.yml: its daily sweep
+merges each Dependabot PR once every check on the PR's head is green. The file
+is managed by _agent-guidance's templates/dependabot-auto-merge/ and is
+overwritten on the next sync if it drifts, so change the template, not this
+copy."
+    fi
+    if $automerge_lock_written; then
+        bootstrap_note="${bootstrap_note}
+
+Also edits $ACTIONS_LOCK_REL_PATH so \`gh actions-lock --no-fix\` stays green: the
+workflows map lists .github/workflows/dependabot-auto-merge.yml with no actions
+(the workflow has no uses: lines), and any dependency no workflow lists any
+more is removed. Nothing else in the lockfile changes."
     fi
 
     if $grec_any_written; then
@@ -1973,6 +2149,13 @@ workflow; see the 2026-11-02 addendum to docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $contributor_written && ! $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
+       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+        commit_message="chore: deliver the fleet contributor rules
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
@@ -1989,7 +2172,13 @@ AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bo
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $grec_any_written \
        && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
-        commit_message="chore: add the Dependabot auto-merge workflow
+        if [[ "$automerge_state" == "lockfile" ]]; then
+            automerge_title="chore: make actions.lock list the Dependabot auto-merge workflow"
+        else
+            automerge_title="chore: $([[ "$automerge_state" == "drifted" ]] && echo update || echo add) the Dependabot auto-merge workflow"
+            $automerge_lock_written && automerge_title="$automerge_title and its actions.lock entry"
+        fi
+        commit_message="$automerge_title
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
@@ -2056,8 +2245,12 @@ Managed content updated by the central _agent-guidance repository.${bootstrap_no
     # branch. Repos whose branch protection still rejects the push (the
     # cms-platform-managed repos) fall back to a PR with auto-merge.
 
+    # What the commit wrote, for the delivery line below (names only; paths
+    # in a repo's own tree, nothing from file contents).
+    committed_files=$(git diff-tree --no-commit-id --name-only -r HEAD | paste -sd, - | sed 's/,/, /g')
+
     if git push origin HEAD:"$default_branch"; then
-        log "Pushed directly to $default_branch."
+        log "Pushed directly to $default_branch (App ruleset bypass); the commit wrote: $committed_files."
 
         # Stale-PR/branch cleanup from the pre-direct-push era: an earlier
         # run of this sync (branch + PR model) may have left an open PR and
@@ -2077,7 +2270,7 @@ Managed content updated by the central _agent-guidance repository.${bootstrap_no
 
         ((OK_COUNT++)) || true
     else
-        log "WARN: direct push to $default_branch rejected — falling back to PR."
+        log "WARN: direct push to $default_branch rejected — falling back to PR (the commit writes: $committed_files)."
 
         git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME" 2>/dev/null || {
             fail "could not create branch in $repo_name"
@@ -2261,7 +2454,7 @@ prints nothing."
             --jq '.[0].number // empty' 2>/dev/null || true)
 
         if [[ -n "$existing_pr" ]]; then
-            log "PR #$existing_pr already exists — branch updated."
+            log "Direct push rejected — updated existing PR #$existing_pr."
             pr_number="$existing_pr"
         else
             # --head: gh cannot infer the head branch in a fresh temp clone.
@@ -2290,7 +2483,7 @@ existing CLAUDE.md is left untouched unless this repo opts in via
 ${pr_extra}
 EOF
 )"); then
-                log "PR created."
+                log "Direct push rejected — opened PR $pr_url."
                 pr_number="${pr_url##*/}"
             else
                 fail "PR creation failed for $repo_name"

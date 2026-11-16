@@ -5,6 +5,11 @@ claude.ai scheduled task named `Fleet health audit`, created from a project
 thread. Each fire starts a fresh session. The prompt is short and points here,
 so the procedure changes by pull request.
 
+**Model:** Sonnet 5.5, set on the task (Adam, 2026-11-13). The audit reads
+widely and files or closes issues but never merges code, so a wrong call costs
+one issue that the next weekly run corrects; Opus would cost more for little
+gain.
+
 The audit looks across every repo in the fleet, every scheduled task and every
 workflow for functionality that is:
 
@@ -45,7 +50,7 @@ report.
   watches only scheduled runs, so a dispatch-only or `workflow_run` workflow
   that fails often (say 3 or more of its last 20 runs) is this audit's
   finding.
-- The owner's durable machine (BOXY) is not reachable from a cloud session.
+- The owner's durable machine is not reachable from a cloud session.
   Read `task-health.json` on the `persistent/task-health` branch of the
   private `Adam-S-Daniel/waiting-feed` repo (attach it with `add_repo`). It is
   replaced daily and holds only names, states, exit codes and UTC times:
@@ -61,7 +66,7 @@ report.
     restic snapshot or keeper line more than a day old), or a nonzero
     `_last_exit`, is a finding.
 
-  If the branch does not exist yet, use the evidence BOXY's tasks leave off
+  If the branch does not exist yet, use the evidence the durable machine's tasks leave off
   the machine (commits on `persistent/*` branches, published files and their
   timestamps) and report the rest as not checked.
 
@@ -75,7 +80,9 @@ duplicates:
 - Failing workflow runs: the daily scheduled-run health audit
   (`scheduled-run-health.yml`), which files a `ci` issue labeled
   `agent-ready`.
-- AGENTS.md delivery and drift: `drift-report.yml` and `sync.yml`.
+- AGENTS.md delivery and drift: `drift-report.yml` and `sync.yml`. The
+  drift report also finds repeated or copied repo-specific guidance; the
+  judgment on it is this audit's (item 8 below).
 - Repo settings and rulesets: repo-settings' drift audit and weekly plan.
 - Whether a skill or guidance section earns its place: skills-evals'
   regression, retirement and eval-scope lanes.
@@ -114,6 +121,34 @@ count or a quoted line.
 7. A repo that exists under either owner but is missing from `repos.yml`, or
    from repo-settings' `fleet.yml`, so the fleet's sync, rulesets and sweeps
    skip it.
+8. Guidance in the wrong place. This replaces the retired guidance
+   centralization audit (_agent-guidance issue 424). Read the
+   "Repo-specific guidance overlap" section of `drift-report.md` on the
+   `persistent/drift-report` branch, which `scripts/guidance-overlap.js`
+   writes nightly. It names line ranges, not text, so open each one. Then
+   decide, for each entry:
+   - **Text repeated across repos.** Ask whether an agent in an unrelated
+     repo would act differently for having read it. base.md carries only
+     what is specific to this account and learned the hard way, not general
+     engineering practice, so most repo-specific text correctly stays put.
+     If a commit could check the rule, the finding is "make it a check"
+     (the fleet worker's lesson-check pass), ahead of moving the text. If it
+     is a reusable procedure, it is a skill for the registry. Otherwise, if
+     it is fleet-general, propose it for base.md. Kind `partial`,
+     recommendation `finish`; file it in `_agent-guidance`. Saying "nothing
+     to promote this week" is the normal result.
+   - **A local copy of shared guidance.** The local copy is redundant. Kind
+     `broken`, recommendation `remove` (delete it from that repo's
+     `## Repo-specific additions`), filed in that repo. Keep it instead when
+     the local text adds a repo-specific fact the shared rule lacks, and say
+     so in the summary.
+   - **A section requested for a language the repo does not use.** Kind
+     `broken`, recommendation `remove` the opt-in. Never propose adding a
+     section because GitHub reports a language: the sections are opt-in,
+     unused by design, and byte counts include generated output.
+
+   If the section is missing or says "Not computed", the drift report's
+   overlap step is the finding (item 2), not the guidance.
 
 Do not report a deliberate deferral, meaning one that a decision record
 names with a reason, as a finding. Also do not report work that an open PR
@@ -129,7 +164,7 @@ not `partial`. A fallback copy or mirror that has drifted from its source is
 ## Issues
 
 - One issue per finding, in the repo the finding is about. For a finding about
-  BOXY state, file it in `Adam-S-Daniel/wsl-automation`; for one about a
+  durable-machine state, file it in `Adam-S-Daniel/wsl-automation`; for one about a
   scheduled task, file it in the repo its spec lives in.
 - Labels: `half-built-or-broken` always. Add `needs-owner` when only the
   owner can act (a setting, a credential, a decision).

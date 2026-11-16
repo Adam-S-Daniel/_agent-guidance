@@ -169,18 +169,18 @@ in between, which is the system working. Do not hand-flip it in the UI: the
 drift report flags exactly that, and a hand-flip that is never reverted is how a
 protected branch quietly stops being protected.
 
-### 2. The ZENDA re-clone step cannot be done — or checked — from here
+### 2. The workstation re-clone step cannot be done — or checked — from here
 
 "Preventing re-introduction from existing clones" below is the part that
 actually bites, and it is the part a cloud session structurally cannot do.
-ZENDA is the durable Windows workstation; its clones live at
+The workstation is the durable Windows machine; its clones live at
 `D:\repos\<github-owner-or-org>\<repo>`; a session running in a Linux
 container has no path to that filesystem and cannot enumerate its branches,
 stashes or worktrees, let alone re-clone them. Nor can it *verify* the step
 afterwards — a report that "every clone was re-cloned" written from a cloud
 session is an assertion about a machine it never touched.
 
-So: whoever runs C runs the ZENDA half **on ZENDA**, and a cloud session's part
+So: whoever runs C runs the workstation half **on the workstation**, and a cloud session's part
 of C ends before it. Say which machine each step ran on. Treat "every machine"
 as a real inventory, per the instruction at the end of that section.
 
@@ -261,7 +261,7 @@ history straight back in**, and pushing that returns every offending commit to
 GitHub — by which time the `.gitleaksignore` is gone, so it lands as a hard red
 on a protected branch.
 
-**`ZENDA` is the specific risk**: it is the durable Windows workstation, its
+**The workstation is the specific risk**: it is the durable Windows machine, its
 clones live at `D:\repos\<github-owner-or-org>\<repo>`, and it drops sessions
 mid-task — so a half-finished clone with local commits is an ordinary state
 there, not an edge case.
@@ -307,7 +307,7 @@ Required, per machine, for each rewritten repo:
    as the bare blobless clone in `README.md` ("Enumerate branches from
    `ls-remote`"): **a view you narrowed yourself shows you only what you asked
    for, and reports the difference as good news.**
-4. **Add a `pre-push` guard so this cannot silently recur.** ZENDA already
+4. **Add a `pre-push` guard so this cannot silently recur.** The workstation already
    carries a global pre-push hook (the sync-skills one), so there is an
    established place and pattern for it. The guard should reject a push whose
    outgoing commits reintroduce a keyword-bearing lock key. Scope it to the
@@ -365,5 +365,5 @@ the PR refs above keep them fetchable by sha. Report both facts, separately.
 - The pre-push guard installed and demonstrated rejecting a synthetic bad push
   **and** allowing a good one. A guard shown only to reject proves half of what
   matters.
-- Which machine ran which step. The ZENDA half cannot be done or verified from
+- Which machine ran which step. The workstation half cannot be done or verified from
   a cloud session.
