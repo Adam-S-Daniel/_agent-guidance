@@ -111,10 +111,11 @@ target.
   exact tag, `vX.Y.Z` when one exists, otherwise the most specific tag it has
   (`v1`), and a branch only when it has no tag. Then run
   `gh actions-lock --no-narrow`, which keeps the ref as written and locks it.
-  Local actions are written `$/<path>`: `--verify` rejects `./`, and the
-  default run rewrites `./` to `$/` (so do not pass
-  `--no-migrate-local-actions`). Never a bare SHA in this form: it trips
-  `sha-as-ref`, which fails the check below.
+  Local actions are written `$/<path>`: `--verify` rejects `./`, and on
+  v0.4.1 a plain run fails on a `./` local action and writes nothing (v0.2.0
+  rewrote it; `--migrate-local-actions` does so now). Never a bare SHA in
+  this form: it trips `sha-as-ref`, a warning the check below prints without
+  failing (v0.4.1; see the 2026-11-13 addendum).
 - **Legacy form,** until a repo migrates: a full 40-character SHA with no
   trailing comment, exactly as 0007 decided.
 - **Cross-repo reusable workflows take a full SHA in both forms.** No
@@ -138,7 +139,7 @@ target.
   from the release binary checked against a sha256 written in the action, not
   by `gh extension install` on a tag. It is referenced by release tag
   (`@v1.0.0`) and locked in each repo's `actions.lock` like any action: a bare
-  SHA ref would trip `sha-as-ref`.
+  SHA ref would trip the `sha-as-ref` warning.
 - **The repo also turns on GitHub's Require lockfile policy** (Settings →
   Actions → Policies) once its migration PR merges. The policy is GitHub's
   runtime enforcement point: it blocks a targeted workflow that is not
@@ -242,8 +243,10 @@ dereferencing, the `cms-platform` release-tag carve-out, and
   - Docker images (`docker://`, a Docker action's image) are not locked.
   - Dependabot regenerates the matching lockfile entry in its own version-update
     PR, but does not onboard a new workflow (GitHub's lockfile docs).
-  - "Pinned commit not in upstream history" (`unreachable-pin`) also fires when
-    a pin merely disagrees with its tag.
+  - "Pinned commit not in upstream history" (`unreachable-pin`) fires only
+    when the commit is not in the action's history. On v0.2.0 it also fired
+    for a pin that merely disagreed with its tag; v0.4.1 reports that as
+    `tag-commit-mismatch`.
 - **Recovery:** `gh actions-lock --accept-moved`. It re-resolves only the
   flagged pins to the tag's current commit and fixes both a mismatched and an
   unreachable pin. `--relock` alone leaves an unreachable pin failing and
@@ -289,3 +292,26 @@ carries no error text, so this rests on the docs and that pattern.
 - **Any other cms-platform reusable has the same problem** for a lockfile
   caller. Check where a reusable is defined before calling it from a lockfile
   repo.
+
+## Addendum, 2026-11-13: three rules corrected, one confirmed, for gh-actions-lock v0.4.1
+
+The v0.4.1 re-run ([evidence](../evidence/2026-11-13-gh-actions-lock-v0.4.1.md))
+contradicted three rule statements above; each is corrected in place, and in
+`base.md`'s "Pinning GitHub Actions" where it appeared there. The fourth
+finding confirms a standing decision.
+
+- **`./` is not migrated by a plain run.** It fails and writes nothing; write
+  `$/<path>` by hand, or pass `--migrate-local-actions` once.
+- **A bare SHA is a warning, not a failure.** `sha-as-ref` has `valid: true`
+  and exit 0, and the shared check (v1.1.0 onward) passes warnings. Decision:
+  no new check for it. The lockfile form's rule (never a bare SHA) stands, the
+  warning is printed in the job, and the tool still locks the SHA's tag.
+- **A pin that disagrees with its tag is `tag-commit-mismatch`**, fixed by
+  `--relock`; `unreachable-pin` is a commit outside the history, fixed by
+  `--accept-moved`. The recovery rule above still holds.
+- **An unreachable API is an error** (`reachability-unknown`, exit 1,
+  `"retryable": true`). That is what the "A GitHub API outage fails the check"
+  decision already assumed, so it stands: the tool retries three times, then
+  the check fails and is re-run when the API is back. No change to the shared
+  action is recorded here; a retry or `retryable` handling there is a
+  question for [verify-actions-lock](https://github.com/Adam-S-Daniel/verify-actions-lock/issues).
