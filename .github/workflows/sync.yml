@@ -28,6 +28,9 @@ on:
       - "scripts/bootstrap-status.sh"
       - "scripts/register-bootstrap-hook.sh"
       - "scripts/set-skill-shell-setting.sh"
+      # And what each consumer loses: the owner-only guidance files and the
+      # settings.json entries the sync once wrote for them (ADR 0043).
+      - "scripts/unregister-hook.sh"
       # And what each consumer's .gitattributes gets (docs/decisions/0019).
       - "scripts/hook-eol-gitattributes.sh"
       # And what each lockfile repo's actions.lock gets beside the Dependabot
