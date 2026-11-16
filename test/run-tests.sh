@@ -611,12 +611,11 @@ YAML
         "## Repo-specific additions" \
         "<!-- Add your repo-specific agent guidance below this line -->")"
     printf '%s\n%s\n' "$managed_for_repo7" "$marker_block" > AGENTS.md
-    mkdir -p .claude/hooks
-    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
-    cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
+    # An in-sync consumer after ADR 0043: the contributor rules, and no
+    # fleet-memory hook or payload copy (the sync removes those).
     mkdir -p .github
     cp "$REPO_ROOT/.github/fleet-contributor-rules.md" .github/fleet-contributor-rules.md
-    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md .github/fleet-contributor-rules.md
+    git add .agents-sync.yml AGENTS.md .github/fleet-contributor-rules.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
 
@@ -961,12 +960,11 @@ YAML
         "## Repo-specific additions" \
         "<!-- Add your repo-specific agent guidance below this line -->")"
     printf '%s\n%s\n' "$managed" "$marker_block" > AGENTS.md
-    mkdir -p .claude/hooks
-    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" .claude/hooks/fleet-memory.sh
-    cp "$REPO_ROOT/agents-md/base.md" .claude/hooks/fleet-guidance.md
+    # An in-sync consumer after ADR 0043: the contributor rules, and no
+    # fleet-memory hook or payload copy (the sync removes those).
     mkdir -p .github
     cp "$REPO_ROOT/.github/fleet-contributor-rules.md" .github/fleet-contributor-rules.md
-    git add .agents-sync.yml AGENTS.md .claude/hooks/fleet-memory.sh .claude/hooks/fleet-guidance.md .github/fleet-contributor-rules.md
+    git add .agents-sync.yml AGENTS.md .github/fleet-contributor-rules.md
     git commit -m "init" >/dev/null 2>&1
     git push origin HEAD:main >/dev/null 2>&1
     cd "$REPO_ROOT"
@@ -2532,6 +2530,17 @@ case "$1" in
                             [[ -d "$bare_dir" ]] || continue
                             name=$(basename "$bare_dir")
                             rows="${rows}${rows:+,}{\"nameWithOwner\":\"acorg/${name#acorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
+                    retireorg)
+                        # The ADR 0043 removal lane's fixtures, enumerated
+                        # off disk like acorg's.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/retireorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"retireorg/${name#retireorg_}\"}"
                         done
                         json="[$rows]"
                         ;;
@@ -4596,12 +4605,11 @@ test_drift_report_plugin_copies() {
 
 test_drift_report_fleet_payload() {
     echo ""
-    echo "=== Test: drift-report.sh (fleet-memory hook and payload) ==="
+    echo "=== Test: drift-report.sh (retired fleet-memory hook and payload, ADR 0043) ==="
 
     local bare="$TEST_DIR/bare/fleetorg_repo-payload"
     local work="$TEST_DIR/work/fleet-payload"
     local rpt="$TEST_DIR/drift-fleet-payload.md"
-    local expected_sha found_sha
     mkdir -p "$bare" "$work/.claude/hooks"
     git init --bare --initial-branch=main "$bare" >/dev/null 2>&1
     git init --initial-branch=main "$work" >/dev/null 2>&1
@@ -4611,20 +4619,20 @@ test_drift_report_fleet_payload() {
 sections: []
 YAML
     "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
-    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
-    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
     mkdir -p "$work/.github"
     cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
 
+    # The synced state after ADR 0043: neither retired file, the rules current.
     run_fleet_payload_report
     assert_row_contains "$rpt" "fleetorg/repo-payload" "**up-to-date**" \
-        "fleet payload: current hook and payload leave row up-to-date"
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "ok" \
-        "fleet payload: current artifacts report ok"
-    expected_sha=$(sha256sum "$REPO_ROOT/agents-md/base.md")
-    assert_row_note_contains "$rpt" "fleetorg/repo-payload" "expected \`${expected_sha:0:8}\`, found \`${expected_sha:0:8}\`" \
-        "fleet payload: current hash matches the installed verdict"
+        "fleet payload: a repo without the retired files is up-to-date"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "fleet-memory" "—" \
+        "fleet payload: an absent fleet-memory.sh reads — (expected)"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "fleet-guidance" "—" \
+        "fleet payload: an absent fleet-guidance.md reads — (expected)"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "contributor-rules" "ok" \
+        "fleet payload: current contributor rules read ok"
 
     rm "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
@@ -4639,25 +4647,24 @@ YAML
     cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$work/.github/fleet-contributor-rules.md"
     push_fleet_payload_fixture
 
-    # A changed body and a changed trailing newline must both be visible.
-    printf 'stale payload\n' >"$work/.claude/hooks/fleet-guidance.md"
+    # A leftover payload is drift whatever its bytes: a byte-current copy too.
+    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
     push_fleet_payload_fixture
     run_fleet_payload_report
-    found_sha=$(sha256sum "$work/.claude/hooks/fleet-guidance.md")
     assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
-        "fleet payload: stale payload drifts the row"
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
-        "fleet payload: stale payload has a drifted artifact cell"
-    assert_row_note_contains "$rpt" "fleetorg/repo-payload" "expected \`${expected_sha:0:8}\`, found \`${found_sha:0:8}\`" \
-        "fleet payload: expected and found short hashes are shown"
+        "fleet payload: a leftover payload drifts the row"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "fleet-guidance" "**leftover**" \
+        "fleet payload: a byte-current leftover payload reads leftover"
+    assert_row_note_contains "$rpt" "fleetorg/repo-payload" "leftover \`.claude/hooks/fleet-guidance.md\`" \
+        "fleet payload: Notes name the leftover payload"
 
     rm "$work/AGENTS.md"
     push_fleet_payload_fixture
     run_fleet_payload_report
     assert_row_contains "$rpt" "fleetorg/repo-payload" "**no-agents-md**" \
-        "fleet payload: stale payload does not hide missing AGENTS.md"
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
-        "fleet payload: artifact drift is still visible without AGENTS.md"
+        "fleet payload: a leftover payload does not hide missing AGENTS.md"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**leftover**" \
+        "fleet payload: a leftover is still visible without AGENTS.md"
     assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
         "fleet payload: missing AGENTS.md keeps its primary status"
     "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
@@ -4681,8 +4688,8 @@ SH
     PATH="$failbin:$PATH" run_fleet_payload_report
     assert_row_contains "$rpt" "fleetorg/repo-payload" "**update-failed**" \
         "fleet payload: a failed AGENTS.md build keeps update-failed status"
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
-        "fleet payload: stale artifact remains visible after a failed build"
+    assert_row_contains "$rpt" "fleetorg/repo-payload" "**leftover**" \
+        "fleet payload: a leftover remains visible after a failed build"
     assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
         "fleet payload: artifact drift does not hide a failed build"
     assert_row_note_contains "$rpt" "fleetorg/repo-payload" 'Could not build expected content' \
@@ -4691,66 +4698,29 @@ SH
     : >"$work/.claude/hooks/fleet-guidance.md"
     push_fleet_payload_fixture
     run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
-        "fleet payload: a present zero-byte payload is drifted, not missing"
-    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
-        "fleet payload: present zero-byte payload is not absent"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "fleet-guidance" "**leftover**" \
+        "fleet payload: a present zero-byte payload is a leftover, not absent"
 
-    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
-    printf '\n' >>"$work/.claude/hooks/fleet-guidance.md"
-    push_fleet_payload_fixture
-    run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
-        "fleet payload: a trailing newline alone is drift"
-
-    cp "$REPO_ROOT/agents-md/base.md" "$work/.claude/hooks/fleet-guidance.md"
-    printf 'stale hook\n' >"$work/.claude/hooks/fleet-memory.sh"
-    push_fleet_payload_fixture
-    run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
-        "fleet payload: stale hook drifts the row"
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**drifted**" \
-        "fleet payload: stale hook has a drifted artifact cell"
-
-    cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
     rm "$work/.claude/hooks/fleet-guidance.md"
+    printf 'any hook\n' >"$work/.claude/hooks/fleet-memory.sh"
     push_fleet_payload_fixture
     run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "**missing**" \
-        "fleet payload: stub-mode missing payload reports missing"
     assert_row_contains "$rpt" "fleetorg/repo-payload" "**drift-detected**" \
-        "fleet payload: stub-mode missing payload drifts the row"
+        "fleet payload: a leftover hook drifts the row"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "fleet-memory" "**leftover**" \
+        "fleet payload: a leftover hook reads leftover"
+    assert_row_col_equals "$rpt" "fleetorg/repo-payload" "fleet-guidance" "—" \
+        "fleet payload: the payload column stays — when only the hook is left"
 
+    # Full mode changes nothing about the retired files: absent is still clean.
     AGENTS_MD_MODE=full "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
     rm "$work/.claude/hooks/fleet-memory.sh"
     push_fleet_payload_fixture
     run_fleet_payload_report
     assert_row_contains "$rpt" "fleetorg/repo-payload" "**up-to-date**" \
         "fleet payload: full-mode managed content matches its full source"
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "—" \
-        "fleet payload: full-mode missing artifacts are not drift"
-    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
-        "fleet payload: full-mode absence is not called missing"
-
-    # sync.sh may preserve a legacy prefix ahead of the managed block. Its
-    # Mode marker still decides whether absent fleet files are required.
-    printf 'legacy prefix\n' >"$work/AGENTS.prefixed"
-    cat "$work/AGENTS.md" >>"$work/AGENTS.prefixed"
-    mv "$work/AGENTS.prefixed" "$work/AGENTS.md"
-    push_fleet_payload_fixture
-    run_fleet_payload_report
-    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
-        "fleet payload: a prefixed full-mode block does not require fleet files"
-
-    # The report cannot infer eligibility if the generated mode is absent.
-    sed '/^<!-- Mode: full -->$/d' "$work/AGENTS.md" >"$work/AGENTS.no-mode"
-    mv "$work/AGENTS.no-mode" "$work/AGENTS.md"
-    push_fleet_payload_fixture
-    run_fleet_payload_report
-    assert_row_contains "$rpt" "fleetorg/repo-payload" "unverified" \
-        "fleet payload: unknown mode leaves absent files unverified"
-    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**missing**" \
-        "fleet payload: unknown mode does not invent missing artifacts"
+    assert_row_lacks_cell "$rpt" "fleetorg/repo-payload" "**leftover**" \
+        "fleet payload: full mode with no retired files has no leftover"
 
     "$REPO_ROOT/scripts/build-agents-md.sh" >"$work/AGENTS.md"
     cp "$REPO_ROOT/.claude/hooks/fleet-memory.sh" "$work/.claude/hooks/fleet-memory.sh"
@@ -7480,20 +7450,18 @@ test_sync_bootstrap() {
         fail "repo-no-lock: could not clone"
         return
     }
-    # `.claude/` DOES exist here now — fleet-memory is delivered to every
-    # synced repo, unconditionally, because every synced repo's AGENTS.md is
-    # simultaneously reduced to the stub that depends on it. What must still be
-    # withheld is the BOOTSTRAP hook specifically, so the assertion names that
-    # file instead of the directory it happens to share.
+    # What must be withheld is the BOOTSTRAP hook specifically, so the
+    # assertion names that file instead of the directory.
     if [[ -e "$nolock/$HOOK_REL_PATH_T" ]]; then
         fail "repo-no-lock: skills-bootstrap withheld"
     else
         pass "repo-no-lock: skills-bootstrap withheld"
     fi
-    if [[ -f "$nolock/$FLEET_HOOK_REL_PATH_T" && -s "$nolock/$FLEET_PAYLOAD_REL_PATH_T" ]]; then
-        pass "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
+    # ADR 0043: the owner-only payload and its hook are no longer delivered.
+    if [[ -e "$nolock/$FLEET_HOOK_REL_PATH_T" || -e "$nolock/$FLEET_PAYLOAD_REL_PATH_T" ]]; then
+        fail "repo-no-lock: fleet-memory and its payload are not delivered (ADR 0043)"
     else
-        fail "repo-no-lock: fleet-memory still delivered (it is not allowlisted)"
+        pass "repo-no-lock: fleet-memory and its payload are not delivered (ADR 0043)"
     fi
     # ADR 0043: the contributor rules go to every synced repo, byte for byte.
     if cmp -s "$nolock/.github/fleet-contributor-rules.md" "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
@@ -7501,26 +7469,26 @@ test_sync_bootstrap() {
     else
         fail "repo-no-lock: contributor rules delivered byte for byte"
     fi
-    # The guidance-load record rides with fleet-memory: same repos, a managed
-    # byte-identical copy, executable, and one Stop group with its timeout.
-    if cmp -s "$nolock/$GREC_REL_PATH_T" "$REPO_ROOT/$GREC_REL_PATH_T" && [[ -x "$nolock/$GREC_REL_PATH_T" ]]; then
-        pass "repo-no-lock: guidance-load-record delivered byte for byte and executable"
+    # The guidance-load record moved to the owner's private plugin (ADR 0043).
+    if [[ -e "$nolock/$GREC_REL_PATH_T" ]]; then
+        fail "repo-no-lock: guidance-load-record is not delivered (ADR 0043)"
     else
-        fail "repo-no-lock: guidance-load-record delivered byte for byte and executable"
+        pass "repo-no-lock: guidance-load-record is not delivered (ADR 0043)"
     fi
     local grec_reg
     grec_reg=$(python3 -c '
 import json, sys
 doc = json.load(open(sys.argv[1]))
-for g in doc["hooks"]["Stop"]:
-    for h in g["hooks"]:
-        if "guidance-load-record.sh" in h["command"]:
-            print(g["matcher"], h["timeout"], h["command"])
-' "$nolock/.claude/settings.json" 2>/dev/null) || grec_reg=""
-    if [[ "$grec_reg" == '* 20 bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh"' ]]; then
-        pass "repo-no-lock: guidance-load-record registered on Stop with its timeout"
+for ev, gs in doc.get("hooks", {}).items():
+    for g in gs:
+        for h in g["hooks"]:
+            if "guidance-load-record.sh" in h["command"] or "fleet-memory.sh" in h["command"]:
+                print(ev, h["command"])
+' "$nolock/.claude/settings.json" 2>&1) || grec_reg="unreadable: $grec_reg"
+    if [[ -z "$grec_reg" ]]; then
+        pass "repo-no-lock: no fleet-memory or guidance-load-record entry registered (ADR 0043)"
     else
-        fail "repo-no-lock: guidance-load-record registered on Stop with its timeout — got: $grec_reg"
+        fail "repo-no-lock: no fleet-memory or guidance-load-record entry registered — got: $grec_reg"
     fi
     if [[ -e "$nolock/skills.lock" ]]; then
         fail "repo-no-lock: the sync did NOT create a skills.lock"
@@ -7539,10 +7507,10 @@ for g in doc["hooks"]["Stop"]:
     else
         pass "repo-not-allowed: a lock alone does NOT trigger bootstrap delivery"
     fi
-    if [[ -f "$notallowed/$FLEET_HOOK_REL_PATH_T" ]]; then
-        pass "repo-not-allowed: fleet-memory delivered regardless of the allowlist"
+    if [[ -e "$notallowed/$FLEET_HOOK_REL_PATH_T" ]]; then
+        fail "repo-not-allowed: fleet-memory is not delivered (ADR 0043)"
     else
-        fail "repo-not-allowed: fleet-memory delivered regardless of the allowlist"
+        pass "repo-not-allowed: fleet-memory is not delivered (ADR 0043)"
     fi
 
     # ── repo-ignored: warned above; nothing may have landed.
@@ -7640,19 +7608,18 @@ test_sync_bootstrap_idempotent() {
     }
     local groups
     groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks']['SessionStart']))")
-    # Three groups: the repo's own, skills-bootstrap, and fleet-memory. The
-    # point of the assertion is unchanged — a second run must not append a
-    # duplicate of either hook — only the expected count moved.
-    if [[ "$groups" -eq 3 ]]; then
-        pass "re-run: still exactly 3 SessionStart groups (registration not duplicated)"
+    # Two groups: the repo's own and skills-bootstrap (ADR 0043 retired the
+    # fleet-memory one). A second run must not append a duplicate.
+    if [[ "$groups" -eq 2 ]]; then
+        pass "re-run: still exactly 2 SessionStart groups (registration not duplicated)"
     else
-        fail "re-run: still exactly 3 SessionStart groups — got $groups"
+        fail "re-run: still exactly 2 SessionStart groups — got $groups"
     fi
-    groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks']['Stop']))")
-    if [[ "$groups" -eq 1 ]]; then
-        pass "re-run: exactly 1 Stop group (guidance-load-record not duplicated)"
+    groups=$(python3 -c "import json;print(len(json.load(open('$adopted/.claude/settings.json'))['hooks'].get('Stop', [])))")
+    if [[ "$groups" -eq 0 ]]; then
+        pass "re-run: no Stop group (guidance-load-record is not delivered)"
     else
-        fail "re-run: exactly 1 Stop group — got $groups"
+        fail "re-run: no Stop group — got $groups"
     fi
     if cmp -s "$adopted/skills.lock" "$TEST_DIR/repo-adopted.skills.lock.orig"; then
         pass "re-run: skills.lock STILL byte-identical"
@@ -7711,8 +7678,8 @@ test_sync_bootstrap_drift() {
 # ── Test 5d2: an already-wired repo with the pre-fork matcher is migrated ──
 #
 # #173: since Claude Code 2.1.214 a forked session reports SessionStart source
-# `fork`, so a consumer the sync wired with `startup|resume` skips both fleet
-# hooks on every fork. The next sync must widen exactly those two matchers in
+# `fork`, so a consumer the sync wired with `startup|resume` skips the fleet
+# hook on every fork. The next sync must widen exactly that matcher in
 # place: no duplicate group, the repo's own startup|resume group untouched,
 # and a run after that is a no-op. Leaves repo-adopted fully delivered, the
 # state the drift-report tests that follow expect.
@@ -7758,7 +7725,6 @@ PY
     ) || true
     echo "$output" > "$TEST_DIR/sync-fork-migration.txt"
     assert_contains "$TEST_DIR/sync-fork-migration.txt" "skills-bootstrap: settings.json — migrated." "fork migration: skills-bootstrap's matcher migrated"
-    assert_contains "$TEST_DIR/sync-fork-migration.txt" "fleet-memory: settings.json — migrated." "fork migration: fleet-memory's matcher migrated"
 
     local v="$TEST_DIR/verify-fork-migration"
     rm -rf "$v"
@@ -7772,29 +7738,28 @@ import json, sys
 before = json.load(open(sys.argv[1], encoding="utf-8"))
 after = json.load(open(sys.argv[2], encoding="utf-8"))
 groups = after["hooks"]["SessionStart"]
-assert len(groups) == 3, "expected 3 SessionStart groups, got %d" % len(groups)
+assert len(groups) == 2, "expected 2 SessionStart groups, got %d" % len(groups)
 by_hook = {}
 for g in groups:
     cmd = g["hooks"][0]["command"]
-    for name in ("setup-hooks.sh", "skills-bootstrap.sh", "fleet-memory.sh"):
+    for name in ("setup-hooks.sh", "skills-bootstrap.sh"):
         if name in cmd:
             by_hook[name] = g["matcher"]
 assert by_hook == {
     "setup-hooks.sh": "startup|resume",
     "skills-bootstrap.sh": "startup|resume|fork",
-    "fleet-memory.sh": "startup|resume|fork",
 }, by_hook
 for g in groups:
     if g["matcher"] == "startup|resume|fork":
         g["matcher"] = "startup|resume"
-assert after == before, "something besides the two matchers changed"
+assert after == before, "something besides the fleet matcher changed"
 print("OK")
 PY
 ) || rc=$?
     if [[ $rc -eq 0 && "$shape" == "OK" ]]; then
-        pass "fork migration: both fleet matchers widened, the repo's own group untouched, nothing added"
+        pass "fork migration: the fleet matcher widened, the repo's own group untouched, nothing added"
     else
-        fail "fork migration: both fleet matchers widened, the repo's own group untouched, nothing added — $shape"
+        fail "fork migration: the fleet matcher widened, the repo's own group untouched, nothing added — $shape"
     fi
     assert_contains "$v/.claude/settings.json" '"startup|resume|fork"' "fork migration: the committed file carries the new matcher"
     if git -C "$v" log -1 --format=%B | grep -qF "startup|resume|fork"; then
@@ -7813,12 +7778,10 @@ PY
     echo "$output" > "$TEST_DIR/sync-fork-migration-2.txt"
     assert_contains "$TEST_DIR/sync-fork-migration-2.txt" "6 skipped" "fork migration: a run after migrating leaves every repo up to date"
 
-    # One hook stale at a time: each migration alone must still be staged and
-    # committed, since the other hook's registration cannot carry it along.
-    # fleet-memory alone is the common case: most fleet repos have no
-    # skills.lock, so only fleet-memory is ever registered there.
+    # The migration alone must still be staged and committed. (fleet-memory.sh
+    # was the other migrated hook until ADR 0043 stopped registering it.)
     local hook state
-    for hook in skills-bootstrap.sh fleet-memory.sh; do
+    for hook in skills-bootstrap.sh; do
         git -C "$w" fetch -q origin main >/dev/null 2>&1 && git -C "$w" reset -q --hard FETCH_HEAD
         python3 - "$w/.claude/settings.json" "$hook" <<'PY'
 import json, sys
@@ -7910,8 +7873,8 @@ test_sync_bootstrap_dry_run() {
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would add .github/fleet-contributor-rules.md" "dry-run: names the contributor rules it would add"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would NOT touch skills.lock" "dry-run: states that skills.lock is never touched"
     assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "no skills.lock in the repo yet" "dry-run: explains the withheld repo"
-    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would write $GREC_REL_PATH_T (guidance-load record hook missing)" "dry-run: names the guidance-load-record hook it would add"
-    assert_contains "$TEST_DIR/sync-bootstrap-dry.txt" "[DRY RUN] Would register guidance-load-record.sh on Stop in .claude/settings.json" "dry-run: names the Stop registration"
+    assert_not_contains "$TEST_DIR/sync-bootstrap-dry.txt" "guidance-load record hook" "dry-run: no guidance-load-record delivery (ADR 0043)"
+    assert_not_contains "$TEST_DIR/sync-bootstrap-dry.txt" "Would register guidance-load-record.sh" "dry-run: no Stop registration (ADR 0043)"
 
     # A dry run must change nothing at all.
     local v="$TEST_DIR/verify-dry"
@@ -7958,8 +7921,7 @@ test_sync_bootstrap_pr_body() {
     assert_contains "$body" "always-on context" "PR body: discloses the standing context cost"
     assert_contains "$body" "existing entries are preserved" "PR body: states that existing SessionStart entries survive"
     assert_contains "$body" "sha256 verified before writing" "PR body: states the delivered bytes were digest-verified"
-    assert_contains "$body" "This PR also delivers \`.claude/hooks/guidance-load-record.sh\`" "PR body: the guidance-load-record hook is called out"
-    assert_prose_contains "$body" "the line holds no paths, names or content" "PR body: states what the guidance-load record never holds"
+    assert_not_contains "$body" "guidance-load-record.sh" "PR body: no guidance-load-record delivery (ADR 0043)"
 
     rm -f "$TEST_DIR/bare/bootorg_repo-adopted/hooks/pre-receive"
 }
@@ -27372,6 +27334,273 @@ test_self_hosted_guidance_record() {
     fi
 }
 
+# ── deregister-hook.sh: take back exactly what the sync wrote (ADR 0043) ───
+#
+# The inverse of register-bootstrap-hook.sh. What it must never do is the
+# thing a removal tool does wrong quietly: take a neighbor with it. So every
+# case below holds a foreign entry next to ours and asserts it survives, in
+# place, with its group's matcher; and every refusal leaves the bytes alone.
+test_deregister_hook() {
+    echo ""
+    echo "=== Test: deregister-hook.sh (exact-command removal) ==="
+    local s="$REPO_ROOT/scripts/deregister-hook.sh" d="$TEST_DIR/dereg" out rc
+    local fm='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh"'
+    mkdir -p "$d"
+    dereg() {   # <event> <file> [--check]
+        local ev="$1" f="$2"; shift 2
+        DEREGISTER_EVENT="$ev" DEREGISTER_COMMAND="$fm" "$s" "$@" "$f"
+    }
+
+    cat > "$d/mixed.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"", "timeout": 30}]},
+      {"matcher": "startup|resume|fork", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh\"", "timeout": 30}]},
+      {"matcher": "startup", "hooks": [
+        {"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh\"", "timeout": 5},
+        {"type": "command", "command": "echo mine"}]},
+      {"matcher": "startup", "hooks": [{"type": "command", "command": "bash .claude/hooks/fleet-memory.sh --mine"}]},
+      "not-a-group"
+    ],
+    "Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh\""}]}]
+  },
+  "worktree": {"symlinkDirectories": ["vendor"]}
+}
+JSON
+    cp "$d/mixed.json" "$d/mixed.orig"
+
+    rc=0; out=$(dereg SessionStart "$d/mixed.json" --check) || rc=$?
+    if [[ $rc -eq 0 && "$out" == "would-remove 2" ]] && cmp -s "$d/mixed.json" "$d/mixed.orig"; then
+        pass "deregister: --check counts both exact entries and writes nothing"
+    else
+        fail "deregister: --check printed '$out' (exit $rc) or wrote the file"
+    fi
+
+    rc=0; out=$(dereg SessionStart "$d/mixed.json") || rc=$?
+    local want
+    want=$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+ss = d["hooks"]["SessionStart"]
+print(json.dumps([
+    len(ss),
+    ss[0]["hooks"][0]["command"],
+    ss[1]["matcher"], [h["command"] for h in ss[1]["hooks"]],
+    ss[2]["hooks"][0]["command"],
+    ss[3],
+    d["hooks"]["Stop"][0]["hooks"][0]["command"].endswith("fleet-memory.sh\""),
+    d["worktree"],
+]))' "$d/mixed.json" 2>&1) || want="unreadable: $want"
+    local expect='[4, "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"", "startup", ["echo mine"], "bash .claude/hooks/fleet-memory.sh --mine", "not-a-group", true, {"symlinkDirectories": ["vendor"]}]'
+    if [[ $rc -eq 0 && "$out" == "removed 2" && "$want" == "$expect" ]]; then
+        pass "deregister: removes only the exact entries; drops the group it emptied; keeps a shared group's other entry and matcher, a hand-edited entry, a non-group element, other events and other keys"
+    else
+        fail "deregister: removal result '$out' (exit $rc) — got $want"
+    fi
+
+    rc=0; out=$(dereg SessionStart "$d/mixed.json") || rc=$?
+    cp "$d/mixed.json" "$d/after-first"
+    if [[ $rc -eq 0 && "$out" == "not-registered" ]] && cmp -s "$d/mixed.json" "$d/after-first"; then
+        pass "deregister: a second run is a no-op"
+    else
+        fail "deregister: second run printed '$out' (exit $rc)"
+    fi
+
+    # Removing the last entry of the last event drops the event and `hooks`.
+    printf '{"hooks": {"Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash \\"$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh\\""}]}]}, "disableSkillShellExecution": true}\n' > "$d/only.json"
+    rc=0; out=$(dereg Stop "$d/only.json") || rc=$?
+    if [[ $rc -eq 0 && "$out" == "removed 1" ]] \
+        && [[ "$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$d/only.json")" == '{"disableSkillShellExecution": true}' ]]; then
+        pass "deregister: an emptied event and an emptied hooks object are dropped, other keys kept"
+    else
+        fail "deregister: emptied containers — '$out' (exit $rc): $(cat "$d/only.json")"
+    fi
+
+    local f
+    for f in missing empty; do
+        [[ $f == empty ]] && : > "$d/$f.json"
+        rc=0; out=$(dereg SessionStart "$d/$f.json") || rc=$?
+        if [[ $rc -eq 0 && "$out" == "not-registered" && ( $f == empty || ! -e "$d/$f.json" ) ]]; then
+            pass "deregister: a $f settings file is not-registered and is not created"
+        else
+            fail "deregister: $f settings file — '$out' (exit $rc)"
+        fi
+    done
+
+    printf '{ not json\n' > "$d/bad.json"; cp "$d/bad.json" "$d/bad.orig"
+    printf '{"hooks": ["SessionStart"]}\n' > "$d/badtype.json"; cp "$d/badtype.json" "$d/badtype.orig"
+    printf '{"hooks": {"SessionStart": {"x": 1}}}\n' > "$d/badevent.json"; cp "$d/badevent.json" "$d/badevent.orig"
+    for f in bad badtype badevent; do
+        rc=0; out=$(dereg SessionStart "$d/$f.json") || rc=$?
+        if [[ $rc -eq 3 && "$out" == "refused-unparseable" ]] && cmp -s "$d/$f.json" "$d/$f.orig"; then
+            pass "deregister: $f settings is refused (exit 3) and left byte for byte"
+        else
+            fail "deregister: $f settings — '$out' (exit $rc), or the file changed"
+        fi
+    done
+
+    rc=0; DEREGISTER_EVENT=SessionStart "$s" "$d/mixed.json" >/dev/null 2>&1 || rc=$?
+    [[ $rc -eq 2 ]] && pass "deregister: no command is a usage error (exit 2)" \
+                    || fail "deregister: no command exited $rc, want 2"
+}
+
+# ── sync.sh removes the owner-only payload from consumer repos (ADR 0043) ──
+#
+# The one lane in sync.sh that deletes. Fixtures carry what the old sync
+# delivered (the three files and both registrations) beside entries that are
+# not the sync's: a foreign SessionStart group, a foreign Stop entry sharing
+# our group, a hand-edited fleet-memory entry, the agent-checks guard. Only
+# the sync's own bytes may go.
+setup_retire_repos() {
+    local bare_dir="$1" work="$TEST_DIR/retire-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in rt-full rt-unparseable rt-clean rt-ignored; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/retireorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        case "$name" in
+            rt-full|rt-unparseable|rt-ignored)
+                mkdir -p "$work/$name/.claude/hooks"
+                printf 'old payload\n' > "$work/$name/.claude/hooks/fleet-guidance.md"
+                printf '#!/usr/bin/env bash\n# an older fleet-memory\n' > "$work/$name/.claude/hooks/fleet-memory.sh"
+                printf '#!/usr/bin/env bash\n# an older guidance-load-record\n' > "$work/$name/.claude/hooks/guidance-load-record.sh"
+                ;;
+        esac
+        case "$name" in
+            rt-full)
+                cat > "$work/$name/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"", "timeout": 30}]},
+      {"matcher": "startup|resume|fork", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh\"", "timeout": 30}]},
+      {"matcher": "startup", "hooks": [{"type": "command", "command": "bash .claude/hooks/fleet-memory.sh --mine"}]}
+    ],
+    "Stop": [
+      {"matcher": "*", "hooks": [
+        {"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh\"", "timeout": 20},
+        {"type": "command", "command": "echo stop-mine"}]}
+    ]
+  },
+  "disableSkillShellExecution": true
+}
+JSON
+                ;;
+            rt-unparseable) printf '{ this is not json\n' > "$work/$name/.claude/settings.json" ;;
+            rt-ignored)
+                # Tracked before the ignore line arrived: the files are the
+                # sync's and go; the settings it may not touch.
+                printf '.claude/\n' > "$work/$name/.gitignore"
+                gattr_git -C "$work/$name" add -f .claude/hooks
+                ;;
+        esac
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/retireorg_$name" HEAD:main 2>/dev/null
+    done
+    cp "$work/rt-unparseable/.claude/settings.json" "$TEST_DIR/retire-unparseable.orig"
+}
+
+test_sync_retires_owner_payload() {
+    echo ""
+    echo "=== Test: sync.sh removes the owner-only payload and its entries (ADR 0043) ==="
+    local bare="$TEST_DIR/retire-bare" out="$TEST_DIR/retire-sync" r p before
+    setup_retire_repos "$bare"
+    mkdir -p "$out"
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/retire-repos.yml"
+    run_retire_sync() {   # <log> [--dry-run]
+        local log="$1"; shift
+        GITHUB_REPOSITORY_OWNER=retireorg \
+        MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/retire-pr-bodies" \
+        REPOS_YML="$TEST_DIR/retire-repos.yml" \
+        PATH="$TEST_DIR/bin:$PATH" \
+        "$REPO_ROOT/scripts/sync.sh" "$@" > "$log" 2>&1
+    }
+    rt_show() { gattr_git -C "$bare/retireorg_$1" show "main:$2" 2>/dev/null; }
+    rt_sha() { gattr_git -C "$bare/retireorg_$1" rev-parse main; }
+
+    # Dry run: names every removal, writes nothing.
+    before=$(for r in rt-full rt-unparseable rt-clean rt-ignored; do rt_sha "$r"; done)
+    run_retire_sync "$out/dry.txt" --dry-run || true
+    for p in .claude/hooks/fleet-guidance.md .claude/hooks/fleet-memory.sh .claude/hooks/guidance-load-record.sh; do
+        assert_contains "$out/dry.txt" "[DRY RUN] Would remove $p (ADR 0043" "retire dry-run: names $p"
+    done
+    assert_contains "$out/dry.txt" "[DRY RUN] Would remove the fleet-memory.sh SessionStart entry from .claude/settings.json (exact command match" "retire dry-run: names the SessionStart entry"
+    assert_contains "$out/dry.txt" "[DRY RUN] Would remove the guidance-load-record.sh Stop entry from .claude/settings.json (exact command match" "retire dry-run: names the Stop entry"
+    if [[ "$before" == "$(for r in rt-full rt-unparseable rt-clean rt-ignored; do rt_sha "$r"; done)" ]]; then
+        pass "retire dry-run: no ref moved"
+    else
+        fail "retire dry-run: a default branch moved"
+    fi
+
+    run_retire_sync "$out/run.txt" || true
+    for r in rt-full rt-unparseable rt-ignored; do
+        for p in .claude/hooks/fleet-guidance.md .claude/hooks/fleet-memory.sh .claude/hooks/guidance-load-record.sh; do
+            if gattr_git -C "$bare/retireorg_$r" cat-file -e "main:$p" 2>/dev/null; then
+                fail "retire: $r still tracks $p"
+            else
+                pass "retire: $r no longer tracks $p"
+            fi
+        done
+    done
+
+    local got
+    got=$(rt_show rt-full .claude/settings.json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+ss, st = d["hooks"]["SessionStart"], d["hooks"]["Stop"]
+print(json.dumps([[g["matcher"] for g in ss], [h["command"] for g in ss for h in g["hooks"]],
+                  [g["matcher"] for g in st], [h["command"] for g in st for h in g["hooks"]],
+                  d["disableSkillShellExecution"]]))' 2>&1) || got="unreadable: $got"
+    local expect='[["startup|resume", "startup"], ["bash \"$CLAUDE_PROJECT_DIR/scripts/setup-hooks.sh\"", "bash .claude/hooks/fleet-memory.sh --mine"], ["*"], ["echo stop-mine"], true]'
+    if [[ "$got" == "$expect" ]]; then
+        pass "retire: settings.json lost exactly the two entries the sync wrote; foreign, shared-group and hand-edited entries stay"
+    else
+        fail "retire: settings.json after removal — got $got"
+    fi
+    if rt_show rt-unparseable .claude/settings.json | cmp -s - "$TEST_DIR/retire-unparseable.orig"; then
+        pass "retire: an unparseable settings.json is left byte for byte"
+    else
+        fail "retire: the unparseable settings.json was changed"
+    fi
+    assert_contains "$out/run.txt" "WARN: .claude/settings.json is not parseable JSON — any retired fleet-memory or guidance-load-record entry in it is left for the repo to remove." "retire: the unparseable repo is warned about"
+    if [[ -z "$(rt_show rt-ignored .claude/settings.json)" ]]; then
+        pass "retire: no settings.json written into a repo that gitignores .claude/"
+    else
+        fail "retire: a settings.json appeared in the ignored repo"
+    fi
+    if gattr_git -C "$bare/retireorg_rt-full" log -1 --format=%B main | grep -qF "Removes the owner-only fleet guidance this sync used to deliver"; then
+        pass "retire: the commit message says what was removed"
+    else
+        fail "retire: the commit message does not describe the removal"
+    fi
+    if awk '/=== retireorg\/rt-clean ===/{on=1} on && /=== retireorg\/rt-[a-z]+ ===/ && !/rt-clean/{on=0} on' "$out/run.txt" | grep -qF "retired payload: files=0 fleet-memory-entry=not-registered guidance-load-record-entry=not-registered"; then
+        pass "retire: a repo with nothing retired is classified clean"
+    else
+        fail "retire: rt-clean was not classified clean"
+    fi
+    for r in rt-full rt-clean; do
+        if cmp -s <(rt_show "$r" .github/fleet-contributor-rules.md) "$REPO_ROOT/.github/fleet-contributor-rules.md"; then
+            pass "retire: $r keeps (or gets) the contributor rules"
+        else
+            fail "retire: $r lacks the contributor rules"
+        fi
+    done
+
+    # A second run removes nothing more and moves no ref.
+    before=$(for r in rt-full rt-unparseable rt-clean rt-ignored; do rt_sha "$r"; done)
+    run_retire_sync "$out/rerun.txt" || true
+    if [[ "$before" == "$(for r in rt-full rt-unparseable rt-clean rt-ignored; do rt_sha "$r"; done)" ]] \
+        && ! grep -qF "retired payload: .claude" "$out/rerun.txt"; then
+        pass "retire: a re-run is a no-op"
+    else
+        fail "retire: the re-run moved a ref or removed something again"
+    fi
+}
+
 TEST_GROUPS=(
     runner
     codex_memory_audit
@@ -27402,6 +27631,7 @@ GROUP_sync=(
     test_bridge_status
     test_bootstrap_status
     test_register_bootstrap_hook
+    test_deregister_hook
     test_set_skill_shell_setting
     # Before the first sync that writes anything, so "not one ref moved" is
     # measured against pristine bares rather than against whatever the previous
@@ -27450,6 +27680,7 @@ GROUP_bootstrap=(
     test_drift_report_probe_cleanup
     test_sync_bootstrap_bad_digest
     test_sync_bootstrap_pr_body
+    test_sync_retires_owner_payload
 )
 
 # Drift reports over testorg that used to sit inside the bootstrap lane. They

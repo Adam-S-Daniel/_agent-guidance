@@ -33,8 +33,8 @@
 #   • verify-actions-lock is NOT excluded, although it is a published Action:
 #     the sync reaches it like any fleet repo, with the stub AGENTS.md, the
 #     agent-checks runner, CI check and guard, and skills-bootstrap per its
-#     skills.lock. Until ADR 0043 step 5 it also gets the owner payload and
-#     its hooks; after it, the contributor file in their place. Whether to
+#     skills.lock, and the contributor file. Since ADR 0043 step 5 the sync
+#     removes the owner payload and its hooks there as everywhere. Whether to
 #     exclude it is a separate question.
 exclude:
   - acsi-kit
@@ -332,8 +332,8 @@ dependabot_auto_merge:
 # repo: the runner `.githooks/agent-checks` (managed, overwritten on drift), the
 # `agent-checks` CI workflow (added once; skipped where any workflow already
 # runs the runner, or where actions.lock pins the actions), the Claude Code
-# PreToolUse guard against --no-verify (managed, wherever fleet-memory can be
-# delivered), and a `.githooks/* text eol=lf` line in .gitattributes. Only a
+# PreToolUse guard against --no-verify (managed, wherever `.claude/` is not
+# gitignored and settings.json parses), and a `.githooks/* text eol=lf` line in .gitattributes. Only a
 # literal `true` turns it on.
 agent_checks:
   deliver: true

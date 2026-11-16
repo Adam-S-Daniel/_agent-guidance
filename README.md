@@ -45,11 +45,10 @@ The skills that used to live here (`debug-github-workflows`,
 - `scripts/drift-report.sh` (CI: nightly `drift-report.yml`) writes
   `drift-report.md`, a dashboard of which repos are missing or out of date,
   including a "CLAUDE.md bridge" column (`bridge-ok` / `no-import` /
-  `missing`) and byte comparisons for the fleet-memory hook and guidance
-  payload. The generated AGENTS.md `Mode` header records the sync's delivery
-  decision: a stub-mode repo needs both files, while a full-mode repo keeps
-  guidance inline. Without a recognized mode, missing files stay unverified;
-  a present payload's expected and found SHA-256 prefixes appear in Notes.
+  `missing`), a byte comparison for `.github/fleet-contributor-rules.md`, and
+  the fleet-memory hook and guidance payload columns, which since ADR 0043 read
+  **leftover** when a repo still tracks either retired file (the next sync
+  removes it).
   Notes also says `gitattr-ok` or `gitattr-missing` for the `.gitattributes`
   line above.
   This tracks **guidance delivery drift** — it is the guidance layer
@@ -499,8 +498,8 @@ Mechanics:
   forked session reports source `fork`, not `resume`. A group the sync wrote
   earlier with `startup|resume` and nothing but its own hook reads as
   `stale-matcher`, and the next sync widens that one matcher in place; a
-  hand-tuned matcher or a shared group is left alone. Both `fleet-memory.sh`
-  and `skills-bootstrap.sh` migrate this way, and re-running
+  hand-tuned matcher or a shared group is left alone. `skills-bootstrap.sh`
+  migrates this way (as `fleet-memory.sh` did until ADR 0043), and re-running
   `scripts/register-memory-home-hook.sh` does the same for a machine.
 - A hook that **drifts** from the pin is overwritten (it is machinery with no
   repo-specific seam; the escape hatch is the allowlist, not a `fix_*` flag).

@@ -640,7 +640,7 @@ holds, each read fresh:
    `skills/<skill>/` in cms-platform, `.claude/skills/<skill>/` in
    adamdaniel.ai), and that directory no longer exists at the head. No file
    that the _agent-guidance sync manages changes (`.githooks/`,
-   `.claude/hooks/fleet-guidance.md`, or `AGENTS.md` above its
+   `.github/fleet-contributor-rules.md`, or `AGENTS.md` above its
    `## Repo-specific additions` heading). In adamdaniel.ai, whose merge
    publishes the site, every changed file is under `.claude/` or `docs/`,
    or is `AGENTS.md`, `CLAUDE.md`, `README.md` or `skills.lock`; anything

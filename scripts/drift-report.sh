@@ -9,7 +9,8 @@ set -euo pipefail
 #   • Whether the repo-specific marker header is present
 #   • Whether CLAUDE.md imports @AGENTS.md (the Claude Code bridge)
 #   • Whether the skills-bootstrap hook is delivered, current and REGISTERED
-#   • Whether the fleet-memory hook and guidance payload match their sources
+#   • Whether a retired fleet-memory hook or guidance payload is left over
+#     (ADR 0043), and whether the contributor rules match their source
 #   • Whether the plugin's bundled copies of both match (adam-agentskills#113)
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
@@ -38,8 +39,6 @@ BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
 FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
-FLEET_HOOK_SOURCE="$REPO_ROOT/$FLEET_HOOK_REL_PATH"
-FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 # ADR 0043: the generated contributor rules sync.sh delivers in every mode.
 CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
 CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
@@ -1179,7 +1178,7 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
-    # ── Check fleet-memory delivery ────────────────────────────────────
+    # ── Check for the retired fleet-memory payload (ADR 0043) ──────────
     # Read to files: command substitution strips trailing newlines, which are
     # part of both installed artifacts and must remain visible to cmp/hash.
     fleet_hook_file="$WORK_DIR/fleet-hook"
@@ -1191,41 +1190,28 @@ for repo_name in "${REPOS[@]}"; do
     fetch_file_content "$repo_name" "$FLEET_PAYLOAD_REL_PATH" >"$fleet_payload_file" || fleet_payload_rc=$?
     fleet_payload_present="$FETCH_FILE_PRESENT"
 
+    # ADR 0043: sync.sh no longer delivers either file, and removes any copy a
+    # repo still tracks. So absence is the expected state in every mode, and
+    # a present copy is **leftover**: drift the next sync clears. Its bytes
+    # are not compared; a current copy is as much a leftover as a stale one.
     if [[ "$fleet_hook_rc" -ne 0 ]]; then
         fetch_failed_paths+=("$FLEET_HOOK_REL_PATH")
         fleet_hook_cell="?"
     elif [[ "$fleet_hook_present" == "yes" ]]; then
-        if cmp -s "$FLEET_HOOK_SOURCE" "$fleet_hook_file"; then
-            fleet_hook_cell="ok"
-        else
-            fleet_hook_cell="**drifted**"
-            fleet_drift=true
-        fi
-    elif [[ "$fleet_mode" == "stub" ]]; then
-        fleet_hook_cell="**missing**"
+        fleet_hook_cell="**leftover**"
         fleet_drift=true
-    elif [[ "$fleet_mode" == "full" ]]; then
+    else
         fleet_hook_cell="—"
     fi
 
-    expected_sha=$(sha256sum "$FLEET_PAYLOAD_SOURCE")
     if [[ "$fleet_payload_rc" -ne 0 ]]; then
         fetch_failed_paths+=("$FLEET_PAYLOAD_REL_PATH")
         fleet_payload_cell="?"
     elif [[ "$fleet_payload_present" == "yes" ]]; then
-        if cmp -s "$FLEET_PAYLOAD_SOURCE" "$fleet_payload_file"; then
-            fleet_payload_cell="ok"
-        else
-            fleet_payload_cell="**drifted**"
-            fleet_drift=true
-        fi
-        found_sha=$(sha256sum "$fleet_payload_file")
-        notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found \`${found_sha:0:8}\`"
-    elif [[ "$fleet_mode" == "stub" ]]; then
-        fleet_payload_cell="**missing**"
+        fleet_payload_cell="**leftover**"
         fleet_drift=true
-        notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found missing"
-    elif [[ "$fleet_mode" == "full" ]]; then
+        notes="${notes:+$notes; }leftover \`$FLEET_PAYLOAD_REL_PATH\` (ADR 0043 retired it; the next sync removes it)"
+    else
         fleet_payload_cell="—"
     fi
 
@@ -1723,24 +1709,23 @@ fi
     echo "| — | Not allowlisted and no hook present |"
     echo "| ? | A file this column is decided from (the hook, \`skills.lock\`, \`.claude/settings.json\`, or the repo's ignore rules) could not be read — withheld, not guessed (the row reads **fetch-failed**) |"
     echo ""
-    echo "**fleet-memory and fleet-guidance legend**"
+    echo "**fleet-memory, fleet-guidance and contributor-rules legend**"
     echo ""
-    echo "The generated AGENTS.md \`Mode\` header records sync.sh's delivery decision:"
-    echo "\`stub\` requires both files; \`full\` keeps the guidance inline. An"
-    echo "unknown mode does not establish that absent files are missing. Present"
-    echo "files are compared byte for byte in every mode. A drifted payload's"
-    echo "expected and found eight-character sha256 prefixes appear in **Notes**."
-    echo "The contributor-rules column compares \`.github/fleet-contributor-rules.md\`"
-    echo "the same way, but it is delivered in both modes, so absence is **missing**"
-    echo "whatever the mode."
+    echo "ADR 0043 retired \`.claude/hooks/fleet-memory.sh\` and"
+    echo "\`.claude/hooks/fleet-guidance.md\` from consumer repos: the sync removes any"
+    echo "copy a repo still tracks, so in those two columns absence is the expected"
+    echo "state and a present copy is **leftover**. The contributor-rules column"
+    echo "compares \`.github/fleet-contributor-rules.md\` byte for byte with the source"
+    echo "in this repo; it is delivered in every mode, so absence is **missing**."
     echo ""
     echo "| Status | Meaning |"
     echo "|--------|---------|"
-    echo "| ok | Present and byte-equal to the source in this repo |"
-    echo "| **drifted** | Present but its bytes differ from the source |"
-    echo "| **missing** | Absent in a stub-mode repo that requires it |"
-    echo "| — | Absent in a full-mode repo |"
-    echo "| unverified | Absent and AGENTS.md has no recognized mode |"
+    echo "| ok | contributor-rules: present and byte-equal to the source in this repo |"
+    echo "| **drifted** | contributor-rules: present but its bytes differ from the source |"
+    echo "| **missing** | contributor-rules: absent |"
+    echo "| **leftover** | fleet-memory or fleet-guidance: a retired file is still tracked — the next sync removes it |"
+    echo "| — | fleet-memory or fleet-guidance: absent, as expected |"
+    echo "| unverified | Not checked this run |"
     echo "| ? | Contents read failed or was partial — withheld; the row reads **fetch-failed** |"
     echo ""
     echo "**Cron-coverage classification**"
