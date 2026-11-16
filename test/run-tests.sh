@@ -11624,7 +11624,7 @@ RENDER
                 #     cannot put a per-source question about any source" —
                 #     no flag spelled, and false of a generator that carries
                 #     `--only`. Reverting that line to its old wording left
-                #     this lane at 13 passed / 0 failed while the flag-naming
+                #     this lane at 14 passed / 0 failed while the flag-naming
                 #     rule below was already live, so the trigger reads
                 #     capability ascription too, not just flag spellings.
                 #
@@ -11739,7 +11739,7 @@ sys.exit(0 if re.search(r"listed below|below was checked", flat) else 1)
                 # cell and the check passed over a body that named no
                 # --source-repo at all. Measured: rewording that clause to
                 # "SHAPE half of what this PR ran" and dropping the flag left
-                # test_bump_pr_claims_cross_product at 13 passed / 0 failed.
+                # test_bump_pr_claims_cross_product at 14 passed / 0 failed.
                 # `format` + advancing is the condition claim_holds uses to
                 # emit repro_shape_half, and it is what the sibling check
                 # above already keys on.
@@ -11762,7 +11762,7 @@ sys.exit(0 if re.search(r"listed below|below was checked", flat) else 1)
                 # word cannot span "Each federated source was put its OWN" —
                 # measured, that restores the unrestricted claim over a body
                 # that still says one source's question "was not put", at
-                # 13 passed / 0 failed here and 681 passed / 0 failed on the
+                # 14 passed / 0 failed here and 681 passed / 0 failed on the
                 # full gate. It also saw none of the three OTHER unrestricted
                 # quantifiers in the same artifact ("was asked once per source",
                 # "One scoped question per source"), which are denied by that
@@ -14188,14 +14188,14 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "21" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 21 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "22" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 22 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=21, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=22, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
-# The fleet worker fire workflow (fleet-worker-fire.yml): every 3 hours (or
+# The fleet worker fire workflow (fleet-worker-fire.yml): a matrix of the fleet and loop workers, each (or
 # thinned by FLEET_WORKER_EVERY_HOURS), the bearer on stdin only, an
 # unconfigured URL or bearer fails. Never piped.
 test_fleet_worker_fire() {
@@ -14206,10 +14206,10 @@ test_fleet_worker_fire() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "10" && "$fail_n" == "0" ]]; then
-        pass "fleet worker fire workflow: 10 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "14" && "$fail_n" == "0" ]]; then
+        pass "fleet worker fire workflow: 14 passed"
     else
-        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=10, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=14, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 

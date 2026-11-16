@@ -425,3 +425,18 @@ test('eval-protected subjects get correctness findings and fixes only (ADR 0033)
   includes(prose(section(worker, 'The issue pass')), ['Hold every other finding on a listed subject', 'closed as not planned']);
   assert.ok(fs.existsSync(path.join(root, 'scripts/eval-protected.js')), 'the gate script the specs name is missing');
 });
+
+test('fleet worker splits into a loop role and a maintenance role (ADR 0046)', () => {
+  const two = prose(section(worker, 'Two tasks'));
+  includes(two, ['**A run whose prompt names no role does all of both**', 'the existing task keeps working', 'until the owner pastes the new prompts', 'Step 2e (skill removals)', 'The lesson-check pass', 'The `Lessons:` summary line', 'The PRs the loop role handles', 'Every other `agent-ready` issue is the maintenance role\'s', 'each one falls to exactly one role', '`Prompt-audit sweep <YYYY-MM-DD>: `', '`Prompt-audit sweep trigger: `', '`Memory promotion <YYYY-MM-DD>: `', '`Retire skill <skill>: `', 'label `hook-proposal`', 'A maintenance run\'s summary has no `Lessons:` line']);
+  const trigger = prose(section(worker, 'The trigger'));
+  includes(trigger, ['Model: Sonnet 5.5, set explicitly', 'the GitHub connector only', 'This run\'s role is maintenance.', 'This run\'s role is loop.', '`LOOP_WORKER_FIRE_URL`', '`LOOP_WORKER_FIRE_BEARER`', '`LOOP_WORKER_EVERY_HOURS`', 'required, no default']);
+  // The maintenance prompt is not authorized for the loop's extra writes.
+  const maintenance = trigger.slice(trigger.indexOf('This run\'s role is maintenance.'), trigger.indexOf('This run\'s role is loop.'));
+  for (const word of ['retire-skill', 'loop-withdrawn', 'auto-merge']) assert.ok(!maintenance.includes(word), `maintenance prompt must not authorize ${word}`);
+  const loop = trigger.slice(trigger.indexOf('This run\'s role is loop.'));
+  includes(loop, ['loop-withdrawn', 'retire-skill/* branches', 'arming auto-merge only on its lesson-check PRs']);
+  const adr46 = 'docs/decisions/0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md';
+  includes(prose(section(adr46, 'Decision')), ['A run whose prompt names no role does all of both', '`LOOP_WORKER_EVERY_HOURS`', 'required with no default', 'its own concurrency group']);
+  includes(read('docs/decisions/README.md'), ['[0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md)']);
+});

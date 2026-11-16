@@ -61,6 +61,7 @@ a page.
 | [0043](0043-the-owner-only-guidance-leaves-the-consumer-repos.md) | The owner-only guidance leaves the consumer repos, and the stub stays the only per-repo copy |
 | [0044](0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md) | The fleet worker removes skills the eval verdict retires |
 | [0045](0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md) | The fleet worker merges its own reviewed issue fixes |
+| [0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md) | The fleet worker splits into a loop worker and a maintenance worker |
 
 ## Format
 
