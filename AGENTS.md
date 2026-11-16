@@ -59,17 +59,20 @@ Automation that could merge a PR changing `agents-md/base.md` or
 person may merge any time, but a manual merge outside the window restarts every
 guidance section's eval evidence.
 
-**`agents-md/base.md` is the fleet-memory payload, with a mirror.** Every edit to
-it is copied byte for byte to `.claude/hooks/fleet-guidance.md`, which this
-repo's own sessions load. CI's "Fleet payload mirrors base.md" step
-(`scripts/check-fleet-guidance-mirror.js`) fails on any difference and names the
-fix. A PR that changes `base.md` shows the payload consumers receive on their
-next session; one that changes `stub.md` shows the text each consumer repo's
-`AGENTS.md` gets on the next sync.
-
-Why it is committed here at all, when `sync.sh` writes it everywhere else: the
-sync excludes its own repo (`SYNC_SELF_REPO`), so without this copy it would be
-the one repo in the fleet whose agents never read the fleet's guidance.
+**`agents-md/base.md` is the owner's full payload; no repo ships a copy**
+([ADR 0043](docs/decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md)).
+The owner's sessions install it from the owner's own routes (the plugin's
+SessionStart hook and the cloud environments' setup script). Consumer repos,
+this one included, carry only the stub and `.github/fleet-contributor-rules.md`,
+which `scripts/build-contributor-rules.js` builds from `base.md` and CI
+regenerates and diffs. `scripts/sync.sh` removes a leftover
+`.claude/hooks/fleet-guidance.md`, `fleet-memory.sh` or `guidance-load-record.sh`
+from a consumer, along with exactly the `settings.json` entries it once wrote
+for them. This repo keeps `fleet-memory.sh` and `guidance-load-record.sh`
+because they are the source the owner's routes download, and the tests run
+them. A PR that changes `base.md` shows the owner's next payload; one that
+changes `stub.md` shows the text each consumer repo's `AGENTS.md` gets on the
+next sync.
 
 Regenerate with:
 

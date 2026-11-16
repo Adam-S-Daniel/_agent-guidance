@@ -407,16 +407,16 @@ guidance view.
 The harness is described in skills-evals'
 [DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
 
-### Payload mirror
+### Guidance markers and evidence pointers
 
-This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
-byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
-nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
-(CI: the "Fleet payload mirrors base.md" step in
-[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails when
-the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
-pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
-exist.
+[`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
+(CI: the "Guidance markers and evidence pointers" step in
+[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails
+when a `docs/evidence/<file>` pointer in `base.md`, `stub.md` or `sections/*.md`
+names a file that does not exist, or when a `guidance-marker:` line the
+guidance-load Stop hook counts is missing, duplicated or in the wrong file. No
+repo carries a copy of `base.md` any more (ADR 0043); the owner's own setup
+installs it into the owner's sessions.
 
 ### Agent Markdown warnings
 
@@ -426,8 +426,7 @@ push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
 whatever it finds, so it cannot fail the `checks` job or, through it, the
 required `test` context. It prints one
 `::warning file=...,line=...` annotation per finding over the Markdown agents
-read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
-`.claude/hooks/fleet-guidance.md`):
+read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`):
 
 - **British spellings**, from a fixed word list in the script (no generic
   `-ise` pattern). Fenced and inline code, block quotes, HTML and URLs are
