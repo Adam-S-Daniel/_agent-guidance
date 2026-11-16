@@ -124,6 +124,11 @@ as passing. **Adding a test group means adding it to one shard** in `ci.yml`'s
 from `./test/run-tests.sh --list-groups` exactly once. Balance shards by the
 per-group seconds in the suite's `Groups` table, not by count.
 
+**Running the suite outside CI needs mikefarah `yq` v4 first on `PATH`**, at
+the `YQ_VERSION` `ci.yml` pins. Cloud images ship the Python `yq` at
+`/usr/bin/yq`, and with it several hundred sync and drift tests fail
+spuriously; check with `yq --version` (mikefarah's names its GitHub URL).
+
 **Each `suite` shard starts with a scope step** (`scripts/ci-scope.sh`), and
 every later step waits on its `run` output, so a shard a change does not need
 still reports success. `checks` always runs: its gates are cheap and tests
