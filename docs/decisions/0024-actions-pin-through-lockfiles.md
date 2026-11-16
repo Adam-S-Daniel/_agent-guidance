@@ -60,7 +60,7 @@ tested for the row.
 | API unreachable | — | exit 0, `reachability-unknown` (warning) | exit 1, `valid: false`, `reachability-unknown` (error, `"retryable": true`) |
 | Pin disagreeing with its tag (an older commit in the tag's history) | — | exit 1, `unreachable-pin` | exit 1, `tag-commit-mismatch` (error) |
 | Pin not in the action's history (a commit that does not exist) | — | not run | exit 1, `unreachable-pin` (error) |
-| Nested pin unchanged across a composite bump (`DeterminateSystems/update-flake-lock@v28` bumped to `@v29`, regenerated with a plain run; its child `DamianReeves/write-file-action@6929a9a…` has a mixed-case owner, [github/gh-actions-lock#257](https://github.com/github/gh-actions-lock/issues/257)) | v0.4.1: all five child pins kept, that one in both the parent's `uses:` and `dependencies:`; v0.4.0 not run | not run | exit 0, valid, no findings |
+| Nested pin unchanged across a composite bump (`DeterminateSystems/update-flake-lock@v28` bumped to `@v29`, regenerated with a plain run; its child `DamianReeves/write-file-action@6929a9a…` has a mixed-case owner, [github/gh-actions-lock#257](https://github.com/github/gh-actions-lock/issues/257)) | v0.4.1: all five child pins kept, that one in both the parent's `uses:` and `dependencies:`; v0.4.0 (2026-11-16): that one pin dropped from both | not run | exit 0, valid, no findings (v0.4.0: exit 1, invalid, `incomplete-lockfile`) |
 
 Linters, on a workflow with a `$/` action step and a `$/` workflow call:
 

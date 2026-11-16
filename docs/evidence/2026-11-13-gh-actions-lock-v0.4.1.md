@@ -28,8 +28,9 @@ under [ADR 0018](../decisions/0018-incident-narratives-live-in-docs-evidence.md)
   `gh actions-lock --no-narrow --no-interactive`, then checked with
   `gh actions-lock --verify --no-interactive --json=valid,findings`. Exit codes
   below are the extension's own, captured unpiped.
-- **Only v0.4.1 was run.** No other version was downloaded, so the v0.4.0 side
-  of the nested-pin case is not reproduced (see that section).
+- **Only v0.4.1 was run on 2026-11-13.** The v0.4.0 side of the nested-pin
+  case was added on 2026-11-16 (see that section); every other row is v0.4.1
+  only.
 
 Fixed commits used: `actions/checkout` `v7.0.1` →
 `3d3c42e5aac5ba805825da76410c181273ba90b1`, `v7.0.0` →
@@ -100,10 +101,34 @@ On v0.4.1:
    in `dependencies:`. The other four children moved to new commits.
 3. `--verify`: exit 0, `valid: true`, no findings.
 
-**Not reproduced: v0.4.0 dropping the pin.** Only the v0.4.1 binary that
-verify-actions-lock's `install.sh` pins was installed; no other version was
-downloaded. The regeneration here is `gh actions-lock` itself, not
-Dependabot's updater, which is where #257 was reported.
+**v0.4.0 drops the pin (added 2026-11-16).** The same three steps, run on
+the owner's workstation (WSL) in a fresh `git init` with no remote, with
+v0.4.0's `linux-amd64` release asset. Its SHA-256 matched the `digest` that
+the GitHub release API publishes for it
+(`f9da98f2a6e9e0ae77deadf9a2319a8a86bb002b541cc3203b247cc59fb04842`), and
+`--version` read `v0.4.0`. A v0.4.1 control was run beside it, from that
+release's asset, which matched `install.sh`'s digest (`39deb2fe…`).
+
+1. Lock `@v28`: exit 0, "Pinned 1 action (+ 5 transitive)",
+   `DamianReeves/write-file-action@6929a9a` listed `via
+   DeterminateSystems/update-flake-lock@v28`. Same as v0.4.1.
+2. Edit to `@v29` and re-run: exit 0, "Pinned 1 action (+ 5 transitive)", but
+   the transitive list prints `damianreeves/write-file-action@6929a9a` with
+   no `via` parent. The written lockfile no longer names it anywhere: the
+   parent's `uses:` lists the other four children, and there is no
+   `dependencies:` entry for it (`grep -ci write-file` counts 0; v0.4.1's
+   control counts 2).
+3. `--verify --no-interactive --json=valid,findings`: exit 1,
+   `valid: false`, one `incomplete-lockfile` error, "determinatesystems/
+   update-flake-lock@v29 at locked commit da03c0f078bc uses
+   DamianReeves/write-file-action@6929a9a…, but its lockfile entry … does
+   not record it", remediation `gh actions-lock --relock`. The human-readable
+   run prints "Lockfile doesn't match locked manifest", the message
+   github/gh-actions-lock#257 reported. The v0.4.1 control's `--verify`
+   exited 0.
+
+So the bug reproduces in `gh actions-lock`'s own regeneration, not only in
+Dependabot's updater, and v0.4.1 fixes it.
 
 ## Where v0.4.1 departs from a rule ADR 0024 states
 
