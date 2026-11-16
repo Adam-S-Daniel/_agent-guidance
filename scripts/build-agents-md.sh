@@ -20,15 +20,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # the floor of rules that must hold even when the guidance did not load.
 STUB_FILE="$REPO_ROOT/agents-md/stub.md"
 # What `full` mode appends after the stub: the generated contributor rules (ADR 0043
-# decision 4), never base.md, so a repo that cannot receive the hook still
-# carries the rules an outside contributor needs and none of the owner-only ones.
+# decision 4), never base.md, so a repo whose `.claude/` the sync cannot use
+# still carries the rules an outside contributor needs inline, and none of the
+# owner-only ones.
 PAYLOAD_FILE="$REPO_ROOT/.github/fleet-contributor-rules.md"
 SECTIONS_DIR="$REPO_ROOT/agents-md/sections"
 SECTIONS=("${@}")
 
 # MODE decides whether this repo gets the always-on STUB (the default, and what
-# every repo that can receive the fleet-memory hook gets) or the FULL mode, which
-# inlines the contributor rules the old way.
+# every repo whose `.claude/` the sync can use gets) or the FULL mode, which also
+# inlines the contributor rules. (Until ADR 0043 step 5 the same test decided
+# whether the repo could receive the fleet-memory hook; the history below is
+# why full mode exists at all.)
 #
 # `full` is the fail-safe, and it is the whole reason the stub is safe to ship.
 # A repo that cannot receive the hook — `.claude/` is gitignored there, or its
