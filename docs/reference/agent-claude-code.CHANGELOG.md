@@ -30,6 +30,61 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-17 — 2.1.326 through 2.1.326
+
+- **Checked:** 2026-11-17T02:09Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z
+- **Window:** v2.1.326 (published 2026-11-16T22:11Z), the first stable release after v2.1.325: 1 release, 367 bullets (the 11 in groups 1 to 4 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.326` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time and its opening and a mid-section bullet matched the clone.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance` 64a78b7, `acsi-kit` 0f46394, `adam-agentskills` 0370ab7, `adam-agentskills-private` 492d995, `adamdaniel.ai` 99cf30c, `ai-usage-dashboard` 8374f1a, `claude-memory-map` 1e61380, `cms-platform` 3bf0193, `fastmail-actions` 34f6c49, `jodidaniel.com` 7610d3b, `repo-settings` 5eb0115, `rss-inator` 416e320, `security-alerts` 732082f, `skills-evals` 680af7d, `verify-actions-lock` 563524b, `wsl-automation` 9b8e990), and assessed with a fleet grep; none was re-fetched from the remote this run.
+
+#### 1. Bash sandbox and auto mode tighten; unexpected `.git` entries set aside
+
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/230)
+  > Improved Bash permission checks: some commands now ask first, or are refused where no one can answer
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/293)
+  > Changed auto mode to stop some shell commands that ran before
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/298)
+  > Changed the Bash sandbox to keep its state in some cases during a session, until you run `/sandbox` or `/cd`; Bash may ask first
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/299)
+  > Changed sandboxed commands on macOS, Linux and WSL to no longer write to some sensitive home folders by default; some can be allowed with `sandbox.filesystem.allowWrite` in user or managed settings
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/300)
+  > Changed the Bash sandbox to set aside unexpected entries in a repository's `.git` folder after a command
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/319)
+  > Changed auto mode to ignore some wildcard shell allow rules, such as ones that name no program or that start with `$HOME`, so the safety check decides those commands
+
+**Issues:** PENDING.
+
+#### 2. Background session resume and Remote Control idle status
+
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/32)
+  > Fixed a background session being killed and its request lost when you opened, stopped or removed the older session whose conversation it had resumed
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/92)
+  > Remote Control: Fixed terminal sessions showing as idle on your phone while background subagents were still running; Stop on your phone or the web now ends them together with the turn
+
+**Issues:** PENDING.
+
+#### 3. Hook `"decision": "block"` holds in more cases
+
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/295)
+  > Changed a hook's `"decision": "block"` to hold in more cases, so a hook that always prints one may start blocking calls
+
+**Issues:** PENDING.
+
+#### 4. Prompt-audit sweep trigger
+
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/128)
+  > Fixed a first skill, command or agent created during a session not being found right away
+- [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/325)
+  > Changed enabled plugins that were refused for a malformed `plugin.json` display field: they now load, with their hooks and MCP servers; administrators should check the plugins they deploy
+
+**Issues:** PENDING.
+
+**Prompt-audit sweep:** requested through group 4. Bullets 2.1.326/128 (a first skill, command or agent created during a session was not found right away) and 2.1.326/325 (enabled plugins refused for a malformed `plugin.json` display field now load) change what loads on surfaces the fleet uses, as 2.1.321/18 did. Considered and not counted: 2.1.326/259 (`/doctor` shares findings as it works, which changes its progress display only) and 2.1.326/4 (a note when a malformed `plugin.json` field is ignored, display only). No `Prompt-audit sweep trigger:` issue was open at the start of the run.
+
+No other group met the name-the-surface bar. Considered and dropped: the hook `updatedInput` and exit 127 changes (no fleet hook rewrites tool input or exits 127 by design); the `allowedHttpHookUrls` and `httpHookAllowedEnvVars` change and the HTTP hook header change (no fleet file sets either); the stricter `PATH` for worktree creation and `/teleport` (no fleet repo declares a git `filter=` driver in `.gitattributes`); the worktree-isolated subagent git refusals and `ExitWorktree` change (no fleet routine or script spawns an isolated subagent); the refusal to write Claude Code's sign-in files (`ai-usage-dashboard`'s collector only reads `~/.claude/.credentials.json`); the `--bg --await-initialize` refusal and the `--bare` background change (`wsl-automation` passes neither); the Remote Control CONNECT-tunnel change and the `--verbose` debug-log move (the keeper passes neither a proxy nor `--verbose` to `claude rc`); and the `claude plugin` output marks and wording (piped and `--json` output keep their forms, and no fleet script parses the terminal text). Codex: no stable release after 0.169.0 (page 1 holds 0.169.0 and 0.171.0 alphas only). The open discrepancy about repo skills after `cd` is not fixed by this release.
+
+
 ### 2026-11-14 — 2.1.325 through 2.1.325
 
 - **Checked:** 2026-11-14T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
