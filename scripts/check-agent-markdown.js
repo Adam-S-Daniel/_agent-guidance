@@ -13,7 +13,7 @@
  * adds or changes); until now only review applied it.
  *
  * Scope (agent-facing Markdown): `agents-md/**` (*.md), `AGENTS.md`,
- * `CLAUDE.md`, every `SKILL.md`, and `.claude/hooks/fleet-guidance.md`.
+ * `CLAUDE.md` and every `SKILL.md`.
  * The walk skips `.git`, `node_modules`, `.claude/worktrees` and any
  * subdirectory that is itself a git checkout (CI checks skills-evals out into
  * the workspace; its text is not this repo's).
@@ -144,7 +144,7 @@ function walk(root) {
 }
 
 function isAgentFacing(rel) {
-  if (rel === "AGENTS.md" || rel === "CLAUDE.md" || rel === ".claude/hooks/fleet-guidance.md") return true;
+  if (rel === "AGENTS.md" || rel === "CLAUDE.md") return true;
   if (rel.startsWith("agents-md/") && rel.endsWith(".md")) return true;
   return rel === "SKILL.md" || rel.endsWith("/SKILL.md");
 }

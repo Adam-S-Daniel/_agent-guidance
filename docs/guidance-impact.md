@@ -26,13 +26,13 @@ sensitive rejection is recorded by PR link alone.
 ```
 ## YYYY-MM-DD — <section-id> — <create|edit|rename|remove|rejected>
 - Motivation: one line — the incident, pattern, or issue that prompted it
-- Change: one line — what changed (PR #NNN)
+- Change: one line — what changed (PR #558)
 - Eval: a real result naming both what was measured and its outcome — an
   exit code (`exit 0`), a score fraction (`7.0/8`), or a sample size (`n=3`),
   alongside a fixture path, eval id, or report link for context; "none — no
   fixture yet" (legal only while the manifest row is `gap`); or "exempt
   (skipped row)" (legal only while the manifest row is `skipped`). Nothing
-  else satisfies this bullet — a placeholder like "TBD" or "TBD (PR #NNN)"
+  else satisfies this bullet — a placeholder like "TBD" or "TBD (PR #558)"
   does not, even though the latter contains a digit.
 - Outcome: merged YYYY-MM-DD, or rejected YYYY-MM-DD — one line why. The
   full proposal survives in the closed PR; link it rather than pasting it.
@@ -49,6 +49,18 @@ Rules:
 
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
+
+## 2026-11-13 — pinning-github-actions — edit
+- Motivation: issue 540: gh-actions-lock v0.4.1 no longer rewrites `./` to `$/` by default (a plain run fails) and the shared check no longer fails on every finding, so two sentences were wrong (evidence docs/evidence/2026-11-13-gh-actions-lock-v0.4.1.md)
+- Change: local actions read `$/<path>`, not `./`; verify-actions-lock "fails on a pin error"; "40-character" shortened to "40-hex" to hold the section at its size (0 bytes net)
+- Eval: the evals/guidance/pinning-github-actions/ fixture was NOT re-run (no eval harness in the authoring session); the only results are the base.md checks, `node --test test/test-on-hold-label.js test/test-fleet-guidance-mirror.js test/test-check-agent-markdown.js` exit 0 (104 tests) and `node scripts/check-guidance-coverage.js` exit 0
+- Outcome: pending
+
+## 2026-11-13 — eval-rules — create
+- Motivation: Adam asked (2026-11-13) for one source of truth on the eval, keep/remove and pause rules that agents in any repo can check against; restated thresholds had drifted (a project memory note still gave a superseded keep level)
+- Change: new one-line section pointing at skills-evals' generated `docs/rules.md`, generated from its policy YAMLs (PR #558)
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-11-13
 
 ## 2026-11-08 — subagent-delegation — edit
 - Motivation: the 2026-11-08 rewrite (PR #472) dropped the old "Don't write code in the orchestrating session" mandate; a thread started right after it built three fixtures in its own Opus context with no subagent (session transcript, 19:50-20:33 UTC)

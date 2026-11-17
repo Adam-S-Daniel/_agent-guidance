@@ -17,6 +17,13 @@ The owner can also start it with **Run now** and an article URL.
 "Automatic Continuous Self Improvement and Evals" project. Its prompt is short and points here, so the procedure is
 reviewed as a pull request.
 
+**Model:** Sonnet 5.5 is set on the task (Adam, 2026-11-13), but it does not
+take effect: a task created from a project thread starts a project thread, and
+those run on Opus whatever the task page says (the Fleet health audit, set the
+same way, ran Opus on 2026-11-16). Sonnet would only apply to a task created
+on the claude.ai Routines page, which this routine could be, since it needs
+only its repos.
+
 ## How the watch decides what fires
 
 `scripts/article_watch.py` holds the rules and `test/test_article_watch.py`
@@ -37,6 +44,15 @@ Configuration, each set in one place with no default:
 
 A missing one fails the run with a message naming it. To skip everything now
 in the feed, run the workflow by hand with `reseed` checked.
+
+Agent sessions have reported that the feed host could not be reached from a
+cloud session or from the owner's VM network (not verified here); the workflow
+runs on GitHub Actions and reaches it directly. A git clone of
+`Adam-S-Daniel/rss-inator` shows how the feed is built (its scraper reads
+the upstream page), not the feed's items. For the items, read
+`article-watch/state.json` on the branch `persistent/article-watch`: it
+records every item the workflow has seen, except a matching one whose fire
+has not yet succeeded.
 
 ## Each run
 

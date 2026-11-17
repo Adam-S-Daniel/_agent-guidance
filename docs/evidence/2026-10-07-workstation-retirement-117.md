@@ -16,9 +16,9 @@ The issue has no `on-hold` label, and the open-PR search for
 | Workstation layout | Host-neutral Windows and WSL clone conventions are already on main. | [Merged PR 157](https://github.com/Adam-S-Daniel/_agent-guidance/pull/157), [current source](../../agents-md/base.md#workstation-layout) |
 | Session-cutoff guidance | The obsolete section is absent from current source. | [Merged PR 213](https://github.com/Adam-S-Daniel/_agent-guidance/pull/213) |
 | Earlier session-cutoff proposal | Closed without merging; it is not evidence of a merged fix. | [Closed PR 156](https://github.com/Adam-S-Daniel/_agent-guidance/pull/156) |
-| Live hostname references | A case-insensitive search of `agents-md/` and the delivered payload on the fetched default branch found no ZENDA references. | [Guidance source](../../agents-md/base.md), [delivered payload](../../.claude/hooks/fleet-guidance.md) |
+| Live hostname references | A case-insensitive search of `agents-md/` and the delivered payload on the fetched default branch found no references to the retired workstation's hostname. | [Guidance source](../../agents-md/base.md), [delivered payload](../../.claude/hooks/fleet-guidance.md) |
 
-The remaining ZENDA mentions in this repository occur in the dated
+The remaining mentions of that hostname in this repository occur in the dated
 [guidance-impact entry](../guidance-impact.md),
 [memory-home ADR](../decisions/0013-a-memory-note-outside-a-repo-names-its-home.md),
 [August handoff](../handoffs/2026-08-20-gitleaks-and-silent-failures/C-history-rewrite.md),

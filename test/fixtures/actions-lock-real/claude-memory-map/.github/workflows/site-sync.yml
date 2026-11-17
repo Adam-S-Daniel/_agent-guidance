@@ -1,0 +1,91 @@
+# Auto-publish to adamdaniel.ai: every merge to main that changes index.html
+# opens (or updates) a vendor-bump PR in the site repo and enables auto-merge,
+# so the site's own CI + deploy pipeline takes it live with no manual step.
+# See README "Publishing to adamdaniel.ai" for the SITE_SYNC_TOKEN setup.
+name: Site sync
+run-name: "sync → adamdaniel.ai @ ${{ github.sha }}"
+
+on:
+  push:
+    branches: [main]
+    paths: [index.html]
+  workflow_dispatch:
+
+# Rapid merges collapse to the newest state — the branch is force-pushed and
+# the PR reused, so only the latest content ever matters.
+concurrency:
+  group: site-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: read # site-repo writes use the SITE_SYNC_TOKEN PAT, not GITHUB_TOKEN
+
+env:
+  SITE_REPO: Adam-S-Daniel/adamdaniel.ai
+  SYNC_BRANCH: tool-sync/claude-memory-map
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require SITE_SYNC_TOKEN
+        env:
+          HAVE_TOKEN: ${{ secrets.SITE_SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAVE_TOKEN" != "true" ]; then
+            echo "::error::SITE_SYNC_TOKEN is not set. Create a fine-grained PAT scoped to ${SITE_REPO} (Contents + Pull requests, read-write) and add it as an Actions secret. See README → Publishing to adamdaniel.ai."
+            exit 1
+          fi
+
+      - name: Checkout claude-memory-map
+        uses: actions/checkout@v7.0.1
+
+      - name: Checkout site repo
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: Adam-S-Daniel/adamdaniel.ai
+          ref: main
+          token: ${{ secrets.SITE_SYNC_TOKEN }}
+          path: site
+
+      - name: Copy index.html + provenance, push sync branch
+        id: sync
+        env:
+          SITE_DIR: ${{ github.workspace }}/site
+          BRANCH: ${{ env.SYNC_BRANCH }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REF: main
+          COMMIT_MSG: "tools: sync Claude Memory Map to ${{ github.sha }}"
+        run: bash scripts/sync-to-site.sh
+
+      - name: Open (or reuse) the site PR and enable auto-merge
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SITE_SYNC_TOKEN }}
+          PREVIOUS: ${{ steps.sync.outputs.previous_commit }}
+        run: |
+          short="${GITHUB_SHA::7}"
+          title="tools: sync Claude Memory Map to ${short}"
+          if [ -n "$PREVIOUS" ]; then
+            changes="Upstream changes: https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS}...${GITHUB_SHA}"
+          else
+            changes="Source commit: https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          fi
+          body=$(cat <<EOF
+          Automated vendor bump of \`assets/tools/claude-memory-map/index.html\` from ${GITHUB_REPOSITORY}@${short}.
+
+          ${changes}
+
+          Opened by the source repo's \`site-sync\` workflow (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Auto-merge is enabled — this lands once the site's required checks pass.
+          EOF
+          )
+          pr=$(gh pr list -R "$SITE_REPO" --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [ -z "$pr" ]; then
+            gh pr create -R "$SITE_REPO" --head "$SYNC_BRANCH" --base main \
+              --title "$title" --body "$body"
+            pr=$(gh pr list -R "$SITE_REPO" --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          else
+            gh pr edit -R "$SITE_REPO" "$pr" --title "$title" --body "$body"
+          fi
+          gh pr merge -R "$SITE_REPO" "$pr" --auto --squash \
+            || echo "::warning::Could not enable auto-merge on ${SITE_REPO}#${pr} — merge it manually (is 'Allow auto-merge' on for the site repo?)."

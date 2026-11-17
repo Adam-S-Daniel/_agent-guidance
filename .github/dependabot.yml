@@ -59,3 +59,14 @@ updates:
       # is what lets that one bump land without the third-party wait
       # (https://github.com/Adam-S-Daniel/cms-platform/issues/424).
       exclude: ["Adam-S-Daniel/cms-platform/*"]
+
+  # The dated-phrasing pass the sync delivers to every repo pins one npm
+  # dependency here; without this entry that pin has no bump path. npm, unlike
+  # github-actions, supports semver-major-days, so majors wait 30 days.
+  - package-ecosystem: npm
+    directory: "/templates/agent-checks/dated-phrasing"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30

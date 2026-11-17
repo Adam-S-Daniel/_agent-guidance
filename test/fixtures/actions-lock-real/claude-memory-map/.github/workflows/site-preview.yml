@@ -1,0 +1,150 @@
+# Preview a PR of this repo inside the adamdaniel.ai site: mirrors the PR's
+# index.html to a draft PR in the site repo, whose existing deploy-preview
+# pipeline then publishes https://preview-pr<N>.adamdaniel.ai/ with the tool
+# page rendering this PR's map. The preview URL is commented back here.
+# Closing this PR closes the mirror (the site tears the preview down on the
+# mirror PR's close event). Merging it makes site-sync supersede the mirror.
+#
+# No paths filter, deliberately: the teardown leg must run even when the final
+# diff no longer touches index.html, and the mirror leg closes a stale mirror
+# if a rebase dropped the index.html change. Both legs are cheap API calls
+# when there is nothing to do.
+name: Site preview
+run-name: "PR #${{ github.event.pull_request.number }} → site preview (${{ github.event.action }})"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+# `mirror` and `teardown` publish to adamdaniel.ai, not a verdict on this PR
+# — they are deliberately NOT required status checks. This `cancel-in-progress`
+# group is what supersedes a stale mirror once a new push lands; a job with a
+# concurrency group must never publish a REQUIRED context, because a
+# cancelled run on a shared head sha blocks the merge API outright with
+# `405 Required status check ... is cancelled` (cms-platform#437). The
+# Dependabot sweep (dependabot-auto-merge.yml) still waits for `mirror` to
+# conclude before it merges, so a cancelled `mirror` run stalls a Dependabot
+# PR with a named skip — it never merges over it — until someone re-runs it.
+concurrency:
+  group: site-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write # comment the preview link on this PR (GITHUB_TOKEN)
+
+env:
+  SITE_REPO: Adam-S-Daniel/adamdaniel.ai
+  PREVIEW_BRANCH: tool-preview/claude-memory-map-pr-${{ github.event.pull_request.number }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  COMMENT_MARKER: "<!-- claude-memory-map-site-preview -->"
+
+jobs:
+  # Same-repo PRs only: fork PRs don't get secrets, and this repo's PRs are
+  # branch PRs by convention.
+  mirror:
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Does this PR change index.html?
+        id: relevance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json files -q '.files[].path' | grep -qx 'index.html'; then
+            echo "relevant=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      # Soft-skip (not a red X) while the PAT is unconfigured: a preview is a
+      # nice-to-have on a PR. The main-branch publish path (site-sync.yml)
+      # hard-fails instead — silent staleness there would be worse.
+      - name: Check SITE_SYNC_TOKEN
+        id: token
+        if: steps.relevance.outputs.relevant == 'true'
+        env:
+          HAVE_TOKEN: ${{ secrets.SITE_SYNC_TOKEN != '' }}
+        run: |
+          echo "have=$HAVE_TOKEN" >>"$GITHUB_OUTPUT"
+          if [ "$HAVE_TOKEN" != "true" ]; then
+            msg="SITE_SYNC_TOKEN is not set — skipping the site preview mirror. Create a fine-grained PAT scoped to ${SITE_REPO} (Contents + Pull requests, read-write) and add it as an Actions secret. See README → Publishing to adamdaniel.ai."
+            echo "::warning::$msg"
+            echo "$msg" >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Checkout PR head
+        if: steps.relevance.outputs.relevant == 'true' && steps.token.outputs.have == 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout site repo
+        if: steps.relevance.outputs.relevant == 'true' && steps.token.outputs.have == 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: Adam-S-Daniel/adamdaniel.ai
+          ref: main
+          token: ${{ secrets.SITE_SYNC_TOKEN }}
+          path: site
+
+      - name: Copy index.html + provenance, push preview branch
+        if: steps.relevance.outputs.relevant == 'true' && steps.token.outputs.have == 'true'
+        id: sync
+        env:
+          SITE_DIR: ${{ github.workspace }}/site
+          BRANCH: ${{ env.PREVIEW_BRANCH }}
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+          SOURCE_REF: pr-${{ github.event.pull_request.number }}
+          SOURCE_PR: ${{ github.event.pull_request.number }}
+          COMMIT_MSG: "tools: preview Claude Memory Map PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
+        run: bash scripts/sync-to-site.sh
+
+      - name: Ensure the draft mirror PR, comment the preview URL here
+        if: steps.relevance.outputs.relevant == 'true' && steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SITE_SYNC_TOKEN }}
+          SRC_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          title="Preview: Claude Memory Map PR #${PR_NUMBER} — ${SRC_TITLE}"
+          body="Draft mirror of ${GITHUB_REPOSITORY}#${PR_NUMBER} (head \`${HEAD_SHA::7}\`) for the site preview pipeline. Do not merge — it closes automatically when the source PR closes, and a merged source PR lands via the \`tool-sync/claude-memory-map\` PR instead."
+          pr=$(gh pr list -R "$SITE_REPO" --head "$PREVIEW_BRANCH" --state open --json number -q '.[0].number')
+          if [ -z "$pr" ]; then
+            gh pr create -R "$SITE_REPO" --head "$PREVIEW_BRANCH" --base main --draft \
+              --title "$title" --body "$body"
+            pr=$(gh pr list -R "$SITE_REPO" --head "$PREVIEW_BRANCH" --state open --json number -q '.[0].number')
+          else
+            gh pr edit -R "$SITE_REPO" "$pr" --title "$title" --body "$body"
+          fi
+
+          preview_url="https://preview-pr${pr}.adamdaniel.ai/tools/claude-memory-map/"
+          comment=$(cat <<EOF
+          ${COMMENT_MARKER}
+          **Site preview:** ${preview_url}
+
+          Mirrored to ${SITE_REPO}#${pr} at \`${HEAD_SHA::7}\`. The link goes live once the site's *Deploy Preview* run for that PR finishes (a minute or two), and it updates on every push here. The full \`/tools/\` page chrome requires adamdaniel.ai#2280 on the site's main — until then use ${preview_url%tools/claude-memory-map/}assets/tools/claude-memory-map/ for the bare asset.
+          EOF
+          )
+          GH_TOKEN="${{ github.token }}" bash scripts/upsert-comment.sh "$PR_NUMBER" "$COMMENT_MARKER" "$comment"
+
+  teardown:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close the mirror PR (if any)
+        env:
+          GH_TOKEN: ${{ secrets.SITE_SYNC_TOKEN }}
+          HAVE_TOKEN: ${{ secrets.SITE_SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAVE_TOKEN" != "true" ]; then
+            echo "::warning::SITE_SYNC_TOKEN is not set — nothing to tear down."
+            exit 0
+          fi
+          pr=$(gh pr list -R "$SITE_REPO" --head "$PREVIEW_BRANCH" --state open --json number -q '.[0].number')
+          if [ -n "$pr" ]; then
+            gh pr close -R "$SITE_REPO" "$pr" --delete-branch \
+              --comment "Source PR ${GITHUB_REPOSITORY}#${PR_NUMBER} was closed — tearing down this preview mirror."
+          else
+            echo "No open mirror PR for ${PREVIEW_BRANCH}."
+          fi

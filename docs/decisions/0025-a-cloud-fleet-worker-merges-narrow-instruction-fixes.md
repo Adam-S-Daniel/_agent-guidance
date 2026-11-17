@@ -1,6 +1,6 @@
 # 0025 — A cloud fleet worker merges narrow instruction fixes and tells the owner about the rest
 
-**Status:** Accepted (2026-10-25)
+**Status:** Accepted (2026-10-25). Widened by [0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) (2026-11-12): the fleet worker also merges reviewed agent-made PRs and the hook pin bump.
 
 ## Context
 
@@ -32,7 +32,7 @@ a PR needs his approval.
    trigger issue whose "To check" list has hands-on items stays open and
    gets `agent-ready`. Details: [`prompt-audit-sweep.md`](../routines/prompt-audit-sweep.md).
 2. **The issue worker runs in the cloud**, as the issue pass of a scheduled
-   task, `Fleet worker`, every 2 hours (amended 2026-11-03: it runs hourly, `20 * * * *`; amended 2026-11-08: every 3 hours, `20 */3 * * *`, fired by `fleet-worker-fire.yml`)
+   task, `Fleet worker`, every 2 hours (amended 2026-11-03: it runs hourly, `20 * * * *`; amended 2026-11-08: every 3 hours, `20 */3 * * *`, fired by `fleet-worker-fire.yml`; amended 2026-11-15: split into a loop worker and a maintenance worker by [0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md))
    ([`fleet-worker.md`](../routines/fleet-worker.md)). The laptop task is
    turned off.
 3. **The fleet worker may merge one kind of PR:** a fix for a prompt-audit

@@ -30,6 +30,78 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-14 — 2.1.325 through 2.1.325
+
+- **Checked:** 2026-11-14T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z
+- **Window:** v2.1.325 (published 2026-11-13T20:40Z), the first stable release after v2.1.323 (no tag or changelog section exists for 2.1.324, so it is skipped as a gap): 1 release, 139 bullets (the 3 in groups 1 and 2 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.325` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time and its opening bullets matched the clone.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. Sandboxed Bash no longer auto-allowed by default
+
+- [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/95)
+  > Changed sandboxed Bash commands to follow the normal permission flow by default; set `sandbox.autoAllowBashIfSandboxed: true` to keep running them without prompts
+- [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/96)
+  > Changed managed settings that turn the sandbox on: to keep commands running without prompts, set `sandbox.autoAllowBashIfSandboxed: true` in your highest-ranking managed source
+
+**Issues:** [skills-evals#1023](https://github.com/Adam-S-Daniel/skills-evals/issues/1023).
+
+#### 2. Cloud sessions start despite `sandbox.failIfUnavailable`
+
+- [v2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), published 2026-11-13T20:40Z (bullet 2.1.325/116)
+  > Changed Claude Code on the web, cloud scheduled tasks and Cowork cloud sessions to start despite `sandbox.failIfUnavailable`: the hosted container has no command sandbox
+
+**Issues:** [skills-evals#1024](https://github.com/Adam-S-Daniel/skills-evals/issues/1024).
+
+**Prompt-audit sweep:** not requested. No bullet changes models, `/doctor` or how an instruction file loads on a surface the fleet uses (the nested skill loading change is for `--plugin-dir` plugins, which no fleet file passes), and the earlier trigger issue [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) is still open, so none would be filed in any case (step 4a).
+
+No other group met the name-the-surface bar. Considered and dropped: scheduled tasks and `/loop` asking before running a skill that declares `allowed-tools` or hooks (the only such skills, in `adam-agentskills`' `adam-non-coding-local` plugin, are run by hand, not scheduled); read-only git commands asking in a repository outside the project (`wsl-automation`'s `run-memory-curation.sh` already names its extra folder with `--add-dir`); the marketplace `ref` change (no fleet marketplace pins a commit); the `pluginDigests`, `prependPlugins` and `appendPlugins` entries (no fleet use); the saved `sonnet[1m]` fix (no fleet setting holds it); and the `ALL_PROXY` CONNECT change (`skills-evals` only forwards the variable). Codex: no stable release after 0.169.0 (page 1 holds 0.169.0 and 0.170.0 and 0.171.0 alphas). The open discrepancy about repo skills after `cd` is not fixed by this release.
+
+### 2026-11-13 — 2.1.322 through 2.1.323
+
+- **Checked:** 2026-11-13T17:40Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323), published 2026-11-12T22:12Z
+- **Window:** v2.1.322 (published 2026-11-10T02:29Z) and v2.1.323 (published 2026-11-12T22:12Z), the first stable releases after v2.1.321: 2 releases, 295 bullets (the 2 in group 1 are indexed). Publish times are the `datetime` attributes on the tag pages, in UTC.
+- **Source text:** the matching `CHANGELOG.md` sections in `anthropics/claude-code` (shallow clone; tags `v2.1.322` and `v2.1.323` listed by `git ls-remote --tags`); both tag pages were fetched (HTTP 200) for their publish times.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. subagentStatusLine removed, plugin agent setting deprecated
+
+- [v2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323), published 2026-11-12T22:12Z (bullet 2.1.323/246)
+  > Removed the `subagentStatusLine` setting: subagent rows always use the default look, and settings files that still hold the key load as before
+- [v2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323), published 2026-11-12T22:12Z (bullet 2.1.323/247)
+  > Deprecated a plugin's `agent` setting: it still applies, and now warns at startup, in `claude plugin list` and in `claude plugin validate`
+
+**Issues:** [adam-agentskills#155](https://github.com/Adam-S-Daniel/adam-agentskills/issues/155).
+
+**Prompt-audit sweep:** not requested. Bullets 2.1.323/72 (plugins with `defaultEnabled: false` staying off in a claude.ai cloud session) and 2.1.323/86 (plugins with a version list in `enabledPlugins` staying off with no message) touch plugin loading, but the sweep trigger issue [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) is still open, so no second one is filed (step 4a).
+
+No other group met the name-the-surface bar. Considered and dropped: the `engines["claude-code"]` plugin manifest key, the Bash sandbox change that makes `git worktree add` read-only (no fleet script runs it in a sandbox), the `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` entries (no fleet use), and 2.1.322 (one bullet, Vertex fast mode). The open discrepancy about repo skills after `cd` is not fixed by either release.
+
+### 2026-11-10 — 2.1.321 through 2.1.321
+
+- **Checked:** 2026-11-10T02:30Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z
+- **Window:** v2.1.321 (published 2026-11-09T19:22Z), the first stable release after v2.1.319 (no tag or changelog section exists for 2.1.320, so it is skipped as a gap): 1 release, 118 bullets (the 4 in group 1 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.321` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 14 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed beyond a fleet grep.
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/0)
+  > Added Claude Fable 5.2 (`claude-fable-5-2`), now the default Fable model — 1M context, $8/$40 per Mtok with $0.20/Mtok cache reads
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/18)
+  > Fixed project skills, commands and agents staying missing after their folder was removed and came back mid-session, such as with `git stash`, including after entering a worktree
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/95)
+  > Changed saved Fable 5.1 model picks to move to `fable`: on Pro and Max plans at once, on Team and Enterprise plans once your organization allows it; use `/model claude-fable-5-1` to switch back
+- [v2.1.321](https://github.com/anthropics/claude-code/releases/tag/v2.1.321), published 2026-11-09T19:22Z (bullet 2.1.321/97)
+  > Changed nested skill loading: `.claude/skills` folders inside `~/.claude/plugins` no longer load when Claude works on files there
+
+**Issues:** [_agent-guidance#501](https://github.com/Adam-S-Daniel/_agent-guidance/issues/501) (no label). No earlier trigger issue was open.
+
+No other group met the name-the-surface bar. Codex: no stable release after 0.167.0 (page 1 holds 0.167.0 and alphas only). The open discrepancy about repo skills after `cd` into a nested repo is not fixed by this release: the nearest bullet names a skills folder that is removed and returns mid-session, not `cd`.
+
 ### 2026-11-07 — 2.1.319 through 2.1.319
 
 - **Checked:** 2026-11-07T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)

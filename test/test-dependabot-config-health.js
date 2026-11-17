@@ -33,13 +33,15 @@ const {
   planIssueAction,
   renderIssueBody,
   logLine,
+  verdictFor,
+  cooldownGaps,
   assessRepo,
   runSweep,
 } = require("../scripts/dependabot-config-health.js");
 
 // ── Shared fixture helpers ─────────────────────────────────────────────────
 
-const WEEKLY_YAML = "updates:\n  - package-ecosystem: npm\n    schedule:\n      interval: weekly\n";
+const WEEKLY_YAML = "updates:\n  - package-ecosystem: npm\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n";
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64");
 const yamlContent = (text) => ({ content: b64(text), encoding: "base64" });
 
@@ -1024,4 +1026,92 @@ test("D: a workflows page short of 100 items stops pagination without an extra e
   );
   assert.equal(calls, 1, "a first page short of 100 items must not trigger a second, confirmatory fetch");
   assert.notEqual(a.jobs.state, "unknown");
+});
+
+// ── 12. no-cooldown (third signal) ───────────────────────────────────────────
+
+const entry = (eco, dir, cooldown) =>
+  `  - package-ecosystem: ${eco}\n    directory: "${dir}"\n    schedule:\n      interval: weekly\n${cooldown || ""}`;
+const cfg = (...entries) => `version: 2\nupdates:\n${entries.join("")}`;
+
+test("cooldownGaps: an entry with no cooldown is flagged by ecosystem and directory", () => {
+  assert.deepEqual(cooldownGaps(cfg(entry("npm", "/web"))), ["npm@/web"]);
+});
+
+test("cooldownGaps: default-days plus an exclude list passes", () => {
+  const cd = '    cooldown:\n      default-days: 7\n      exclude: ["Adam-S-Daniel/cms-platform/*"]\n';
+  assert.deepEqual(cooldownGaps(cfg(entry("github-actions", "/", cd))), []);
+});
+
+test("cooldownGaps: null, scalar, and default-days-less cooldowns are flagged", () => {
+  const nul = "    cooldown:\n";
+  const scalar = "    cooldown: 7\n";
+  const noDays = "    cooldown:\n      exclude: [foo]\n";
+  assert.deepEqual(
+    cooldownGaps(cfg(entry("npm", "/a", nul), entry("pip", "/b", scalar), entry("gomod", "/c", noDays))),
+    ["npm@/a", "pip@/b", "gomod@/c"],
+  );
+});
+
+test("cooldownGaps: with several entries only the offender is named", () => {
+  const ok = "    cooldown:\n      default-days: 7\n";
+  assert.deepEqual(
+    cooldownGaps(cfg(entry("github-actions", "/", ok), entry("npm", "/tools"), entry("pip", "/py", ok))),
+    ["npm@/tools"],
+  );
+});
+
+test("cooldownGaps: unparseable YAML and a missing updates list yield no gaps", () => {
+  assert.deepEqual(cooldownGaps("updates: [unclosed"), []);
+  assert.deepEqual(cooldownGaps("version: 2\n"), []);
+});
+
+test("cooldownGaps: a label cannot carry whitespace or a comment terminator", () => {
+  const [g] = cooldownGaps(cfg(entry("npm", "/a b-->c")));
+  assert.ok(!/[\s>]/.test(g), g);
+});
+
+test("verdictFor: a cooldown gap is a no-cooldown finding keyed on ecosystem@directory", () => {
+  const v = verdictFor({
+    config: { path: ".github/dependabot.yml", raw: "" },
+    check: { state: "success", id: 1 }, jobs: { state: "recent" }, firstCommitProof: null,
+    cooldownGaps: ["npm@/tools"],
+  });
+  assert.equal(v.verdict, "finding");
+  assert.deepEqual(v.findings, [{ kind: "no-cooldown", key: "no-cooldown:npm@/tools" }]);
+});
+
+test("verdictFor: no gaps stays healthy (negative control)", () => {
+  const v = verdictFor({
+    config: { path: ".github/dependabot.yml", raw: "" },
+    check: { state: "success", id: 1 }, jobs: { state: "recent" }, firstCommitProof: null,
+    cooldownGaps: [],
+  });
+  assert.equal(v.verdict, "healthy");
+});
+
+test("assessRepo: a config without a cooldown is a no-cooldown finding; the body explains 7 days and the cms-platform exclude", () => {
+  const raw = cfg(entry("npm", "/tools"));
+  const api = fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(raw) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "aaaaaa", date: "2026-08-01T00:00:00Z" }),
+    commitPulls: () => [],
+    checkRuns: (o, r, sha) => ({
+      total_count: 1,
+      check_runs: [{ id: 7, app: { slug: "dependabot" }, name: ".github/dependabot.yml", status: "completed", conclusion: "success", head_sha: sha, output: { title: "t", summary: "s" }, completed_at: "2026-08-01T00:05:00Z" }],
+    }),
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 42, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-09-10T00:00:00Z", html_url: "https://x/runs/1" }),
+  });
+  const a = assessRepo(
+    { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" },
+    api, Date.parse("2026-09-15T00:00:00Z"), { label: "ci" },
+  );
+  assert.equal(a.verdict, "finding");
+  assert.deepEqual(a.findings, [{ kind: "no-cooldown", key: "no-cooldown:npm@/tools" }]);
+  const body = renderIssueBody(a);
+  assert.ok(body.includes("<!-- evidence: no-cooldown:npm@/tools -->"), body);
+  assert.ok(body.includes("default-days: 7"), body);
+  assert.ok(body.includes("Adam-S-Daniel/cms-platform/*"), body);
+  assert.ok(logLine(a).includes("kinds=no-cooldown"));
 });

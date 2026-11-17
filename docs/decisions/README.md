@@ -56,6 +56,12 @@ a page.
 | [0038](0038-memory-curation-checks-claims-against-evidence.md) | Memory curation checks claims against their evidence and keeps the index short |
 | [0039](0039-fleet-guidance-merges-are-batched-into-one-weekly-window.md) | Fleet guidance merges by automation are batched into one weekly window |
 | [0040](0040-the-repo-stub-keeps-only-the-pointer-and-the-irreversible-rules.md) | The repo stub keeps only the pointer and the irreversible rules |
+| [0041](0041-the-fleet-worker-merges-reviewed-agent-made-changes.md) | The fleet worker merges reviewed agent-made changes and the hook pin bump |
+| [0042](0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md) | The guidance hooks are opt-in on a durable machine |
+| [0043](0043-the-owner-only-guidance-leaves-the-consumer-repos.md) | The owner-only guidance leaves the consumer repos, and the stub stays the only per-repo copy |
+| [0044](0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md) | The fleet worker removes skills the eval verdict retires |
+| [0045](0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md) | The fleet worker merges its own reviewed issue fixes |
+| [0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md) | The fleet worker splits into a loop worker and a maintenance worker |
 
 ## Format
 

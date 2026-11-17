@@ -48,6 +48,7 @@ class CodexCloudDeliveryTests(unittest.TestCase):
 
     def hook_env(self, payload=None):
         env = os.environ.copy()
+        env["FLEET_GIT_HOOKS"] = "off"
         env.update(
             HOME=str(self.home),
             CLAUDE_CONFIG_DIR=str(self.claude_config),

@@ -115,8 +115,10 @@ irreversible rules; _agent-guidance#473). `base.md` itself
 is held under 26 KiB (26,624 bytes) by an assertion in
 `test/test-on-hold-label.js`, raised from 25 KiB on 2026-11-04 to fit the
 "Turn lessons into checks, skills and guidance" section. Measured
-2026-10-04 with `wc -c`: `base.md` 24,930 bytes, full build 29,113, stub
-build 4,859.
+2026-11-13 with `wc -c`: `base.md` 26,548 bytes, full build 26,739, stub
+build 1,509. These drift with every guidance edit; rerun `wc -c` on
+`agents-md/base.md` and the output of `scripts/build-agents-md.sh` (with
+`AGENTS_MD_MODE=full` for the full build) before quoting them.
 
 The guidance itself reaches Codex a different way. The `fleet-memory`
 SessionStart hook (`.claude/hooks/fleet-memory.sh`) writes its marked block to
@@ -126,6 +128,13 @@ by `codex-rs/codex-home/src/instructions/mod.rs` and are *not* counted against
 the project-doc budget. The Codex write happens only when `~/.codex` already
 exists; the hook never creates it, so a machine without Codex gets nothing new.
 One verdict line covers both, and `FLEET_GUIDANCE_SKIP` opts out of both.
+On a durable machine the hook writes nothing, prints nothing and exits 0
+unless the run carries an owner signal: the marker file
+`~/.config/fleet-guidance/owner` (adam-agentskills' `setup.sh --owner-machine`
+writes it), `FLEET_GUIDANCE_OWNER=1` (the plugin passes it), or a
+caller-chosen `FLEET_GUIDANCE_PAYLOAD`. Hosted sessions and `--codex-cloud`
+need none. The Stop hook `guidance-load-record.sh` takes the same gate; see
+[ADR 0042](docs/decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md).
 Normal hook runs keep the freshest delivered block per destination and report
 when a checkout is older; see [ADR 0016](docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md).
 
@@ -189,27 +198,36 @@ once per machine with `scripts/register-codex-hook.sh` (default target
 `~/.codex/hooks.json`) and then **trusted once** in the Codex TUI with
 `/hooks` — Codex trusts non-managed hooks per definition hash per config layer,
 so a per-repo `.codex/hooks.json` would cost one review prompt in every repo.
-Reasoning: [`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
+The registered command runs a per-user launcher, not a file in any repo
+([ADR 0043](docs/decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md)):
+`${XDG_DATA_HOME:-$HOME/.local/share}/fleet-guidance/codex-session-start.sh`
+(`XDG_DATA_HOME` counts only when absolute), which adam-agentskills'
+`setup.sh --owner-machine` installs. The launcher runs the installed
+`adam-anything-anywhere` plugin's fleet-guidance hook with
+`FLEET_GUIDANCE_OWNER=1`, which writes `~/.codex/AGENTS.md`. The registrar
+refuses (exit 6, `refused-no-launcher`) until that setup has run. Reasoning:
+[`docs/decisions/0012`](docs/decisions/0012-codex-gets-the-guidance-as-user-instructions.md).
 On **native Windows Codex**, run the registrar from Git Bash: Codex runs hooks
 through `cmd.exe`, where a bare `bash` is WSL's launcher and single quotes are
 not quoting, so the registrar also writes a `commandWindows` override that runs
-the tracked launcher `.claude/hooks/codex-session-start.sh` under Git Bash by
-explicit path (override with `CODEX_HOOK_GIT_BASH` / `--launcher`). Re-running
-it upgrades an existing registration in place; re-trust the changed definition
-in `/hooks`.
+the same launcher under Git Bash by explicit path (override with
+`CODEX_HOOK_GIT_BASH` / `--launcher`). Re-running it upgrades an existing
+registration in place, including either earlier command that ran a repo's own
+`fleet-memory.sh`; re-trust the changed definition in `/hooks`.
 
-**2026-09-28 — parent-directory launches:** from a multi-repo parent, the
-registered command runs the first child hook supporting `--workspace`; that
-hook selects the freshest immediate child's payload using the same delivery
-stamp and installed-block arbitration as normal runs. A second
-`fleet-workspace:` line lists the child repos whose `AGENTS.md` must be read
-before working in them, even when guidance is opted out. Codex does not load
-child instructions from the parent (nor through `--add-dir`); inlining 19
-repos' files would consume a large context budget for instructions relevant
-only while working in each repo. **Upgrade once per machine:** run
-[`scripts/register-codex-hook.sh`](scripts/register-codex-hook.sh), then
-re-trust the changed definition in `/hooks`. Only the exact previous default
-command is upgraded; hand-written variants stay untouched.
+**2026-09-28 — parent-directory launches (historical):** `fleet-memory.sh
+--workspace <dir>` still selects the freshest immediate child's payload and
+prints a `fleet-workspace:` line naming the child repos whose `AGENTS.md` must
+be read, because Codex does not load child instructions from a parent (nor
+through `--add-dir`). Since ADR 0043 the registered local-Codex command runs the
+per-user launcher, which does not call that mode, so a Codex session started
+from a multi-repo parent gets no such list; the guidance itself still arrives
+through the plugin hook. **Upgrade once per machine:** run
+[`scripts/register-codex-hook.sh`](scripts/register-codex-hook.sh) after
+`setup.sh --owner-machine`, then re-trust the changed definition in `/hooks`.
+Both earlier defaults, and a command naming the deleted
+`.claude/hooks/codex-session-start.sh`, are upgraded in place; other
+hand-written variants stay untouched.
 
 The Codex Cloud cold-start path is verified with **Manual** environment setup
 and persistent `CODEX_HOME=/opt/codex`: preserve `npm ci`, then run
@@ -375,8 +393,9 @@ through the real `fleet-memory.sh` and proving each arm got it
 results go to skills-evals' [`persistent/eval-results`](https://github.com/Adam-S-Daniel/skills-evals/tree/persistent/eval-results)
 branch. From there the regression detector and the gates read them. A section
 is retired when its `full` against `full-minus-section` pair, pooled across
-versions of the rest of the guidance, shows with 90% confidence that it does
-not improve results by 0.15 or more. Retirement is an auto-merging pull
+versions of the rest of the guidance, shows no benefit by the thresholds in
+skills-evals' [`docs/rules.md`](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/rules.md).
+Retirement is an auto-merging pull
 request in this repo, with no human approval. Each removal is followed by a
 skills-evals notice issue to Adam with the way to revert it, and a section
 that helps only alone gets a shorten-or-merge issue
@@ -388,16 +407,16 @@ guidance view.
 The harness is described in skills-evals'
 [DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
 
-### Payload mirror
+### Guidance markers and evidence pointers
 
-This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
-byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
-nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
-(CI: the "Fleet payload mirrors base.md" step in
-[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails when
-the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
-pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
-exist.
+[`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
+(CI: the "Guidance markers and evidence pointers" step in
+[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails
+when a `docs/evidence/<file>` pointer in `base.md`, `stub.md` or `sections/*.md`
+names a file that does not exist, or when a `guidance-marker:` line the
+guidance-load Stop hook counts is missing, duplicated or in the wrong file. No
+repo carries a copy of `base.md` any more (ADR 0043); the owner's own setup
+installs it into the owner's sessions.
 
 ### Agent Markdown warnings
 
@@ -407,8 +426,7 @@ push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
 whatever it finds, so it cannot fail the `checks` job or, through it, the
 required `test` context. It prints one
 `::warning file=...,line=...` annotation per finding over the Markdown agents
-read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
-`.claude/hooks/fleet-guidance.md`):
+read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`):
 
 - **British spellings**, from a fixed word list in the script (no generic
   `-ise` pattern). Fenced and inline code, block quotes, HTML and URLs are

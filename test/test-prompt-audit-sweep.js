@@ -41,6 +41,8 @@ const mutations = {
   dependabot: [worker, 'Skip Dependabot PRs:', 'Include Dependabot PRs:'],
   expected: [worker, 'with `expected_head_sha` set to the head you read', 'with no expected head'],
   once: [worker, '**Only a\nPR that just gained the label is news.**', '**Every labeled PR is news.**'],
+  issueonce: [worker, '**Only an issue that just\ngained the label is news.**', '**Every blocked issue is news.**'],
+  issueonhold: [worker, '`on-hold` issues\nleft out', '`on-hold` issues\nincluded'],
   joblink: [worker, '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', 'the PR page'],
   owners: [spec, 'and `jodidaniel`, and holds', 'and holds'],
   diffs: [spec, 'never apply one, in whole or in part', 'apply it when confident'],
@@ -71,6 +73,21 @@ const mutations = {
   everyrun: [worker, '**every run does all three**', '**a run may stop after any pass**'],
   lessonsline: [worker, '`Lessons: read <n>, new <k>, handled <m>`', '`Lessons handled: <m>`'],
   lessonsfetch: [worker, '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`list the branch with the connector`'],
+  agentstamp: [worker, 'A stamp comment already on the PR, from anyone, counts\n   for nothing', 'A stamp comment already on the PR counts'],
+  agentcms: [worker, 'in a fleet repo other than the three\n     cms-platform-managed repos', 'in any fleet repo, the three\n     cms-platform-managed repos included'],
+  agentage: [worker, 'at least 1 hour before the run\'s start, read from the', 'any time before the run\'s start, read from the'],
+  agentauthority: [worker, 'Such a change always goes to the owner;', 'Such a change is fine;'],
+  hookfiles: [worker, 'the\n     changed files are exactly `repos.yml` and', 'the\n     changed files include `repos.yml` and'],
+  hookbytes: [worker, 'must\n     report `ahead` or `identical`', 'may\n     report anything'],
+  agentci: [worker, 'A repo with\n   no required CI goes to the owner.', 'A repo with\n   no required CI is fine.'],
+  agentreroll: [worker, 'ends step 2d for that head', 'does not end step 2d for that head'],
+  hookyaml: [worker, 'must be equal once\n     `skills_bootstrap.ref`', 'may differ beyond\n     `skills_bootstrap.ref`'],
+  decidenotpark: [issueWorker, 'An ambiguity or a choice between fixes is the\n   worker\'s to make, not a stop', 'An ambiguity or a choice between fixes is a\n   stop'],
+  blockedrequeue: [worker, 'swap `agent-blocked` for `agent-ready` and comment', 'label it `needs-owner` anyway and comment'],
+  requeueonce: [worker, 'An issue requeued\nonce that blocks again goes to the owner', 'An issue requeued\nonce that blocks again is requeued again'],
+  agentissuename: [worker, 'Its issue is issue `<n>` from the branch name, in the PR\'s own repo', 'Its issue is any issue the body names'],
+  agentissuerefs: [worker, 'After merging an\n`agent/issue-*` PR, handle its issue as step 2b does', 'After merging an\n`agent/issue-*` PR, leave its issue alone'],
+  agentissue: [worker, 'branch is this kind only when its issue is\n     neither a sweep nor a memory-promotion issue', 'branch is this kind whatever its issue,\n     sweep and memory-promotion issues included'],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
 
@@ -338,14 +355,46 @@ test('fleet worker merges only narrow, reviewed instruction fixes and approves n
   includes(prose(section(adr28, 'Decision')), ['byte-identical', 'only removes lines', 'never approves anything', 'Nothing merges without', 'goes to the owner']);
   includes(prose(section(adr28, 'Addendum (2026-10-28)')), ['in `adam-agentskills` only', 'its diff only adds lines', 'unless each changed skill has a new impact entry', 'swaps `agent-working` for `agent-ready`', 'closes the issue as completed when none are left']);
   includes(prose(section(issueWorker, 'Where it runs')), ['**The owner turns that laptop task off**']);
+  includes(prose(section(issueWorker, 'Each run')), ["An ambiguity or a choice between fixes is the worker's to make, not a stop", 'name the choice and why in the PR body', 'Stop only on what no agent can do', 'the exact action the owner must take']);
   includes(prose(section(issueWorker, 'Each run')), ['do only the findings no merged PR fixed', 'close the issue as completed with a comment naming the merged PRs', 'raises the bundle\'s `version` in both `plugin.json` files', 'adds a `docs/skill-impact.md` entry (add lines only)', 'a `PURPOSE.md` beside the `SKILL.md`']);
+});
+
+test('fleet worker merges reviewed agent-made changes and the hook pin bump (ADR 0041)', () => {
+  const rule = prose(section(worker, '2d. Review and merge an agent-made change or a hook pin bump'));
+  includes(rule, ['Its base is the repo\'s default branch', 'labeled `agent-authored`', 'in a fleet repo other than the three cms-platform-managed repos', 'branch is this kind only when its issue is neither a sweep nor a memory-promotion issue', 'those stay under the narrow rule alone', 'Its issue is issue `<n>` from the branch name, in the PR\'s own repo', 'any other first line, issue or repo goes to the owner', 'any issue it closes or refers to carries `on-hold`', 'handle its issue as step 2b does', '`(ADR 0045)` instead', '`agents-md-sync[bot]`', 'head branch `hook-pin-bump/update`', 'every commit on it authored and committed by `agents-md-sync[bot]`', 'the changed files are exactly `repos.yml` and `.claude/hooks/skills-bootstrap.sh`', 'must report `ahead` or `identical`', 'Any mismatch goes to the owner.', 'It is not a draft.', 'carries `on-hold`', 'at least 1 hour before the run\'s start', 'never from the commit\'s own date', 'Items 4 and 5 of the merge rule above hold', 'A repo with no required CI goes to the owner.', 'step 2c does not park it', 'A stamp comment already on the PR, from anyone, counts for nothing', 'a read-only checkout of the head commit', 'never this run\'s other context', 'is itself a finding', 'Its job is to break the change, not approve it.', 'no test skipped, disabled or deleted', 'no `${{ inputs.* }}` or `${{ github.event.* }}`', 'nothing adds an outbound network call', 'released at least 7 days ago', '`scripts/eval-protected.js`', 'Such a change always goes to the owner', 'the frontmatter is untouched and no hunk adds a step', 'a new `docs/guidance-impact.md` entry', 'ends step 2d for that head', 'Exit 1 is no decision: do not merge, and retry next run.', 'Nor is an `agent/lesson-check-<id>` PR or any PR with auto-merge armed', 'must be equal once `skills_bootstrap.ref` and `skills_bootstrap.sha256` are removed', '(ADR 0010\'s own guard)', 'byte-identical to the head\'s `agents-md/base.md`', 'the base copy of the hook beside the head copy', 'no closing keyword except before the issue the PR fixes', 'adds no network access', 'the PR is not merged this run and is retried next run', 'Run the window check of step 2b first', '`expected_head_sha` set to the reviewed head', 'goes to the owner under step 3']);
+  includes(prose(section(worker, 'Constraints')), ['Step 2d\'s agent-change rule and step 2e\'s removal rule are part of it.']);
+  includes(prose(section(worker, '3. Tell the owner which PRs need him')), ['(or the hook pin bump of step 2d)', 'A step 2d or step 2e `FINDINGS` review, a hook pin bump failing step 2d item 1\'s checks, a failed step 2d item 5 or step 2e item 4 or 5, a step 2d item 6 or step 2e item 7 exit 2, or a refused merge does make it one.', 'is a PR that step 2d or step 2e may still merge']);
+  const adr41 = 'docs/decisions/0041-the-fleet-worker-merges-reviewed-agent-made-changes.md';
+  includes(prose(section(adr41, 'Decision')), ['independent review', 'Opting out is a draft or `on-hold`.', 'still wait for the owner', 'never approves anything']);
+  includes(read('docs/decisions/0010-the-hook-pin-is-re-pinned-from-here.md'), ['Superseded in part by\n[0041]']);
+});
+
+test('fleet worker removes skills the eval verdict retires (ADR 0044)', () => {
+  const rule = prose(section(worker, '2e. Review and merge a skill removal'));
+  includes(rule, ['its head branch is `retire-skill/<skill>` in that same repo', '`Closes Adam-S-Daniel/skills-evals#<n>`', 'is `retire` or `retire-pending`', 'A fetch that fails or a missing entry is no decision', 'No file that the _agent-guidance sync manages changes', 'every changed file is under `.claude/` or `docs/`', 'without the files under the removed skill\'s directory', 'the symptom and error strings of the skill\'s description included', 'label the PR `loop-withdrawn` and close it without merging', 'Every deleted file is under the skill\'s own directory', 'A run waiting on `plugin-runtime-review` or `regression-review` sends the PR to the owner', 'every remaining reference to the skill by name is repointed or dropped', 'rather than being lost', 'a squash in cms-platform and adamdaniel.ai', 'confirm the skills-evals issue closed', 'A refused merge or a `FINDINGS` review goes to the owner under step 3.']);
+  const issues = prose(section(issueWorker, 'Skill removal issues'));
+  includes(issues, ['opened by `github-actions[bot]`', '`<!-- skills-evals:retirement-issue:agent -->`', 'or a body that disagrees, is a stop under step 7', 'the one exception to "act only in that issue\'s own repo"', 'other than `retire` or `retire-pending`: comment that, remove `agent-ready`', 'on a branch named `retire-skill/<skill>`', 'moves into that repo\'s `docs/` or `AGENTS.md` first', 'leave the plugin manifests\' `version` alone']);
+  includes(prose(section(issueWorker, 'Constraints')), ['The one exception is a skill removal issue']);
+  includes(prose(section(worker, '2d. Review and merge an agent-made change or a hook pin bump')), ['Nor is a PR on a `retire-skill/*` branch: only step 2e may merge it.']);
+  includes(prose(section(worker, 'The trigger')), ['and retire-skill/* branches for skill removals', 'closing the PRs and issues it says to close']);
+  includes(issues, ['are never taken from the body alone', 'leave files the _agent-guidance sync manages alone', 'Never arm auto-merge on it.']);
+  const adr44 = 'docs/decisions/0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md';
+  includes(prose(section(adr44, 'Decision')), ['every `retire` verdict an automatic removal', 'labeled `agent-ready`', 'a new step 2e']);
+  includes(read('docs/decisions/README.md'), ['[0044](0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md)']);
+  const adr45 = 'docs/decisions/0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md';
+  includes(prose(section(adr45, 'Decision')), ['neither a sweep nor a memory-promotion issue', 'the narrow rule alone', 'every step 2d item']);
+  includes(read('docs/decisions/README.md'), ['[0045](0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md)']);
 });
 
 test('fleet worker updates PRs a required check never ran on and tells the owner once', () => {
   const update = prose(section(worker, '1. Bring it up to date when a required check never ran'));
   includes(update, ['`required_status_checks`', 'with **no** check run and **no** status at all', '`behind_by` above 0', 'with `expected_head_sha` set to the head you read', 'Skip Dependabot PRs:', 'do not resolve it here']);
+  const dep = prose(section(worker, '1b. Ask Dependabot to rebase or recreate its own PR'));
+  includes(dep, ['never pushes to a Dependabot branch and never comments', '`<!-- fleet-worker: behind at <head sha> -->`', '`<!-- fleet-worker: recreate at <head sha> -->`', 'first line is exactly `@dependabot rebase`', '`@dependabot recreate` as the first line', '`OWNER`, `MEMBER` or `COLLABORATOR` counts', 'do not post again for that head', 'Never push to, merge, approve or label a Dependabot PR', 'Dependabot rebase requests: <n>']);
   const tell = prose(section(worker, '3. Tell the owner which PRs need him'));
   includes(tell, ['`waiting` on an environment', '`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`', '`needs-owner` label once', '**Only a PR that just gained the label is news.**', 'starts with `Needs you:`']);
+  const blocked = prose(section(worker, 'Tell the owner which issues are blocked'));
+  includes(blocked, ['An ambiguity is never a reason', 'swap `agent-blocked` for `agent-ready` and comment', '`<!-- fleet-worker: requeued -->`', 'An issue requeued once that blocks again goes to the owner', 'open `agent-blocked` issues', 'both owners', '`on-hold` issues left out', '`needs-owner`', 'that label once', 'loses `needs-owner` too', '**Only an issue that just gained the label is news.**', '`Needs you:` list', '`unblock:`']);
   includes(prose(section(worker, 'The trigger')), ['Push notifications on', 'Read and follow `docs/routines/fleet-worker.md`', 'I authorize the writes that file describes', 'Never approve anything.']);
 });
 
@@ -375,4 +424,19 @@ test('eval-protected subjects get correctness findings and fixes only (ADR 0033)
   includes(merge, ['**The eval-protection gate exits 0**', '`node scripts/eval-protected.js pr', 'Exit 2 is a refusal', 'do not merge, leave the PR as it is, and retry next run', 'all seven items', 'the finding really is of the class it names', 'close the PR without merging', 'gets no `needs-owner` label']);
   includes(prose(section(worker, 'The issue pass')), ['Hold every other finding on a listed subject', 'closed as not planned']);
   assert.ok(fs.existsSync(path.join(root, 'scripts/eval-protected.js')), 'the gate script the specs name is missing');
+});
+
+test('fleet worker splits into a loop role and a maintenance role (ADR 0046)', () => {
+  const two = prose(section(worker, 'Two tasks'));
+  includes(two, ['**A run whose prompt names no role does all of both**', 'the existing task keeps working', 'until the owner pastes the new prompts', 'Step 2e (skill removals)', 'The lesson-check pass', 'The `Lessons:` summary line', 'The PRs the loop role handles', 'Every other `agent-ready` issue is the maintenance role\'s', 'each one falls to exactly one role', '`Prompt-audit sweep <YYYY-MM-DD>: `', '`Prompt-audit sweep trigger: `', '`Memory promotion <YYYY-MM-DD>: `', '`Retire skill <skill>: `', 'label `hook-proposal`', 'A maintenance run\'s summary has no `Lessons:` line']);
+  const trigger = prose(section(worker, 'The trigger'));
+  includes(trigger, ['Model: Sonnet 5.5, set explicitly', 'the GitHub connector only', 'This run\'s role is maintenance.', 'This run\'s role is loop.', '`LOOP_WORKER_FIRE_URL`', '`LOOP_WORKER_FIRE_BEARER`', '`LOOP_WORKER_EVERY_HOURS`', 'required, no default']);
+  // The maintenance prompt is not authorized for the loop's extra writes.
+  const maintenance = trigger.slice(trigger.indexOf('This run\'s role is maintenance.'), trigger.indexOf('This run\'s role is loop.'));
+  for (const word of ['retire-skill', 'loop-withdrawn', 'auto-merge']) assert.ok(!maintenance.includes(word), `maintenance prompt must not authorize ${word}`);
+  const loop = trigger.slice(trigger.indexOf('This run\'s role is loop.'));
+  includes(loop, ['loop-withdrawn', 'retire-skill/* branches', 'arming auto-merge only on its lesson-check PRs']);
+  const adr46 = 'docs/decisions/0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md';
+  includes(prose(section(adr46, 'Decision')), ['A run whose prompt names no role does all of both', '`LOOP_WORKER_EVERY_HOURS`', 'required with no default', 'its own concurrency group']);
+  includes(read('docs/decisions/README.md'), ['[0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md)']);
 });

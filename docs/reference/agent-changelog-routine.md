@@ -109,12 +109,16 @@ touches, and say so in the run log and the PR.
   bearer lives in an Actions secret instead (step 4a). If any host this run needs fails to
   resolve, stop and report — never fall back to WebFetch for a release body
   without cross-checking it against a raw source first (step 2).
-- The environment must have the repos in **Repos considered** attached,
-  plus `_agent-guidance`.
-- The Routine must also attach `openai/codex` and `anthropics/claude-code`
-  as sources, read-only. The session proxy allows github.com release pages
-  only for repos attached to the session (measured 2026-09-28: `403`
-  without them, `200` with them).
+- The Routine (the scheduled task, not the environment, whose repository
+  list is empty) must have the repos in **Repos considered** attached,
+  plus `_agent-guidance`, and no others: every attached repo's
+  `skills.lock` feeds the `skills-bootstrap` hook, and one stale lock from
+  a repo outside the list kept nine skills from installing, this run's own
+  among them ([#509](https://github.com/Adam-S-Daniel/_agent-guidance/issues/509)).
+- `openai/codex` and `anthropics/claude-code` are not attached, and need
+  not be. The daily runs to date have read both from github.com without
+  them; the owner confirmed on 2026-11-13 that they were
+  never attached.
 - Prompt, exactly:
 
   > Read and follow `docs/reference/agent-changelog-routine.md` in
@@ -331,11 +335,9 @@ version number after a newer one.
 
 The route for Codex is the release HTML pages on `github.com`
 (`github.com/openai/codex/releases`). The session proxy allows github.com
-release pages only for repos attached to the session (measured 2026-09-28:
-`403` without `openai/codex` and `anthropics/claude-code` attached, `200`
-with them; see **The trigger**). The session
-proxy blocks the GitHub API and `codeload` for repos not attached to the
-session. Don't request push access to a vendor repo to read it; it is
+release pages and the `git clone` below without either vendor repo attached
+(see **The trigger**). Treat the GitHub API and `codeload` as unavailable for
+these repos, and don't depend on them. Don't request push access to a vendor repo to read it; it is
 refused, and it is never needed. If a list-page or tag-page fetch fails (a
 non-200 response, a redirect off `github.com`, or an HTML page with no
 release blocks), stop and report exactly
@@ -726,8 +728,8 @@ Each was hit on 2026-09-25. The step that now prevents it is in parentheses.
   `developers.openai.com/codex/changelog/rss.xml` was retired — it now
   redirects to a combined ChatGPT & Codex changelog with no CLI release
   items or version numbers. Codex now reads from GitHub release pages
-  instead (2); the session proxy allows them only for attached repos
-  (403 without, 200 with, measured 2026-09-28).
+  instead (2). A 2026-09-28 measurement read a 403 without the vendor
+  repos attached; the daily runs since have read the pages without them.
 - In a fresh session, `./test/run-tests.sh` needs `npm ci` as well as the
   CI-pinned `yq` (checksum-verified, as `.github/workflows/ci.yml` installs
   it). Without `node_modules`, 16 tests fail (7).

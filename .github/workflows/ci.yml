@@ -253,19 +253,17 @@ jobs:
       - name: Agent Markdown warnings (spelling, dangling references)
         run: node scripts/check-agent-markdown.js
 
-      # This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a
-      # hand-made byte-identical copy of agents-md/base.md that nothing syncs
-      # (SYNC_SELF_REPO) and no drift report names; the same step proves every
-      # docs/evidence/ file that base.md and stub.md point at still exists.
-      # Unconditional and not path-filtered, like the rest of this job. The
-      # integration suite compares the same two files and fails on the same
-      # drift, but with a FAIL line buried in a shard's log; this step's
-      # message names the one-line fix. So it must never be skipped behind a
-      # failure: the suite now runs in the separate `suite` job, which this
-      # job does not need, and within this job it sits right after `npm ci`,
-      # ahead of every step that can fail, because a later step without
-      # `if: always()` is skipped once an earlier one fails.
-      - name: Fleet payload mirrors base.md
+      # Proves every docs/evidence/ file that base.md and stub.md point at still
+      # exists, and that each guidance marker the guidance-load Stop hook counts
+      # appears once, in its own file. (It once also compared a byte copy of
+      # base.md at `.claude/hooks/fleet-guidance.md`; ADR 0043 retired that
+      # mirror.) Unconditional and not path-filtered, like the rest of this job.
+      # The message names the one-line fix, so it must never be skipped behind a
+      # failure: the suite runs in the separate `suite` job, which this job does
+      # not need, and within this job it sits right after `npm ci`, ahead of
+      # every step that can fail, because a later step without `if: always()`
+      # is skipped once an earlier one fails.
+      - name: Guidance markers and evidence pointers
         run: node scripts/check-fleet-guidance-mirror.js
 
       # This repo runs crons of its own (drift-report, the Dependabot sweep),
@@ -321,6 +319,14 @@ jobs:
 
       - name: Section manifest covers every guidance heading
         run: node scripts/check-guidance-coverage.js --skills-evals skills-evals --check-bytes
+
+      # ADR 0043: the contributor half of base.md, built from the sections
+      # eval-coverage.yml marks `audience: contributor`. Like AGENTS.md, the
+      # file is a committed artifact the sync delivers, so CI regenerates it
+      # and fails on any difference, naming the one-line fix. After the
+      # manifest gate, which reports a missing row or audience in detail.
+      - name: Contributor rules match base.md
+        run: node scripts/build-contributor-rules.js --check
 
       # The touch gate (_agent-guidance#120), after the graduation gate above
       # so a heading with no row at all is reported once, by that step, not
@@ -393,6 +399,36 @@ jobs:
       # `./test/run-tests.sh --list-groups` rather than from the script's text.
       - name: CI shards cover every test group
         run: node scripts/check-ci-shards.js
+
+      # The real `gh actions-lock --no-fix` against what the sync's lockfile
+      # helper (scripts/actions-lock-entry.sh) writes, on vendored real
+      # lockfiles: the suite's own model of that rule is the helper's rule
+      # again, so only the tool can say the helper is right. Installed the way
+      # Adam-S-Daniel/verify-actions-lock installs it (same release, same
+      # digest; bump the two together with that action). Unconditional like the
+      # rest of this job: a required check cannot be path-filtered, and a
+      # change to sync.sh or the helper must always reach it. The tool resolves
+      # pins over the network, so it gets the job's read-only token through
+      # `env:`, never a `${{ }}` inside `run:`.
+      - name: Install gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK_TOOL_VERSION: v0.3.0
+          LOCK_TOOL_SHA256: 15810767a8cd28d389f0942e3ce515ac0008c3f65301c3834fd4c046d4bda497
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/gh-actions-lock"
+          mkdir -p "$dir"
+          gh release download "$LOCK_TOOL_VERSION" -R github/gh-actions-lock -p linux-amd64 -O "$dir/gh-actions-lock" --clobber
+          echo "$LOCK_TOOL_SHA256  $dir/gh-actions-lock" | sha256sum -c -
+          chmod +x "$dir/gh-actions-lock"
+          (cd "$dir" && gh extension install .)
+          gh actions-lock --version
+
+      - name: Lockfile helper satisfies gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-actions-lock-helper.sh
 
   # THE REQUIRED CONTEXT. Its job id and name are both `test` and must stay
   # so: that is the context branch protection names. `if: always()` and not
