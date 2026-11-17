@@ -21,6 +21,7 @@ import tempfile
 import textwrap
 import threading
 import unittest
+from unittest import mock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / ".claude" / "hooks" / "guidance-load-record.sh"
@@ -1843,7 +1844,10 @@ class CloudSafetyTests(CloudTestCase):
 
     def reason_for(self, base, name="vector"):
         self.write_transcript(self.use_with_base("toolu_z1", name, base))
-        self.stop()
+        # A counter clock: the parse and hash budgets end after a fixed number
+        # of checks, so a loaded machine cannot run them out before the use is
+        # recorded. What these tests check (what is read) needs no real time.
+        self.stop(env={"GUIDANCE_RECORD_TEST_TICK": "0.001"})
         [line] = self.shard()
         return line["digest_null_reason"]
 
@@ -1933,19 +1937,43 @@ class CloudGateTests(CloudTestCase):
         self.assertEqual([l["id"] for l in self.shard()], ["toolu_g1", "toolu_g2"])
 
     def test_phase_1_and_phase_2_stay_under_the_stop_timeout_when_every_call_hangs(self):
-        # Every curl uses its whole --max-time; every clone, fetch and push
-        # hangs with a child holding its pipe. The hook must still end inside
-        # the 20-second Stop timeout. Every budget is scaled by SCALE (the
-        # test-only seam), so the bound checked is 20 s * SCALE.
-        scale = 0.12
+        # On a fake clock, so the bound is the hook's budgeting, not how fast
+        # this machine is: every curl uses its whole --max-time and then grants
+        # push, as SLOW_CURL does below; every git call hangs to its whole cap,
+        # then the reap waits MIN_CALL. The hook's real budgets apply (no
+        # SCALE), and the run must end inside the 20-second Stop timeout.
+        env = dict(self.env, **self.cloud_env, GUIDANCE_HOOK_INPUT=json.dumps({
+            "session_id": CLOUD_SESSION, "transcript_path": str(self.transcript),
+            "hook_event_name": "Stop"}))
+        with mock.patch.dict(os.environ, env, clear=True):
+            hook = hook_module()
+            clock, calls = [0.0], []
+
+            def hang(args, cwd=None, env=None, data=None, cap=hook["CALL_CAP"]):
+                calls.append(args)
+                if args[0] == "curl":
+                    clock[0] += float(args[args.index("--max-time") + 1])
+                    pathlib.Path(args[args.index("-o") + 1]).write_text(
+                        json.dumps({"permissions": {"push": True}}), encoding="utf-8")
+                    return 0, b"200"
+                clock[0] += cap + hook["MIN_CALL"]
+                return None, b""
+
+            hook.update(monotonic=lambda: clock[0], START=0.0, run=hang)
+            hook["main"]()
+        self.assertEqual(hook["BUDGET"], 15.0)
+        self.assertTrue(any("clone" in a for a in calls), calls)
+        self.assertLess(clock[0], 20.0)
+        self.assertIs(self.records()[0]["uploaded"], False)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_g1"])
+
+    def test_a_hung_call_is_killed_with_its_children_and_the_use_kept(self):
+        # The same Stop through the real hook: every curl uses its whole
+        # --max-time; every clone, fetch and push hangs with a child holding
+        # its pipe. Its run time is bounded by the test above, not here.
         (self.bin / "curl").write_text(SLOW_CURL, encoding="utf-8")
-        # The hook reports its own run time (from its start, so the interpreter
-        # start-up a loaded machine slows is not counted).
-        elapsed_file = self.tmp / "elapsed"
         self.stop(env={"FAKE_GIT_MODE": "hang-network", "GUIDANCE_RECORD_TEST": "1",
-                       "GUIDANCE_RECORD_TEST_SCALE": str(scale),
-                       "GUIDANCE_RECORD_TEST_ELAPSED_FILE": str(elapsed_file)})
-        self.assertLess(float(elapsed_file.read_text()), 20 * scale)
+                       "GUIDANCE_RECORD_TEST_SCALE": "0.12"})
         # It did wait on the hung calls, rather than skip them.
         self.assertTrue(any("clone" in c for c in self.git_calls()))
         # The timeout killed the whole process group, the hung child included.
