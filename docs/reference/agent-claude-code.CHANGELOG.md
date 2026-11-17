@@ -53,7 +53,7 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/319)
   > Changed auto mode to ignore some wildcard shell allow rules, such as ones that name no program or that start with `$HOME`, so the safety check decides those commands
 
-**Issues:** PENDING.
+**Issues:** [skills-evals#1082](https://github.com/Adam-S-Daniel/skills-evals/issues/1082).
 
 #### 2. Background session resume and Remote Control idle status
 
@@ -62,14 +62,14 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/92)
   > Remote Control: Fixed terminal sessions showing as idle on your phone while background subagents were still running; Stop on your phone or the web now ends them together with the turn
 
-**Issues:** PENDING.
+**Issues:** [wsl-automation#119](https://github.com/Adam-S-Daniel/wsl-automation/issues/119).
 
 #### 3. Hook `"decision": "block"` holds in more cases
 
 - [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/295)
   > Changed a hook's `"decision": "block"` to hold in more cases, so a hook that always prints one may start blocking calls
 
-**Issues:** PENDING.
+**Issues:** [_agent-guidance#589](https://github.com/Adam-S-Daniel/_agent-guidance/issues/589).
 
 #### 4. Prompt-audit sweep trigger
 
@@ -78,12 +78,11 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.326](https://github.com/anthropics/claude-code/releases/tag/v2.1.326), published 2026-11-16T22:11Z (bullet 2.1.326/325)
   > Changed enabled plugins that were refused for a malformed `plugin.json` display field: they now load, with their hooks and MCP servers; administrators should check the plugins they deploy
 
-**Issues:** PENDING.
+**Issues:** [_agent-guidance#590](https://github.com/Adam-S-Daniel/_agent-guidance/issues/590) (no label). The fire workflow's comment, if any, is on the issue.
 
 **Prompt-audit sweep:** requested through group 4. Bullets 2.1.326/128 (a first skill, command or agent created during a session was not found right away) and 2.1.326/325 (enabled plugins refused for a malformed `plugin.json` display field now load) change what loads on surfaces the fleet uses, as 2.1.321/18 did. Considered and not counted: 2.1.326/259 (`/doctor` shares findings as it works, which changes its progress display only) and 2.1.326/4 (a note when a malformed `plugin.json` field is ignored, display only). No `Prompt-audit sweep trigger:` issue was open at the start of the run.
 
 No other group met the name-the-surface bar. Considered and dropped: the hook `updatedInput` and exit 127 changes (no fleet hook rewrites tool input or exits 127 by design); the `allowedHttpHookUrls` and `httpHookAllowedEnvVars` change and the HTTP hook header change (no fleet file sets either); the stricter `PATH` for worktree creation and `/teleport` (no fleet repo declares a git `filter=` driver in `.gitattributes`); the worktree-isolated subagent git refusals and `ExitWorktree` change (no fleet routine or script spawns an isolated subagent); the refusal to write Claude Code's sign-in files (`ai-usage-dashboard`'s collector only reads `~/.claude/.credentials.json`); the `--bg --await-initialize` refusal and the `--bare` background change (`wsl-automation` passes neither); the Remote Control CONNECT-tunnel change and the `--verbose` debug-log move (the keeper passes neither a proxy nor `--verbose` to `claude rc`); and the `claude plugin` output marks and wording (piped and `--json` output keep their forms, and no fleet script parses the terminal text). Codex: no stable release after 0.169.0 (page 1 holds 0.169.0 and 0.171.0 alphas only). The open discrepancy about repo skills after `cd` is not fixed by this release.
-
 
 ### 2026-11-14 — 2.1.325 through 2.1.325
 
