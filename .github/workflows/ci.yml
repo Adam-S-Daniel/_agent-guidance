@@ -266,6 +266,14 @@ jobs:
       - name: Guidance markers and evidence pointers
         run: node scripts/check-fleet-guidance-mirror.js
 
+      # The Codex Cloud setup recipe in docs/codex-cloud.md, run offline against
+      # stubbed curl and git: its pin matches fleet-memory.sh, and a digest
+      # mismatch stops setup without running the download, in the `|| exit 1`
+      # call form the doc gives (which turns off `set -e` inside the function).
+      # Nothing ran this test before, and the recipe ran unverified bytes.
+      - name: Codex Cloud recipe fails closed
+        run: python3 -m unittest discover -s test -p test_codex_cloud_recipe.py -v
+
       # This repo runs crons of its own (drift-report, the Dependabot sweep),
       # and a scheduled failure notifies nobody — drift-report.yml was red 26
       # consecutive nights unnoticed. So the repo must also run the
