@@ -44,6 +44,11 @@ the passes after it. The lesson-check pass's own writes are a branch, a push
 and a PR, so a denied label write elsewhere never stops it
 (the 2026-11-03 16:20 UTC run stopped after one denied `needs-owner` label and
 skipped both later passes).
+**A run never skips the issue pass while its role has a candidate.** A long
+PR pass, many `needs-owner` labels or a short run are not reasons: the
+2026-11-18 15:45 UTC maintenance run listed `skills-evals#1079`, its role's
+oldest `agent-ready` issue, then wrote "I did not run the issue pass" and
+ended, and the issue had waited since 2026-11-16 20:49 UTC.
 
 1. **The PR pass** (below): brings open PRs up to date when a required check
    never ran on them, reviews and merges the kinds of PR Claude may merge
@@ -106,6 +111,7 @@ role applies to a run of either role, to the steps it runs.
 | Tell the owner which issues are blocked | loop issues | every other issue, for example the scheduled-run health audit's `ci` issues |
 | The lesson-check pass | yes | no |
 | The `Lessons:` summary line | yes | no |
+| The `Issues:` summary line | yes, for loop issues | yes, for every other issue |
 
 **The PRs the loop role handles** are those on an `agent/issue-<n>-<slug>`
 branch whose issue is a loop issue (step 2), on a `retire-skill/*` branch
@@ -738,6 +744,15 @@ role every other one). Skip an issue
 titled `Memory promotion <YYYY-MM-DD>: <n> agent-checks`: the lesson-check
 pass takes it.
 
+**List candidates with the one search in step 1 of "Each run"**, across both
+owners, never by listing each repo's issues: a per-repo listing cut to its
+newest entries can miss the oldest issue, and it does not sort the fleet
+oldest first. Drop issues outside the fleet repos and outside your role, then
+take them oldest first. **The oldest candidate is taken first**, unless it is
+skipped for a reason step 2 of "Each run" gives (`on-hold`, already
+`agent-working` or `agent-blocked`, a held linked PR); a skipped candidate is
+named with its reason in the summary.
+
 Before fixing a sweep or memory-promotion issue, run
 `node scripts/eval-protected.js list` on a fresh `explorer/latest.json`
 (merge rule item 7). Fix a finding on a listed subject only when the issue
@@ -890,7 +905,14 @@ The run's final message has, in this order:
    or withdrawn, PRs parked (eval-protected), stale claims, conflicts, `NOT REACHED` repos, and
    `on hold` items.
 3. If nothing else happened: `Nothing to do.`
-4. **Always, as the last line, even when all three numbers are zero:**
+4. **Always, every role, even when both numbers are zero:**
+   `Issues: candidates <n>, taken <k>`, where **candidates** counts the
+   `agent-ready` issues the role owns after the search and filters above, and
+   **taken** counts the ones this run claimed. When `<n>` is above 0, add
+   `; oldest <owner>/<repo>#<number>`. A summary without this line, or with
+   `<n>` above 0 and `<k>` 0 and no skip reason for each candidate, means the
+   issue pass did not run, which is a defect in the run.
+5. **Always, as the last line, even when all three numbers are zero:**
    (a loop run or a run with no role; a maintenance run has none)
    `Lessons: read <n>, new <k>, handled <m>`, with the counts defined under the
    lesson-check pass's inputs. When the `persistent/lessons` branch could not

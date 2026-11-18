@@ -88,6 +88,9 @@ const mutations = {
   agentissuename: [worker, 'Its issue is issue `<n>` from the branch name, in the PR\'s own repo', 'Its issue is any issue the body names'],
   agentissuerefs: [worker, 'After merging an\n`agent/issue-*` PR, handle its issue as step 2b does', 'After merging an\n`agent/issue-*` PR, leave its issue alone'],
   agentissue: [worker, 'branch is this kind only when its issue is\n     neither a sweep nor a memory-promotion issue', 'branch is this kind whatever its issue,\n     sweep and memory-promotion issues included'],
+  noskipissue: [worker, '**A run never skips the issue pass while its role has a candidate.**', '**A run may skip the issue pass when time is short.**'],
+  issuesline: [worker, '`Issues: candidates <n>, taken <k>`', '`Issues taken: <k>`'],
+  oldestfirst: [worker, '**The oldest candidate is taken first**', '**Any candidate may be taken first**'],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
 
@@ -405,6 +408,15 @@ test('fleet worker runs the lesson-check pass every run and always reports it (#
   includes(inputs, ['Call `add_repo` with owner `Adam-S-Daniel`, repo `adam-agentskills-private`', '`git clone --depth 1 --branch persistent/lessons --single-branch', '`git -C <scratch>/lessons ls-tree -r --name-only HEAD -- lessons/proposals/`', '`__agent-check.json`', 'never treat it as "no proposals"', '**read** is the number of lessons found', '**handled** is the number this run took']);
   includes(prose(section(worker, 'Summary')), ['**Always, as the last line, even when all three numbers are zero:**', '`Lessons: read <n>, new <k>, handled <m>`', '`; persistent/lessons NOT REACHED`', 'the lesson-check pass did not run']);
   includes(prose(section(issueWorker, 'Each run')), ['end this pass (in the fleet worker, the lesson-check pass still runs)']);
+});
+
+test('fleet worker never skips the issue pass and always reports it (skills-evals#1079)', () => {
+  const intro = prose(tokens(worker).slice(0, tokens(worker).findIndex(t => t.type === 'heading_open' && t.tag === 'h2')));
+  includes(intro, ['**A run never skips the issue pass while its role has a candidate.**', 'are not reasons']);
+  includes(prose(section(worker, 'Two tasks')), ['The `Issues:` summary line']);
+  includes(prose(section(worker, 'The issue pass')), ['**List candidates with the one search in step 1 of "Each run"**', 'never by listing each repo\'s issues', '**The oldest candidate is taken first**', 'named with its reason in the summary']);
+  includes(prose(section(worker, 'Summary')), ['**Always, every role, even when both numbers are zero:**', '`Issues: candidates <n>, taken <k>`', '`; oldest <owner>/<repo>#<number>`', 'the issue pass did not run']);
+  includes(prose(section(issueWorker, 'Each run')), ['`gh search issues --label agent-ready --state open --owner Adam-S-Daniel --owner jodidaniel`', 'sort oldest first']);
 });
 
 test('memory curation reads memory-note and guidance-edit lessons every run (skills-evals#657)', () => {
