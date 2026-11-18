@@ -33,7 +33,7 @@ review cap and the issue pass's 3-issue limit bound those passes only, and
 a run that took an issue still does the lesson-check pass afterwards. Where
 [`agent-issue-worker.md`](../reference/agent-issue-worker.md) says "say so
 and end", that ends the issue pass, not the run. A run
-whose PR and issue passes found nothing still does it too, so "Nothing to
+whose issue and PR passes found nothing still does it too, so "Nothing to
 do" is decided after the third pass, never before it
 ([_agent-guidance#427](https://github.com/Adam-S-Daniel/_agent-guidance/issues/427):
 runs ended after the issue pass and never read a lesson).
@@ -62,8 +62,8 @@ runs first**: the PR pass cannot crowd it out.
 2. **The PR pass** (below): brings open PRs up to date when a required check
    never ran on them, reviews and merges the kinds of PR Claude may merge
    (skill removals among them, step 2e), and tells the owner which PRs need
-   him. A fix PR the issue pass just opened is too new for step 2d's merge
-   rule, so running the issue pass first merges nothing early.
+   him. **It skips the PRs this run's issue pass opened**: the next run
+   reviews them, as it did when the issue pass ran second.
 3. **The lesson-check pass** (below): turns checkable lessons into checks
    in the fleet's agent-checks runner, in PRs that auto-merge when green.
 
