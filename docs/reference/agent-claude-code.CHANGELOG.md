@@ -30,6 +30,32 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-18 — 2.1.327 through 2.1.327
+
+- **Checked:** 2026-11-18T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.327](https://github.com/anthropics/claude-code/releases/tag/v2.1.327), published 2026-11-17T23:17Z
+- **Window:** v2.1.327 (published 2026-11-17T23:17Z), the first stable release after v2.1.326: 1 release, 173 bullets (the 2 in groups 1 and 2 are indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.327` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time and its opening bullets matched the clone.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance` af7cbb8, `acsi-kit` 7e8042d, `adam-agentskills` 0370ab7, `adam-agentskills-private` e92225e, `adamdaniel.ai` e4e8f34, `ai-usage-dashboard` 8374f1a, `claude-memory-map` 8fe887a, `cms-platform` a8f8c4c, `fastmail-actions` 34f6c49, `jodidaniel.com` 7610d3b, `repo-settings` 86b8a51, `rss-inator` 416e320, `security-alerts` 732082f, `skills-evals` 21cf8d7, `verify-actions-lock` 563524b, `wsl-automation` ea9a6d8), and assessed with a fleet grep; none was re-fetched from the remote this run.
+
+#### 1. Auto mode: the classifier fallback goes away
+
+- [v2.1.327](https://github.com/anthropics/claude-code/releases/tag/v2.1.327), published 2026-11-17T23:17Z (bullet 2.1.327/137)
+  > Changed auto mode's notice about falling back to billed classifier requests to say that an upcoming release removes the fallback; each action it would have checked will be asked about or denied
+
+**Issues:** PENDING_1_SKILLS, PENDING_1_WSL.
+
+#### 2. Prompt-audit sweep trigger
+
+- [v2.1.327](https://github.com/anthropics/claude-code/releases/tag/v2.1.327), published 2026-11-17T23:17Z (bullet 2.1.327/70)
+  > Fixed `claudeMdExcludes` patterns on Windows not matching a path whose drive letter is written in the other case
+
+**Issues:** PENDING_2 (no label). The fire workflow's comment, if any, is on the issue.
+
+**Prompt-audit sweep:** requested through group 2. Bullet 2.1.327/70 (`claudeMdExcludes` patterns on Windows failed to match when the drive letter's case differed) changes what loads on a surface the fleet uses (the Windows terminal CLI), as 2.1.311/312 fixes did. Considered and not counted: 2.1.327/30 and 2.1.327/31 (plugin and `--agents` agents dropped; no fleet plugin ships an `agents/` folder), 2.1.327/87 (the `/` menu listing a row for each skill of the same name, a display fix) and 2.1.327/3 (`/status` lists broken skill and agent files, display only). The 2026-11-17 trigger issue, [_agent-guidance#590](https://github.com/Adam-S-Daniel/_agent-guidance/issues/590), is closed, so no `Prompt-audit sweep trigger:` issue was open at the start of the run.
+
+No other group met the name-the-surface bar. Considered and dropped: the auto-mode change to ignore allow rules that run any package (no fleet file sets such a rule; `skills-evals` only validates the key's type); the PowerShell tool ask and the Bash long-variable denial (the `skills-evals` PowerShell fixtures use a stand-in `bin/pwsh` through Bash, and `wsl-automation`'s memory curation runs bash); the path and symlink checks and `blockReadsOutsideWorkingDirectories` changes (`claude-memory-map` and `skills-evals` document the setting but none depends on which paths count as inside); `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in cloud sessions (`skills-evals` sets it only in its model-alias probe's scrubbed local environment); the `ExitWorktree` ask (no fleet routine or script calls it); the prompt-history change for `claude --bg` launches (`wsl-automation`'s keeper resumes with `claude --bg --resume`, and the change is to history only); `claude mcp add` and `.mcp.json` changes (no fleet repo carries a project `.mcp.json`); the artifact approval changes (no fleet routine publishes an artifact unattended); and the VS Code, Windows start-up and terminal display items.
+
 ### 2026-11-17 — 2.1.326 through 2.1.326
 
 - **Checked:** 2026-11-17T02:09Z, [release log](https://github.com/anthropics/claude-code/releases)
