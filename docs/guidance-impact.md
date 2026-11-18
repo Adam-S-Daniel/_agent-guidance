@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-17 — dependency-updates — edit
+- Motivation: Adam's rule (2026-11-17): the owner's own actions skip the 7-day github-actions cooldown, and every fleet repo with workflows needs a github-actions Dependabot config
+- Change: the cooldown bullet now says github-actions entries `exclude` `Adam-S-Daniel/*` and `jodidaniel/*` (case-sensitive; platform-managed repos exempt), checked daily and merged by the sweep; the "(cms-platform `exclude`d)" note, the advisories, 3-day and minor/patch notes and two parentheticals were trimmed to hold base.md under the 26,624-byte cap
+- Eval: not re-run (no eval harness in the authoring session); `node test/test-dependabot-config-health.js` exit 0 (91 tests) and `node scripts/check-guidance-coverage.js` exit 0; fixture evals/guidance/dependency-updates/ re-runs on the new text
+- Outcome: pending
+
 ## 2026-11-13 — pinning-github-actions — edit
 - Motivation: issue 540: gh-actions-lock v0.4.1 no longer rewrites `./` to `$/` by default (a plain run fails) and the shared check no longer fails on every finding, so two sentences were wrong (evidence docs/evidence/2026-11-13-gh-actions-lock-v0.4.1.md)
 - Change: local actions read `$/<path>`, not `./`; verify-actions-lock "fails on a pin error"; "40-character" shortened to "40-hex" to hold the section at its size (0 bytes net)
