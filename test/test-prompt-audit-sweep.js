@@ -90,6 +90,8 @@ const mutations = {
   agentissue: [worker, 'branch is this kind only when its issue is\n     neither a sweep nor a memory-promotion issue', 'branch is this kind whatever its issue,\n     sweep and memory-promotion issues included'],
   noskipissue: [worker, '**A run never skips the issue pass while its role has a candidate.**', '**A run may skip the issue pass when time is short.**'],
   issuesline: [worker, '`Issues: candidates <n>, taken <k>`', '`Issues taken: <k>`'],
+  issuefirst: [worker, 'Start it before\n   reading any PR.', 'Start it after\n   the PR pass.'],
+  sameRunSkip: [worker, "**It skips the PRs this run's issue pass opened**", "**It reviews the PRs this run's issue pass opened**"],
   oldestfirst: [worker, '**The oldest candidate is taken first**', '**Any candidate may be taken first**'],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
@@ -412,7 +414,9 @@ test('fleet worker runs the lesson-check pass every run and always reports it (#
 
 test('fleet worker never skips the issue pass and always reports it (skills-evals#1079)', () => {
   const intro = prose(tokens(worker).slice(0, tokens(worker).findIndex(t => t.type === 'heading_open' && t.tag === 'h2')));
-  includes(intro, ['**A run never skips the issue pass while its role has a candidate.**', 'are not reasons']);
+  includes(intro, ['**A run never skips the issue pass while its role has a candidate.**', 'are not reasons', '**the issue pass now runs first**', 'Start it before reading any PR.', '**It skips the PRs this run\'s issue pass opened**']);
+  const order = ['The issue pass', 'The PR pass', 'The lesson-check pass'].map(name => intro.indexOf(`**${name}**`));
+  assert.ok(order.every(i => i >= 0) && order[0] < order[1] && order[1] < order[2], `passes out of order: ${order}`);
   includes(prose(section(worker, 'Two tasks')), ['The `Issues:` summary line']);
   includes(prose(section(worker, 'The issue pass')), ['**List candidates with the one search in step 1 of "Each run"**', 'never by listing each repo\'s issues', '**The oldest candidate is taken first**', 'named with its reason in the summary']);
   includes(prose(section(worker, 'Summary')), ['**Always, every role, even when both numbers are zero:**', '`Issues: candidates <n>, taken <k>`', '`; oldest <owner>/<repo>#<number>`', 'the issue pass did not run']);
