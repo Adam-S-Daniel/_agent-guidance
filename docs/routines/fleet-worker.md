@@ -49,15 +49,21 @@ skipped both later passes).
 PR pass, many `needs-owner` labels or a short run are not reasons: the
 2026-11-18 15:45 UTC maintenance run listed `skills-evals#1079`, its role's
 oldest `agent-ready` issue, then wrote "I did not run the issue pass" and
-ended, and the issue had waited since 2026-11-16 20:49 UTC.
+ended, and the issue had waited since 2026-11-16 20:49 UTC. The 20:38 UTC run,
+the first under the `Issues:` summary line, ran 51 seconds, checked the
+Dependabot PRs, then reported `Issues: candidates 13, taken 0` and called its
+own skip a defect. Both runs ended after the PR pass, so **the issue pass now
+runs first**: the PR pass cannot crowd it out.
 
-1. **The PR pass** (below): brings open PRs up to date when a required check
+1. **The issue pass** (below): turns `agent-ready` issues into fix PRs,
+   exactly as [`agent-issue-worker.md`](../reference/agent-issue-worker.md)
+   says, and tells the owner which issues are blocked on him. Start it before
+   reading any PR.
+2. **The PR pass** (below): brings open PRs up to date when a required check
    never ran on them, reviews and merges the kinds of PR Claude may merge
    (skill removals among them, step 2e), and tells the owner which PRs need
-   him.
-2. **The issue pass:** turns `agent-ready` issues into fix PRs, exactly as
-   [`agent-issue-worker.md`](../reference/agent-issue-worker.md) says, and
-   tells the owner which issues are blocked on him.
+   him. A fix PR the issue pass just opened is too new for step 2d's merge
+   rule, so running the issue pass first merges nothing early.
 3. **The lesson-check pass** (below): turns checkable lessons into checks
    in the fleet's agent-checks runner, in PRs that auto-merge when green.
 
