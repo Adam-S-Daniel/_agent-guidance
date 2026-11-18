@@ -44,6 +44,7 @@ the passes after it. The lesson-check pass's own writes are a branch, a push
 and a PR, so a denied label write elsewhere never stops it
 (the 2026-11-03 16:20 UTC run stopped after one denied `needs-owner` label and
 skipped both later passes).
+
 **A run never skips the issue pass while its role has a candidate.** A long
 PR pass, many `needs-owner` labels or a short run are not reasons: the
 2026-11-18 15:45 UTC maintenance run listed `skills-evals#1079`, its role's
@@ -139,7 +140,8 @@ issues match no row, so they are the maintenance role's. The issue pass's
 skip of `Memory promotion <date>: <n> agent-checks` stands: the loop role's
 lesson-check pass takes it.
 
-**Each role's summary** reports only its own steps. A maintenance run's
+**Each role's summary** reports only its own steps. A run with no role
+reports one `Issues:` line covering both roles' candidates. A maintenance run's
 summary has no `Lessons:` line, and that is not a defect; a loop run's must
 have it. The no-role run's has everything.
 
@@ -747,11 +749,13 @@ pass takes it.
 **List candidates with the one search in step 1 of "Each run"**, across both
 owners, never by listing each repo's issues: a per-repo listing cut to its
 newest entries can miss the oldest issue, and it does not sort the fleet
-oldest first. Drop issues outside the fleet repos and outside your role, then
-take them oldest first. **The oldest candidate is taken first**, unless it is
-skipped for a reason step 2 of "Each run" gives (`on-hold`, already
-`agent-working` or `agent-blocked`, a held linked PR); a skipped candidate is
-named with its reason in the summary.
+oldest first. Drop issues outside the fleet repos, outside your role or
+labeled `on-hold` (reported as `on hold`), and the `Memory promotion
+<YYYY-MM-DD>: <n> agent-checks` issue: what remains are the run's
+**candidates**. **The oldest candidate is taken first**, then the next oldest,
+up to the 3-issue limit. A candidate step 2 of "Each run" skips (it still
+carries `agent-working` or `agent-blocked` beside `agent-ready`, or has a held
+linked PR) is named with its reason in the summary, and the next one is taken.
 
 Before fixing a sweep or memory-promotion issue, run
 `node scripts/eval-protected.js list` on a fresh `explorer/latest.json`
@@ -907,11 +911,13 @@ The run's final message has, in this order:
 3. If nothing else happened: `Nothing to do.`
 4. **Always, every role, even when both numbers are zero:**
    `Issues: candidates <n>, taken <k>`, where **candidates** counts the
-   `agent-ready` issues the role owns after the search and filters above, and
-   **taken** counts the ones this run claimed. When `<n>` is above 0, add
-   `; oldest <owner>/<repo>#<number>`. A summary without this line, or with
-   `<n>` above 0 and `<k>` 0 and no skip reason for each candidate, means the
-   issue pass did not run, which is a defect in the run.
+   run's candidates as "The issue pass" defines them, and **taken** counts
+   the ones this run claimed, including any it then blocked. When `<n>` is
+   above 0, add `; oldest <owner>/<repo>#<number>`. Candidates left over
+   after the 3-issue limit need no reason. A summary without this line, or
+   with `<n>` above 0 and `<k>` 0 where some candidate is not named with a
+   skip reason, means the issue pass did not run, which is a defect in the
+   run.
 5. **Always, as the last line, even when all three numbers are zero:**
    (a loop run or a run with no role; a maintenance run has none)
    `Lessons: read <n>, new <k>, handled <m>`, with the counts defined under the
