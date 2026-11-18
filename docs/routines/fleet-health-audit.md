@@ -10,6 +10,12 @@ take effect: the task was created from a project thread, so each run is a
 project thread on Opus (the 2026-11-16 run served Opus and cost $5.81). Sonnet
 would only apply to a task created on the claude.ai Routines page, which this
 audit could be, since it needs only the fleet repos and the task-listing tool.
+Its 2026-11-09 and 2026-11-16 runs weighed about 0.15 and 0.33
+weekly-allowance points; the same tokens on Sonnet weigh about 40% less. So
+the cheaper setup is a Routines-page task on Sonnet 5.5 with the fleet repos
+and the Claude Code Remote connector (for the task list), with this project
+task deleted once it runs. That move is Adam's call (recommended 2026-11-18,
+not yet made).
 
 The audit looks across every repo in the fleet, every scheduled task and every
 workflow for functionality that is:

@@ -76,6 +76,14 @@ and files them through the same step 4. Nothing else reads those two kinds
   resolved at run time). Run it from an `_agent-guidance` clone fetched to
   `origin/main`, so the script is current. The owner's machine registers it
   through wsl-automation's `register-tasks.ps1`, like its other tasks.
+- **Model.** The project task runs on Opus 5.5 whatever its page says
+  (Sonnet 5.5 is set): a task created from a project thread starts a project
+  thread, and those run on Opus. It has to stay a project task, because it
+  edits the project's memory, which a Routines-page task cannot reach. Its
+  2026-11-09 and 2026-11-16 runs weighed about 0.58 and 0.24 weekly-allowance
+  points. The machine task runs headless `claude -p` on Sonnet
+  (`MEMORY_CURATION_MODEL` in wsl-automation's `run-memory-curation.sh`); its
+  cost is not recorded anywhere.
 
 ## Each run
 
