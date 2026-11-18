@@ -43,14 +43,14 @@ window ([process](agent-discrepancy-process.md), last section).
 - [v2.1.327](https://github.com/anthropics/claude-code/releases/tag/v2.1.327), published 2026-11-17T23:17Z (bullet 2.1.327/137)
   > Changed auto mode's notice about falling back to billed classifier requests to say that an upcoming release removes the fallback; each action it would have checked will be asked about or denied
 
-**Issues:** PENDING_1_SKILLS, PENDING_1_WSL.
+**Issues:** [skills-evals#1091](https://github.com/Adam-S-Daniel/skills-evals/issues/1091), [wsl-automation#123](https://github.com/Adam-S-Daniel/wsl-automation/issues/123).
 
 #### 2. Prompt-audit sweep trigger
 
 - [v2.1.327](https://github.com/anthropics/claude-code/releases/tag/v2.1.327), published 2026-11-17T23:17Z (bullet 2.1.327/70)
   > Fixed `claudeMdExcludes` patterns on Windows not matching a path whose drive letter is written in the other case
 
-**Issues:** PENDING_2 (no label). The fire workflow's comment, if any, is on the issue.
+**Issues:** [_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596) (no label). The fire workflow's comment, if any, is on the issue.
 
 **Prompt-audit sweep:** requested through group 2. Bullet 2.1.327/70 (`claudeMdExcludes` patterns on Windows failed to match when the drive letter's case differed) changes what loads on a surface the fleet uses (the Windows terminal CLI), as 2.1.311/312 fixes did. Considered and not counted: 2.1.327/30 and 2.1.327/31 (plugin and `--agents` agents dropped; no fleet plugin ships an `agents/` folder), 2.1.327/87 (the `/` menu listing a row for each skill of the same name, a display fix) and 2.1.327/3 (`/status` lists broken skill and agent files, display only). The 2026-11-17 trigger issue, [_agent-guidance#590](https://github.com/Adam-S-Daniel/_agent-guidance/issues/590), is closed, so no `Prompt-audit sweep trigger:` issue was open at the start of the run.
 
