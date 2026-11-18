@@ -68,16 +68,19 @@ fails closed rather than launching without the guidance):
 fleet_pin_commit=0ef732fdbd825e35ad6bd853855fe158b61ada2b
 fleet_pin_sha256=cfc01078b9d06990c2e458bade9aebffe10e7e25a97eaec23a59e2d3f28a2241
 fleet_guidance_install() (
+  # Every step exits on failure explicitly: a caller's `||` (as below) turns
+  # off `set -e` inside this function, so `set -e` alone would let a failed
+  # digest check fall through to running the unverified download.
   set -euo pipefail
   raw=https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance
   # The verified installer stays at a digest-named path: it re-reads its own
   # file after it exits (to write its receipt), so it must outlive this function.
   hook_dir="${CODEX_HOME:-/opt/codex}/fleet-guidance"
   umask 077
-  mkdir -p "$hook_dir"
-  chmod 700 "$hook_dir"
-  tmp=$(mktemp -d)
-  dl=$(mktemp "$hook_dir/.download.XXXXXX")
+  mkdir -p "$hook_dir" || exit 1
+  chmod 700 "$hook_dir" || exit 1
+  tmp=$(mktemp -d) || exit 1
+  dl=$(mktemp "$hook_dir/.download.XXXXXX") || exit 1
   trap 'rm -rf "$tmp"; rm -f "$dl"' EXIT
   hook="$hook_dir/fleet-memory-$fleet_pin_sha256.sh"
   # Reuse a verified copy; else fetch the pin, verify, then move it into place.
@@ -85,9 +88,9 @@ fleet_guidance_install() (
          [ "$(sha256sum < "$hook" | cut -d' ' -f1)" = "$fleet_pin_sha256" ]; }; then
     curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
       --max-filesize 4194304 -o "$dl" \
-      "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh"
-    printf '%s  %s\n' "$fleet_pin_sha256" "$dl" | sha256sum --check --status
-    mv -f "$dl" "$hook"
+      "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh" || exit 1
+    printf '%s  %s\n' "$fleet_pin_sha256" "$dl" | sha256sum --check --status || exit 1
+    mv -f "$dl" "$hook" || exit 1
   fi
   # The payload: main's HEAD commit (commit-only fetch), base.md at that commit,
   # stamped with the commit's committer time.
@@ -95,25 +98,25 @@ fleet_guidance_install() (
      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES
      -u GIT_SHALLOW_FILE -u GIT_NAMESPACE -u GIT_GRAFT_FILE
      GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=)
-  "${g[@]}" git init -q --bare --template= "$tmp/g"
+  "${g[@]}" git init -q --bare --template= "$tmp/g" || exit 1
   "${g[@]}" timeout -k 5 30 git --git-dir="$tmp/g" \
     -c credential.helper= -c core.askPass= -c core.hooksPath=/dev/null \
     -c protocol.allow=never -c protocol.https.allow=always \
     fetch -q --no-tags --depth=1 --filter=tree:0 \
-    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main
-  line=$("${g[@]}" git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD)
+    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main || exit 1
+  line=$("${g[@]}" git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD) || exit 1
   line=${line//$'\r'/}
   head_sha=${line%% *}
   stamp=${line#* }
-  [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]]
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]] || exit 1
   curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
-    --max-filesize 1048576 -o "$tmp/base.md" "$raw/$head_sha/agents-md/base.md"
+    --max-filesize 1048576 -o "$tmp/base.md" "$raw/$head_sha/agents-md/base.md" || exit 1
   # The plugin's own check: the exact header every base.md starts with.
   header=$'# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**'
   n="$(LC_ALL=C; printf '%s' "${#header}")"
-  [ "$(head -c "$n" "$tmp/base.md"; printf x)" = "${header}x" ]
+  [ "$(head -c "$n" "$tmp/base.md"; printf x)" = "${header}x" ] || exit 1
   CODEX_HOME="${CODEX_HOME:-/opt/codex}" FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" \
-    FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" bash "$hook" --codex-cloud
+    FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" bash "$hook" --codex-cloud || exit 1
   echo "fleet-guidance-source: _agent-guidance@$head_sha"
 )
 ```
