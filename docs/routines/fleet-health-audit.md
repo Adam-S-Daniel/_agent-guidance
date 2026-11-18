@@ -1,21 +1,23 @@
 # Routine: fleet health audit (half-built and broken features)
 
-**Fires:** weekly, Monday 18:37 UTC (1:37 PM US Eastern in winter), from a
-claude.ai scheduled task named `Fleet health audit`, created from a project
-thread. Each fire starts a fresh session. The prompt is short and points here,
-so the procedure changes by pull request.
+**Fires:** weekly, Monday 1:37 PM US Eastern
+(`CRON_TZ=America/New_York 37 13 * * 1`: 18:37 UTC in winter, 17:37 UTC in
+summer), from a claude.ai scheduled task named `Weekly fleet health audit`
+(`trig_01Gn7qkNfkMENrMcMRu7vgUa`), made on the Routines page (account level,
+not in a project) with the GitHub connector and push notifications on. Each
+fire starts a fresh session. The prompt is short and points here, so the
+procedure changes by pull request.
 
-**Model:** Sonnet 5.5 is set on the task (Adam, 2026-11-13), but it does not
-take effect: the task was created from a project thread, so each run is a
-project thread on Opus (the 2026-11-16 run served Opus and cost $5.81). Sonnet
-would only apply to a task created on the claude.ai Routines page, which this
-audit could be, since it needs only the fleet repos and the task-listing tool.
-Its 2026-11-09 and 2026-11-16 runs weighed about 0.15 and 0.33
-weekly-allowance points; the same tokens on Sonnet weigh about 40% less. So
-the cheaper setup is a Routines-page task on Sonnet 5.5 with the fleet repos
-and the Claude Code Remote connector (for the task list), with this project
-task deleted once it runs. That move is Adam's call (recommended 2026-11-18,
-not yet made).
+**Model:** Sonnet 5.5, set on the task. Keep it set: a blank model runs the
+account default, Fable 5.2. Until 2026-11-18 this was a project task, `Fleet
+health audit` (`trig_01Cdy6b6F8SBpe5DD6z8NLgX`, now deleted), and project
+tasks run as project threads on Opus whatever their model setting says (its
+2026-11-09 and 2026-11-16 runs served Opus, about 0.15 and 0.33
+weekly-allowance points). The audit needs only the fleet repos and the
+scheduled-task listing, so Adam moved it to the account level on Sonnet,
+which weighs about 40% less for the same tokens. The first run on Sonnet is
+2026-11-23; it also shows whether an account-level task can list the
+scheduled tasks.
 
 The audit looks across every repo in the fleet, every scheduled task and every
 workflow for functionality that is:
