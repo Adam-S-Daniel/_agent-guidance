@@ -30,6 +30,18 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-19 — 0.170.0 through 0.170.0
+
+- **Checked:** 2026-11-19T02:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.170.0](https://github.com/openai/codex/releases/tag/rust-v0.170.0), published 2026-11-18T03:40Z
+- **Window:** 0.170.0 (2026-11-18T03:40Z), the first stable release after 0.169.1: 1 stable release, 58 bullets, none indexed (no group). Pre-releases (`-alpha`) excluded. The publish time is read from the tag page's `datetime` attribute, in UTC.
+- **Source text:** the GitHub release list page 1 and the tag page; page 1 included `rust-v0.169.1`, the previous entry's last version.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (heads as in the Claude Code entry of the same date).
+
+No group met the name-the-surface bar. The notes cover realtime voice, OpenTelemetry header refresh, same-named MCP servers across environments, MCP OAuth races, Cloud reconnection and sandbox permission-profile fixes; no fleet file depends on any of them.
+
+**Issues:** none.
+
 ### 2026-11-18 — 0.169.1 through 0.169.1
 
 - **Checked:** 2026-11-18T02:20Z, [release log](https://github.com/openai/codex/releases)

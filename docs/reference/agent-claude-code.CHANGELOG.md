@@ -30,6 +30,18 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-19 — 2.1.328 through 2.1.328
+
+- **Checked:** 2026-11-19T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.328](https://github.com/anthropics/claude-code/releases/tag/v2.1.328), published 2026-11-19T01:14Z
+- **Window:** v2.1.328 (published 2026-11-19T01:14Z), the first stable release after v2.1.327: 1 release, 190 bullets, none indexed (no group). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.328` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance 239eaef, `acsi-kit` b954d54, `adam-agentskills` 72e900f, `adam-agentskills-private` 109ce02, `adamdaniel.ai` 1c075d9, `ai-usage-dashboard` f4a1f7a, `claude-memory-map` 0f9a642, `cms-platform` e35791b, `fastmail-actions` 7c121ba, `jodidaniel.com` f0597b0, `repo-settings` 0af9a50, `rss-inator` d2a555e, `security-alerts` e2a410c, `skills-evals` 2e5a515, `verify-actions-lock` 02bd2ce, `wsl-automation` e8f5494`).
+
+No group met the name-the-surface bar. A grep of the fleet for `/code-review`, `onFailure`, `mcp_tool`, `deniedMcpServers`, `PermissionRequest`, `PostToolUse`, `CLAUDE_CODE_FORK_SUBAGENT`, `CLAUDE_STREAM_IDLE_TIMEOUT`, `OTEL_` and `--permission-mode` found no dependence on a changed behavior: the `PostToolUse` hooks are plugin hooks, and the change is to managed ones; the `--permission-mode auto` calls (`wsl-automation` memory curation, `skills-evals` harness) run on the Anthropic API, while the auto-mode additions and fixes are for third-party providers; `skills-evals/HANDOFF.md` only names `/code-review` as a reviewer role, and the report format change (bugs and CLAUDE.md violations only, findings marked Important, Pre-existing or Nit) contradicts nothing it says. The new `/status` and `claude doctor` OpenTelemetry notice adds a warning and does not change `/doctor`'s checks of instruction files, so the prompt-audit sweep was not triggered (no bullet adds a model, changes the default model or an alias, or changes how instruction files, skills or memory load on a surface the fleet uses; the skill and hook-context fix is for Code Mode).
+
+**Issues:** none.
+
 ### 2026-11-18 — 2.1.327 through 2.1.327
 
 - **Checked:** 2026-11-18T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
