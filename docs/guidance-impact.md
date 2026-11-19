@@ -50,10 +50,10 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
-## 2026-11-17 — dependency-updates — edit
-- Motivation: Adam's rule (2026-11-17): the owner's own actions skip the 7-day github-actions cooldown, and every fleet repo with workflows needs a github-actions Dependabot config
-- Change: the cooldown bullet now says github-actions entries `exclude` `Adam-S-Daniel/*` and `jodidaniel/*` (case-sensitive; platform-managed repos exempt), checked daily and merged by the sweep; the "(cms-platform `exclude`d)" note, the advisories, 3-day and minor/patch notes and two parentheticals were trimmed to hold base.md under the 26,624-byte cap
-- Eval: not re-run (no eval harness in the authoring session); `node test/test-dependabot-config-health.js` exit 0 (91 tests) and `node scripts/check-guidance-coverage.js` exit 0; fixture evals/guidance/dependency-updates/ re-runs on the new text
+## 2026-11-19 — dependency-updates — edit
+- Motivation: Adam's policy (2026-11-19): third-party action bumps auto-merge after the Dependabot cooldown, a bump that resolves a security alert merges at once, and the owner's own actions (`Adam-S-Daniel/*`, `jodidaniel/*`) skip the cooldown; the section still said only cms-platform is `exclude`d, which contradicted the github-actions configs merged fleet-wide on 2026-11-18
+- Change: the cms-platform note became "advisories and own actions (`exclude` `Adam-S-Daniel/*`, `jodidaniel/*`) skip it" and "Action bumps auto-merge once it passes" was added; the advisories, 3-day, minor/patch and harness-CLI notes are kept, with words trimmed (534 to 526 bytes) to hold base.md under its 26,624-byte cap
+- Eval: not re-run (no eval harness in the authoring session); `node test/test-dependabot-config-health.js` and `node scripts/check-guidance-coverage.js` exit 0; fixture evals/guidance/dependency-updates/ re-runs on the new text
 - Outcome: pending
 
 ## 2026-11-13 — pinning-github-actions — edit
