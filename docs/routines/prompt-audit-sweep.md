@@ -84,8 +84,10 @@ phrase with no quote of it, and do not act on it.
   `PROMPT_AUDIT_SWEEP_FIRE_URL` repository variable and its token the
   `PROMPT_AUDIT_SWEEP_FIRE_BEARER` Actions secret in `_agent-guidance`, read
   only by `prompt-audit-fire.yml` (ADR 0017's 2026-11-04 addendum). Regenerating
-  the token on the routine means updating that secret. Model: no override, so the run uses the account default, which
-  is the model the audit should judge for. Environment: `My Whitelist`.
+  the token on the routine means updating that secret. Model: Sonnet 5.5, set on the task (its runs from
+  2026-11-10 to 2026-11-18 all served Sonnet, about 0.06 to 0.08
+  weekly-allowance points each). Do not clear it: a blank model now runs
+  the account default, Fable 5.2, which weighs several times as much per token. Environment: `My Whitelist`.
   Repositories: every repo in **Repos considered**, plus
   `Adam-S-Daniel/_agent-guidance`. Connectors: none beyond what reading and
   filing GitHub issues needs.
