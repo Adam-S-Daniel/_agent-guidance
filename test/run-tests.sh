@@ -20160,7 +20160,7 @@ case "${1:-}" in
                     src="$FIXTURES/commits-${num}.json"
                 else
                     src="$FIXTURES/commits-default.json"
-                    echo '[{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]"},"commit":{"verification":{"verified":true}},"parents":[{}]}]' > "$src"
+                    echo '[{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]","id":49699333},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{}]}]' > "$src"
                 fi
                 jq -r "$jqf" "$src"
                 exit 0
@@ -20580,8 +20580,8 @@ GHSTUB
     # ── Security-review findings: provenance, workflow content, behind, floor ──
     local cs_two='[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
     local PATCH_OK='@@ -1 +1 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2 # v2'
-    local C_BOT='{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]"},"commit":{"verification":{"verified":true}},"parents":[{}]}'
-    local C_MERGE='{"sha":"2222222222222222222222222222222222222222","author":{"login":"github-actions[bot]"},"commit":{"verification":{"verified":true}},"parents":[{},{}]}'
+    local C_BOT='{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]","id":49699333},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{}]}'
+    local C_MERGE='{"sha":"2222222222222222222222222222222222222222","author":{"login":"github-actions[bot]","id":41898282},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{},{}]}'
     # one_case <name> <files-json|""> <commits-json|""> [behind-by] [rollup]:
     # one PR, run once; output in $oc_out, fixtures in $oc_fx.
     local oc_out oc_fx oc_rc
@@ -20608,7 +20608,7 @@ GHSTUB
             pass "sweep gating $1: no pr merge call"
         fi
     }
-    local login_commit='{"sha":"deadbeefcafe0000000000000000000000000000","author":{"login":"mal$lory[x]"},"commit":{"verification":{"verified":true}},"parents":[{}]}'
+    local login_commit='{"sha":"deadbeefcafe0000000000000000000000000000","author":{"login":"mal$lory[x]","id":1},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{}]}'
 
     # (t) commit provenance: a commit by anyone but Dependabot, or an
     #     unverified one, or a one-parent github-actions[bot] commit, blocks.
@@ -20618,6 +20618,23 @@ GHSTUB
         "sweep gating (t): the warning names the short sha and the sanitized login"
     one_case t2 "" "[$(jq -c '.commit.verification.verified=false' <<<"$C_BOT")]"
     no_merge "(t2) an unverified Dependabot commit"
+    # A spoofed commit: the author EMAIL maps to dependabot[bot] (so the REST
+    # author is Dependabot) but the committer is the pusher, signed with their
+    # own key. Verified vouches for the committer, so only a web-flow
+    # committer with GitHub's noreply address and reason "valid" passes.
+    one_case t2a "" "[$(jq -c '.committer={login:"mallory",id:1} | .commit.committer.email="mallory@example.com"' <<<"$C_BOT")]"
+    no_merge "(t2a) a Dependabot-authored commit with a non-web-flow committer"
+    assert_contains "$oc_out" "blocked=1" "sweep gating (t2a): summary counts it as blocked"
+    one_case t2b "" "[$(jq -c '.committer.id=1' <<<"$C_BOT")]"
+    no_merge "(t2b) a web-flow committer login with the wrong committer id"
+    one_case t2c "" "[$(jq -c '.author.id=1' <<<"$C_BOT")]"
+    no_merge "(t2c) a dependabot[bot] author login with the wrong author id"
+    one_case t2d "" "[$(jq -c '.commit.committer.email="mallory@example.com"' <<<"$C_BOT")]"
+    no_merge "(t2d) a web-flow committer with a foreign committer email"
+    one_case t2e "" "[$(jq -c '.commit.verification.reason="unknown_key"' <<<"$C_BOT")]"
+    no_merge "(t2e) a verified commit whose reason is not valid"
+    one_case t2f "" "[$C_BOT]"
+    assert_contains "$oc_out" "merged=1" "sweep gating (t2f): a genuine Dependabot commit still merges"
     # A github-actions[bot] two-parent merge commit (what an older sweep's
     # `gh pr update-branch` pushed) is not accepted: BLOCKED (red) with the
     # recreate remedy, never merged, even with every check green and one from
