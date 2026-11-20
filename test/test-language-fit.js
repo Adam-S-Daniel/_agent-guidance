@@ -18,12 +18,20 @@ function run(files, extraArgs = []) {
   const input = path.join(dir, 'in');
   fs.mkdirSync(input);
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(input, name), body);
+  // A RELATIVE findings path, written from inside the temp dir: CodeQL traces
+  // an os.tmpdir() path from here into main's write and flags it as an
+  // insecure temporary file (js/insecure-temporary-file), although in CI the
+  // path is $RUNNER_TEMP.
   const findings = path.join(dir, 'findings.txt');
   let out = '';
   const orig = process.stdout.write;
+  const cwd = process.cwd();
   process.stdout.write = (s) => { out += s; return true; };
   let rc;
-  try { rc = main(['node', 'language-fit.js', input, '--findings', findings, ...extraArgs]); } finally { process.stdout.write = orig; }
+  try {
+    process.chdir(dir);
+    rc = main(['node', 'language-fit.js', input, '--findings', 'findings.txt', ...extraArgs]);
+  } finally { process.stdout.write = orig; process.chdir(cwd); }
   return { rc, out, findings: fs.existsSync(findings) ? fs.readFileSync(findings, 'utf8') : null };
 }
 
