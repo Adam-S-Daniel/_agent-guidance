@@ -1097,6 +1097,7 @@ lint_skip_path() {
   while IFS= read -r g; do
     [ -n "$g" ] || continue
     # A glob matched with case, never eval'd; its charset was checked on load.
+    # shellcheck disable=SC2254
     case "$1" in $g) return 0 ;; esac
   done <<< "$lint_excl"
   return 1
@@ -1168,6 +1169,7 @@ lint_shebang_kind() {
   case "$first" in '#!'*) ;; *) echo none; return 0 ;; esac
   first=${first#'#!'}
   set -f
+  # shellcheck disable=SC2086
   set -- $first
   set +f
   w=${1:-}
