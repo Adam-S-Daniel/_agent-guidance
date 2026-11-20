@@ -42,5 +42,9 @@ contents API on 2026-11-20 (two repos have no `dependabot.yml`):
 | `cms-platform` | actions minor + patch | npm (`@playwright/test` excluded) |
 | the other 21 | none | none |
 
-So grouping is the right default but is not rolled out. Rolling it out means a
-`groups:` block in each repo's `dependabot.yml`; nothing syncs that file.
+So grouping is the right default, and the table above predates the rollout.
+The sync now delivers `templates/dependabot/dependabot.yml` to repos whose
+`dependabot.yml` covers only github-actions
+([ADR 0047](../decisions/0047-the-sync-owns-an-actions-only-repos-dependabot-config.md)).
+Repos with another ecosystem hand-maintain their file, and are being updated by
+hand to carry the same groups.

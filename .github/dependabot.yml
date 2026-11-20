@@ -53,6 +53,17 @@ updates:
       # `Adam-S-Daniel/cms-platform/*` entry that
       # https://github.com/Adam-S-Daniel/cms-platform/issues/424 added.
       exclude: ["Adam-S-Daniel/*", "jodidaniel/*"]
+    # Version updates group by ecosystem (own actions stay out: they skip the
+    # cooldown); security updates group separately. See
+    # docs/reference/dependabot-grouping.md.
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["Adam-S-Daniel/*", "jodidaniel/*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   # The dated-phrasing pass the sync delivers to every repo pins one npm
   # dependency here; without this entry that pin has no bump path. npm, unlike
@@ -64,3 +75,11 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 30
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
