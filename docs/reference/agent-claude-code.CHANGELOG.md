@@ -30,6 +30,20 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-20 — 2.1.329 through 2.1.329
+
+- **Checked:** 2026-11-20T02:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.329](https://github.com/anthropics/claude-code/releases/tag/v2.1.329), published 2026-11-19T22:14Z
+- **Window:** v2.1.329 (published 2026-11-19T22:14Z), the first stable release after v2.1.328: 1 release, 130 bullets, none indexed (no group). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.329` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance` 9a27ea9, `acsi-kit` d7bfd93, `adam-agentskills` dadc729, `adam-agentskills-private` 0b5f605, `adamdaniel.ai` faf8f91, `ai-usage-dashboard` e775dcc, `claude-memory-map` e900083, `cms-platform` d5541bb, `fastmail-actions` 18c7705, `jodidaniel.com` e81aa63, `repo-settings` b2b6ec9, `rss-inator` 019626e, `security-alerts` 26e008a, `skills-evals` ef9b2ac, `verify-actions-lock` 9fb13df, `wsl-automation` b3adb1e).
+
+No group met the name-the-surface bar. A grep of the fleet for `background_tasks`, `Code Mode`, `/code-review`, `Plugin directory does not exist`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `--add-dir` and saved scheduled tasks found no file that depends on a changed behavior: no fleet hook reads `background_tasks`; no fleet file sets `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (the removed `max_tokens` retry is for gateways); the `/code-review` changes touch only a skill the fleet names as a reviewer role; the scheduled-task change is for tasks saved in a session, not the claude.ai routines the fleet uses; and the `claude.ai`-synced plugin hook fix is for macOS, which no fleet machine runs. The `keeper` resume path in `wsl-automation` (`claude --bg --resume`) is not changed by the background-agent resume fix, which is about a stop racing a resume.
+
+**Prompt-audit sweep:** not requested, because one is already open. Two bullets change what loads: "Fixed a new skills, commands or agents folder being missed when `--add-dir` names the working directory or Claude Code starts in the home folder" (bullet 2.1.329/39; bullet 2.1.329/90, "Improved cloud sessions to retry plugins that failed to download at startup", also changes what loads). A trigger issue, [_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596), is still open, so by step 4a nothing is filed and the sweep is not fired; the owner or the sweep can fold the new bullet into that issue's check. This run edits no issue it did not create.
+
+**Issues:** none.
+
 ### 2026-11-19 — 2.1.328 through 2.1.328
 
 - **Checked:** 2026-11-19T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
