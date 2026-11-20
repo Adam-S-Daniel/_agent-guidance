@@ -27489,6 +27489,22 @@ STUB
         else
             fail "lint (CI): a failed download refuses — exit $rc: $(cat "$out.err")"
         fi
+        # A platform with no pin (a Windows runner) skips with a notice, not a refusal.
+        mkdir -p "$TEST_DIR/ac-lint-winuname"
+        printf '#!/bin/sh\ncase "$1" in -s) echo MINGW64_NT-10.0 ;; -m) echo x86_64 ;; *) echo MINGW64_NT-10.0 ;; esac\n' > "$TEST_DIR/ac-lint-winuname/uname"
+        chmod +x "$TEST_DIR/ac-lint-winuname/uname"
+        rm -f "$TEST_DIR/ac-lint-fetch.log"
+        AC_LINT_PATH="$TEST_DIR/ac-lint-winuname:$corebin"
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz")
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 0 ]] && ! grep -qF 'lint-tool-install' "$out.err" \
+           && grep -qF 'no pinned release binary exists for this platform (MINGW64_NT-10.0 x86_64)' "$out.err" \
+           && [[ ! -e "$TEST_DIR/ac-lint-fetch.log" ]]; then
+            pass "lint (CI): a platform with no pinned binary skips with a notice and downloads nothing"
+        else
+            fail "lint (CI): a platform with no pinned binary skips with a notice — exit $rc: $(cat "$out.err")"
+        fi
+        AC_LINT_PATH="$corebin"
         # With the tool opted out, CI downloads nothing.
         mkdir -p "$repo/.agent-checks"
         printf 'shell=off\n' > "$repo/.agent-checks/lint.conf"
