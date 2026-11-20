@@ -64,6 +64,7 @@ a page.
 | [0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md) | The fleet worker splits into a loop worker and a maintenance worker |
 | [0047](0047-the-sync-owns-an-actions-only-repos-dependabot-config.md) | The sync owns an actions-only repo's dependabot.yml |
 | [0048](0048-sync-marks-synced-tooling-linguist-vendored.md) | The sync marks its tooling `linguist-vendored` in each repo's `.gitattributes` |
+| [0049](0049-code-quality-comes-from-managed-linters-not-codeql.md) | Code quality comes from centrally managed linters, not CodeQL's quality suite |
 
 ## Format
 
