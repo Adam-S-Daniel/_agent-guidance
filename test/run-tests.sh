@@ -2624,6 +2624,16 @@ case "$1" in
                         done
                         json="[$rows]"
                         ;;
+                    dcorg)
+                        # The Dependabot config lane's fixtures, off disk too.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/dcorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"dcorg/${name#dcorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
                     acorg)
                         # The agent-checks lane's fixtures, enumerated off
                         # disk like gattrorg's.
@@ -28244,11 +28254,121 @@ GROUP_gitattr=(
     test_sync_gitattributes
 )
 
+# ── Dependabot config delivery (repos.yml dependabot_config, ADR 0047) ────────
+# dcorg in a MOCK_BARE_DIR of its own; a switch-off run first (it also
+# delivers AGENTS.md), then the real run.
+setup_dc_repos() {
+    local bare_dir="$1" work="$TEST_DIR/dc-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in dc-actions dc-none dc-drift dc-multi dc-nomanifest dc-cmscall dc-current cms-platform; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/dcorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        mkdir -p "$work/$name/.github/workflows" "$work/$name/.githooks/dated-phrasing"
+        echo "name: CI" > "$work/$name/.github/workflows/ci.yml"
+        echo '{}' > "$work/$name/.githooks/dated-phrasing/package.json"
+        case "$name" in
+            dc-actions|cms-platform|dc-cmscall)
+                printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: "/"\n    schedule:\n      interval: daily\n' \
+                    > "$work/$name/.github/dependabot.yml" ;;
+            dc-drift) printf "# Managed by _agent-guidance's templates/dependabot/\nOLD-CONTENT: true\n" > "$work/$name/.github/dependabot.yml" ;;
+            dc-multi) printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: "/"\n    schedule:\n      interval: daily\n  - package-ecosystem: npm\n    directory: "/"\n    schedule:\n      interval: weekly\n' \
+                    > "$work/$name/.github/dependabot.yml" ;;
+            dc-nomanifest)
+                rm -rf "$work/$name/.githooks"
+                printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: "/"\n    schedule:\n      interval: daily\n' \
+                    > "$work/$name/.github/dependabot.yml" ;;
+            dc-current) cp "$REPO_ROOT/templates/dependabot/dependabot.yml" "$work/$name/.github/dependabot.yml" ;;
+        esac
+        [[ "$name" == dc-cmscall ]] && printf 'name: deps\njobs:\n  a:\n    uses: Adam-S-Daniel/cms-platform/.github/workflows/dependabot-auto-merge.yml@v1\n' > "$work/$name/.github/workflows/deps.yml"
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/dcorg_$name" HEAD:main 2>/dev/null
+    done
+}
+
+test_sync_dependabot_config() {
+    echo ""
+    echo "=== Test: sync.sh delivers the managed dependabot.yml to actions-only repos ==="
+
+    local bare="$TEST_DIR/dc-bare" out="$TEST_DIR/dc-sync" rc got
+    local tmpl="$REPO_ROOT/templates/dependabot/dependabot.yml" cfg=".github/dependabot.yml"
+    setup_dc_repos "$bare"
+    dc_show() { gattr_git -C "$bare/dcorg_$1" show "main:$2" 2>/dev/null; }
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/dc-repos-off.yml"
+    printf 'exclude: []\ndefault_sections: []\ndependabot_config:\n  deliver: true\n' > "$TEST_DIR/dc-repos-on.yml"
+    run_dc_sync() {   # <repos.yml> <log>
+        GITHUB_REPOSITORY_OWNER=dcorg MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/dc-pr-bodies" REPOS_YML="$1" \
+        PATH="$TEST_DIR/bin:$PATH" "$REPO_ROOT/scripts/sync.sh" > "$2" 2>&1
+    }
+
+    rc=0; run_dc_sync "$TEST_DIR/dc-repos-off.yml" "$out-off.log" || rc=$?
+    if [[ $rc -eq 0 ]] && ! cmp -s <(dc_show dc-actions "$cfg") "$tmpl"; then
+        pass "dependabot config (off): with deliver unset the file is left alone"
+    else
+        fail "dependabot config (off): with deliver unset the file is left alone — exit $rc"
+    fi
+
+    rc=0; run_dc_sync "$TEST_DIR/dc-repos-on.yml" "$out-on.log" || rc=$?
+    [[ $rc -eq 0 ]] && pass "dependabot config (sync): the run exits 0" || fail "dependabot config (sync): the run exits 0 — got $rc"
+
+    if cmp -s <(dc_show dc-actions "$cfg") "$tmpl"; then
+        pass "dependabot config (sync): an actions-only file is replaced by the template"
+    else
+        fail "dependabot config (sync): an actions-only file is replaced by the template"
+    fi
+    # dc-none has no file at all: setup gave it none, so it must be added.
+    if cmp -s <(dc_show dc-none "$cfg") "$tmpl"; then
+        pass "dependabot config (sync): a repo with no dependabot.yml gets the template"
+    else
+        fail "dependabot config (sync): a repo with no dependabot.yml gets the template"
+    fi
+    if cmp -s <(dc_show dc-drift "$cfg") "$tmpl"; then
+        pass "dependabot config (sync): a drifted file with the managed header is overwritten"
+    else
+        fail "dependabot config (sync): a drifted file with the managed header is overwritten"
+    fi
+    got=$(dc_show dc-multi "$cfg")
+    if [[ "$got" == *"package-ecosystem: npm"* ]] && ! cmp -s <(echo "$got") "$tmpl"; then
+        pass "dependabot config (sync): a multi-ecosystem file is left alone"
+    else
+        fail "dependabot config (sync): a multi-ecosystem file is left alone"
+    fi
+    assert_contains "$out-on.log" "hand-maintained, not delivered" "dependabot config (sync): the multi-ecosystem skip is logged"
+    got=$(dc_show dc-nomanifest "$cfg")
+    if [[ "$got" == "version: 2"* ]]; then
+        pass "dependabot config (sync): a repo without the dated-phrasing manifest is left alone"
+    else
+        fail "dependabot config (sync): a repo without the dated-phrasing manifest is left alone"
+    fi
+    assert_contains "$out-on.log" "has no .githooks/dated-phrasing/package.json" "dependabot config (sync): the missing manifest is logged"
+    if [[ "$(dc_show cms-platform "$cfg")" == "version: 2"* && "$(dc_show dc-cmscall "$cfg")" == "version: 2"* ]]; then
+        pass "dependabot config (sync): cms-platform and a cms-platform caller are left alone"
+    else
+        fail "dependabot config (sync): cms-platform and a cms-platform caller are left alone"
+    fi
+    got=$(gattr_git -C "$bare/dcorg_dc-drift" log -1 --format=%B main)
+    if [[ "$got" == "chore: update the managed Dependabot config"* && "$got" == *"Updates .github/dependabot.yml"* ]]; then
+        pass "dependabot config (sync): the commit says the file was updated and is managed"
+    else
+        fail "dependabot config (sync): the commit says the file was updated and is managed — got: $(head -1 <<< "$got")"
+    fi
+    got=$(gattr_git -C "$bare/dcorg_dc-current" log -1 --format=%s main)
+    if [[ "$got" != *"Dependabot"* ]]; then
+        pass "dependabot config (sync): a file already equal to the template gets no commit"
+    else
+        fail "dependabot config (sync): a file already equal to the template gets no commit"
+    fi
+}
+
 # The Dependabot auto-merge delivery lane: amorg in a MOCK_BARE_DIR of its
 # own; steps run in order (switch off → dry run → sync → re-run).
 GROUP_automerge=(
     test_actions_lock_entry_helper
     test_sync_dependabot_auto_merge
+    test_sync_dependabot_config
 )
 
 # The agent-checks delivery lane (ADR 0021): acorg in a MOCK_BARE_DIR of its

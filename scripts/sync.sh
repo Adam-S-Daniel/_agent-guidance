@@ -81,6 +81,14 @@ GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
 # block in repos.yml for the carve-outs (cms-platform and its callers).
 AUTOMERGE_TEMPLATE_DIR="$REPO_ROOT/templates/dependabot-auto-merge"
 AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
+# The managed .github/dependabot.yml (ADR 0047), delivered when repos.yml's
+# dependabot_config.deliver is true, only to repos whose own file covers
+# nothing but github-actions (or is already this template). Same carve-outs
+# as the auto-merge workflow above.
+DEPCFG_TEMPLATE="$REPO_ROOT/templates/dependabot/dependabot.yml"
+DEPCFG_REL_PATH=".github/dependabot.yml"
+DEPCFG_HEADER="# Managed by _agent-guidance's templates/dependabot/"
+DEPCFG_MANIFEST_REL_PATH=".githooks/dated-phrasing/package.json"
 # A repo that pins actions through `gh actions-lock` keeps a lockfile naming
 # every workflow; `gh actions-lock --no-fix` rejects one without an entry for
 # a workflow file, or with a dependency no workflow lists. Overwriting the
@@ -492,6 +500,17 @@ if [[ "$(read_repos_yml '.dependabot_auto_merge.deliver // false')" == "true" ]]
         AUTOMERGE_ENABLED=true
     else
         echo "::warning::repos.yml turns on dependabot_auto_merge.deliver, but $AUTOMERGE_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
+    fi
+fi
+
+# ── Dependabot config delivery config ─────────────────────────────────────
+# Same posture: only a literal `true` turns it on.
+DEPCFG_ENABLED=false
+if [[ "$(read_repos_yml '.dependabot_config.deliver // false')" == "true" ]]; then
+    if [[ -s "$DEPCFG_TEMPLATE" ]]; then
+        DEPCFG_ENABLED=true
+    else
+        echo "::warning::repos.yml turns on dependabot_config.deliver, but $DEPCFG_TEMPLATE is missing — not delivering it this run." >&2
     fi
 fi
 
@@ -1366,20 +1385,21 @@ for repo_name in "${REPOS[@]}"; do
     #   - a repo with only the .yaml spelling (a .yml would be a second
     #     workflow), and a gitignored path.
     automerge_state="n/a"
+    # Shared by the auto-merge and dependabot.yml lanes.
+    automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
+    # Any workflow file may hold the caller, and the owner's case varies.
+    automerge_cms_caller=false
+    if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
+        for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
+            [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
+            if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
+                automerge_cms_caller=true
+                break
+            fi
+        done
+    fi
     if $AUTOMERGE_ENABLED; then
         automerge_state="missing"
-        automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
-        # Any workflow file may hold the caller, and the owner's case varies.
-        automerge_cms_caller=false
-        if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
-            for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
-                [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
-                if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
-                    automerge_cms_caller=true
-                    break
-                fi
-            done
-        fi
         if [[ "${repo_name##*/}" == "cms-platform" ]]; then
             automerge_state="skipped"
             log "dependabot auto-merge: $repo_name is cms-platform itself, which has its own workflow — not delivered."
@@ -1442,6 +1462,46 @@ for repo_name in "${REPOS[@]}"; do
     fi
     automerge_up_to_date=true
     [[ "$automerge_state" == "missing" || "$automerge_state" == "drifted" || "$automerge_state" == "lockfile" ]] && automerge_up_to_date=false
+
+    # ── Dependabot config: classify ────────────────────────────────────
+    # missing | current | drifted | skipped | n/a. Written (missing, drifted)
+    # only when the repo's own file is absent, equals the template, starts with
+    # the managed header, or lists nothing but github-actions (ADR 0047). Any
+    # other ecosystem means the repo hand-maintains its file. Never written:
+    # cms-platform itself or a caller of its reusable workflows, a repo with no
+    # dated-phrasing manifest (Dependabot errors on a directory with none),
+    # and a symlinked, non-regular, gitignored or .yaml-spelled file.
+    depcfg_state="n/a"
+    if $DEPCFG_ENABLED; then
+        depcfg_state="skipped"
+        depcfg_other=""
+        if [[ -f "$DEPCFG_REL_PATH" && ! -L "$DEPCFG_REL_PATH" ]]; then
+            depcfg_other=$(yq '((.updates // []) | length) as $n | ([.updates[]? | select(.["package-ecosystem"] != "github-actions")] | length) as $o | ($n == 0 or $o > 0)' "$DEPCFG_REL_PATH" 2>/dev/null) || depcfg_other="unparseable"
+        fi
+        if [[ "${repo_name##*/}" == "cms-platform" ]] || $automerge_cms_caller; then
+            log "dependabot config: $repo_name is cms-platform or calls its reusable workflows — not delivered."
+        elif [[ -L .github || -L "$DEPCFG_REL_PATH" || ( -e "$DEPCFG_REL_PATH" && ! -f "$DEPCFG_REL_PATH" ) ]]; then
+            log "WARN: $DEPCFG_REL_PATH (or .github) is a symlink or not a regular file in $repo_name — dependabot config not delivered."
+        elif [[ -e .github/dependabot.yaml && ! -e "$DEPCFG_REL_PATH" ]]; then
+            log "WARN: $repo_name has .github/dependabot.yaml; writing the .yml spelling would make a second config — not delivered."
+        elif [[ ! -f "$DEPCFG_MANIFEST_REL_PATH" ]]; then
+            log "dependabot config: $repo_name has no $DEPCFG_MANIFEST_REL_PATH (Dependabot errors on a directory with no manifest) — not delivered."
+        elif git check-ignore -q "$DEPCFG_REL_PATH" 2>/dev/null; then
+            log "WARN: $DEPCFG_REL_PATH is gitignored in $repo_name — not delivered."
+        elif [[ ! -f "$DEPCFG_REL_PATH" ]]; then
+            depcfg_state="missing"
+        elif cmp -s "$DEPCFG_TEMPLATE" "$DEPCFG_REL_PATH"; then
+            depcfg_state="current"
+        elif [[ "$(head -n 1 "$DEPCFG_REL_PATH")" == "$DEPCFG_HEADER"* ]]; then
+            depcfg_state="drifted"
+        elif [[ "$depcfg_other" == "false" ]]; then
+            depcfg_state="drifted"
+        else
+            log "dependabot config: $repo_name lists an ecosystem other than github-actions (or does not parse) — hand-maintained, not delivered."
+        fi
+    fi
+    depcfg_up_to_date=true
+    [[ "$depcfg_state" == "missing" || "$depcfg_state" == "drifted" ]] && depcfg_up_to_date=false
 
     # ── agent-checks: classify ─────────────────────────────────────────
     # Four parts, each skipped on its own rather than failing the repo:
@@ -1565,7 +1625,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $depcfg_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1656,6 +1716,10 @@ for repo_name in "${REPOS[@]}"; do
             if [[ "$automerge_lock_state" == "fix" ]]; then
                 log "[DRY RUN] Would edit $ACTIONS_LOCK_REL_PATH to list $AUTOMERGE_WF_REL_PATH with no actions and drop dependencies no workflow uses $delivery_note"
             fi
+        fi
+
+        if ! $depcfg_up_to_date; then
+            log "[DRY RUN] Would write $DEPCFG_REL_PATH (managed Dependabot config, $depcfg_state) $delivery_note"
         fi
 
         if ! $ac_up_to_date; then
@@ -1877,6 +1941,15 @@ for repo_name in "${REPOS[@]}"; do
         [[ -z "$automerge_lock_tmp" ]] || rm -f "$automerge_lock_tmp"
     fi
 
+    # ── Dependabot config: write ───────────────────────────────────────
+    depcfg_written=false
+    if ! $depcfg_up_to_date; then
+        mkdir -p "$(dirname "$DEPCFG_REL_PATH")"
+        cp "$DEPCFG_TEMPLATE" "$DEPCFG_REL_PATH"
+        depcfg_written=true
+        log "dependabot config: $DEPCFG_REL_PATH $([[ "$depcfg_state" == "drifted" ]] && echo updated || echo added)."
+    fi
+
     # ── agent-checks: write ────────────────────────────────────────────
     ac_runner_written=false; ac_dated_written=false; ac_wf_written=false; ac_eol_written=false
     ac_guard_written=false; ac_registered_now=false; ac_trigger_written=false
@@ -1972,6 +2045,7 @@ for repo_name in "${REPOS[@]}"; do
     $skillshell_written && add_paths+=("$SETTINGS_REL_PATH")
     $automerge_written && [[ "$automerge_state" != "lockfile" ]] && add_paths+=("$AUTOMERGE_WF_REL_PATH")
     $automerge_lock_written && add_paths+=("$ACTIONS_LOCK_REL_PATH")
+    $depcfg_written && add_paths+=("$DEPCFG_REL_PATH")
     $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
@@ -2056,6 +2130,16 @@ workflows map lists .github/workflows/dependabot-auto-merge.yml with no actions
 more is removed. Nothing else in the lockfile changes."
     fi
 
+    if $depcfg_written; then
+        bootstrap_note="${bootstrap_note}
+
+$([[ "$depcfg_state" == "drifted" ]] && echo Updates || echo Adds) .github/dependabot.yml: github-actions updates grouped (own actions
+skip the cooldown) and the synced dated-phrasing npm dependency held back. The
+file is managed by _agent-guidance's templates/dependabot/ and is overwritten
+on the next sync if it drifts, so change the template, not this copy. A repo
+that adds another ecosystem is no longer delivered it (ADR 0047)."
+    fi
+
     if $retired_any; then
         bootstrap_note="${bootstrap_note}
 
@@ -2087,19 +2171,19 @@ workflow; see the 2026-11-02 addendum to docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $contributor_written && ! $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $retired_any \
+       && $contributor_written && ! $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $depcfg_written && ! $gitattr_written && ! $retired_any \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
         commit_message="chore: deliver the fleet contributor rules
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $retired_any \
+       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $depcfg_written && ! $gitattr_written && ! $retired_any \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
         commit_message="chore: disable shell execution when a skill loads
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $retired_any \
+       && $ac_any_written && ! $automerge_written && ! $depcfg_written && ! $gitattr_written && ! $retired_any \
        && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
         commit_message="chore: deliver the agent-checks git hooks and CI check
 
@@ -2113,6 +2197,11 @@ AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bo
             $automerge_lock_written && automerge_title="$automerge_title and its actions.lock entry"
         fi
         commit_message="$automerge_title
+
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $depcfg_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $retired_any; then
+        commit_message="chore: $([[ "$depcfg_state" == "drifted" ]] && echo update || echo add) the managed Dependabot config
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
