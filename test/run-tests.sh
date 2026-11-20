@@ -1150,6 +1150,9 @@ PY
                     ;;
             esac
             "$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure .gitattributes >/dev/null
+            for l in ".githooks/** linguist-vendored" ".claude/hooks/** linguist-vendored"; do
+                HOOK_EOL_LINE="$l" "$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure .gitattributes >/dev/null
+            done
             git add -A
             git commit -m init >/dev/null 2>&1
             git push origin HEAD:main >/dev/null 2>&1
@@ -25230,6 +25233,11 @@ PY
 
 GATTR_LINE_T='.claude/hooks/*.sh text eol=lf'
 GATTR_COMMENT_T='# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)'
+# The two linguist-vendored lines (ADR 0048), each with its comment, as a
+# printf format to append to an expectation: LF and CRLF spellings.
+GATTR_VEND_C='# managed by _agent-guidance: synced tooling is vendored, not this repo'"'"'s code (see ADR 0048)'
+GATTR_VEND_T="$GATTR_VEND_C\n.githooks/** linguist-vendored\n$GATTR_VEND_C\n.claude/hooks/** linguist-vendored\n"
+GATTR_VEND_CRLF_T="$GATTR_VEND_C\r\n.githooks/** linguist-vendored\r\n$GATTR_VEND_C\r\n.claude/hooks/** linguist-vendored\r\n"
 
 # gattr_git — git with no system config and no signing, so a test's answer
 # cannot depend on the machine running it (a system core.autocrlf, say).
@@ -25446,7 +25454,7 @@ setup_gattr_repos() {
         echo "# $name" > "$work/$name/README.md"
         case "$name" in
             repo-append|repo-protected) printf '*.png binary\n' > "$work/$name/.gitattributes" ;;
-            repo-present) printf '*.png binary\n  %s  \n' "$GATTR_LINE_T" > "$work/$name/.gitattributes" ;;
+            repo-present) printf '*.png binary\n  %s  \n.githooks/** linguist-vendored\n.claude/hooks/** linguist-vendored\n' "$GATTR_LINE_T" > "$work/$name/.gitattributes" ;;
             repo-crlf) printf '*.png binary\r\n*.jpg binary\r\n' > "$work/$name/.gitattributes" ;;
             repo-no-newline) printf '*.png binary' > "$work/$name/.gitattributes" ;;
             repo-star-minus-text) printf '* -text\n' > "$work/$name/.gitattributes" ;;
@@ -25489,6 +25497,7 @@ test_sync_gitattributes() {
     echo "=== Test: sync.sh maintains the hook-script LF line in .gitattributes ==="
 
     local bare="$TEST_DIR/gattr-bare" L="$GATTR_LINE_T" C="$GATTR_COMMENT_T"
+    local V="$GATTR_VEND_T" VR="$GATTR_VEND_CRLF_T"
     local out="$TEST_DIR/gattr-sync" before after rc sec got
     setup_gattr_repos "$bare"
 
@@ -25549,17 +25558,17 @@ test_sync_gitattributes() {
     else
         fail "gitattributes (sync): the run exits 0 — got $rc"
     fi
-    gattr_expect repo-none "$C\n$L\n" \
+    gattr_expect repo-none "$C\n$L\n$V" \
         "gitattributes (sync): created with the comment and the line"
-    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-append "*.png binary\n$C\n$L\n$V" \
         "gitattributes (sync): appended, every existing byte preserved"
-    gattr_expect repo-present "*.png binary\n  $L  \n" \
+    gattr_expect repo-present "*.png binary\n  $L  \n.githooks/** linguist-vendored\n.claude/hooks/** linguist-vendored\n" \
         "gitattributes (sync): already present (padded) — byte-identical"
-    gattr_expect repo-crlf "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n" \
+    gattr_expect repo-crlf "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n$VR" \
         "gitattributes (sync): a CRLF file is appended to with CRLF"
-    gattr_expect repo-no-newline "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-no-newline "*.png binary\n$C\n$L\n$V" \
         "gitattributes (sync): a missing final newline is supplied before appending"
-    gattr_expect repo-star-minus-text "* -text\n$C\n$L\n" \
+    gattr_expect repo-star-minus-text "* -text\n$C\n$L\n$V" \
         "gitattributes (sync): appended after '* -text'"
 
     # Same commit as the rest of the delivery, not a second one.
@@ -25588,6 +25597,14 @@ test_sync_gitattributes() {
     else
         fail "gitattributes (sync): in the '* -text' repo the hooks get text eol=lf and README.md stays -text — got: $got"
     fi
+    got=$(gattr_git -C "$clone" check-attr linguist-vendored -- .githooks/agent-checks .claude/hooks/fleet-memory.sh README.md)
+    if [[ "$got" == *".githooks/agent-checks: linguist-vendored: set"* \
+          && "$got" == *"fleet-memory.sh: linguist-vendored: set"* \
+          && "$got" == *"README.md: linguist-vendored: unspecified"* ]]; then
+        pass "gitattributes (sync): synced tooling is linguist-vendored and README.md is not"
+    else
+        fail "gitattributes (sync): synced tooling is linguist-vendored and README.md is not — got: $got"
+    fi
 
     # A gitignored .gitattributes: warned, not written, and the rest delivered.
     if gattr_git -C "$bare/gattrorg_repo-ignored" cat-file -e main:.gitattributes 2>/dev/null; then
@@ -25602,10 +25619,10 @@ test_sync_gitattributes() {
     fi
 
     # The PR fallback carries it too, and says so.
-    gattr_expect repo-protected "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-protected "*.png binary\n$C\n$L\n$V" \
         "gitattributes (sync, PR fallback): appended on the fallback branch" agents-md-sync/update
     got="$TEST_DIR/gattr-pr-bodies/gattrorg_repo-protected.body"
-    assert_prose_contains "$got" "This PR also adds one line to \`.gitattributes\`" \
+    assert_prose_contains "$got" "This PR also appends managed lines to \`.gitattributes\`" \
         "gitattributes (sync, PR fallback): the PR body names the .gitattributes change"
 
     # ── Idempotence: a second run changes nothing and commits nothing ──
@@ -25638,7 +25655,7 @@ test_sync_gitattributes() {
     assert_not_contains "$out-3-append" "Up to date — skipping." \
         "gitattributes (only the line missing): the repo is not skipped"
     got=$(gattr_git -C "$bare/gattrorg_repo-append" log -1 --format=%s main)
-    if [[ "$got" == "chore: pin the hook scripts to LF in .gitattributes" ]]; then
+    if [[ "$got" == "chore: update the managed .gitattributes lines" ]]; then
         pass "gitattributes (only the line missing): the commit's subject names the change"
     else
         fail "gitattributes (only the line missing): the commit's subject names the change — got '$got'"
@@ -25649,7 +25666,7 @@ test_sync_gitattributes() {
     else
         fail "gitattributes (only the line missing): the commit touches .gitattributes alone — got: $(tr '\n' ' ' <<< "$got")"
     fi
-    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-append "*.png binary\n$C\n$L\n$V" \
         "gitattributes (only the line missing): the pair is back, every other byte preserved"
 
     # ── Drift report after the sync ──

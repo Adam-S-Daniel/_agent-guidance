@@ -19,7 +19,8 @@ set -euo pipefail
 #      command string; every other entry, and a settings.json it cannot parse,
 #      is left untouched). The owner's routes install the guidance instead
 #   7. Ensures the root .gitattributes pins .claude/hooks/*.sh to LF (one
-#      appended line; see docs/decisions/0019)
+#      appended line; see docs/decisions/0019) and marks .githooks/** and
+#      .claude/hooks/** linguist-vendored (ADR 0048)
 #   8. Pushes the update directly to the default branch (the sync App has a
 #      ruleset bypass, declared in repo-settings); falls back to a PR with
 #      auto-merge for repos whose protection rejects the push
@@ -109,6 +110,13 @@ AC_DATED_FILES=(dated-phrasing.js dated-phrasing-allowlist.txt
 # same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
 AC_EOL_LINE='.githooks/* text eol=lf'
 AC_EOL_COMMENT='# managed by _agent-guidance: the agent-checks runner must stay LF for bash (see ADR 0021)'
+# The files the sync delivers under these two directories are tooling copied
+# from this repo, yet GitHub's linguist counted them as each repo's own code:
+# most repos read "Shell 80%, JavaScript 19%". Marking them vendored keeps the
+# language bar, and the language-fit check that reads it, about the repo's own
+# code (ADR 0048). Two more managed lines, appended like the LF ones.
+LINGUIST_LINES=('.githooks/** linguist-vendored' '.claude/hooks/** linguist-vendored')
+LINGUIST_COMMENT='# managed by _agent-guidance: synced tooling is vendored, not this repo'"'"'s code (see ADR 0048)'
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -1335,6 +1343,15 @@ for repo_name in "${REPOS[@]}"; do
     if $gitattr_deliver && [[ "$gitattr_state" != "present" ]]; then
         gitattr_up_to_date=false
     fi
+    linguist_missing=()
+    if $gitattr_deliver; then
+        for linguist_line in "${LINGUIST_LINES[@]}"; do
+            [[ "$(HOOK_EOL_LINE="$linguist_line" HOOK_EOL_COMMENT="$LINGUIST_COMMENT" \
+                  "$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")" == "present" ]] \
+                || linguist_missing+=("$linguist_line")
+        done
+    fi
+    [[ ${#linguist_missing[@]} -gt 0 ]] && gitattr_up_to_date=false
 
     # ── Dependabot auto-merge workflow: classify ───────────────────────
     # missing | current | drifted | skipped | n/a. Managed: missing and
@@ -1621,13 +1638,16 @@ for repo_name in "${REPOS[@]}"; do
             esac
         fi
 
-        if ! $gitattr_up_to_date; then
+        if ! $gitattr_up_to_date && [[ "$gitattr_state" != "present" ]]; then
             if [[ -e "$GITATTR_REL_PATH" ]]; then
                 log "[DRY RUN] Would append the hook-script LF line to $GITATTR_REL_PATH (existing lines preserved) $delivery_note"
             else
                 log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF $delivery_note"
             fi
         fi
+        for linguist_line in ${linguist_missing[@]+"${linguist_missing[@]}"}; do
+            log "[DRY RUN] Would append \`$linguist_line\` to $GITATTR_REL_PATH (existing lines preserved) $delivery_note"
+        done
 
         if ! $automerge_up_to_date; then
             if [[ "$automerge_state" != "lockfile" ]]; then
@@ -1800,7 +1820,8 @@ for repo_name in "${REPOS[@]}"; do
     # ── .gitattributes: write ──────────────────────────────────────────
     # Appended to, never rewritten (the helper's header has the byte rules).
     gitattr_written=false
-    if ! $gitattr_up_to_date; then
+    linguist_written=false
+    if ! $gitattr_up_to_date && [[ "$gitattr_state" != "present" ]]; then
         if gitattr_result=$("$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
             [[ "$gitattr_result" == "created" || "$gitattr_result" == "appended" ]] && gitattr_written=true
             log "gitattributes: $GITATTR_REL_PATH — $gitattr_result."
@@ -1808,6 +1829,16 @@ for repo_name in "${REPOS[@]}"; do
             log "WARN: could not add the hook-script LF line to $GITATTR_REL_PATH (${gitattr_result:-no output}) — leaving it untouched."
         fi
     fi
+    for linguist_line in ${linguist_missing[@]+"${linguist_missing[@]}"}; do
+        if linguist_result=$(HOOK_EOL_LINE="$linguist_line" HOOK_EOL_COMMENT="$LINGUIST_COMMENT" \
+                             "$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
+            [[ "$linguist_result" == "created" || "$linguist_result" == "appended" ]] && linguist_written=true
+            log "gitattributes: \`$linguist_line\` — $linguist_result."
+        else
+            log "WARN: could not add \`$linguist_line\` to $GITATTR_REL_PATH (${linguist_result:-no output}) — leaving it untouched."
+        fi
+    done
+    $linguist_written && gitattr_written=true
 
     # ── Dependabot auto-merge workflow: write ──────────────────────────
     # Managed: written when missing, overwritten when drifted.
@@ -1999,9 +2030,12 @@ sync wrote, holding nothing but its own hook, are changed."
     if $gitattr_written; then
         bootstrap_note="${bootstrap_note}
 
-Pins .claude/hooks/*.sh to LF in .gitattributes (one appended line; nothing
-else in the file changed): a Windows autocrlf checkout gives them CRLF, which
-bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
+Updates .gitattributes (appended lines only; nothing else in the file
+changed): pins .claude/hooks/*.sh to LF, because a Windows autocrlf checkout
+gives them CRLF, which bash in WSL cannot parse (_agent-guidance's
+docs/decisions/0019), and marks .githooks/** and .claude/hooks/**
+linguist-vendored so GitHub's language bar shows this repo's own code
+(docs/decisions/0048)."
     fi
 
     if $automerge_written && [[ "$automerge_state" != "lockfile" ]]; then
@@ -2083,7 +2117,7 @@ AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bo
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
        && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $retired_any; then
-        commit_message="chore: pin the hook scripts to LF in .gitattributes
+        commit_message="chore: update the managed .gitattributes lines
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
@@ -2328,10 +2362,13 @@ It is registered as an **additional** \`hooks.SessionStart\` entry in
         if $gitattr_written; then
             pr_extra="${pr_extra}
 
-This PR also adds one line to \`$GITATTR_REL_PATH\`, \`.claude/hooks/*.sh text eol=lf\`,
-with a comment above it; nothing else in that file changes. A Windows
-\`core.autocrlf=true\` checkout gives the hook scripts CRLF, which bash in WSL
-cannot parse. See [ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)."
+This PR also appends managed lines to \`$GITATTR_REL_PATH\`, each with a comment
+above it; nothing else in that file changes. \`.claude/hooks/*.sh text eol=lf\`:
+a Windows \`core.autocrlf=true\` checkout gives the hook scripts CRLF, which
+bash in WSL cannot parse ([ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)).
+\`.githooks/** linguist-vendored\` and \`.claude/hooks/** linguist-vendored\`:
+the synced tooling stops counting as this repo's code in GitHub's language
+bar ([ADR 0048](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0048-sync-marks-synced-tooling-linguist-vendored.md))."
         fi
 
         if $retired_any; then
