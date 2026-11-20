@@ -187,13 +187,13 @@ test('directories globs cover nested manifests', () => {
   assert.match(sectionOf(out, 'Dependabot manifests'), /\(0\)/);
 });
 
-test('exempt paths need no entry: dated-phrasing, fixtures, node_modules, evals/real-work', () => {
+test('exempt paths need no entry: dated-phrasing, fixtures, seeds, node_modules', () => {
   const { out } = run({
     'o__r.sections': '',
     'o__r.languages.json': '{}',
     'o__r.dependabot.yml': DEP,
     'o__r.tree.json': tree(blob('.githooks/dated-phrasing/package.json'), blob('test/fixtures/x/package.json'),
-      blob('node_modules/a/package.json'), blob('evals/real-work/a/go.mod'), blob('testdata/Cargo.toml'), blob('.github/workflows/ci.yml')),
+      blob('node_modules/a/package.json'), blob('evals/q/seed/go.mod'), blob('seeds/Gemfile'), blob('testdata/Cargo.toml'), blob('.github/workflows/ci.yml')),
   });
   assert.match(sectionOf(out, 'Dependabot manifests'), /\(0\)/);
 });
@@ -267,4 +267,53 @@ test('bad usage and a missing directory exit 2', () => {
   } finally {
     process.stderr.write = orig;
   }
+});
+
+test('a manifest .gitattributes marks vendored or generated is exempt; documentation is not', () => {
+  const files = {
+    'o__r.sections': '', 'o__r.languages.json': '{}', 'o__r.dependabot.yml': DEP,
+    'o__r.gitattributes': 'evals/** linguist-vendored\ngen/** linguist-generated\ndocs/** linguist-documentation\n',
+    'o__r.tree.json': tree(blob('evals/a/go.mod'), blob('gen/Cargo.toml'), blob('docs/Gemfile'), blob('.github/workflows/ci.yml')),
+  };
+  const s = sectionOf(run(files).out, 'Dependabot manifests');
+  assert.match(s, /1 manifest directory without an updates entry: `\/docs` \(bundler\)/);
+});
+
+test('own bytes for the add check exclude fixture paths but not paths a linguist rule already covers', () => {
+  // GitHub saw 100,000 B of JavaScript; 95,000 B of it is under evals/.
+  const files = {
+    'o__r.sections': '',
+    'o__r.languages.json': JSON.stringify({ JavaScript: 100000, Ruby: 100000 }),
+    'o__r.tree.json': tree(blob('evals/a.js', 95000), blob('src/b.js', 5000), blob('c.rb', 100000)),
+  };
+  const before = sectionOf(run(files).out, 'Sections');
+  // 5,000 of 105,000 own bytes is under 10%.
+  assert.doesNotMatch(before, /javascript/);
+  assert.match(before, /add `ruby`|\(0\)/);
+  // Once evals/ is marked vendored GitHub's own numbers already exclude it; nothing is subtracted twice.
+  const covered = {
+    ...files,
+    'o__r.languages.json': JSON.stringify({ JavaScript: 5000, Ruby: 100000 }),
+    'o__r.gitattributes': 'evals/** linguist-vendored\n',
+  };
+  const after = sectionOf(run(covered).out, 'Sections');
+  assert.doesNotMatch(after, /javascript/);
+  const ok = run({ ...covered, 'o__r.languages.json': JSON.stringify({ JavaScript: 5000 }), 'o__r.tree.json': tree(blob('evals/a.js', 95000), blob('src/b.js', 5000)) });
+  assert.match(sectionOf(ok.out, 'Sections'), /add `javascript` \(100% /);
+});
+
+test('a failed read is "not checked", never an absent file, and yields no finding', () => {
+  const base = { 'o__r.sections': '', 'o__r.languages.json': '{}' };
+  for (const [marker, extra, pattern] of [
+    ['o__r.tree.json.unread', { 'o__r.dependabot.yml': DEP }, /tree \(read failed; dependabot\)/],
+    ['o__r.dependabot.yml.unread', { 'o__r.tree.json': tree(blob('go.mod')) }, /dependabot\.yml \(read failed\)/],
+    ['o__r.gitattributes.unread', { 'o__r.dependabot.yml': DEP, 'o__r.tree.json': tree(blob('evals/a.js', 9000)) }, /\.gitattributes \(read failed; linguist\)/],
+  ]) {
+    const { out, findings } = run({ ...base, ...extra, [marker]: '' });
+    assert.match(sectionOf(out, 'Not checked'), pattern);
+    assert.strictEqual(findings, '', marker);
+  }
+  const { out } = run({ 'o__r.sections': 'go\n', 'o__r.languages.json.unread': '', 'o__r.tree.json': tree() });
+  assert.match(sectionOf(out, 'Not checked'), /languages \(read failed/);
+  assert.doesNotMatch(sectionOf(out, 'Sections'), /remove/);
 });

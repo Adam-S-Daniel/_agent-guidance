@@ -21026,6 +21026,33 @@ test_drift_report_guidance_dir() {
         fail "guidance dir: language-fit.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
     fi
 
+    # A confirmed read leaves no .unread marker.
+    if ! ls "$gdir"/*.unread >/dev/null 2>&1; then
+        pass "guidance dir: no .unread marker when every read succeeded"
+    else
+        fail "guidance dir: unexpected .unread markers: $(ls "$gdir"/*.unread | tr '\n' ' ')"
+    fi
+
+    # A failed read is a marker, never an absent file: no tree fixture gives a
+    # 404 on the tree call, and MOCK_CONTENTS_HTTP_FAIL fails every contents
+    # call with an HTTP 403 that is not a confirmed absence.
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.tree.json"
+    rm -rf "$gdir"; mkdir -p "$gdir"
+    rc=0
+    DRIFT_GUIDANCE_DIR="$gdir" MOCK_CONTENTS_HTTP_FAIL="fleetorg_repo-payload" \
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    if [[ -e "$stem.tree.json.unread" && ! -e "$stem.tree.json" \
+          && -e "$stem.dependabot.yml.unread" && ! -e "$stem.dependabot.yml" \
+          && -e "$stem.gitattributes.unread" && ! -e "$stem.gitattributes" \
+          && ! -e "$stem.languages.json.unread" ]]; then
+        pass "guidance dir: failed reads write .unread markers and no data file"
+    else
+        fail "guidance dir: rc=$rc; saw $(ls "$gdir" | tr '\n' ' ')"
+    fi
+
     # Every repo gets the language-fit files, even with no AGENTS.md read.
     cp "$saved/.agents-sync.yml" "$saved/AGENTS.md" "$work/"
     rm -rf "$work/.github" "$work/.gitattributes"
@@ -21076,11 +21103,11 @@ test_language_fit() {
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
-    # 21 is the suite's count, so a deleted test fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 21 ]]; then
+    # 24 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 24 ]]; then
         pass "language fit: node:test suite is green ($pass_n passed)"
     else
-        fail "language fit: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=21): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "language fit: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=24): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 

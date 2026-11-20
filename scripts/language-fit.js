@@ -17,9 +17,12 @@
  *   a. Sections, both directions. A requested section with no matching
  *      language is "remove" (this moved here from guidance-overlap.js's check
  *      3). A language with no requested section is "add" when it is at least
- *      10% of the repo's NON-VENDORED bytes and at least 2,000 bytes; bytes
- *      under .githooks/ and .claude/hooks/ are subtracted (by file extension,
- *      from the tree) unless .gitattributes already marks them vendored. A
+ *      10% of the repo's OWN bytes and at least 2,000 bytes. Own bytes are
+ *      GitHub's, minus (by file extension, from the tree) the files under
+ *      .githooks/ and .claude/hooks/ and under fixture, generated, vendored or
+ *      docs paths (check b's patterns). A file a linguist-vendored, -generated
+ *      or -documentation rule already covers is not subtracted twice: GitHub
+ *      excludes it already. A
  *      Dockerfile anywhere outside fixture paths adds `docker`. The report
  *      prints the exact `sections:` list the repo should have.
  *   b. Linguist. A language whose remaining bytes come at least 80% from
@@ -32,18 +35,23 @@
  *      entry for its ecosystem; an entry whose directory holds no manifest of
  *      its ecosystem is flagged (Dependabot errors on it); a repo with
  *      workflows needs a github-actions entry; a package.json needs a lockfile
- *      beside it; a repo with manifests needs a dependabot.yml. Schedule and
+ *      beside it; a repo with manifests needs a dependabot.yml. A manifest is
+ *      exempt under node_modules, fixture/fixtures/testdata/seed/seeds
+ *      segments, .githooks/dated-phrasing/, or a path .gitattributes marks
+ *      linguist-vendored or -generated. Schedule and
  *      silence are scripts/dependabot-config-health.js's, not this script's.
  *
  * PRIVACY. The report is published on a branch of a PUBLIC repo and the nudge
  * issue is public. For a repo with the `.private` marker the output holds only
  * a category and a count: never a path, a file name or a language byte count.
  * File contents are never printed. A tree that is missing or truncated is
- * "not checked", never clean.
+ * "not checked", never clean. So is an input whose read FAILED:
+ * drift-report.sh writes `<stem>.<name>.unread` (no data file) for any read
+ * that failed other than a confirmed 404, and no finding is drawn from it.
  *
  * INPUT. The directory drift-report.sh writes when DRIFT_GUIDANCE_DIR is set;
  * per repo `<owner>__<repo>.` plus: sections, languages.json, tree.json,
- * dependabot.yml, gitattributes, private.
+ * dependabot.yml, gitattributes, private, and `<name>.unread` markers.
  *
  * USAGE. node scripts/language-fit.js <dir> [--findings <file>]
  * Markdown to stdout; --findings writes one plain-text line per finding (empty
@@ -93,7 +101,7 @@ const DIR_KINDS = {
   dist: 'generated', build: 'generated', _site: 'generated',
   docs: 'documentation',
 };
-const FIXTURE_SEGMENTS = new Set(['fixture', 'fixtures', '__fixtures__', 'testdata']);
+const FIXTURE_SEGMENTS = new Set(['fixture', 'fixtures', '__fixtures__', 'testdata', 'seed', 'seeds']);
 const LINGUIST_ATTRS = ['linguist-vendored', 'linguist-generated', 'linguist-documentation'];
 
 // ── .gitattributes ──────────────────────────────────────────────────────────
@@ -157,13 +165,14 @@ function linguistCovered(rules, filePath) {
 
 function loadRepos(dir) {
   const repos = new Map();
-  const re = /^(.+?)__(.+)\.(agents\.md|sections|languages\.json|tree\.json|dependabot\.yml|gitattributes|private)$/;
+  const re = /^(.+?)__(.+)\.(agents\.md|sections|languages\.json|tree\.json|dependabot\.yml|gitattributes|private)(\.unread)?$/;
   for (const f of fs.readdirSync(dir).sort()) {
     const m = f.match(re);
     if (!m) continue;
     const name = `${m[1]}/${m[2]}`;
-    if (!repos.has(name)) repos.set(name, { private: false });
+    if (!repos.has(name)) repos.set(name, { private: false, unread: new Set() });
     const r = repos.get(name);
+    if (m[4]) { r.unread.add(m[3]); continue; }
     const body = fs.readFileSync(path.join(dir, f), 'utf8');
     const kind = m[3];
     if (kind === 'sections') r.sections = body.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -187,6 +196,9 @@ function blobs(r) {
     .map((e) => ({ path: e.path, size: Number(e.size) || 0 }));
 }
 
+// Why an input is missing: a read that failed, or one that was never made.
+const why = (r, kind) => (r.unread && r.unread.has(kind) ? 'read failed' : 'not read');
+
 function extOf(p) {
   const base = p.split('/').pop();
   const i = base.lastIndexOf('.');
@@ -205,11 +217,17 @@ const hasSegment = (p, set) => p.split('/').some((s) => set.has(s));
 
 // ── a. sections ─────────────────────────────────────────────────────────────
 
+// "Own" bytes: GitHub's per-language bytes minus the files that are not the
+// repo's own code: the synced hook directories and fixture, generated,
+// vendored or docs paths (patternOf, defined with check b). A file a
+// linguist-vendored/generated/documentation rule already covers is NOT
+// subtracted again: GitHub's numbers exclude it already.
 function nonVendoredBytes(languages, files, rules) {
   const out = { ...languages };
   for (const f of files) {
-    if (!inSynced(f.path) || attrOf(rules, f.path, 'linguist-vendored') === true) continue;
-    const l = languageOf(f.path);
+    if (linguistCovered(rules, f.path)) continue;
+    if (!inSynced(f.path) && !patternOf(f.path)) continue;
+    const l = languageOf(f.path) || EXT_LANGUAGE[extOf(f.path)];
     if (l && out[l] !== undefined) out[l] = Math.max(0, out[l] - f.size);
   }
   return out;
@@ -218,9 +236,13 @@ function nonVendoredBytes(languages, files, rules) {
 function checkSections(r) {
   const res = { findings: [], notChecked: [] };
   if (!r.sections) { res.notChecked.push('sections (AGENTS.md or .agents-sync.yml not read)'); return res; }
-  if (!r.languages) res.notChecked.push('languages');
-  const files = blobs(r);
-  if (!files) res.notChecked.push('tree (added sections)');
+  if (!r.languages) res.notChecked.push(`languages (${why(r, 'languages.json')})`);
+  let files = blobs(r);
+  if (!files) res.notChecked.push(`tree (${why(r, 'tree.json')}; added sections)`);
+  if (files && r.unread.has('gitattributes')) {
+    res.notChecked.push('.gitattributes (read failed; added sections)');
+    files = null;
+  }
   const rules = parseGitattributes(r.gitattributes);
   const hasDockerfile = files ? files.some((f) => f.path.split('/').pop() === 'Dockerfile' &&
     !hasSegment(f.path, FIXTURE_SEGMENTS) && !f.path.split('/').includes('node_modules')) : null;
@@ -287,7 +309,8 @@ function patternOf(p) {
 function checkLinguist(r) {
   const res = { findings: [], info: [], notChecked: [] };
   const files = blobs(r);
-  if (!files) { res.notChecked.push('tree (linguist)'); return res; }
+  if (!files) { res.notChecked.push(`tree (${why(r, 'tree.json')}; linguist)`); return res; }
+  if (r.unread.has('gitattributes')) { res.notChecked.push('.gitattributes (read failed; linguist)'); return res; }
   const rules = parseGitattributes(r.gitattributes);
   const byLang = new Map();
   for (const f of files) {
@@ -350,10 +373,14 @@ function manifestEcosystem(p, siblings) {
   return null;
 }
 
-function exemptPath(p) {
+// Not ours to bump: node_modules, fixtures and seeds, anything .gitattributes
+// marks vendored or generated, and the synced dated-phrasing copy (kept as a
+// literal so the check is right before the sync's vendored line lands).
+function exemptPath(p, rules) {
   const segs = p.split('/');
   return segs.includes('node_modules') || p.startsWith('.githooks/dated-phrasing/') ||
-    p.startsWith('evals/real-work/') || segs.some((s) => FIXTURE_SEGMENTS.has(s));
+    segs.some((s) => FIXTURE_SEGMENTS.has(s)) ||
+    attrOf(rules, p, 'linguist-vendored') === true || attrOf(rules, p, 'linguist-generated') === true;
 }
 
 const normDir = (d) => String(d == null ? '' : d).replace(/^\/+|\/+$/g, '');
@@ -375,7 +402,9 @@ function entryCovers(entry, dir, eco) {
 function checkDependabot(r) {
   const res = { findings: [], notChecked: [] };
   const files = blobs(r);
-  if (!files) { res.notChecked.push('tree (dependabot)'); return res; }
+  if (!files) { res.notChecked.push(`tree (${why(r, 'tree.json')}; dependabot)`); return res; }
+  if (r.unread.has('gitattributes')) { res.notChecked.push('.gitattributes (read failed; dependabot)'); return res; }
+  const rules = parseGitattributes(r.gitattributes);
   const names = new Set(files.map((f) => f.path));
   const manifests = [];
   for (const f of files) {
@@ -384,14 +413,16 @@ function checkDependabot(r) {
     const eco = manifestEcosystem(f.path, siblings);
     if (eco) manifests.push({ path: f.path, dir, eco });
   }
-  const live = manifests.filter((m) => !exemptPath(m.path));
+  const live = manifests.filter((m) => !exemptPath(m.path, rules));
   const hasWorkflows = files.some((f) => f.path.startsWith('.github/workflows/') && /\.ya?ml$/.test(f.path));
 
   const n = (k, w) => `${k} ${w === 'manifest directory' && k !== 1 ? 'manifest directories' : `${w}${k === 1 ? '' : 's'}`}`;
   const add = (pub, priv) => res.findings.push({ category: 'dependabot', pub, priv });
 
   let entries = null;
-  if (r.dependabot === undefined) {
+  if (r.unread.has('dependabot.yml')) {
+    res.notChecked.push('dependabot.yml (read failed)');
+  } else if (r.dependabot === undefined) {
     if (live.length || hasWorkflows) {
       add('no dependabot.yml, but the repo has manifests or workflows', 'no dependabot.yml, but the repo has manifests or workflows');
     }

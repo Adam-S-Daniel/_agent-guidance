@@ -1018,25 +1018,35 @@ for repo_name in "${REPOS[@]}"; do
             printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
             printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
         fi
-        # The language-fit inputs, for EVERY repo and best-effort: a failed
-        # read leaves the file out, and language-fit.js reports "not read"
-        # rather than reading an absent file as a clean one. Output of a
-        # failed call is discarded explicitly (gh prints the error body to
-        # stdout).
+        # The language-fit inputs, for EVERY repo and best-effort. A failed
+        # read writes `<stem>.<name>.unread` and no data file: language-fit.js
+        # reports it as "not checked", never as an absent (clean) file. Only a
+        # CONFIRMED absence (fetch_file_content returns 0 on a 404 it verified
+        # against the repo) leaves neither file. Output of a failed gh call is
+        # discarded explicitly (gh prints the error body to stdout).
         lf_out=$(gh api "repos/$repo_name/languages" 2>/dev/null) || lf_out=""
-        [[ -n "$lf_out" ]] && printf '%s\n' "$lf_out" > "$guidance_stem.languages.json"
+        if [[ -n "$lf_out" ]]; then printf '%s\n' "$lf_out" > "$guidance_stem.languages.json"
+        else : > "$guidance_stem.languages.json.unread"; fi
         lf_out=$(gh api "repos/$repo_name/git/trees/HEAD?recursive=1" \
             --jq '{truncated: .truncated, tree: [.tree[] | {path: .path, type: .type, size: .size}]}' 2>/dev/null) || lf_out=""
-        [[ -n "$lf_out" ]] && printf '%s\n' "$lf_out" > "$guidance_stem.tree.json"
-        # An absent file reads as empty and returns 0, so a present
-        # dependabot.yml wins and .yaml is tried only when .yml was empty.
+        if [[ -n "$lf_out" ]]; then printf '%s\n' "$lf_out" > "$guidance_stem.tree.json"
+        else : > "$guidance_stem.tree.json.unread"; fi
+        # A present dependabot.yml wins; .yaml is tried only when .yml is
+        # confirmed absent.
         for lf_pair in "dependabot.yml:.github/dependabot.yml" "dependabot.yml:.github/dependabot.yaml" "gitattributes:.gitattributes"; do
             lf_name="${lf_pair%%:*}"; lf_path="${lf_pair#*:}"
             [[ -s "$guidance_stem.$lf_name" ]] && continue
-            if lf_out=$(fetch_file_content "$repo_name" "$lf_path") && [[ -n "$lf_out" ]]; then
+            lf_rc=0
+            lf_out=$(fetch_file_content "$repo_name" "$lf_path") || lf_rc=$?
+            if [[ "$lf_rc" -ne 0 ]]; then
+                : > "$guidance_stem.$lf_name.unread"
+            elif [[ -n "$lf_out" ]]; then
                 printf '%s\n' "$lf_out" > "$guidance_stem.$lf_name"
+                rm -f "$guidance_stem.$lf_name.unread"
             fi
         done
+        # Found after all: the .yaml read succeeded, so the .yml failure is moot.
+        [[ -s "$guidance_stem.dependabot.yml" ]] && rm -f "$guidance_stem.dependabot.yml.unread"
         lf_out=$(gh api "repos/$repo_name" --jq .private 2>/dev/null) || lf_out=""
         [[ "$lf_out" == "true" ]] && : > "$guidance_stem.private"
     fi
