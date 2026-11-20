@@ -26,10 +26,16 @@
  *   3. Whether every `updates[]` entry sets a `cooldown` with `default-days`
  *      (parsed with YAML, no regex) — NO-COOLDOWN when one does not. The
  *      fleet convention is `default-days: 7` so a release waits a week before
- *      a version-update PR opens (security updates bypass it); an entry for
- *      cms-platform's own releases excludes them with `exclude:
- *      ["Adam-S-Daniel/cms-platform/*"]`. This signal reads the config text
- *      alone, so it needs no extra API call.
+ *      a version-update PR opens (security updates bypass it). Every
+ *      `github-actions` entry also lists `exclude: ["Adam-S-Daniel/*",
+ *      "jodidaniel/*"]` (case-sensitive), because the owner's own actions are
+ *      gated code and skip the wait — OWN-ACTIONS-COOLDOWN when an entry
+ *      lacks either pattern. cms-platform and its consumers adamdaniel.ai and
+ *      jodidaniel.com are exempt (PLATFORM_MANAGED_REPOS): their refs move
+ *      through platform-bump. A repo with workflows but no config at all is
+ *      NOT a finding here: that verdict stays `no-config`, since telling it
+ *      apart needs a workflow-file read per repo and a new issue flow. These
+ *      signals read the config text alone, so they need no extra API call.
  * A finding files or updates a single `ci`-labelled tracking issue in the
  * AFFECTED repo (never here), keyed on a hidden evidence marker so repeat
  * runs don't spam duplicate comments, and the issue is shut once both
@@ -362,6 +368,48 @@ function cooldownGaps(text) {
   return gaps;
 }
 
+// Repos whose action refs move through cms-platform's platform-bump, so their
+// github-actions entries need not carry the own-actions exclude patterns.
+// Explicit full names: repos.yml has no per-repo attribute for this.
+const PLATFORM_MANAGED_REPOS = new Set([
+  "Adam-S-Daniel/cms-platform",
+  "Adam-S-Daniel/adamdaniel.ai",
+  "jodidaniel/jodidaniel.com",
+]);
+
+// The exact (case-sensitive) patterns every github-actions entry excludes
+// from its cooldown, so the owner's own actions are bumped without the wait.
+const OWN_ACTION_EXCLUDES = ["Adam-S-Daniel/*", "jodidaniel/*"];
+
+// ownActionsExcludeGaps(text, repo) — one label per `github-actions`
+// `updates[]` entry whose `cooldown.exclude` lacks either OWN_ACTION_EXCLUDES
+// pattern. Parsed with YAML. A PLATFORM_MANAGED_REPOS repo yields []. Labels
+// use the same restricted alphabet as cooldownGaps. Unparseable YAML yields [].
+function ownActionsExcludeGaps(text, repo) {
+  if (PLATFORM_MANAGED_REPOS.has(repo)) return [];
+  let doc;
+  try {
+    doc = YAML.parse(text);
+  } catch {
+    return [];
+  }
+  const updates = doc && typeof doc === "object" ? doc.updates : undefined;
+  if (!Array.isArray(updates)) return [];
+  const gaps = [];
+  for (const u of updates) {
+    if (!u || typeof u !== "object" || u["package-ecosystem"] !== "github-actions") continue;
+    const cd = u.cooldown;
+    const ex = cd && typeof cd === "object" && !Array.isArray(cd) ? cd.exclude : undefined;
+    const list = Array.isArray(ex) ? ex : [];
+    if (OWN_ACTION_EXCLUDES.every((pat) => list.includes(pat))) continue;
+    let dir = "?";
+    if (typeof u.directory === "string") dir = u.directory;
+    else if (Array.isArray(u.directories)) dir = u.directories.filter((d) => typeof d === "string").join(",") || "?";
+    gaps.push(`github-actions@${dir}`.replace(/[^A-Za-z0-9_.\/*@,-]/g, "_"));
+  }
+  return gaps;
+}
+
 // parseSchedule(text) — walk `updates[].schedule.interval` in a Dependabot
 // config's YAML text. A recognised interval maps to INTERVAL_DAYS; anything
 // else (a `cron:`-only entry, a missing interval) is collected in
@@ -502,7 +550,7 @@ function jobsState({ lastJobAt, configCommitAt, thresholdDays, nowMs }) {
 // config's path has exactly one commit ever and (b) a successful update job
 // started after it (see firstCommitProvesHealthy) — everything else about a
 // missing check is untouched.
-function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps }) {
+function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps, ownActionsGaps }) {
   if (!config) {
     return { verdict: "no-config", findings: [], unknowns: [], notices: [] };
   }
@@ -517,6 +565,9 @@ function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps 
   }
   for (const g of gaps || []) {
     findings.push({ kind: "no-cooldown", key: `no-cooldown:${g}` });
+  }
+  for (const g of ownActionsGaps || []) {
+    findings.push({ kind: "own-actions-cooldown", key: `own-actions-cooldown:${g}` });
   }
   if (check.state === "missing") {
     if (firstCommitProof) {
@@ -642,10 +693,23 @@ function renderNoCooldownSection(findings) {
     ...entries,
     "",
     "The fleet convention is `cooldown: default-days: 7`, so a release must be a week old before " +
-      "Dependabot opens a version-update PR (security updates bypass it). An entry that also " +
-      "tracks cms-platform releases adds `exclude: [\"Adam-S-Daniel/cms-platform/*\"]`, because " +
-      "those are this account's own gated code and do not need the wait. `github-actions` " +
-      "entries take only `default-days`; other `semver-*-days` keys are not supported there.",
+      "Dependabot opens a version-update PR (security updates bypass it). `github-actions` " +
+      "entries take only `default-days` and `exclude`; other `semver-*-days` keys are not supported there.",
+  ];
+}
+
+function renderOwnActionsSection(findings) {
+  const entries = findings
+    .filter((f) => f.kind === "own-actions-cooldown")
+    .map((f) => `- \`${f.key.slice("own-actions-cooldown:".length)}\``);
+  return [
+    "**Own actions not exempt.** These `github-actions` entries do not list both own-action patterns in `cooldown.exclude`:",
+    "",
+    ...entries,
+    "",
+    "Add `exclude: [\"Adam-S-Daniel/*\", \"jodidaniel/*\"]` under `cooldown` (matching is case-sensitive). " +
+      "The owner's own actions are gated code, so they skip the third-party 7-day wait; the daily " +
+      "sweep merges their bump PRs once CI passes. cms-platform, adamdaniel.ai and jodidaniel.com are exempt.",
   ];
 }
 
@@ -662,6 +726,9 @@ function renderIssueBody(assessment) {
   }
   if (assessment.findings.some((f) => f.kind === "no-cooldown")) {
     lines.push(...renderNoCooldownSection(assessment.findings), "");
+  }
+  if (assessment.findings.some((f) => f.kind === "own-actions-cooldown")) {
+    lines.push(...renderOwnActionsSection(assessment.findings), "");
   }
   lines.push(
     "**What to do:** repair the config on the default branch. The sweep comments new evidence " +
@@ -684,6 +751,9 @@ function renderComment(assessment, freshFindings) {
   }
   if (freshFindings.some((f) => f.kind === "no-cooldown")) {
     lines.push(...renderNoCooldownSection(freshFindings), "");
+  }
+  if (freshFindings.some((f) => f.kind === "own-actions-cooldown")) {
+    lines.push(...renderOwnActionsSection(freshFindings), "");
   }
   lines.push(FOOTER);
   return lines.join("\n");
@@ -963,7 +1033,7 @@ function assessRepo(target, api, nowMs, opts) {
       }
     }
 
-    verdictResult = verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: cooldownGaps(config.raw) });
+    verdictResult = verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: cooldownGaps(config.raw), ownActionsGaps: ownActionsExcludeGaps(config.raw, repo) });
   }
 
   const unknowns = [...extraUnknowns, ...verdictResult.unknowns];
@@ -1222,7 +1292,7 @@ if (require.main === module) {
 module.exports = {
   // constants
   CONFIG_PATHS, UPDATES_WORKFLOW_PATH, CHECK_APP_SLUG, INTERVAL_DAYS,
-  SILENCE_SLACK_DAYS, MARKER, ISSUE_TITLE, DEFAULT_LABEL,
+  SILENCE_SLACK_DAYS, MARKER, ISSUE_TITLE, DEFAULT_LABEL, PLATFORM_MANAGED_REPOS,
   // errors
   ApiError,
   // pure helpers
@@ -1236,6 +1306,7 @@ module.exports = {
   jobsState,
   verdictFor,
   cooldownGaps,
+  ownActionsExcludeGaps,
   extractReportedEvidence,
   hiddenEvidenceBlock,
   planIssueAction,

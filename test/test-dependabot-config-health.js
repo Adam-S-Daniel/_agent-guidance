@@ -35,6 +35,8 @@ const {
   logLine,
   verdictFor,
   cooldownGaps,
+  ownActionsExcludeGaps,
+  PLATFORM_MANAGED_REPOS,
   assessRepo,
   runSweep,
 } = require("../scripts/dependabot-config-health.js");
@@ -1090,7 +1092,7 @@ test("verdictFor: no gaps stays healthy (negative control)", () => {
   assert.equal(v.verdict, "healthy");
 });
 
-test("assessRepo: a config without a cooldown is a no-cooldown finding; the body explains 7 days and the cms-platform exclude", () => {
+test("assessRepo: a config without a cooldown is a no-cooldown finding; the body explains the 7-day convention", () => {
   const raw = cfg(entry("npm", "/tools"));
   const api = fakeApi({
     getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(raw) : (() => { throw new ApiError("Not Found", 404); })()),
@@ -1112,6 +1114,77 @@ test("assessRepo: a config without a cooldown is a no-cooldown finding; the body
   const body = renderIssueBody(a);
   assert.ok(body.includes("<!-- evidence: no-cooldown:npm@/tools -->"), body);
   assert.ok(body.includes("default-days: 7"), body);
-  assert.ok(body.includes("Adam-S-Daniel/cms-platform/*"), body);
+  assert.ok(!body.includes("cms-platform/*"), body);
   assert.ok(logLine(a).includes("kinds=no-cooldown"));
+});
+
+// ── 13. own-actions-cooldown (fourth signal) ─────────────────────────────────
+
+const OWN_OK = '    cooldown:\n      default-days: 7\n      exclude: ["Adam-S-Daniel/*", "jodidaniel/*"]\n';
+
+test("ownActionsExcludeGaps: a github-actions entry missing the excludes is flagged", () => {
+  const cd = "    cooldown:\n      default-days: 7\n";
+  assert.deepEqual(ownActionsExcludeGaps(cfg(entry("github-actions", "/", cd)), "Adam-S-Daniel/x"), ["github-actions@/"]);
+});
+
+test("ownActionsExcludeGaps: one pattern, the old cms-platform exclude, or a case variant is flagged", () => {
+  const one = '    cooldown:\n      default-days: 7\n      exclude: ["Adam-S-Daniel/*"]\n';
+  const old = '    cooldown:\n      default-days: 7\n      exclude: ["Adam-S-Daniel/cms-platform/*"]\n';
+  const cased = '    cooldown:\n      default-days: 7\n      exclude: ["adam-s-daniel/*", "jodidaniel/*"]\n';
+  for (const cd of [one, old, cased]) {
+    assert.deepEqual(ownActionsExcludeGaps(cfg(entry("github-actions", "/", cd)), "Adam-S-Daniel/x"), ["github-actions@/"]);
+  }
+});
+
+test("ownActionsExcludeGaps: a complete config is clean, and other ecosystems are ignored", () => {
+  assert.deepEqual(ownActionsExcludeGaps(cfg(entry("github-actions", "/", OWN_OK), entry("npm", "/t")), "Adam-S-Daniel/x"), []);
+});
+
+test("ownActionsExcludeGaps: platform-managed repos are exempt", () => {
+  const bare = cfg(entry("github-actions", "/", "    cooldown:\n      default-days: 7\n"));
+  for (const r of PLATFORM_MANAGED_REPOS) assert.deepEqual(ownActionsExcludeGaps(bare, r), []);
+  assert.deepEqual([...PLATFORM_MANAGED_REPOS].sort(), ["Adam-S-Daniel/adamdaniel.ai", "Adam-S-Daniel/cms-platform", "jodidaniel/jodidaniel.com"]);
+});
+
+test("ownActionsExcludeGaps: unparseable YAML yields no gaps", () => {
+  assert.deepEqual(ownActionsExcludeGaps("updates: [unclosed", "Adam-S-Daniel/x"), []);
+});
+
+test("verdictFor: an own-actions gap is a finding", () => {
+  const v = verdictFor({
+    config: { path: ".github/dependabot.yml", raw: "" },
+    check: { state: "success" }, jobs: { state: "healthy" }, firstCommitProof: null,
+    cooldownGaps: [], ownActionsGaps: ["github-actions@/"],
+  });
+  assert.equal(v.verdict, "finding");
+  assert.deepEqual(v.findings, [{ kind: "own-actions-cooldown", key: "own-actions-cooldown:github-actions@/" }]);
+});
+
+test("assessRepo: a missing own-actions exclude is a finding whose body names both patterns; an exempt repo is healthy", () => {
+  const run = (repoName, raw) => {
+    const api = fakeApi({
+      getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(raw) : (() => { throw new ApiError("Not Found", 404); })()),
+      newestPathCommit: () => ({ sha: "aaaaaa", date: "2026-08-01T00:00:00Z" }),
+      commitPulls: () => [],
+      checkRuns: (o, r, sha) => ({
+        total_count: 1,
+        check_runs: [{ id: 7, app: { slug: "dependabot" }, name: ".github/dependabot.yml", status: "completed", conclusion: "success", head_sha: sha, output: { title: "t", summary: "s" }, completed_at: "2026-08-01T00:05:00Z" }],
+      }),
+      workflowsPage: () => ({ total_count: 1, workflows: [{ id: 42, path: UPDATES_WORKFLOW_PATH }] }),
+      newestWorkflowRun: () => ({ created_at: "2026-09-10T00:00:00Z", html_url: "https://x/runs/1" }),
+    });
+    return assessRepo(
+      { owner: repoName.split("/")[0], repo: repoName, private: false, defaultBranch: "main" },
+      api, Date.parse("2026-09-15T00:00:00Z"), { label: "ci" },
+    );
+  };
+  const bare = cfg(entry("github-actions", "/", "    cooldown:\n      default-days: 7\n"));
+  const bad = run("Adam-S-Daniel/x", bare);
+  assert.equal(bad.verdict, "finding");
+  assert.deepEqual(bad.findings, [{ kind: "own-actions-cooldown", key: "own-actions-cooldown:github-actions@/" }]);
+  const body = renderIssueBody(bad);
+  assert.ok(body.includes("<!-- evidence: own-actions-cooldown:github-actions@/ -->"), body);
+  assert.ok(body.includes('"Adam-S-Daniel/*"') && body.includes('"jodidaniel/*"'), body);
+  assert.equal(run("Adam-S-Daniel/x", cfg(entry("github-actions", "/", OWN_OK))).verdict, "healthy");
+  assert.equal(run("Adam-S-Daniel/cms-platform", bare).verdict, "healthy");
 });
