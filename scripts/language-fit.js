@@ -559,7 +559,9 @@ function main(argv) {
   const results = analyze(repos);
   process.stdout.write(render(results));
   if (findings) {
-    try { fs.writeFileSync(findings, findingsText(results)); } catch (e) {
+    // Exclusive create: the workflow removes any stale file first, and a file
+    // already there (or a symlink planted at the path) is refused, not followed.
+    try { fs.writeFileSync(findings, findingsText(results), { flag: 'wx', mode: 0o600 }); } catch (e) {
       process.stderr.write(`cannot write ${findings}: ${e.code || e.message}\n`);
       return 2;
     }
