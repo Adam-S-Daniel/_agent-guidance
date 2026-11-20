@@ -1008,19 +1008,37 @@ for repo_name in "${REPOS[@]}"; do
     agents_rc=0
     current_agents=$(fetch_file_content "$repo_name" "AGENTS.md") || agents_rc=$?
 
-    # Inputs for scripts/guidance-overlap.js, only when the caller asks for
-    # them (drift-report.yml does; the tests mostly do not). Written only from a
-    # confident read, so an unreadable file is absent, never empty. The
-    # languages call is best-effort: a failure leaves the file out, and the
-    # overlap report names the repos whose languages it could not read.
-    if [[ -n "${DRIFT_GUIDANCE_DIR:-}" && "$agents_rc" -eq 0 && -n "$current_agents" ]]; then
+    # Inputs for scripts/guidance-overlap.js and scripts/language-fit.js, only
+    # when the caller asks for them (drift-report.yml does; the tests mostly do
+    # not). AGENTS.md and the section list are written only from a confident
+    # read, so an unreadable file is absent, never empty.
+    if [[ -n "${DRIFT_GUIDANCE_DIR:-}" ]]; then
         guidance_stem="$DRIFT_GUIDANCE_DIR/${repo_name%%/*}__${repo_name#*/}"
-        printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
-        printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
-        if [[ "$sections_rc" -eq 0 && "${#sections[@]}" -gt 0 ]]; then
-            gh api "repos/$repo_name/languages" > "$guidance_stem.languages.json" 2>/dev/null \
-                || rm -f "$guidance_stem.languages.json"
+        if [[ "$agents_rc" -eq 0 && -n "$current_agents" ]]; then
+            printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
+            printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
         fi
+        # The language-fit inputs, for EVERY repo and best-effort: a failed
+        # read leaves the file out, and language-fit.js reports "not read"
+        # rather than reading an absent file as a clean one. Output of a
+        # failed call is discarded explicitly (gh prints the error body to
+        # stdout).
+        lf_out=$(gh api "repos/$repo_name/languages" 2>/dev/null) || lf_out=""
+        [[ -n "$lf_out" ]] && printf '%s\n' "$lf_out" > "$guidance_stem.languages.json"
+        lf_out=$(gh api "repos/$repo_name/git/trees/HEAD?recursive=1" \
+            --jq '{truncated: .truncated, tree: [.tree[] | {path: .path, type: .type, size: .size}]}' 2>/dev/null) || lf_out=""
+        [[ -n "$lf_out" ]] && printf '%s\n' "$lf_out" > "$guidance_stem.tree.json"
+        # An absent file reads as empty and returns 0, so a present
+        # dependabot.yml wins and .yaml is tried only when .yml was empty.
+        for lf_pair in "dependabot.yml:.github/dependabot.yml" "dependabot.yml:.github/dependabot.yaml" "gitattributes:.gitattributes"; do
+            lf_name="${lf_pair%%:*}"; lf_path="${lf_pair#*:}"
+            [[ -s "$guidance_stem.$lf_name" ]] && continue
+            if lf_out=$(fetch_file_content "$repo_name" "$lf_path") && [[ -n "$lf_out" ]]; then
+                printf '%s\n' "$lf_out" > "$guidance_stem.$lf_name"
+            fi
+        done
+        lf_out=$(gh api "repos/$repo_name" --jq .private 2>/dev/null) || lf_out=""
+        [[ "$lf_out" == "true" ]] && : > "$guidance_stem.private"
     fi
 
     if [[ "$agents_rc" -ne 0 ]]; then
