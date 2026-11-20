@@ -326,6 +326,15 @@ skills_bootstrap:
 dependabot_auto_merge:
   deliver: true
 
+# ── Dependabot config (ADR 0047) ───────────────────────────────────────────
+#
+# Delivers templates/dependabot/dependabot.yml as .github/dependabot.yml to a
+# repo whose own file is absent, already managed, or lists only github-actions.
+# A repo with another ecosystem hand-maintains its file; cms-platform and its
+# callers, and repos without .githooks/dated-phrasing/package.json, are skipped.
+dependabot_config:
+  deliver: true
+
 # ── agent-checks (ADR 0021) ────────────────────────────────────────────────
 #
 # Delivers the commit-time checks from templates/agent-checks/ to every synced

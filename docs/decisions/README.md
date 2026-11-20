@@ -62,6 +62,7 @@ a page.
 | [0044](0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md) | The fleet worker removes skills the eval verdict retires |
 | [0045](0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md) | The fleet worker merges its own reviewed issue fixes |
 | [0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md) | The fleet worker splits into a loop worker and a maintenance worker |
+| [0047](0047-the-sync-owns-an-actions-only-repos-dependabot-config.md) | The sync owns an actions-only repo's dependabot.yml |
 
 ## Format
 
