@@ -2936,7 +2936,7 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
-            json='{"default_branch": "main"}'
+            json='{"default_branch": "main", "private": false}'
             # <bare>/<owner>_<repo>.private makes the repo private (language-fit).
             [[ -f "${MOCK_BARE_DIR}/${repo_slug}.private" ]] && json='{"default_branch": "main", "private": true}'
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi

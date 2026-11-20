@@ -1047,8 +1047,10 @@ for repo_name in "${REPOS[@]}"; do
         done
         # Found after all: the .yaml read succeeded, so the .yml failure is moot.
         [[ -s "$guidance_stem.dependabot.yml" ]] && rm -f "$guidance_stem.dependabot.yml.unread"
+        # Fail closed: a repo is shown with paths only when GitHub CONFIRMED it
+        # is public. A failed read redacts it like a private one.
         lf_out=$(gh api "repos/$repo_name" --jq .private 2>/dev/null) || lf_out=""
-        [[ "$lf_out" == "true" ]] && : > "$guidance_stem.private"
+        [[ "$lf_out" == "false" ]] || : > "$guidance_stem.private"
     fi
 
     if [[ "$agents_rc" -ne 0 ]]; then
