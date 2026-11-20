@@ -92,6 +92,10 @@ duplicates:
 - AGENTS.md delivery and drift: `drift-report.yml` and `sync.yml`. The
   drift report also finds repeated or copied repo-specific guidance; the
   judgment on it is this audit's (item 8 below).
+- Language fit: the drift report's "Language fit" section
+  (`scripts/language-fit.js`) and its "Language fit findings" issue cover
+  sections that do not match a repo's languages, linguist overrides and
+  Dependabot manifest coverage. Link that issue instead of filing a copy.
 - Repo settings and rulesets: repo-settings' drift audit and weekly plan.
 - Whether a skill or guidance section earns its place: skills-evals'
   regression, retirement and eval-scope lanes.

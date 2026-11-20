@@ -2765,6 +2765,20 @@ case "$1" in
             exit 1
         fi
 
+        # GET repos/{owner}/{repo}/git/trees/HEAD?recursive=1 — the language-fit
+        # inputs, asked only when DRIFT_GUIDANCE_DIR is set. A fixture opts in
+        # with <bare>/<owner>_<repo>.tree.json holding the raw API shape; the
+        # caller's --jq is applied as real gh does. Without one: a 404.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/git/trees/HEAD ]]; then
+            tree_file="${MOCK_BARE_DIR}/${BASH_REMATCH[1]}_${BASH_REMATCH[2]}.tree.json"
+            if [[ -f "$tree_file" ]]; then
+                if [[ -n "$jq_filter" ]]; then jq -c "$jq_filter" "$tree_file"; else cat "$tree_file"; fi
+                exit 0
+            fi
+            echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+        fi
+
         # DELETE repos/{owner}/{repo}/git/refs/heads/{branch}
         # What delete_bump_branch calls to clean up after a merged bump PR.
         if [[ "$api_method" == "DELETE" \
@@ -2935,7 +2949,9 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
-            json='{"default_branch": "main"}'
+            json='{"default_branch": "main", "private": false}'
+            # <bare>/<owner>_<repo>.private makes the repo private (language-fit).
+            [[ -f "${MOCK_BARE_DIR}/${repo_slug}.private" ]] && json='{"default_branch": "main", "private": true}'
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -20953,6 +20969,12 @@ test_drift_report_guidance_dir() {
     { "$REPO_ROOT/scripts/build-agents-md.sh" python; printf '\nOverlap fixture line.\n'; } >"$work/AGENTS.md"
     push_fleet_payload_fixture
     printf '{"JavaScript": 100}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    printf '{"truncated":false,"tree":[{"path":"a.js","type":"blob","size":100,"sha":"x"}]}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.tree.json"
+    : >"$TEST_DIR/bare/fleetorg_repo-payload.private"
+    mkdir -p "$work/.github"
+    printf 'version: 2\n' >"$work/.github/dependabot.yml"
+    printf '* text=auto\n' >"$work/.gitattributes"
+    push_fleet_payload_fixture
 
     # Unset: nothing is written.
     rm -rf "$gdir"; mkdir -p "$gdir"
@@ -20985,24 +21007,70 @@ test_drift_report_guidance_dir() {
         fail "guidance dir: sections file holds '$(cat "$stem.sections" 2>/dev/null)'"
     fi
     if grep -qF '"JavaScript"' "$stem.languages.json" 2>/dev/null; then
-        pass "guidance dir: the languages map is saved for a repo with sections"
+        pass "guidance dir: the languages map is saved"
     else
-        fail "guidance dir: languages file missing for a repo that requests sections"
+        fail "guidance dir: languages file missing"
+    fi
+    if [[ "$(jq -c . "$stem.tree.json" 2>/dev/null)" == '{"truncated":false,"tree":[{"path":"a.js","type":"blob","size":100}]}' ]]; then
+        pass "guidance dir: the tree is saved, trimmed to truncated and path/type/size"
+    else
+        fail "guidance dir: tree file holds '$(head -c 300 "$stem.tree.json" 2>/dev/null)'"
+    fi
+    if grep -qxF 'version: 2' "$stem.dependabot.yml" 2>/dev/null && grep -qxF '* text=auto' "$stem.gitattributes" 2>/dev/null; then
+        pass "guidance dir: dependabot.yml and .gitattributes are saved"
+    else
+        fail "guidance dir: dependabot.yml or gitattributes missing from $gdir"
+    fi
+    if [[ -e "$stem.private" && ! -s "$stem.private" ]]; then
+        pass "guidance dir: a private repo gets an empty .private marker"
+    else
+        fail "guidance dir: the private marker is missing or not empty"
     fi
 
-    # End to end: the overlap script reads the saved files and flags the
-    # python section on a repo GitHub reports no Python for.
-    local out="$TEST_DIR/guidance-overlap-e2e.md"
+    # End to end: language-fit.js reads the saved files and flags the python
+    # section on a repo GitHub reports no Python for. The repo is private, so
+    # the count shows and the file name does not.
+    local out="$TEST_DIR/language-fit-e2e.md"
     rc=0
-    node "$REPO_ROOT/scripts/guidance-overlap.js" "$gdir" > "$out" 2>&1 || rc=$?
-    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload` requests `python`' "$out"; then
-        pass "guidance dir: guidance-overlap.js flags the section misfit from the saved files"
+    node "$REPO_ROOT/scripts/language-fit.js" "$gdir" > "$out" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload`: remove 1 section' "$out" && ! grep -qF 'a.js' "$out"; then
+        pass "guidance dir: language-fit.js flags the section misfit from the saved files, redacted"
     else
-        fail "guidance dir: guidance-overlap.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
+        fail "guidance dir: language-fit.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
     fi
 
+    # A confirmed read leaves no .unread marker.
+    if ! ls "$gdir"/*.unread >/dev/null 2>&1; then
+        pass "guidance dir: no .unread marker when every read succeeded"
+    else
+        fail "guidance dir: unexpected .unread markers: $(ls "$gdir"/*.unread | tr '\n' ' ')"
+    fi
+
+    # A failed read is a marker, never an absent file: no tree fixture gives a
+    # 404 on the tree call, and MOCK_CONTENTS_HTTP_FAIL fails every contents
+    # call with an HTTP 403 that is not a confirmed absence.
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.tree.json"
+    rm -rf "$gdir"; mkdir -p "$gdir"
+    rc=0
+    DRIFT_GUIDANCE_DIR="$gdir" MOCK_CONTENTS_HTTP_FAIL="fleetorg_repo-payload" \
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    if [[ -e "$stem.tree.json.unread" && ! -e "$stem.tree.json" \
+          && -e "$stem.dependabot.yml.unread" && ! -e "$stem.dependabot.yml" \
+          && -e "$stem.gitattributes.unread" && ! -e "$stem.gitattributes" \
+          && ! -e "$stem.languages.json.unread" ]]; then
+        pass "guidance dir: failed reads write .unread markers and no data file"
+    else
+        fail "guidance dir: rc=$rc; saw $(ls "$gdir" | tr '\n' ' ')"
+    fi
+
+    # Every repo gets the language-fit files, even with no AGENTS.md read.
     cp "$saved/.agents-sync.yml" "$saved/AGENTS.md" "$work/"
-    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    rm -rf "$work/.github" "$work/.gitattributes"
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json" "$TEST_DIR/bare/fleetorg_repo-payload.tree.json" \
+        "$TEST_DIR/bare/fleetorg_repo-payload.private"
     push_fleet_payload_fixture
 }
 
@@ -21023,11 +21091,36 @@ test_guidance_overlap() {
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
-    # 11 is the suite's count, so a deleted test fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 11 ]]; then
+    # 9 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 9 ]]; then
         pass "guidance overlap: node:test suite is green ($pass_n passed)"
     else
-        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=11): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=9): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+test_language_fit() {
+    echo ""
+    echo "=== Test: language-fit.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "language fit: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/language-fit-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-language-fit.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 24 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 24 ]]; then
+        pass "language fit: node:test suite is green ($pass_n passed)"
+    else
+        fail "language fit: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=24): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -27924,6 +28017,7 @@ GROUP_self_hosted=(
     test_routine_merge_gate
     test_base_md_merge_window
     test_guidance_overlap
+    test_language_fit
     test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown
