@@ -65,6 +65,11 @@ export FLEET_GIT_HOOKS=off
 # copy CI's `npm ci` puts in this repo's node_modules themselves.
 export AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/no-markdown-it"
 
+# Nor may its lint pass run a linter the suite's machine happens to have, or
+# download one: it is off here, and test_agent_checks_lint turns it on with stub
+# tools on an isolated PATH.
+export AGENT_CHECKS_LINT=off
+
 # Nor may it install zizmor from PyPI for gha-template-injection: point it at
 # a path with no zizmor, so a run over a workflow file warns (or, under
 # GITHUB_ACTIONS, refuses) without the network. test_agent_checks_gha_injection
@@ -27208,6 +27213,413 @@ STUB
     fi
 }
 
+# The lint pass (templates/agent-checks/agent-checks, "Lint pass"): stub tools
+# on an isolated PATH emit canned output, so no real linter and no network is
+# needed. A line holding LINT_ERR makes a stub report an error on that line,
+# LINT_WARN a warning.
+test_agent_checks_lint() {
+    echo ""
+    echo "=== Test: agent-checks lint pass (required tier refuses, advisory warns, config and opt-outs) ==="
+    local repo="$TEST_DIR/ac-lint" out="$TEST_DIR/ac-lint-run" bindir="$TEST_DIR/ac-lint-bin" corebin="$TEST_DIR/ac-lint-core" log="$TEST_DIR/ac-lint-stub.log" rc base c
+    local -a g=(git -C "$repo" -c user.name=Example -c user.email=agent@example.com -c commit.gpgsign=false)
+    local -a AC_LINT_ENV=()
+    local AC_LINT_PATH=""
+    mkdir -p "$bindir" "$corebin"
+    # An isolated PATH: only the tools the runner needs, never a real linter.
+    for c in git awk sed grep tr head tail mktemp cat cut sort uname dirname basename id hostname date mv rm mkdir cp chmod wc find tar sha256sum ls ln node bash env xargs gzip; do
+        [[ -x "$corebin/$c" ]] || ln -s "$(command -v "$c")" "$corebin/$c" 2> /dev/null || true
+    done
+    cat > "$bindir/stub-lib" <<'STUB'
+# files <args...> — the arguments after `--`
+stub_files() { local a seen=false; for a in "$@"; do $seen && printf '%s\n' "$a"; [ "$a" = -- ] && seen=true; done; }
+# marker <file> <MARK> — line numbers holding the marker
+stub_lines() { grep -n -F -- "$2" "$1" | cut -d: -f1; }
+STUB
+    cat > "$bindir/shellcheck" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "shellcheck $*" >> "$STUB_LOG"
+[ -f .shellcheckrc ] && echo "shellcheck cfg .shellcheckrc" >> "$STUB_LOG"
+rc=0
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: error: bad thing [SC1073]"; rc=1; done
+  for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: note: meh [SC2086]"; rc=1; done
+done < <(stub_files "$@")
+exit $rc
+STUB
+    cat > "$bindir/ruff" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "ruff $*" >> "$STUB_LOG"
+req=false; case " $* " in *" --select E9,F63,F7,F82 "*) req=true ;; esac
+rc=0
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: F821 Undefined name \`x\`"; rc=1; done
+  $req || for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: F401 [*] unused"; rc=1; done
+done < <(stub_files "$@")
+echo "Found things."
+exit $rc
+STUB
+    cat > "$bindir/actionlint" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "actionlint $*" >> "$STUB_LOG"
+plain=true; case " $* " in *" -shellcheck "*) plain=false ;; esac
+rc=0
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: bad expression [expression]"; rc=1; done
+  for n in $(stub_lines "$f" LINT_LABEL); do echo "$f:$n:1: label \"x\" is unknown [runner-label]"; rc=1; done
+  $plain || for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: shellcheck reported issue in this script: SC2086:info [shellcheck]"; rc=1; done
+done < <(stub_files "$@")
+exit $rc
+STUB
+    cat > "$bindir/pwsh" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "pwsh $*" >> "$STUB_LOG"
+case " $* " in *" -Command "*) exit 0 ;; esac
+while [ $# -gt 0 ]; do case "$1" in -List) list=$2; shift ;; -Settings) echo "pwsh settings=$2" >> "$STUB_LOG"; shift ;; esac; shift; done
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: Error: PSBadThing: bad thing"; done
+  for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: Warning: PSMeh: meh"; done
+done < "$list"
+STUB
+    cat > "$bindir/ruby" <<'STUB'
+#!/usr/bin/env bash
+echo "ruby $*" >> "$STUB_LOG"
+f=${@: -1}
+if grep -qF LINT_ERR "$f"; then echo "$f:2: syntax error, unexpected end-of-input" >&2; exit 1; fi
+echo "Syntax OK"
+STUB
+    chmod +x "$bindir"/*
+    for c in git awk sed grep tr head tail mktemp cat cut sort uname dirname basename id hostname date mv rm mkdir cp chmod wc find tar sha256sum ls ln node bash env xargs gzip; do
+        ln -sf "$corebin/$c" "$bindir/$c" 2> /dev/null || true
+    done
+    git init -q -b main "$repo"
+    "${g[@]}" commit -q --allow-empty -m base
+    ac_lint_run() {   # <runner args...> — prints the exit code
+        local r=0
+        (cd "$repo" && env -u GITHUB_ACTIONS -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH -u AGENT_CHECKS_LINT \
+            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off STUB_LOG="$log" \
+            PATH="${AC_LINT_PATH:-$bindir}" ${AC_LINT_ENV[@]+"${AC_LINT_ENV[@]}"} \
+            "$corebin/bash" "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
+            > "$out.out" 2> "$out.err" < /dev/null || r=$?
+        echo "$r"
+    }
+    ac_lint_reset() { "${g[@]}" rm -q -r -f --cached . > /dev/null 2>&1 || true; find "$repo" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +; : > "$log"; AC_LINT_ENV=(); AC_LINT_PATH=""; }
+    ac_lint_reset
+    mkdir -p "$repo/.github/workflows" "$repo/.githooks"
+
+    # ── required tier: one refusal per tool, whole-file, with path:line ──
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/a.sh"
+    printf 'x = 1\n# LINT_ERR\n' > "$repo/a.py"
+    printf 'on: push\n# LINT_ERR\n' > "$repo/.github/workflows/w.yml"
+    printf '# LINT_ERR\n' > "$repo/a.ps1"
+    printf 'var x = ;\n' > "$repo/a.js"
+    printf '# LINT_ERR\n' > "$repo/a.rb"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] \
+       && grep -qF 'agent-checks: a.sh:2: shellcheck: bad thing [SC1073]' "$out.err" \
+       && grep -qF 'agent-checks: a.py:2: ruff: F821 Undefined name' "$out.err" \
+       && grep -qF 'agent-checks: .github/workflows/w.yml:2: actionlint: bad expression [expression]' "$out.err" \
+       && grep -qF 'agent-checks: a.ps1:1: PSScriptAnalyzer: PSBadThing: bad thing' "$out.err" \
+       && grep -qF "agent-checks: a.js:1: node --check: SyntaxError" "$out.err" \
+       && grep -qF 'agent-checks: a.rb:2: ruby -wc: ' "$out.err"; then
+        pass "lint (required): a shellcheck, ruff, actionlint, PSScriptAnalyzer, node --check and ruby -wc error each refuses with path:line"
+    else
+        fail "lint (required): each tool's error refuses with path:line — exit $rc: $(cat "$out.err")"
+    fi
+    # The ruff run that refuses is the explicit required select list, with the repo's excludes kept.
+    if grep -qF 'ruff check --no-cache --force-exclude --select E9,F63,F7,F82 --output-format=concise' "$log"; then
+        pass "lint (required): ruff runs with --select E9,F63,F7,F82 (syntax errors and undefined names, not unused imports)"
+    else
+        fail "lint (required): ruff runs with --select E9,F63,F7,F82 — log: $(cat "$log")"
+    fi
+    # The same F821 must not also print as a warning (the tiers do not overlap).
+    if ! grep -q 'warning.*F821\|warning.*SC1073\|warning.*bad expression' "$out.err"; then
+        pass "lint: a finding in the required tier is not repeated as an advisory warning"
+    else
+        fail "lint: a finding in the required tier is not repeated as an advisory warning: $(cat "$out.err")"
+    fi
+
+    # ── run log: lint refusals count as check names ──
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS -u AGENT_CHECKS_LINT GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        AGENT_CHECKS_LOG="$out.jsonl" STUB_LOG="$log" PATH="$bindir" "$corebin/bash" "$REPO_ROOT/templates/agent-checks/agent-checks" pre-commit) > /dev/null 2>&1 < /dev/null || rc=$?
+    if grep -q '"failed":\[[^]]*"lint-required-shell"' "$out.jsonl" && grep -q '"lint-required-python"' "$out.jsonl" \
+       && grep -q '"lint-required-workflow"' "$out.jsonl" && grep -q '"lint-required-javascript"' "$out.jsonl"; then
+        pass "lint: the run log names each refusal lint-required-<language>"
+    else
+        fail "lint: the run log names each refusal lint-required-<language> — $(cat "$out.jsonl" 2> /dev/null)"
+    fi
+
+    # ── advisory tier: warns, never changes the exit status ──
+    ac_lint_reset
+    mkdir -p "$repo/.github/workflows"
+    printf '#!/bin/bash\n# LINT_WARN\n' > "$repo/a.sh"
+    printf 'x = 1\n# LINT_WARN\n' > "$repo/a.py"
+    printf 'on: push\n# LINT_WARN\n# LINT_LABEL\n' > "$repo/.github/workflows/w.yml"
+    printf '# LINT_WARN\n' > "$repo/a.ps1"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] \
+       && grep -qF 'agent-checks (warning): a.sh:2: shellcheck: note: meh [SC2086]' "$out.err" \
+       && grep -qF 'agent-checks (warning): a.py:2: ruff: F401 [*] unused' "$out.err" \
+       && grep -qF 'agent-checks (warning): .github/workflows/w.yml:2: actionlint: shellcheck reported issue' "$out.err" \
+       && grep -qF 'agent-checks (warning): .github/workflows/w.yml:3: actionlint: label "x" is unknown [runner-label]' "$out.err" \
+       && grep -qF 'agent-checks (warning): a.ps1:1: PSScriptAnalyzer: PSMeh: meh' "$out.err"; then
+        pass "lint (advisory): warnings print as agent-checks (warning) lines, a runner-label finding is advisory, and the exit status stays 0"
+    else
+        fail "lint (advisory): warnings print and the exit status stays 0 — exit $rc: $(cat "$out.err")"
+    fi
+    AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH=/nonexistent)
+    rc=$(ac_lint_run pre-commit)
+    # (the workflow file also reaches zizmor, which has no python here: its own refusal, not lint's)
+    if grep -qF '::warning file=a.sh,line=2,title=agent-checks lint shellcheck::note: meh [SC2086]' "$out.err" && ! grep -qF 'lint-required' "$out.err"; then
+        pass "lint (advisory): in CI a warning is a ::warning file=,line= annotation"
+    else
+        fail "lint (advisory): in CI a warning is a ::warning file=,line= annotation — exit $rc: $(cat "$out.err")"
+    fi
+    AC_LINT_ENV=()
+
+    # ── changed lines only (pre-commit, ci); tree shows all ──
+    ac_lint_reset
+    printf '#!/bin/bash\n# LINT_WARN old\nx=1\n' > "$repo/old.sh"
+    "${g[@]}" add -A && "${g[@]}" commit -q -m "old.sh"
+    base=$("${g[@]}" rev-parse HEAD)
+    printf '#!/bin/bash\n# LINT_WARN old\nx=1\n# LINT_WARN new\n' > "$repo/old.sh"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] && grep -qF 'old.sh:4: shellcheck' "$out.err" && ! grep -qF 'old.sh:2: shellcheck' "$out.err"; then
+        pass "lint (changed lines): pre-commit warns only on the staged hunk, not on older lines of the file"
+    else
+        fail "lint (changed lines): pre-commit warns only on the staged hunk — exit $rc: $(cat "$out.err")"
+    fi
+    "${g[@]}" commit -q -m "new line"
+    rc=$(ac_lint_run ci "$base" HEAD)
+    if [[ $rc -eq 0 ]] && grep -qF 'old.sh:4: shellcheck' "$out.err" && ! grep -qF 'old.sh:2: shellcheck' "$out.err"; then
+        pass "lint (changed lines): ci warns only on lines changed between base and head"
+    else
+        fail "lint (changed lines): ci warns only on lines changed between base and head — exit $rc: $(cat "$out.err")"
+    fi
+    rc=$(ac_lint_run tree HEAD)
+    if [[ $rc -eq 0 ]] && grep -qF 'old.sh:4: shellcheck' "$out.err" && grep -qF 'old.sh:2: shellcheck' "$out.err"; then
+        pass "lint (changed lines): tree mode reports every finding"
+    else
+        fail "lint (changed lines): tree mode reports every finding — exit $rc: $(cat "$out.err")"
+    fi
+    # The required tier covers the whole changed file: an old error refuses when any line is touched.
+    printf '#!/bin/bash\n# LINT_ERR old\nx=1\n# touched\n' > "$repo/old.sh"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: old.sh:2: shellcheck: bad thing' "$out.err"; then
+        pass "lint (changed lines): a required-tier error on an untouched line of a changed file still refuses"
+    else
+        fail "lint (changed lines): a required-tier error anywhere in a changed file refuses — exit $rc: $(cat "$out.err")"
+    fi
+    # Advisory output is capped per file.
+    ac_lint_reset
+    { printf '#!/bin/bash\n'; for c in $(seq 1 25); do printf '# LINT_WARN %s\n' "$c"; done; } > "$repo/many.sh"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 && "$(grep -c 'many.sh:[0-9]*: shellcheck' "$out.err")" -eq 20 ]] && grep -qF 'many.sh: 5 more findings in this file are not shown' "$out.err"; then
+        pass "lint (advisory): at most 20 findings per file print, then a count of the rest"
+    else
+        fail "lint (advisory): at most 20 findings per file print, then a count — exit $rc: $(grep -c 'many.sh' "$out.err") lines"
+    fi
+
+    # ── a missing tool locally: one notice, no refusal, no network ──
+    ac_lint_reset
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/a.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/b.sh"
+    "${g[@]}" add -A
+    "${g[@]}" commit -q -m "two shell files"
+    printf '# touched\n' >> "$repo/a.sh"; printf '# touched\n' >> "$repo/b.sh"
+    "${g[@]}" add -A
+    AC_LINT_PATH="$corebin"
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 && "$(grep -c 'lint skipped: shellcheck is not on PATH' "$out.err")" -eq 1 ]]; then
+        pass "lint (missing tool): locally it skips the language with ONE notice and does not refuse"
+    else
+        fail "lint (missing tool): locally one notice, no refusal — exit $rc: $(cat "$out.err")"
+    fi
+    AC_LINT_PATH=""
+
+    # ── CI installs a pinned tool; a bad digest or a failed download refuses ──
+    if [[ "$(uname -s)" == Linux ]]; then
+        local pkg="$TEST_DIR/ac-lint-pkg" arch digest
+        arch=$(uname -m); [[ $arch == amd64 ]] && arch=x86_64; [[ $arch == arm64 ]] && arch=aarch64
+        mkdir -p "$pkg/shellcheck-v0.11.0"
+        # Only the named member is extracted, so the stub carries its helpers inline.
+        { head -n 1 "$bindir/shellcheck"; cat "$bindir/stub-lib"; tail -n +2 "$bindir/shellcheck" | grep -v '^\. '; } > "$pkg/shellcheck-v0.11.0/shellcheck"
+        chmod +x "$pkg/shellcheck-v0.11.0/shellcheck"
+        tar -czf "$pkg.tar.gz" -C "$pkg" shellcheck-v0.11.0
+        digest=$(sha256sum "$pkg.tar.gz" | cut -d' ' -f1)
+        cat > "$TEST_DIR/ac-lint-fetch" <<'STUB'
+#!/usr/bin/env bash
+echo "$1" >> "$FETCH_LOG"
+[ -z "${FETCH_FAIL:-}" ] || exit 22
+cp "$FETCH_TARBALL" "$2"
+STUB
+        chmod +x "$TEST_DIR/ac-lint-fetch"
+        rm -f "$TEST_DIR/ac-lint-fetch.log"
+        AC_LINT_PATH="$corebin"
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz" AGENT_CHECKS_LINT_TEST_SHA256="$digest")
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks lint-required-shell::agent-checks: a.sh:2: shellcheck: bad thing' "$out.err" \
+           && grep -qF "koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.$arch.tar.gz" "$TEST_DIR/ac-lint-fetch.log"; then
+            pass "lint (CI): a missing shellcheck is downloaded from its pinned release URL, digest-verified, and run"
+        else
+            fail "lint (CI): a missing shellcheck is downloaded from its pinned release, verified and run — exit $rc: $(cat "$out.err")"
+        fi
+        # The pinned digest is the real one, so the stub archive (not the test override) is refused.
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz")
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks lint-tool-install::' "$out.err" && grep -qF 'did not match its pinned sha256' "$out.err" \
+           && ! grep -qF 'shellcheck: bad thing' "$out.err"; then
+            pass "lint (CI): a download whose sha256 does not match the pin is refused and never run"
+        else
+            fail "lint (CI): a download whose sha256 does not match the pin is refused — exit $rc: $(cat "$out.err")"
+        fi
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz" FETCH_FAIL=1)
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 1 ]] && grep -qF 'shellcheck could not be downloaded from https://github.com/koalaman/shellcheck/' "$out.err"; then
+            pass "lint (CI): a failed download refuses (fail closed) with a clear message"
+        else
+            fail "lint (CI): a failed download refuses — exit $rc: $(cat "$out.err")"
+        fi
+        # With the tool opted out, CI downloads nothing.
+        mkdir -p "$repo/.agent-checks"
+        printf 'shell=off\n' > "$repo/.agent-checks/lint.conf"
+        "${g[@]}" add -A && "${g[@]}" commit -q -m "opt out of shell lint"
+        rm -f "$TEST_DIR/ac-lint-fetch.log"
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 0 && ! -e "$TEST_DIR/ac-lint-fetch.log" ]]; then
+            pass "lint (CI): a language turned off in lint.conf downloads nothing"
+        else
+            fail "lint (CI): a language turned off in lint.conf downloads nothing — exit $rc: $(cat "$out.err")"
+        fi
+        AC_LINT_ENV=(); AC_LINT_PATH=""
+    else
+        echo "  SKIP: lint (CI) install tests need Linux release binaries"
+    fi
+
+    # ── a repo's own config wins ──
+    ac_lint_reset
+    printf 'x = 1\n# LINT_WARN\n' > "$repo/plain.py"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if grep -qF -- '--select F,B,PLE,PLW,W605,E711' "$log" && grep -qF 'agent-checks (warning): plain.py:2: ruff' "$out.err"; then
+        pass "lint (config): with no ruff config the advisory tier uses the fleet's default rule set"
+    else
+        fail "lint (config): the advisory tier uses the fleet's default rule set — $(cat "$log")"
+    fi
+    ac_lint_reset
+    mkdir -p "$repo/pkg"
+    printf '[tool.ruff]\nline-length = 100\n' > "$repo/pyproject.toml"
+    printf 'x = 1\n# LINT_WARN\n' > "$repo/pkg/m.py"
+    printf '#!/bin/bash\n' > "$repo/s.sh"; printf 'disable=SC2086\n' > "$repo/.shellcheckrc"
+    printf '# LINT_WARN\n' > "$repo/a.ps1"; printf '@{ ExcludeRules = @() }\n' > "$repo/PSScriptAnalyzerSettings.psd1"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] \
+       && grep -qF 'ruff check --no-cache --force-exclude --output-format=concise -- pkg/m.py' "$log" \
+       && ! grep -F 'ruff check' "$log" | grep -F -- '--ignore' | grep -qF 'pkg/m.py' \
+       && grep -qF 'shellcheck cfg .shellcheckrc' "$log" \
+       && grep -qF 'pwsh settings=./PSScriptAnalyzerSettings.psd1' "$log"; then
+        pass "lint (config): a repo's ruff table, .shellcheckrc and PSScriptAnalyzerSettings.psd1 are used, from the content being checked"
+    else
+        fail "lint (config): a repo's own ruff, shellcheck and PSScriptAnalyzer config are used — exit $rc: $(cat "$log")"
+    fi
+
+    # ── lint.conf opt-outs ──
+    ac_lint_reset
+    mkdir -p "$repo/.agent-checks"
+    printf '#!/bin/bash\n# LINT_ERR\n# LINT_WARN\n' > "$repo/a.sh"
+    printf 'x = 1\n# LINT_ERR\n# LINT_WARN\n' > "$repo/a.py"
+    printf 'python=off\n' > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'a.sh:2: shellcheck' "$out.err" && ! grep -qF 'a.py' "$out.err" && ! grep -qF 'ruff' "$log"; then
+        pass "lint (opt-out): python=off skips ruff entirely and leaves shell linted"
+    else
+        fail "lint (opt-out): python=off skips ruff — exit $rc: $(cat "$out.err")"
+    fi
+    printf '# a comment\nrequired = off\n' > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] && grep -qF 'agent-checks (warning): a.sh:3: shellcheck' "$out.err"; then
+        pass "lint (opt-out): required=off removes the refusals and keeps the warnings"
+    else
+        fail "lint (opt-out): required=off removes the refusals — exit $rc: $(cat "$out.err")"
+    fi
+    printf 'advisory=off\n' > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: a.sh:2: shellcheck' "$out.err" && ! grep -qF 'agent-checks (warning): a.sh' "$out.err"; then
+        pass "lint (opt-out): advisory=off keeps the refusals and removes the warnings"
+    else
+        fail "lint (opt-out): advisory=off removes the warnings — exit $rc: $(cat "$out.err")"
+    fi
+    mkdir -p "$repo/gen"; printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/gen/g.sh"; printf 'x = 1\n# LINT_ERR\n' > "$repo/gen/g.py"
+    printf 'shell.required=off\nshell.advisory=on\npython.advisory=off\nnonsense\npython=maybe\n$(touch %s/pwned)=off\nexclude=gen/*\nexclude=a;b\n' "$TEST_DIR" > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'a.py:2: ruff' "$out.err" && grep -qF 'agent-checks (warning): a.sh:3: shellcheck' "$out.err" && ! grep -qF 'agent-checks: a.sh' "$out.err" \
+       && [[ "$(grep -c 'lint.conf line [0-9]* is not' "$out.err")" -eq 4 ]] && [[ ! -e "$TEST_DIR/pwned" ]] && ! grep -qF 'gen/' "$out.err"; then
+        pass "lint (opt-out): per-language tier keys and exclude= globs work; unknown lines warn once each and are never executed"
+    else
+        fail "lint (opt-out): per-language tier keys work, unknown lines warn and are never executed — exit $rc: $(cat "$out.err")"
+    fi
+    rm -f "$repo/.agent-checks/lint.conf"; "${g[@]}" add -A
+    AC_LINT_ENV=(AGENT_CHECKS_LINT=off)
+    : > "$log"
+    rc=$(ac_lint_run pre-commit)
+    AC_LINT_ENV=()
+    if [[ $rc -eq 0 && ! -s "$log" ]]; then
+        pass "lint (opt-out): AGENT_CHECKS_LINT=off runs no linter"
+    else
+        fail "lint (opt-out): AGENT_CHECKS_LINT=off runs no linter — exit $rc: $(cat "$log")"
+    fi
+
+    # ── untrusted names, skips and file types ──
+    ac_lint_reset
+    mkdir -p "$repo/fixtures" "$repo/node_modules/p"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/-dash.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/a b.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/\$(touch pwned).sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/$(printf 'NEW\nLINEFILE').sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/fixtures/x.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/node_modules/p/x.sh"
+    printf '#!/usr/bin/env zsh\n# LINT_ERR\n' > "$repo/z.sh"
+    printf '#!/usr/bin/env bash\n# LINT_ERR\n' > "$repo/runme"
+    printf 'plain text LINT_ERR\n' > "$repo/NOTES"
+    printf '# LINT_ERR\n' > "$repo/target.sh.txt"
+    ln -s target.sh.txt "$repo/link.sh"
+    printf -- '---\n---\nvar x = ;\n' > "$repo/page.js"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] \
+       && grep -qF 'agent-checks: -dash.sh:2: shellcheck' "$out.err" \
+       && grep -qF 'agent-checks: a b.sh:2: shellcheck' "$out.err" \
+       && grep -qF 'agent-checks: $(touch pwned).sh:2: shellcheck' "$out.err" \
+       && grep -qF 'agent-checks: runme:2: shellcheck' "$out.err" \
+       && ! grep -qE 'fixtures|node_modules|z\.sh|NOTES|link\.sh|page\.js|LINEFILE' "$out.err" \
+       && [[ ! -e "$repo/pwned" ]]; then
+        pass "lint (names): spaces, leading dashes and shell metacharacters in names are data; fixtures, vendored, newline-named, symlinked, zsh and front-matter files are skipped; an extensionless shebang file is linted"
+    else
+        fail "lint (names): untrusted names are data and the skip rules hold — exit $rc: $(cat "$out.err")"
+    fi
+    # Every tool call passes the files after `--`.
+    if grep -F 'shellcheck ' "$log" | grep -vF -- ' -- ' | grep -q .; then
+        fail "lint (names): shellcheck is always called with -- before the file names"
+    else
+        pass "lint (names): shellcheck is always called with -- before the file names"
+    fi
+    ac_lint_reset
+}
+
 # The dated-phrasing warning pass (templates/agent-checks/dated-phrasing.js):
 # it warns on dated history and migration-relative phrasing in the prose of
 # the Markdown agents load, never in code, quotes, HTML, URLs, link text or an
@@ -28474,6 +28886,7 @@ GROUP_agent_checks=(
     test_agent_checks_agents_md_size
     test_agent_checks_ci_annotation
     test_agent_checks_gha_injection
+    test_agent_checks_lint
     test_agent_checks_dated_phrasing
     test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
