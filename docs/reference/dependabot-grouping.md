@@ -48,3 +48,10 @@ The sync now delivers `templates/dependabot/dependabot.yml` to repos whose
 ([ADR 0047](../decisions/0047-the-sync-owns-an-actions-only-repos-dependabot-config.md)).
 Repos with another ecosystem hand-maintain their file, and are being updated by
 hand to carry the same groups.
+
+## The sweep checks this
+
+The daily `dependabot-config-health` sweep flags a fleet repo (every repo the
+owner listing returns, minus `repos.yml`'s `exclude` list) whose
+`dependabot.yml` lacks these groups, or breaks the related cooldown rules, and
+flags any Dependabot PR that has been open more than 4 days.
