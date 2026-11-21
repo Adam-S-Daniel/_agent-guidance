@@ -43,6 +43,15 @@ name: Fire fleet worker
 #   from the clock: GitHub starts scheduled runs one to two hours late, so the
 #   earlier "UTC hour is a multiple" test skipped every fire from 2026-11-10
 #   to 2026-11-12 once the variable was 6.
+# * The pace hold (Adam, 2026-11-20: stop loop runs while the account is
+#   ahead of its weekly pace; skills-evals#1111 and #1120): a scheduled Loop
+#   worker fire first reads skills-evals' `scripts/allowance_guard.py hold`
+#   against its public persistent/eval-results branch and is skipped, with a
+#   notice, while it prints pace_hold=true. Anything else (a failed clone, no
+#   PyYAML, no verdict) fails the run and fires nothing: fail closed, and red
+#   so it is seen. A dispatch is a person's own choice and skips the hold, as
+#   it skips the cadence. The Fleet worker is maintenance, not loop work, and
+#   is not held.
 
 on:
   schedule:
@@ -135,6 +144,28 @@ jobs:
           if (( ${#missing[@]} )); then
             echo "::error::not configured: ${missing[*]}. Set them in this repository's Actions settings; the task's API trigger on claude.ai gives both."
             exit 1
+          fi
+          if [[ "$WORKER" == loop && "${GITHUB_EVENT_NAME:-}" == schedule ]]; then
+            pace=$(mktemp -d)
+            src=https://github.com/Adam-S-Daniel/skills-evals.git
+            hold=""
+            if git clone -q --depth 1 --filter=blob:none --sparse "$src" "$pace/se" &&
+              git -C "$pace/se" sparse-checkout set scripts harness evals vendor &&
+              git clone -q --depth 1 --filter=blob:none --sparse --branch persistent/eval-results "$src" "$pace/er" &&
+              git -C "$pace/er" sparse-checkout set routine-results &&
+              { python3 -c 'import yaml' 2>/dev/null ||
+                python3 -m pip install -q --target "$pace/py" pyyaml==6.0.3; }; then
+              hold=$(cd "$pace/se" && PYTHONPATH="$pace/py" python3 scripts/allowance_guard.py hold --results-tree "$pace/er" | tail -n 1) || hold=""
+            fi
+            case "$hold" in
+              pace_hold=true)
+                echo "::notice::skipped: the account is ahead of its weekly pace (skills-evals allowance_guard.py hold)"
+                exit 0 ;;
+              pace_hold=false) ;;
+              *)
+                echo "::error::could not read the pace hold from skills-evals; the loop worker was not fired"
+                exit 1 ;;
+            esac
           fi
 
           body=$(jq -n --arg t "$FIRE_TEXT" '{text: $t}')

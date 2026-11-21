@@ -14478,7 +14478,8 @@ test_prompt_audit_sweep() {
 
 # The fleet worker fire workflow (fleet-worker-fire.yml): a matrix of the fleet and loop workers, each (or
 # thinned by FLEET_WORKER_EVERY_HOURS), the bearer on stdin only, an
-# unconfigured URL or bearer fails. Never piped.
+# unconfigured URL or bearer fails, and a scheduled loop fire waits on the
+# skills-evals pace hold. Never piped.
 test_fleet_worker_fire() {
     echo ""
     echo "=== Test: fleet worker fire workflow ==="
@@ -14487,10 +14488,10 @@ test_fleet_worker_fire() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "14" && "$fail_n" == "0" ]]; then
-        pass "fleet worker fire workflow: 14 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "18" && "$fail_n" == "0" ]]; then
+        pass "fleet worker fire workflow: 18 passed"
     else
-        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=14, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=18, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 

@@ -91,7 +91,8 @@ function stepEnv(role, { url, bearer, every }) {
 }
 
 function runFire({ role = 'fleet', url = 'https://api.example.com/fire', bearer = 'placeholder-value', status = 200,
-  every = role === 'loop' ? '6' : '', event = 'schedule', line = '20 3,9,15,21 * * *', hour = '9' } = {}) {
+  every = role === 'loop' ? '6' : '', event = 'schedule', line = '20 3,9,15,21 * * *', hour = '9',
+  hold = 'pace_hold=false', gitStatus = 0 } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-fire-test-'));
   try {
     const log = path.join(temp, 'calls.jsonl');
@@ -108,14 +109,35 @@ process.stdout.write(process.env.TEST_STATUS);
     fs.writeFileSync(path.join(temp, 'date'), `#!/usr/bin/env bash
 echo "$TEST_HOUR"
 `, { mode: 0o755 });
+    // Fake git and python3 for the Loop worker's pace hold: git logs its
+    // arguments and makes the clone directory; python3 imports yaml and
+    // prints TEST_HOLD for `allowance_guard.py hold`.
+    const gitLog = path.join(temp, 'git.jsonl');
+    fs.writeFileSync(path.join(temp, 'git'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.TEST_GIT_LOG, JSON.stringify(args) + '\\n');
+if (args[0] === 'clone') fs.mkdirSync(args[args.length - 1], { recursive: true });
+process.exit(Number(process.env.TEST_GIT_STATUS));
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(temp, 'python3'), `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === '-c') process.exit(0);
+if (args[0] === 'scripts/allowance_guard.py' && args[1] === 'hold') {
+  process.stdout.write(process.env.TEST_HOLD ? process.env.TEST_HOLD + '\\n' : '');
+  process.exit(0);
+}
+process.exit(2);
+`, { mode: 0o755 });
     const eventPath = path.join(temp, 'event.json');
     fs.writeFileSync(eventPath, JSON.stringify(event === 'schedule' ? { schedule: line } : {}));
     const result = spawnSync('bash', ['-c', step().run], { encoding: 'utf8', env: {
       PATH: [temp, process.env.PATH].join(path.delimiter), TEST_LOG: log, TEST_STATUS: String(status),
       ...stepEnv(role, { url, bearer, every }), GITHUB_EVENT_NAME: event,
-      GITHUB_EVENT_PATH: eventPath, TEST_HOUR: hour } });
-    const curl = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
-    return { result, curl };
+      GITHUB_EVENT_PATH: eventPath, TEST_HOUR: hour, TEST_HOLD: hold, TEST_GIT_LOG: gitLog,
+      TEST_GIT_STATUS: String(gitStatus) } });
+    const lines = f => fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+    return { result, curl: lines(log), git: lines(gitLog) };
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 }
 
@@ -279,4 +301,49 @@ test('LOOP_WORKER_EVERY_HOURS gates scheduled loop fires on the cron line, and a
     assert.equal(curl.length, 0, every);
     assert.ok(result.stdout.includes('LOOP_WORKER_EVERY_HOURS'), every);
   }
+});
+
+test('a scheduled loop fire is skipped while skills-evals reports the pace hold', () => {
+  const { result, curl, git } = runFire({ role: 'loop', line: '20 6,18 * * *', hold: 'pace_hold=true' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(curl.length, 0);
+  assert.ok(result.stdout.includes('skipped: the account is ahead of its weekly pace'));
+  // It reads skills-evals' main and its persistent/eval-results branch.
+  const clones = git.filter(a => a[0] === 'clone');
+  assert.equal(clones.length, 2);
+  assert.ok(clones.every(a => a.includes('https://github.com/Adam-S-Daniel/skills-evals.git')));
+  assert.ok(clones[1].includes('persistent/eval-results'));
+  assert.ok(!clones[0].includes('--branch'), 'the hold is read from the default branch');
+  const sparse = git.filter(a => a.includes('sparse-checkout'));
+  assert.deepEqual(sparse.map(a => a.slice(a.indexOf('set') + 1)),
+    [['scripts', 'harness', 'evals', 'vendor'], ['routine-results']]);
+});
+
+test('a scheduled loop fire goes when the hold is off', () => {
+  const { result, curl } = runFire({ role: 'loop', line: '20 6,18 * * *', hold: 'pace_hold=false' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(curl.length, 1);
+});
+
+test('an unreadable pace hold fails the loop fire closed, and fires nothing', () => {
+  for (const over of [{ hold: '' }, { hold: 'something else' }, { gitStatus: 128 }]) {
+    const { result, curl } = runFire({ role: 'loop', line: '20 6,18 * * *', ...over });
+    assert.equal(result.status, 1, JSON.stringify(over));
+    assert.equal(curl.length, 0, JSON.stringify(over));
+    assert.ok(result.stdout.includes('could not read the pace hold'), JSON.stringify(over));
+  }
+});
+
+test('the pace hold never gates the fleet worker, a dispatch or a skipped cadence slot', () => {
+  for (const over of [{ role: 'fleet', hold: 'pace_hold=true' },
+    { role: 'loop', event: 'workflow_dispatch', hold: 'pace_hold=true' }]) {
+    const { result, curl, git } = runFire(over);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(curl.length, 1, JSON.stringify(over));
+    assert.equal(git.length, 0, JSON.stringify(over));
+  }
+  // A slot off the loop's cadence skips before any clone.
+  const { curl, git } = runFire({ role: 'loop', every: '12', line: '20 6,18 * * *', hold: 'pace_hold=true' });
+  assert.equal(curl.length, 0);
+  assert.equal(git.length, 0);
 });

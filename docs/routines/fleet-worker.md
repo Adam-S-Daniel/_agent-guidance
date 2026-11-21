@@ -15,7 +15,10 @@ repository variable per task (`FLEET_WORKER_EVERY_HOURS`, optional, and
 schedule for a smaller plan; it gates on which cron line started the run,
 never the clock, because GitHub starts scheduled runs one to two hours late.
 `FLEET_WORKER_EVERY_HOURS` is set to 6 in this repository (seen in the fire
-job logs on 2026-11-12), so the Fleet worker fires every 6 hours. Why the
+job logs on 2026-11-12), so the Fleet worker fires every 6 hours. A
+scheduled Loop worker fire is skipped while skills-evals' pace hold is on
+(the account ahead of its weekly pace; `allowance_guard.py hold`), and fails
+closed when the hold cannot be read; a dispatch skips the hold. Why the
 worker exists, and why it may merge the
 kinds of PR its merge rule allows: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
 widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md),
