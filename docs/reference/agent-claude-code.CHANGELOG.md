@@ -30,6 +30,20 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-21 — 2.1.330 through 2.1.330
+
+- **Checked:** 2026-11-21T02:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.330](https://github.com/anthropics/claude-code/releases/tag/v2.1.330), published 2026-11-20T22:32Z
+- **Window:** v2.1.330 (published 2026-11-20T22:32Z), the first stable release after v2.1.329: 1 release, 142 bullets, none indexed (no group). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.330` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 18 checkouts under the session's home directory were read at their local heads (`_agent-guidance` 4a62a5d, `acsi-kit` 1e2cab5, `adam-agentskills` e3ff82a, `adam-agentskills-private` fefac11, `adamdaniel.ai` f8183a6, `ai-usage-dashboard` 7ecc977, `claude-memory-map` d5df08d, `cms-platform` ac60a53, `fastmail-actions` 0c4de45, `jodidaniel.com` 9aba856, `repo-settings` 67b9d10, `rss-inator` 59d75b4, `security-alerts` 5e07282, `skills-evals` 3418eda, `verify-actions-lock` edf92cb, `wsl-automation` f91e279; the two vendor repos `claude-code` and `codex` are also checked out and not assessed). `repos.yml` `cron_coverage.fleet` was not re-read this run.
+
+No group met the name-the-surface bar. A grep of the fleet for `--continue`, `deniedMcpServers`, `opusplan`, `forceLoginOrgUUID`, `claude plugin install`, `ExitWorktree`, `bashEditDiffEnabled`, `SELF_HOSTED_RUNNER` and `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT` found only the `skills-bootstrap` hooks' `claude plugin install` calls, which 2.1.330 extends with extra `--json` fields and a concurrency fix without changing what they call, and vendor example files. Nothing in the fleet depends on a changed behavior.
+
+**Prompt-audit sweep:** not requested, because one is already open. One bullet changes what loads: "Fixed link reference definitions being dropped from CLAUDE.md and memory files that contain an HTML comment" (bullet 2.1.330/52). A trigger issue, [_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596), is still open, so by step 4a nothing is filed and the sweep is not fired. This run edits no issue it did not create.
+
+**Issues:** none.
+
 ### 2026-11-20 — 2.1.329 through 2.1.329
 
 - **Checked:** 2026-11-20T02:10Z, [release log](https://github.com/anthropics/claude-code/releases)
