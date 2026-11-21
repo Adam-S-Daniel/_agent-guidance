@@ -1254,7 +1254,7 @@ test("assessRepo: a stale Dependabot PR is one stale-pr finding, rendered once w
   assert.equal(a.stalePulls.length, 1);
   const body = renderIssueBody(a);
   assert.equal(body.split("**Stale Dependabot PRs.**").length, 2);
-  assert.ok(body.includes("https://github.com/o/r/pull/7"), body);
+  assert.match(body, /^- https:\/\/github\.com\/o\/r\/pull\/7 /m);
   assert.ok(body.includes("5 day(s) open"), body);
   assert.ok(body.includes("&lt;!-- evidence: x -->"), "title markers are escaped");
   assert.equal(extractReportedEvidence([body]).has("x"), false);
