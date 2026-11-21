@@ -156,5 +156,17 @@ they carry a signal already.
 - A new owner home gets no guidance from a fleet repo until
   `setup.sh --owner-machine` runs there; the plugin still delivers if it is
   installed.
+- **Surfaces not covered (2026-11-16).** Real sessions or uploaded records
+  confirm the signal on two surfaces: Claude Code on the web run as a project
+  thread (`remote_projects`) and scheduled routines (`remote_trigger`, 700
+  sessions). Codex Cloud is covered by `--codex-cloud`. The others are not
+  covered by any evidence: Claude Code on mobile (`remote_mobile`), other
+  `remote*` entrypoints, Claude in Slack and in Teams, and a GitHub Action
+  run, which this ADR does not treat as hosted. On a surface that sets
+  neither variable, the session falls back to the repo stub and reports
+  running degraded. That failure is visible, not silent. The first such
+  session that is gated in would also show up as a new `surface` in the
+  Stop hook's records
+  ([evidence](../evidence/2026-11-13-hosted-surface-owner-signal.md)).
 - The gate is two copies of a short shell function, one in each hook, because
   each file is delivered alone; the tests run both against the same signals.

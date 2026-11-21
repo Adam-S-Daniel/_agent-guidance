@@ -21,6 +21,7 @@ import tempfile
 import textwrap
 import threading
 import unittest
+from unittest import mock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / ".claude" / "hooks" / "guidance-load-record.sh"
@@ -1262,6 +1263,152 @@ class CloudVectorTests(CloudTestCase):
         self.assertEqual(lines[2]["digest_null_reason"], "no-base-dir")
 
 
+def tool_use(call, tool, given, ts=USE_TS, session=CLOUD_SESSION):
+    return {"type": "assistant", "sessionId": session, "timestamp": ts, "version": "2.1.312",
+            "uuid": "a-" + call, "message": {"id": "msg_" + call, "role": "assistant", "content": [
+                {"type": "tool_use", "id": call, "name": tool, "input": given}]}}
+
+
+class CloudReadTests(CloudTestCase):
+    """Reading an installed skill copy's files is a use too (kind skill-read)."""
+
+    def setUp(self):
+        super().setUp()
+        self.done_phase1()
+        self.script([PUSH_OK])
+        write_vector(self.skills / "vector")
+
+    def test_a_read_of_an_installed_skill_md_is_one_read_line_with_the_copys_digest(self):
+        self.write_transcript([tool_use("toolu_r1", "Read",
+                                        {"file_path": str(self.skills / "vector" / "SKILL.md")})])
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual(line, {
+            "v": 1, "id": "toolu_r1", "ts": "2099-01-01T00:00:00Z", "kind": "skill-read",
+            "surface": "cloud", "session": CLOUD_SID[:16], "cli": "2.1.312", "name": "vector",
+            "base_kind": "user-skills", "registry": None, "ref": None,
+            "digest": VECTOR_ALL_FILES, "digest_null_reason": None})
+        self.assertEqual(set(line), SHARD_KEYS)
+        text = self.remote_text(f"events/2099-01/cloud-skills/{CLOUD_SID[:16]}.jsonl")
+        self.assertNotIn(str(self.home), text)
+        self.assertNotIn("SKILL.md", text)
+
+    def test_bash_cat_of_a_tilde_path_counts(self):
+        self.write_transcript([tool_use("toolu_r2", "Bash",
+                                        {"command": "cat ~/.claude/skills/vector/ref.md | head"})])
+        self.stop()
+        [line] = self.shard()
+        self.assertEqual((line["id"], line["kind"], line["name"], line["digest"]),
+                         ("toolu_r2", "skill-read", "vector", VECTOR_ALL_FILES))
+
+    def test_a_registry_checkout_path_does_not_count(self):
+        checkout = self.tmp / "adam-agentskills" / "plugins" / "p" / "skills" / "vector"
+        write_vector(checkout)
+        self.write_transcript([
+            tool_use("toolu_r3", "Read", {"file_path": "/home/user/adam-agentskills/plugins/p/skills/x/SKILL.md"}),
+            tool_use("toolu_r4", "Read", {"file_path": str(checkout / "SKILL.md")}),
+            tool_use("toolu_r5", "Grep", {"pattern": "x", "path": str(checkout)}),
+            later_turn(1)])
+        self.stop()
+        self.assertEqual(self.shard(), [])
+        self.assertEqual(self.pending(), [])
+
+    def test_a_session_that_calls_the_skill_records_no_read_for_it(self):
+        # The call comes after the read and in a subagent transcript: still no read line.
+        self.write_transcript([tool_use("toolu_r6", "Read",
+                                        {"file_path": str(self.skills / "vector" / "SKILL.md")})])
+        sub = self.tmp / CLOUD_SESSION / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a.jsonl").write_text("".join(json.dumps(e) + "\n" for e in self.use_with_base(
+            "toolu_c1", "example:vector", self.skills / "vector")), encoding="utf-8")
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard()], [("toolu_c1", "skill")])
+
+    def test_a_call_in_an_earlier_stop_keeps_a_later_read_out(self):
+        entries = self.use_with_base("toolu_c2", "vector", self.skills / "vector")
+        self.write_transcript(entries)
+        self.stop()
+        self.write_transcript(entries + [tool_use("toolu_r7", "Glob", {
+            "pattern": "**/*.md", "path": str(self.skills / "vector")})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard() + self.pending()],
+                         [("toolu_c2", "skill")])
+
+    def test_two_reads_give_one_line_keyed_on_the_first(self):
+        first = tool_use("toolu_r8", "Read", {"file_path": str(self.skills / "vector" / "SKILL.md")})
+        second = tool_use("toolu_r9", "Bash", {"command": "ls $HOME/.claude/skills/vector"})
+        self.write_transcript([first, second])
+        self.stop()
+        self.write_transcript([first, second, tool_use("toolu_r10", "Read", {
+            "file_path": str(self.skills / "vector" / "a" / "b" / "c.txt")})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard() + self.pending()],
+                         [("toolu_r8", "skill-read")])
+
+    def test_a_path_to_no_copy_records_nothing(self):
+        self.write_transcript([tool_use("toolu_r11", "Bash", {"command": "ls ~/.claude/skills/missing/"}),
+                               tool_use("toolu_r12", "Glob", {"pattern": "~/.claude/skills/*/SKILL.md"})])
+        self.stop()
+        self.assertEqual(self.shard(), [])
+
+    def test_a_command_that_only_mentions_writes_or_fetches_a_copy_records_nothing(self):
+        # Review findings, 2026-11-15: each of these recorded a read before.
+        copy = str(self.skills / "vector")
+        commands = [f"git commit -m 'fix {copy}/SKILL.md'", f"echo {copy}/SKILL.md",
+                    f"cat > /tmp/x <<'EOF'\nsee {copy}/SKILL.md\nEOF",
+                    f"mkdir -p {copy} && cp -r a {copy}", f"rm -rf {copy}",
+                    f"sed -i s/a/b/ {copy}/SKILL.md", f"cat a > {copy}/SKILL.md",
+                    f"curl https://example.com{copy}/SKILL.md",
+                    # Second review: heredoc body lines, combined sed flags, perl -pi, a grep pattern.
+                    f"cat > /tmp/x <<'EOF'\ncat {copy}/SKILL.md\nEOF",
+                    f"git commit -F - <<'EOF'\nfix\n{copy}/SKILL.md\nEOF",
+                    f"sed -Ei s/a/b/ {copy}/SKILL.md", f"sed --in-place=.bak s/a/b/ {copy}/SKILL.md",
+                    f"perl -pi -e s/a/b/ {copy}/SKILL.md", f"grep '{copy}' notes.txt",
+                    f"find {copy} -delete", f"cat {copy}/../../../etc/hosts"]
+        self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
+                               for i, c in enumerate(commands)] + [later_turn(1)])
+        self.stop()
+        self.assertEqual(self.shard() + self.pending(), [])
+        # Control: a script the copy ships, run by its interpreter, is a read.
+        self.write_transcript([tool_use("toolu_m%d" % i, "Bash", {"command": c})
+                               for i, c in enumerate(commands)] + [later_turn(1), tool_use(
+            "toolu_m99", "Bash", {"command": f"cd /tmp && python3 {copy}/scripts/x.py"})])
+        self.script([PUSH_OK])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard() + self.pending()],
+                         [("toolu_m99", "vector")])
+
+    def test_an_apostrophe_in_a_heredoc_does_not_hide_an_earlier_read(self):
+        copy = str(self.skills / "vector")
+        self.write_transcript([tool_use("toolu_r16", "Bash", {
+            "command": f"cat {copy}/SKILL.md && cat > f <<EOF\ndon't\nEOF"})])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard()], [("toolu_r16", "vector")])
+
+    def test_a_missing_copy_named_first_does_not_hide_a_real_one(self):
+        self.write_transcript([tool_use("toolu_r13", "Bash", {
+            "command": "ls ~/.claude/skills/missing ~/.claude/skills/vector"})])
+        self.stop()
+        self.assertEqual([(l["id"], l["name"]) for l in self.shard()], [("toolu_r13", "vector")])
+
+    def test_an_account_synced_copy_is_named_by_its_own_directory(self):
+        write_vector(self.skills / "synced" / "vector-sync")
+        self.write_transcript([tool_use("toolu_r14", "Read", {
+            "file_path": str(self.skills / "synced" / "vector-sync" / "SKILL.md")})])
+        self.stop()
+        self.assertEqual([(l["name"], l["kind"]) for l in self.shard()],
+                         [("vector-sync", "skill-read")])
+
+    def test_a_malformed_tool_name_does_not_stop_a_valid_call_being_recorded(self):
+        bad = tool_use("toolu_r15", "Read", {"file_path": str(self.skills / "vector" / "SKILL.md")})
+        bad["message"]["content"][0]["name"] = ["Read"]
+        self.write_transcript([bad] + self.use_with_base("toolu_c3", "vector", self.skills / "vector"))
+        self.stop()
+        self.assertEqual([(l["id"], l["kind"]) for l in self.shard()], [("toolu_c3", "skill")])
+
+
 class CloudStorageTests(CloudTestCase):
     def setUp(self):
         super().setUp()
@@ -1697,7 +1844,10 @@ class CloudSafetyTests(CloudTestCase):
 
     def reason_for(self, base, name="vector"):
         self.write_transcript(self.use_with_base("toolu_z1", name, base))
-        self.stop()
+        # A counter clock: the parse and hash budgets end after a fixed number
+        # of checks, so a loaded machine cannot run them out before the use is
+        # recorded. What these tests check (what is read) needs no real time.
+        self.stop(env={"GUIDANCE_RECORD_TEST_TICK": "0.001"})
         [line] = self.shard()
         return line["digest_null_reason"]
 
@@ -1787,19 +1937,43 @@ class CloudGateTests(CloudTestCase):
         self.assertEqual([l["id"] for l in self.shard()], ["toolu_g1", "toolu_g2"])
 
     def test_phase_1_and_phase_2_stay_under_the_stop_timeout_when_every_call_hangs(self):
-        # Every curl uses its whole --max-time; every clone, fetch and push
-        # hangs with a child holding its pipe. The hook must still end inside
-        # the 20-second Stop timeout. Every budget is scaled by SCALE (the
-        # test-only seam), so the bound checked is 20 s * SCALE.
-        scale = 0.12
+        # On a fake clock, so the bound is the hook's budgeting, not how fast
+        # this machine is: every curl uses its whole --max-time and then grants
+        # push, as SLOW_CURL does below; every git call hangs to its whole cap,
+        # then the reap waits MIN_CALL. The hook's real budgets apply (no
+        # SCALE), and the run must end inside the 20-second Stop timeout.
+        env = dict(self.env, **self.cloud_env, GUIDANCE_HOOK_INPUT=json.dumps({
+            "session_id": CLOUD_SESSION, "transcript_path": str(self.transcript),
+            "hook_event_name": "Stop"}))
+        with mock.patch.dict(os.environ, env, clear=True):
+            hook = hook_module()
+            clock, calls = [0.0], []
+
+            def hang(args, cwd=None, env=None, data=None, cap=hook["CALL_CAP"]):
+                calls.append(args)
+                if args[0] == "curl":
+                    clock[0] += float(args[args.index("--max-time") + 1])
+                    pathlib.Path(args[args.index("-o") + 1]).write_text(
+                        json.dumps({"permissions": {"push": True}}), encoding="utf-8")
+                    return 0, b"200"
+                clock[0] += cap + hook["MIN_CALL"]
+                return None, b""
+
+            hook.update(monotonic=lambda: clock[0], START=0.0, run=hang)
+            hook["main"]()
+        self.assertEqual(hook["BUDGET"], 15.0)
+        self.assertTrue(any("clone" in a for a in calls), calls)
+        self.assertLess(clock[0], 20.0)
+        self.assertIs(self.records()[0]["uploaded"], False)
+        self.assertEqual([p["id"] for p in self.pending()], ["toolu_g1"])
+
+    def test_a_hung_call_is_killed_with_its_children_and_the_use_kept(self):
+        # The same Stop through the real hook: every curl uses its whole
+        # --max-time; every clone, fetch and push hangs with a child holding
+        # its pipe. Its run time is bounded by the test above, not here.
         (self.bin / "curl").write_text(SLOW_CURL, encoding="utf-8")
-        # The hook reports its own run time (from its start, so the interpreter
-        # start-up a loaded machine slows is not counted).
-        elapsed_file = self.tmp / "elapsed"
         self.stop(env={"FAKE_GIT_MODE": "hang-network", "GUIDANCE_RECORD_TEST": "1",
-                       "GUIDANCE_RECORD_TEST_SCALE": str(scale),
-                       "GUIDANCE_RECORD_TEST_ELAPSED_FILE": str(elapsed_file)})
-        self.assertLess(float(elapsed_file.read_text()), 20 * scale)
+                       "GUIDANCE_RECORD_TEST_SCALE": "0.12"})
         # It did wait on the hung calls, rather than skip them.
         self.assertTrue(any("clone" in c for c in self.git_calls()))
         # The timeout killed the whole process group, the hung child included.

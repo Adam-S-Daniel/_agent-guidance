@@ -82,12 +82,19 @@ class CodexCloudRecipeTests(unittest.TestCase):
             git.chmod(0o755)
             env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
                        HOME=str(root), CODEX_HOME=str(root / "codex"))
-            result = subprocess.run(
-                ["bash", "-c", block + "\nfleet_guidance_install"],
-                env=env, text=True, capture_output=True, timeout=60)
-            self.assertNotEqual(0, result.returncode)
-            self.assertFalse(ran.exists())
-            self.assertFalse((root / "codex" / "AGENTS.md").exists())
+            # Both call forms: the doc's `|| exit 1` turns off `set -e` inside
+            # the function, so only its explicit exits stop the run there.
+            for call in ("fleet_guidance_install", "fleet_guidance_install || exit 1"):
+                with self.subTest(call=call):
+                    result = subprocess.run(
+                        ["bash", "-c", block + "\n" + call],
+                        env=env, text=True, capture_output=True, timeout=60)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertFalse(ran.exists())
+                    self.assertFalse((root / "codex" / "AGENTS.md").exists())
+                    pin = re.search(r"^fleet_pin_sha256=([0-9a-f]{64})$", block, re.M).group(1)
+                    self.assertFalse(
+                        (root / "codex" / "fleet-guidance" / f"fleet-memory-{pin}.sh").exists())
 
     def test_success_path_offline_uses_the_stamp_and_codex_home(self):
         block = recipe_block()

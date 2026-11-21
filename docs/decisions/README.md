@@ -60,6 +60,12 @@ a page.
 | [0042](0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md) | The guidance hooks are opt-in on a durable machine |
 | [0043](0043-the-owner-only-guidance-leaves-the-consumer-repos.md) | The owner-only guidance leaves the consumer repos, and the stub stays the only per-repo copy |
 | [0044](0044-the-fleet-worker-removes-skills-the-eval-verdict-retires.md) | The fleet worker removes skills the eval verdict retires |
+| [0045](0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md) | The fleet worker merges its own reviewed issue fixes |
+| [0046](0046-the-fleet-worker-splits-into-a-loop-worker-and-a-maintenance-worker.md) | The fleet worker splits into a loop worker and a maintenance worker |
+| [0047](0047-the-sync-owns-an-actions-only-repos-dependabot-config.md) | The sync owns an actions-only repo's dependabot.yml |
+| [0048](0048-sync-marks-synced-tooling-linguist-vendored.md) | The sync marks its tooling `linguist-vendored` in each repo's `.gitattributes` |
+| [0049](0049-code-quality-comes-from-managed-linters-not-codeql.md) | Code quality comes from centrally managed linters, not CodeQL's quality suite |
+| [0050](0050-agent-checks-lints-in-two-tiers.md) | agent-checks lints every changed file in two tiers: a few errors refuse, the rest warn |
 
 ## Format
 

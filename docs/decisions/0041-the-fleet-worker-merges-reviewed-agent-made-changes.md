@@ -3,7 +3,7 @@
 **Status:** Accepted (2026-11-12). Supersedes, in part,
 [0010](0010-the-hook-pin-is-re-pinned-from-here.md): its "proposes and stops"
 property. Widens [0025](0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md)
-and [0028](0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md).
+and [0028](0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md). Widened by [0045](0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md) (2026-11-15): `agent/issue-*` PRs for issues other than sweep and memory-promotion issues merge under this rule too.
 
 ## Context
 

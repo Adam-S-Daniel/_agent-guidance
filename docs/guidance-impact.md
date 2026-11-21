@@ -62,6 +62,12 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: exempt (skipped row)
 - Outcome: pending — opened 2026-11-14
 
+## 2026-11-13 — pinning-github-actions — edit
+- Motivation: issue 540: gh-actions-lock v0.4.1 no longer rewrites `./` to `$/` by default (a plain run fails) and the shared check no longer fails on every finding, so two sentences were wrong (evidence docs/evidence/2026-11-13-gh-actions-lock-v0.4.1.md)
+- Change: local actions read `$/<path>`, not `./`; verify-actions-lock "fails on a pin error"; "40-character" shortened to "40-hex" to hold the section at its size (0 bytes net)
+- Eval: the evals/guidance/pinning-github-actions/ fixture was NOT re-run (no eval harness in the authoring session); the only results are the base.md checks, `node --test test/test-on-hold-label.js test/test-fleet-guidance-mirror.js test/test-check-agent-markdown.js` exit 0 (104 tests) and `node scripts/check-guidance-coverage.js` exit 0
+- Outcome: pending
+
 ## 2026-11-13 — eval-rules — create
 - Motivation: Adam asked (2026-11-13) for one source of truth on the eval, keep/remove and pause rules that agents in any repo can check against; restated thresholds had drifted (a project memory note still gave a superseded keep level)
 - Change: new one-line section pointing at skills-evals' generated `docs/rules.md`, generated from its policy YAMLs (PR #558)

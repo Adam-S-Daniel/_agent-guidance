@@ -12,10 +12,15 @@ set -euo pipefail
 #   5. Delivers the skills-bootstrap SessionStart hook to ALLOWLISTED repos
 #      that already carry their own skills.lock (see repos.yml and
 #      docs/decisions/0001) — never to every repo, and never writing the lock
-#   6. Delivers, with the fleet-memory hook, the guidance-load-record Stop
-#      hook that records once per session whether the full guidance loaded
+#   6. Retires the owner-only guidance files (ADR 0043): removes
+#      .claude/hooks/fleet-guidance.md, fleet-memory.sh and
+#      guidance-load-record.sh from a repo that still has them, with exactly
+#      the settings.json registrations this sync wrote for them (matched by
+#      command string; every other entry, and a settings.json it cannot parse,
+#      is left untouched). The owner's routes install the guidance instead
 #   7. Ensures the root .gitattributes pins .claude/hooks/*.sh to LF (one
-#      appended line; see docs/decisions/0019)
+#      appended line; see docs/decisions/0019) and marks .githooks/** and
+#      .claude/hooks/** linguist-vendored (ADR 0048)
 #   8. Pushes the update directly to the default branch (the sync App has a
 #      ruleset bypass, declared in repo-settings); falls back to a PR with
 #      auto-merge for repos whose protection rejects the push
@@ -43,33 +48,26 @@ SKILL_SHELL_SCRIPT="$SCRIPT_DIR/set-skill-shell-setting.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
 SETTINGS_REL_PATH=".claude/settings.json"
 LOCK_REL_PATH="skills.lock"
-# fleet-memory: the hook that installs the managed guidance into USER memory
-# (~/.claude/CLAUDE.md) once per session, so N attached repos no longer mean N
-# identical copies. Unlike skills-bootstrap this is NOT allowlisted and NOT
-# gated on anything the repo declares: every synced repo gets it, because every
-# synced repo's AGENTS.md is simultaneously being reduced to the stub that
-# depends on it. Those two are one decision — see FLEET_MODE below.
+# The owner-only guidance (ADR 0043) no longer ships in consumer repos. These
+# three files were delivered here until then; the sync now REMOVES them, with
+# the registrations it wrote for them. RETIRED_REGISTRATIONS rows are
+# `event|command`, the exact strings the sync used to write.
 FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
-FLEET_HOOK_SOURCE="$REPO_ROOT/.claude/hooks/fleet-memory.sh"
-FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
+GREC_REL_PATH=".claude/hooks/guidance-load-record.sh"
+RETIRED_FILES=("$FLEET_HOOK_REL_PATH" "$FLEET_PAYLOAD_REL_PATH" "$GREC_REL_PATH")
+RETIRED_REGISTRATIONS=(
+    'SessionStart|bash "$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh"'
+    'Stop|bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh"'
+)
+UNREGISTER_SCRIPT="$SCRIPT_DIR/unregister-hook.sh"
 # The contributor rules (ADR 0043): the generated subset of base.md an outside
 # contributor's agent needs, read on demand and never imported by AGENTS.md.
-# Delivered byte for byte to EVERY synced repo in both AGENTS_MD_MODE values,
-# independent of fleet-memory: it does not depend on `.claude/` or settings.json.
+# Delivered byte for byte to EVERY synced repo in both AGENTS_MD_MODE values;
+# it does not depend on `.claude/` or settings.json.
 CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
 CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
 CONTRIBUTOR_HEADER="<!-- Managed by _agent-guidance"
-# guidance-load-record: the Stop hook that writes one line per session saying
-# whether the full guidance or only the stub loaded. It measures the very
-# delivery fleet-memory makes, so it rides with it: every repo fleet-memory
-# reaches gets it, MANAGED (overwritten when it drifts) like fleet-memory.sh,
-# and registered as an additional `Stop` group. Stop takes no matcher; `*` is
-# the match-all value, written so the shared registrar's default (a
-# SessionStart source list) does not land on a Stop entry.
-GREC_REL_PATH=".claude/hooks/guidance-load-record.sh"
-GREC_SOURCE="$REPO_ROOT/.claude/hooks/guidance-load-record.sh"
-GREC_MATCHER="*"
 # The one managed line in each repo's root .gitattributes that keeps the hook
 # scripts above LF in every checkout, so bash in WSL can parse them from a
 # Windows-autocrlf clone. Owned by GITATTR_SCRIPT; see docs/decisions/0019.
@@ -83,6 +81,14 @@ GITATTR_SCRIPT="$SCRIPT_DIR/hook-eol-gitattributes.sh"
 # block in repos.yml for the carve-outs (cms-platform and its callers).
 AUTOMERGE_TEMPLATE_DIR="$REPO_ROOT/templates/dependabot-auto-merge"
 AUTOMERGE_WF_REL_PATH=".github/workflows/dependabot-auto-merge.yml"
+# The managed .github/dependabot.yml (ADR 0047), delivered when repos.yml's
+# dependabot_config.deliver is true, only to repos whose own file covers
+# nothing but github-actions (or is already this template). Same carve-outs
+# as the auto-merge workflow above.
+DEPCFG_TEMPLATE="$REPO_ROOT/templates/dependabot/dependabot.yml"
+DEPCFG_REL_PATH=".github/dependabot.yml"
+DEPCFG_HEADER="# Managed by _agent-guidance's templates/dependabot/"
+DEPCFG_MANIFEST_REL_PATH=".githooks/dated-phrasing/package.json"
 # A repo that pins actions through `gh actions-lock` keeps a lockfile naming
 # every workflow; `gh actions-lock --no-fix` rejects one without an entry for
 # a workflow file, or with a dependency no workflow lists. Overwriting the
@@ -95,7 +101,7 @@ ACTIONS_LOCK_REL_PATH=".github/workflows/actions.lock"
 ACTIONS_LOCK_SCRIPT="${SYNC_TEST_ACTIONS_LOCK_SCRIPT:-$SCRIPT_DIR/actions-lock-entry.sh}"
 # The agent-checks lane (ADR 0021), on when repos.yml's agent_checks.deliver is
 # true. The runner and the Claude Code guard are MANAGED (overwritten whenever
-# they drift, like fleet-memory.sh); the CI workflow is ADDED once and never
+# they drift); the CI workflow is ADDED once and never
 # overwritten, like the Dependabot one, so Dependabot can keep its pin current.
 AGENT_CHECKS_TEMPLATE_DIR="$REPO_ROOT/templates/agent-checks"
 AC_RUNNER_REL_PATH=".githooks/agent-checks"
@@ -112,6 +118,13 @@ AC_DATED_FILES=(dated-phrasing.js dated-phrasing-allowlist.txt
 # same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
 AC_EOL_LINE='.githooks/* text eol=lf'
 AC_EOL_COMMENT='# managed by _agent-guidance: the agent-checks runner must stay LF for bash (see ADR 0021)'
+# The files the sync delivers under these two directories are tooling copied
+# from this repo, yet GitHub's linguist counted them as each repo's own code:
+# most repos read "Shell 80%, JavaScript 19%". Marking them vendored keeps the
+# language bar, and the language-fit check that reads it, about the repo's own
+# code (ADR 0048). Two more managed lines, appended like the LF ones.
+LINGUIST_LINES=('.githooks/** linguist-vendored' '.claude/hooks/** linguist-vendored')
+LINGUIST_COMMENT='# managed by _agent-guidance: synced tooling is vendored, not this repo'"'"'s code (see ADR 0048)'
 MARKER="## Repo-specific additions"
 # Codex's `project_doc_max_bytes` default (codex-rs/core/src/agents_md.rs,
 # codex-cli 0.154.0, measured 2026-09-14). Same constant in
@@ -487,6 +500,17 @@ if [[ "$(read_repos_yml '.dependabot_auto_merge.deliver // false')" == "true" ]]
         AUTOMERGE_ENABLED=true
     else
         echo "::warning::repos.yml turns on dependabot_auto_merge.deliver, but $AUTOMERGE_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
+    fi
+fi
+
+# ── Dependabot config delivery config ─────────────────────────────────────
+# Same posture: only a literal `true` turns it on.
+DEPCFG_ENABLED=false
+if [[ "$(read_repos_yml '.dependabot_config.deliver // false')" == "true" ]]; then
+    if [[ -s "$DEPCFG_TEMPLATE" ]]; then
+        DEPCFG_ENABLED=true
+    else
+        echo "::warning::repos.yml turns on dependabot_config.deliver, but $DEPCFG_TEMPLATE is missing — not delivering it this run." >&2
     fi
 fi
 
@@ -1015,9 +1039,9 @@ for repo_name in "${REPOS[@]}"; do
     # ── Clone & prepare ────────────────────────────────────────────────
     #
     # The managed content is NOT built yet. What gets built depends on whether
-    # this repo can actually receive the fleet-memory hook, and that is a fact
-    # about the CLONE (its .gitignore, its settings.json) — see the
-    # fleet-memory classification below.
+    # this repo's `.claude/` can be edited, and that is a fact about the CLONE
+    # (its .gitignore, its settings.json) — see the deliverability
+    # classification below.
 
     repo_dir="$WORK_DIR/$(echo "$repo_name" | tr '/' '_')"
     if ! gh repo clone "$repo_name" "$repo_dir" -- --depth 1; then
@@ -1039,84 +1063,59 @@ for repo_name in "${REPOS[@]}"; do
         git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${repo_name}.git"
     fi
 
-    # ── fleet-memory: classify, then choose this repo's AGENTS.md mode ──
+    # ── .claude/ deliverability: choose this repo's AGENTS.md mode ─────
     #
-    # ONE decision, not two. The stub in AGENTS.md is only safe for a repo that
-    # will actually get the hook: the stub's entire content is "the guidance
-    # lives in user memory, check the verdict". Ship that to a repo the hook can
-    # never reach and you have quietly deleted its guidance and left a note
-    # pointing at something that will never arrive. So any repo we cannot
-    # deliver to keeps the FULL guidance inlined, exactly as before.
-    #
-    # Two things can block delivery, and both are deliberate refusals rather
-    # than failures: `.claude/` gitignored (two fleet repos do this on purpose),
-    # and a settings.json we cannot parse (same posture as an existing
-    # CLAUDE.md — a config we cannot read is one we must not rewrite).
+    # The stub in AGENTS.md points at the owner's own setup and at the
+    # contributor file, neither of which needs `.claude/`. Two facts about the
+    # CLONE still matter, because both are deliberate refusals rather than
+    # failures: `.claude/` gitignored (two fleet repos do this on purpose), and
+    # a settings.json we cannot parse (a config we cannot read is one we must
+    # not rewrite). A repo like that keeps the FULL contributor rules inline
+    # as before, gets no agent-checks guard, and keeps its retired owner-only
+    # files untouched, because removing the files while the registrations
+    # stay would leave a hook pointing at nothing.
 
     fleet_deliver=true
     fleet_reason=""
-    fleet_hook_state="missing"     # missing | current | drifted
-    fleet_payload_state="missing"  # missing | current | drifted
-    fleet_reg_state="missing"      # registered | no-entry | unparseable | missing
+    fleet_reg_state="n/a"
 
-    if [[ ! -r "$FLEET_HOOK_SOURCE" || ! -s "$FLEET_PAYLOAD_SOURCE" ]]; then
+    if git check-ignore -q "$FLEET_HOOK_REL_PATH" 2>/dev/null \
+       || git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
         fleet_deliver=false
-        fleet_reason="hook or payload missing in _agent-guidance — cannot deliver"
-    elif git check-ignore -q "$FLEET_HOOK_REL_PATH" 2>/dev/null \
-         || git check-ignore -q "$SETTINGS_REL_PATH" 2>/dev/null; then
-        fleet_deliver=false
-        fleet_reason=".claude/ is gitignored in this repo — keeping the full guidance inline instead"
+        fleet_reason=".claude/ is gitignored in this repo — keeping the contributor rules inline instead"
     else
-        fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
+        fleet_reg_state=$(BOOTSTRAP_HOOK_BASENAME="skills-bootstrap.sh" \
                           "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
         if [[ "$fleet_reg_state" == "unparseable" ]]; then
             fleet_deliver=false
-            fleet_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it, keeping the full guidance inline"
-        else
-            if [[ -f "$FLEET_HOOK_REL_PATH" ]]; then
-                cmp -s "$FLEET_HOOK_REL_PATH" "$FLEET_HOOK_SOURCE" \
-                    && fleet_hook_state="current" || fleet_hook_state="drifted"
-            fi
-            if [[ -f "$FLEET_PAYLOAD_REL_PATH" ]]; then
-                cmp -s "$FLEET_PAYLOAD_REL_PATH" "$FLEET_PAYLOAD_SOURCE" \
-                    && fleet_payload_state="current" || fleet_payload_state="drifted"
-            fi
+            fleet_reason="$SETTINGS_REL_PATH is not parseable JSON — refusing to edit it, keeping the contributor rules inline"
         fi
     fi
 
     if $fleet_deliver; then FLEET_MODE=stub; else FLEET_MODE=full; fi
-    [[ -n "$fleet_reason" ]] && log "fleet-memory: $fleet_reason."
-    log "fleet-memory: mode=$FLEET_MODE hook=$fleet_hook_state payload=$fleet_payload_state settings=$fleet_reg_state"
+    [[ -n "$fleet_reason" ]] && log "owner-guidance: $fleet_reason."
 
-    fleet_up_to_date=true
-    if $fleet_deliver && { [[ "$fleet_hook_state" != "current" ]] \
-                        || [[ "$fleet_payload_state" != "current" ]] \
-                        || [[ "$fleet_reg_state" != "registered" ]]; }; then
-        fleet_up_to_date=false
+    # ── owner-only guidance (ADR 0043): classify what to retire ────────
+    # Files first, then the exact registrations. Nothing is retired where the
+    # clone cannot be edited safely (see above).
+    retire_files=()
+    retire_regs=()      # event|command rows still registered
+    if $fleet_deliver; then
+        for retire_path in "${RETIRED_FILES[@]}"; do
+            if [[ -f "$retire_path" || -L "$retire_path" ]] && ! git check-ignore -q "$retire_path" 2>/dev/null; then
+                retire_files+=("$retire_path")
+            fi
+        done
+        for retire_row in "${RETIRED_REGISTRATIONS[@]}"; do
+            retire_state=$(BOOTSTRAP_HOOK_EVENT="${retire_row%%|*}" \
+                           BOOTSTRAP_HOOK_COMMAND="${retire_row#*|}" \
+                           "$UNREGISTER_SCRIPT" status "$SETTINGS_REL_PATH")
+            [[ "$retire_state" == "present" ]] && retire_regs+=("$retire_row")
+        done
     fi
-
-    # ── guidance-load-record: classify ─────────────────────────────────
-    # Wherever fleet-memory goes, and nowhere else: a record of whether the
-    # guidance loaded means nothing in a repo the guidance cannot reach.
-    grec_deliver=false
-    grec_state="n/a"         # n/a | missing | current | drifted
-    grec_reg_state="n/a"     # n/a | registered | no-entry | missing
-    if $fleet_deliver && [[ -r "$GREC_SOURCE" ]]; then
-        grec_deliver=true
-        grec_state="missing"
-        if [[ -f "$GREC_REL_PATH" ]]; then
-            cmp -s "$GREC_REL_PATH" "$GREC_SOURCE" && grec_state="current" || grec_state="drifted"
-        fi
-        grec_reg_state=$(BOOTSTRAP_HOOK_EVENT="Stop" \
-                         BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
-                         BOOTSTRAP_HOOK_MATCHER="$GREC_MATCHER" \
-                         "$BOOTSTRAP_STATUS_SCRIPT" "$SETTINGS_REL_PATH")
-        log "guidance-load-record: hook=$grec_state settings=$grec_reg_state"
-    fi
-    grec_up_to_date=true
-    if $grec_deliver && { [[ "$grec_state" != "current" ]] || [[ "$grec_reg_state" != "registered" ]]; }; then
-        grec_up_to_date=false
-    fi
+    retire_up_to_date=true
+    if (( ${#retire_files[@]} > 0 || ${#retire_regs[@]} > 0 )); then retire_up_to_date=false; fi
+    log "owner-guidance: mode=$FLEET_MODE retire-files=${#retire_files[@]} retire-registrations=${#retire_regs[@]}"
 
     # ── contributor rules: classify ────────────────────────────────────
     contributor_state="n/a"   # n/a | missing | current | drifted
@@ -1344,7 +1343,7 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     # ── .gitattributes: classify ───────────────────────────────────────
-    # Every synced repo, whatever its fleet-memory mode: the line costs one
+    # Every synced repo, whatever its AGENTS.md mode: the line costs one
     # entry, matches nothing in a repo with no hook scripts, and keeps any hook
     # a repo does carry parseable by bash from a Windows-autocrlf clone. Two
     # refusals, neither a failure: a .gitattributes that is itself gitignored
@@ -1363,6 +1362,15 @@ for repo_name in "${REPOS[@]}"; do
     if $gitattr_deliver && [[ "$gitattr_state" != "present" ]]; then
         gitattr_up_to_date=false
     fi
+    linguist_missing=()
+    if $gitattr_deliver; then
+        for linguist_line in "${LINGUIST_LINES[@]}"; do
+            [[ "$(HOOK_EOL_LINE="$linguist_line" HOOK_EOL_COMMENT="$LINGUIST_COMMENT" \
+                  "$GITATTR_SCRIPT" status "$GITATTR_REL_PATH")" == "present" ]] \
+                || linguist_missing+=("$linguist_line")
+        done
+    fi
+    [[ ${#linguist_missing[@]} -gt 0 ]] && gitattr_up_to_date=false
 
     # ── Dependabot auto-merge workflow: classify ───────────────────────
     # missing | current | drifted | skipped | n/a. Managed: missing and
@@ -1377,20 +1385,21 @@ for repo_name in "${REPOS[@]}"; do
     #   - a repo with only the .yaml spelling (a .yml would be a second
     #     workflow), and a gitignored path.
     automerge_state="n/a"
+    # Shared by the auto-merge and dependabot.yml lanes.
+    automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
+    # Any workflow file may hold the caller, and the owner's case varies.
+    automerge_cms_caller=false
+    if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
+        for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
+            [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
+            if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
+                automerge_cms_caller=true
+                break
+            fi
+        done
+    fi
     if $AUTOMERGE_ENABLED; then
         automerge_state="missing"
-        automerge_cms_call_re='uses:[[:space:]]*["'\'']?adam-s-daniel/cms-platform/\.github/workflows/dependabot-'
-        # Any workflow file may hold the caller, and the owner's case varies.
-        automerge_cms_caller=false
-        if [[ -d .github/workflows && ! -L .github/workflows && ! -L .github ]]; then
-            for automerge_wf_file in .github/workflows/*.yml .github/workflows/*.yaml; do
-                [[ -f "$automerge_wf_file" && ! -L "$automerge_wf_file" ]] || continue
-                if grep -Eqi "$automerge_cms_call_re" "$automerge_wf_file"; then
-                    automerge_cms_caller=true
-                    break
-                fi
-            done
-        fi
         if [[ "${repo_name##*/}" == "cms-platform" ]]; then
             automerge_state="skipped"
             log "dependabot auto-merge: $repo_name is cms-platform itself, which has its own workflow — not delivered."
@@ -1454,6 +1463,46 @@ for repo_name in "${REPOS[@]}"; do
     automerge_up_to_date=true
     [[ "$automerge_state" == "missing" || "$automerge_state" == "drifted" || "$automerge_state" == "lockfile" ]] && automerge_up_to_date=false
 
+    # ── Dependabot config: classify ────────────────────────────────────
+    # missing | current | drifted | skipped | n/a. Written (missing, drifted)
+    # only when the repo's own file is absent, equals the template, starts with
+    # the managed header, or lists nothing but github-actions (ADR 0047). Any
+    # other ecosystem means the repo hand-maintains its file. Never written:
+    # cms-platform itself or a caller of its reusable workflows, a repo with no
+    # dated-phrasing manifest (Dependabot errors on a directory with none),
+    # and a symlinked, non-regular, gitignored or .yaml-spelled file.
+    depcfg_state="n/a"
+    if $DEPCFG_ENABLED; then
+        depcfg_state="skipped"
+        depcfg_other=""
+        if [[ -f "$DEPCFG_REL_PATH" && ! -L "$DEPCFG_REL_PATH" ]]; then
+            depcfg_other=$(yq '((.updates // []) | length) as $n | ([.updates[]? | select(.["package-ecosystem"] != "github-actions")] | length) as $o | ($n == 0 or $o > 0)' "$DEPCFG_REL_PATH" 2>/dev/null) || depcfg_other="unparseable"
+        fi
+        if [[ "${repo_name##*/}" == "cms-platform" ]] || $automerge_cms_caller; then
+            log "dependabot config: $repo_name is cms-platform or calls its reusable workflows — not delivered."
+        elif [[ -L .github || -L "$DEPCFG_REL_PATH" || ( -e "$DEPCFG_REL_PATH" && ! -f "$DEPCFG_REL_PATH" ) ]]; then
+            log "WARN: $DEPCFG_REL_PATH (or .github) is a symlink or not a regular file in $repo_name — dependabot config not delivered."
+        elif [[ -e .github/dependabot.yaml && ! -e "$DEPCFG_REL_PATH" ]]; then
+            log "WARN: $repo_name has .github/dependabot.yaml; writing the .yml spelling would make a second config — not delivered."
+        elif [[ ! -f "$DEPCFG_MANIFEST_REL_PATH" ]]; then
+            log "dependabot config: $repo_name has no $DEPCFG_MANIFEST_REL_PATH (Dependabot errors on a directory with no manifest) — not delivered."
+        elif git check-ignore -q "$DEPCFG_REL_PATH" 2>/dev/null; then
+            log "WARN: $DEPCFG_REL_PATH is gitignored in $repo_name — not delivered."
+        elif [[ ! -f "$DEPCFG_REL_PATH" ]]; then
+            depcfg_state="missing"
+        elif cmp -s "$DEPCFG_TEMPLATE" "$DEPCFG_REL_PATH"; then
+            depcfg_state="current"
+        elif [[ "$(head -n 1 "$DEPCFG_REL_PATH")" == "$DEPCFG_HEADER"* ]]; then
+            depcfg_state="drifted"
+        elif [[ "$depcfg_other" == "false" ]]; then
+            depcfg_state="drifted"
+        else
+            log "dependabot config: $repo_name lists an ecosystem other than github-actions (or does not parse) — hand-maintained, not delivered."
+        fi
+    fi
+    depcfg_up_to_date=true
+    [[ "$depcfg_state" == "missing" || "$depcfg_state" == "drifted" ]] && depcfg_up_to_date=false
+
     # ── agent-checks: classify ─────────────────────────────────────────
     # Four parts, each skipped on its own rather than failing the repo:
     #   runner    missing | current | drifted | skipped (gitignored)
@@ -1463,8 +1512,8 @@ for repo_name in "${REPOS[@]}"; do
     #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
     #             "present" is ANY workflow that runs .githooks/agent-checks:
     #             adam-agentskills runs it as a job in ci.yml.
-    #   guard     the PreToolUse hook; delivered only where fleet-memory can
-    #             be (same .claude/ and settings.json refusals).
+    #   guard     the PreToolUse hook; delivered only where `.claude/` can be
+    #             edited (same .claude/ and settings.json refusals).
     #   eol       the `.githooks/* text eol=lf` line in .gitattributes.
     #   trigger   an existing agent-checks.yml's pull_request types:
     #             current | missing-edited | skipped (a shape not edited) | n/a
@@ -1576,7 +1625,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $fleet_up_to_date && $grec_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $depcfg_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1628,27 +1677,18 @@ for repo_name in "${REPOS[@]}"; do
             log "[DRY RUN] Would NOT touch $LOCK_REL_PATH (present; the sync never writes it)"
         fi
 
-        # fleet-memory, reported the same way and for the same reason: on most
-        # repos this run's ONLY change is the hook plus the AGENTS.md shrink,
-        # and a preview that showed the shrink without the delivery would be
-        # previewing a repo losing its guidance.
-        if ! $fleet_up_to_date; then
-            case "$fleet_hook_state" in
-                missing) log "[DRY RUN] Would add $FLEET_HOOK_REL_PATH $delivery_note" ;;
-                drifted) log "[DRY RUN] Would overwrite drifted $FLEET_HOOK_REL_PATH $delivery_note" ;;
-            esac
-            case "$fleet_payload_state" in
-                missing) log "[DRY RUN] Would add $FLEET_PAYLOAD_REL_PATH (the guidance itself, $(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes, outside any memory-file path) $delivery_note" ;;
-                drifted) log "[DRY RUN] Would refresh drifted $FLEET_PAYLOAD_REL_PATH $delivery_note" ;;
-            esac
-            if [[ "$fleet_reg_state" == "stale-matcher" ]]; then
-                log "[DRY RUN] Would widen fleet-memory.sh's legacy SessionStart matcher in $SETTINGS_REL_PATH to include fork (nothing else changed) $delivery_note"
-            elif [[ "$fleet_reg_state" != "registered" ]]; then
-                log "[DRY RUN] Would append a SessionStart entry for fleet-memory.sh to $SETTINGS_REL_PATH (existing entries preserved) $delivery_note"
-            fi
+        # The owner-only guidance (ADR 0043) is retired, reported line by line
+        # like every other write: a preview that hid a deletion would be lying.
+        if ! $retire_up_to_date; then
+            for retire_path in "${retire_files[@]}"; do
+                log "[DRY RUN] Would remove $retire_path (the owner-only guidance no longer ships in consumer repos) $delivery_note"
+            done
+            for retire_row in "${retire_regs[@]}"; do
+                log "[DRY RUN] Would remove the ${retire_row%%|*} entry the sync registered for ${retire_row#*|} from $SETTINGS_REL_PATH (every other entry preserved) $delivery_note"
+            done
         fi
         if [[ "$FLEET_MODE" == "full" ]]; then
-            log "[DRY RUN] Would keep the FULL guidance inline in AGENTS.md (fleet-memory cannot be delivered here)"
+            log "[DRY RUN] Would keep the contributor rules inline in AGENTS.md ($SETTINGS_REL_PATH cannot be edited here)"
         fi
 
         if ! $contributor_up_to_date; then
@@ -1658,20 +1698,16 @@ for repo_name in "${REPOS[@]}"; do
             esac
         fi
 
-        if ! $grec_up_to_date; then
-            [[ "$grec_state" != "current" ]] \
-                && log "[DRY RUN] Would write $GREC_REL_PATH (guidance-load record hook $grec_state) $delivery_note"
-            [[ "$grec_reg_state" != "registered" ]] \
-                && log "[DRY RUN] Would register guidance-load-record.sh on Stop in $SETTINGS_REL_PATH (currently: $grec_reg_state) $delivery_note"
-        fi
-
-        if ! $gitattr_up_to_date; then
+        if ! $gitattr_up_to_date && [[ "$gitattr_state" != "present" ]]; then
             if [[ -e "$GITATTR_REL_PATH" ]]; then
                 log "[DRY RUN] Would append the hook-script LF line to $GITATTR_REL_PATH (existing lines preserved) $delivery_note"
             else
                 log "[DRY RUN] Would add $GITATTR_REL_PATH pinning .claude/hooks/*.sh to LF $delivery_note"
             fi
         fi
+        for linguist_line in ${linguist_missing[@]+"${linguist_missing[@]}"}; do
+            log "[DRY RUN] Would append \`$linguist_line\` to $GITATTR_REL_PATH (existing lines preserved) $delivery_note"
+        done
 
         if ! $automerge_up_to_date; then
             if [[ "$automerge_state" != "lockfile" ]]; then
@@ -1680,6 +1716,10 @@ for repo_name in "${REPOS[@]}"; do
             if [[ "$automerge_lock_state" == "fix" ]]; then
                 log "[DRY RUN] Would edit $ACTIONS_LOCK_REL_PATH to list $AUTOMERGE_WF_REL_PATH with no actions and drop dependencies no workflow uses $delivery_note"
             fi
+        fi
+
+        if ! $depcfg_up_to_date; then
+            log "[DRY RUN] Would write $DEPCFG_REL_PATH (managed Dependabot config, $depcfg_state) $delivery_note"
         fi
 
         if ! $ac_up_to_date; then
@@ -1801,51 +1841,36 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
-    # ── fleet-memory: write ────────────────────────────────────────────
+    # ── owner-only guidance: retire ────────────────────────────────────
     #
-    # Hook and payload are plain copies from _agent-guidance; the payload IS
-    # agents-md/base.md, shipped to `.claude/hooks/` rather than a memory-file
-    # path precisely so it costs zero always-on context in the repo carrying it
-    # (only CLAUDE.md and AGENTS.md are auto-loaded).
+    # The contributor file is classified above, and a repo that refuses it is
+    # skipped whole before anything is removed, so the stub never points at a
+    # file the repo lacks; the removals are committed together with it. The
+    # settings edit goes through unregister-hook.sh, which removes only the
+    # entries whose command equals the string this sync wrote and re-parses its
+    # own output before writing.
 
-    fleet_hook_written=false
-    fleet_payload_written=false
-    fleet_registered_now=false
-
-    if $fleet_deliver; then
-        if [[ "$fleet_hook_state" != "current" ]]; then
-            mkdir -p "$(dirname "$FLEET_HOOK_REL_PATH")"
-            cp "$FLEET_HOOK_SOURCE" "$FLEET_HOOK_REL_PATH"
-            chmod 0755 "$FLEET_HOOK_REL_PATH"
-            fleet_hook_written=true
-            log "fleet-memory: hook ${fleet_hook_state} — written."
-        fi
-
-        if [[ "$fleet_payload_state" != "current" ]]; then
-            mkdir -p "$(dirname "$FLEET_PAYLOAD_REL_PATH")"
-            cp "$FLEET_PAYLOAD_SOURCE" "$FLEET_PAYLOAD_REL_PATH"
-            fleet_payload_written=true
-            log "fleet-memory: payload ${fleet_payload_state} — written ($(wc -c < "$FLEET_PAYLOAD_SOURCE" | tr -d ' ') bytes)."
-        fi
-
-        if [[ "$fleet_reg_state" != "registered" ]]; then
-            mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
-            # Same registrar as skills-bootstrap, re-pointed via its documented
-            # env seam. A second registrar would be a second place for the
-            # append-never-overwrite proof to rot.
-            if fleet_register_result=$(
-                    BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-memory.sh"' \
-                    BOOTSTRAP_HOOK_BASENAME="fleet-memory.sh" \
-                    BOOTSTRAP_HOOK_TIMEOUT="30" \
-                    "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
-                [[ "$fleet_register_result" == "registered" || "$fleet_register_result" == "migrated" ]] && fleet_registered_now=true
-                [[ "$fleet_register_result" == "migrated" ]] && matcher_migrated=true
-                log "fleet-memory: settings.json — $fleet_register_result."
+    retired_files_now=()
+    retired_regs_now=false
+    if ! $retire_up_to_date; then
+        for retire_path in "${retire_files[@]}"; do
+            rm -f -- "$retire_path"
+            retired_files_now+=("$retire_path")
+            log "owner-guidance: removed $retire_path."
+        done
+        for retire_row in "${retire_regs[@]}"; do
+            if retire_result=$(BOOTSTRAP_HOOK_EVENT="${retire_row%%|*}" \
+                               BOOTSTRAP_HOOK_COMMAND="${retire_row#*|}" \
+                               "$UNREGISTER_SCRIPT" remove "$SETTINGS_REL_PATH"); then
+                [[ "$retire_result" == "removed" ]] && retired_regs_now=true
+                log "owner-guidance: settings.json ${retire_row%%|*} — $retire_result."
             else
-                log "WARN: could not register fleet-memory in $SETTINGS_REL_PATH ($fleet_register_result) — leaving it untouched."
+                log "WARN: could not remove the ${retire_row%%|*} registration from $SETTINGS_REL_PATH (${retire_result:-no output}) — leaving it untouched."
             fi
-        fi
+        done
     fi
+    retired_any=false
+    { (( ${#retired_files_now[@]} > 0 )) || $retired_regs_now; } && retired_any=true
 
     # ── contributor rules: write ───────────────────────────────────────
     contributor_written=false
@@ -1856,40 +1881,11 @@ for repo_name in "${REPOS[@]}"; do
         log "contributor-rules: file ${contributor_state} — written ($(wc -c < "$CONTRIBUTOR_SOURCE" | tr -d ' ') bytes)."
     fi
 
-    # ── guidance-load-record: write ────────────────────────────────────
-    grec_written=false
-    grec_registered_now=false
-    if ! $grec_up_to_date; then
-        if [[ "$grec_state" != "current" ]]; then
-            mkdir -p "$(dirname "$GREC_REL_PATH")"
-            cp "$GREC_SOURCE" "$GREC_REL_PATH"
-            chmod 0755 "$GREC_REL_PATH"
-            grec_written=true
-            log "guidance-load-record: hook ${grec_state} — written."
-        fi
-        if [[ "$grec_reg_state" != "registered" ]]; then
-            mkdir -p "$(dirname "$SETTINGS_REL_PATH")"
-            if grec_register_result=$(
-                    BOOTSTRAP_HOOK_EVENT="Stop" \
-                    BOOTSTRAP_HOOK_MATCHER="$GREC_MATCHER" \
-                    BOOTSTRAP_HOOK_COMMAND='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guidance-load-record.sh"' \
-                    BOOTSTRAP_HOOK_BASENAME="guidance-load-record.sh" \
-                    BOOTSTRAP_HOOK_TIMEOUT="20" \
-                    "$REGISTER_SCRIPT" "$SETTINGS_REL_PATH"); then
-                [[ "$grec_register_result" == "registered" || "$grec_register_result" == "migrated" ]] && grec_registered_now=true
-                log "guidance-load-record: settings.json — $grec_register_result."
-            else
-                log "WARN: could not register guidance-load-record in $SETTINGS_REL_PATH ($grec_register_result) — leaving it untouched."
-            fi
-        fi
-    fi
-    grec_any_written=false
-    { $grec_written || $grec_registered_now; } && grec_any_written=true
-
     # ── .gitattributes: write ──────────────────────────────────────────
     # Appended to, never rewritten (the helper's header has the byte rules).
     gitattr_written=false
-    if ! $gitattr_up_to_date; then
+    linguist_written=false
+    if ! $gitattr_up_to_date && [[ "$gitattr_state" != "present" ]]; then
         if gitattr_result=$("$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
             [[ "$gitattr_result" == "created" || "$gitattr_result" == "appended" ]] && gitattr_written=true
             log "gitattributes: $GITATTR_REL_PATH — $gitattr_result."
@@ -1897,6 +1893,16 @@ for repo_name in "${REPOS[@]}"; do
             log "WARN: could not add the hook-script LF line to $GITATTR_REL_PATH (${gitattr_result:-no output}) — leaving it untouched."
         fi
     fi
+    for linguist_line in ${linguist_missing[@]+"${linguist_missing[@]}"}; do
+        if linguist_result=$(HOOK_EOL_LINE="$linguist_line" HOOK_EOL_COMMENT="$LINGUIST_COMMENT" \
+                             "$GITATTR_SCRIPT" ensure "$GITATTR_REL_PATH"); then
+            [[ "$linguist_result" == "created" || "$linguist_result" == "appended" ]] && linguist_written=true
+            log "gitattributes: \`$linguist_line\` — $linguist_result."
+        else
+            log "WARN: could not add \`$linguist_line\` to $GITATTR_REL_PATH (${linguist_result:-no output}) — leaving it untouched."
+        fi
+    done
+    $linguist_written && gitattr_written=true
 
     # ── Dependabot auto-merge workflow: write ──────────────────────────
     # Managed: written when missing, overwritten when drifted.
@@ -1933,6 +1939,15 @@ for repo_name in "${REPOS[@]}"; do
             fi
         fi
         [[ -z "$automerge_lock_tmp" ]] || rm -f "$automerge_lock_tmp"
+    fi
+
+    # ── Dependabot config: write ───────────────────────────────────────
+    depcfg_written=false
+    if ! $depcfg_up_to_date; then
+        mkdir -p "$(dirname "$DEPCFG_REL_PATH")"
+        cp "$DEPCFG_TEMPLATE" "$DEPCFG_REL_PATH"
+        depcfg_written=true
+        log "dependabot config: $DEPCFG_REL_PATH $([[ "$depcfg_state" == "drifted" ]] && echo updated || echo added)."
     fi
 
     # ── agent-checks: write ────────────────────────────────────────────
@@ -2030,19 +2045,14 @@ for repo_name in "${REPOS[@]}"; do
     $skillshell_written && add_paths+=("$SETTINGS_REL_PATH")
     $automerge_written && [[ "$automerge_state" != "lockfile" ]] && add_paths+=("$AUTOMERGE_WF_REL_PATH")
     $automerge_lock_written && add_paths+=("$ACTIONS_LOCK_REL_PATH")
+    $depcfg_written && add_paths+=("$DEPCFG_REL_PATH")
     $gitattr_written && add_paths+=("$GITATTR_REL_PATH")
     { $claude_md_added || $claude_md_fixed; } && add_paths+=(CLAUDE.md)
     $bootstrap_hook_written && add_paths+=("$HOOK_REL_PATH")
     $bootstrap_registered_now && add_paths+=("$SETTINGS_REL_PATH")
-    $fleet_hook_written && add_paths+=("$FLEET_HOOK_REL_PATH")
-    $fleet_payload_written && add_paths+=("$FLEET_PAYLOAD_REL_PATH")
+    (( ${#retired_files_now[@]} > 0 )) && add_paths+=("${retired_files_now[@]}")
+    $retired_regs_now && add_paths+=("$SETTINGS_REL_PATH")
     $contributor_written && add_paths+=("$CONTRIBUTOR_REL_PATH")
-    $grec_written && add_paths+=("$GREC_REL_PATH")
-    $grec_registered_now && add_paths+=("$SETTINGS_REL_PATH")
-    # Both hooks can register in the same file in one run; add it once.
-    if $fleet_registered_now && ! $bootstrap_registered_now; then
-        add_paths+=("$SETTINGS_REL_PATH")
-    fi
     git add "${add_paths[@]}"
 
     # Whatever else changed, skills.lock is never among it. Cheap, absolute,
@@ -2094,9 +2104,12 @@ sync wrote, holding nothing but its own hook, are changed."
     if $gitattr_written; then
         bootstrap_note="${bootstrap_note}
 
-Pins .claude/hooks/*.sh to LF in .gitattributes (one appended line; nothing
-else in the file changed): a Windows autocrlf checkout gives them CRLF, which
-bash in WSL cannot parse. See _agent-guidance's docs/decisions/0019."
+Updates .gitattributes (appended lines only; nothing else in the file
+changed): pins .claude/hooks/*.sh to LF, because a Windows autocrlf checkout
+gives them CRLF, which bash in WSL cannot parse (_agent-guidance's
+docs/decisions/0019), and marks .githooks/** and .claude/hooks/**
+linguist-vendored so GitHub's language bar shows this repo's own code
+(docs/decisions/0048)."
     fi
 
     if $automerge_written && [[ "$automerge_state" != "lockfile" ]]; then
@@ -2117,16 +2130,25 @@ workflows map lists .github/workflows/dependabot-auto-merge.yml with no actions
 more is removed. Nothing else in the lockfile changes."
     fi
 
-    if $grec_any_written; then
+    if $depcfg_written; then
         bootstrap_note="${bootstrap_note}
 
-Delivers the guidance-load-record Stop hook ($GREC_REL_PATH), registered as
-an additional Stop entry: once per session it appends one line to a local
-state file saying whether the full fleet guidance or only this repo's stub
-loaded, read from the session transcript. The line holds no paths, names or
-content. In cloud sessions with the usage-writer App configured it also
-appends that line to the private usage-events branch. Managed by
-_agent-guidance."
+$([[ "$depcfg_state" == "drifted" ]] && echo Updates || echo Adds) .github/dependabot.yml: github-actions updates grouped (own actions
+skip the cooldown) and the synced dated-phrasing npm dependency held back. The
+file is managed by _agent-guidance's templates/dependabot/ and is overwritten
+on the next sync if it drifts, so change the template, not this copy. A repo
+that adds another ecosystem is no longer delivered it (ADR 0047)."
+    fi
+
+    if $retired_any; then
+        bootstrap_note="${bootstrap_note}
+
+Stops delivering the owner-only guidance (ADR 0043): removes
+${retired_files_now[*]:-no files} and, from $SETTINGS_REL_PATH, only the
+hook registrations this sync wrote for them (matched by command string; every
+other entry is preserved). The fleet owner's own setup installs that guidance
+into the owner's sessions; this repo's AGENTS.md stub and
+$CONTRIBUTOR_REL_PATH carry what any contributor needs."
     fi
 
     if $ac_any_written; then
@@ -2149,29 +2171,25 @@ workflow; see the 2026-11-02 addendum to docs/decisions/0021."
     fi
 
     if $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $contributor_written && ! $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
-       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
-       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+       && $contributor_written && ! $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $depcfg_written && ! $gitattr_written && ! $retired_any \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
         commit_message="chore: deliver the fleet contributor rules
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
-       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
-       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+       && $skillshell_written && ! $ac_any_written && ! $automerge_written && ! $depcfg_written && ! $gitattr_written && ! $retired_any \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
         commit_message="chore: disable shell execution when a skill loads
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $ac_any_written && ! $automerge_written && ! $gitattr_written && ! $grec_any_written \
-       && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
-       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+       && $ac_any_written && ! $automerge_written && ! $depcfg_written && ! $gitattr_written && ! $retired_any \
+       && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
         commit_message="chore: deliver the agent-checks git hooks and CI check
 
 AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $grec_any_written \
-       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
+       && $automerge_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $retired_any; then
         if [[ "$automerge_state" == "lockfile" ]]; then
             automerge_title="chore: make actions.lock list the Dependabot auto-merge workflow"
         else
@@ -2182,17 +2200,20 @@ AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bo
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $grec_any_written \
-       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
-        commit_message="chore: pin the hook scripts to LF in .gitattributes
+       && $depcfg_written && ! $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $retired_any; then
+        commit_message="chore: $([[ "$depcfg_state" == "drifted" ]] && echo update || echo add) the managed Dependabot config
 
 AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
-       && $grec_any_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now \
-       && ! $fleet_hook_written && ! $fleet_payload_written && ! $fleet_registered_now; then
-        commit_message="chore: deliver the guidance-load-record Stop hook
+       && $gitattr_written && ! $bootstrap_hook_written && ! $bootstrap_registered_now && ! $retired_any; then
+        commit_message="chore: update the managed .gitattributes lines
 
-AGENTS.md, the CLAUDE.md bridge and the other hooks were already up to date.${bootstrap_note}"
+AGENTS.md, the CLAUDE.md bridge and the hooks were already up to date.${bootstrap_note}"
+    elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed \
+       && $retired_any && ! $bootstrap_hook_written && ! $bootstrap_registered_now; then
+        commit_message="chore: stop delivering the owner-only guidance files
+
+AGENTS.md and the CLAUDE.md bridge were already up to date.${bootstrap_note}"
     elif $agents_up_to_date && $claude_md_present && ! $claude_md_fixed; then
         commit_message="chore: deliver the skills-bootstrap SessionStart hook
 
@@ -2430,24 +2451,24 @@ It is registered as an **additional** \`hooks.SessionStart\` entry in
         if $gitattr_written; then
             pr_extra="${pr_extra}
 
-This PR also adds one line to \`$GITATTR_REL_PATH\`, \`.claude/hooks/*.sh text eol=lf\`,
-with a comment above it; nothing else in that file changes. A Windows
-\`core.autocrlf=true\` checkout gives the hook scripts CRLF, which bash in WSL
-cannot parse. See [ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)."
+This PR also appends managed lines to \`$GITATTR_REL_PATH\`, each with a comment
+above it; nothing else in that file changes. \`.claude/hooks/*.sh text eol=lf\`:
+a Windows \`core.autocrlf=true\` checkout gives the hook scripts CRLF, which
+bash in WSL cannot parse ([ADR 0019](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0019-sync-pins-hook-scripts-to-lf-via-gitattributes.md)).
+\`.githooks/** linguist-vendored\` and \`.claude/hooks/** linguist-vendored\`:
+the synced tooling stops counting as this repo's code in GitHub's language
+bar ([ADR 0048](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0048-sync-marks-synced-tooling-linguist-vendored.md))."
         fi
 
-        if $grec_any_written; then
+        if $retired_any; then
             pr_extra="${pr_extra}
 
-This PR also delivers \`$GREC_REL_PATH\`, a \`Stop\` hook registered as an
-**additional** \`hooks.Stop\` entry in \`$SETTINGS_REL_PATH\` (existing entries
-preserved). Once per session it appends one JSON line to
-\`\${XDG_STATE_HOME:-~/.local/state}/fleet-guidance/sessions.jsonl\` saying
-whether the full fleet guidance or only this repo's stub loaded, read from the
-session transcript; the line holds no paths, names or content. In a cloud
-session with the usage-writer GitHub App's credentials set, it also appends
-that line to a private usage-events branch. It never blocks a session and
-prints nothing."
+This PR also stops delivering the owner-only guidance (ADR 0043): it removes
+\`${retired_files_now[*]:-no files}\` and, from \`$SETTINGS_REL_PATH\`, only the
+hook registrations this sync wrote for those files (matched by command string;
+every other entry is preserved). The fleet owner's own setup installs that
+guidance into the owner's sessions. What any contributor needs is in the
+\`AGENTS.md\` stub and \`$CONTRIBUTOR_REL_PATH\`."
         fi
 
         existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number \

@@ -30,6 +30,18 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-18 — 0.169.1 through 0.169.1
+
+- **Checked:** 2026-11-18T02:20Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.169.1](https://github.com/openai/codex/releases/tag/rust-v0.169.1), published 2026-11-17T22:21Z
+- **Window:** 0.169.1 (2026-11-17T22:21Z), the first stable release after 0.169.0: 1 stable release with no notes (its page says "No verified release highlights available" and lists only a full-changelog compare link, so no bullets are indexed). Pre-releases (`-alpha`) excluded. The publish time is read from the tag page's `datetime` attribute, in UTC.
+- **Source text:** the GitHub release list pages 1-2 and the tag page; page 2 included `rust-v0.169.0`, the previous entry's last version.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`; this run did not re-read their heads and relied on local checkouts, so none is newly assessed.
+
+No notes, so no group.
+
+**Issues:** none.
+
 ### 2026-11-13 — 0.167.1 through 0.169.0
 
 - **Checked:** 2026-11-13T17:40Z, [release log](https://github.com/openai/codex/releases)

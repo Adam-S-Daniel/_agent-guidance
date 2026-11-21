@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /*
  * guidance-overlap.js — warn-only report of repo-specific guidance that looks
- * like it belongs in the shared guidance, and of section opt-ins that do not
- * fit a repo's languages.
+ * like it belongs in the shared guidance.
  *
  * WHY. The daily "Guidance centralization audit" routine was the only thing
  * that looked under each consumer's `## Repo-specific additions` for text that
@@ -19,11 +18,9 @@
  *      a block in another repo's additions.
  *   2. A block that substantially repeats agents-md/base.md or a file under
  *      agents-md/sections/, i.e. a local copy of a rule the fleet already ships.
- *   3. A repo whose `.agents-sync.yml` requests a section for a language GitHub
- *      reports none of. The other direction (a language with no section) is
- *      NOT reported: the sections are opt-in and deliberately unused, and a
- *      byte count cannot tell first-party code from generated output (the
- *      spec's GHA-bench trap). That stays a judgment call.
+ *
+ * (A third check, sections requested for a language the repo lacks, moved to
+ * scripts/language-fit.js, which also covers the other direction.)
  *
  * Blocks come from a real markdown parse (markdown-it token maps), never a line
  * scan, per the fleet rule on shape checks. Similarity is word 5-gram
@@ -37,7 +34,6 @@
  * INPUT. A directory written by drift-report.sh when DRIFT_GUIDANCE_DIR is set:
  *   <owner>__<repo>.agents.md       the repo's AGENTS.md as read
  *   <owner>__<repo>.sections        requested sections, one per line
- *   <owner>__<repo>.languages.json  GitHub's languages map, when it was read
  *
  * USAGE. node scripts/guidance-overlap.js <dir> [--base <base.md>]
  *            [--sections-dir <dir>]
@@ -63,17 +59,6 @@ const MIN_WORDS = 15;
 // A paraphrase with little shared wording is not found; that stays judgment.
 const REPO_THRESHOLD = 0.5;
 const SHARED_THRESHOLD = 0.4;
-
-// Section file -> the GitHub (linguist) language names that justify it.
-const SECTION_LANGUAGES = {
-  docker: ['Dockerfile'],
-  dotnet: ['C#', 'F#', 'Visual Basic .NET'],
-  go: ['Go'],
-  javascript: ['JavaScript'],
-  python: ['Python'],
-  rust: ['Rust'],
-  typescript: ['TypeScript'],
-};
 
 const md = new MarkdownIt();
 
@@ -141,7 +126,7 @@ function readIf(p) {
 function loadRepos(dir) {
   const repos = new Map();
   for (const f of fs.readdirSync(dir).sort()) {
-    const m = f.match(/^(.+?)__(.+)\.(agents\.md|sections|languages\.json)$/);
+    const m = f.match(/^(.+?)__(.+)\.(agents\.md|sections)$/);
     if (!m) continue;
     const name = `${m[1]}/${m[2]}`;
     if (!repos.has(name)) repos.set(name, {});
@@ -149,9 +134,6 @@ function loadRepos(dir) {
     const body = fs.readFileSync(path.join(dir, f), 'utf8');
     if (m[3] === 'agents.md') r.agents = body;
     if (m[3] === 'sections') r.sections = body.split('\n').map((s) => s.trim()).filter(Boolean);
-    if (m[3] === 'languages.json') {
-      try { r.languages = JSON.parse(body); } catch { r.languages = null; }
-    }
   }
   return repos;
 }
@@ -224,18 +206,7 @@ function analyze(repos, shared) {
   }
   copies.sort((x, y) => x.unit.repo.localeCompare(y.unit.repo) || x.unit.start - y.unit.start);
 
-  // 3. Sections requested for a language the repo has none of.
-  const misfits = [];
-  for (const [name, r] of repos) {
-    if (!r.sections || !r.languages) continue;
-    for (const s of r.sections) {
-      const langs = SECTION_LANGUAGES[s];
-      if (!langs) continue;
-      if (!langs.some((l) => (r.languages[l] || 0) > 0)) misfits.push({ repo: name, section: s, langs });
-    }
-  }
-
-  return { units: units.length, repeats, copies, misfits };
+  return { units: units.length, repeats, copies };
 }
 
 function loc(u) {
@@ -268,16 +239,6 @@ function render(result, meta) {
     out.push(`- ${loc(c.unit)} repeats ${Math.round(c.score * 100)}% of ${where}`);
   }
   out.push('');
-  out.push(`### Sections requested for a language the repo does not use (${result.misfits.length})`);
-  out.push('');
-  if (result.misfits.length === 0) out.push('None.');
-  for (const m of result.misfits) {
-    out.push(`- \`${m.repo}\` requests \`${m.section}\`, but GitHub reports no ${m.langs.join(' or ')} code`);
-  }
-  if (meta.noLanguages.length) {
-    out.push('', `Languages not read for: ${meta.noLanguages.map((n) => `\`${n}\``).join(', ')}.`);
-  }
-  out.push('');
   return out.join('\n');
 }
 
@@ -297,8 +258,7 @@ function main(argv) {
   try { repos = loadRepos(dir); } catch (e) { process.stderr.write(`cannot read ${dir}: ${e.code || e.message}\n`); return 2; }
   const { shared, baseRead } = loadShared(base, sectionsDir);
   const result = analyze(repos, shared);
-  const noLanguages = [...repos].filter(([, r]) => r.sections && r.sections.length && !r.languages).map(([n]) => n);
-  process.stdout.write(render(result, { repos: [...repos.values()].filter((r) => r.agents).length, baseRead, noLanguages }));
+  process.stdout.write(render(result, { repos: [...repos.values()].filter((r) => r.agents).length, baseRead }));
   return 0;
 }
 

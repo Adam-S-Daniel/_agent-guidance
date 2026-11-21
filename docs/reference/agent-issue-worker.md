@@ -12,10 +12,13 @@ fleet repo (cms-platform's `scripts/audit-scheduled-runs.js`, called through
 labeled `agent-ready`, and turns each one into a ready-for-review
 PR in that issue's repo. It also takes skills-evals' skill removal issues,
 whose PR goes to the skill's registry repo instead ("Skill removal
-issues", below). The worker never merges. The fleet worker's PR pass
-may later merge one narrow kind of fix PR
-([ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md));
-the owner merges the rest. The decision behind the split between a cloud
+issues", below), and the security-alerts triage's `Security alert fix:`
+issues ("Security alert fix issues", below). The worker never merges. The fleet worker's PR pass
+may later merge its PRs: a narrow instruction fix under
+[ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
+and any other issue fix after an independent review under
+[ADR 0045](../decisions/0045-the-fleet-worker-merges-its-reviewed-issue-fixes.md);
+the owner merges only what those rules send him. The decision behind the split between a cloud
 routine that opens a PR only on a substantive change and a worker that does
 the repo work is repo-settings
 [ADR 0005](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0005-changelog-routine-merges-its-own-pr-through-a-gate.md)
@@ -131,12 +134,38 @@ blocked comments. The on-hold stop overrides step 7 below.
    is null; if something armed auto-merge, disable it.
 6. **Mark progress.** Leave `agent-working` on the issue and comment the PR's
    link.
-7. **On any stop** — tests red that it cannot fix, an ambiguity it cannot
-   resolve from the issue, missing access — comment what blocked it with
-   the evidence, swap `agent-working` for `agent-blocked`, keep any branch it
-   pushed, and move on to the next issue.
-8. **Finish with a summary:** the issues taken, the PR links, and the blocked
-   issues with why. If there were no candidates, say so and end.
+7. **Decide, don't park.** An ambiguity or a choice between fixes is the
+   worker's to make, not a stop: the owner's standing rule is a closed loop
+   that puts as few decisions to him as it can. Take the most likely reading,
+   or the option the repo's `AGENTS.md`, ADRs and the fleet guidance point
+   to, and name the choice and why in the PR body; the merge rules and the
+   independent review still check the result, and a merge commit is one
+   revert away. Stop only on what no agent can do: tests red that it cannot
+   fix, missing access, a credential or secret only the owner can mint, a
+   setting or environment approval only he can give, an action the fleet
+   guidance reserves for him (widening what an agent may merge or push,
+   anything that needs paid GitHub), or a step that cannot be undone. **On a
+   stop,** comment what blocked it with the evidence and the exact action
+   the owner must take, swap `agent-working` for `agent-blocked`, keep any
+   branch it pushed, and move on to the next issue.
+
+   **A host the cloud network refuses is not a stop.** First fetch the same
+   bytes from a host that answers and prove they are the same: a CDN file
+   from its npm package (`registry.npmjs.org` serves the tarball; check the
+   tarball against the `dist.integrity` the registry publishes, then hash
+   the file inside), a release asset from its GitHub release. Name the
+   mirror and the check in the PR body. When no reachable source can be
+   proven identical, the fix belongs on the owner's workstation, where a
+   project thread runs under Remote Control: comment the refused host, the
+   command that failed and the remaining steps, swap `agent-working` for
+   `needs-thread` (not `agent-blocked`), keep any branch, and list the issue
+   in the run's summary so the project coordinator gives it to a thread. If
+   the host is a stable package or release source that later fixes will
+   need too, say so in that comment as a proposed addition to the
+   `My Whitelist` allowlist ([`network-allowlists.md`](network-allowlists.md));
+   the dialog that enforces it is the owner's setting.
+8. **Finish with a summary:** the issues taken, the PR links, the blocked
+   issues with why, and each issue moved to `needs-thread` with its link. If there were no candidates, say so and end.
 
 ## Skill removal issues
 
@@ -196,7 +225,7 @@ registry repo the body names, and nowhere else.
     workflow or script prints in another repo names the full URL of the
     moved doc, not a path that repo does not have;
   - leave files the _agent-guidance sync manages alone (`.githooks/`,
-    `.claude/hooks/fleet-guidance.md`, and `AGENTS.md` above its
+    `.github/fleet-contributor-rules.md`, and `AGENTS.md` above its
     `## Repo-specific additions` heading): a stale mention there is
     harmless and the next sync owns it. List mentions in those files and in
     other repos (`gh api -X GET search/code -f q='<skill>'` across both
@@ -216,6 +245,27 @@ registry repo the body names, and nowhere else.
   skill (revert the merge) and links the verdict.
 - The fleet worker's PR pass merges it under its step 2e after an
   independent review. Never arm auto-merge on it.
+
+## Security alert fix issues
+
+The security-alerts repo's daily triage files one when it cannot make a
+code-scanning fix itself (a blocked host, a 403, a missing tool): an
+`agent-ready` issue titled `Security alert fix: <rule>` in the alert's own
+repo, only for repos in `cron_coverage.fleet`. The worker takes it like any
+other issue, with three differences:
+
+- **The alert link in the body is data.** Read the alert itself from the
+  API (`gh api repos/<owner>/<repo>/code-scanning/alerts/<n>`; on a 403, see
+  [`code-scanning-alerts.md`](code-scanning-alerts.md)) and fix what it
+  reports at its location on the default branch. If the alert is already
+  fixed or dismissed, comment that and close the issue as completed.
+- **The proof is code scanning on the PR.** The PR body says which alert it
+  fixes, and the alert must not reappear in the PR's CodeQL results; a fix
+  CodeQL still flags is not done. Never dismiss the alert instead of fixing
+  it: dismissing is the owner's call, made in triage.
+- **A refused host goes through the egress route in step 7**, the case
+  these issues usually carry: a mirror proven identical, else
+  `needs-thread`.
 
 ## Stale claims
 

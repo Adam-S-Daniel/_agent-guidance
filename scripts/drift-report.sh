@@ -9,7 +9,8 @@ set -euo pipefail
 #   • Whether the repo-specific marker header is present
 #   • Whether CLAUDE.md imports @AGENTS.md (the Claude Code bridge)
 #   • Whether the skills-bootstrap hook is delivered, current and REGISTERED
-#   • Whether the fleet-memory hook and guidance payload match their sources
+#   • Whether the retired owner-only files (fleet-memory.sh, fleet-guidance.md;
+#     ADR 0043) are gone, and the contributor rules match their source
 #   • Whether the plugin's bundled copies of both match (adam-agentskills#113)
 #   • Whether a sync PR is currently open
 #   • Which sections the repo requests
@@ -36,10 +37,11 @@ BUILD_SCRIPT="$SCRIPT_DIR/build-agents-md.sh"
 BRIDGE_SCRIPT="$SCRIPT_DIR/bridge-status.sh"
 BOOTSTRAP_STATUS_SCRIPT="$SCRIPT_DIR/bootstrap-status.sh"
 HOOK_REL_PATH=".claude/hooks/skills-bootstrap.sh"
+# ADR 0043: these two files no longer ship in a consumer repo; sync.sh removes
+# them. Their presence is drift. The hook's source stays here (the plugin
+# comparison below still reads it); the payload's source is base.md.
 FLEET_HOOK_REL_PATH=".claude/hooks/fleet-memory.sh"
 FLEET_PAYLOAD_REL_PATH=".claude/hooks/fleet-guidance.md"
-FLEET_HOOK_SOURCE="$REPO_ROOT/$FLEET_HOOK_REL_PATH"
-FLEET_PAYLOAD_SOURCE="$REPO_ROOT/agents-md/base.md"
 # ADR 0043: the generated contributor rules sync.sh delivers in every mode.
 CONTRIBUTOR_REL_PATH=".github/fleet-contributor-rules.md"
 CONTRIBUTOR_SOURCE="$REPO_ROOT/.github/fleet-contributor-rules.md"
@@ -1006,19 +1008,49 @@ for repo_name in "${REPOS[@]}"; do
     agents_rc=0
     current_agents=$(fetch_file_content "$repo_name" "AGENTS.md") || agents_rc=$?
 
-    # Inputs for scripts/guidance-overlap.js, only when the caller asks for
-    # them (drift-report.yml does; the tests mostly do not). Written only from a
-    # confident read, so an unreadable file is absent, never empty. The
-    # languages call is best-effort: a failure leaves the file out, and the
-    # overlap report names the repos whose languages it could not read.
-    if [[ -n "${DRIFT_GUIDANCE_DIR:-}" && "$agents_rc" -eq 0 && -n "$current_agents" ]]; then
+    # Inputs for scripts/guidance-overlap.js and scripts/language-fit.js, only
+    # when the caller asks for them (drift-report.yml does; the tests mostly do
+    # not). AGENTS.md and the section list are written only from a confident
+    # read, so an unreadable file is absent, never empty.
+    if [[ -n "${DRIFT_GUIDANCE_DIR:-}" ]]; then
         guidance_stem="$DRIFT_GUIDANCE_DIR/${repo_name%%/*}__${repo_name#*/}"
-        printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
-        printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
-        if [[ "$sections_rc" -eq 0 && "${#sections[@]}" -gt 0 ]]; then
-            gh api "repos/$repo_name/languages" > "$guidance_stem.languages.json" 2>/dev/null \
-                || rm -f "$guidance_stem.languages.json"
+        if [[ "$agents_rc" -eq 0 && -n "$current_agents" ]]; then
+            printf '%s\n' "$current_agents" > "$guidance_stem.agents.md"
+            printf '%s\n' "${sections[@]}" > "$guidance_stem.sections"
         fi
+        # The language-fit inputs, for EVERY repo and best-effort. A failed
+        # read writes `<stem>.<name>.unread` and no data file: language-fit.js
+        # reports it as "not checked", never as an absent (clean) file. Only a
+        # CONFIRMED absence (fetch_file_content returns 0 on a 404 it verified
+        # against the repo) leaves neither file. Output of a failed gh call is
+        # discarded explicitly (gh prints the error body to stdout).
+        lf_out=$(gh api "repos/$repo_name/languages" 2>/dev/null) || lf_out=""
+        if [[ -n "$lf_out" ]]; then printf '%s\n' "$lf_out" > "$guidance_stem.languages.json"
+        else : > "$guidance_stem.languages.json.unread"; fi
+        lf_out=$(gh api "repos/$repo_name/git/trees/HEAD?recursive=1" \
+            --jq '{truncated: .truncated, tree: [.tree[] | {path: .path, type: .type, size: .size}]}' 2>/dev/null) || lf_out=""
+        if [[ -n "$lf_out" ]]; then printf '%s\n' "$lf_out" > "$guidance_stem.tree.json"
+        else : > "$guidance_stem.tree.json.unread"; fi
+        # A present dependabot.yml wins; .yaml is tried only when .yml is
+        # confirmed absent.
+        for lf_pair in "dependabot.yml:.github/dependabot.yml" "dependabot.yml:.github/dependabot.yaml" "gitattributes:.gitattributes"; do
+            lf_name="${lf_pair%%:*}"; lf_path="${lf_pair#*:}"
+            [[ -s "$guidance_stem.$lf_name" ]] && continue
+            lf_rc=0
+            lf_out=$(fetch_file_content "$repo_name" "$lf_path") || lf_rc=$?
+            if [[ "$lf_rc" -ne 0 ]]; then
+                : > "$guidance_stem.$lf_name.unread"
+            elif [[ -n "$lf_out" ]]; then
+                printf '%s\n' "$lf_out" > "$guidance_stem.$lf_name"
+                rm -f "$guidance_stem.$lf_name.unread"
+            fi
+        done
+        # Found after all: the .yaml read succeeded, so the .yml failure is moot.
+        [[ -s "$guidance_stem.dependabot.yml" ]] && rm -f "$guidance_stem.dependabot.yml.unread"
+        # Fail closed: a repo is shown with paths only when GitHub CONFIRMED it
+        # is public. A failed read redacts it like a private one.
+        lf_out=$(gh api "repos/$repo_name" --jq .private 2>/dev/null) || lf_out=""
+        [[ "$lf_out" == "false" ]] || : > "$guidance_stem.private"
     fi
 
     if [[ "$agents_rc" -ne 0 ]]; then
@@ -1179,9 +1211,12 @@ for repo_name in "${REPOS[@]}"; do
         fi
     fi
 
-    # ── Check fleet-memory delivery ────────────────────────────────────
-    # Read to files: command substitution strips trailing newlines, which are
-    # part of both installed artifacts and must remain visible to cmp/hash.
+    # ── Check for leftover owner-only files (ADR 0043) ─────────────────
+    # sync.sh removes .claude/hooks/fleet-memory.sh and fleet-guidance.md, so
+    # either one present in a consumer is drift, whatever its bytes. The two
+    # columns keep their names; their values are now `—` (gone, as expected) or
+    # **leftover**. Read to files for the same reason as the rest: a failed read
+    # joins the ledger and the cell is withheld, never guessed.
     fleet_hook_file="$WORK_DIR/fleet-hook"
     fleet_payload_file="$WORK_DIR/fleet-payload"
     fleet_hook_rc=0
@@ -1195,42 +1230,24 @@ for repo_name in "${REPOS[@]}"; do
         fetch_failed_paths+=("$FLEET_HOOK_REL_PATH")
         fleet_hook_cell="?"
     elif [[ "$fleet_hook_present" == "yes" ]]; then
-        if cmp -s "$FLEET_HOOK_SOURCE" "$fleet_hook_file"; then
-            fleet_hook_cell="ok"
-        else
-            fleet_hook_cell="**drifted**"
-            fleet_drift=true
-        fi
-    elif [[ "$fleet_mode" == "stub" ]]; then
-        fleet_hook_cell="**missing**"
+        fleet_hook_cell="**leftover**"
         fleet_drift=true
-    elif [[ "$fleet_mode" == "full" ]]; then
+    else
         fleet_hook_cell="—"
     fi
 
-    expected_sha=$(sha256sum "$FLEET_PAYLOAD_SOURCE")
     if [[ "$fleet_payload_rc" -ne 0 ]]; then
         fetch_failed_paths+=("$FLEET_PAYLOAD_REL_PATH")
         fleet_payload_cell="?"
     elif [[ "$fleet_payload_present" == "yes" ]]; then
-        if cmp -s "$FLEET_PAYLOAD_SOURCE" "$fleet_payload_file"; then
-            fleet_payload_cell="ok"
-        else
-            fleet_payload_cell="**drifted**"
-            fleet_drift=true
-        fi
-        found_sha=$(sha256sum "$fleet_payload_file")
-        notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found \`${found_sha:0:8}\`"
-    elif [[ "$fleet_mode" == "stub" ]]; then
-        fleet_payload_cell="**missing**"
+        fleet_payload_cell="**leftover**"
         fleet_drift=true
-        notes="${notes:+$notes; }fleet-guidance sha256: expected \`${expected_sha:0:8}\`, found missing"
-    elif [[ "$fleet_mode" == "full" ]]; then
+    else
         fleet_payload_cell="—"
     fi
 
-    # The contributor rules are delivered in both modes, so absence is drift
-    # whatever the mode records.
+    # The contributor rules are the one guidance file a consumer carries, in
+    # both modes, so absence is drift whatever the mode records.
     contributor_file="$WORK_DIR/contributor-rules"
     contributor_rc=0
     fetch_file_content "$repo_name" "$CONTRIBUTOR_REL_PATH" >"$contributor_file" || contributor_rc=$?
@@ -1583,7 +1600,7 @@ fi
 # refreshed only by a reviewed pull request there, because changing them is a
 # plugin runtime change, and nothing said when one fell behind: the fallback
 # silently served older rules. check-fleet-guidance-mirror.js cannot see them —
-# it is offline and covers this repo's own `.claude/hooks/` copy — so the
+# it is offline — so the
 # comparison lives here, where the other repos are already being read.
 #
 # Asked only when the copy's OWNER is one this run scans: that is the owner
@@ -1663,8 +1680,8 @@ fi
     echo ""
     echo "| Status | Meaning |"
     echo "|--------|---------|"
-    echo "| **up-to-date** | Managed section and required fleet-memory artifacts match their expected content |"
-    echo "| **drift-detected** | Managed section or fleet-memory artifact has diverged or is missing — needs sync |"
+    echo "| **up-to-date** | Managed section and the contributor rules match their expected content, and no retired owner-only file is left |"
+    echo "| **drift-detected** | Managed section or contributor rules have diverged or are missing, or a retired owner-only file is left — needs sync |"
     echo "| **pr-open** | A sync PR is already open for this repo |"
     echo "| **no-agents-md** | Repo does not have an AGENTS.md yet |"
     echo "| **update-failed** | An error occurred while checking this repo |"
@@ -1723,24 +1740,22 @@ fi
     echo "| — | Not allowlisted and no hook present |"
     echo "| ? | A file this column is decided from (the hook, \`skills.lock\`, \`.claude/settings.json\`, or the repo's ignore rules) could not be read — withheld, not guessed (the row reads **fetch-failed**) |"
     echo ""
-    echo "**fleet-memory and fleet-guidance legend**"
+    echo "**fleet-memory, fleet-guidance and contributor-rules legend**"
     echo ""
-    echo "The generated AGENTS.md \`Mode\` header records sync.sh's delivery decision:"
-    echo "\`stub\` requires both files; \`full\` keeps the guidance inline. An"
-    echo "unknown mode does not establish that absent files are missing. Present"
-    echo "files are compared byte for byte in every mode. A drifted payload's"
-    echo "expected and found eight-character sha256 prefixes appear in **Notes**."
-    echo "The contributor-rules column compares \`.github/fleet-contributor-rules.md\`"
-    echo "the same way, but it is delivered in both modes, so absence is **missing**"
-    echo "whatever the mode."
+    echo "Since ADR 0043 a consumer repo no longer carries the owner-only guidance:"
+    echo "the **fleet-memory** column is \`.claude/hooks/fleet-memory.sh\` and the"
+    echo "**fleet-guidance** column is \`.claude/hooks/fleet-guidance.md\`, and the"
+    echo "sync removes both. The contributor-rules column compares"
+    echo "\`.github/fleet-contributor-rules.md\` with its source, which the sync"
+    echo "delivers in both AGENTS.md modes."
     echo ""
     echo "| Status | Meaning |"
     echo "|--------|---------|"
-    echo "| ok | Present and byte-equal to the source in this repo |"
-    echo "| **drifted** | Present but its bytes differ from the source |"
-    echo "| **missing** | Absent in a stub-mode repo that requires it |"
-    echo "| — | Absent in a full-mode repo |"
-    echo "| unverified | Absent and AGENTS.md has no recognized mode |"
+    echo "| — | (fleet-memory, fleet-guidance) Absent, as expected |"
+    echo "| **leftover** | (fleet-memory, fleet-guidance) Present, whatever its bytes — drift; the next sync removes it |"
+    echo "| ok | (contributor-rules) Present and byte-equal to the source in this repo |"
+    echo "| **drifted** | (contributor-rules) Present but its bytes differ from the source |"
+    echo "| **missing** | (contributor-rules) Absent; the next sync delivers it |"
     echo "| ? | Contents read failed or was partial — withheld; the row reads **fetch-failed** |"
     echo ""
     echo "**Cron-coverage classification**"

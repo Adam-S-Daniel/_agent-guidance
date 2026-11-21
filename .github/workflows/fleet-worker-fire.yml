@@ -1,32 +1,57 @@
 name: Fire fleet worker
 
-# Starts the fleet worker routine (docs/routines/fleet-worker.md) every 3
-# hours. The claude.ai Routines page offers hourly or daily, nothing between,
-# and hourly cost about $150-215 a week in sessions that mostly found nothing
-# to do (2026-11-08 measurement), so the schedule lives here and the routine
-# keeps only its API trigger.
+# Starts the two scheduled tasks that docs/routines/fleet-worker.md describes:
+# the Fleet worker (general maintenance) and the Loop worker (the continuous
+# improvement system's work), on separate cadences so their costs are
+# measured separately (ADR 0046). The claude.ai Routines page offers hourly or
+# daily, nothing between, and hourly cost about $150-215 a week in sessions
+# that mostly found nothing to do (2026-11-08 measurement), so the schedule
+# lives here and each task keeps only its API trigger.
 #
 # * schedule and workflow_dispatch only. No pull_request or push, so no path
 #   filter and not a required check. scheduled-run-health.yml reports failed
 #   scheduled runs.
-# * Configuration lives in one place each, with no default: the routine's
-#   fire URL is a repository variable, the fire bearer an Actions secret. A
-#   missing one fails the run naming it, so a missed fire shows red.
+# * One matrix job fires both tasks, so the gating below is written once. Each
+#   matrix entry names its own variables and secret. The step reads the
+#   variables by name (`vars[matrix.url_var]`) and picks the bearer from two
+#   named secrets by worker, so an unset one can never fall through to the
+#   other task's value. fail-fast is off, and each entry has its own
+#   concurrency group, so a failed or slow fire of one never cancels or
+#   queues behind the other.
+# * Configuration lives in one place each, with no default: a task's fire URL
+#   is a repository variable, its fire bearer an Actions secret. A missing
+#   one fails that fire naming it, so a missed fire shows red. Fleet worker:
+#   FLEET_WORKER_FIRE_URL and FLEET_WORKER_FIRE_BEARER. Loop worker:
+#   LOOP_WORKER_FIRE_URL and LOOP_WORKER_FIRE_BEARER.
 # * Nothing from the event is interpolated into a `run:` block; the only
-#   `${{ }}` uses are the `env:` that hands the URL and bearer to the step.
+#   `${{ }}` uses are the `env:` that hands the URL, bearer and cadence to
+#   the step.
 # * The bearer reaches curl on stdin through --config -, never argv, and the
 #   response body is never printed.
 # * No `uses:` step, so actions.lock lists this file with no actions.
-# * An optional repository variable, FLEET_WORKER_EVERY_HOURS (3, 6, 12, 24 or
-#   168), thins the schedule for a smaller Claude plan. Each cron line below
-#   names the longest cadence its slots belong to, and a scheduled run fires
-#   only when its line (github.event.schedule, read from the event file) is
-#   on that cadence. Unset, every scheduled run fires (every 3 hours). A
-#   dispatch always fires. 168 fires weekly, on the Tuesday 00:20 UTC line.
-#   Any other value fails the run naming the variable (acsi-kit#29).
-#   The cadence never comes from the clock: GitHub starts scheduled runs one
-#   to two hours late, so the earlier "UTC hour is a multiple" test skipped
-#   every fire from 2026-11-10 to 2026-11-12 once the variable was 6.
+# * A repository variable per task (FLEET_WORKER_EVERY_HOURS and
+#   LOOP_WORKER_EVERY_HOURS; 3, 6, 12, 24 or 168) thins that task's schedule
+#   for a smaller Claude plan. Each cron line below names the longest cadence
+#   its slots belong to, and a scheduled run fires a task only when its line
+#   (github.event.schedule, read from the event file) is on that task's
+#   cadence. For the Fleet worker the variable is optional: unset, every
+#   scheduled run fires (every 3 hours). For the Loop worker it is required,
+#   with no default, because the loop's spend must fit the weekly eval cap:
+#   unset fails the fire naming it. A dispatch fires both tasks regardless of
+#   cadence. 168 fires weekly, on the Tuesday 00:20 UTC line. Any other value
+#   fails the fire naming the variable (acsi-kit#29). The cadence never comes
+#   from the clock: GitHub starts scheduled runs one to two hours late, so the
+#   earlier "UTC hour is a multiple" test skipped every fire from 2026-11-10
+#   to 2026-11-12 once the variable was 6.
+# * The pace hold (Adam, 2026-11-20: stop loop runs while the account is
+#   ahead of its weekly pace; skills-evals#1111 and #1120): a scheduled Loop
+#   worker fire first reads skills-evals' `scripts/allowance_guard.py hold`
+#   against its public persistent/eval-results branch and is skipped, with a
+#   notice, while it prints pace_hold=true. Anything else (a failed clone, no
+#   PyYAML, no verdict) fails the run and fires nothing: fail closed, and red
+#   so it is seen. A dispatch is a person's own choice and skips the hold, as
+#   it skips the cadence. The Fleet worker is maintenance, not loop work, and
+#   is not held.
 
 on:
   schedule:
@@ -39,25 +64,64 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: fleet-worker-fire
-  cancel-in-progress: false
-
 jobs:
   fire:
+    name: Fire the ${{ matrix.worker }} worker routine
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # Per-entry groups, never a workflow-level one: the two fires must neither
+    # cancel nor wait on each other, and a fire still running when the next
+    # slot starts queues behind its own task only (cancel-in-progress false).
+    concurrency:
+      group: ${{ matrix.concurrency }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - worker: fleet
+            concurrency: fleet-worker-fire
+            url_var: FLEET_WORKER_FIRE_URL
+            bearer_var: FLEET_WORKER_FIRE_BEARER
+            every_var: FLEET_WORKER_EVERY_HOURS
+            every_required: 'false'
+            text: Scheduled fire from fleet-worker-fire.yml
+          - worker: loop
+            concurrency: loop-worker-fire
+            url_var: LOOP_WORKER_FIRE_URL
+            bearer_var: LOOP_WORKER_FIRE_BEARER
+            every_var: LOOP_WORKER_EVERY_HOURS
+            every_required: 'true'
+            text: Scheduled fire of the loop worker from fleet-worker-fire.yml
     steps:
-      - name: Fire the fleet worker routine
+      - name: Fire the ${{ matrix.worker }} worker routine
         env:
-          FIRE_URL: ${{ vars.FLEET_WORKER_FIRE_URL }}
-          FIRE_BEARER: ${{ secrets.FLEET_WORKER_FIRE_BEARER }}
-          EVERY_HOURS: ${{ vars.FLEET_WORKER_EVERY_HOURS }}
+          FIRE_URL: ${{ vars[matrix.url_var] }}
+          # Named secrets only, never a dynamic secrets index, which hands every
+          # repository secret to the runner (CodeQL excessive-secrets-exposure).
+          FLEET_BEARER: ${{ secrets.FLEET_WORKER_FIRE_BEARER }}
+          LOOP_BEARER: ${{ secrets.LOOP_WORKER_FIRE_BEARER }}
+          EVERY_HOURS: ${{ vars[matrix.every_var] }}
+          WORKER: ${{ matrix.worker }}
+          URL_VAR: ${{ matrix.url_var }}
+          BEARER_VAR: ${{ matrix.bearer_var }}
+          EVERY_VAR: ${{ matrix.every_var }}
+          EVERY_REQUIRED: ${{ matrix.every_required }}
+          FIRE_TEXT: ${{ matrix.text }}
         run: |
           set -euo pipefail
+          case "$WORKER" in
+            fleet) FIRE_BEARER="$FLEET_BEARER" ;;
+            loop) FIRE_BEARER="$LOOP_BEARER" ;;
+            *) echo "::error::unknown worker: $WORKER"; exit 1 ;;
+          esac
+          if [[ "$EVERY_REQUIRED" == true && -z "${EVERY_HOURS:-}" ]]; then
+            echo "::error::not configured: variable $EVERY_VAR (3, 6, 12, 24 or 168). It has no default; set it in this repository's Actions settings."
+            exit 1
+          fi
           case "${EVERY_HOURS:-}" in
             ""|3|6|12|24|168) ;;
-            *) echo "::error::variable FLEET_WORKER_EVERY_HOURS must be 3, 6, 12, 24 or 168, or unset"; exit 1 ;;
+            *) echo "::error::variable $EVERY_VAR must be 3, 6, 12, 24 or 168$([[ "$EVERY_REQUIRED" == true ]] || echo ", or unset")"; exit 1 ;;
           esac
           if [[ -n "${EVERY_HOURS:-}" && "${GITHUB_EVENT_NAME:-}" == schedule ]]; then
             line=$(jq -r '.schedule // ""' "$GITHUB_EVENT_PATH")
@@ -70,19 +134,41 @@ jobs:
               *) echo "::error::unknown schedule line: $line"; exit 1 ;;
             esac
             if (( slot < EVERY_HOURS )); then
-              echo "::notice::skipped: FLEET_WORKER_EVERY_HOURS is $EVERY_HOURS and the cron line '$line' is on the $slot-hour cadence"
+              echo "::notice::skipped: $EVERY_VAR is $EVERY_HOURS and the cron line '$line' is on the $slot-hour cadence"
               exit 0
             fi
           fi
           missing=()
-          [[ -n "$FIRE_URL" ]] || missing+=("variable FLEET_WORKER_FIRE_URL")
-          [[ -n "$FIRE_BEARER" ]] || missing+=("secret FLEET_WORKER_FIRE_BEARER")
+          [[ -n "$FIRE_URL" ]] || missing+=("variable $URL_VAR")
+          [[ -n "$FIRE_BEARER" ]] || missing+=("secret $BEARER_VAR")
           if (( ${#missing[@]} )); then
-            echo "::error::not configured: ${missing[*]}. Set them in this repository's Actions settings; the routine's API trigger on claude.ai gives both."
+            echo "::error::not configured: ${missing[*]}. Set them in this repository's Actions settings; the task's API trigger on claude.ai gives both."
             exit 1
           fi
+          if [[ "$WORKER" == loop && "${GITHUB_EVENT_NAME:-}" == schedule ]]; then
+            pace=$(mktemp -d)
+            src=https://github.com/Adam-S-Daniel/skills-evals.git
+            hold=""
+            if git clone -q --depth 1 --filter=blob:none --sparse "$src" "$pace/se" &&
+              git -C "$pace/se" sparse-checkout set scripts harness evals vendor &&
+              git clone -q --depth 1 --filter=blob:none --sparse --branch persistent/eval-results "$src" "$pace/er" &&
+              git -C "$pace/er" sparse-checkout set routine-results &&
+              { python3 -c 'import yaml' 2>/dev/null ||
+                python3 -m pip install -q --target "$pace/py" pyyaml==6.0.3; }; then
+              hold=$(cd "$pace/se" && PYTHONPATH="$pace/py" python3 scripts/allowance_guard.py hold --results-tree "$pace/er" | tail -n 1) || hold=""
+            fi
+            case "$hold" in
+              pace_hold=true)
+                echo "::notice::skipped: the account is ahead of its weekly pace (skills-evals allowance_guard.py hold)"
+                exit 0 ;;
+              pace_hold=false) ;;
+              *)
+                echo "::error::could not read the pace hold from skills-evals; the loop worker was not fired"
+                exit 1 ;;
+            esac
+          fi
 
-          body=$(jq -n --arg t "Scheduled fire from fleet-worker-fire.yml" '{text: $t}')
+          body=$(jq -n --arg t "$FIRE_TEXT" '{text: $t}')
           response=$(mktemp)
           code=$(printf 'header = "Authorization: Bearer %s"\n' "$FIRE_BEARER" |
             curl -sS --config - -o "$response" -w '%{http_code}' -X POST \
@@ -97,4 +183,4 @@ jobs:
             echo "::error::fire failed (HTTP $code)"
             exit 1
           fi
-          echo "::notice::fleet worker fired"
+          echo "::notice::$WORKER worker fired"

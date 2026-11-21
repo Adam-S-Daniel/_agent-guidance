@@ -407,16 +407,16 @@ guidance view.
 The harness is described in skills-evals'
 [DESIGN.md "Guidance subject"](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md).
 
-### Payload mirror
+### Guidance markers and evidence pointers
 
-This repo's own sessions load `.claude/hooks/fleet-guidance.md`, a hand-made
-byte-identical copy of `agents-md/base.md` (the sync excludes this repo, so
-nothing refreshes it). [`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
-(CI: the "Fleet payload mirrors base.md" step in
-[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails when
-the two differ, naming the `cp` that fixes it, and when a `docs/evidence/<file>`
-pointer in `base.md`, `stub.md` or `sections/*.md` names a file that does not
-exist.
+[`scripts/check-fleet-guidance-mirror.js`](scripts/check-fleet-guidance-mirror.js)
+(CI: the "Guidance markers and evidence pointers" step in
+[`ci.yml`](.github/workflows/ci.yml), every pull request and push to main) fails
+when a `docs/evidence/<file>` pointer in `base.md`, `stub.md` or `sections/*.md`
+names a file that does not exist, or when a `guidance-marker:` line the
+guidance-load Stop hook counts is missing, duplicated or in the wrong file. No
+repo carries a copy of `base.md` any more (ADR 0043); the owner's own setup
+installs it into the owner's sessions.
 
 ### Agent Markdown warnings
 
@@ -426,8 +426,7 @@ push and pull request) is advisory — owner decision D5, "Warn" — and exits 0
 whatever it finds, so it cannot fail the `checks` job or, through it, the
 required `test` context. It prints one
 `::warning file=...,line=...` annotation per finding over the Markdown agents
-read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`,
-`.claude/hooks/fleet-guidance.md`):
+read (`agents-md/**`, `AGENTS.md`, `CLAUDE.md`, any `SKILL.md`):
 
 - **British spellings**, from a fixed word list in the script (no generic
   `-ise` pattern). Fenced and inline code, block quotes, HTML and URLs are
@@ -823,8 +822,7 @@ No workflow here can judge whether a paragraph under one repo's
 mechanical, though, so the nightly drift report does it: its
 "Repo-specific guidance overlap" section
 ([`scripts/guidance-overlap.js`](scripts/guidance-overlap.js)) lists blocks
-repeated across repos, local copies of `base.md` or a section file, and
-sections requested for a language a repo does not use. It names repos and
+repeated across repos and local copies of `base.md` or a section file. It names repos and
 line ranges only, because the report is public and some repos are private.
 Nothing in it fails the run. The weekly
 [Fleet health audit](docs/routines/fleet-health-audit.md) (item 8) makes the
@@ -833,6 +831,16 @@ judgment on each entry.
 This replaced the daily "Guidance centralization audit" Routine, retired on
 2026-11-09; its spec and run log are kept as
 [evidence](docs/evidence/2026-11-09-guidance-centralization-audit-retired.md).
+
+## Language fit
+
+The nightly drift report also carries a "Language fit" section
+([`scripts/language-fit.js`](scripts/language-fit.js)). Per repo it finds
+sections requested for a language the repo lacks (and languages with no
+section), languages whose GitHub bytes are mostly fixture, generated or
+vendored files with no linguist attribute, and manifests Dependabot does not
+cover. Private repos show a category and a count only. Findings feed the
+"Language fit findings" issue, which a fleet worker fixes one repo per PR.
 
 ## Layout
 
