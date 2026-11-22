@@ -15,7 +15,10 @@ repository variable per task (`FLEET_WORKER_EVERY_HOURS`, optional, and
 schedule for a smaller plan; it gates on which cron line started the run,
 never the clock, because GitHub starts scheduled runs one to two hours late.
 `FLEET_WORKER_EVERY_HOURS` is set to 6 in this repository (seen in the fire
-job logs on 2026-11-12), so the Fleet worker fires every 6 hours. Why the
+job logs on 2026-11-12), so the Fleet worker fires every 6 hours. A
+scheduled Loop worker fire is skipped while skills-evals' pace hold is on
+(the account ahead of its weekly pace; `allowance_guard.py hold`), and fails
+closed when the hold cannot be read; a dispatch skips the hold. Why the
 worker exists, and why it may merge the
 kinds of PR its merge rule allows: [ADR 0025](../decisions/0025-a-cloud-fleet-worker-merges-narrow-instruction-fixes.md),
 widened to skill text, fleet guidance and partial fixes by [ADR 0028](../decisions/0028-the-fleet-worker-merges-skill-guidance-and-partial-fixes.md),
@@ -744,6 +747,14 @@ reaches the owner's phone. A PR already labeled is not repeated, so the
 owner hears about each PR once.
 
 ## The issue pass
+
+First hand back half-done claims: run
+`SYNC_OWNERS="<the owners above>" node scripts/stale-claims.js --apply` from
+this repo's checkout ([`agent-issue-worker.md`](../reference/agent-issue-worker.md),
+"Stale claims"). It requeues every `agent-working` issue whose `Refs` PR
+merged, whoever merged it, so the candidate list below includes them. Its
+`stale` and `closes-open` rows go in the summary as stale claims; an exit 1
+is noted in the summary and the pass goes on.
 
 Follow [`agent-issue-worker.md`](../reference/agent-issue-worker.md), "Each
 run", with the cloud notes in its "Where it runs" section. Take only the issues

@@ -822,8 +822,7 @@ No workflow here can judge whether a paragraph under one repo's
 mechanical, though, so the nightly drift report does it: its
 "Repo-specific guidance overlap" section
 ([`scripts/guidance-overlap.js`](scripts/guidance-overlap.js)) lists blocks
-repeated across repos, local copies of `base.md` or a section file, and
-sections requested for a language a repo does not use. It names repos and
+repeated across repos and local copies of `base.md` or a section file. It names repos and
 line ranges only, because the report is public and some repos are private.
 Nothing in it fails the run. The weekly
 [Fleet health audit](docs/routines/fleet-health-audit.md) (item 8) makes the
@@ -832,6 +831,16 @@ judgment on each entry.
 This replaced the daily "Guidance centralization audit" Routine, retired on
 2026-11-09; its spec and run log are kept as
 [evidence](docs/evidence/2026-11-09-guidance-centralization-audit-retired.md).
+
+## Language fit
+
+The nightly drift report also carries a "Language fit" section
+([`scripts/language-fit.js`](scripts/language-fit.js)). Per repo it finds
+sections requested for a language the repo lacks (and languages with no
+section), languages whose GitHub bytes are mostly fixture, generated or
+vendored files with no linguist attribute, and manifests Dependabot does not
+cover. Private repos show a category and a count only. Findings feed the
+"Language fit findings" issue, which a fleet worker fixes one repo per PR.
 
 ## Layout
 

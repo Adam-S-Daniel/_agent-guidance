@@ -1,0 +1,33 @@
+# Managed by _agent-guidance's templates/dependabot/; overwritten on drift, so
+# change the template, not this copy. Why the groups and the ignore:
+# https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/dependabot-grouping.md
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      # Own actions skip the cooldown, so they stay out of the cooled-down group.
+      exclude: ["Adam-S-Daniel/*", "jodidaniel/*"]
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["Adam-S-Daniel/*", "jodidaniel/*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  # The synced agent-checks dependency; _agent-guidance updates the source copy.
+  - package-ecosystem: npm
+    directory: "/.githooks/dated-phrasing"
+    schedule:
+      interval: weekly
+    # Holds back security updates too, so the synced package-lock.json copies
+    # do not each get a PR that the sync then overwrites.
+    ignore:
+      - dependency-name: "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30

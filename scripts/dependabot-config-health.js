@@ -17,7 +17,7 @@
  * outside that one repo's own PR/commit UI.
  *
  * THE REMEDY. A daily sweep of every non-fork, non-archived repo under both
- * SYNC_OWNERS, using three signals per repo:
+ * SYNC_OWNERS, using five signals per repo:
  *   1. GitHub's own `.github/dependabot.yml` check run (app slug
  *      `dependabot`) on the commit that brought the config onto the default
  *      branch — INVALID when it concludes failure.
@@ -26,20 +26,26 @@
  *   3. Whether every `updates[]` entry sets a `cooldown` with `default-days`
  *      (parsed with YAML, no regex) — NO-COOLDOWN when one does not. The
  *      fleet convention is `default-days: 7` so a release waits a week before
- *      a version-update PR opens (security updates bypass it). Every
- *      `github-actions` entry also lists `exclude: ["Adam-S-Daniel/*",
- *      "jodidaniel/*"]` (case-sensitive), because the owner's own actions are
- *      gated code and skip the wait — OWN-ACTIONS-COOLDOWN when an entry
- *      lacks either pattern. cms-platform and its consumers adamdaniel.ai and
- *      jodidaniel.com are exempt (PLATFORM_MANAGED_REPOS): their refs move
- *      through platform-bump. A repo with workflows but no config at all is
- *      NOT a finding here: that verdict stays `no-config`, since telling it
- *      apart needs a workflow-file read per repo and a new issue flow. These
- *      signals read the config text alone, so they need no extra API call.
+ *      a version-update PR opens (security updates bypass it); an entry for
+ *      cms-platform's own releases excludes them with `exclude:
+ *      ["Adam-S-Daniel/cms-platform/*"]`. This signal reads the config text
+ *      alone, so it needs no extra API call.
+ *   4. SHAPE (fleet-managed repos only, config text alone): a github-actions
+ *      entry must exclude both owners' own actions from the cooldown and
+ *      carry a version-updates group and a security-updates group, and set
+ *      no `semver-*-days`; an npm, bundler or pip entry (unless it ignores
+ *      everything) must carry a security-updates group. See shapeGaps and
+ *      docs/reference/dependabot-grouping.md.
+ *   5. STALE PRs (fleet-managed repos only, one extra paged API call): a
+ *      Dependabot PR open more than STALE_PR_DAYS days. A healthy PR merges
+ *      within a few days, so an older one is stuck (failing check, conflict,
+ *      or a sibling-PR strand that grouping prevents).
+ *   Fleet-managed means returned by the owner listing and not named under
+ *   repos.yml's top-level `exclude`. Signals 1-3 cover every listed repo.
  * A finding files or updates a single `ci`-labelled tracking issue in the
  * AFFECTED repo (never here), keyed on a hidden evidence marker so repeat
- * runs don't spam duplicate comments, and the issue is shut once both
- * signals clear.
+ * runs don't spam duplicate comments, and the issue is shut once every
+ * signal clears.
  *
  * MEASURED FACTS THE DESIGN RESTS ON:
  *
@@ -159,6 +165,11 @@ const MARKER = "<!-- dependabot-config-health -->";
 const ISSUE_TITLE = "Dependabot config is invalid or silent (automated sweep)";
 const DEFAULT_LABEL = "ci";
 const MAX_PAGES = 10; // pagination ceiling for every list* call below
+// The auto-merge sweep runs daily and the fleet worker waits 24h before
+// `@dependabot rebase`, so a healthy Dependabot PR merges within about 2-3
+// days; strictly more than 4 days open is stale.
+const STALE_PR_DAYS = 4;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ── Errors ─────────────────────────────────────────────────────────────────
 
@@ -293,6 +304,9 @@ function buildApi(env) {
         `repos/${repo}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=100&page=${page}`,
       ]);
     },
+    openPullsPage(owner, repo, page) {
+      return getJson(owner, ["api", `repos/${repo}/pulls?state=open&per_page=100&page=${page}`]);
+    },
     issueCommentsPage(owner, repo, number, page) {
       return getJson(owner, ["api", `repos/${repo}/issues/${number}/comments?per_page=100&page=${page}`]);
     },
@@ -343,50 +357,22 @@ function buildApi(env) {
 // the space-separated hidden evidence block or close its HTML comment.
 // Unparseable YAML yields [] — that is the invalid-config signal's job.
 function cooldownGaps(text) {
-  let doc;
-  try {
-    doc = YAML.parse(text);
-  } catch {
-    return [];
-  }
-  const updates = doc && typeof doc === "object" ? doc.updates : undefined;
-  if (!Array.isArray(updates)) return [];
+  const updates = parseUpdates(text);
   const gaps = [];
   for (const u of updates) {
-    if (!u || typeof u !== "object") continue;
     const cd = u.cooldown;
     const ok =
       cd && typeof cd === "object" && !Array.isArray(cd) &&
       cd["default-days"] !== undefined && cd["default-days"] !== null;
     if (ok) continue;
-    const eco = typeof u["package-ecosystem"] === "string" ? u["package-ecosystem"] : "unknown";
-    let dir = "?";
-    if (typeof u.directory === "string") dir = u.directory;
-    else if (Array.isArray(u.directories)) dir = u.directories.filter((d) => typeof d === "string").join(",") || "?";
-    gaps.push(`${eco}@${dir}`.replace(/[^A-Za-z0-9_.\/*@,-]/g, "_"));
+    gaps.push(entryLabel(u));
   }
   return gaps;
 }
 
-// Repos whose action refs move through cms-platform's platform-bump, so their
-// github-actions entries need not carry the own-actions exclude patterns.
-// Explicit full names: repos.yml has no per-repo attribute for this.
-const PLATFORM_MANAGED_REPOS = new Set([
-  "Adam-S-Daniel/cms-platform",
-  "Adam-S-Daniel/adamdaniel.ai",
-  "jodidaniel/jodidaniel.com",
-]);
-
-// The exact (case-sensitive) patterns every github-actions entry excludes
-// from its cooldown, so the owner's own actions are bumped without the wait.
-const OWN_ACTION_EXCLUDES = ["Adam-S-Daniel/*", "jodidaniel/*"];
-
-// ownActionsExcludeGaps(text, repo) — one label per `github-actions`
-// `updates[]` entry whose `cooldown.exclude` lacks either OWN_ACTION_EXCLUDES
-// pattern. Parsed with YAML. A PLATFORM_MANAGED_REPOS repo yields []. Labels
-// use the same restricted alphabet as cooldownGaps. Unparseable YAML yields [].
-function ownActionsExcludeGaps(text, repo) {
-  if (PLATFORM_MANAGED_REPOS.has(repo)) return [];
+// parseUpdates(text) — the object entries of `updates[]`, or [] for
+// unparseable YAML or a missing/non-array `updates`.
+function parseUpdates(text) {
   let doc;
   try {
     doc = YAML.parse(text);
@@ -395,19 +381,81 @@ function ownActionsExcludeGaps(text, repo) {
   }
   const updates = doc && typeof doc === "object" ? doc.updates : undefined;
   if (!Array.isArray(updates)) return [];
+  return updates.filter((u) => u && typeof u === "object");
+}
+
+// entryLabel(u) — `<ecosystem>@<directory>`, restricted to characters that
+// cannot break the space-separated hidden evidence block.
+function entryLabel(u) {
+  const eco = typeof u["package-ecosystem"] === "string" ? u["package-ecosystem"] : "unknown";
+  let dir = "?";
+  if (typeof u.directory === "string") dir = u.directory;
+  else if (Array.isArray(u.directories)) dir = u.directories.filter((d) => typeof d === "string").join(",") || "?";
+  return `${eco}@${dir}`.replace(/[^A-Za-z0-9_.\/*@,-]/g, "_");
+}
+
+const SHAPE_ECOSYSTEMS_SECURITY_ONLY = ["npm", "bundler", "pip"];
+const OWN_ACTION_PATTERNS = ["Adam-S-Daniel/*", "jodidaniel/*"];
+
+// shapeGaps(text) — one `<label>:<problem>` per way an `updates[]` entry
+// departs from the fleet's grouping convention
+// (docs/reference/dependabot-grouping.md, templates/dependabot/dependabot.yml).
+// Problems: own-not-excluded, no-version-group, no-security-group,
+// semver-days (github-actions); no-security-group (npm, bundler, pip, unless
+// the entry ignores every dependency). Unparseable YAML yields [].
+function shapeGaps(text) {
   const gaps = [];
-  for (const u of updates) {
-    if (!u || typeof u !== "object" || u["package-ecosystem"] !== "github-actions") continue;
-    const cd = u.cooldown;
-    const ex = cd && typeof cd === "object" && !Array.isArray(cd) ? cd.exclude : undefined;
-    const list = Array.isArray(ex) ? ex : [];
-    if (OWN_ACTION_EXCLUDES.every((pat) => list.includes(pat))) continue;
-    let dir = "?";
-    if (typeof u.directory === "string") dir = u.directory;
-    else if (Array.isArray(u.directories)) dir = u.directories.filter((d) => typeof d === "string").join(",") || "?";
-    gaps.push(`github-actions@${dir}`.replace(/[^A-Za-z0-9_.\/*@,-]/g, "_"));
+  for (const u of parseUpdates(text)) {
+    const eco = u["package-ecosystem"];
+    const label = entryLabel(u);
+    const groups = u.groups && typeof u.groups === "object" && !Array.isArray(u.groups)
+      ? Object.values(u.groups).filter((g) => g && typeof g === "object")
+      : [];
+    const hasSecurityGroup = groups.some((g) => g["applies-to"] === "security-updates");
+    if (eco === "github-actions") {
+      const cd = u.cooldown && typeof u.cooldown === "object" && !Array.isArray(u.cooldown) ? u.cooldown : {};
+      const excl = Array.isArray(cd.exclude) ? cd.exclude : [];
+      if (!OWN_ACTION_PATTERNS.every((p) => excl.includes(p))) gaps.push(`${label}:own-not-excluded`);
+      if (!groups.some((g) => g["applies-to"] == null || g["applies-to"] === "version-updates")) {
+        gaps.push(`${label}:no-version-group`);
+      }
+      if (!hasSecurityGroup) gaps.push(`${label}:no-security-group`);
+      if (Object.keys(cd).some((k) => k.startsWith("semver-"))) gaps.push(`${label}:semver-days`);
+    } else if (SHAPE_ECOSYSTEMS_SECURITY_ONLY.includes(eco)) {
+      const ignoresAll = Array.isArray(u.ignore) &&
+        u.ignore.some((i) => i && typeof i === "object" && i["dependency-name"] === "*");
+      if (ignoresAll) continue;
+      if (!hasSecurityGroup) gaps.push(`${label}:no-security-group`);
+    }
   }
   return gaps;
+}
+
+// stalePulls(pulls, nowMs) — the open Dependabot PRs older than
+// STALE_PR_DAYS (strictly), each with its whole-day age. Skips a PR whose
+// created_at does not parse; see unparseablePulls for those.
+function dependabotPulls(pulls) {
+  return (Array.isArray(pulls) ? pulls : []).filter(
+    (p) => p && p.user && p.user.login === "dependabot[bot]",
+  );
+}
+function stalePulls(pulls, nowMs) {
+  const out = [];
+  for (const p of dependabotPulls(pulls)) {
+    const created = Date.parse(p.created_at);
+    if (Number.isNaN(created)) continue;
+    const age = nowMs - created;
+    if (age > STALE_PR_DAYS * DAY_MS) {
+      out.push({
+        number: p.number, title: String(p.title || ""), html_url: p.html_url,
+        created_at: p.created_at, ageDays: Math.floor(age / DAY_MS),
+      });
+    }
+  }
+  return out;
+}
+function unparseablePulls(pulls) {
+  return dependabotPulls(pulls).filter((p) => Number.isNaN(Date.parse(p.created_at)));
 }
 
 // parseSchedule(text) — walk `updates[].schedule.interval` in a Dependabot
@@ -550,7 +598,7 @@ function jobsState({ lastJobAt, configCommitAt, thresholdDays, nowMs }) {
 // config's path has exactly one commit ever and (b) a successful update job
 // started after it (see firstCommitProvesHealthy) — everything else about a
 // missing check is untouched.
-function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps, ownActionsGaps }) {
+function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps, shapeGaps: shape, stalePulls: stale }) {
   if (!config) {
     return { verdict: "no-config", findings: [], unknowns: [], notices: [] };
   }
@@ -566,8 +614,11 @@ function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps,
   for (const g of gaps || []) {
     findings.push({ kind: "no-cooldown", key: `no-cooldown:${g}` });
   }
-  for (const g of ownActionsGaps || []) {
-    findings.push({ kind: "own-actions-cooldown", key: `own-actions-cooldown:${g}` });
+  for (const g of shape || []) {
+    findings.push({ kind: "shape", key: `shape:${g}` });
+  }
+  for (const p of stale || []) {
+    findings.push({ kind: "stale-pr", key: `stale-pr:#${Number(p.number)}` });
   }
   if (check.state === "missing") {
     if (firstCommitProof) {
@@ -693,23 +744,59 @@ function renderNoCooldownSection(findings) {
     ...entries,
     "",
     "The fleet convention is `cooldown: default-days: 7`, so a release must be a week old before " +
-      "Dependabot opens a version-update PR (security updates bypass it). `github-actions` " +
-      "entries take only `default-days` and `exclude`; other `semver-*-days` keys are not supported there.",
+      "Dependabot opens a version-update PR (security updates bypass it). An entry that also " +
+      "tracks cms-platform releases adds `exclude: [\"Adam-S-Daniel/cms-platform/*\"]`, because " +
+      "those are this account's own gated code and do not need the wait. `github-actions` " +
+      "entries take only `default-days`; other `semver-*-days` keys are not supported there.",
   ];
 }
 
-function renderOwnActionsSection(findings) {
-  const entries = findings
-    .filter((f) => f.kind === "own-actions-cooldown")
-    .map((f) => `- \`${f.key.slice("own-actions-cooldown:".length)}\``);
+const SHAPE_REASONS = {
+  "own-not-excluded":
+    "The `github-actions` cooldown must `exclude` both `Adam-S-Daniel/*` and `jodidaniel/*`: those are this account's own gated actions and do not need the wait.",
+  "no-version-group":
+    "A `github-actions` entry needs a version-updates group (`applies-to: version-updates`, or no `applies-to`) so action bumps arrive as one PR instead of a stranded sibling set.",
+  "no-security-group":
+    "The entry needs a group with `applies-to: security-updates` so security fixes also arrive as one PR.",
+  "semver-days":
+    "GitHub rejects `semver-*-days` under `cooldown` for `github-actions`; only `default-days` (and `exclude`) is supported.",
+};
+
+function renderShapeSection(findings) {
+  const gaps = findings.filter((f) => f.kind === "shape").map((f) => f.key.slice("shape:".length));
+  const problems = [];
+  for (const g of gaps) {
+    const problem = g.slice(g.lastIndexOf(":") + 1);
+    if (SHAPE_REASONS[problem] && !problems.includes(problem)) problems.push(problem);
+  }
   return [
-    "**Own actions not exempt.** These `github-actions` entries do not list both own-action patterns in `cooldown.exclude`:",
+    "**Shape.** These `updates` entries depart from the fleet's grouping convention:",
     "",
-    ...entries,
+    ...gaps.map((g) => `- \`${g}\``),
     "",
-    "Add `exclude: [\"Adam-S-Daniel/*\", \"jodidaniel/*\"]` under `cooldown` (matching is case-sensitive). " +
-      "The owner's own actions are gated code, so they skip the third-party 7-day wait; the daily " +
-      "sweep merges their bump PRs once CI passes. cms-platform, adamdaniel.ai and jodidaniel.com are exempt.",
+    ...problems.map((p) => `- \`${p}\`: ${SHAPE_REASONS[p]}`),
+    "",
+    "The convention is in " +
+      "https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/dependabot-grouping.md " +
+      "and the template to copy from is " +
+      "https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/templates/dependabot/dependabot.yml.",
+  ];
+}
+
+function renderStalePullsSection(pulls) {
+  return [
+    `**Stale Dependabot PRs.** These Dependabot PRs have been open more than ${STALE_PR_DAYS} days:`,
+    "",
+    ...pulls.map((p) => {
+      // A code span keeps manifest-derived text from rendering as Markdown
+      // (links, emphasis, @-mentions); the fence outruns any backtick run.
+      const raw = escapeHiddenMarkers(String(p.title).replace(/\s+/g, " "));
+      const fence = "`".repeat(Math.max(0, ...(raw.match(/`+/g) || []).map((m) => m.length)) + 1);
+      return `- ${p.html_url} ${fence} ${raw} ${fence} (${p.ageDays} day(s) open)`;
+    }),
+    "",
+    "A healthy Dependabot PR merges within a few days. The likely causes are a failing required " +
+      "check, a merge conflict the rebase did not clear, or a sibling-PR strand that grouping prevents.",
   ];
 }
 
@@ -727,13 +814,16 @@ function renderIssueBody(assessment) {
   if (assessment.findings.some((f) => f.kind === "no-cooldown")) {
     lines.push(...renderNoCooldownSection(assessment.findings), "");
   }
-  if (assessment.findings.some((f) => f.kind === "own-actions-cooldown")) {
-    lines.push(...renderOwnActionsSection(assessment.findings), "");
+  if (assessment.findings.some((f) => f.kind === "shape")) {
+    lines.push(...renderShapeSection(assessment.findings), "");
+  }
+  if (assessment.findings.some((f) => f.kind === "stale-pr")) {
+    lines.push(...renderStalePullsSection(assessment.stalePulls || []), "");
   }
   lines.push(
-    "**What to do:** repair the config on the default branch. The sweep comments new evidence " +
-      "and shuts this issue once the newest check is success and an update job has run since the " +
-      "newest config commit.",
+    "**What to do:** fix each item above (a config problem on the default branch, or a stuck " +
+      "Dependabot PR). The sweep comments new evidence and shuts this issue once every signal " +
+      "it checks is clear.",
     "",
     FOOTER,
   );
@@ -752,8 +842,13 @@ function renderComment(assessment, freshFindings) {
   if (freshFindings.some((f) => f.kind === "no-cooldown")) {
     lines.push(...renderNoCooldownSection(freshFindings), "");
   }
-  if (freshFindings.some((f) => f.kind === "own-actions-cooldown")) {
-    lines.push(...renderOwnActionsSection(freshFindings), "");
+  if (freshFindings.some((f) => f.kind === "shape")) {
+    lines.push(...renderShapeSection(freshFindings), "");
+  }
+  const freshKeys = new Set(freshFindings.map((f) => f.key));
+  const freshStale = (assessment.stalePulls || []).filter((p) => freshKeys.has(`stale-pr:#${Number(p.number)}`));
+  if (freshStale.length) {
+    lines.push(...renderStalePullsSection(freshStale), "");
   }
   lines.push(FOOTER);
   return lines.join("\n");
@@ -762,8 +857,7 @@ function renderComment(assessment, freshFindings) {
 function renderShutComment() {
   return [
     MARKER,
-    "The newest config check run is success and an update job has run since the newest config " +
-      "commit — shutting this issue.",
+    "Every signal this sweep checks is clear — shutting this issue.",
     "",
     FOOTER,
   ].join("\n");
@@ -874,6 +968,8 @@ function assessRepo(target, api, nowMs, opts) {
   const isPrivate = Boolean(target.private);
   const defaultBranch = target.defaultBranch;
   const label = (opts && opts.label) || DEFAULT_LABEL;
+  const fleetManaged = !opts || opts.fleetManaged === undefined ? true : Boolean(opts.fleetManaged);
+  let stale = [];
 
   if (!defaultBranch) {
     return {
@@ -1033,7 +1129,38 @@ function assessRepo(target, api, nowMs, opts) {
       }
     }
 
-    verdictResult = verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: cooldownGaps(config.raw), ownActionsGaps: ownActionsExcludeGaps(config.raw, repo) });
+    let shape = [];
+    if (fleetManaged) {
+      shape = shapeGaps(config.raw);
+      const all = [];
+      let pullsError = null;
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        let items;
+        try {
+          items = api.openPullsPage(owner, repo, page);
+        } catch (e) {
+          pullsError = describeApiError("listing open pull requests", e);
+          break;
+        }
+        items = Array.isArray(items) ? items : [];
+        all.push(...items);
+        if (items.length < 100) break;
+        if (page === MAX_PAGES) pullsError = "open pull request listing truncated";
+      }
+      if (pullsError) {
+        extraUnknowns.push(pullsError);
+      } else {
+        if (unparseablePulls(all).length) {
+          extraUnknowns.push("a Dependabot pull request's created_at could not be parsed");
+        }
+        stale = stalePulls(all, nowMs);
+      }
+    }
+
+    verdictResult = verdictFor({
+      config, check, jobs, firstCommitProof,
+      cooldownGaps: cooldownGaps(config.raw), shapeGaps: shape, stalePulls: stale,
+    });
   }
 
   const unknowns = [...extraUnknowns, ...verdictResult.unknowns];
@@ -1067,6 +1194,7 @@ function assessRepo(target, api, nowMs, opts) {
     unknowns,
     notices: verdictResult.notices || [],
     issueLookupFailed,
+    stalePulls: stale,
     config, check, jobs, openIssue,
   };
 }
@@ -1091,7 +1219,7 @@ const VERDICTS = ["finding", "unknown", "pending", "healthy", "no-config"];
 
 function runSweep({
   owners, api, nowMs, dryRun, label, revealPrivate, requireOwnerTokens, env,
-  registryFleet, onlyRepos, out,
+  registryFleet, registryExclude, onlyRepos, out,
 }) {
   const output = out || console.log;
   const effectiveLabel = label || DEFAULT_LABEL;
@@ -1142,7 +1270,8 @@ function runSweep({
   for (const target of allRepos) {
     let assessment;
     try {
-      assessment = assessRepo(target, api, nowMs, { label: effectiveLabel });
+      const excluded = new Set(registryExclude || []).has(target.repo.split("/")[1]);
+      assessment = assessRepo(target, api, nowMs, { label: effectiveLabel, fleetManaged: !excluded });
     } catch (e) {
       assessment = {
         owner: target.owner, repo: target.repo, private: target.private,
@@ -1252,7 +1381,8 @@ function main() {
   }
 
   let registryFleet = [];
-  if (!flags.repoList.length) {
+  let registryExclude = [];
+  {
     let doc;
     try {
       doc = YAML.parse(fs.readFileSync(flags.registryPath, "utf8"));
@@ -1260,12 +1390,15 @@ function main() {
       console.error(`dependabot-config-health: cannot read the registry in ${flags.registryPath} (${e.code || e.message})`);
       process.exit(2);
     }
-    const fleet = doc && doc.cron_coverage && doc.cron_coverage.fleet;
-    if (!Array.isArray(fleet) || !fleet.length || fleet.some((f) => typeof f !== "string" || !f.trim())) {
-      console.error(`dependabot-config-health: ${flags.registryPath} cron_coverage.fleet must be a non-empty array of strings`);
-      process.exit(2);
+    if (doc && Array.isArray(doc.exclude)) registryExclude = doc.exclude.filter((x) => typeof x === "string");
+    if (!flags.repoList.length) {
+      const fleet = doc && doc.cron_coverage && doc.cron_coverage.fleet;
+      if (!Array.isArray(fleet) || !fleet.length || fleet.some((f) => typeof f !== "string" || !f.trim())) {
+        console.error(`dependabot-config-health: ${flags.registryPath} cron_coverage.fleet must be a non-empty array of strings`);
+        process.exit(2);
+      }
+      registryFleet = fleet;
     }
-    registryFleet = fleet;
   }
 
   const api = buildApi(process.env);
@@ -1279,6 +1412,7 @@ function main() {
     requireOwnerTokens: flags.requireOwnerTokens,
     env: process.env,
     registryFleet,
+    registryExclude,
     onlyRepos: flags.repoList,
     out: console.log,
   });
@@ -1292,7 +1426,7 @@ if (require.main === module) {
 module.exports = {
   // constants
   CONFIG_PATHS, UPDATES_WORKFLOW_PATH, CHECK_APP_SLUG, INTERVAL_DAYS,
-  SILENCE_SLACK_DAYS, MARKER, ISSUE_TITLE, DEFAULT_LABEL, PLATFORM_MANAGED_REPOS,
+  SILENCE_SLACK_DAYS, STALE_PR_DAYS, MARKER, ISSUE_TITLE, DEFAULT_LABEL,
   // errors
   ApiError,
   // pure helpers
@@ -1306,7 +1440,8 @@ module.exports = {
   jobsState,
   verdictFor,
   cooldownGaps,
-  ownActionsExcludeGaps,
+  shapeGaps,
+  stalePulls,
   extractReportedEvidence,
   hiddenEvidenceBlock,
   planIssueAction,
