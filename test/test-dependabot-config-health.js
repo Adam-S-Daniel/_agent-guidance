@@ -22,6 +22,7 @@ const {
   ApiError,
   UPDATES_WORKFLOW_PATH,
   ownerTokenEnvName,
+  redactedUnknownSummary,
   parseSchedule,
   silenceThresholdDays,
   candidateShas,
@@ -35,13 +36,18 @@ const {
   logLine,
   verdictFor,
   cooldownGaps,
+  shapeGaps,
+  stalePulls,
+  renderComment,
+  renderShutComment,
+  STALE_PR_DAYS,
   assessRepo,
   runSweep,
 } = require("../scripts/dependabot-config-health.js");
 
 // ── Shared fixture helpers ─────────────────────────────────────────────────
 
-const WEEKLY_YAML = "updates:\n  - package-ecosystem: npm\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n";
+const WEEKLY_YAML = "updates:\n  - package-ecosystem: npm\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n    groups:\n      npm-security:\n        applies-to: security-updates\n        patterns: [\"*\"]\n";
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64");
 const yamlContent = (text) => ({ content: b64(text), encoding: "base64" });
 
@@ -58,6 +64,7 @@ function fakeApi(overrides = {}) {
     workflowsPage: overrides.workflowsPage || (() => ({ total_count: 0, workflows: [] })),
     newestWorkflowRun: overrides.newestWorkflowRun || (() => null),
     newestSuccessfulWorkflowRun: overrides.newestSuccessfulWorkflowRun || (() => null),
+    openPullsPage: overrides.openPullsPage || (() => []),
     openIssuesPage: overrides.openIssuesPage || (() => []),
     issueCommentsPage: overrides.issueCommentsPage || (() => []),
     ensureLabel: overrides.ensureLabel || (() => {}),
@@ -709,6 +716,40 @@ test("runSweep: output for a fleet with a private finding names neither the repo
   assert.ok(!text.includes("secret"), `leaked: ${text}`);
 });
 
+test("runSweep: a private repo's UNKNOWN reason is logged without its name or data", () => {
+  const events = [];
+  const api = fakeApi({
+    listRepos: (owner) => [{ repo: `${owner}/secret`, private: true, defaultBranch: "main" }],
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "aaa", date: "2020-01-01T00:00:00Z" }),
+    checkRuns: () => ({
+      total_count: 1,
+      check_runs: [{
+        id: 9, app: { slug: "dependabot" }, name: ".github/dependabot.yml", status: "queued", conclusion: null,
+        head_sha: "aaa", output: { title: "top secret detail", summary: "very secret summary text" }, started_at: "2020-01-01T00:05:00Z",
+      }],
+    }),
+    workflowsPage: () => ({ total_count: 0, workflows: [] }),
+  });
+  runSweep({
+    owners: ["Adam-S-Daniel"], api, nowMs: Date.parse("2020-02-01T00:00:00Z"),
+    dryRun: true, revealPrivate: false, requireOwnerTokens: false, env: {},
+    registryFleet: [], onlyRepos: [], out: (l) => events.push(l),
+  });
+  const text = events.join("\n");
+  assert.ok(!text.includes("secret"), `leaked: ${text}`);
+  assert.match(text, /a private repo \(name withheld\): the config check run's status\/conclusion could not be classified \(status=queued, conclusion=none\)/);
+});
+
+test("redactedUnknownSummary: keeps fixed templates, drops anything that could carry repo data", () => {
+  assert.equal(
+    redactedUnknownSummary("reading .github/dependabot.yml failed (HTTP 502): body with secret"),
+    "reading .github/dependabot.yml failed (HTTP 502)",
+  );
+  assert.equal(redactedUnknownSummary("the Dependabot config's schedule could not be parsed as YAML: bad key secret"), "unclassified");
+  assert.equal(redactedUnknownSummary("assessment crashed: secret"), "unclassified");
+});
+
 // ── 11. runSweep end-to-end over the measured 19-repo fleet ────────────────
 
 function buildFleetApi() {
@@ -745,6 +786,7 @@ function buildFleetApi() {
       return { total_count: 1, workflows: [{ id: 42, path: UPDATES_WORKFLOW_PATH }] };
     },
     newestWorkflowRun: () => ({ created_at: "2026-09-10T00:00:00Z", html_url: "https://x/runs/1" }),
+    openPullsPage: () => [],
     openIssuesPage: () => [],
     issueCommentsPage: () => [],
     ensureLabel: () => {},
@@ -1032,6 +1074,7 @@ test("D: a workflows page short of 100 items stops pagination without an extra e
 
 const entry = (eco, dir, cooldown) =>
   `  - package-ecosystem: ${eco}\n    directory: "${dir}"\n    schedule:\n      interval: weekly\n${cooldown || ""}`;
+const SEC_GROUP = "    groups:\n      sec:\n        applies-to: security-updates\n";
 const cfg = (...entries) => `version: 2\nupdates:\n${entries.join("")}`;
 
 test("cooldownGaps: an entry with no cooldown is flagged by ecosystem and directory", () => {
@@ -1091,7 +1134,7 @@ test("verdictFor: no gaps stays healthy (negative control)", () => {
 });
 
 test("assessRepo: a config without a cooldown is a no-cooldown finding; the body explains 7 days and the cms-platform exclude", () => {
-  const raw = cfg(entry("npm", "/tools"));
+  const raw = cfg(entry("npm", "/tools", SEC_GROUP));
   const api = fakeApi({
     getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(raw) : (() => { throw new ApiError("Not Found", 404); })()),
     newestPathCommit: () => ({ sha: "aaaaaa", date: "2026-08-01T00:00:00Z" }),
@@ -1114,4 +1157,256 @@ test("assessRepo: a config without a cooldown is a no-cooldown finding; the body
   assert.ok(body.includes("default-days: 7"), body);
   assert.ok(body.includes("Adam-S-Daniel/cms-platform/*"), body);
   assert.ok(logLine(a).includes("kinds=no-cooldown"));
+});
+
+// ── 13. shape (fourth signal) ────────────────────────────────────────────────
+
+const OWN_EXCL = '      exclude: ["Adam-S-Daniel/*", "jodidaniel/*"]\n';
+const GHA_OK =
+  "    cooldown:\n      default-days: 7\n" + OWN_EXCL +
+  "    groups:\n      actions:\n        patterns: [\"*\"]\n      actions-security:\n        applies-to: security-updates\n";
+
+test("shapeGaps: a compliant github-actions entry has no gaps (extra excludes, no applies-to on the version group)", () => {
+  const cd = "    cooldown:\n      default-days: 7\n      exclude: [\"Adam-S-Daniel/*\", \"jodidaniel/*\", \"Adam-S-Daniel/cms-platform/*\"]\n";
+  const groups = "    groups:\n      actions-minor-patch:\n        update-types: [minor, patch]\n      sec:\n        applies-to: security-updates\n";
+  assert.deepEqual(shapeGaps(cfg(entry("github-actions", "/", cd + groups))), []);
+  assert.deepEqual(shapeGaps(cfg(entry("github-actions", "/", GHA_OK))), []);
+});
+
+test("shapeGaps: a bare github-actions entry reports all three missing pieces, labeled", () => {
+  assert.deepEqual(shapeGaps(cfg(entry("github-actions", "/"))), [
+    "github-actions@/:own-not-excluded",
+    "github-actions@/:no-version-group",
+    "github-actions@/:no-security-group",
+  ]);
+});
+
+test("shapeGaps: own-not-excluded needs BOTH owners", () => {
+  const one = "    cooldown:\n      default-days: 7\n      exclude: [\"Adam-S-Daniel/*\"]\n" +
+    "    groups:\n      actions:\n        patterns: [\"*\"]\n      sec:\n        applies-to: security-updates\n";
+  const raw = cfg(entry("github-actions", "/", one));
+  assert.deepEqual(shapeGaps(raw), ["github-actions@/:own-not-excluded"]);
+});
+
+test("shapeGaps: only a security group is no-version-group; only a version group is no-security-group", () => {
+  const cd = "    cooldown:\n      default-days: 7\n" + OWN_EXCL;
+  assert.deepEqual(
+    shapeGaps(cfg(entry("github-actions", "/", cd + "    groups:\n      s:\n        applies-to: security-updates\n"))),
+    ["github-actions@/:no-version-group"],
+  );
+  assert.deepEqual(
+    shapeGaps(cfg(entry("github-actions", "/", cd + "    groups:\n      v:\n        applies-to: version-updates\n"))),
+    ["github-actions@/:no-security-group"],
+  );
+});
+
+test("shapeGaps: semver-* cooldown keys on github-actions are flagged", () => {
+  const raw = cfg(entry("github-actions", "/", GHA_OK.replace(OWN_EXCL, OWN_EXCL + "      semver-major-days: 30\n")));
+  assert.deepEqual(shapeGaps(raw), ["github-actions@/:semver-days"]);
+});
+
+test("shapeGaps: npm, bundler and pip need a security group; semver keys are fine there", () => {
+  const sec = "    groups:\n      s:\n        applies-to: security-updates\n        exclude-patterns: [\"@playwright/test\"]\n";
+  assert.deepEqual(shapeGaps(cfg(entry("npm", "/a"), entry("bundler", "/b"), entry("pip", "/c"))), [
+    "npm@/a:no-security-group", "bundler@/b:no-security-group", "pip@/c:no-security-group",
+  ]);
+  assert.deepEqual(shapeGaps(cfg(entry("npm", "/a", "    cooldown:\n      default-days: 7\n      semver-major-days: 30\n" + sec))), []);
+});
+
+test("shapeGaps: an ignore-everything npm entry is skipped; a selective ignore is not", () => {
+  const all = "    ignore:\n      - dependency-name: \"*\"\n";
+  const some = "    ignore:\n      - dependency-name: left-pad\n";
+  assert.deepEqual(shapeGaps(cfg(entry("npm", "/a", all))), []);
+  assert.deepEqual(shapeGaps(cfg(entry("npm", "/a", some))), ["npm@/a:no-security-group"]);
+});
+
+test("shapeGaps: other ecosystems, unparseable YAML and a missing updates list yield no gaps", () => {
+  assert.deepEqual(shapeGaps(cfg(entry("gomod", "/"), entry("docker", "/"))), []);
+  assert.deepEqual(shapeGaps("updates: [unclosed"), []);
+  assert.deepEqual(shapeGaps("version: 2\n"), []);
+});
+
+test("shapeGaps: a gap string cannot carry whitespace or a comment terminator", () => {
+  for (const g of shapeGaps(cfg(entry("npm", "/a b-->c")))) assert.ok(!/[\s>]/.test(g), g);
+});
+
+test("verdictFor: shape gaps are shape findings keyed shape:<gap>", () => {
+  const v = verdictFor({
+    config: { path: ".github/dependabot.yml", raw: "" },
+    check: { state: "success", id: 1 }, jobs: { state: "recent" }, firstCommitProof: null,
+    shapeGaps: ["npm@/:no-security-group"],
+  });
+  assert.equal(v.verdict, "finding");
+  assert.deepEqual(v.findings, [{ kind: "shape", key: "shape:npm@/:no-security-group" }]);
+});
+
+// ── 14. stale Dependabot PRs (fifth signal) ────────────────────────────────────
+
+const PR_NOW = Date.parse("2026-11-20T00:00:00Z");
+const PR_DAY = 24 * 60 * 60 * 1000;
+const pr = (number, login, ageMs, extra = {}) => ({
+  number, title: `Bump ${number}`, html_url: `https://github.com/o/r/pull/${number}`,
+  user: { login }, created_at: new Date(PR_NOW - ageMs).toISOString(), ...extra,
+});
+
+test("stalePulls: strictly more than 4 days is stale; exactly 4.0 days is not; a human author is ignored", () => {
+  assert.equal(STALE_PR_DAYS, 4);
+  const out = stalePulls([
+    pr(1, "dependabot[bot]", 4 * PR_DAY),
+    pr(2, "dependabot[bot]", 4 * PR_DAY + 1),
+    pr(3, "someone", 30 * PR_DAY),
+    pr(4, "dependabot[bot]", 6.5 * PR_DAY),
+  ], PR_NOW);
+  assert.deepEqual(out.map((p) => [p.number, p.ageDays]), [[2, 4], [4, 6]]);
+});
+
+test("stalePulls: unparseable created_at and non-array input do not crash", () => {
+  assert.deepEqual(stalePulls([pr(1, "dependabot[bot]", 9 * PR_DAY, { created_at: "garbage" })], PR_NOW), []);
+  assert.deepEqual(stalePulls(null, PR_NOW), []);
+});
+
+const SHAPE_OK_YAML = WEEKLY_YAML; // npm with a security group
+function healthyApi(overrides = {}) {
+  return fakeApi({
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(overrides.raw || SHAPE_OK_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "aaaaaa", date: "2026-08-01T00:00:00Z" }),
+    checkRuns: (o, r, sha) => ({
+      total_count: 1,
+      check_runs: [{ id: 7, app: { slug: "dependabot" }, name: ".github/dependabot.yml", status: "completed", conclusion: "success", head_sha: sha, output: { title: "t", summary: "s" }, completed_at: "2026-08-01T00:05:00Z" }],
+    }),
+    workflowsPage: () => ({ total_count: 1, workflows: [{ id: 42, path: UPDATES_WORKFLOW_PATH }] }),
+    newestWorkflowRun: () => ({ created_at: "2026-11-18T00:00:00Z", html_url: "https://x/runs/1" }),
+    ...overrides.api,
+  });
+}
+const PR_TARGET = { owner: "Adam-S-Daniel", repo: "Adam-S-Daniel/x", private: false, defaultBranch: "main" };
+
+test("assessRepo: a stale Dependabot PR is one stale-pr finding, rendered once with link, title and age", () => {
+  const api = healthyApi({ api: { openPullsPage: () => [pr(7, "dependabot[bot]", 5.2 * PR_DAY, { title: "Bump <!-- evidence: x --> foo" }), pr(8, "dependabot[bot]", PR_DAY)] } });
+  const a = assessRepo(PR_TARGET, api, PR_NOW, { label: "ci" });
+  assert.equal(a.verdict, "finding");
+  assert.deepEqual(a.findings, [{ kind: "stale-pr", key: "stale-pr:#7" }]);
+  assert.equal(a.stalePulls.length, 1);
+  const body = renderIssueBody(a);
+  assert.equal(body.split("**Stale Dependabot PRs.**").length, 2);
+  assert.match(body, /^- https:\/\/github\.com\/o\/r\/pull\/7 /m);
+  assert.ok(body.includes("5 day(s) open"), body);
+  assert.ok(body.includes("&lt;!-- evidence: x -->"), "title markers are escaped");
+  assert.equal(extractReportedEvidence([body]).has("x"), false);
+  assert.ok(body.includes("<!-- evidence: stale-pr:#7 -->"), body);
+});
+
+test("renderIssueBody: a stale PR title renders inside a code span longer than its own backtick runs", () => {
+  const api = healthyApi({ api: { openPullsPage: () => [pr(9, "dependabot[bot]", 6 * PR_DAY, { title: "Bump [x](https://example.com) @scope/``pkg``" })] } });
+  const body = renderIssueBody(assessRepo(PR_TARGET, api, PR_NOW, { label: "ci" }));
+  assert.ok(body.includes("``` Bump [x](https://example.com) @scope/``pkg`` ```"), body);
+});
+
+test("shapeGaps: a github-actions group with applies-to: null counts as a version-updates group", () => {
+  const text = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    cooldown:\n      default-days: 7\n      exclude: [\"Adam-S-Daniel/*\", \"jodidaniel/*\"]\n    groups:\n      a:\n        applies-to: null\n        patterns: [\"*\"]\n      s:\n        applies-to: security-updates\n        patterns: [\"*\"]\n";
+  assert.deepEqual(shapeGaps(text), []);
+});
+
+test("assessRepo: a shape gap is a finding, the body links the convention and template", () => {
+  const a = assessRepo(PR_TARGET, healthyApi({ raw: cfg(entry("npm", "/tools", "    cooldown:\n      default-days: 7\n")) }), PR_NOW, { label: "ci" });
+  assert.deepEqual(a.findings, [{ kind: "shape", key: "shape:npm@/tools:no-security-group" }]);
+  const body = renderIssueBody(a);
+  assert.ok(body.includes("**Shape.**"), body);
+  assert.ok(body.includes("`npm@/tools:no-security-group`"), body);
+  assert.ok(body.includes("https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/dependabot-grouping.md"), body);
+  assert.ok(body.includes("https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/templates/dependabot/dependabot.yml"), body);
+  assert.ok(logLine(a).includes("kinds=shape"));
+});
+
+test("renderComment: only the fresh stale PRs and shape gaps are rendered", () => {
+  const api = healthyApi({ api: { openPullsPage: () => [pr(7, "dependabot[bot]", 5 * PR_DAY), pr(9, "dependabot[bot]", 6 * PR_DAY)] } });
+  const a = assessRepo(PR_TARGET, api, PR_NOW, { label: "ci" });
+  const fresh = a.findings.filter((f) => f.key === "stale-pr:#9");
+  const c = renderComment(a, fresh);
+  assert.ok(c.includes("pull/9") && !c.includes("pull/7"), c);
+});
+
+test("renderShutComment is generic", () => {
+  assert.ok(renderShutComment().includes("Every signal this sweep checks is clear"));
+});
+
+test("assessRepo: pagination — a full page continues, a short page ends, truncation and errors are unknowns", () => {
+  const seen = [];
+  const full = Array.from({ length: 100 }, (_, i) => pr(1000 + i, "someone", PR_DAY));
+  let a = assessRepo(PR_TARGET, healthyApi({ api: { openPullsPage: (o, r, page) => { seen.push(page); return page === 1 ? full : [pr(5, "dependabot[bot]", 9 * PR_DAY)]; } } }), PR_NOW, { label: "ci" });
+  assert.deepEqual(seen, [1, 2]);
+  assert.deepEqual(a.findings, [{ kind: "stale-pr", key: "stale-pr:#5" }]);
+
+  a = assessRepo(PR_TARGET, healthyApi({ api: { openPullsPage: () => full } }), PR_NOW, { label: "ci" });
+  assert.equal(a.verdict, "unknown");
+  assert.ok(a.unknowns.includes("open pull request listing truncated"), a.unknowns.join("|"));
+
+  a = assessRepo(PR_TARGET, healthyApi({ api: { openPullsPage: () => { throw new ApiError("Boom", 502); } } }), PR_NOW, { label: "ci" });
+  assert.equal(a.verdict, "unknown");
+  assert.ok(a.unknowns.some((u) => u.startsWith("listing open pull requests failed (HTTP 502)")), a.unknowns.join("|"));
+});
+
+test("assessRepo: an unparseable Dependabot created_at is an unknown, not a crash", () => {
+  const api = healthyApi({ api: { openPullsPage: () => [pr(3, "dependabot[bot]", PR_DAY, { created_at: "nope" })] } });
+  const a = assessRepo(PR_TARGET, api, PR_NOW, { label: "ci" });
+  assert.equal(a.verdict, "unknown");
+  assert.ok(a.unknowns.some((u) => u.includes("created_at")), a.unknowns.join("|"));
+});
+
+test("assessRepo: fleetManaged false skips both new signals and never calls the pulls API", () => {
+  let pullCalls = 0;
+  const api = healthyApi({
+    raw: cfg(entry("npm", "/tools", "    cooldown:\n      default-days: 7\n")),
+    api: { openPullsPage: () => { pullCalls++; return [pr(7, "dependabot[bot]", 9 * PR_DAY)]; } },
+  });
+  const a = assessRepo(PR_TARGET, api, PR_NOW, { label: "ci", fleetManaged: false });
+  assert.equal(pullCalls, 0);
+  assert.deepEqual(a.findings, []);
+  assert.equal(a.verdict, "healthy");
+});
+
+test("runSweep: a repo named in registryExclude gets neither signal nor a pulls call", () => {
+  const calls = [];
+  const bad = cfg(entry("npm", "/tools", "    cooldown:\n      default-days: 7\n"));
+  const api = healthyApi({
+    raw: bad,
+    api: {
+      listRepos: () => [
+        { repo: "Adam-S-Daniel/acsi-kit", private: false, defaultBranch: "main" },
+        { repo: "Adam-S-Daniel/other", private: false, defaultBranch: "main" },
+      ],
+      openPullsPage: (o, repo) => { calls.push(repo); return []; },
+    },
+  });
+  const result = runSweep({
+    owners: ["Adam-S-Daniel"], api, nowMs: PR_NOW, dryRun: true, revealPrivate: true,
+    requireOwnerTokens: false, env: {}, registryFleet: [], registryExclude: ["acsi-kit"], onlyRepos: [], out: () => {},
+  });
+  assert.deepEqual(calls, ["Adam-S-Daniel/other"]);
+  const byName = Object.fromEntries(result.assessments.map((x) => [x.repo.split("/")[1], x]));
+  assert.equal(byName["acsi-kit"].verdict, "healthy");
+  assert.equal(byName.other.verdict, "finding");
+});
+
+test("logLine: a private repo's stale-PR title and shape gap never reach stdout", () => {
+  const api = healthyApi({
+    raw: cfg(entry("npm", "/secret-dir", "    cooldown:\n      default-days: 7\n")),
+    api: {
+      listRepos: () => [{ repo: "Adam-S-Daniel/zzrepo", private: true, defaultBranch: "main" }],
+      openPullsPage: () => [pr(7, "dependabot[bot]", 9 * PR_DAY, { title: "SECRET-TITLE" })],
+    },
+  });
+  const out = [];
+  const result = runSweep({
+    owners: ["Adam-S-Daniel"], api, nowMs: PR_NOW, dryRun: true, revealPrivate: false,
+    requireOwnerTokens: false, env: {}, registryFleet: [], onlyRepos: [], out: (l) => out.push(l),
+  });
+  assert.equal(result.assessments[0].verdict, "finding");
+  const text = out.join("\n");
+  assert.ok(!text.includes("SECRET-TITLE") && !text.includes("secret-dir") && !text.includes("zzrepo"), text);
+  assert.equal(logLine(result.assessments[0]), null);
+  // a public repo's line carries kinds only
+  const pub = { ...result.assessments[0], private: false };
+  const line = logLine(pub);
+  assert.ok(line.includes("kinds=") && !line.includes("SECRET-TITLE") && !line.includes("secret-dir"), line);
 });

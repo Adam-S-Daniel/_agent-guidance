@@ -286,6 +286,11 @@ skills_bootstrap:
       reason: >-
         Public adoption kit that adopters clone and run Claude Code in; the
         hook would install this account's bundles into their sessions.
+    - repo: claude-plan-usage-estimator
+      reason: >-
+        Small public Python library with no skills.lock, left out on purpose
+        when it was onboarded (2026-11-20); the bundles' always-on context
+        costs more than its short sessions would use.
 
   # Forks and archived repos are NOT listed above: discovery never reaches
   # them (`gh repo list --source --no-archived`), so their absence from
@@ -388,6 +393,7 @@ cron_coverage:
     - adamdaniel.ai
     - ai-usage-dashboard
     - claude-memory-map
+    - claude-plan-usage-estimator
     - cms-platform
     - fastmail-actions
     - jodidaniel.com

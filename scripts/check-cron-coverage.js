@@ -173,13 +173,34 @@ function missingScopes(perms) {
 // Pure fs, never a `git` subprocess: the gate must not need git on PATH.
 function resolveGitDir(dir) {
   const marker = path.join(dir, ".git");
-  const st = fs.statSync(marker, { throwIfNoEntry: false });
-  if (!st) return null;
-  if (st.isDirectory()) return marker;
-  if (!st.isFile()) return null;
+  // Open first and decide from the descriptor, never stat-then-read by path:
+  // the entry can change between the two (js/file-system-race).
+  // O_NONBLOCK keeps a FIFO named `.git` from hanging the open (POSIX only).
+  let fd;
+  try {
+    fd = fs.openSync(marker, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+  } catch (e) {
+    // Opening a directory can fail with EISDIR, or EPERM/EACCES on Windows
+    // and on an unreadable directory; ask stat whether it is one (nothing is
+    // read after this check, so it is not a check-then-use).
+    if (!e || !["EISDIR", "EPERM", "EACCES"].includes(e.code)) return null;
+    const st = fs.statSync(marker, { throwIfNoEntry: false });
+    return st && st.isDirectory() ? marker : null;
+  }
+  let text;
+  try {
+    const st = fs.fstatSync(fd);
+    if (st.isDirectory()) return marker;
+    if (!st.isFile()) return null;
+    text = fs.readFileSync(fd, "utf8");
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
   // A gitlink: `gitdir: <path>`, resolved against the containing directory
   // because git writes it relative for submodules and absolute for worktrees.
-  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(fs.readFileSync(marker, "utf8"));
+  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text);
   return m ? path.resolve(dir, m[1]) : null;
 }
 

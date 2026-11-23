@@ -222,7 +222,7 @@
   audience: contributor
   status: covered
   fixture: evals/guidance/dependency-updates/
-  bytes: 534
+  bytes: 526
 
 - id: name-becomes-scanner-data
   heading: A name you choose becomes data a scanner reads

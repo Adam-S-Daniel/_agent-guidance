@@ -748,6 +748,14 @@ owner hears about each PR once.
 
 ## The issue pass
 
+First hand back half-done claims: run
+`SYNC_OWNERS="<the owners above>" node scripts/stale-claims.js --apply` from
+this repo's checkout ([`agent-issue-worker.md`](../reference/agent-issue-worker.md),
+"Stale claims"). It requeues every `agent-working` issue whose `Refs` PR
+merged, whoever merged it, so the candidate list below includes them. Its
+`stale` and `closes-open` rows go in the summary as stale claims; an exit 1
+is noted in the summary and the pass goes on.
+
 Follow [`agent-issue-worker.md`](../reference/agent-issue-worker.md), "Each
 run", with the cloud notes in its "Where it runs" section. Take only the issues
 your role owns ("Two tasks": the loop role the loop issues, the maintenance
