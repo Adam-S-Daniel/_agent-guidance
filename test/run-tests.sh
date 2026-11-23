@@ -28076,6 +28076,25 @@ test_ci_scope() {
     scope_case "the ledger with an unlisted reader runs everything" "scope=full run=true" "bump" \
         docs/agent-checks-lessons.md
 
+    # A `git grep` that ERRORS (exit 128: a missing object in a partial or
+    # shallow checkout) is not "no file names this doc": it must widen to full
+    # scope, never skip the shard. Only exit 1 means no match.
+    local shim="$TEST_DIR/ci-scope-git-shim" real_git
+    real_git=$(command -v git)
+    mkdir -p "$shim"
+    printf '#!/usr/bin/env bash\nfor a in "$@"; do [[ "$a" == grep ]] && exit 128; done\nexec %q "$@"\n' \
+        "$real_git" > "$shim/git"
+    chmod +x "$shim/git"
+    git -C "$dir" checkout -q "$base"
+    printf 'more\n' >> "$dir/docs/unread.md"
+    git -C "$dir" add -A; git -C "$dir" commit -qm grep-error
+    jq -n --arg b "$base" --arg h "$(git -C "$dir" rev-parse HEAD)" \
+        '{pull_request:{base:{sha:$b},head:{sha:$h}}}' > "$ev"
+    out=$(PATH="$shim:$PATH" GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" MATRIX_GROUPS="bump" \
+        bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a git grep error runs everything" \
+        || fail "ci-scope: a git grep error runs everything — got '$out'"
+
     out=$(GITHUB_EVENT_NAME=workflow_dispatch bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
     [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a dispatch runs everything" \
         || fail "ci-scope: a dispatch runs everything — got '$out'"
