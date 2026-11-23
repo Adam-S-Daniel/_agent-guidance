@@ -24,7 +24,19 @@ STUB_FILE="$REPO_ROOT/agents-md/stub.md"
 # carries the rules an outside contributor needs and none of the owner-only ones.
 PAYLOAD_FILE="$REPO_ROOT/.github/fleet-contributor-rules.md"
 SECTIONS_DIR="$REPO_ROOT/agents-md/sections"
-SECTIONS=("${@}")
+# Section names come from each consumer repo's .agents-sync.yml, so they are
+# untrusted. A name is a bare file stem; anything else (a `/` or `..` would
+# reach outside sections/ and could inline the owner-only base.md, and `-->`
+# would close the header comment it is echoed into) is dropped, never echoed.
+SECTIONS=()
+INVALID_SECTIONS=0
+for section in "$@"; do
+    if [[ "$section" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+        SECTIONS+=("$section")
+    else
+        INVALID_SECTIONS=$((INVALID_SECTIONS + 1))
+    fi
+done
 
 # MODE decides whether this repo gets the always-on STUB (the default, and what
 # every repo that can receive the fleet-memory hook gets) or the FULL mode, which
@@ -60,6 +72,11 @@ if [[ "$MODE" == "full" ]]; then
 fi
 
 # ── Requested language / tooling sections ──────────────────────────────────
+if (( INVALID_SECTIONS > 0 )); then
+    echo ""
+    echo "<!-- WARNING: ${INVALID_SECTIONS} invalid section name(s) ignored — a name is letters, digits, '-' and '_' only -->"
+    echo "build-agents-md: ignored ${INVALID_SECTIONS} invalid section name(s)" >&2
+fi
 for section in "${SECTIONS[@]}"; do
     section_file="$SECTIONS_DIR/${section}.md"
     if [[ -f "$section_file" ]]; then

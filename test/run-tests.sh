@@ -3618,6 +3618,19 @@ test_build_script() {
     echo "$output" > "$TEST_DIR/build-unknown.md"
     assert_contains "$TEST_DIR/build-unknown.md" "WARNING: unknown section 'bogus'" "warns on unknown section"
     assert_contains "$TEST_DIR/build-unknown.md" "## Python" "still includes valid section"
+
+    # Section names come from a consumer repo's .agents-sync.yml, so they are
+    # untrusted: a path must not reach outside agents-md/sections/ (`../base`
+    # would inline the owner-only base.md, ADR 0043), and a name must not
+    # close the HTML comment it is echoed into and inject Markdown.
+    output=$("$REPO_ROOT/scripts/build-agents-md.sh" python ../base 'x --> # Injected' 2>/dev/null)
+    echo "$output" > "$TEST_DIR/build-hostile.md"
+    local base_h
+    base_h=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/base.md")
+    assert_not_contains "$TEST_DIR/build-hostile.md" "$base_h" "a ../ section name does not inline base.md"
+    assert_not_contains "$TEST_DIR/build-hostile.md" "# Injected" "a section name cannot inject Markdown"
+    assert_contains "$TEST_DIR/build-hostile.md" "WARNING: 2 invalid section name(s) ignored" "warns on invalid section names"
+    assert_contains "$TEST_DIR/build-hostile.md" "## Python" "still includes valid section beside invalid names"
 }
 
 # ── Test 1a: bridge-status.sh ─────────────────────────────────────────────
@@ -7896,6 +7909,30 @@ test_sync_bootstrap() {
     else
         pass "repo-unparseable: hook withheld too (a hook nothing runs is silently dead)"
     fi
+
+    # ── A build that fails for ONE repo must count that repo as failed and
+    #    let the run go on, never abort the fleet under set -e. A copied tree
+    #    whose build script fails only inside repo-ignored's clone (third of
+    #    six); --dry-run keeps the leg from writing to the fleet.
+    local btree="$TEST_DIR/build-fail-tree" bout="$TEST_DIR/sync-build-fail.txt" brc=0
+    rm -rf "$btree"; mkdir -p "$btree/.github"
+    cp -r "$REPO_ROOT/scripts" "$REPO_ROOT/agents-md" "$REPO_ROOT/templates" "$btree/"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$btree/.github/"
+    mv "$btree/scripts/build-agents-md.sh" "$btree/scripts/build-agents-md.real.sh"
+    printf '#!/usr/bin/env bash\ncase "$PWD" in *_repo-ignored) echo "stub build failure" >&2; exit 3 ;; esac\nexec %q "$@"\n' \
+        "$btree/scripts/build-agents-md.real.sh" > "$btree/scripts/build-agents-md.sh"
+    chmod +x "$btree/scripts/build-agents-md.sh"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$btree/scripts/sync.sh" --dry-run > "$bout" 2>&1 || brc=$?
+    assert_contains "$bout" "stub build failure" "build failure: the stub build ran and failed"
+    assert_contains "$bout" "bootorg/repo-ignored: could not build AGENTS.md" "build failure: the failing repo is named"
+    assert_contains "$bout" "=== bootorg/repo-unparseable ===" "build failure: the run reaches the last repo"
+    assert_contains "$bout" "1 failed ===" "build failure: counted as one failed repo"
+    [[ "$brc" -ne 0 ]] && pass "build failure: the run exits nonzero (rc=$brc)" \
+        || fail "build failure: the run exits nonzero"
 }
 
 # ── Test 5c: a second sync run is a no-op (no duplicate registration) ─────
@@ -28075,6 +28112,25 @@ test_ci_scope() {
     base=$(git -C "$dir" rev-parse HEAD)
     scope_case "the ledger with an unlisted reader runs everything" "scope=full run=true" "bump" \
         docs/agent-checks-lessons.md
+
+    # A `git grep` that ERRORS (exit 128: a missing object in a partial or
+    # shallow checkout) is not "no file names this doc": it must widen to full
+    # scope, never skip the shard. Only exit 1 means no match.
+    local shim="$TEST_DIR/ci-scope-git-shim" real_git
+    real_git=$(command -v git)
+    mkdir -p "$shim"
+    printf '#!/usr/bin/env bash\nfor a in "$@"; do [[ "$a" == grep ]] && exit 128; done\nexec %q "$@"\n' \
+        "$real_git" > "$shim/git"
+    chmod +x "$shim/git"
+    git -C "$dir" checkout -q "$base"
+    printf 'more\n' >> "$dir/docs/unread.md"
+    git -C "$dir" add -A; git -C "$dir" commit -qm grep-error
+    jq -n --arg b "$base" --arg h "$(git -C "$dir" rev-parse HEAD)" \
+        '{pull_request:{base:{sha:$b},head:{sha:$h}}}' > "$ev"
+    out=$(PATH="$shim:$PATH" GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" MATRIX_GROUPS="bump" \
+        bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a git grep error runs everything" \
+        || fail "ci-scope: a git grep error runs everything — got '$out'"
 
     out=$(GITHUB_EVENT_NAME=workflow_dispatch bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
     [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a dispatch runs everything" \
