@@ -161,6 +161,11 @@ const INTERVAL_DAYS = {
   yearly: 366,
 };
 const SILENCE_SLACK_DAYS = 3;
+// A `dependabot` check run normally completes within seconds. GitHub
+// occasionally leaves one `queued` for good (cms-platform and one private
+// repo, 2026-11-21..23): that is "no result yet", not an unreadable one, so it
+// reads as pending until it has been stuck this long, then as unknown.
+const STUCK_CHECK_DAYS = 7;
 const MARKER = "<!-- dependabot-config-health -->";
 const ISSUE_TITLE = "Dependabot config is invalid or silent (automated sweep)";
 const DEFAULT_LABEL = "ci";
@@ -541,7 +546,7 @@ function checkState(check) {
     if (FAILURE_CONCLUSIONS.has(check.conclusion)) return "failure";
     return "unknown"; // neutral, cancelled, skipped, stale, ...
   }
-  return "unknown"; // queued, in_progress, ...
+  return "pending"; // queued, in_progress, waiting, ... — no result yet
 }
 
 // firstCommitProvesHealthy — #194 / ADR 0014's addendum. GitHub sometimes
@@ -631,6 +636,8 @@ function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps,
     }
   } else if (check.state === "unknown") {
     unknowns.push(check.reason || "the config check run's status/conclusion could not be classified");
+  } else if (check.state === "pending") {
+    notices.push("GitHub's config check run has not finished yet; validity is not known until it does");
   }
   if (jobs.state === "unknown") {
     unknowns.push(jobs.reason || "whether Dependabot update jobs are running could not be determined");
@@ -638,7 +645,7 @@ function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps,
   let verdict;
   if (findings.length) verdict = "finding";
   else if (unknowns.length) verdict = "unknown";
-  else if (jobs.state === "pending") verdict = "pending";
+  else if (jobs.state === "pending" || check.state === "pending") verdict = "pending";
   else verdict = "healthy";
   return { verdict, findings, unknowns, notices };
 }
@@ -896,6 +903,8 @@ function redactedUnknownSummary(reason) {
   const text = String(reason);
   const check = /^the config check run's status\/conclusion could not be classified \(status=[a-z_]+, conclusion=[a-z_]+\)$/.exec(text);
   if (check) return check[0];
+  const stuck = /^the config check run has been stuck [a-z_]+ for more than \d+ days$/.exec(text);
+  if (stuck) return stuck[0];
   const api = /^(reading \.github\/dependabot\.ya?ml|finding the newest commit that touched the config|finding the PR that merged the config commit|looking up the open tracking issue) failed( \(HTTP \d{3}\))?: /.exec(text);
   if (api) return `${api[1]} failed${api[2] || ""}`;
   const fixed = SAFE_UNKNOWN_PREFIXES.find((p) => text.startsWith(p));
@@ -904,8 +913,17 @@ function redactedUnknownSummary(reason) {
 
 // ── assessRepo ─────────────────────────────────────────────────────────────
 
-function buildCheckEnvelope(run) {
-  const state = checkState(run);
+function buildCheckEnvelope(run, nowMs) {
+  let state = checkState(run);
+  let stuckReason = null;
+  if (state === "pending") {
+    const startedMs = Date.parse(run.started_at || "");
+    const ageDays = Number.isNaN(startedMs) || nowMs === undefined ? 0 : (nowMs - startedMs) / 86400000;
+    if (ageDays > STUCK_CHECK_DAYS) {
+      state = "unknown";
+      stuckReason = `the config check run has been stuck ${/^[a-z_]+$/.test(run.status || "") ? run.status : "unfinished"} for more than ${STUCK_CHECK_DAYS} days`;
+    }
+  }
   if (state === "missing") {
     return {
       state, id: null, htmlUrl: null, sha: null,
@@ -922,9 +940,9 @@ function buildCheckEnvelope(run) {
     outputSummary: (run.output && run.output.summary) || null,
     status: run.status || null,
     conclusion: run.conclusion || null,
-    reason: state === "unknown"
+    reason: stuckReason || (state === "unknown"
       ? `the config check run's status/conclusion could not be classified (status=${run.status || "unknown"}, conclusion=${run.conclusion || "none"})`
-      : null,
+      : null),
   };
 }
 
@@ -1077,7 +1095,7 @@ function assessRepo(target, api, nowMs, opts) {
           outputTitle: null, outputSummary: null, status: null, conclusion: null,
           reason: checkRunsError,
         }
-      : buildCheckEnvelope(pickDependabotCheck(allRuns, config.path));
+      : buildCheckEnvelope(pickDependabotCheck(allRuns, config.path), nowMs);
 
     const configCommitAt = pathCommit ? pathCommit.date : null;
     let workflows = [];
@@ -1458,6 +1476,7 @@ module.exports = {
   // pure helpers
   ownerTokenEnvName,
   redactedUnknownSummary,
+  buildCheckEnvelope,
   parseSchedule,
   silenceThresholdDays,
   candidateShas,
